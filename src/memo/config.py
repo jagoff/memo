@@ -609,15 +609,20 @@ class Config(BaseModel):
         has_vault_env = "MEMO_VAULT_PATH" in os.environ
         has_legacy = has_vault_env or os.environ.get("MEMO_MEMORY_SUBDIR")
         has_storage_config = bool(file_data and file_data.get("storage")) or bool(
-            {"data_dir", "vault_path", "memory_subdir", "state_dir", "memories_in_vault", "single_db"}
+            {
+                "data_dir",
+                "vault_path",
+                "memory_subdir",
+                "state_dir",
+                "memories_in_vault",
+                "single_db",
+            }
             & md_values.keys()
         )
         if cwd_is_repo and not has_data_env and not has_legacy and not has_storage_config:
             # Default to "memories"; honor a legacy "memorias" dir if one already
             # exists in the clone (back-compat for installs predating the rename).
-            kwargs["data_dir"] = (
-                "memorias" if (Path.cwd() / "memorias").is_dir() else "memories"
-            )
+            kwargs["data_dir"] = "memorias" if (Path.cwd() / "memorias").is_dir() else "memories"
         if cwd_is_repo and not has_state_env and not has_legacy and not has_storage_config:
             kwargs["state_dir"] = ".memo-state"
 

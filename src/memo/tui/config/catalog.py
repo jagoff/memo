@@ -484,7 +484,9 @@ def path_to_env() -> dict[str, str]:
     from memo.flags import REGISTRY
 
     paths = {binding.key: binding.env_name for binding in FIELD_BINDINGS}
-    paths.update({_flag_path(env_name, flag.group): env_name for env_name, flag in REGISTRY.items()})
+    paths.update(
+        {_flag_path(env_name, flag.group): env_name for env_name, flag in REGISTRY.items()}
+    )
     return paths
 
 

@@ -487,8 +487,16 @@ def test_orphan_image_gets_vlm_caption_body(tmp_path: Path, runner_env, monkeypa
 
     result = CliRunner().invoke(
         cli,
-        ["ingest", str(vault), "--name", "v", "--ocr", "--include-orphan-images",
-         "--no-include-pdf", "--no-chunk"],
+        [
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--ocr",
+            "--include-orphan-images",
+            "--no-include-pdf",
+            "--no-chunk",
+        ],
         env=env,
     )
     assert result.exit_code == 0, result.output
@@ -759,8 +767,17 @@ def test_ingest_include_audio_transcribes_and_indexes(tmp_path: Path, runner_env
 
     result = CliRunner().invoke(
         cli,
-        ["ingest", str(vault), "--name", "v", "--include-audio",
-         "--no-include-pdf", "--no-include-orphan-images", "--no-ocr", "--no-chunk"],
+        [
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--include-audio",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+            "--no-chunk",
+        ],
         env=runner_env,
     )
     assert result.exit_code == 0, result.output
@@ -783,8 +800,16 @@ def test_ingest_audio_default_off(tmp_path: Path, runner_env, monkeypatch):
 
     result = CliRunner().invoke(
         cli,
-        ["ingest", str(vault), "--name", "v",
-         "--no-include-pdf", "--no-include-orphan-images", "--no-ocr", "--no-chunk"],
+        [
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+            "--no-chunk",
+        ],
         env=runner_env,
     )
     assert result.exit_code == 0, result.output
@@ -798,8 +823,17 @@ def test_ingest_audio_without_whisper_warns_and_skips(tmp_path: Path, runner_env
 
     result = CliRunner().invoke(
         cli,
-        ["ingest", str(vault), "--name", "v", "--include-audio",
-         "--no-include-pdf", "--no-include-orphan-images", "--no-ocr", "--no-chunk"],
+        [
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--include-audio",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+            "--no-chunk",
+        ],
         env=runner_env,
     )
     assert result.exit_code == 0, result.output
@@ -837,9 +871,15 @@ def test_prune_does_not_delete_audio_rows_when_include_audio_is_off(
     r1 = CliRunner().invoke(
         cli,
         [
-            "ingest", str(vault), "--name", "v",
-            "--include-audio", "--no-include-pdf",
-            "--no-include-orphan-images", "--no-ocr", "--no-chunk",
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--include-audio",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+            "--no-chunk",
         ],
         env=runner_env,
     )
@@ -852,9 +892,15 @@ def test_prune_does_not_delete_audio_rows_when_include_audio_is_off(
     r2 = CliRunner().invoke(
         cli,
         [
-            "ingest", str(vault), "--name", "v",
-            "--prune", "--no-include-pdf",
-            "--no-include-orphan-images", "--no-ocr", "--no-chunk",
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--prune",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+            "--no-chunk",
         ],
         env=runner_env,
     )
@@ -887,9 +933,15 @@ def test_prune_does_not_delete_audio_rows_when_whisper_unavailable(
     r1 = CliRunner().invoke(
         cli,
         [
-            "ingest", str(vault), "--name", "v",
-            "--include-audio", "--no-include-pdf",
-            "--no-include-orphan-images", "--no-ocr", "--no-chunk",
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--include-audio",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+            "--no-chunk",
         ],
         env=runner_env,
     )
@@ -902,9 +954,16 @@ def test_prune_does_not_delete_audio_rows_when_whisper_unavailable(
     r2 = CliRunner().invoke(
         cli,
         [
-            "ingest", str(vault), "--name", "v",
-            "--include-audio", "--prune", "--no-include-pdf",
-            "--no-include-orphan-images", "--no-ocr", "--no-chunk",
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--include-audio",
+            "--prune",
+            "--no-include-pdf",
+            "--no-include-orphan-images",
+            "--no-ocr",
+            "--no-chunk",
         ],
         env=runner_env,
     )
@@ -917,9 +976,7 @@ def test_prune_does_not_delete_audio_rows_when_whisper_unavailable(
     )
 
 
-def test_orphan_images_excluded_by_glob_star_star_pattern(
-    tmp_path: Path, runner_env, monkeypatch
-):
+def test_orphan_images_excluded_by_glob_star_star_pattern(tmp_path: Path, runner_env, monkeypatch):
     """Regression: images inside a `dir/**`-excluded subtree must not be
     ingested as orphan standalone memories.  The md walker's `_excluded`
     closure handles `/**` correctly; `find_orphan_images` previously had
@@ -940,10 +997,16 @@ def test_orphan_images_excluded_by_glob_star_star_pattern(
     result = CliRunner().invoke(
         cli,
         [
-            "ingest", str(vault), "--name", "v",
-            "--exclude", "Obsidian/Whatsapp/**",
-            "--ocr", "--include-orphan-images",
-            "--no-include-pdf", "--no-chunk",
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--exclude",
+            "Obsidian/Whatsapp/**",
+            "--ocr",
+            "--include-orphan-images",
+            "--no-include-pdf",
+            "--no-chunk",
         ],
         env=runner_env,
     )
@@ -951,6 +1014,5 @@ def test_orphan_images_excluded_by_glob_star_star_pattern(
     rows = _all_rows(_open_store(runner_env))
     excluded_rows = [r for r in rows if "photo.jpg" in r["path"]]
     assert not excluded_rows, (
-        f"REGRESSION: excluded image ingested as orphan "
-        f"(rows={[r['path'] for r in rows]})"
+        f"REGRESSION: excluded image ingested as orphan (rows={[r['path'] for r in rows]})"
     )

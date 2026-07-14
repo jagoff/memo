@@ -982,7 +982,8 @@ def test_sync_init_home_byo_pushes_existing_memories(tmp_path: Path, monkeypatch
     remote = tmp_path / "byo.git"
     subprocess.run(
         ["git", "init", "--bare", "-b", "main", str(remote)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     # a memories dir with one existing .md, not yet a git repo
     memories = tmp_path / "repo" / "memorias"
@@ -1003,7 +1004,8 @@ def test_sync_init_home_byo_pushes_existing_memories(tmp_path: Path, monkeypatch
     # the remote now has the memory committed
     ls = subprocess.run(
         ["git", "-C", str(remote), "log", "--oneline"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert ls.returncode == 0 and ls.stdout.strip()
 
@@ -1020,7 +1022,8 @@ def test_sync_init_home_byo_empty_dir_initializes(tmp_path: Path, monkeypatch):
     remote = tmp_path / "byo.git"
     subprocess.run(
         ["git", "init", "--bare", "-b", "main", str(remote)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     # a memories dir that is EMPTY (no .md files, brand-new user)
     memories = tmp_path / "repo" / "memorias"
@@ -1041,6 +1044,7 @@ def test_sync_init_home_byo_empty_dir_initializes(tmp_path: Path, monkeypatch):
     # the remote now has an initial (possibly empty) commit
     ls = subprocess.run(
         ["git", "-C", str(remote), "log", "--oneline"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert ls.returncode == 0 and ls.stdout.strip()

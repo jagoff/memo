@@ -1,4 +1,5 @@
 """`memo confidence` — inspect the recall confidence calibration map."""
+
 from __future__ import annotations
 
 import click

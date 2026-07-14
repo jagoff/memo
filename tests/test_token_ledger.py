@@ -310,12 +310,11 @@ def test_roll_up_merges_cohort_turn_counts(tmp_path: Path) -> None:
     from memo import token_ledger
     from memo.dashboard import append_grounding_log, append_recall_log
 
-    append_recall_log(tmp_path, prompt="q on", hits=[], via="subprocess",
-                      session_id="s1", turn=1)
-    append_recall_log(tmp_path, prompt="q off", hits=[], via="disabled",
-                      session_id="s1", turn=2)
-    append_grounding_log(tmp_path, session_id="s1", turn=1,
-                         recall_id="aaaabbbb", used_score=0.9, method="lexical")
+    append_recall_log(tmp_path, prompt="q on", hits=[], via="subprocess", session_id="s1", turn=1)
+    append_recall_log(tmp_path, prompt="q off", hits=[], via="disabled", session_id="s1", turn=2)
+    append_grounding_log(
+        tmp_path, session_id="s1", turn=1, recall_id="aaaabbbb", used_score=0.9, method="lexical"
+    )
     ledger = token_ledger.roll_up(tmp_path)
     (day,) = ledger["days"].keys()
     rec = ledger["days"][day]
@@ -353,8 +352,7 @@ def test_summarize_exposes_ablation_totals(tmp_path) -> None:
     from memo import token_ledger
     from memo.dashboard import append_recall_log
 
-    append_recall_log(tmp_path, prompt="q", hits=[], via="disabled",
-                      session_id="s1", turn=1)
+    append_recall_log(tmp_path, prompt="q", hits=[], via="disabled", session_id="s1", turn=1)
     token_ledger.roll_up(tmp_path)
     s = token_ledger.summarize(tmp_path)
     assert s["ablation"] == {"turns_on": 0, "turns_off": 1}
@@ -376,10 +374,10 @@ def _c(ts: str, *, source: str, has_hits: bool = True) -> dict:
 
 def test_consults_by_day_client_counts_productive_only() -> None:
     rows = [
-        _c("2026-06-10T12:00:00+00:00", source="codex"),           # productive
-        _c("2026-06-10T13:00:00+00:00", source="codex"),           # productive
+        _c("2026-06-10T12:00:00+00:00", source="codex"),  # productive
+        _c("2026-06-10T13:00:00+00:00", source="codex"),  # productive
         _c("2026-06-10T14:00:00+00:00", source="synapse", has_hits=False),  # empty ping
-        _c("2026-06-11T09:00:00+00:00", source="memflow"),         # productive, next day
+        _c("2026-06-11T09:00:00+00:00", source="memflow"),  # productive, next day
     ]
     by = token_ledger.consults_by_day_client(rows, to_day=lambda ts: ts[:10])
     assert by == {"2026-06-10": {"codex": 2}, "2026-06-11": {"memflow": 1}}
@@ -425,7 +423,9 @@ def test_roll_up_consults_are_monotonic_across_rotation(tmp_path: Path) -> None:
     assert first["days"]["2026-06-05"]["consults"] == {"codex": 3}
 
     # recall.log rotates down to one row — durable count must not shrink.
-    log.write_text(json.dumps(_c("2026-06-05T12:00:00+00:00", source="codex")) + "\n", encoding="utf-8")
+    log.write_text(
+        json.dumps(_c("2026-06-05T12:00:00+00:00", source="codex")) + "\n", encoding="utf-8"
+    )
     second = token_ledger.roll_up(tmp_path)
     assert second["days"]["2026-06-05"]["consults"] == {"codex": 3}
 

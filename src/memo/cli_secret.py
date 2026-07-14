@@ -19,7 +19,13 @@ def secret() -> None:
 
 @secret.command()
 @click.option("--name", required=True, help="Secret name (e.g., 'openai-api-key')")
-@click.option("--kind", type=click.Choice(["api_token", "password", "ssh_key", "db_credential", "certificate", "generic"]), help="Secret kind (auto-detected if not provided)")
+@click.option(
+    "--kind",
+    type=click.Choice(
+        ["api_token", "password", "ssh_key", "db_credential", "certificate", "generic"]
+    ),
+    help="Secret kind (auto-detected if not provided)",
+)
 @click.option("--value", required=False, help="Secret value (if not provided, read from stdin)")
 @click.option("--no-confirm", is_flag=True, help="Skip confirmation prompt")
 def save(name: str, kind: str | None, value: str | None, no_confirm: bool) -> None:
@@ -62,7 +68,13 @@ def get(name: str) -> None:
 
 
 @secret.command()
-@click.option("--kind", type=click.Choice(["api_token", "password", "ssh_key", "db_credential", "certificate", "generic"]), help="Filter by kind")
+@click.option(
+    "--kind",
+    type=click.Choice(
+        ["api_token", "password", "ssh_key", "db_credential", "certificate", "generic"]
+    ),
+    help="Filter by kind",
+)
 def list(kind: str | None) -> None:
     """List saved secrets (names only, no values)."""
     cfg = Config.from_env()

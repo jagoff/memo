@@ -15,7 +15,7 @@ import click
 
 from memo.config import Config
 from memo.flags import flag_bool, flag_float, flag_int, flag_str
-from memo.recall_logic import session_budget_scale  # re-export for tests + local use
+from memo.recall_logic import RankKnobs, session_budget_scale  # re-export for tests + local use
 
 _log = logging.getLogger("memo.cli_recall_hook")
 
@@ -75,6 +75,28 @@ def maybe_inject_verbosity_steering(system_prompt: str, level: int) -> str:
     steering_block = f"\n{SENTINEL_START}{level}\n{steering_text}\n{SENTINEL_END}"
 
     return system_prompt + steering_block
+
+
+def apply_session_mode(knobs: RankKnobs, session_mode: str) -> RankKnobs:
+    """Apply bounded per-session ranking adjustments."""
+    if session_mode == "focus":
+        return replace(knobs, top_k=min(knobs.top_k, 2), min_sim=max(knobs.min_sim, 0.65))
+    if session_mode == "explore":
+        return replace(knobs, top_k=max(knobs.top_k, 5), min_sim=min(knobs.min_sim, 0.4))
+    if session_mode == "maintenance":
+        return replace(knobs, top_k=1, min_sim=max(knobs.min_sim, 0.70))
+    return knobs
+
+
+def adaptive_token_budget(token_budget: int, prompt_length: int) -> int:
+    """Scale a positive per-turn budget for very short or long prompts."""
+    if token_budget <= 0:
+        return token_budget
+    if prompt_length < 50:
+        return int(min(token_budget * 1.5, 800))
+    if prompt_length > 300:
+        return int(max(token_budget * 0.6, 200))
+    return token_budget
 
 
 @click.command(name="recall-hook")
@@ -223,7 +245,11 @@ def recall_hook() -> None:
         if _raw_float is not None and _raw_float >= 0.1:
             _daemon_timeout = _raw_float
         else:
-            _daemon_timeout = max(0.2, (2000 if (_dmt := flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS")) is None else _dmt) / 1000.0)
+            _daemon_timeout = max(
+                0.2,
+                (2000 if (_dmt := flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS")) is None else _dmt)
+                / 1000.0,
+            )
         _daemon_result = connect_and_recall(
             cfg.state_dir,
             prompt=prompt,
@@ -281,12 +307,7 @@ def recall_hook() -> None:
     # Session-mode adjustments (subprocess-only: MEMFLOW_SESSION_MODE is a
     # per-session env var the long-lived daemon process cannot see).
     _session_mode = os.environ.get("MEMFLOW_SESSION_MODE", "").strip().lower()
-    if _session_mode == "focus":
-        knobs = replace(knobs, top_k=min(knobs.top_k, 2), min_sim=max(knobs.min_sim, 0.65))
-    elif _session_mode == "explore":
-        knobs = replace(knobs, top_k=max(knobs.top_k, 5), min_sim=min(knobs.min_sim, 0.4))
-    elif _session_mode == "maintenance":
-        knobs = replace(knobs, top_k=1, min_sim=max(knobs.min_sim, 0.70))
+    knobs = apply_session_mode(knobs, _session_mode)
 
     _bc = flag_int("MEMO_RECALL_BODY_CHARS")
     body_chars = 400 if _bc is None else _bc
@@ -295,13 +316,7 @@ def recall_hook() -> None:
 
     # Adaptive budget: scale by prompt length
     if flag_bool("MEMO_RECALL_ADAPTIVE_BUDGET") and token_budget > 0 and prompt:
-        prompt_len = len(prompt)
-        # Short prompts (clarity) get more budget; long prompts leave room
-        if prompt_len < 50:
-            token_budget = int(min(token_budget * 1.5, 800))
-        elif prompt_len > 300:
-            token_budget = int(max(token_budget * 0.6, 200))
-        # Mid-range stays as-is
+        token_budget = adaptive_token_budget(token_budget, len(prompt))
 
     # Session cumulative budget decay: once the session has consumed more than
     # MEMO_RECALL_SESSION_TOKEN_BUDGET tokens of recall context, halve the
@@ -424,7 +439,11 @@ def recall_hook() -> None:
         from memo import interject as _ij
 
         _interject_banner = _ij.evaluate_and_render(
-            cfg, mem, prompt=prompt, hits=qualifying, sim_threshold=_guard_sim_threshold,
+            cfg,
+            mem,
+            prompt=prompt,
+            hits=qualifying,
+            sim_threshold=_guard_sim_threshold,
         )
 
     def _stamp_metrics(n_hits: int) -> None:
@@ -560,7 +579,9 @@ def recall_hook() -> None:
 
     if _recall_format == "compact":
         context = render_recall_compact(
-            relevant, token_budget=token_budget, disputed_by=_disputed_by,
+            relevant,
+            token_budget=token_budget,
+            disputed_by=_disputed_by,
             state_dir=mem.cfg.state_dir,
         )
     elif _recall_format == "balanced":
@@ -581,6 +602,7 @@ def recall_hook() -> None:
 
     # Apply verbosity steering (L4 token savings) if enabled
     from memo.flags_recall import flag_recall_verbosity_level
+
     verbosity_level = flag_recall_verbosity_level()
     if verbosity_level > 0:
         context = maybe_inject_verbosity_steering(context, verbosity_level)

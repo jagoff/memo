@@ -253,11 +253,7 @@ def _memo_snapshot_candidate(snap: dict[str, object]) -> ResumeCandidate | None:
     )
     prompt_trail_raw = snap.get("prompt_trail")
     prompt_trail = (
-        [
-            str(p).strip()
-            for p in prompt_trail_raw
-            if isinstance(p, str) and p.strip()
-        ]
+        [str(p).strip() for p in prompt_trail_raw if isinstance(p, str) and p.strip()]
         if isinstance(prompt_trail_raw, list)
         else []
     )

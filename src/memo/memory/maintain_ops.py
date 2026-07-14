@@ -731,7 +731,11 @@ class _MaintainOpsMixin(_MemoryBase):
                     messages=[
                         {
                             "role": "system",
-                            "content": resolve_prompt("extract_entities", _EXTRACT_ENTITIES_SYSTEM_PROMPT, self.cfg.state_dir),
+                            "content": resolve_prompt(
+                                "extract_entities",
+                                _EXTRACT_ENTITIES_SYSTEM_PROMPT,
+                                self.cfg.state_dir,
+                            ),
                         },
                         {"role": "user", "content": user_msg},
                     ],

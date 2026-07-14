@@ -322,7 +322,11 @@ def test_quality_compact_rollback_ids_include_attempted_ids():
     archived_id = ("def456" * 5 + "de")[:32]
     receipt = {
         "quality_compacted": [
-            {"proposal_id": "quality-compact-demo", "archived_ids": [], "attempted_ids": [attempted_id]},
+            {
+                "proposal_id": "quality-compact-demo",
+                "archived_ids": [],
+                "attempted_ids": [attempted_id],
+            },
             {"proposal_id": "quality-compact-demo-2", "archived_ids": [archived_id]},
         ]
     }

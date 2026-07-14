@@ -50,12 +50,14 @@ def related_for(memory: Any, query_or_id: str, hops: int = 2, limit: int = 5) ->
         rec = memory.get(h.id)
         if rec is None or (getattr(rec, "extra", None) or {}).get(IS_FORGOTTEN_KEY):
             continue
-        out.append({
-            "id": h.id,
-            "title": getattr(rec, "title", h.id),
-            "via": h.via,
-            "activation": round(h.activation, 3),
-        })
+        out.append(
+            {
+                "id": h.id,
+                "title": getattr(rec, "title", h.id),
+                "via": h.via,
+                "activation": round(h.activation, 3),
+            }
+        )
         if len(out) >= limit:
             break
     return out

@@ -40,9 +40,7 @@ def test_undo_removes_a_saved_memory(tmp_path: Path) -> None:
 def test_fix_updates_title(tmp_path: Path) -> None:
     r = CliRunner()
     env = _env(tmp_path)
-    save = r.invoke(
-        cli, ["save", "--type", "note", "--defer-embed", "--json", "old body"], env=env
-    )
+    save = r.invoke(cli, ["save", "--type", "note", "--defer-embed", "--json", "old body"], env=env)
     assert save.exit_code == 0, save.output
     mid = json.loads(save.output)["id"]
 

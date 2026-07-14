@@ -5,6 +5,7 @@ knob's OFF is its current DEFAULT (``off_value``), pinned through
 (same as ``dream_tune.measure_rank_knob``). Line-searches ``cand.grid`` for the
 best value that wins vs the baseline. No behavior change — only reads the index
 through eval_recall."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -48,7 +49,9 @@ def best_on_value(
         (best_value, deltas) tuple where deltas has delta_prec and delta_noise
     """
     base = default_configs()[0]  # A vec/0.60/keep — the live default shape
-    off = run_config(mem, _with_knob(base, f"{cand.flag}-off", cand.field, cand.off_value), k, labels)
+    off = run_config(
+        mem, _with_knob(base, f"{cand.flag}-off", cand.field, cand.off_value), k, labels
+    )
     grid = cand.grid or (cand.on_value,)
     best_value = cand.off_value
     best_deltas = {"delta_prec": 0.0, "delta_noise": 0.0}

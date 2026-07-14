@@ -989,9 +989,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 (kind,),
             )
         else:
-            cursor.execute(
-                "SELECT id, name, kind, accessed_count FROM secret_store ORDER BY name"
-            )
+            cursor.execute("SELECT id, name, kind, accessed_count FROM secret_store ORDER BY name")
         rows = cursor.fetchall()
         return [
             {

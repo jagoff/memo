@@ -6,6 +6,7 @@ with NO ref, or a `commit:<sha>` that does not exist locally, is 'unsupported'
 — the caller DOWNGRADES confidence (never drops the memory). Hedged or
 first-person-intent statements are exempt. No LLM, no MLX.
 """
+
 from __future__ import annotations
 
 import re
@@ -31,7 +32,9 @@ _HEDGE_RE = re.compile(
 
 # evidence refs
 _COMMIT_RE = re.compile(r"\bcommit:([0-9a-f]{7,40})\b", re.I)
-_OTHER_REF_RE = re.compile(r"\b(pr:#?\d+|bench:\S+|ci:\S+|tests?\s+(?:green|pass(?:ing|ed)?))\b", re.I)
+_OTHER_REF_RE = re.compile(
+    r"\b(pr:#?\d+|bench:\S+|ci:\S+|tests?\s+(?:green|pass(?:ing|ed)?))\b", re.I
+)
 
 
 @dataclass(frozen=True)

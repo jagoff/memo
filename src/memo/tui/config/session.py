@@ -122,9 +122,7 @@ def _platform_key() -> str:
     return "darwin-arm64" if is_apple_silicon() else "unsupported"
 
 
-def _legacy_storage(
-    env: Mapping[str, str], *, use_default_path: bool
-) -> dict[str, object]:
+def _legacy_storage(env: Mapping[str, str], *, use_default_path: bool) -> dict[str, object]:
     from memo.setup.config_io import load_config_file
 
     raw_path = env.get("MEMO_CONFIG_FILE")

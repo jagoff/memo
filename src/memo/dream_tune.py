@@ -603,8 +603,8 @@ def curated_gate(
 # --- HyDE A/B (MEMO_HYDE_ENABLED — shipped default-off, never measured) ------
 
 _HYDE_FLAG = "MEMO_HYDE_ENABLED"
-_HYDE_FLOOR = 0.40        # same floor as grid configs C/J (hybrid)
-_HYDE_MAX_PROMPTS = 40    # cap: HyDE costs one MLX chat call PER PROMPT
+_HYDE_FLOOR = 0.40  # same floor as grid configs C/J (hybrid)
+_HYDE_MAX_PROMPTS = 40  # cap: HyDE costs one MLX chat call PER PROMPT
 # HyDE adds an LLM call by construction; it is ask-path-only (never the vec
 # hook), so the headroom is looser than RANK_KNOB_LATENCY_HEADROOM.
 HYDE_LATENCY_HEADROOM = 3.0
@@ -658,9 +658,7 @@ def run_hyde_pass(
     off = measure_hyde(mem, labels, k=k, enabled=False)
     on = measure_hyde(mem, labels, k=k, enabled=True)
     res.update({"off": off, "on": on, "curated_used": curated_used})
-    wins = (on["precision_at_k"], -on["noise_at_k"]) > (
-        off["precision_at_k"], -off["noise_at_k"]
-    )
+    wins = (on["precision_at_k"], -on["noise_at_k"]) > (off["precision_at_k"], -off["noise_at_k"])
     if not wins:
         res["status"] = "hyde_loses"
         return res

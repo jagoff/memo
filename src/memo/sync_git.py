@@ -140,9 +140,7 @@ def clone_bootstrap(url: str, dest: Path) -> dict:
         raise SyncGitError(f"git clone failed: {cp.stderr.strip()}")
     memories = _corpus_subdir(dest)
     if not memories.exists():
-        raise SyncGitError(
-            f"cloned repo has no memories/ (or legacy memorias/) dir at {dest}"
-        )
+        raise SyncGitError(f"cloned repo has no memories/ (or legacy memorias/) dir at {dest}")
     n_md = len(list(memories.rglob("*.md")))
     return {"cloned": str(dest), "memories_dir": str(memories), "memories": n_md}
 
@@ -376,8 +374,7 @@ def _scan_staged_secrets(root: Path) -> list[str]:
     findings: list[str] = []
     for path, lines in added_by_file.items():
         findings.extend(
-            f"{path}: {kind} {preview}"
-            for kind, preview in scan_secrets("\n".join(lines))
+            f"{path}: {kind} {preview}" for kind, preview in scan_secrets("\n".join(lines))
         )
     return findings
 
@@ -558,8 +555,12 @@ def _merge_remote_signal_from_git(root: Path, store: VecStore, ref: str) -> None
             continue
         if doc.get("schema") != SIGNAL_SCHEMA:
             import logging
+
             logging.getLogger(__name__).warning(
-                "sync: skipping %s signal (schema %r != %r)", table, doc.get("schema"), SIGNAL_SCHEMA
+                "sync: skipping %s signal (schema %r != %r)",
+                table,
+                doc.get("schema"),
+                SIGNAL_SCHEMA,
             )
             payload[table] = []
             continue
@@ -609,8 +610,14 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
         if non_signal or not conflicts:
             # Empty commit after resolving all signal conflicts: git rebase --continue
             # exits non-zero with 'nothing to stage' / '--skip'. Handle it before aborting.
-            if not non_signal and not conflicts and (
-                "--skip" in rebase.stderr or "nothing to stage" in rebase.stderr or "nothing to commit" in rebase.stderr
+            if (
+                not non_signal
+                and not conflicts
+                and (
+                    "--skip" in rebase.stderr
+                    or "nothing to stage" in rebase.stderr
+                    or "nothing to commit" in rebase.stderr
+                )
             ):
                 rebase = _git(root, "rebase", "--skip", check=False)
                 continue
@@ -639,7 +646,10 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
         pruned = mem.gc(fix=True).get("orphan_store", [])
     except Exception as exc:  # never let GC break the pull
         import logging
-        logging.getLogger(__name__).warning("sync_pull: GC failed (orphan rows may remain): %s", exc)
+
+        logging.getLogger(__name__).warning(
+            "sync_pull: GC failed (orphan rows may remain): %s", exc
+        )
 
     # 4) re-export the merged signal so the next push carries the union
     export_signal(store, signal_dir_for(cfg))

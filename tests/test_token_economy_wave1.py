@@ -33,7 +33,10 @@ def test_crush_cache_stores_and_retrieves():
 def test_crush_marker_format():
     """crush_marker produces correct sentinel object."""
     marker = crush_marker(dropped_count=47, hash_val="abc123")
-    assert marker["_compressed"] == "47 rows offloaded — ask `memo retrieve <<memo-crush:abc123>>` for full"
+    assert (
+        marker["_compressed"]
+        == "47 rows offloaded — ask `memo retrieve <<memo-crush:abc123>>` for full"
+    )
 
 
 def test_crush_cache_ttl_expiration():
@@ -216,18 +219,26 @@ def test_maybe_crush_json_capture_detects_json():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
-        config = Config(data_dir=state_dir / "data", vault_path=state_dir / "vault", state_dir=state_dir / "state")
+        config = Config(
+            data_dir=state_dir / "data",
+            vault_path=state_dir / "vault",
+            state_dir=state_dir / "state",
+        )
         (state_dir / "data").mkdir(parents=True, exist_ok=True)
         (state_dir / "vault").mkdir(parents=True, exist_ok=True)
         (state_dir / "state").mkdir(parents=True, exist_ok=True)
 
-        json_content = json.dumps([
-            {"id": 1, "text": "important"},
-            {"id": 2, "text": "noise"},
-            {"id": 3, "text": "low-score"},
-        ])
+        json_content = json.dumps(
+            [
+                {"id": 1, "text": "important"},
+                {"id": 2, "text": "noise"},
+                {"id": 3, "text": "low-score"},
+            ]
+        )
 
-        crushed, hash_val = maybe_crush_json_capture(json_content, context="test query", config=config)
+        crushed, hash_val = maybe_crush_json_capture(
+            json_content, context="test query", config=config
+        )
 
         # Should detect JSON
         assert isinstance(crushed, str)
@@ -243,7 +254,11 @@ def test_maybe_crush_json_respects_disable_flag(monkeypatch):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
-        config = Config(data_dir=state_dir / "data", vault_path=state_dir / "vault", state_dir=state_dir / "state")
+        config = Config(
+            data_dir=state_dir / "data",
+            vault_path=state_dir / "vault",
+            state_dir=state_dir / "state",
+        )
         (state_dir / "data").mkdir(parents=True, exist_ok=True)
         (state_dir / "vault").mkdir(parents=True, exist_ok=True)
         (state_dir / "state").mkdir(parents=True, exist_ok=True)
@@ -267,7 +282,11 @@ def test_crush_preserves_structure(monkeypatch):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
-        config = Config(data_dir=state_dir / "data", vault_path=state_dir / "vault", state_dir=state_dir / "state")
+        config = Config(
+            data_dir=state_dir / "data",
+            vault_path=state_dir / "vault",
+            state_dir=state_dir / "state",
+        )
         (state_dir / "data").mkdir(parents=True, exist_ok=True)
         (state_dir / "vault").mkdir(parents=True, exist_ok=True)
         (state_dir / "state").mkdir(parents=True, exist_ok=True)
@@ -296,7 +315,11 @@ def test_crush_json_too_small_not_crushed(monkeypatch):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
-        config = Config(data_dir=state_dir / "data", vault_path=state_dir / "vault", state_dir=state_dir / "state")
+        config = Config(
+            data_dir=state_dir / "data",
+            vault_path=state_dir / "vault",
+            state_dir=state_dir / "state",
+        )
         (state_dir / "data").mkdir(parents=True, exist_ok=True)
         (state_dir / "vault").mkdir(parents=True, exist_ok=True)
         (state_dir / "state").mkdir(parents=True, exist_ok=True)
@@ -319,7 +342,11 @@ def test_crush_json_non_array_not_crushed(monkeypatch):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
-        config = Config(data_dir=state_dir / "data", vault_path=state_dir / "vault", state_dir=state_dir / "state")
+        config = Config(
+            data_dir=state_dir / "data",
+            vault_path=state_dir / "vault",
+            state_dir=state_dir / "state",
+        )
         (state_dir / "data").mkdir(parents=True, exist_ok=True)
         (state_dir / "vault").mkdir(parents=True, exist_ok=True)
         (state_dir / "state").mkdir(parents=True, exist_ok=True)
@@ -343,7 +370,11 @@ def test_crush_invalid_json_not_crushed(monkeypatch):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir)
-        config = Config(data_dir=state_dir / "data", vault_path=state_dir / "vault", state_dir=state_dir / "state")
+        config = Config(
+            data_dir=state_dir / "data",
+            vault_path=state_dir / "vault",
+            state_dir=state_dir / "state",
+        )
         (state_dir / "data").mkdir(parents=True, exist_ok=True)
         (state_dir / "vault").mkdir(parents=True, exist_ok=True)
         (state_dir / "state").mkdir(parents=True, exist_ok=True)
@@ -381,11 +412,14 @@ def test_retrieve_command_via_mcp_tool():
         cache.cache(hash_val, original)
 
         # Create Memory and mock server
-        config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False)
+        config = Config(
+            data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False
+        )
         memory = Memory(config)
 
         try:
             from unittest.mock import MagicMock
+
             mock_server = MagicMock()
             tool_functions = {}
 
@@ -393,6 +427,7 @@ def test_retrieve_command_via_mcp_tool():
                 def decorator(func):
                     tool_functions[name or func.__name__] = func
                     return func
+
                 return decorator
 
             mock_server.tool = capture_tool
@@ -421,11 +456,14 @@ def test_retrieve_mcp_tool_missing_cache_entry():
         data_dir.mkdir()
         vault_dir.mkdir()
 
-        config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False)
+        config = Config(
+            data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False
+        )
         memory = Memory(config)
 
         try:
             from unittest.mock import MagicMock
+
             mock_server = MagicMock()
             tool_functions = {}
 
@@ -433,6 +471,7 @@ def test_retrieve_mcp_tool_missing_cache_entry():
                 def decorator(func):
                     tool_functions[name or func.__name__] = func
                     return func
+
                 return decorator
 
             mock_server.tool = capture_tool
@@ -460,11 +499,14 @@ def test_retrieve_mcp_tool_invalid_marker_format():
         data_dir.mkdir()
         vault_dir.mkdir()
 
-        config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False)
+        config = Config(
+            data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir, reranker_enabled=False
+        )
         memory = Memory(config)
 
         try:
             from unittest.mock import MagicMock
+
             mock_server = MagicMock()
             tool_functions = {}
 
@@ -472,6 +514,7 @@ def test_retrieve_mcp_tool_invalid_marker_format():
                 def decorator(func):
                     tool_functions[name or func.__name__] = func
                     return func
+
                 return decorator
 
             mock_server.tool = capture_tool
@@ -510,13 +553,14 @@ def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
         config = Config(data_dir=data_dir, vault_path=vault_dir, state_dir=state_dir)
 
         # Step 1: Simulate captured JSON (large result set)
-        large_json = json.dumps([
-            {"id": i, "text": f"result row {i}", "data": "x" * 50}
-            for i in range(50)
-        ])
+        large_json = json.dumps(
+            [{"id": i, "text": f"result row {i}", "data": "x" * 50} for i in range(50)]
+        )
 
         # Step 2: Crush it
-        crushed, hash_val = maybe_crush_json_capture(large_json, context="search results", config=config)
+        crushed, hash_val = maybe_crush_json_capture(
+            large_json, context="search results", config=config
+        )
         assert isinstance(crushed, str)
 
         if hash_val is not None:
@@ -530,6 +574,7 @@ def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
 
             # Step 4: Retrieve via cache
             from memo.store.crush_cache import CrushCache
+
             cache = CrushCache(state_dir)
             original = cache.retrieve(hash_val)
             assert original == large_json

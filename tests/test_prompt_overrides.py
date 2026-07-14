@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -49,9 +50,7 @@ def test_extract_insights_uses_override_prompt(tmp_path: Path):
     from memo.capture import extract_insights
 
     (tmp_path / "prompts").mkdir()
-    (tmp_path / "prompts" / "capture_extract.md").write_text(
-        "CUSTOM EXTRACTOR", encoding="utf-8"
-    )
+    (tmp_path / "prompts" / "capture_extract.md").write_text("CUSTOM EXTRACTOR", encoding="utf-8")
     seen: dict = {}
 
     class _Chat:
@@ -81,7 +80,17 @@ def test_every_llm_call_site_resolves_its_prompt():
     through resolve_prompt("<name>", ...) so user overrides take effect."""
     root = Path(__file__).resolve().parents[1]
     for rel, name in _CALL_SITES:
-        text = (root / rel).read_text(encoding="utf-8")
-        assert f'resolve_prompt("{name}"' in text, (
+        tree = ast.parse((root / rel).read_text(encoding="utf-8"), filename=rel)
+        resolved_names = {
+            node.args[0].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "resolve_prompt"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        }
+        assert name in resolved_names, (
             f"{rel}: chat() call does not resolve prompt {name!r} via prompt_overrides"
         )

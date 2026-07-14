@@ -30,6 +30,7 @@ def test_evaluate_shadow_logs_but_does_not_render_when_off(monkeypatch, tmp_cfg)
     monkeypatch.setattr(ij, "recalibrated_band_of_score", lambda sd, s: "high", raising=False)
     # stub the calibration band to "high" via the confidence_calibration seam
     import memo.confidence_calibration as cc
+
     monkeypatch.setattr(cc, "recalibrated_band", lambda sd, band: "high")
 
     mem = _Mem([_Pair("a" * 32, "z" * 32)])
@@ -47,6 +48,7 @@ def test_evaluate_renders_when_on_and_in_budget(monkeypatch, tmp_cfg):
     monkeypatch.setenv("MEMO_INTERJECT_MAX_PER_SESSION", "1")
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-x")
     import memo.confidence_calibration as cc
+
     monkeypatch.setattr(cc, "recalibrated_band", lambda sd, band: "high")
 
     mem = _Mem([_Pair("a" * 32, "z" * 32)])
@@ -74,9 +76,12 @@ def test_evaluate_never_raises_on_broken_store(monkeypatch, tmp_cfg):
 
     hits = [_hit("a" * 32, "Use vec mode", "decision", 0.9)]
     # must not raise; no dispute -> no candidates -> None
-    assert ij.evaluate_and_render(
-        tmp_cfg, _Broken(), prompt="switch instead", hits=hits, sim_threshold=0.6
-    ) is None
+    assert (
+        ij.evaluate_and_render(
+            tmp_cfg, _Broken(), prompt="switch instead", hits=hits, sim_threshold=0.6
+        )
+        is None
+    )
 
 
 def test_evaluate_never_touches_store_without_reversal_signal(monkeypatch, tmp_cfg):

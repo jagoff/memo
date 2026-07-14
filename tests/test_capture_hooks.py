@@ -242,10 +242,7 @@ def test_list_sessions_without_watermark_respects_limit(tmp_path: Path):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
 
-    sessions = [
-        {"session_id": f"sess-{i}", "created_at": i * 100}
-        for i in range(1, 11)
-    ]
+    sessions = [{"session_id": f"sess-{i}", "created_at": i * 100} for i in range(1, 11)]
 
     pending = list_sessions_without_watermark(state_dir, sessions, limit=3)
     assert len(pending) == 3
@@ -296,7 +293,8 @@ def test_run_capture_no_trigger_keywords(tmp_path: Path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     transcript = tmp_path / "notrigger.jsonl"
     transcript.write_text(
-        json.dumps({"type": "user", "message": {"content": "hello"}}) + "\n"
+        json.dumps({"type": "user", "message": {"content": "hello"}})
+        + "\n"
         + json.dumps({"type": "assistant", "message": {"content": "short"}}),
         encoding="utf-8",
     )
@@ -325,24 +323,31 @@ def test_run_capture_incremental_no_new_turns(tmp_path: Path, monkeypatch):
     # Create a transcript with 2 exchanges
     transcript = tmp_path / "t.jsonl"
     transcript.write_text(
-        json.dumps({"type": "user", "message": {"content": "q1"}}) + "\n"
-        + json.dumps({
-            "type": "assistant",
-            "message": {
-                "content": "decided to change config because we found a bug "
-                "in the reranker; the fix was to truncate text before ranking "
-                "and latency dropped three times in the hot path of the hook."
+        json.dumps({"type": "user", "message": {"content": "q1"}})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": "decided to change config because we found a bug "
+                    "in the reranker; the fix was to truncate text before ranking "
+                    "and latency dropped three times in the hot path of the hook."
+                },
             }
-        }) + "\n"
-        + json.dumps({"type": "user", "message": {"content": "q2"}}) + "\n"
-        + json.dumps({
-            "type": "assistant",
-            "message": {
-                "content": "decided we should use Qwen because it is faster "
-                "and more efficient for embeddings; we tested it on 1000 samples "
-                "and the latency improved by 50 percent on our warm cache tests."
+        )
+        + "\n"
+        + json.dumps({"type": "user", "message": {"content": "q2"}})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": "decided we should use Qwen because it is faster "
+                    "and more efficient for embeddings; we tested it on 1000 samples "
+                    "and the latency improved by 50 percent on our warm cache tests."
+                },
             }
-        }),
+        ),
         encoding="utf-8",
     )
 

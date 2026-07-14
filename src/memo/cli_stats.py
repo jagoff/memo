@@ -26,7 +26,9 @@ def stats() -> None:
         cfg = mem.cfg
         state_dir = cfg.state_dir
 
-        console.print(f"\n[bold cyan]memo stats — {datetime.now(UTC).strftime('%H:%M:%S')}[/bold cyan]")
+        console.print(
+            f"\n[bold cyan]memo stats — {datetime.now(UTC).strftime('%H:%M:%S')}[/bold cyan]"
+        )
 
         console.print("\n[bold]📚 Corpus[/bold]")
         console.print(f"  total       {mem.store.count():,}")
@@ -37,7 +39,9 @@ def stats() -> None:
             ).fetchone()
             n_uncertain = int(row[0]) if row else 0
             if n_uncertain:
-                console.print(f"  uncertain   {n_uncertain:,} (low-confidence capture, tag _uncertain)")
+                console.print(
+                    f"  uncertain   {n_uncertain:,} (low-confidence capture, tag _uncertain)"
+                )
         except Exception as exc:
             _log.debug("uncertain-tag count failed: %s", exc)
         console.print(f"  data_dir   {cfg.data_dir}")

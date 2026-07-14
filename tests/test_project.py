@@ -111,9 +111,7 @@ def _git(cwd: Path, *args: str) -> None:
     )
 
 
-def test_worktree_resolves_to_main_repo(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_worktree_resolves_to_main_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression: a linked worktree (`.git` FILE) must tag as the MAIN repo,
     not as the worktree basename — the release flow's `/tmp/rel` worktree was
     minting `project:rel` memories forever."""

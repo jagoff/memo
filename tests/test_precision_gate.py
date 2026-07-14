@@ -6,6 +6,7 @@ Tests:
   - learn_precision_bands: flags a zero-grounding band
   - load_precision_bands: reads cached JSON
 """
+
 from __future__ import annotations
 
 import json

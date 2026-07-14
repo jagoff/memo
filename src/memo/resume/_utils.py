@@ -71,6 +71,8 @@ def _mtime_capped(paths: Iterable[Path], cap: int | None = None) -> list[Path]:
             continue
     stated.sort(key=lambda item: item[0], reverse=True)
     return [path for _, path in stated[:limit]]
+
+
 _STATUS_RANK = {"active": 3, "stale": 2, "recent": 1}
 _STATUS_BADGES = {
     "active": ("● ", "\x1b[32m"),  # green
@@ -83,9 +85,7 @@ def _active_window_seconds() -> int:
     from memo.flags import flag_int
 
     flag_value = flag_int("MEMO_RESUME_ACTIVE_WINDOW_S")
-    return (
-        _DEFAULT_ACTIVE_WINDOW_SECONDS if flag_value is None else max(0, flag_value)
-    )
+    return _DEFAULT_ACTIVE_WINDOW_SECONDS if flag_value is None else max(0, flag_value)
 
 
 def _age_seconds(updated_at: str, now: datetime) -> float | None:
@@ -124,6 +124,7 @@ def _with_run_status(candidate: ResumeCandidate, now: datetime) -> ResumeCandida
     if not computed:
         return candidate
     from dataclasses import replace
+
     return replace(candidate, status=computed)
 
 
@@ -194,9 +195,13 @@ def _sort_key(value: str) -> tuple[int, float, str]:
 
 def _file_updated_at(path: Path) -> str:
     with contextlib.suppress(OSError):
-        return datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds").replace(
-            "+00:00",
-            "Z",
+        return (
+            datetime.fromtimestamp(path.stat().st_mtime, UTC)
+            .isoformat(timespec="seconds")
+            .replace(
+                "+00:00",
+                "Z",
+            )
         )
     return ""
 
@@ -235,7 +240,11 @@ def _format_relative_time(value: str, *, now: datetime | None = None) -> str:
     if not raw:
         return ""
     try:
-        parsed = datetime.fromisoformat(raw[:-1] + "+00:00") if raw.endswith("Z") else datetime.fromisoformat(raw)
+        parsed = (
+            datetime.fromisoformat(raw[:-1] + "+00:00")
+            if raw.endswith("Z")
+            else datetime.fromisoformat(raw)
+        )
     except ValueError:
         return ""
     if parsed.tzinfo is None:

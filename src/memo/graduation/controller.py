@@ -1,6 +1,7 @@
 """The graduation controller: for each candidate, shadow-eval → record → decide
 flip / revert / accumulate. Pure over its inputs except the ledger + overlay
 writes; the ``evaluator`` seam keeps it MLX-free under test."""
+
 from __future__ import annotations
 
 import os
@@ -52,11 +53,15 @@ def run_graduation_controller(
         win = bool(res.get("win"))
         delta_prec = float(res.get("delta_prec", 0.0))
         if not dry_run:
-            ledger.record(state_dir, cand.flag, {
-                "verdict": "confirmed" if win else "reverted",
-                "realized_delta": delta_prec,
-                "delta_noise": float(res.get("delta_noise", 0.0)),
-            })
+            ledger.record(
+                state_dir,
+                cand.flag,
+                {
+                    "verdict": "confirmed" if win else "reverted",
+                    "realized_delta": delta_prec,
+                    "delta_noise": float(res.get("delta_noise", 0.0)),
+                },
+            )
         s = ledger.streak(state_dir, cand.flag)
 
         live = (
@@ -75,8 +80,11 @@ def run_graduation_controller(
             if not dry_run:
                 if is_numeric:
                     overlay_ops.flip_numeric(
-                        state_dir, cand.flag, float(res["best_value"]),
-                        evidence={"streak": s, **res})
+                        state_dir,
+                        cand.flag,
+                        float(res["best_value"]),
+                        evidence={"streak": s, **res},
+                    )
                 else:
                     overlay_ops.flip_on(state_dir, cand.flag, evidence={"streak": s, **res})
             status = "graduated"

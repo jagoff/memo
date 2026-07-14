@@ -32,9 +32,7 @@ _log = logging.getLogger(__name__)
 # --- pure core (testable) ----------------------------------------------------
 
 
-def cross_project_counts(
-    rows: list[dict[str, Any]], *, threshold: float
-) -> dict[str, set[str]]:
+def cross_project_counts(rows: list[dict[str, Any]], *, threshold: float) -> dict[str, set[str]]:
     """Map ``recall_id`` prefix → distinct ``project:`` tags whose sessions
     grounded it (``used_score >= threshold``). Rows with no ``project`` field
     carry no cross-project evidence and are ignored."""
@@ -122,9 +120,7 @@ def run_retag_global(
             return None
         return {"id": rec.id, "tags": list(rec.tags), "type": rec.type}
 
-    decisions = retag_decisions(
-        counts, get_record=_get, min_other_projects=min_other_projects
-    )
+    decisions = retag_decisions(counts, get_record=_get, min_other_projects=min_other_projects)
     retagged: list[dict[str, Any]] = []
     for d in decisions:
         if not dry_run:

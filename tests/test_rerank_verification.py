@@ -80,12 +80,8 @@ def test_rerank_prioritizes_verified(tmp_cfg):
         )
 
     # Extract scores
-    verified_score = next(
-        (h["score"] for h in result if h["id"] == "verified1"), None
-    )
-    unverified_score = next(
-        (h["score"] for h in result if h["id"] == "unverified1"), None
-    )
+    verified_score = next((h["score"] for h in result if h["id"] == "verified1"), None)
+    unverified_score = next((h["score"] for h in result if h["id"] == "unverified1"), None)
 
     # VERIFIED (1.0 decay) should be higher than UNVERIFIED (0.8 decay)
     assert verified_score is not None, "verified1 should be in result"
@@ -148,9 +144,7 @@ def test_rerank_stale_decays(tmp_cfg):
             rerank_candidates=2,
         )
 
-    verified_score = next(
-        (h["score"] for h in result if h["id"] == "verified1"), None
-    )
+    verified_score = next((h["score"] for h in result if h["id"] == "verified1"), None)
     stale_score = next((h["score"] for h in result if h["id"] == "stale1"), None)
 
     # VERIFIED (1.0 decay) should be higher than STALE (0.7 decay)
@@ -217,7 +211,5 @@ def test_rerank_no_state_decay_when_disabled(tmp_cfg):
 
     # Without state decay, hits should be ordered by original score (0.9 > 0.8)
     # so unverified1 should be first
-    assert result[0]["id"] == "unverified1", (
-        "Without state decay, should sort by original score"
-    )
+    assert result[0]["id"] == "unverified1", "Without state decay, should sort by original score"
     assert result[1]["id"] == "verified1"

@@ -35,16 +35,11 @@ def status_cmd(as_json: bool) -> None:
         durable_total = sum(
             1
             for memory_id in mem.store.all_ids()
-            if (row := mem.store.get(memory_id))
-            and row.get("type") in DURABLE_TYPES
+            if (row := mem.store.get(memory_id)) and row.get("type") in DURABLE_TYPES
         )
 
         # Coverage percentage
-        coverage_pct = (
-            (stats["memories"] / durable_total * 100.0)
-            if durable_total > 0
-            else 0.0
-        )
+        coverage_pct = (stats["memories"] / durable_total * 100.0) if durable_total > 0 else 0.0
 
         # Backlog (read-only, respects cap)
         night_cap = flag_int("MEMO_HYPE_NIGHT_CAP") or 400
@@ -61,8 +56,9 @@ def status_cmd(as_json: bool) -> None:
         if as_json:
             click.echo(json.dumps(result, indent=2, ensure_ascii=False))
         else:
-            click.echo(f"Indexed:  {stats['memories']}/{durable_total} "
-                      f"memories ({coverage_pct:.1f}%)")
+            click.echo(
+                f"Indexed:  {stats['memories']}/{durable_total} memories ({coverage_pct:.1f}%)"
+            )
             click.echo(f"Questions: {stats['questions']}")
             click.echo(f"Backlog:  {len(backlog)} pending")
     finally:

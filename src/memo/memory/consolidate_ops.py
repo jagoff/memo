@@ -56,8 +56,7 @@ def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
         result = _re.sub(
             r"hace\s+(\d+)\s+d[ií]as?",
             lambda m: (
-                f"hace {m.group(1)} días"
-                f" ({_iso(ref_date - _dt.timedelta(days=int(m.group(1))))})"
+                f"hace {m.group(1)} días ({_iso(ref_date - _dt.timedelta(days=int(m.group(1))))})"
             ),
             result,
             flags=_re.IGNORECASE,
@@ -65,8 +64,7 @@ def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
         result = _re.sub(
             r"(\d+)\s+days?\s+ago",
             lambda m: (
-                f"{m.group(1)} days ago"
-                f" ({_iso(ref_date - _dt.timedelta(days=int(m.group(1))))})"
+                f"{m.group(1)} days ago ({_iso(ref_date - _dt.timedelta(days=int(m.group(1))))})"
             ),
             result,
             flags=_re.IGNORECASE,
@@ -278,7 +276,9 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 for cluster in clusters:
                     rep_item = items[cluster[0]]
                     norm_r = sum(x * x for x in rep_item["emb"]) ** 0.5 or 1.0
-                    cosine = sum(x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=False)) / (norm_i * norm_r)
+                    cosine = sum(
+                        x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=False)
+                    ) / (norm_i * norm_r)
                     if cosine >= threshold:
                         cluster.append(i)
                         joined = True
@@ -469,7 +469,9 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     messages=[
                         {
                             "role": "system",
-                            "content": resolve_prompt("consolidate", _CONSOLIDATE_SYSTEM_PROMPT, self.cfg.state_dir),
+                            "content": resolve_prompt(
+                                "consolidate", _CONSOLIDATE_SYSTEM_PROMPT, self.cfg.state_dir
+                            ),
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -534,7 +536,9 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
         threshold_flag = flag_float("MEMO_SYNTHESIS_THRESHOLD")
         threshold = (
-            threshold if threshold is not None else (0.78 if threshold_flag is None else threshold_flag)
+            threshold
+            if threshold is not None
+            else (0.78 if threshold_flag is None else threshold_flag)
         )
         min_cluster_flag = flag_int("MEMO_SYNTHESIS_MIN_CLUSTER")
         min_cluster_size = (
@@ -654,7 +658,9 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     messages=[
                         {
                             "role": "system",
-                            "content": resolve_prompt("synthesis", _SYNTHESIS_SYSTEM_PROMPT, self.cfg.state_dir),
+                            "content": resolve_prompt(
+                                "synthesis", _SYNTHESIS_SYSTEM_PROMPT, self.cfg.state_dir
+                            ),
                         },
                         {"role": "user", "content": prompt},
                     ],

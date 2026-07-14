@@ -26,7 +26,7 @@ def test_load_values_reads_fenced_toml_blocks(tmp_path: Path) -> None:
         "Human notes are ignored.\n\n"
         "```toml\n"
         "[recall]\n"
-        'top_k = 5\n'
+        "top_k = 5\n"
         'disable = "off"\n'
         "```\n",
         encoding="utf-8",
@@ -43,9 +43,7 @@ def test_load_values_reads_fenced_toml_blocks(tmp_path: Path) -> None:
 def test_index_toml_is_read_and_validated(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     home.mkdir()
-    (home / "memo-config.md").write_text(
-        "```toml\n[recall]\ntop_k = 7\n```\n", encoding="utf-8"
-    )
+    (home / "memo-config.md").write_text("```toml\n[recall]\ntop_k = 7\n```\n", encoding="utf-8")
     env = {"MEMO_CONFIG_DIR": str(home)}
 
     assert config_md.flag_values(env)["MEMO_RECALL_TOP_K"] == "7"
@@ -86,9 +84,7 @@ def test_invalid_index_value_is_validated_before_domain_override(tmp_path: Path)
     (home / "memo-config.md").write_text(
         '```toml\n[recall]\ntop_k = "bad"\n```\n', encoding="utf-8"
     )
-    (cfg / "recall-config.md").write_text(
-        "```toml\n[recall]\ntop_k = 5\n```\n", encoding="utf-8"
-    )
+    (cfg / "recall-config.md").write_text("```toml\n[recall]\ntop_k = 5\n```\n", encoding="utf-8")
     env = {"MEMO_CONFIG_DIR": str(home)}
 
     problems = config_md.validate_markdown_config(env)
@@ -157,18 +153,13 @@ def test_invalid_boolean_flag_reports_problem(tmp_path: Path) -> None:
     cfg = home / "config"
     cfg.mkdir(parents=True)
     (cfg / "recall-config.md").write_text(
-        "```toml\n"
-        "[recall]\n"
-        'debug = "perhaps"\n'
-        "```\n",
+        '```toml\n[recall]\ndebug = "perhaps"\n```\n',
         encoding="utf-8",
     )
 
     problems = config_md.validate_markdown_config({"MEMO_CONFIG_DIR": str(home)})
 
-    assert any(
-        p.key == "recall.debug" and "expected a boolean" in p.error for p in problems
-    )
+    assert any(p.key == "recall.debug" and "expected a boolean" in p.error for p in problems)
 
 
 def test_out_of_bounds_numeric_flag_reports_problem(tmp_path: Path) -> None:
@@ -176,10 +167,7 @@ def test_out_of_bounds_numeric_flag_reports_problem(tmp_path: Path) -> None:
     cfg = home / "config"
     cfg.mkdir(parents=True)
     (cfg / "recall-config.md").write_text(
-        "```toml\n"
-        "[recall]\n"
-        "min_sim = -1\n"
-        "```\n",
+        "```toml\n[recall]\nmin_sim = -1\n```\n",
         encoding="utf-8",
     )
 
@@ -196,10 +184,7 @@ def test_invalid_config_field_reports_problem(tmp_path: Path) -> None:
     cfg = home / "config"
     cfg.mkdir(parents=True)
     (cfg / "search-config.md").write_text(
-        "```toml\n"
-        "[search]\n"
-        "default_limit = 0\n"
-        "```\n",
+        "```toml\n[search]\ndefault_limit = 0\n```\n",
         encoding="utf-8",
     )
 
@@ -216,9 +201,7 @@ def test_load_values_accepts_fence_without_final_newline(tmp_path: Path) -> None
     cfg = home / "config"
     cfg.mkdir(parents=True)
     (cfg / "recall-config.md").write_text(
-        "```toml\n"
-        "[recall]\n"
-        "top_k = 5```",
+        "```toml\n[recall]\ntop_k = 5```",
         encoding="utf-8",
     )
 
@@ -232,10 +215,7 @@ def test_unknown_key_reports_problem(tmp_path: Path) -> None:
     cfg = home / "config"
     cfg.mkdir(parents=True)
     (cfg / "recall-config.md").write_text(
-        "```toml\n"
-        "[recall]\n"
-        'toppp_k = 5\n'
-        "```\n",
+        "```toml\n[recall]\ntoppp_k = 5\n```\n",
         encoding="utf-8",
     )
 
@@ -264,7 +244,9 @@ def test_unknown_config_file_warns(tmp_path: Path) -> None:
 
     problems = config_md.validate_markdown_config({"MEMO_CONFIG_DIR": str(home)})
 
-    assert any(p.file.endswith("custom-config.md") and "unknown config file" in p.error for p in problems)
+    assert any(
+        p.file.endswith("custom-config.md") and "unknown config file" in p.error for p in problems
+    )
     assert not any(p.file.endswith("notes.md") for p in problems)
 
 
@@ -281,8 +263,12 @@ def test_write_default_config_creates_index_and_domain_files(tmp_path: Path) -> 
     assert home.joinpath("config", "models-config.md").is_file()
     assert home.joinpath("config", "recall-config.md").is_file()
     assert any(path.name == "storage-config.md" for path in written)
-    assert 'data_dir = "' in home.joinpath("config", "storage-config.md").read_text(encoding="utf-8")
-    assert 'disable = "off"' in home.joinpath("config", "recall-config.md").read_text(encoding="utf-8")
+    assert 'data_dir = "' in home.joinpath("config", "storage-config.md").read_text(
+        encoding="utf-8"
+    )
+    assert 'disable = "off"' in home.joinpath("config", "recall-config.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_write_default_config_refuses_overwrite_without_force(tmp_path: Path) -> None:

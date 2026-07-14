@@ -45,7 +45,9 @@ def gaps(*, limit: int, min_count: int, top: int, as_json: bool) -> None:
 
 
 @click.command(name="outcome")
-@click.option("--apply", "do_apply", is_flag=True, help="Write the reconciled roi_score (default: dry-run).")
+@click.option(
+    "--apply", "do_apply", is_flag=True, help="Write the reconciled roi_score (default: dry-run)."
+)
 @click.option(
     "--archive-dead",
     is_flag=True,
@@ -73,7 +75,11 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
         finally:
             mem.close()
         if as_json:
-            click.echo(_json.dumps({"dry_run": True, "dead_weight": dead, **u}, ensure_ascii=False, indent=2))
+            click.echo(
+                _json.dumps(
+                    {"dry_run": True, "dead_weight": dead, **u}, ensure_ascii=False, indent=2
+                )
+            )
             return
         click.echo(
             f"outcome (dry-run) — {scored} memories with history; "
@@ -98,7 +104,12 @@ def outcome(*, do_apply: bool, archive_dead: bool, as_json: bool) -> None:
         archived: list[str] = []
         if archive_dead:
             for d in dead_weight(mem, min_surfaced=min_surfaced):
-                if mem.forget(d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding") is not None:
+                if (
+                    mem.forget(
+                        d["id"], reason=f"outcome: surfaced {d['surfaced']}x without grounding"
+                    )
+                    is not None
+                ):
                     archived.append(d["id"])
     finally:
         mem.close()

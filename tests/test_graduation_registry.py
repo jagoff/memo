@@ -17,6 +17,7 @@ def test_default_candidates_are_well_formed():
 def test_candidate_is_frozen():
     c = default_candidates()[0]
     import dataclasses
+
     assert dataclasses.is_dataclass(c)
     with __import__("pytest").raises(dataclasses.FrozenInstanceError):
         c.flag = "x"  # type: ignore[misc]

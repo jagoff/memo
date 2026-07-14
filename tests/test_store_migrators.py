@@ -31,8 +31,11 @@ def test_zep_mapper_skips_invalidated_facts():
     payload = {
         "facts": [
             {"fact": "usuario vive en Buenos Aires", "created_at": "2025-01-01T00:00:00Z"},
-            {"fact": "usuario vive en Madrid", "created_at": "2024-01-01T00:00:00Z",
-             "invalid_at": "2025-01-01T00:00:00Z"},
+            {
+                "fact": "usuario vive en Madrid",
+                "created_at": "2024-01-01T00:00:00Z",
+                "invalid_at": "2025-01-01T00:00:00Z",
+            },
         ]
     }
     recs = zep_to_import_records(payload)

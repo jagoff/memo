@@ -46,6 +46,7 @@ def _fmt_bytes(n: int | None) -> str:
 # Watch-mode signal helpers (no MLX, no heavy imports)
 # ---------------------------------------------------------------------------
 
+
 def _check_daemon(cfg: Config) -> str:
     """Return 'running' | 'stopped' | 'unknown'."""
     try:
@@ -136,7 +137,14 @@ def _collect_watch_signals(cfg: Config) -> dict[str, Any]:
     db = _check_db(cfg)
 
     # Derive overall status
-    if daemon == "stopped" or db in ("error", "missing") or sync == "stale" or daemon == "unknown" or fds < 0 or sync == "unknown":
+    if (
+        daemon == "stopped"
+        or db in ("error", "missing")
+        or sync == "stale"
+        or daemon == "unknown"
+        or fds < 0
+        or sync == "unknown"
+    ):
         status = "degraded"
     else:
         status = "healthy"

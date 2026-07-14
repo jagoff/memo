@@ -286,6 +286,7 @@ def ingest(
         # cryptic "dimension mismatch" error. Catching it here makes dry-run
         # actually useful for smoke-testing before a production ingest.
         from memo.config import _index_embedder_profile
+
         profile = _index_embedder_profile(cfg.db_path)
         if profile is not None:
             _, index_dims = profile
@@ -353,11 +354,10 @@ def ingest(
         # clean notes. Combined with any per-source signal already passed (e.g.
         # OCR mean-confidence for images): keep the LOWER confidence.
         from .text_quality import text_health_confidence as _text_conf
+
         _tq = _text_conf(body)
         if _tq is not None:
-            health_confidence = (
-                _tq if health_confidence is None else min(health_confidence, _tq)
-            )
+            health_confidence = _tq if health_confidence is None else min(health_confidence, _tq)
         composed_full = f"{title}\n\n{body}"
         if chunk and len(composed_full) > chunk_chars:
             pieces = chunk_markdown(
@@ -499,8 +499,7 @@ def ingest(
                     # file; skip it rather than indexing the raw `---` block as
                     # the document body (which pollutes recall with YAML syntax).
                     console.print(
-                        f"[yellow]skip (frontmatter parse error):[/yellow] "
-                        f"{path.name} — {_fm_exc}"
+                        f"[yellow]skip (frontmatter parse error):[/yellow] {path.name} — {_fm_exc}"
                     )
                     skipped_empty += 1
                     continue
@@ -640,9 +639,7 @@ def ingest(
                     progress.advance(audio_task)
 
         if include_orphan_images and ocr:
-            orphans = find_orphan_images(
-                vault, referenced_images, excluded_fn=_excluded
-            )
+            orphans = find_orphan_images(vault, referenced_images, excluded_fn=_excluded)
             # Filter image extensions we actually OCR (Apple Vision covers png/jpg/webp/heic).
             orphans = [o for o in orphans if o.suffix.lower() in IMAGE_EXTENSIONS]
             if orphans:

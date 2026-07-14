@@ -5,6 +5,7 @@ verifies that the lever is active when its flag is set and a no-op when unset.
 Helper unit tests already cover the helpers themselves (collapse_near_dups,
 suppress_score, session_budget_scale). These tests assert the wiring.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -66,7 +67,9 @@ def test_precision_gate_suppresses_when_flag_on(mem: Memory, monkeypatch):
     mem.save(content="fix del flock", title="Flock fix", type_="fact")
 
     # Monkeypatch the gate to always suppress (simulates a learned zero-grounding band).
-    monkeypatch.setattr("memo.token_meter.load_precision_bands", lambda _: {"0.00": {"suppress": True}})
+    monkeypatch.setattr(
+        "memo.token_meter.load_precision_bands", lambda _: {"0.00": {"suppress": True}}
+    )
     monkeypatch.setattr("memo.token_meter.suppress_score", lambda score, bands: True)
 
     out, _ = _recall_logic("fix del flock", None, mem, mem.cfg)
@@ -82,7 +85,9 @@ def test_precision_gate_passes_when_flag_off(mem: Memory, monkeypatch):
 
     # Gate would suppress, but flag is off → should still inject.
     monkeypatch.setattr("memo.token_meter.suppress_score", lambda score, bands: True)
-    monkeypatch.setattr("memo.token_meter.load_precision_bands", lambda _: {"0.00": {"suppress": True}})
+    monkeypatch.setattr(
+        "memo.token_meter.load_precision_bands", lambda _: {"0.00": {"suppress": True}}
+    )
 
     out, _ = _recall_logic("fix del flock", None, mem, mem.cfg)
     assert out != "{}", "precision-gate must be bypassed when flag is unset"
@@ -101,12 +106,22 @@ def test_intra_dedup_collapses_near_dups_when_flag_on(mem: Memory, monkeypatch):
     monkeypatch.setenv("MEMO_RECALL_TOP_K", "5")
 
     # Two near-identical memories — same body, same title.
-    mem.save(content="el cutover memflow a mac-work fue ok", title="Deploy cutover mac-work", type_="fact")
-    mem.save(content="el cutover memflow a mac work fue ok", title="Deploy cutover en mac-work", type_="fact")
+    mem.save(
+        content="el cutover memflow a mac-work fue ok",
+        title="Deploy cutover mac-work",
+        type_="fact",
+    )
+    mem.save(
+        content="el cutover memflow a mac work fue ok",
+        title="Deploy cutover en mac-work",
+        type_="fact",
+    )
 
     # Capture collapse_near_dups calls to verify it was invoked.
     calls: list[tuple] = []
-    original_collapse = __import__("memo.recall_logic", fromlist=["collapse_near_dups"]).collapse_near_dups
+    original_collapse = __import__(
+        "memo.recall_logic", fromlist=["collapse_near_dups"]
+    ).collapse_near_dups
 
     def _spy(relevant, *, threshold):
         result = original_collapse(relevant, threshold=threshold)
@@ -117,7 +132,9 @@ def test_intra_dedup_collapses_near_dups_when_flag_on(mem: Memory, monkeypatch):
 
     out, _ = _recall_logic("deploy cutover mac-work", None, mem, mem.cfg)
     assert out != "{}", "expected at least one recall hit — check stub embedder / saved memories"
-    assert calls, "collapse_near_dups must be called when MEMO_RECALL_INTRA_DEDUP=1 and len(relevant)>1"
+    assert calls, (
+        "collapse_near_dups must be called when MEMO_RECALL_INTRA_DEDUP=1 and len(relevant)>1"
+    )
 
 
 def test_intra_dedup_skipped_when_flag_off(mem: Memory, monkeypatch):
@@ -129,8 +146,16 @@ def test_intra_dedup_skipped_when_flag_off(mem: Memory, monkeypatch):
     monkeypatch.delenv("MEMO_RECALL_INTRA_DEDUP", raising=False)
     monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
 
-    mem.save(content="el cutover memflow a mac-work fue ok", title="Deploy cutover mac-work", type_="fact")
-    mem.save(content="el cutover memflow a mac work fue ok", title="Deploy cutover en mac-work", type_="fact")
+    mem.save(
+        content="el cutover memflow a mac-work fue ok",
+        title="Deploy cutover mac-work",
+        type_="fact",
+    )
+    mem.save(
+        content="el cutover memflow a mac work fue ok",
+        title="Deploy cutover en mac-work",
+        type_="fact",
+    )
 
     calls: list = []
 
@@ -157,25 +182,32 @@ def test_session_budget_decay_triggers_when_over_budget(mem: Memory, monkeypatch
     """
     _base_env(monkeypatch)
     monkeypatch.setenv("MEMO_RECALL_SESSION_TOKEN_BUDGET", "10")  # very low session budget
-    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "600")          # base budget
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "600")  # base budget
 
     mem.save(content="fix del flock fue ok", title="Flock fix", type_="fact")
 
     # Simulate cumulative > session budget (e.g. 5000 tokens already used).
     monkeypatch.setattr(
         "memo.dashboard.read_context_cost_log",
-        lambda state_dir, **kw: [{"kind": "recall", "session_id": "sess-budget-test", "chars": 20000}],
+        lambda state_dir, **kw: [
+            {"kind": "recall", "session_id": "sess-budget-test", "chars": 20000}
+        ],
     )
 
     captured: list[int] = []
     import memo.recall_logic as _rl
+
     original_render = _rl.render_recall_context
 
     def _spy(relevant, nudge, *, turn, body_chars, token_budget, **kwargs):
         captured.append(token_budget)
         return original_render(
-            relevant, nudge, turn=turn, body_chars=body_chars,
-            token_budget=token_budget, **kwargs,
+            relevant,
+            nudge,
+            turn=turn,
+            body_chars=body_chars,
+            token_budget=token_budget,
+            **kwargs,
         )
 
     monkeypatch.setattr("memo.recall_logic.render_recall_context", _spy)
@@ -206,18 +238,25 @@ def test_session_budget_no_decay_when_flag_off(mem: Memory, monkeypatch):
     # Even if cumulative is huge, without the flag it must be ignored.
     monkeypatch.setattr(
         "memo.dashboard.read_context_cost_log",
-        lambda state_dir, **kw: [{"kind": "recall", "session_id": "sess-budget-off", "chars": 20000}],
+        lambda state_dir, **kw: [
+            {"kind": "recall", "session_id": "sess-budget-off", "chars": 20000}
+        ],
     )
 
     captured: list[int] = []
     import memo.recall_logic as _rl
+
     original_render = _rl.render_recall_context
 
     def _spy(relevant, nudge, *, turn, body_chars, token_budget, **kwargs):
         captured.append(token_budget)
         return original_render(
-            relevant, nudge, turn=turn, body_chars=body_chars,
-            token_budget=token_budget, **kwargs,
+            relevant,
+            nudge,
+            turn=turn,
+            body_chars=body_chars,
+            token_budget=token_budget,
+            **kwargs,
         )
 
     monkeypatch.setattr("memo.recall_logic.render_recall_context", _spy)

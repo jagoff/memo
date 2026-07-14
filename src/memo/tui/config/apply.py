@@ -221,9 +221,7 @@ def _render_table(
         if header is None:
             continue
         next_header = re.search(r"(?m)^\s*\[", block[header.end() :])
-        section_end = (
-            header.end() + next_header.start() if next_header is not None else len(block)
-        )
+        section_end = header.end() + next_header.start() if next_header is not None else len(block)
         suffix = block[section_end:]
         rendered_table = tomli_w.dumps({table: values}).rstrip()
         separator = "\n\n" if suffix else ""
@@ -257,9 +255,7 @@ def _changed_externally(change: PlannedChange, view: _SourceView, snapshot: Sour
     return baseline_exists and view.key_files.get(change.key) != snapshot.key_files.get(change.key)
 
 
-def render_draft(
-    plan: ApplyPlan, env: Mapping[str, str] | None = None
-) -> dict[Path, str]:
+def render_draft(plan: ApplyPlan, env: Mapping[str, str] | None = None) -> dict[Path, str]:
     if plan.blocked:
         messages = "; ".join(issue.message for issue in plan.issues if issue.blocking)
         raise ConfigTransactionError(f"configuration review is blocked: {messages}")
@@ -489,7 +485,9 @@ def restore_transaction_backup(manifest_path: Path) -> TransactionReceipt:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ConfigTransactionError(f"failed to read backup manifest {manifest_path}: {exc}") from exc
+        raise ConfigTransactionError(
+            f"failed to read backup manifest {manifest_path}: {exc}"
+        ) from exc
 
     restored: list[Path] = []
     try:

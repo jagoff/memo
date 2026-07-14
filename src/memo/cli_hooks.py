@@ -77,9 +77,7 @@ def _memo_command(memo_bin: str | None = None) -> str:
 
 def _canonical_group(memo_bin: str | None = None) -> dict[str, object]:
     return {
-        "hooks": [
-            {"type": "command", "command": _memo_command(memo_bin), "timeout": _HOOK_TIMEOUT}
-        ]
+        "hooks": [{"type": "command", "command": _memo_command(memo_bin), "timeout": _HOOK_TIMEOUT}]
     }
 
 
@@ -91,11 +89,7 @@ def _precompact_command(memo_bin: str | None = None) -> str:
 
 
 def _precompact_group(memo_bin: str | None = None) -> dict[str, object]:
-    return {
-        "hooks": [
-            {"type": "command", "command": _precompact_command(memo_bin), "timeout": 60}
-        ]
-    }
+    return {"hooks": [{"type": "command", "command": _precompact_command(memo_bin), "timeout": 60}]}
 
 
 def wire_precompact_hook(
@@ -151,9 +145,7 @@ def _is_memo_group(group: object, verb: str = _RECALL_VERB) -> bool:
     if not isinstance(group, dict):
         return False
     return any(
-        isinstance(h, dict)
-        and isinstance(h.get("command"), str)
-        and verb in h["command"]
+        isinstance(h, dict) and isinstance(h.get("command"), str) and verb in h["command"]
         for h in group.get("hooks", [])
     )
 

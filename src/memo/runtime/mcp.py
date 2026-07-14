@@ -370,9 +370,7 @@ def _devin_desktop_mcp_config_path() -> Path:
     return Path.home() / ".devin" / "mcp.json"
 
 
-def _install_devin_desktop_mcp(
-    memo_mcp: Path, env: dict[str, str], *, dry_run: bool
-) -> None:
+def _install_devin_desktop_mcp(memo_mcp: Path, env: dict[str, str], *, dry_run: bool) -> None:
     path = _devin_desktop_mcp_config_path()
     server_config = _mcp_server_json(memo_mcp, env, include_type=True)
     if dry_run:
@@ -417,7 +415,12 @@ def _write_yaml_continue(path: Path, server: Any) -> str:
         "version": "0.0.1",
         "schema": "v1",
         "mcpServers": [
-            {"name": server.name, "command": str(server.command), "args": [], "env": dict(server.env)}
+            {
+                "name": server.name,
+                "command": str(server.command),
+                "args": [],
+                "env": dict(server.env),
+            }
         ],
     }
     action = "updated" if path.is_file() else "created"

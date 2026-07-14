@@ -38,24 +38,41 @@ def test_expand_labels_cmd_writes_output(tmp_cfg, tmp_path, monkeypatch) -> None
     from memo.cli import cli
 
     src = tmp_path / "labels.json"
-    src.write_text(json.dumps({
-        "schema": "memo.eval_recall.labels.v1",
-        "prompts": [{"text": "cómo configuro el sync remoto?",
-                     "relevant": True, "expect_ids": ["aaaabbbb"]}],
-    }), encoding="utf-8")
+    src.write_text(
+        json.dumps(
+            {
+                "schema": "memo.eval_recall.labels.v1",
+                "prompts": [
+                    {
+                        "text": "cómo configuro el sync remoto?",
+                        "relevant": True,
+                        "expect_ids": ["aaaabbbb"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     out = tmp_path / "expanded.json"
 
     class _StubChat:
         def chat(self, **kwargs):
-            return {"message": {"content": "1. cómo seteo el sync remoto?\n2. qué config lleva el sync remoto?"}}
+            return {
+                "message": {
+                    "content": "1. cómo seteo el sync remoto?\n2. qué config lleva el sync remoto?"
+                }
+            }
 
     monkeypatch.setattr("memo.llm.MLXChat", lambda: _StubChat())
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["eval", "expand-labels", "--labels", str(src), "--out", str(out)],
-        env={"MEMO_NONINTERACTIVE": "1",
-             "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
-             "MEMO_STATE_DIR": str(tmp_cfg.state_dir)},
+        cli,
+        ["eval", "expand-labels", "--labels", str(src), "--out", str(out)],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        },
         catch_exceptions=False,
     )
     assert result.exit_code == 0, result.output
@@ -73,17 +90,30 @@ def test_expand_labels_cmd_refuses_out_equals_labels(tmp_cfg, tmp_path) -> None:
     from memo.cli import cli
 
     src = tmp_path / "labels.json"
-    src.write_text(json.dumps({
-        "schema": "memo.eval_recall.labels.v1",
-        "prompts": [{"text": "cómo configuro el sync remoto?",
-                     "relevant": True, "expect_ids": ["aaaabbbb"]}],
-    }), encoding="utf-8")
+    src.write_text(
+        json.dumps(
+            {
+                "schema": "memo.eval_recall.labels.v1",
+                "prompts": [
+                    {
+                        "text": "cómo configuro el sync remoto?",
+                        "relevant": True,
+                        "expect_ids": ["aaaabbbb"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     runner = CliRunner()
     result = runner.invoke(
-        cli, ["eval", "expand-labels", "--labels", str(src), "--out", str(src)],
-        env={"MEMO_NONINTERACTIVE": "1",
-             "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
-             "MEMO_STATE_DIR": str(tmp_cfg.state_dir)},
+        cli,
+        ["eval", "expand-labels", "--labels", str(src), "--out", str(src)],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        },
     )
     assert result.exit_code != 0
     assert "must differ" in result.output

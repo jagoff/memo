@@ -38,8 +38,14 @@ def compress_token_stream(tokens: Iterator[str], config: Config) -> Iterator[str
     # Collect tokens into buffer and check for preamble patterns
     buffer: list[str] = []
     preamble_patterns = [
-        "I'll help", "Let me", "I can", "I'm", "Here's",
-        "Let me think", "I understand", "Sure",
+        "I'll help",
+        "Let me",
+        "I can",
+        "I'm",
+        "Here's",
+        "Let me think",
+        "I understand",
+        "Sure",
     ]
 
     for token in tokens:

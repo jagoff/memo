@@ -6,6 +6,7 @@ and persists a durable per-session ledger. Runs in the Stop hook only — never
 in the 5s recall hook. Pure stdlib + memo.dashboard_logs + memo.flags; no MLX,
 no memo.memory.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -201,7 +202,12 @@ def learn_precision_bands(state_dir: Path, *, min_samples: int = 20) -> dict:
         sid = r.get("session_id")
         turn = r.get("turn")
         raw = r.get("used_score")
-        if sid and turn is not None and isinstance(raw, (int, float)) and float(raw) >= GROUNDED_SCORE:
+        if (
+            sid
+            and turn is not None
+            and isinstance(raw, (int, float))
+            and float(raw) >= GROUNDED_SCORE
+        ):
             grounded_turns.add((sid, turn))
 
     # Bucket recall log entries by score band.

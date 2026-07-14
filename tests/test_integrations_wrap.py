@@ -94,9 +94,7 @@ def test_postcall_capture_spawns_detached_extract(tmp_cfg, monkeypatch):
     monkeypatch.setattr(wrap_mod.subprocess, "Popen", lambda *a, **k: spawned.append((a, k)))
     client, _calls = _fake_openai()
     wrap(client, cfg=tmp_cfg)
-    client.chat.completions.create(
-        model="m", messages=[{"role": "user", "content": "how do I X?"}]
-    )
+    client.chat.completions.create(model="m", messages=[{"role": "user", "content": "how do I X?"}])
     assert spawned, "post-call capture must spawn a memo save --extract subprocess"
     argv = spawned[0][0][0]
     assert argv[:3] == ["memo", "save", "--extract"]

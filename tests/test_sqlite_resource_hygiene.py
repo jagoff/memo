@@ -15,8 +15,7 @@ def _sqlite_resource_warnings(
     return [
         w
         for w in caught
-        if issubclass(w.category, ResourceWarning)
-        and "unclosed database" in str(w.message).lower()
+        if issubclass(w.category, ResourceWarning) and "unclosed database" in str(w.message).lower()
     ]
 
 

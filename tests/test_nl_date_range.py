@@ -1,4 +1,5 @@
 """parse_date_range: ES/EN relative expressions -> inclusive ISO [start, end]."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -48,6 +49,7 @@ def test_memo_search_when_param_fills_date_filters(tmp_cfg):
         def wrapper(fn):
             tools[fn.__name__] = fn
             return fn
+
         return wrapper
 
     server.tool = tool_decorator

@@ -185,7 +185,9 @@ def roi(*, limit: int = 500, window_turns: int = 4, as_json: bool = False) -> No
         click.echo("\n  ablation (MEMO_RECALL_DISABLE cohorts, live sessions)")
         click.echo(f"    turns           on {abl['turns_on']} · off {abl['turns_off']}")
         gpt = abl.get("grounded_per_turn_on")
-        click.echo(f"    grounded/turn   on {gpt if gpt is not None else '—'} · off 0.0 (by construction)")
+        click.echo(
+            f"    grounded/turn   on {gpt if gpt is not None else '—'} · off 0.0 (by construction)"
+        )
         r_on, r_off = abl.get("reask_rate_on"), abl.get("reask_rate_off")
         if r_on is not None and r_off is not None:
             delta_pp = round((r_off - r_on) * 100)

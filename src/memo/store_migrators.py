@@ -25,9 +25,7 @@ def mem0_to_import_records(data: Any) -> list[dict[str, Any]]:
     become tags; items are typed `fact` (Mem0 stores extracted facts) and
     tagged `imported:mem0`.
     """
-    items = (
-        (data.get("results") or data.get("memories")) if isinstance(data, dict) else data
-    )
+    items = (data.get("results") or data.get("memories")) if isinstance(data, dict) else data
     out: list[dict[str, Any]] = []
     for item in items or []:
         if not isinstance(item, dict):

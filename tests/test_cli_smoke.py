@@ -96,7 +96,9 @@ def test_record_history_help(tmp_path: Path) -> None:
     assert "ID_OR_PREFIX" in res.output
 
 
-def test_ask_human_output_handles_none_source_score(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ask_human_output_handles_none_source_score(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     class _FakeMemory:
         def ask(self, *_args, **_kwargs):
             return {

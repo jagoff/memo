@@ -12,24 +12,34 @@ from __future__ import annotations
 from typing import Any
 
 READ_ONLY: dict[str, Any] = {
-    "readOnlyHint": True, "destructiveHint": False,
-    "idempotentHint": True, "openWorldHint": False,
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
 }
 WRITE: dict[str, Any] = {
-    "readOnlyHint": False, "destructiveHint": False,
-    "idempotentHint": False, "openWorldHint": False,
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": False,
 }
 WRITE_IDEMPOTENT: dict[str, Any] = {
-    "readOnlyHint": False, "destructiveHint": False,
-    "idempotentHint": True, "openWorldHint": False,
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
 }
 DESTRUCTIVE: dict[str, Any] = {
-    "readOnlyHint": False, "destructiveHint": True,
-    "idempotentHint": False, "openWorldHint": False,
+    "readOnlyHint": False,
+    "destructiveHint": True,
+    "idempotentHint": False,
+    "openWorldHint": False,
 }
 NETWORK_WRITE: dict[str, Any] = {
-    "readOnlyHint": False, "destructiveHint": False,
-    "idempotentHint": False, "openWorldHint": True,
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": True,
 }
 
 

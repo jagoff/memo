@@ -161,6 +161,5 @@ def test_gating_checklist_exists() -> None:
     content = checklist_path.read_text()
     # Should mention key gate requirements
     assert any(
-        phrase in content.lower()
-        for phrase in ["20+", "tests", "0.90", "baseline", "wave 2"]
+        phrase in content.lower() for phrase in ["20+", "tests", "0.90", "baseline", "wave 2"]
     )

@@ -548,13 +548,13 @@ def _graph_reason_has_low_idf_edge(reason: Any) -> bool:
     return False
 
 
-def _search_for_eval(mem: Any, query: str, *, trace: list[dict[str, Any]], **kwargs: Any) -> list[Any]:
+def _search_for_eval(
+    mem: Any, query: str, *, trace: list[dict[str, Any]], **kwargs: Any
+) -> list[Any]:
     search = mem.search
     with contextlib.suppress(TypeError, ValueError):
         sig = inspect.signature(search)
-        has_var_kw = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        )
+        has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
         if "_trace" in sig.parameters or has_var_kw:
             kwargs["_trace"] = trace
         # Retrieval-only: skip the cross-encoder reranker so `hybrid` configs
@@ -951,7 +951,10 @@ def rows_to_table(rows: list[Row], k: int) -> str:
         "engine surfaces from the top-K seeds (the path vector search alone missed)."
     )
     if any(
-        r.graph_recall_gain or r.graph_noise_rate or r.graph_explanation_coverage or r.latency_ms_graph
+        r.graph_recall_gain
+        or r.graph_noise_rate
+        or r.graph_explanation_coverage
+        or r.latency_ms_graph
         for r in rows
     ):
         lines.append("")
@@ -1206,17 +1209,14 @@ def harvest_negative_labels(
         ids = [str(i) for i in (r.get("recall_ids") or []) if len(str(i)) >= 8]
         if len(text) < 8 or not ids:
             continue
-        entry = by_text.setdefault(
-            text, {"text": text, "avoid_ids": set(), "ts": ""}
-        )
+        entry = by_text.setdefault(text, {"text": text, "avoid_ids": set(), "ts": ""})
         entry["avoid_ids"].update(ids)
         ts = str(r.get("ts") or "")
         if ts > entry["ts"]:
             entry["ts"] = ts
     ordered = sorted(by_text.values(), key=lambda e: e["ts"], reverse=True)[:max_labels]
     return [
-        {"text": e["text"], "relevant": False, "avoid_ids": sorted(e["avoid_ids"])}
-        for e in ordered
+        {"text": e["text"], "relevant": False, "avoid_ids": sorted(e["avoid_ids"])} for e in ordered
     ]
 
 
@@ -1251,9 +1251,7 @@ def merge_label_prompts(
                         str(x) for x in h["avoid_ids"]
                     }
                     # Grounded positive evidence beats a heuristic verdict.
-                    p["avoid_ids"] = sorted(
-                        av - {str(x) for x in (p.get("expect_ids") or [])}
-                    )
+                    p["avoid_ids"] = sorted(av - {str(x) for x in (p.get("expect_ids") or [])})
                 break
         else:
             merged.append(h)

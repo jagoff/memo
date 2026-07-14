@@ -29,7 +29,9 @@ _META_SELECT_COLUMNS = (
 )
 
 
-def _env_float(name: str, default: float, min_val: float | None = None, max_val: float | None = None) -> float:
+def _env_float(
+    name: str, default: float, min_val: float | None = None, max_val: float | None = None
+) -> float:
     """Parse a float env var, falling back to `default` when unset/blank/bad.
 
     The store layer is a foundation module and cannot import memo.flags, so
@@ -78,9 +80,7 @@ class _BM25QueriesMixin(_StoreBase):
         if not query or not query.strip():
             return []
         if field_boost == "exact":
-            return self._search_bm25_fts5(
-                query, limit, type_, exclude_types, field_boost="exact"
-            )
+            return self._search_bm25_fts5(query, limit, type_, exclude_types, field_boost="exact")
         t = self._get_tantivy()
         if t is not None:
             return self._search_bm25_tantivy(query, limit, type_, exclude_types, t)
@@ -277,5 +277,7 @@ class _BM25QueriesMixin(_StoreBase):
     def count(self) -> int:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
         if "deleted_at" in cols:
-            return self._conn.execute("SELECT COUNT(*) FROM meta WHERE deleted_at IS NULL").fetchone()[0]
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM meta WHERE deleted_at IS NULL"
+            ).fetchone()[0]
         return self._conn.execute("SELECT COUNT(*) FROM meta").fetchone()[0]

@@ -174,8 +174,7 @@ def downgrade_volatile_contradiction(
     return replace(
         contr,
         relationship="evolution",
-        rationale=(contr.rationale or "")
-        + " [mutability: volatile-vs-volatile → evolution]",
+        rationale=(contr.rationale or "") + " [mutability: volatile-vs-volatile → evolution]",
     )
 
 
@@ -695,9 +694,7 @@ def emit_anomaly(
         anomaly_id=anomaly_id,
         kind="semantic_contradiction",
         state=state,
-        summary=(
-            f"memo {relationship} between memories {memory_id_a[:12]} and {memory_id_b[:12]}"
-        ),
+        summary=(f"memo {relationship} between memories {memory_id_a[:12]} and {memory_id_b[:12]}"),
         detected_at=ts,
         source_backend="memo",
         evidence_uris=(

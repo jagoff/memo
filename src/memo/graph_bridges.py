@@ -75,9 +75,7 @@ def _articulation_points(neighbors: dict[str, set[str]]) -> set[str]:
     return aps
 
 
-def _components_without(
-    neighbors: dict[str, set[str]], excluded: str
-) -> list[list[str]]:
+def _components_without(neighbors: dict[str, set[str]], excluded: str) -> list[list[str]]:
     """Connected components of the graph with ``excluded`` removed (sorted)."""
     seen: set[str] = {excluded}
     components: list[list[str]] = []
@@ -126,9 +124,7 @@ def find_bridges(
         # (>= min_side so it is meaningful, <= max_side so it is not the global
         # giant component masquerading as a "theme").
         qualifying = [
-            c
-            for c in components
-            if min_side <= len(c) <= max_side and any(x in nbr_set for x in c)
+            c for c in components if min_side <= len(c) <= max_side and any(x in nbr_set for x in c)
         ]
         if len(qualifying) < 2:
             continue

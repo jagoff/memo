@@ -47,9 +47,7 @@ def _vec_dims(memory: Memory) -> int | None:
 
 def _fts_ready(conn) -> bool:
     try:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE name = 'fts' LIMIT 1"
-        ).fetchone()
+        row = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'fts' LIMIT 1").fetchone()
         return row is not None
     except Exception:
         return False

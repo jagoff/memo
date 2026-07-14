@@ -67,7 +67,11 @@ class _SearchScoringMixin(_MemoryBase):
 
             memoria_scores: dict[str, float] = {}
             for ent_name in query_entities:
-                w = _idf(doc_freqs.get(ent_name.strip().lower(), 0.0), n_docs) if n_docs > 0 else 1.0
+                w = (
+                    _idf(doc_freqs.get(ent_name.strip().lower(), 0.0), n_docs)
+                    if n_docs > 0
+                    else 1.0
+                )
                 if w <= 0.0:  # ubiquitous / unknown entity carries no signal
                     continue
                 for mid in self.graph.entity_memories(ent_name):

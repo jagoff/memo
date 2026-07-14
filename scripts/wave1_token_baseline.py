@@ -32,10 +32,7 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -57,13 +54,16 @@ def measure_tokens(prompts: list[dict[str, Any]]) -> dict[str, int]:
     # Try to import memo's token meter; fallback to simple heuristic if not available
     try:
         from memo.token_meter import estimate_tokens
+
         logger.info("Using memo.token_meter for token estimation")
         token_fn = estimate_tokens
     except ImportError:
         logger.warning("memo.token_meter not available; using fallback heuristic")
+
         # Rough heuristic: 1 token ≈ 4 characters (GPT-3/4 approximation)
         def estimate_tokens(text: str) -> int:
             return len(text) // 4 + 1
+
         token_fn = estimate_tokens
 
     results: dict[str, int] = {}
@@ -120,13 +120,13 @@ def main() -> int:
         "--prompts",
         type=Path,
         required=True,
-        help="JSON file with list of prompt dicts (each with 'prompt' and optional 'context')"
+        help="JSON file with list of prompt dicts (each with 'prompt' and optional 'context')",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=Path("baseline_tokens.json"),
-        help="Output JSON file for baseline measurements (default: baseline_tokens.json)"
+        help="Output JSON file for baseline measurements (default: baseline_tokens.json)",
     )
     args = parser.parse_args()
 

@@ -77,7 +77,9 @@ class _SecretOpsMixin(_MemoryBase):
         doc = frontmatter.Post(markdown_content, handler=None, **frontmatter_data)
 
         # Write markdown
-        file_path = self.cfg.memory_dir / "secrets" / now_iso[:7].replace("-", "/") / f"{_slugify(name)}.md"
+        file_path = (
+            self.cfg.memory_dir / "secrets" / now_iso[:7].replace("-", "/") / f"{_slugify(name)}.md"
+        )
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(frontmatter.dumps(doc), encoding="utf-8")
         file_path.chmod(0o600)  # Restrict permissions

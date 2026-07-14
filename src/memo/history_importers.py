@@ -92,9 +92,7 @@ def iter_codex_exchanges(rollout_path: Path) -> Iterator[tuple[str, str]]:
                     continue
                 parts = item.get("content") or []
                 text = "\n".join(
-                    str(c.get("text", ""))
-                    for c in parts
-                    if isinstance(c, dict) and c.get("text")
+                    str(c.get("text", "")) for c in parts if isinstance(c, dict) and c.get("text")
                 ).strip()
                 if not text:
                     continue
@@ -321,8 +319,14 @@ def run_codex_import(
             files_skipped += 1
             continue
         result = mine_exchange_stream(
-            mem, chat, cfg, iter_codex_exchanges(f),
-            turn_hashes=turn_hashes, dry_run=dry_run, debug=debug, source_name=f.name,
+            mem,
+            chat,
+            cfg,
+            iter_codex_exchanges(f),
+            turn_hashes=turn_hashes,
+            dry_run=dry_run,
+            debug=debug,
+            source_name=f.name,
         )
         candidates += result["candidates"]
         saved.extend(result["saved"])
@@ -332,9 +336,14 @@ def run_codex_import(
             _save_state(cfg.state_dir, state, name=_IMPORT_STATE)
         files_processed += 1
     return {
-        "status": "ok", "root": str(root), "files_total": len(files),
-        "files_processed": files_processed, "files_skipped": files_skipped,
-        "candidates": candidates, "saved": saved, "skipped_dup": skipped_dup,
+        "status": "ok",
+        "root": str(root),
+        "files_total": len(files),
+        "files_processed": files_processed,
+        "files_skipped": files_skipped,
+        "candidates": candidates,
+        "saved": saved,
+        "skipped_dup": skipped_dup,
         "dry_run": dry_run,
     }
 
@@ -357,7 +366,13 @@ def run_file_import(
     mem = Memory(cfg)
     chat = mem._ensure_chat()
     result = mine_exchange_stream(
-        mem, chat, cfg, exchanges,
-        turn_hashes=set(), dry_run=dry_run, debug=debug, source_name=source_name,
+        mem,
+        chat,
+        cfg,
+        exchanges,
+        turn_hashes=set(),
+        dry_run=dry_run,
+        debug=debug,
+        source_name=source_name,
     )
     return {"status": "ok", "dry_run": dry_run, **result}

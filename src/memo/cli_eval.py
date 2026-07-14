@@ -169,9 +169,7 @@ def eval_recall_cmd(
         if config_names:
             selected_configs = eval_recall.select_configs(list(config_names), quick=quick)
         elif profile is not None:
-            selected_configs = eval_recall.profile_configs(
-                cast(eval_recall.EvalProfile, profile)
-            )
+            selected_configs = eval_recall.profile_configs(cast(eval_recall.EvalProfile, profile))
         else:
             selected_configs = eval_recall.select_configs(None, quick=quick)
     except ValueError as exc:
@@ -454,6 +452,7 @@ def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8")
     import os
+
     os.replace(tmp, path)
 
     if as_json:
@@ -576,24 +575,29 @@ def harvest_cmd(
 
 @eval_group.command(name="expand-labels")
 @click.option(
-    "--labels", "labels_path",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True,
+    "--labels",
+    "labels_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
     help="Source label set (schema memo.eval_recall.labels.v1).",
 )
 @click.option(
-    "--out", "out_path",
+    "--out",
+    "out_path",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=Path("eval/expanded_labels.json"), show_default=True,
+    default=Path("eval/expanded_labels.json"),
+    show_default=True,
     help="Where to write source prompts + paraphrases (never edits the source file).",
 )
 @click.option("--per-prompt", type=int, default=2, show_default=True)
 @click.option(
-    "--max-prompts", type=int, default=40, show_default=True,
+    "--max-prompts",
+    type=int,
+    default=40,
+    show_default=True,
     help="Cap on source prompts (each costs one MLX chat call).",
 )
-def expand_labels_cmd(
-    labels_path: Path, out_path: Path, per_prompt: int, max_prompts: int
-) -> None:
+def expand_labels_cmd(labels_path: Path, out_path: Path, per_prompt: int, max_prompts: int) -> None:
     """Grow the eval label set with MLX paraphrases of expect_ids prompts.
 
     Offline batch (one local MLX chat call per source prompt, capped by

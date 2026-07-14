@@ -57,8 +57,10 @@ def epistemic_label(hit: Any) -> str:
     if "_uncertain" in tags:
         return "?unverified"
     month = str(getattr(hit, "updated", "") or "")[:7]
-    kind = "~inferred" if getattr(hit, "type", "") == "synthesis" else (
-        getattr(hit, "type", "") or "note"
+    kind = (
+        "~inferred"
+        if getattr(hit, "type", "") == "synthesis"
+        else (getattr(hit, "type", "") or "note")
     )
     return f"{kind} · {month}" if month else kind
 
@@ -121,7 +123,7 @@ def collapse_near_dups(relevant: list[Any], *, threshold: float) -> list[Any]:
     exceeds ``threshold``. Lexical only — safe for the 5s recall hook (no MLX)."""
     kept: list[Any] = []
     kept_sets: list[set[str]] = []
-    for h in sorted(relevant, key=lambda x: (x.score or 0.0), reverse=True):
+    for h in sorted(relevant, key=lambda x: x.score or 0.0, reverse=True):
         toks = _dedup_tokens(f"{h.title} {h.body or ''}")
         dup = False
         for ks in kept_sets:
@@ -195,9 +197,7 @@ def render_recall_context(
         title_line = f"**[{hit.id[:8]}] {hit.title}**{label}{gate_tag}{score_tag}"
         tags_line = f"_tags_: {', '.join(hit.tags)}" if hit.tags else ""
         dossier_line = (
-            f"_trust_: {trust_dossier(hit, (disputed_by or {}).get(hit.id))}"
-            if use_dossier
-            else ""
+            f"_trust_: {trust_dossier(hit, (disputed_by or {}).get(hit.id))}" if use_dossier else ""
         )
         body = (hit.body or "").strip().replace("\n", " ")
         limit = _effective_body_chars(hit.score)
@@ -221,8 +221,18 @@ def render_recall_context(
         if _prefix_over and (tags_line or dossier_line):
             prefix = [title_line]
         empty_body_len = len(_render([*prefix, ""]))
-        _tail_reserve = 50 if (max_chars is not None and flag_bool("MEMO_RECALL_OMISSIONS_TAIL") and (len(relevant) > i + 1 or bool(omitted))) else 0
-        available = (max_chars - empty_body_len - 4 - _tail_reserve) if max_chars is not None else len(body)
+        _tail_reserve = (
+            50
+            if (
+                max_chars is not None
+                and flag_bool("MEMO_RECALL_OMISSIONS_TAIL")
+                and (len(relevant) > i + 1 or bool(omitted))
+            )
+            else 0
+        )
+        available = (
+            (max_chars - empty_body_len - 4 - _tail_reserve) if max_chars is not None else len(body)
+        )
         appended = False
         if body and available > 20:
             lines.extend([*prefix, f"> {body[:available].rstrip()}…", ""])
@@ -317,7 +327,9 @@ def render_recall_compact(
     return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
 
 
-def render_recall_balanced(relevant: list[Any], *, token_budget: int, turn: int | None = None) -> str:
+def render_recall_balanced(
+    relevant: list[Any], *, token_budget: int, turn: int | None = None
+) -> str:
     """Balanced recall format: title + short bullets, ~40% savings vs full.
 
     Format::
@@ -467,7 +479,9 @@ def _apply_synthesis_boost(hits: list[Any], boost: float) -> list[Any]:
 
 
 _BROAD_MAX_TOKENS = 4
-_ID_TOKEN_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*\.[A-Za-z0-9_]+|[A-Za-z_]+[0-9]+[A-Za-z0-9_]*|[0-9a-f]{8,})")
+_ID_TOKEN_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*\.[A-Za-z0-9_]+|[A-Za-z_]+[0-9]+[A-Za-z0-9_]*|[0-9a-f]{8,})"
+)
 
 
 def _is_broad_query(query: str | None) -> bool:
@@ -928,13 +942,50 @@ def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
     return qualifying
 
 
-_GATE_STOPWORDS = frozenset([
-    "para", "esta", "este", "esto", "estos", "estas", "that", "this", "with",
-    "what", "como", "cómo", "donde", "dónde", "cuando", "cuándo", "sobre",
-    "entre", "desde", "hasta", "the", "and", "una", "unos", "unas", "los",
-    "las", "del", "que", "qué", "cual", "cuál", "hacer", "haciendo", "have",
-    "does", "memo", "about", "tiene", "tienen",
-])
+_GATE_STOPWORDS = frozenset(
+    [
+        "para",
+        "esta",
+        "este",
+        "esto",
+        "estos",
+        "estas",
+        "that",
+        "this",
+        "with",
+        "what",
+        "como",
+        "cómo",
+        "donde",
+        "dónde",
+        "cuando",
+        "cuándo",
+        "sobre",
+        "entre",
+        "desde",
+        "hasta",
+        "the",
+        "and",
+        "una",
+        "unos",
+        "unas",
+        "los",
+        "las",
+        "del",
+        "que",
+        "qué",
+        "cual",
+        "cuál",
+        "hacer",
+        "haciendo",
+        "have",
+        "does",
+        "memo",
+        "about",
+        "tiene",
+        "tienen",
+    ]
+)
 
 
 def unmatched_term_gate(prompt: str, hits: list[Any]) -> bool:
@@ -1064,7 +1115,11 @@ def _recall_logic(
     try:
         if use_fallback and micro_embedder:
             candidates = mem.search(
-                prompt, limit=top_k * 5, mode="bm25", recency=True, exclude_types=exclude_types,
+                prompt,
+                limit=top_k * 5,
+                mode="bm25",
+                recency=True,
+                exclude_types=exclude_types,
                 exclude_tags=exclude_tags,
             )
             if not candidates:
@@ -1131,8 +1186,12 @@ def _recall_logic(
                     )
         else:
             hits = mem.search(
-                prompt, limit=search_k, mode=mode, recency=True,
-                exclude_types=exclude_types, exclude_tags=exclude_tags,
+                prompt,
+                limit=search_k,
+                mode=mode,
+                recency=True,
+                exclude_types=exclude_types,
+                exclude_tags=exclude_tags,
             )
             _band_days = _flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
             if _band_days > 0:
@@ -1209,7 +1268,11 @@ def _recall_logic(
         from memo import interject as _ij
 
         _interject_banner = _ij.evaluate_and_render(
-            cfg, mem, prompt=prompt, hits=qualifying, sim_threshold=_guard_sim_threshold,
+            cfg,
+            mem,
+            prompt=prompt,
+            hits=qualifying,
+            sim_threshold=_guard_sim_threshold,
         )
 
     # Pre-top-K paraphrase collapse: drop lexical near-dups from the over-fetched

@@ -65,9 +65,7 @@ def test_high_support_loser_flagged_not_archived(mock_memory, tmp_path):
     assert mock_memory.get(new.id) is not None
     # pair stays open for triage
     open_pairs = mock_memory.contradict_store.list_open(min_confidence=0.9)
-    assert any(
-        {p.memory_id_a, p.memory_id_b} == {old.id, new.id} for p in open_pairs
-    )
+    assert any({p.memory_id_a, p.memory_id_b} == {old.id, new.id} for p in open_pairs)
 
 
 def test_gate_off_archives_older_side(mock_memory, tmp_path):

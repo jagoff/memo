@@ -54,7 +54,9 @@ def _match(pattern: str, title: str, tags: list[str], body: str) -> bool:
 
 @click.command(name="invalidate")
 @click.argument("pattern", required=False)
-@click.option("--reason", default="", help="Why these memories are being weakened (stored in extra).")
+@click.option(
+    "--reason", default="", help="Why these memories are being weakened (stored in extra)."
+)
 @click.option("--yes", is_flag=True, help="Apply. Without it the command only previews matches.")
 @click.option("--limit", default=500, type=int, help="Max memories weakened per run (default 500).")
 @click.option(
@@ -90,15 +92,22 @@ def invalidate_cmd(
     ][:limit]
 
     if not matched:
-        console.print(json.dumps({"pattern": pattern, "matched": 0}) if as_json else "No memories match.", highlight=False)
+        console.print(
+            json.dumps({"pattern": pattern, "matched": 0}) if as_json else "No memories match.",
+            highlight=False,
+        )
         return
 
     if not yes:
         if as_json:
             console.print(
                 json.dumps(
-                    {"pattern": pattern, "matched": len(matched), "applied": False,
-                     "ids": [r.id for r in matched]}
+                    {
+                        "pattern": pattern,
+                        "matched": len(matched),
+                        "applied": False,
+                        "ids": [r.id for r in matched],
+                    }
                 ),
                 highlight=False,
             )
@@ -136,13 +145,25 @@ def invalidate_cmd(
     ts = now.replace("-", "").replace(":", "")[:15]  # filesystem-safe run id
     rd = _receipt_dir(cfg)
     rd.mkdir(parents=True, exist_ok=True)
-    receipt = {"ts": now, "pattern": pattern, "reason": reason, "penalty": penalty, "entries": entries}
+    receipt = {
+        "ts": now,
+        "pattern": pattern,
+        "reason": reason,
+        "penalty": penalty,
+        "entries": entries,
+    }
     (rd / f"{ts}.json").write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    payload = {"pattern": pattern, "matched": len(matched), "stamped": stamped,
-               "penalty": penalty, "receipt": ts, "applied": True}
+    payload = {
+        "pattern": pattern,
+        "matched": len(matched),
+        "stamped": stamped,
+        "penalty": penalty,
+        "receipt": ts,
+        "applied": True,
+    }
     console.print(
         json.dumps(payload)
         if as_json
@@ -162,9 +183,7 @@ def _do_undo(mem: Any, cfg: Config, undo_ts: str, as_json: bool) -> None:
     receipt = json.loads(path.read_text(encoding="utf-8"))
     entries = receipt.get("entries") or []
 
-    mem.store.set_confidence_batch(
-        [(e["id"], float(e["prev_confidence"])) for e in entries]
-    )
+    mem.store.set_confidence_batch([(e["id"], float(e["prev_confidence"])) for e in entries])
     restored = 0
     for e in entries:
         rec = mem.get(e["id"])
@@ -185,4 +204,7 @@ def _do_undo(mem: Any, cfg: Config, undo_ts: str, as_json: bool) -> None:
 
     path.rename(path.with_suffix(".json.undone"))
     payload = {"undone": path.stem, "restored": restored}
-    console.print(json.dumps(payload) if as_json else f"Restored {restored} memories from {path.stem}.", highlight=False)
+    console.print(
+        json.dumps(payload) if as_json else f"Restored {restored} memories from {path.stem}.",
+        highlight=False,
+    )

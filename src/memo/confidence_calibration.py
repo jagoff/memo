@@ -5,6 +5,7 @@ gate) looks the map up by a hit's SCORE-derived band — one file-cached read, n
 store read, no MLX on the 5s hot path. The offline join (this module's
 ``build_calibration``, run nightly in dream) is the only place the stored
 confidence is consulted."""
+
 from __future__ import annotations
 
 import json
@@ -149,9 +150,7 @@ def _monotonic_map(bins: dict[str, dict[str, Any]], *, min_bin: int) -> dict[str
         _, block_count, start_idx = block
         band_of_block_start.extend([_BAND_ORDER[int(start_idx)]] * int(block_count))
 
-    remap: dict[str, str] = {
-        band: band_of_block_start[idx] for idx, band in enumerate(_BAND_ORDER)
-    }
+    remap: dict[str, str] = {band: band_of_block_start[idx] for idx, band in enumerate(_BAND_ORDER)}
     return remap
 
 

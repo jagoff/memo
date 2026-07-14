@@ -68,9 +68,7 @@ def test_enrich_unchanged_when_flag_off_and_no_ocr(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("MEMO_VLM_CAPTION_ENABLED", raising=False)
     monkeypatch.setattr(ih, "extract_text_cached", lambda p, *, cache_dir: "")
 
-    enriched, resolved, _ = ih.enrich_with_ocr(
-        note.read_text(), note, vault, tmp_path / "state"
-    )
+    enriched, resolved, _ = ih.enrich_with_ocr(note.read_text(), note, vault, tmp_path / "state")
 
     assert "<!-- VLM:" not in enriched
     assert enriched == note.read_text()

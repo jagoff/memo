@@ -95,21 +95,19 @@ def test_distance_decay_e2e():
 
             # Verify memory IDs are in the results
             assert fact_id in order_off or fact_id in order_on, "Fact should be in results"
-            assert (
-                decision_id in order_off or decision_id in order_on
-            ), "Decision should be in results"
-            assert (
-                synthesis_id in order_off or synthesis_id in order_on
-            ), "Synthesis should be in results"
+            assert decision_id in order_off or decision_id in order_on, (
+                "Decision should be in results"
+            )
+            assert synthesis_id in order_off or synthesis_id in order_on, (
+                "Synthesis should be in results"
+            )
 
             # When distance decay is ON and decision is closer than synthesis,
             # decision should rank higher (lower index)
             if decision_id in order_on and synthesis_id in order_on:
                 idx_decision = order_on.index(decision_id)
                 idx_synthesis = order_on.index(synthesis_id)
-                assert (
-                    idx_decision < idx_synthesis
-                ), (
+                assert idx_decision < idx_synthesis, (
                     f"Distance decay should rank close memories higher. "
                     f"Decision index={idx_decision}, Synthesis index={idx_synthesis}, "
                     f"Order={order_on}"

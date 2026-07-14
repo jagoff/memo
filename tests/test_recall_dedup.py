@@ -18,7 +18,7 @@ def test_collapses_near_duplicate_keeps_higher_score():
     out = rl.collapse_near_dups([a, b, c], threshold=0.7)
     ids = [h.id for h in out]
     assert "aaaaaaaa" in ids and "cccccccc" in ids
-    assert "bbbbbbbb" not in ids           # near-dup of a, lower score → dropped
+    assert "bbbbbbbb" not in ids  # near-dup of a, lower score → dropped
     assert len(out) == 2
 
 

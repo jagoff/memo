@@ -18,7 +18,8 @@ def test_hyde_pass_applies_when_on_wins(tmp_cfg, monkeypatch) -> None:
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _labels())
     monkeypatch.setattr(dream_tune, "_curated_label_set", lambda sd: None)
     monkeypatch.setattr(
-        dream_tune, "measure_hyde",
+        dream_tune,
+        "measure_hyde",
         lambda mem, labels, *, k, enabled: _metrics(0.4 if enabled else 0.2, 0.0, 50.0),
     )
     res = dream_tune.run_hyde_pass(tmp_cfg, mem=object())
@@ -32,7 +33,8 @@ def test_hyde_pass_applies_when_on_wins(tmp_cfg, monkeypatch) -> None:
 def test_hyde_pass_noop_when_it_loses(tmp_cfg, monkeypatch) -> None:
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _labels())
     monkeypatch.setattr(
-        dream_tune, "measure_hyde",
+        dream_tune,
+        "measure_hyde",
         lambda mem, labels, *, k, enabled: _metrics(0.2 if enabled else 0.4, 0.0, 50.0),
     )
     res = dream_tune.run_hyde_pass(tmp_cfg, mem=object())
@@ -42,7 +44,8 @@ def test_hyde_pass_noop_when_it_loses(tmp_cfg, monkeypatch) -> None:
 def test_hyde_pass_rejects_latency_blowup(tmp_cfg, monkeypatch) -> None:
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _labels())
     monkeypatch.setattr(
-        dream_tune, "measure_hyde",
+        dream_tune,
+        "measure_hyde",
         lambda mem, labels, *, k, enabled: _metrics(
             0.4 if enabled else 0.2, 0.0, 10_000.0 if enabled else 100.0
         ),
@@ -63,7 +66,8 @@ def test_hyde_pass_dry_run_does_not_write_overlay(tmp_cfg, monkeypatch) -> None:
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _labels())
     monkeypatch.setattr(dream_tune, "_curated_label_set", lambda sd: None)
     monkeypatch.setattr(
-        dream_tune, "measure_hyde",
+        dream_tune,
+        "measure_hyde",
         lambda mem, labels, *, k, enabled: _metrics(0.4 if enabled else 0.2, 0.0, 50.0),
     )
     res = dream_tune.run_hyde_pass(tmp_cfg, mem=object(), dry_run=True)

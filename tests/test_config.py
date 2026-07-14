@@ -135,11 +135,7 @@ def test_markdown_config_file_loads_storage_and_models(monkeypatch, tmp_path: Pa
         encoding="utf-8",
     )
     (cfg_dir / "models-config.md").write_text(
-        "```toml\n"
-        "[models]\n"
-        'model_profile = "light"\n'
-        'embedder_dims = 1024\n'
-        "```\n",
+        '```toml\n[models]\nmodel_profile = "light"\nembedder_dims = 1024\n```\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
@@ -193,10 +189,7 @@ def test_env_overrides_markdown_config(monkeypatch, tmp_path: Path):
     cfg_dir = home / "config"
     cfg_dir.mkdir(parents=True)
     (cfg_dir / "storage-config.md").write_text(
-        "```toml\n"
-        "[storage]\n"
-        f'data_dir = "{tmp_path / "from-md"}"\n'
-        "```\n",
+        f'```toml\n[storage]\ndata_dir = "{tmp_path / "from-md"}"\n```\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
@@ -215,10 +208,7 @@ def test_markdown_overrides_legacy_toml(monkeypatch, tmp_path: Path):
     cfg_dir = home / "config"
     cfg_dir.mkdir(parents=True)
     (cfg_dir / "storage-config.md").write_text(
-        "```toml\n"
-        "[storage]\n"
-        f'data_dir = "{tmp_path / "from-md"}"\n'
-        "```\n",
+        f'```toml\n[storage]\ndata_dir = "{tmp_path / "from-md"}"\n```\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))

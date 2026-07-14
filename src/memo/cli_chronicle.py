@@ -1,4 +1,5 @@
 """`memo chronicle` — read the nightly engineering diary (see dream_chronicle)."""
+
 from __future__ import annotations
 
 from pathlib import Path

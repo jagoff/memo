@@ -143,7 +143,9 @@ def _fit_context_pack_prompt(
                 if expanded_sensitive_omitted == 1
                 else "expanded source memories"
             )
-            notes.append(f"{expanded_sensitive_omitted} sensitive {noun} omitted from compacted context")
+            notes.append(
+                f"{expanded_sensitive_omitted} sensitive {noun} omitted from compacted context"
+            )
         notes.extend(
             note
             for note in (
@@ -230,9 +232,7 @@ def _filter_verbatim_hits(
     if not use_context_pack:
         return hits
     allowed_ids = {
-        str(source.get("id") or "")
-        for source in sources
-        if source.get("source") == "memory"
+        str(source.get("id") or "") for source in sources if source.get("source") == "memory"
     }
     if not allowed_ids:
         return []
@@ -302,7 +302,9 @@ class _AskOpsMixin(_MemoryBase):
                     seen.add(h.id)
                     added.append(h if h.body else replace(h, body=self._read_body(h.path)))
             if added:
-                _log.info("ask multi-round: +%d hits via %d refined queries", len(added), len(queries))
+                _log.info(
+                    "ask multi-round: +%d hits via %d refined queries", len(added), len(queries)
+                )
             return [*hits, *added]
         except Exception as exc:
             _log.debug("ask multi-round skipped: %s", exc)
@@ -650,20 +652,21 @@ class _AskOpsMixin(_MemoryBase):
                 _context_budget_chars(snippet_chars=snippet_chars, k=k) - len(context_header),
                 0,
             )
-            context_prompt, current_rows, supporting_rows, stale_rows, kept_expanded_rows, kept_repo_rows = (
-                _fit_context_pack_prompt(
-                    pack,
-                    expanded_rows=expanded_memory_rows,
-                    repo_rows=repo_rows,
-                    budget_chars=budget_chars,
-                    expanded_sensitive_omitted=expanded_sensitive_omitted,
-                )
+            (
+                context_prompt,
+                current_rows,
+                supporting_rows,
+                stale_rows,
+                kept_expanded_rows,
+                kept_repo_rows,
+            ) = _fit_context_pack_prompt(
+                pack,
+                expanded_rows=expanded_memory_rows,
+                repo_rows=repo_rows,
+                budget_chars=budget_chars,
+                expanded_sensitive_omitted=expanded_sensitive_omitted,
             )
-            user_msg = (
-                f"User question:\n{question}\n\n"
-                f"{context_header}"
-                f"{context_prompt}"
-            )
+            user_msg = f"User question:\n{question}\n\n{context_header}{context_prompt}"
             sources = []
             for row in [*current_rows, *supporting_rows, *stale_rows]:
                 source_data = primary_memory_sources.get(str(row["id"]) or "")
@@ -682,7 +685,9 @@ class _AskOpsMixin(_MemoryBase):
                 source["snippet"] = row["snippet"]
                 sources.append(source)
             kept_repo_ids = {str(row["id"]) for row in kept_repo_rows}
-            sources.extend(dict(source) for source in repo_sources if str(source["id"]) in kept_repo_ids)
+            sources.extend(
+                dict(source) for source in repo_sources if str(source["id"]) in kept_repo_ids
+            )
         else:
             user_msg = (
                 f"User question:\n{question}\n\n"

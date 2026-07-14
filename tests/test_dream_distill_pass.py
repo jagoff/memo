@@ -6,9 +6,11 @@ from memo.cli import cli
 
 
 def _env(tmp_path):
-    return {"MEMO_NONINTERACTIVE": "1",
-            "MEMO_DATA_DIR": str(tmp_path / "data"),
-            "MEMO_STATE_DIR": str(tmp_path / "state")}
+    return {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
 
 
 def test_dream_run_calls_distill_when_enabled(monkeypatch, tmp_path):

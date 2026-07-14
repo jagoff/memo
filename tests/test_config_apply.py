@@ -28,9 +28,7 @@ def _env(tmp_path: Path) -> dict[str, str]:
     }
 
 
-def _write_config(
-    tmp_path: Path, table: str, key: str, value: object, *, intro: str = ""
-) -> Path:
+def _write_config(tmp_path: Path, table: str, key: str, value: object, *, intro: str = "") -> Path:
     path = tmp_path / "memo-home" / "config" / f"{table}-config.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     rendered = f'"{value}"' if isinstance(value, str) else str(value).lower()

@@ -33,14 +33,16 @@ class VerificationState(StrEnum):
 REFERENCE_TYPES: frozenset[str] = frozenset({"reference"})
 
 # Secret credential kinds
-SECRET_KINDS: frozenset[str] = frozenset({
-    "api_token",
-    "password",
-    "ssh_key",
-    "db_credential",
-    "certificate",
-    "generic",
-})
+SECRET_KINDS: frozenset[str] = frozenset(
+    {
+        "api_token",
+        "password",
+        "ssh_key",
+        "db_credential",
+        "certificate",
+        "generic",
+    }
+)
 
 # Durable tiers: the source-of-truth surfaced automatically. Mirrors
 # `memory._VALID_TYPES` minus the reference tier. `procedure` (how-to

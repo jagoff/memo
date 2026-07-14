@@ -92,6 +92,7 @@ def _instant_sort_key(value: str | None) -> tuple[int, float, str]:
         parsed = parsed.replace(tzinfo=UTC)
     return (1, parsed.astimezone(UTC).timestamp(), raw)
 
+
 _log = logging.getLogger(__name__)
 
 _LRU_CAP_DEFAULT = 250

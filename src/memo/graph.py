@@ -198,9 +198,7 @@ class GraphStore:
 
             tables = {
                 r[0]
-                for r in self._conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                )
+                for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
             if "entity_memoria" in tables and "entity_memory" in tables:
                 self._conn.execute(
@@ -429,8 +427,7 @@ class GraphStore:
         with self._tx() as cx:
             cx.execute("DELETE FROM entity_edges")
             last_seen = {
-                r["id"]: r["last_seen"]
-                for r in cx.execute("SELECT id, last_seen FROM entities")
+                r["id"]: r["last_seen"] for r in cx.execute("SELECT id, last_seen FROM entities")
             }
             mem_ents: dict[str, list[int]] = defaultdict(list)
             for r in cx.execute("SELECT memory_id, entity_id FROM entity_memory"):
@@ -582,7 +579,13 @@ class GraphStore:
             "SUM(CASE WHEN weight > 1 THEN 1 ELSE 0 END) FROM entity_edges"
         ).fetchone()
         if row is None or not row[0]:
-            return {"edges": 0, "weight_min": 0.0, "weight_max": 0.0, "weight_mean": 0.0, "edges_gt1": 0}
+            return {
+                "edges": 0,
+                "weight_min": 0.0,
+                "weight_max": 0.0,
+                "weight_mean": 0.0,
+                "edges_gt1": 0,
+            }
         return {
             "edges": int(row[0]),
             "weight_min": float(row[1] or 0),

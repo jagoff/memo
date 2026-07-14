@@ -62,9 +62,7 @@ def consolidated_reuse(memory: Memory, *, limit: int = 1000) -> dict[str, Any]:
     state_dir = memory.cfg.state_dir
     grounding_rows = read_grounding_log(state_dir)
     reused_prefixes: set[str] = {
-        row["recall_id"]
-        for row in grounding_rows
-        if grounding_used(row) and row.get("recall_id")
+        row["recall_id"] for row in grounding_rows if grounding_used(row) and row.get("recall_id")
     }
 
     n_reused = 0

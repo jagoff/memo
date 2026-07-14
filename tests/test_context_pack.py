@@ -102,7 +102,15 @@ def test_build_context_pack_handles_budget_smaller_than_row_overhead() -> None:
 def test_build_context_pack_ignores_malformed_optional_quality_metadata() -> None:
     pack = build_context_pack(
         "q",
-        [_Hit("current-id", 0.8, "Current", "Body", extra={"support_count": "many", "roi_score": "high"})],
+        [
+            _Hit(
+                "current-id",
+                0.8,
+                "Current",
+                "Body",
+                extra={"support_count": "many", "roi_score": "high"},
+            )
+        ],
         snippet_chars=100,
         budget_chars=4000,
     )
@@ -301,7 +309,9 @@ def test_context_pack_omits_sensitive_expanded_memory(mem_with_stub, monkeypatch
     )
 
     monkeypatch.setenv("MEMO_ASK_EXPAND_SYNTHESIS", "1")
-    monkeypatch.setattr(mem_with_stub, "search", lambda *args, **kwargs: [mem_with_stub.get(synth.id)])
+    monkeypatch.setattr(
+        mem_with_stub, "search", lambda *args, **kwargs: [mem_with_stub.get(synth.id)]
+    )
 
     _, sources, user_msg, _ = mem_with_stub._build_ask_context(
         "alpha?",
@@ -327,7 +337,9 @@ def test_context_pack_expanded_memory_gets_quality_metadata(mem_with_stub, monke
     )
 
     monkeypatch.setenv("MEMO_ASK_EXPAND_SYNTHESIS", "1")
-    monkeypatch.setattr(mem_with_stub, "search", lambda *args, **kwargs: [mem_with_stub.get(synth.id)])
+    monkeypatch.setattr(
+        mem_with_stub, "search", lambda *args, **kwargs: [mem_with_stub.get(synth.id)]
+    )
 
     _, sources, user_msg, _ = mem_with_stub._build_ask_context(
         "alpha?",

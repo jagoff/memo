@@ -202,9 +202,7 @@ def test_bump_existing_row_does_not_advance_updated_at(tmp_path: Path) -> None:
     store.penalize_confidence_batch(["m1"], delta=0.3)  # 1.0 -> 0.7
     # Backdate the row to a known old timestamp so we can detect any clock advance.
     OLD_TS = "2020-01-01T00:00:00"
-    store._conn.execute(
-        "UPDATE memory_health SET updated_at = ? WHERE id = 'm1'", (OLD_TS,)
-    )
+    store._conn.execute("UPDATE memory_health SET updated_at = ? WHERE id = 'm1'", (OLD_TS,))
     store._conn.commit()
 
     # Verify the row is seeded correctly.
@@ -264,12 +262,10 @@ def test_bump_does_not_clobber_fresher_peer_confidence_on_merge(tmp_path: Path) 
     a.bump_support_batch(["m1"])
 
     # After the fix, A's updated_at must remain OLD_TS (not advanced to now).
-    a_ts = a._conn.execute(
-        "SELECT updated_at FROM memory_health WHERE id = 'm1'"
-    ).fetchone()["updated_at"]
-    assert a_ts == OLD_TS, (
-        f"pre-condition: A's updated_at should be {OLD_TS!r}, got {a_ts!r}"
-    )
+    a_ts = a._conn.execute("SELECT updated_at FROM memory_health WHERE id = 'm1'").fetchone()[
+        "updated_at"
+    ]
+    assert a_ts == OLD_TS, f"pre-condition: A's updated_at should be {OLD_TS!r}, got {a_ts!r}"
 
     # Merge A into B.
     payload = a.dump_signal()

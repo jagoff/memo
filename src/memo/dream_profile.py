@@ -234,9 +234,7 @@ def _llm_distill(
 
     if not docs:
         return None
-    mem_lines = "\n".join(
-        f"- [{d['type']}] {d['title']}: {d['body'][:400]}" for d in docs[:40]
-    )
+    mem_lines = "\n".join(f"- [{d['type']}] {d['title']}: {d['body'][:400]}" for d in docs[:40])
     prompt = (
         f"Scope: {scope}\n\nPRIOR PROFILE (may be empty):\n{prior[:budget]}\n\n"
         f"MEMORIES:\n{mem_lines}\n\nRewrite the profile."
@@ -340,8 +338,7 @@ def run_profile_pass(
             path = profile_path(cfg, scope)
             prior = path.read_text(encoding="utf-8") if path.is_file() else ""
             docs = _docs_for(mem, sources)
-            narrative = _llm_distill(mem, docs, prior=prior, scope=scope_name,
-                                     budget=char_budget)
+            narrative = _llm_distill(mem, docs, prior=prior, scope=scope_name, budget=char_budget)
             if narrative is None and not scope_rules:
                 res["written"].append({"scope": scope_name, "status": "skipped"})
                 continue
@@ -360,8 +357,12 @@ def run_profile_pass(
             else:
                 _atomic_write(path, content)
                 res["written"].append(
-                    {"scope": scope_name, "status": "written",
-                     "chars": len(content), "path": str(path)}
+                    {
+                        "scope": scope_name,
+                        "status": "written",
+                        "chars": len(content),
+                        "path": str(path),
+                    }
                 )
         if any(w.get("status") in ("written", "would_write") for w in res["written"]):
             res["status"] = "done"

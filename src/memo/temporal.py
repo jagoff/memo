@@ -228,7 +228,9 @@ Body: {(r2.body or "")[:1000]}
                 messages=[
                     {
                         "role": "system",
-                        "content": resolve_prompt("contradiction", _CONTRADICTION_SYSTEM_PROMPT, self.memory.cfg.state_dir),
+                        "content": resolve_prompt(
+                            "contradiction", _CONTRADICTION_SYSTEM_PROMPT, self.memory.cfg.state_dir
+                        ),
                     },
                     {"role": "user", "content": prompt},
                 ],

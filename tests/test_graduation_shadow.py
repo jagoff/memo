@@ -39,8 +39,7 @@ def test_shadow_eval_runs_off_then_on(monkeypatch):
         return _Row(0.30 if on else 0.20, 0.0)
 
     monkeypatch.setattr(shadow, "run_config", fake_run_config)
-    cand = Candidate(flag="MEMO_GRAPH_SIGNAL_ENABLED",
-                     on_flags={"MEMO_GRAPH_SIGNAL_ENABLED": "1"})
+    cand = Candidate(flag="MEMO_GRAPH_SIGNAL_ENABLED", on_flags={"MEMO_GRAPH_SIGNAL_ENABLED": "1"})
     res = shadow.shadow_eval(object(), cand, k=5, labels=object())
     assert res["win"] is True
     assert res["delta_prec"] == pytest.approx(0.10)

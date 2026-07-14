@@ -114,12 +114,8 @@ def test_standing_rule_ids_ignores_low_used_score():
 
 def test_standing_rule_ids_orders_by_session_count_then_prefix():
     rows = [
-        {"recall_id": "cccccccc", "session_id": s, "used_score": 1.0}
-        for s in ("s1", "s2", "s3")
-    ] + [
-        {"recall_id": "aaaaaaaa", "session_id": s, "used_score": 1.0}
-        for s in ("s1", "s2")
-    ]
+        {"recall_id": "cccccccc", "session_id": s, "used_score": 1.0} for s in ("s1", "s2", "s3")
+    ] + [{"recall_id": "aaaaaaaa", "session_id": s, "used_score": 1.0} for s in ("s1", "s2")]
     assert dp.standing_rule_ids(rows, k=2) == ["cccccccc", "aaaaaaaa"]
 
 
@@ -167,10 +163,15 @@ def test_losing_ids_retires_missing_record_outright():
 
 
 class _Rec:
-    def __init__(self, id_, type_="preference", title="Prefers pytest", body="body",
-                 updated="2026-06-01"):
+    def __init__(
+        self, id_, type_="preference", title="Prefers pytest", body="body", updated="2026-06-01"
+    ):
         self.id, self.type, self.title, self.body, self.updated = (
-            id_, type_, title, body, updated,
+            id_,
+            type_,
+            title,
+            body,
+            updated,
         )
 
 
@@ -213,8 +214,9 @@ def _mk_cfg(tmp_path):
 
 def _write_grounding(state_dir, rid8, sessions, used=0.9):
     lines = [
-        _json.dumps({"session_id": s, "turn": 1, "recall_id": rid8,
-                     "used_score": used, "method": "cited"})
+        _json.dumps(
+            {"session_id": s, "turn": 1, "recall_id": rid8, "used_score": used, "method": "cited"}
+        )
         for s in sessions
     ]
     (state_dir / "grounding.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -280,8 +282,18 @@ def test_run_profile_pass_graduates_and_retires_standing_rules(tmp_path, monkeyp
     _write_grounding(cfg.state_dir, winner[:8], ["s1", "s2", "s3"])
     with (cfg.state_dir / "grounding.log").open("a", encoding="utf-8") as fh:
         for s in ("s1", "s2", "s3"):
-            fh.write(_json.dumps({"session_id": s, "turn": 2, "recall_id": loser[:8],
-                                  "used_score": 0.9, "method": "cited"}) + "\n")
+            fh.write(
+                _json.dumps(
+                    {
+                        "session_id": s,
+                        "turn": 2,
+                        "recall_id": loser[:8],
+                        "used_score": 0.9,
+                        "method": "cited",
+                    }
+                )
+                + "\n"
+            )
     monkeypatch.setattr(dp, "_llm_distill", lambda *a, **k: "- narrative")
     res = dp.run_profile_pass(cfg, mem, directive_k=3)
     doc = dp.profile_path(cfg).read_text(encoding="utf-8")

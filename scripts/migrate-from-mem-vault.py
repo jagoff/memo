@@ -142,8 +142,9 @@ def migrate_file(path: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true",
-                    help="Walk + report counts but don't write any files.")
+    ap.add_argument(
+        "--dry-run", action="store_true", help="Walk + report counts but don't write any files."
+    )
     args = ap.parse_args()
 
     cfg = Config.from_env()
@@ -165,7 +166,9 @@ def main() -> int:
             counts[migrate_file(md)] += 1
 
     verb = "would migrate" if args.dry_run else "migrated"
-    print(f"{verb}: {counts['migrated']}  skipped (already had id): {counts['skipped']}  errors: {counts['error']}")
+    print(
+        f"{verb}: {counts['migrated']}  skipped (already had id): {counts['skipped']}  errors: {counts['error']}"
+    )
     if not args.dry_run:
         print("\nRun `memo reindex` to absorb the migrated files into the index.")
     return 0

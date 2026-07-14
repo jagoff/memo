@@ -9,6 +9,7 @@ persistent text slot in its TUI (it has no native statusline/tagline for
 custom text; plugin status-bar widgets are an open feature request). That
 makes `[Memo <ver>]` show next to every user message.
 """
+
 from __future__ import annotations
 
 import re

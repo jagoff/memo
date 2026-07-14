@@ -52,6 +52,7 @@ class SettingSwitch(Switch):
     def _enable_events(self) -> None:
         self._events_enabled = True
 
+
 class SettingSelect(Select[str]):
     def __init__(self, state: SettingState, *, disabled: bool) -> None:
         self.setting_key = state.spec.key
@@ -75,6 +76,7 @@ class SettingSelect(Select[str]):
 
     def _enable_events(self) -> None:
         self._events_enabled = True
+
 
 class SettingInput(Input):
     def __init__(self, state: SettingState, *, disabled: bool) -> None:
@@ -108,10 +110,9 @@ class SettingInput(Input):
     def _enable_events(self) -> None:
         self._events_enabled = True
 
+
 def control_for(state: SettingState) -> Widget:
-    disabled = (
-        not state.available or state.spec.policy is not PersistencePolicy.PERSISTENT
-    )
+    disabled = not state.available or state.spec.policy is not PersistencePolicy.PERSISTENT
     if state.spec.kind is SettingKind.BOOL:
         return SettingSwitch(state, disabled=disabled)
     if state.spec.choices:

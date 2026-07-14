@@ -378,7 +378,9 @@ def register(server: Any, memory: Memory) -> None:
         out = res if isinstance(res, dict) else {"answer": str(res)}
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
-        log_consult(memory, tool="chat_ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
+        log_consult(
+            memory, tool="chat_ask", query=question, hits=hit_dicts, t0_ms=t0, source=source
+        )
 
         # Read pending idle notification (best-effort, races with writer)
         out["notification"] = _read_notification(memory)

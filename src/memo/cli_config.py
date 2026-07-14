@@ -124,9 +124,13 @@ def config_init(force: bool) -> None:
 
     cfg = Config.from_env()
     try:
-        written = write_default_config(data_dir=cfg.data_dir, vault_path=cfg.vault_path, force=force)
+        written = write_default_config(
+            data_dir=cfg.data_dir, vault_path=cfg.vault_path, force=force
+        )
     except FileExistsError as exc:
-        raise click.ClickException(f"config already exists: {exc}; use --force to overwrite") from exc
+        raise click.ClickException(
+            f"config already exists: {exc}; use --force to overwrite"
+        ) from exc
     console.print(f"[green]created[/green] {len(written)} Markdown config file(s)")
 
 

@@ -48,7 +48,13 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
 
     class StubMemory:
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
+            self,
+            query: str,
+            limit: int,
+            mode: str,
+            recency: bool = False,
+            exclude_types=None,
+            exclude_tags=None,
         ) -> list[MemoryRecord]:
             return [global_hit, project_hit]
 
@@ -89,7 +95,13 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
 
     class StubMemory:
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
+            self,
+            query: str,
+            limit: int,
+            mode: str,
+            recency: bool = False,
+            exclude_types=None,
+            exclude_tags=None,
         ) -> list[MemoryRecord]:
             return [hit]
 
@@ -186,7 +198,13 @@ def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:
 
     class StubMemory:
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
+            self,
+            query: str,
+            limit: int,
+            mode: str,
+            recency: bool = False,
+            exclude_types=None,
+            exclude_tags=None,
         ) -> list[MemoryRecord]:
             seen["recency"] = recency
             return [_rec("r0000001", "Fresh", 0.9)]
@@ -232,7 +250,13 @@ def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
         contextual = FakeContextual()
 
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
+            self,
+            query: str,
+            limit: int,
+            mode: str,
+            recency: bool = False,
+            exclude_types=None,
+            exclude_tags=None,
         ) -> list[MemoryRecord]:
             return [_rec("surf0001", "surfaced", 0.9)]
 
@@ -254,7 +278,13 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
 
     class StubMemory:
         def search(
-            self, query: str, limit: int, mode: str, recency: bool = False, exclude_types=None, exclude_tags=None
+            self,
+            query: str,
+            limit: int,
+            mode: str,
+            recency: bool = False,
+            exclude_types=None,
+            exclude_tags=None,
         ) -> list[MemoryRecord]:
             return hits
 

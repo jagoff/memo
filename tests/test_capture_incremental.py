@@ -391,9 +391,16 @@ def test_run_capture_incremental_stamps_provenance(tmp_path, monkeypatch):
     def _fake_eas(mem, cfg, u, a, *, debug=False, merge_tags=None, extra_base=None):
         seen["extra_base"] = extra_base
         return {
-            "candidates": 0, "saved": [], "saved_titles": [], "skipped_dup": 0,
-            "reconciled": 0, "skipped_quality": 0, "skipped_meta": 0,
-            "skipped_batch_dup": 0, "uncertain": 0, "retyped": 0,
+            "candidates": 0,
+            "saved": [],
+            "saved_titles": [],
+            "skipped_dup": 0,
+            "reconciled": 0,
+            "skipped_quality": 0,
+            "skipped_meta": 0,
+            "skipped_batch_dup": 0,
+            "uncertain": 0,
+            "retyped": 0,
         }
 
     monkeypatch.setattr(capture, "_extract_and_save", _fake_eas)
@@ -437,16 +444,27 @@ def test_run_capture_incremental_stamps_tool_files(tmp_path, monkeypatch):
     def _fake_eas(mem, cfg, u, a, *, debug=False, merge_tags=None, extra_base=None):
         seen["extra_base"] = extra_base
         return {
-            "candidates": 0, "saved": [], "saved_titles": [], "skipped_dup": 0,
-            "reconciled": 0, "skipped_quality": 0, "skipped_meta": 0,
-            "skipped_batch_dup": 0, "uncertain": 0, "retyped": 0,
+            "candidates": 0,
+            "saved": [],
+            "saved_titles": [],
+            "skipped_dup": 0,
+            "reconciled": 0,
+            "skipped_quality": 0,
+            "skipped_meta": 0,
+            "skipped_batch_dup": 0,
+            "uncertain": 0,
+            "retyped": 0,
         }
 
     monkeypatch.setattr(capture, "_extract_and_save", _fake_eas)
 
     assistant_blocks = [
         {"type": "text", "text": "We decided to fix the socket path handling. " + "detail " * 40},
-        {"type": "tool_use", "name": "Edit", "input": {"file_path": "/repo/src/memo/recall_socket.py"}},
+        {
+            "type": "tool_use",
+            "name": "Edit",
+            "input": {"file_path": "/repo/src/memo/recall_socket.py"},
+        },
     ]
     rows = [
         {"type": "user", "message": {"content": [{"type": "text", "text": "fix it"}]}},
@@ -477,9 +495,7 @@ def test_capture_tick_force_bypasses_throttle(tmp_path, monkeypatch):
     )
     from memo.cli_capture import capture_tick
 
-    payload = _json.dumps(
-        {"session_id": "sess-1", "transcript_path": str(tmp_path / "t.jsonl")}
-    )
+    payload = _json.dumps({"session_id": "sess-1", "transcript_path": str(tmp_path / "t.jsonl")})
     res = CliRunner().invoke(
         capture_tick,
         ["--force"],

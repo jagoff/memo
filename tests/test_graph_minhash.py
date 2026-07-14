@@ -37,12 +37,8 @@ def test_estimated_jaccard_orders_near_dupes_above_strangers():
 
 
 def test_candidate_pairs_blocks_near_dupes_only():
-    pairs = candidate_pairs(
-        ["memo recall daemon", "memo recall daemons", "kubernetes networking"]
-    )
-    assert [(a, b) for a, b, _ in pairs] == [
-        ("memo recall daemon", "memo recall daemons")
-    ]
+    pairs = candidate_pairs(["memo recall daemon", "memo recall daemons", "kubernetes networking"])
+    assert [(a, b) for a, b, _ in pairs] == [("memo recall daemon", "memo recall daemons")]
 
 
 def test_candidate_pairs_entropy_and_length_gate():

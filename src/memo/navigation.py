@@ -201,7 +201,9 @@ class GraphNavigator:
         # point lights up every navigator op — path, neighbors, communities,
         # centrality, export — so they leverage code structure, not just the
         # entity-memory graph. Degrades silently if the index is absent or off.
-        _merge_cg = flag_bool("MEMO_GRAPH_USE_CODEGRAPH") if use_codegraph is None else use_codegraph
+        _merge_cg = (
+            flag_bool("MEMO_GRAPH_USE_CODEGRAPH") if use_codegraph is None else use_codegraph
+        )
         if _merge_cg:
             try:
                 cg_adj, _ = codegraph_loader.load()
@@ -374,7 +376,11 @@ class GraphNavigator:
 
         edges = []
         for idx, edge in enumerate(weighted["edges"]):
-            memory_id = path.intermediate_memories[idx] if path and idx < len(path.intermediate_memories) else ""
+            memory_id = (
+                path.intermediate_memories[idx]
+                if path and idx < len(path.intermediate_memories)
+                else ""
+            )
             edges.append({**edge, "memory_id": memory_id})
 
         return {

@@ -61,7 +61,10 @@ def _leg(candidate: dict[str, Any], count_key: str, mode_match: bool) -> dict[st
     if count_key in candidate:
         count = int(candidate.get(count_key) or 0)
         return {"present": count > 0, "candidate_count": count, "detail_available": False}
-    return {"present": bool(mode_match and candidate.get("output_count")), "detail_available": False}
+    return {
+        "present": bool(mode_match and candidate.get("output_count")),
+        "detail_available": False,
+    }
 
 
 def _why(candidate: dict[str, Any], stages: list[str]) -> list[str]:

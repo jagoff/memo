@@ -29,9 +29,7 @@ from typing import Any
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prompts", type=int, default=50, help="Number of test prompts")
-    parser.add_argument(
-        "--output", type=str, default="wave2_baseline.csv", help="Output CSV file"
-    )
+    parser.add_argument("--output", type=str, default="wave2_baseline.csv", help="Output CSV file")
     args = parser.parse_args()
 
     print("Wave 2 Token Baseline Measurement")

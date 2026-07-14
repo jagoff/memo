@@ -50,8 +50,11 @@ class TestRunContradict:
         a = mock_memory.save(content="El dashboard corre en el puerto 8080", title="p-old")
         b = mock_memory.save(content="El dashboard corre en el puerto 8765", title="p-new")
         mock_memory.contradict_store.upsert_open(
-            memory_id_a=a.id, memory_id_b=b.id,
-            relationship="contradiction", confidence=0.95, rationale="ports differ",
+            memory_id_a=a.id,
+            memory_id_b=b.id,
+            relationship="contradiction",
+            confidence=0.95,
+            rationale="ports differ",
         )
 
         result = _run_contradict(mock_memory, dry_run=False)
@@ -71,8 +74,11 @@ class TestRunContradict:
         c = mock_memory.save(content="El release sale el miércoles", title="r3")
         for x, y in [(a, b), (b, c), (c, a)]:
             mock_memory.contradict_store.upsert_open(
-                memory_id_a=x.id, memory_id_b=y.id,
-                relationship="contradiction", confidence=0.95, rationale="dates differ",
+                memory_id_a=x.id,
+                memory_id_b=y.id,
+                relationship="contradiction",
+                confidence=0.95,
+                rationale="dates differ",
             )
 
         result = _run_contradict(mock_memory, dry_run=False)
@@ -97,8 +103,11 @@ class TestDreamRunReceiptCarriesCompeting:
         a = mock_memory.save(content="El dashboard corre en el puerto 8080", title="p-old")
         b = mock_memory.save(content="El dashboard corre en el puerto 8765", title="p-new")
         mock_memory.contradict_store.upsert_open(
-            memory_id_a=a.id, memory_id_b=b.id,
-            relationship="contradiction", confidence=0.95, rationale="ports differ",
+            memory_id_a=a.id,
+            memory_id_b=b.id,
+            relationship="contradiction",
+            confidence=0.95,
+            rationale="ports differ",
         )
 
         with patch("memo.cli_dream._get_memory", return_value=mock_memory):
@@ -121,7 +130,9 @@ class TestDreamRunReceiptCarriesCompeting:
         assert res.exit_code == 0, res.output
         out = res.output
         receipt = json.loads(out[out.index("{") :])
-        assert receipt.get("competing"), "expected the competing pair to surface in the dream receipt"
+        assert receipt.get("competing"), (
+            "expected the competing pair to surface in the dream receipt"
+        )
         assert "flagged_for_review" in receipt
         # neither side archived
         assert mock_memory.get(a.id) is not None
@@ -337,7 +348,9 @@ class TestRunRoiReconcile:
         monkeypatch.setenv("MEMO_OUTCOME_SOURCE_FEEDBACK", "0")
         monkeypatch.setenv("MEMO_OUTCOME_DEAD_MIN_SURFACED", "0")
 
-        with mock_patch("memo.cli_dream_passes.reconcile_roi", side_effect=RuntimeError("roi failed")):
+        with mock_patch(
+            "memo.cli_dream_passes.reconcile_roi", side_effect=RuntimeError("roi failed")
+        ):
             result = _run_roi_reconcile(mock_memory, dry_run=True)
             assert "error" in result
             assert "roi failed" in result["error"]
@@ -348,9 +361,7 @@ class TestRunRoiDecay:
 
     def test_roi_decay_returns_zero_on_dry_run(self, mock_memory: Memory) -> None:
         """Estimates count on dry-run but doesn't modify."""
-        with patch.object(
-            mock_memory.store, "_conn"
-        ) as mock_conn:
+        with patch.object(mock_memory.store, "_conn") as mock_conn:
             mock_cursor = MagicMock()
             mock_cursor.fetchone.return_value = (10,)
             mock_conn.execute.return_value = mock_cursor
@@ -368,9 +379,7 @@ class TestRunRoiDecay:
 
     def test_roi_decay_handles_error_gracefully(self, mock_memory: Memory) -> None:
         """Errors are captured in result dict, not raised."""
-        with patch.object(
-            mock_memory.store, "decay_roi", side_effect=RuntimeError("decay failed")
-        ):
+        with patch.object(mock_memory.store, "decay_roi", side_effect=RuntimeError("decay failed")):
             result = _run_roi_decay(mock_memory, dry_run=False)
             assert "error" in result
             assert "decay failed" in result["error"]
@@ -390,17 +399,19 @@ class TestPhaseIntegration:
                 with patch.object(
                     mock_memory.consolidator, "consolidate_all", return_value={"results": []}
                 ):
-                    with patch.object(mock_memory.temporal, "detect_stale_memories", return_value=[]):
+                    with patch.object(
+                        mock_memory.temporal, "detect_stale_memories", return_value=[]
+                    ):
                         with patch.object(mock_memory, "synthesize_cross_cluster", return_value=[]):
                             with patch.object(
-                                mock_memory, "extract_entities", return_value={"entities_extracted": 0}
+                                mock_memory,
+                                "extract_entities",
+                                return_value={"entities_extracted": 0},
                             ):
                                 from unittest.mock import patch as mock_patch
 
                                 with mock_patch("memo.cli_dream_passes.reconcile_roi") as mock_rec:
-                                    with mock_patch(
-                                        "memo.cli_dream_passes.dead_weight"
-                                    ) as mock_dw:
+                                    with mock_patch("memo.cli_dream_passes.dead_weight") as mock_dw:
                                         mock_rec.return_value = {"updated": 0}
                                         mock_dw.return_value = []
 
@@ -432,17 +443,19 @@ class TestPhaseIntegration:
                 with patch.object(
                     mock_memory.consolidator, "consolidate_all", return_value={"results": []}
                 ):
-                    with patch.object(mock_memory.temporal, "detect_stale_memories", return_value=[]):
+                    with patch.object(
+                        mock_memory.temporal, "detect_stale_memories", return_value=[]
+                    ):
                         with patch.object(mock_memory, "synthesize_cross_cluster", return_value=[]):
                             with patch.object(
-                                mock_memory, "extract_entities", return_value={"entities_extracted": 0}
+                                mock_memory,
+                                "extract_entities",
+                                return_value={"entities_extracted": 0},
                             ):
                                 from unittest.mock import patch as mock_patch
 
                                 with mock_patch("memo.cli_dream_passes.reconcile_roi") as mock_rec:
-                                    with mock_patch(
-                                        "memo.cli_dream_passes.dead_weight"
-                                    ) as mock_dw:
+                                    with mock_patch("memo.cli_dream_passes.dead_weight") as mock_dw:
                                         mock_rec.return_value = {"updated": 0}
                                         mock_dw.return_value = []
 

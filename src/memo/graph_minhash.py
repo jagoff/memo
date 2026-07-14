@@ -61,15 +61,11 @@ def _hash(shingle: str, salt: int) -> int:
     return int.from_bytes(h.digest(), "big")
 
 
-def minhash_signature(
-    shingle_set: set[str], num_hashes: int = _NUM_HASHES
-) -> tuple[int, ...]:
+def minhash_signature(shingle_set: set[str], num_hashes: int = _NUM_HASHES) -> tuple[int, ...]:
     """Per-salt minimum blake2b hash over the shingle set."""
     if not shingle_set:
         return tuple([0] * num_hashes)
-    return tuple(
-        min(_hash(sh, salt) for sh in shingle_set) for salt in range(num_hashes)
-    )
+    return tuple(min(_hash(sh, salt) for sh in shingle_set) for salt in range(num_hashes))
 
 
 def estimated_jaccard(sig_a: tuple[int, ...], sig_b: tuple[int, ...]) -> float:
@@ -93,9 +89,7 @@ def candidate_pairs(
     carries its estimated Jaccard.
     """
     gated = [
-        n
-        for n in dict.fromkeys(names)
-        if len(n) >= min_len and name_entropy(n) >= min_entropy_bits
+        n for n in dict.fromkeys(names) if len(n) >= min_len and name_entropy(n) >= min_entropy_bits
     ]
     sigs = {n: minhash_signature(shingles(n)) for n in gated}
     buckets: dict[tuple[int, tuple[int, ...]], list[str]] = defaultdict(list)

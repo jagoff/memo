@@ -34,9 +34,7 @@ def test_invalidate_preview_mutates_nothing(mock_memory, tmp_path):
 
 def test_invalidate_requires_reason_with_yes(mock_memory, tmp_path):
     with patch("memo.cli_invalidate._get_memory", return_value=mock_memory):
-        result = CliRunner().invoke(
-            cli, ["invalidate", "webpack", "--yes"], env=_env(tmp_path)
-        )
+        result = CliRunner().invoke(cli, ["invalidate", "webpack", "--yes"], env=_env(tmp_path))
     assert result.exit_code != 0
     assert "--reason" in result.output
 

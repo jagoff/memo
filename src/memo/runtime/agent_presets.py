@@ -55,28 +55,43 @@ def _code_child(rel: str) -> dict[str, str]:
 
 AGENT_PRESETS: dict[str, AgentPreset] = {
     "vscode": AgentPreset(
-        "vscode", Writer.JSON_MAP, _code_child("mcp.json"),
-        json_key="servers", include_type=True,
+        "vscode",
+        Writer.JSON_MAP,
+        _code_child("mcp.json"),
+        json_key="servers",
+        include_type=True,
     ),
     "zed": AgentPreset(
-        "zed", Writer.JSON_MAP,
-        {"darwin": "~/.config/zed/settings.json", "linux": "~/.config/zed/settings.json",
-         "win": "%APPDATA%/Zed/settings.json"},
+        "zed",
+        Writer.JSON_MAP,
+        {
+            "darwin": "~/.config/zed/settings.json",
+            "linux": "~/.config/zed/settings.json",
+            "win": "%APPDATA%/Zed/settings.json",
+        },
         json_key="context_servers",
     ),
-    "windsurf": AgentPreset("windsurf", Writer.JSON_MAP, _all("~/.codeium/windsurf/mcp_config.json")),
+    "windsurf": AgentPreset(
+        "windsurf", Writer.JSON_MAP, _all("~/.codeium/windsurf/mcp_config.json")
+    ),
     "cline": AgentPreset(
-        "cline", Writer.JSON_MAP,
+        "cline",
+        Writer.JSON_MAP,
         _code_child("globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"),
     ),
     "roo": AgentPreset(
-        "roo", Writer.JSON_MAP,
+        "roo",
+        Writer.JSON_MAP,
         _code_child("globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json"),
     ),
     "kiro": AgentPreset("kiro", Writer.JSON_MAP, _all("~/.kiro/settings/mcp.json")),
-    "antigravity": AgentPreset("antigravity", Writer.JSON_MAP, _all("~/.gemini/config/mcp_config.json")),
+    "antigravity": AgentPreset(
+        "antigravity", Writer.JSON_MAP, _all("~/.gemini/config/mcp_config.json")
+    ),
     "warp": AgentPreset("warp", Writer.JSON_MAP, _all("~/.warp/.mcp.json")),
-    "continue": AgentPreset("continue", Writer.YAML_CONTINUE, _all("~/.continue/mcpServers/memo.yaml")),
+    "continue": AgentPreset(
+        "continue", Writer.YAML_CONTINUE, _all("~/.continue/mcpServers/memo.yaml")
+    ),
     "goose": AgentPreset("goose", Writer.YAML_GOOSE, _all("~/.config/goose/config.yaml")),
     "jetbrains": AgentPreset("jetbrains", Writer.SNIPPET, {}),
 }
@@ -104,7 +119,9 @@ def resolve_preset_path(preset: AgentPreset) -> Path | None:
 
 def _snippet_result(preset: AgentPreset, server: Any) -> dict[str, Any]:
     env = {**server.env, "MEMO_SOURCE": preset.source or preset.agent}
-    body = {"mcpServers": {server.name: _mcp_server_json(Path(server.command), env, include_type=False)}}
+    body = {
+        "mcpServers": {server.name: _mcp_server_json(Path(server.command), env, include_type=False)}
+    }
     return {
         "ok": True,
         "agent": preset.agent,
@@ -124,21 +141,34 @@ def install_from_preset(preset: AgentPreset, server: Any, *, write: bool) -> dic
 
     path = resolve_preset_path(preset)
     if path is None:
-        return {"ok": False, "agent": preset.agent, "skipped": True,
-                "error": f"no config path for this OS ({sys.platform})"}
+        return {
+            "ok": False,
+            "agent": preset.agent,
+            "skipped": True,
+            "error": f"no config path for this OS ({sys.platform})",
+        }
 
     env = {**server.env, "MEMO_SOURCE": preset.source or preset.agent}
     target = dataclasses.replace(server, env=env)
 
     if not write:
-        return {"ok": True, "agent": preset.agent, "action": "dry-run",
-                "would": "write", "path": str(path)}
+        return {
+            "ok": True,
+            "agent": preset.agent,
+            "action": "dry-run",
+            "would": "write",
+            "path": str(path),
+        }
 
     if preset.writer is Writer.JSON_MAP:
-        action = _write_mcp_json(path, target, json_key=preset.json_key, include_type=preset.include_type)
+        action = _write_mcp_json(
+            path, target, json_key=preset.json_key, include_type=preset.include_type
+        )
     else:
         from memo.runtime.mcp import _write_yaml_continue, _write_yaml_goose
 
-        writer = _write_yaml_continue if preset.writer is Writer.YAML_CONTINUE else _write_yaml_goose
+        writer = (
+            _write_yaml_continue if preset.writer is Writer.YAML_CONTINUE else _write_yaml_goose
+        )
         action = writer(path, target)
     return {"ok": True, "agent": preset.agent, "action": action, "path": str(path)}

@@ -725,9 +725,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return inter / union if union else 0.0
 
 
-def ablation_stats(
-    state_dir, *, limit: int = 2000, window_turns: int = 4
-) -> dict[str, Any]:
+def ablation_stats(state_dir, *, limit: int = 2000, window_turns: int = 4) -> dict[str, Any]:
     """With-vs-without-recall cohort comparison over the live logs.
 
     Cohorts come from recall_hook.log ``via``: "disabled" (the instrumented

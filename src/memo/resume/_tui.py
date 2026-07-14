@@ -23,4 +23,3 @@ __all__ = [
     "_sort_resume_candidates",
     "pick_resume_candidate_interactive",
 ]
-

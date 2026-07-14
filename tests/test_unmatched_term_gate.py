@@ -1,10 +1,15 @@
 """Unmatched-term gate: weak + zero lexical overlap -> honest empty."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
 
 
-def _hit(score: float, title: str = "Nota del reranker", body: str = "detalles del reranker de producción"):
+def _hit(
+    score: float,
+    title: str = "Nota del reranker",
+    body: str = "detalles del reranker de producción",
+):
     return SimpleNamespace(id="a" * 32, title=title, tags=["memo"], body=body, score=score)
 
 

@@ -53,11 +53,13 @@ def _seed(mem: Memory) -> tuple[str, str, str]:
     distinct_id = mem.save(content=_DISTINCT, title="deploy cache warm", type_="fact").id
     older_id = mem.save(
         content="The production database engine is PostgreSQL 15 running on Amazon RDS.",
-        title="prod db pg", type_="fact",
+        title="prod db pg",
+        type_="fact",
     ).id
     newer_id = mem.save(
         content="The production database engine is MySQL 8 running on Amazon RDS.",
-        title="prod db mysql", type_="fact",
+        title="prod db mysql",
+        type_="fact",
     ).id
     for i, text in enumerate(_FILLERS):
         mem.save(content=text, title=f"prod db filler {i}", type_="fact")
@@ -65,7 +67,10 @@ def _seed(mem: Memory) -> tuple[str, str, str]:
     # status: the penalty demotes {open, evolved}; disputes protects {competing,
     # open}; a competing pair is never penalised (so disputes is a no-op there).
     pid = mem.contradict_store.upsert_open(
-        older_id, newer_id, relationship="contradicts", confidence=0.95,
+        older_id,
+        newer_id,
+        relationship="contradicts",
+        confidence=0.95,
         rationale="fixture: prod db engine PostgreSQL vs MySQL",
     )
     assert pid > 0
@@ -89,7 +94,8 @@ def test_dedup_collapse_rescues_distinct_fact_from_paraphrase_crowding(
     distinct_id, _older, _newer = _seed(mem)
     prompt = Prompt(
         "what does the nightly deploy pipeline do after the rollout finishes",
-        relevant=True, expect_ids=[distinct_id],
+        relevant=True,
+        expect_ids=[distinct_id],
     )
 
     monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
@@ -106,14 +112,13 @@ def test_dedup_collapse_rescues_distinct_fact_from_paraphrase_crowding(
 
 @pytest.mark.requires_mlx
 @pytest.mark.slow
-def test_declare_disputes_surfaces_both_sides_of_open_pair(
-    tmp_cfg: Config, monkeypatch
-) -> None:
+def test_declare_disputes_surfaces_both_sides_of_open_pair(tmp_cfg: Config, monkeypatch) -> None:
     mem = Memory(tmp_cfg)
     _distinct, older_id, newer_id = _seed(mem)
     prompt = Prompt(
         "what engine does the production database run",
-        relevant=True, expect_ids=[older_id, newer_id],
+        relevant=True,
+        expect_ids=[older_id, newer_id],
     )
     monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")  # isolate from collapse
 

@@ -26,9 +26,7 @@ def test_last_activity_treats_naive_store_timestamp_as_utc(tmp_path, monkeypatch
         )
         cfg = SimpleNamespace(state_dir=tmp_path)
 
-        assert _get_last_activity(mem, cfg) == datetime(
-            2026, 1, 1, tzinfo=UTC
-        ).timestamp()
+        assert _get_last_activity(mem, cfg) == datetime(2026, 1, 1, tzinfo=UTC).timestamp()
     finally:
         if old_tz is None:
             monkeypatch.delenv("TZ", raising=False)
@@ -76,10 +74,17 @@ def test_run_sleep_cycle_preserves_zero_interval_and_threshold(tmp_path, monkeyp
     monkeypatch.setattr(sleep_cycle.signal, "signal", lambda *a, **k: None)
     monkeypatch.setattr(sleep_cycle.threading, "Event", _FakeEvent)
     monkeypatch.setattr(
-        sleep_cycle, "flag_int", lambda name: 0 if name in {
-            "MEMO_MAINT_SLEEP_CYCLE_INTERVAL",
-            "MEMO_MAINT_IDLE_THRESHOLD_SECS",
-        } else None,
+        sleep_cycle,
+        "flag_int",
+        lambda name: (
+            0
+            if name
+            in {
+                "MEMO_MAINT_SLEEP_CYCLE_INTERVAL",
+                "MEMO_MAINT_IDLE_THRESHOLD_SECS",
+            }
+            else None
+        ),
     )
     monkeypatch.setattr(sleep_cycle, "flag_bool", lambda name: False)
 

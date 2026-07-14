@@ -381,7 +381,8 @@ def test_dream_hype_subcommand_json(tmp_path, monkeypatch):
     from memo.cli import cli
 
     monkeypatch.setattr(
-        dh_mod, "run_hype_pass",
+        dh_mod,
+        "run_hype_pass",
         lambda cfg, mem, **kw: {"status": "done", "generated": 5, "memories": 2},
     )
     env = {

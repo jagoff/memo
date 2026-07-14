@@ -44,9 +44,7 @@ def _resolve_safe_path(raw: str, purpose: str) -> Path:
     message when the path is unsafe."""
     p = Path(raw).expanduser().resolve(strict=False)
     allowed_dirs = _get_allowed_base_dirs()
-    allowed = any(
-        p == base or _is_subdir(p, base) for base in allowed_dirs
-    )
+    allowed = any(p == base or _is_subdir(p, base) for base in allowed_dirs)
     if not allowed:
         raise ValueError(
             f"Unsafe {purpose} path: {raw}. "

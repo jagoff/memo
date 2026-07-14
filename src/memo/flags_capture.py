@@ -95,7 +95,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "",
         "capture",
         "JSON map of memory type -> save-gate preset (strict/balanced/permissive), "
-        "e.g. '{\"decision\":\"strict\",\"bug\":\"strict\"}'. A 'strict' type REFUSES "
+        'e.g. \'{"decision":"strict","bug":"strict"}\'. A \'strict\' type REFUSES '
         "a near-duplicate save (ValueError with the colliding id) instead of warning. "
         "Unset/unlisted types = 'balanced' = today's behavior. Default off (empty).",
     ),
@@ -137,6 +137,7 @@ SPECS: tuple[FlagSpec, ...] = (
 def flag_crusher_enabled() -> bool:
     """Enable JSON array crushing on ingest (default: OFF until scorer real + gated)."""
     from memo.flags import flag_bool
+
     return flag_bool("MEMO_CRUSHER_ENABLED")
 
 
@@ -146,6 +147,7 @@ def flag_crusher_keep_ratio() -> float:
     Returns float, clamped to [0.05, 1.0].
     """
     from memo.flags import flag_float
+
     val = flag_float("MEMO_CRUSHER_ROWS_KEEP_RATIO")
     return 0.2 if val is None else max(0.05, min(1.0, val))  # Clamp [0.05, 1.0]
 
@@ -156,5 +158,6 @@ def flag_crusher_cache_ttl_days() -> int:
     Returns int >= 1.
     """
     from memo.flags import flag_int
+
     val = flag_int("MEMO_CRUSHER_CACHE_TTL_DAYS")
     return 30 if val is None else max(1, val)

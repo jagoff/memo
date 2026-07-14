@@ -1,4 +1,5 @@
 """Tests for the `memo onboard` Day-0 wizard."""
+
 from __future__ import annotations
 
 import os
@@ -79,11 +80,7 @@ def test_recent_memories_prefers_yaml_frontmatter_title(tmp_path):
     root.mkdir()
     p = root / "2026-07-13-kebab-stem.md"
     p.write_text(
-        "---\n"
-        f"id: {'a' * 32}\n"
-        "title: 'Titulo legible desde yaml'\n"
-        "---\n"
-        "cuerpo sin heading\n",
+        f"---\nid: {'a' * 32}\ntitle: 'Titulo legible desde yaml'\n---\ncuerpo sin heading\n",
         encoding="utf-8",
     )
     out = _recent_memories(root, n=1)
@@ -184,8 +181,14 @@ def test_onboard_days_override_and_dry_run(tmp_path, monkeypatch):
 
     def _fake_mine(root=None, **kw):
         mined.append(kw)
-        return {"status": "ok", "files_total": 2, "candidates": 3, "saved": 0,
-                "skipped_dup": 0, "dry_run": True}
+        return {
+            "status": "ok",
+            "files_total": 2,
+            "candidates": 3,
+            "saved": 0,
+            "skipped_dup": 0,
+            "dry_run": True,
+        }
 
     monkeypatch.setattr("memo.transcript_miner.mine_transcripts", _fake_mine)
 
@@ -207,12 +210,17 @@ def test_onboard_json_summary(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "memo.transcript_miner.mine_transcripts",
-        lambda root=None, **kw: {"status": "ok", "files_total": 0, "candidates": 0,
-                                 "saved": 0, "skipped_dup": 0},
+        lambda root=None, **kw: {
+            "status": "ok",
+            "files_total": 0,
+            "candidates": 0,
+            "saved": 0,
+            "skipped_dup": 0,
+        },
     )
     result = CliRunner().invoke(cli, ["onboard", "--yes", "--json"], env=_env(tmp_path))
     assert result.exit_code == 0, result.output
-    payload = _json.loads(result.output[result.output.index("{"):])
+    payload = _json.loads(result.output[result.output.index("{") :])
     assert payload["hook"]["action"] == "added"
     assert payload["backfill"]["status"] == "ok"
     assert isinstance(payload["memories"], list)

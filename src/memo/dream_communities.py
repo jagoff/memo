@@ -23,7 +23,7 @@ _HUB_TOP_N = 3
 
 _SYS = (
     "You abstract a cluster of a user's memories into one durable insight. "
-    "Reply ONLY with JSON {\"title\": str, \"insight\": str}. The insight names "
+    'Reply ONLY with JSON {"title": str, "insight": str}. The insight names '
     "the cross-cutting theme the cluster shares; no preamble, no markdown."
 )
 
@@ -71,9 +71,7 @@ def community_clusters(
     hubs = {n for n, _ in sorted(degree.items(), key=lambda kv: (-kv[1], kv[0]))[:_HUB_TOP_N]}
 
     out: list[dict[str, Any]] = []
-    eligible = [
-        c for c in comms if c.size <= max_size and c.representative_entity not in hubs
-    ]
+    eligible = [c for c in comms if c.size <= max_size and c.representative_entity not in hubs]
     for c in sorted(eligible, key=lambda c: -c.size)[:max_communities]:
         seen: set[str] = set()
         mem_ids: list[str] = []

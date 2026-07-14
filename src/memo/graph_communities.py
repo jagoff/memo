@@ -22,8 +22,7 @@ def degree_normalized(
     propagation. Tight, low-degree clusters dominate. Pure."""
     deg = {n: sum(nbrs.values()) for n, nbrs in adjacency.items()}
     return {
-        n: {nb: w / (deg.get(nb) or 1.0) for nb, w in nbrs.items()}
-        for n, nbrs in adjacency.items()
+        n: {nb: w / (deg.get(nb) or 1.0) for nb, w in nbrs.items()} for n, nbrs in adjacency.items()
     }
 
 

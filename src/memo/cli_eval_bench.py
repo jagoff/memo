@@ -103,9 +103,7 @@ def bench_run(
         os.environ["MEMO_CONTRADICT_PENALTY_ENABLED"] = "1"
     bench_root = workdir or (live.state_dir / "bench")
     try:
-        data_file = file_path or eval_bench.fetch_dataset(
-            dataset, bench_root / "datasets", url=url
-        )
+        data_file = file_path or eval_bench.fetch_dataset(dataset, bench_root / "datasets", url=url)
         raw = json.loads(Path(data_file).read_text(encoding="utf-8"))
         samples = eval_bench.parse_dataset(dataset, raw)
     except (MemoError, ValueError, OSError, json.JSONDecodeError) as exc:

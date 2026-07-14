@@ -270,12 +270,13 @@ def _echo_import_summary(summary: dict, as_json: bool) -> None:
 
 
 @import_group.command(name="codex")
-@click.option("--path", "root_path", default=None,
-              help="Rollouts root (default: ~/.codex/sessions).")
-@click.option("--since", "since_days", type=int, default=None,
-              help="Only files modified in the last N days.")
-@click.option("--limit", "file_limit", type=int, default=None,
-              help="Cap on files (newest first).")
+@click.option(
+    "--path", "root_path", default=None, help="Rollouts root (default: ~/.codex/sessions)."
+)
+@click.option(
+    "--since", "since_days", type=int, default=None, help="Only files modified in the last N days."
+)
+@click.option("--limit", "file_limit", type=int, default=None, help="Cap on files (newest first).")
 @click.option("--dry-run", is_flag=True, help="Extract, don't save.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON summary.")
 def import_codex(root_path, since_days, file_limit, dry_run, as_json) -> None:
@@ -298,8 +299,13 @@ def import_codex(root_path, since_days, file_limit, dry_run, as_json) -> None:
 
 
 @import_group.command(name="opencode")
-@click.option("--db", "db_path", type=click.Path(), default=None,
-              help="opencode.db path (default: ~/.local/share/opencode/opencode.db).")
+@click.option(
+    "--db",
+    "db_path",
+    type=click.Path(),
+    default=None,
+    help="opencode.db path (default: ~/.local/share/opencode/opencode.db).",
+)
 @click.option("--dry-run", is_flag=True, help="Extract, don't save.")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON summary.")
 def import_opencode(db_path, dry_run, as_json) -> None:
@@ -315,9 +321,7 @@ def import_opencode(db_path, dry_run, as_json) -> None:
     )
     if not db.is_file():
         raise click.ClickException(f"opencode db not found: {db}")
-    summary = run_file_import(
-        iter_opencode_exchanges(db), dry_run=dry_run, source_name=db.name
-    )
+    summary = run_file_import(iter_opencode_exchanges(db), dry_run=dry_run, source_name=db.name)
     _echo_import_summary(summary, as_json)
 
 
@@ -332,9 +336,7 @@ def import_chatgpt(export_path, dry_run, as_json) -> None:
     from memo.history_importers import iter_chatgpt_exchanges, run_file_import
 
     p = Path(export_path)
-    summary = run_file_import(
-        iter_chatgpt_exchanges(p), dry_run=dry_run, source_name=p.name
-    )
+    summary = run_file_import(iter_chatgpt_exchanges(p), dry_run=dry_run, source_name=p.name)
     _echo_import_summary(summary, as_json)
 
 
@@ -349,9 +351,7 @@ def import_claude_export(export_path, dry_run, as_json) -> None:
     from memo.history_importers import iter_claude_export_exchanges, run_file_import
 
     p = Path(export_path)
-    summary = run_file_import(
-        iter_claude_export_exchanges(p), dry_run=dry_run, source_name=p.name
-    )
+    summary = run_file_import(iter_claude_export_exchanges(p), dry_run=dry_run, source_name=p.name)
     _echo_import_summary(summary, as_json)
 
 

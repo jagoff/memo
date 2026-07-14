@@ -126,12 +126,21 @@ class FirstRunWizard(_ConfigModal):
         if self.step == 0:
             yield Label("Memory data directory")
             yield Input(
-                str(self.values.get("storage.data_dir", self.session.state("storage.data_dir").effective_value)),
+                str(
+                    self.values.get(
+                        "storage.data_dir", self.session.state("storage.data_dir").effective_value
+                    )
+                ),
                 id="wizard-data-dir",
             )
             yield Label("Obsidian vault (optional)")
             yield Input(
-                str(self.values.get("storage.vault_path", self.session.state("storage.vault_path").effective_value or "")),
+                str(
+                    self.values.get(
+                        "storage.vault_path",
+                        self.session.state("storage.vault_path").effective_value or "",
+                    )
+                ),
                 id="wizard-vault-path",
             )
         elif self.step == 1:
@@ -372,7 +381,9 @@ class RecoveryScreen(_ConfigModal):
                 yield Button("Exit", id="recovery-exit")
 
     def _source_path(self) -> Path:
-        existing = [path for path, fingerprint in self.session.snapshot.files.items() if fingerprint.exists]
+        existing = [
+            path for path, fingerprint in self.session.snapshot.files.items() if fingerprint.exists
+        ]
         return sorted(existing)[0] if existing else config_home(self.session.env) / "memo-config.md"
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:

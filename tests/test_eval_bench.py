@@ -91,6 +91,7 @@ def test_parse_bench_date_formats():
     assert eval_bench._parse_bench_date("total garbage") is None
     assert eval_bench._parse_bench_date(None) is None
 
+
 # --- parsers -------------------------------------------------------------------
 
 
@@ -161,10 +162,13 @@ def test_fetch_dataset_unknown_name_and_url_override(tmp_path):
         eval_bench.fetch_dataset("nope", tmp_path, fetcher=lambda url: b"{}")
     seen: list[str] = []
     eval_bench.fetch_dataset(
-        "custom", tmp_path, url="https://example.com/d.json",
+        "custom",
+        tmp_path,
+        url="https://example.com/d.json",
         fetcher=lambda url: (seen.append(url), b"[]")[1],
     )
     assert seen == ["https://example.com/d.json"]
+
 
 # --- isolated store config --------------------------------------------------------
 
@@ -208,9 +212,7 @@ def bench_mem(tmp_path, monkeypatch):
     live_state = tmp_path / "live-state"
     live_data.mkdir()
     live_state.mkdir()
-    live = Config(
-        data_dir=live_data, state_dir=live_state, embedder_dims=4, reranker_enabled=False
-    )
+    live = Config(data_dir=live_data, state_dir=live_state, embedder_dims=4, reranker_enabled=False)
     root = tmp_path / "bench" / "locomo" / "conv-1"
     bcfg = eval_bench.bench_store_config(root, live)
     from memo.memory import Memory
@@ -255,8 +257,13 @@ def test_load_manifest_missing_or_corrupt(tmp_path):
 
 def _qa(**kw):
     base = dict(
-        qa_id="q1", question="what dog?", answer="Rex", category="single_hop",
-        abstention=False, evidence_session_ids=(), evidence_turn_ids=(),
+        qa_id="q1",
+        question="what dog?",
+        answer="Rex",
+        category="single_hop",
+        abstention=False,
+        evidence_session_ids=(),
+        evidence_turn_ids=(),
     )
     base.update(kw)
     return eval_bench.BenchQA(**base)
@@ -442,8 +449,11 @@ def _receipt(dataset="locomo", **kw):
         "embedder_model": "e",
         "retrieval": {
             "single_hop": {
-                "recall_at_k": 0.8, "ndcg_at_k": 0.7, "mrr": 0.6,
-                "precision_at_k": 0.3, "n_questions": 10,
+                "recall_at_k": 0.8,
+                "ndcg_at_k": 0.7,
+                "mrr": 0.6,
+                "precision_at_k": 0.3,
+                "n_questions": 10,
             }
         },
         "qa": {"single_hop": {"accuracy": 0.5, "n_questions": 10}},
@@ -490,8 +500,10 @@ def test_grade_sample_qa_calls_judge_once_per_qa():
 
     class _CountingJudge:
         name = "counting"
+
         def __init__(self) -> None:
             self.calls = 0
+
         def grade(self, *, question, gold, answer, abstention):
             self.calls += 1
             return True
@@ -504,9 +516,33 @@ def test_grade_sample_qa_calls_judge_once_per_qa():
         sample_id="s1",
         turns=(),
         qa=(
-            eval_bench.BenchQA(qa_id="q1", category="single_hop", question="a?", answer="a", abstention=False, evidence_session_ids=(), evidence_turn_ids=()),
-            eval_bench.BenchQA(qa_id="q2", category="single_hop", question="b?", answer="b", abstention=False, evidence_session_ids=(), evidence_turn_ids=()),
-            eval_bench.BenchQA(qa_id="q3", category="single_hop", question="c?", answer="c", abstention=False, evidence_session_ids=(), evidence_turn_ids=()),
+            eval_bench.BenchQA(
+                qa_id="q1",
+                category="single_hop",
+                question="a?",
+                answer="a",
+                abstention=False,
+                evidence_session_ids=(),
+                evidence_turn_ids=(),
+            ),
+            eval_bench.BenchQA(
+                qa_id="q2",
+                category="single_hop",
+                question="b?",
+                answer="b",
+                abstention=False,
+                evidence_session_ids=(),
+                evidence_turn_ids=(),
+            ),
+            eval_bench.BenchQA(
+                qa_id="q3",
+                category="single_hop",
+                question="c?",
+                answer="c",
+                abstention=False,
+                evidence_session_ids=(),
+                evidence_turn_ids=(),
+            ),
         ),
     )
     judge = _CountingJudge()

@@ -227,8 +227,12 @@ def test_mine_exchange_stream_dry_run_saves_nothing(mock_memory, monkeypatch):
     monkeypatch.setattr(tm, "is_near_duplicate", lambda mem, cand: False)
 
     result = tm.mine_exchange_stream(
-        mock_memory, object(), mock_memory.cfg,
-        iter([("u", "a")]), turn_hashes=set(), dry_run=True,
+        mock_memory,
+        object(),
+        mock_memory.cfg,
+        iter([("u", "a")]),
+        turn_hashes=set(),
+        dry_run=True,
     )
 
     assert result["saved"] == ["<dry-run>"]

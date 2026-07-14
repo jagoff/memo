@@ -46,7 +46,9 @@ def open_store(cfg: Config) -> EpisodeStore | None:
     return EpisodeStore(cfg.episode_db, cfg.embedder_dims)
 
 
-def _gather_user_prompts(path: Path, *, max_prompts: int = _MAX_PROMPTS, max_lines: int = 6000) -> list[str]:
+def _gather_user_prompts(
+    path: Path, *, max_prompts: int = _MAX_PROMPTS, max_lines: int = 6000
+) -> list[str]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:

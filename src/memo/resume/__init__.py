@@ -8,6 +8,7 @@ individuality — memo's own recall-grounded session snapshots
 **zero** memflow/synapse coupling (the cross-machine/checkpoint federation
 stays in synapse).
 """
+
 from __future__ import annotations
 
 # Re-exported at package level so monkeypatching ``memo.resume.os.execvp`` /

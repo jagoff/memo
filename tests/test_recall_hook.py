@@ -18,9 +18,40 @@ import pytest
 from click.testing import CliRunner
 
 from memo.cli import cli
+from memo.recall_logic import RankKnobs
 
 if TYPE_CHECKING:
     from memo.config import Config
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_top_k", "expected_min_sim"),
+    [
+        ("focus", 2, 0.65),
+        ("explore", 5, 0.4),
+        ("maintenance", 1, 0.7),
+        ("unknown", 3, 0.5),
+    ],
+)
+def test_apply_session_mode_is_bounded(mode: str, expected_top_k: int, expected_min_sim: float):
+    from memo.cli_recall_hook import apply_session_mode
+
+    knobs = RankKnobs(top_k=3, min_sim=0.5)
+
+    adjusted = apply_session_mode(knobs, mode)
+
+    assert adjusted.top_k == expected_top_k
+    assert adjusted.min_sim == expected_min_sim
+
+
+@pytest.mark.parametrize(
+    ("budget", "prompt_length", "expected"),
+    [(0, 20, 0), (500, 20, 750), (700, 20, 800), (500, 100, 500), (500, 301, 300)],
+)
+def test_adaptive_token_budget(budget: int, prompt_length: int, expected: int):
+    from memo.cli_recall_hook import adaptive_token_budget
+
+    assert adaptive_token_budget(budget, prompt_length) == expected
 
 
 @pytest.fixture

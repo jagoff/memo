@@ -107,12 +107,7 @@ def get_memory(id_: str) -> dict[str, Any]:
 def list_memory(limit: int = 20, type_: str | None = None) -> dict[str, Any]:
     mem = _get_memory()
     recs = mem.list(limit=limit, type_=type_)
-    return {
-        "memories": [
-            {"id": r.id, "title": r.title, "type": r.type}
-            for r in recs
-        ]
-    }
+    return {"memories": [{"id": r.id, "title": r.title, "type": r.type} for r in recs]}
 
 
 @app.delete("/api/memory/{id_}")

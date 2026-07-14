@@ -70,7 +70,9 @@ def test_rollup_skips_zero_weight_categories():
 
 
 def _qa(cat: str, *, abstention: bool, correct: bool) -> QAResult:
-    return QAResult(qa_id=f"{cat}-x", category=cat, abstention=abstention, correct=correct, answer_head="")
+    return QAResult(
+        qa_id=f"{cat}-x", category=cat, abstention=abstention, correct=correct, answer_head=""
+    )
 
 
 def test_capability_qa_routes_abstention_to_its_bucket():
@@ -113,7 +115,9 @@ def test_capability_rows_render_in_report():
         "schema": eval_bench.RECEIPT_SCHEMA,
         "dataset": "locomo",
         "k": 5,
-        "capability_retrieval": {"single_session_grounding": {"recall_at_k": 0.82, "n_questions": 10}},
+        "capability_retrieval": {
+            "single_session_grounding": {"recall_at_k": 0.82, "n_questions": 10}
+        },
         "capability_qa": {"abstention_constraint": {"accuracy": 0.5, "n_questions": 4}},
         "abstention": {"abstention_accuracy": 0.5, "hallucination_rate": 0.5, "n_questions": 4},
     }

@@ -60,7 +60,9 @@ def garbage_ratio(text: str) -> float:
         return 0.0
     bad = 0
     for ch in text:
-        if ch in _REPLACEMENT_CHARS or (ch not in "\n\r\t" and unicodedata.category(ch) in {"Cc", "Co", "Cn"}):
+        if ch in _REPLACEMENT_CHARS or (
+            ch not in "\n\r\t" and unicodedata.category(ch) in {"Cc", "Co", "Cn"}
+        ):
             bad += 1
     return bad / len(text)
 
