@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import math
+import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -77,6 +78,10 @@ class _SearchOpsMixin(_MemoryBase):
     # Lazily-built HyPE question index (MEMO_HYPE_ENABLED read path). Created
     # on first folded search, reused afterwards; never constructed flag-off.
     _hype_store: HypeStore | None = None
+    # Cached result of the one-time variant-mismatch check below — computed
+    # once per Memory instance (cheap `stats()` query), not per search.
+    _hype_variant_checked: bool = False
+    _hype_variant_warning: str | None = None
 
     # -- search -------------------------------------------------------------
 
@@ -210,7 +215,13 @@ class _SearchOpsMixin(_MemoryBase):
                 rows = self._hype_fold_candidates(
                     rows, emb, limit, type_=type_, exclude_types=exclude_types
                 )
-                _add_trace("hype_fold", input_count=before_hype, output_count=len(rows))
+                variant_warning = self._hype_variant_mismatch_warning()
+                _add_trace(
+                    "hype_fold",
+                    input_count=before_hype,
+                    output_count=len(rows),
+                    **({"warning": variant_warning} if variant_warning else {}),
+                )
         else:
             emb = None  # set below in hybrid's vec branch; used by feedback boost
             # hybrid — fetch a wider candidate set from each side and
@@ -763,6 +774,47 @@ class _SearchOpsMixin(_MemoryBase):
         except Exception as exc:
             _log.warning("hype_fold failed, using doc hits: %s", exc, exc_info=True)
             return rows
+
+    def _hype_variant_mismatch_warning(self) -> str | None:
+        """One cheap `stats()` query (cached for the life of this `Memory`
+        instance) checking whether every HyPE row uses the currently active
+        `MEMO_HYPE_EMBED_RAW` embedding variant.
+
+        A mismatch means some stored question vectors were embedded on a
+        different scale (query-prefixed vs raw) than what live queries use —
+        the fold still runs (never hard-fails search), this only surfaces a
+        trace note so the mismatch is diagnosable instead of silently
+        degrading scores. Resolved by `memo dream hype --reembed`.
+        """
+        if self._hype_variant_checked:
+            return self._hype_variant_warning
+        self._hype_variant_checked = True
+        try:
+            from memo.dream_hype import _active_variant
+
+            store = self._hype_store
+            if store is None:
+                return None  # not yet constructed this call; nothing to check
+            by_variant = store.stats().get("by_variant", {})
+            if not by_variant:
+                return None
+            active = _active_variant()
+            stale_variants = sorted(variant for variant in by_variant if variant != active)
+            if stale_variants:
+                counts = ", ".join(
+                    f"{variant}={by_variant[variant]}" for variant in sorted(by_variant)
+                )
+                warning = (
+                    f"hype store variants ({counts}) include values != active={active!r} "
+                    f"(run `memo dream hype --reembed`)"
+                )
+                self._hype_variant_warning = warning
+                _log.warning(warning)
+                return warning
+            return None
+        except (sqlite3.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+            _log.debug("hype variant check skipped: %s", exc)
+            return None
 
     def _fetch_fact_candidates(
         self,

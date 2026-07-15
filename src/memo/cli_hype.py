@@ -22,7 +22,7 @@ def hype_group() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def status_cmd(as_json: bool) -> None:
     """Show HyPE index coverage: memories indexed, questions, backlog."""
-    from memo.dream_hype import select_backlog
+    from memo.dream_hype import _active_variant, select_backlog
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
@@ -48,6 +48,8 @@ def status_cmd(as_json: bool) -> None:
         result = {
             "indexed_memories": stats["memories"],
             "questions": stats["questions"],
+            "variants": stats.get("by_variant", {}),
+            "active_variant": _active_variant(),
             "durable_total": durable_total,
             "coverage_pct": coverage_pct,
             "backlog": len(backlog),
@@ -60,6 +62,11 @@ def status_cmd(as_json: bool) -> None:
                 f"Indexed:  {stats['memories']}/{durable_total} memories ({coverage_pct:.1f}%)"
             )
             click.echo(f"Questions: {stats['questions']}")
+            variants = ", ".join(
+                f"{variant}={count}"
+                for variant, count in sorted(stats.get("by_variant", {}).items())
+            )
+            click.echo(f"Variants:  {variants or 'none'} (active={_active_variant()})")
             click.echo(f"Backlog:  {len(backlog)} pending")
     finally:
         store.close()

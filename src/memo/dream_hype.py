@@ -14,6 +14,7 @@ Building this index costs nothing for anyone who hasn't flipped the fold on.
 from __future__ import annotations
 
 import json as _json
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from .tiers import DURABLE_TYPES
@@ -31,6 +32,42 @@ _SYS = (
 
 _MIN_QUESTION_LEN = 12
 _MAX_QUESTION_LEN = 200
+_REEMBED_ERRORS = (
+    sqlite3.Error,
+    OSError,
+    RuntimeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    IndexError,
+)
+
+
+def _active_variant() -> str:
+    """Which embedding scale new/reembedded HyPE questions should use.
+
+    'raw' (document-side, no query prefix) when MEMO_HYPE_EMBED_RAW is on,
+    else 'query' (the historical default: `embed_query`, prefixed).
+    """
+    from .flags import flag_bool
+
+    return "raw" if flag_bool("MEMO_HYPE_EMBED_RAW") else "query"
+
+
+def _embed_question(mem: Any, question: str) -> list[float]:
+    """Embed one HyPE question in the currently active variant.
+
+    Query-side (default): `embed_query(question)` — asymmetric retrieval
+    prefix, matches how live search queries are embedded.
+    Raw/document-side (`MEMO_HYPE_EMBED_RAW=1`): `embed([question])[0]` — no
+    prefix, so fold scores share the same cosine scale as the doc vectors.
+    NOTE the MLX invariant: `embed()` takes a list, never a bare str.
+    """
+    from .flags import flag_bool
+
+    if flag_bool("MEMO_HYPE_EMBED_RAW"):
+        return list(mem.embedder.embed([question])[0])
+    return list(mem.embedder.embed_query(question))
 
 
 def select_backlog(mem: Any, store: HypeStore, *, cap: int) -> list[dict[str, Any]]:
@@ -162,9 +199,14 @@ def run_hype_pass(
                 res["errors_items"] += 1
                 continue
             try:
-                pairs = [(q, mem.embedder.embed_query(q)) for q in questions]
+                variant = _active_variant()
+                pairs = [(q, _embed_question(mem, q)) for q in questions]
                 inserted = store.replace_for_memory(
-                    item["id"], item["body_hash"], mem.cfg.helper_model, pairs
+                    item["id"],
+                    item["body_hash"],
+                    mem.cfg.helper_model,
+                    pairs,
+                    variant=variant,
                 )
                 res["generated"] += inserted
                 res["memories"] += 1
@@ -195,4 +237,53 @@ def run_hype_pass(
     return res
 
 
-__all__ = ["run_hype_pass", "select_backlog"]
+def run_hype_reembed(cfg: Any, mem: Any) -> dict[str, Any]:
+    """Re-embed every stored HyPE question whose `variant` differs from the
+    currently active one (`MEMO_HYPE_EMBED_RAW`) — the index holds ONE
+    variant at a time, so flipping the flag requires converting the backlog
+    rather than mixing scales.
+
+    Question TEXT is already stored (`hype_questions.question`) — no LLM call
+    needed, only a re-embed. Batched per memory via `replace_for_memory` (the
+    existing transactional swap) so a memory's rows never end up half-old,
+    half-new. `body_hash`/`model` are preserved from the stored rows. Never
+    raises — returns `{status, reembedded, skipped}`.
+    """
+    res: dict[str, Any] = {"status": "skipped", "reembedded": 0, "skipped": 0}
+    store: HypeStore | None = None
+    try:
+        from .store.hype_store import HypeStore
+
+        store = HypeStore(cfg.db_path, cfg.embedder_dims)
+        variant = _active_variant()
+        stale_ids = store.memories_with_variant_other_than(variant)
+        if not stale_ids:
+            res["status"] = "skipped"
+            return res
+
+        for memory_id in stale_ids:
+            rows = store.questions_for_memory(memory_id)
+            if not rows:
+                res["skipped"] += 1
+                continue
+            try:
+                body_hash = rows[0]["body_hash"]
+                model = rows[0]["model"]
+                pairs = [(r["question"], _embed_question(mem, r["question"])) for r in rows]
+                store.replace_for_memory(memory_id, body_hash, model, pairs, variant=variant)
+                res["reembedded"] += 1
+            except _REEMBED_ERRORS:  # one memory must never abort the reembed pass
+                res["skipped"] += 1
+                continue
+
+        res["status"] = "done"
+    except _REEMBED_ERRORS as exc:  # surfaced to the CLI, never silent
+        res["status"] = "error"
+        res["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        if store is not None:
+            store.close()
+    return res
+
+
+__all__ = ["run_hype_pass", "run_hype_reembed", "select_backlog"]

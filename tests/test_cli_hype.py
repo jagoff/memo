@@ -41,10 +41,45 @@ def test_hype_status_json_empty(tmp_path):
     assert "durable_total" in data
     assert "coverage_pct" in data
     assert "backlog" in data
+    assert "variants" in data
     assert data["indexed_memories"] == 0
     assert data["questions"] == 0
     assert data["durable_total"] == 0
     assert data["coverage_pct"] == 0.0
+    assert data["variants"] == {}
+
+
+def test_hype_status_surfaces_variant_counts(tmp_path, monkeypatch):
+    """Operators can verify whether a flag flip needs `--reembed`."""
+
+    class _FakeStore:
+        def all_ids(self):
+            return []
+
+        def get(self, memory_id):
+            return None
+
+    class _FakeMemory:
+        store = _FakeStore()
+
+    class _FakeHypeStore:
+        def __init__(self, db_path, dims):
+            pass
+
+        def stats(self):
+            return {"memories": 2, "questions": 3, "by_variant": {"query": 2, "raw": 1}}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.cli_hype._get_memory", lambda cfg: _FakeMemory())
+    monkeypatch.setattr("memo.cli_hype.HypeStore", _FakeHypeStore)
+    monkeypatch.setattr("memo.dream_hype.select_backlog", lambda mem, store, cap: [])
+
+    result = CliRunner().invoke(cli, ["hype", "status", "--json"], env=_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["variants"] == {"query": 2, "raw": 1}
 
 
 def test_hype_status_help(tmp_path):

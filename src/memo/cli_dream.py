@@ -1454,14 +1454,35 @@ def dream_chronicle_cmd(day: str | None, dry_run: bool, as_json: bool) -> None:
 
 @dream_cmd.command(name="hype")
 @click.option("--dry-run", is_flag=True, help="Compute the backlog, generate nothing.")
+@click.option(
+    "--reembed",
+    is_flag=True,
+    help=(
+        "Re-embed stored HyPE questions into the currently active variant "
+        "(see MEMO_HYPE_EMBED_RAW) instead of running the generation pass."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit the pass receipt as JSON.")
-def dream_hype_cmd(dry_run: bool, as_json: bool) -> None:
+def dream_hype_cmd(dry_run: bool, reembed: bool, as_json: bool) -> None:
     """Nightly HyPE pass — generate + index hypothetical questions per memory (see MEMO_DREAM_HYPE_ENABLED)."""
+    if dry_run and reembed:
+        raise click.UsageError("--dry-run cannot be combined with --reembed")
+
     from memo import dream_hype
     from memo.flags import flag_int
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
+    if reembed:
+        res = dream_hype.run_hype_reembed(cfg, mem)
+        if as_json:
+            click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+            return
+        console.print(f"[bold]hype reembed:[/bold] {res.get('status')}")
+        console.print(
+            f"  reembedded: {res.get('reembedded', 0)} · skipped: {res.get('skipped', 0)}"
+        )
+        return
     res = dream_hype.run_hype_pass(
         cfg,
         mem,
