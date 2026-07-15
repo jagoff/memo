@@ -34,9 +34,27 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Protocol
 
 from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
+
+
+class ChatBackend(Protocol):
+    """Structural type for chat backends (MLXChat, SamplingChat)."""
+
+    def chat(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def chat_stream(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        options: dict[str, Any] | None = None,
+    ) -> Iterator[str]: ...
 
 _log = logging.getLogger(__name__)
 _MAX_LOADED_MODELS = 2

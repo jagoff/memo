@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from memo.llm import MLXChat
+from memo.llm import ChatBackend, MLXChat
 from memo.prompt_overrides import resolve_prompt
 
 _log = logging.getLogger(__name__)
@@ -134,12 +134,12 @@ class TemporalAnalyzer:
             If None, a new one is created on first use.
     """
 
-    def __init__(self, memory: Any, chat: MLXChat | None = None) -> None:
+    def __init__(self, memory: Any, chat: ChatBackend | None = None) -> None:
         self.memory = memory
         self._chat = chat
         self._chat_lock = threading.Lock()
 
-    def _ensure_chat(self) -> MLXChat:
+    def _ensure_chat(self) -> ChatBackend:
         if self._chat is None:
             with self._chat_lock:
                 if self._chat is None:
