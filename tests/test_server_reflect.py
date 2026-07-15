@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 from memo.memory import Memory
@@ -51,7 +52,7 @@ def test_memo_reflect_no_sessions(tmp_cfg) -> None:
     register(server, mem)
 
     with patch("memo.session.list_sessions", return_value=[]) as mock_ls:
-        result = tools["memo_reflect"]()
+        result = asyncio.run(tools["memo_reflect"]())
 
     mock_ls.assert_called_once()
     assert result == {"status": "no_sessions"}
@@ -74,7 +75,7 @@ def test_memo_reflect_uses_most_recent_session(tmp_cfg) -> None:
         patch("memo.session.list_sessions", return_value=fake_sessions),
         patch("memo.cli_transcripts._reflect_session", return_value=reflect_result) as mock_rs,
     ):
-        result = tools["memo_reflect"]()
+        result = asyncio.run(tools["memo_reflect"]())
 
     mock_rs.assert_called_once()
     call_args = mock_rs.call_args
@@ -98,7 +99,7 @@ def test_memo_reflect_with_explicit_session_id(tmp_cfg) -> None:
         patch("memo.session.list_sessions") as mock_ls,
         patch("memo.cli_transcripts._reflect_session", return_value=reflect_result) as mock_rs,
     ):
-        result = tools["memo_reflect"](session_id="myses01")
+        result = asyncio.run(tools["memo_reflect"](session_id="myses01"))
 
     assert not mock_ls.called, "list_sessions must NOT be called when session_id is given"
     mock_rs.assert_called_once()
@@ -130,7 +131,7 @@ def test_memo_reflect_calls_ensure_chat_before_reflect(tmp_cfg) -> None:
         patch("memo.session.list_sessions", return_value=fake_sessions),
         patch("memo.cli_transcripts._reflect_session", side_effect=fake_reflect),
     ):
-        tools["memo_reflect"]()
+        asyncio.run(tools["memo_reflect"]())
 
     assert "_ensure_chat" in call_order, "_ensure_chat must be called"
     assert "_reflect_session" in call_order, "_reflect_session must be called"
@@ -157,7 +158,7 @@ def test_memo_reflect_if_due_already_reflected(tmp_cfg) -> None:
         patch("memo.session.get_session", return_value=snap) as mock_gs,
         patch("memo.cli_transcripts._reflect_session") as mock_rs,
     ):
-        result = tools["memo_reflect"](if_due=True)
+        result = asyncio.run(tools["memo_reflect"](if_due=True))
 
     mock_gs.assert_called_once()
     assert not mock_rs.called, "_reflect_session must NOT be called for already-reflected session"
@@ -185,7 +186,7 @@ def test_memo_reflect_if_due_not_yet_reflected(tmp_cfg) -> None:
         patch("memo.session.get_session", return_value=snap),
         patch("memo.cli_transcripts._reflect_session", return_value=reflect_result) as mock_rs,
     ):
-        result = tools["memo_reflect"](if_due=True)
+        result = asyncio.run(tools["memo_reflect"](if_due=True))
 
     mock_rs.assert_called_once()
     assert result == reflect_result
@@ -208,7 +209,7 @@ def test_memo_reflect_dry_run_forwarded(tmp_cfg) -> None:
         patch("memo.session.list_sessions", return_value=fake_sessions),
         patch("memo.cli_transcripts._reflect_session", return_value=reflect_result) as mock_rs,
     ):
-        result = tools["memo_reflect"](dry_run=True)
+        result = asyncio.run(tools["memo_reflect"](dry_run=True))
 
     mock_rs.assert_called_once()
     _kw = mock_rs.call_args.kwargs

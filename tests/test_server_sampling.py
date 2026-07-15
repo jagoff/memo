@@ -93,3 +93,30 @@ def test_memo_chat_ask_samples_client_model(mem: Memory, monkeypatch):
 
     out = _call(server, "memo_chat_ask", {"question": "what is the stub fact?"}, handler=handler)
     assert out["synthesizer"].startswith("client:")
+
+
+def test_memo_consolidate_respects_call_cap(mem: Memory, monkeypatch):
+    monkeypatch.setenv("MEMO_SAMPLING_SYNTH_ENABLED", "1")
+    monkeypatch.setenv("MEMO_SAMPLING_MAX_CALLS", "1")
+    server = build_server(mem)
+    calls = {"n": 0}
+
+    async def handler(messages, params, context):
+        calls["n"] += 1
+        return "MERGE PROPOSAL"
+
+    out = _call(server, "memo_consolidate", {}, handler=handler)
+    assert isinstance(out, dict)
+    assert "synthesizer" in out
+    assert calls["n"] <= 1  # cap honored even if clustering wants more LLM calls
+
+
+def test_memo_synthesize_run_dry_run_works_with_handler(mem: Memory, monkeypatch):
+    monkeypatch.setenv("MEMO_SAMPLING_SYNTH_ENABLED", "1")
+    server = build_server(mem)
+
+    async def handler(messages, params, context):
+        return "INSIGHT"
+
+    out = _call(server, "memo_synthesize_run", {"dry_run": True}, handler=handler)
+    assert isinstance(out, list)  # shape unchanged; no top-level stamp on lists
