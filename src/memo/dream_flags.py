@@ -109,6 +109,12 @@ GATES: dict[str, GateSpec] = dict(
         _g("MEMO_UPDATE_CHECK_ENABLED", "manual", "ops/update policy; human-only"),
         _g("MEMO_ASK_GAPS_ENABLED", "manual", "ask-path UX nudge; no retrieval metric"),
         _g("MEMO_SECRET_STORAGE_ENABLED", "manual", "security opt-in; human-only, never auto"),
+        _g(
+            "MEMO_SAMPLING_SYNTH_ENABLED",
+            "manual",
+            "MCP client-sampling for synthesis; not recall-measurable — quality "
+            "gates in synapse eval-chat, human flips via config",
+        ),
         _g("MEMO_GRADUATION_CONTROLLER_ENABLED", "manual", "memory graduation; own shadow eval"),
         # --- manual (meta): flags gating nightly passes themselves ------------
         _g("MEMO_DREAM_TUNE_ENABLED", "manual", "meta: gates the tuner pass; op cost decision"),
