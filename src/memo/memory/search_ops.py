@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import math
+import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -811,7 +812,7 @@ class _SearchOpsMixin(_MemoryBase):
                 _log.warning(warning)
                 return warning
             return None
-        except Exception as exc:
+        except (sqlite3.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
             _log.debug("hype variant check skipped: %s", exc)
             return None
 

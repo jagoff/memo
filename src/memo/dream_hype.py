@@ -14,6 +14,7 @@ Building this index costs nothing for anyone who hasn't flipped the fold on.
 from __future__ import annotations
 
 import json as _json
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from .tiers import DURABLE_TYPES
@@ -31,6 +32,15 @@ _SYS = (
 
 _MIN_QUESTION_LEN = 12
 _MAX_QUESTION_LEN = 200
+_REEMBED_ERRORS = (
+    sqlite3.Error,
+    OSError,
+    RuntimeError,
+    ValueError,
+    TypeError,
+    KeyError,
+    IndexError,
+)
 
 
 def _active_variant() -> str:
@@ -262,12 +272,12 @@ def run_hype_reembed(cfg: Any, mem: Any) -> dict[str, Any]:
                 pairs = [(r["question"], _embed_question(mem, r["question"])) for r in rows]
                 store.replace_for_memory(memory_id, body_hash, model, pairs, variant=variant)
                 res["reembedded"] += 1
-            except Exception:  # one memory must never abort the reembed pass
+            except _REEMBED_ERRORS:  # one memory must never abort the reembed pass
                 res["skipped"] += 1
                 continue
 
         res["status"] = "done"
-    except Exception as exc:  # surfaced via receipt["errors"], never silent
+    except _REEMBED_ERRORS as exc:  # surfaced to the CLI, never silent
         res["status"] = "error"
         res["error"] = f"{type(exc).__name__}: {exc}"
     finally:
