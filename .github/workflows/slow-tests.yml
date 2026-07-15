@@ -6,12 +6,17 @@ on:
     - cron: "0 3 * * *"
   workflow_dispatch:  # manual trigger
 
+permissions:
+  contents: read
+
 jobs:
   slow:
     # MLX slow tests require Apple Silicon — use macos runner for real inference
     runs-on: macos-14
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
       - name: Install Python 3.13 + uv via Homebrew
         run: brew install python@3.13 uv
       - name: Install package + dev deps

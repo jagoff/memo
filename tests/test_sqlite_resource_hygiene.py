@@ -19,6 +19,14 @@ def _sqlite_resource_warnings(
     ]
 
 
+def _drain_preexisting_resource_warnings() -> None:
+    """Collect garbage from earlier tests outside the attribution window."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceWarning)
+        gc.collect()
+        gc.collect()
+
+
 def test_memory_close_releases_sqlite_connections(
     tmp_cfg: Config,
     monkeypatch: pytest.MonkeyPatch,
@@ -29,6 +37,7 @@ def test_memory_close_releases_sqlite_connections(
         lambda self, inputs: [embedding for _ in inputs],
     )
 
+    _drain_preexisting_resource_warnings()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
         mem = Memory(tmp_cfg)
@@ -51,6 +60,7 @@ def test_memory_close_is_idempotent_after_lazy_connections(
         lambda self, inputs: [embedding for _ in inputs],
     )
 
+    _drain_preexisting_resource_warnings()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
         mem = Memory(tmp_cfg)
@@ -72,6 +82,7 @@ def test_memory_finalizer_releases_sqlite_connections(
         lambda self, inputs: [[1.0] + [0.0] * (tmp_cfg.embedder_dims - 1) for _ in inputs],
     )
 
+    _drain_preexisting_resource_warnings()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
         mem = Memory(tmp_cfg)

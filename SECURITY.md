@@ -3,7 +3,9 @@
 ## Reporting a vulnerability
 
 If you find a security issue in memo, please **do not open a public issue**.
-Instead, email <fernandoferrari@gmail.com> with:
+Submit a [private vulnerability report](https://github.com/jagoff/memo/security/advisories/new)
+so the discussion, affected versions, and remediation stay confidential. If
+GitHub reporting is unavailable, email <fernandoferrari@gmail.com> with:
 
 - A description of the vulnerability
 - Steps to reproduce (or a minimal proof-of-concept)
