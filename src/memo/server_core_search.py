@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastmcp import Context
+
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
-from memo.server_common import log_consult, now_ms
+from memo.server_common import log_consult, now_ms, run_synth
 
 
 def _read_notification(memory: Memory) -> str:
@@ -312,7 +314,7 @@ def register(server: Any, memory: Memory) -> None:
         return {"vectors": vecs, "dim": dim, "model": memory.store.embedder_model}
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_ask(
+    async def memo_ask(
         question: str,
         k: int = 5,
         type: str | None = None,
@@ -320,26 +322,33 @@ def register(server: Any, memory: Memory) -> None:
         include_repos: bool = True,
         session_id: str | None = None,
         source: str = "",
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Answer a question using memo retrieval and citations.
 
         Read-only. Use when you want a synthesized answer grounded in durable
         memories instead of raw hit lists. `k`, `type`, and `snippet_chars` tune
-        retrieval; `source` attributes consult logging.
+        retrieval; `source` attributes consult logging. With client sampling
+        enabled, synthesis runs on the calling model (see `synthesizer` field).
         """
         t0 = now_ms()
-        res = memory.ask(
-            question,
-            k=k,
-            type_=type,
-            snippet_chars=snippet_chars,
-            include_repos=include_repos,
-            session_id=session_id,
+        res, synthesizer = await run_synth(
+            memory,
+            ctx,
+            lambda: memory.ask(
+                question,
+                k=k,
+                type_=type,
+                snippet_chars=snippet_chars,
+                include_repos=include_repos,
+                session_id=session_id,
+            ),
         )
         out = res if isinstance(res, dict) else {"answer": str(res)}
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(memory, tool="ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
+        out["synthesizer"] = synthesizer
 
         # Read pending idle notification (best-effort, races with writer)
         out["notification"] = _read_notification(memory)
@@ -347,7 +356,7 @@ def register(server: Any, memory: Memory) -> None:
         return out
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_chat_ask(
+    async def memo_chat_ask(
         question: str,
         k: int = 7,
         type: str | None = None,
@@ -356,26 +365,34 @@ def register(server: Any, memory: Memory) -> None:
         snippet_chars: int = 800,
         session_id: str | None = None,
         source: str = "",
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Answer a conversational question with optional history and context.
 
         Read-only. Use instead of memo_ask when prior turns or explicit
         `context` should shape retrieval and synthesis. `history` is a list of
         chat messages; `session_id` links the answer to a tracked memo session.
+        With client sampling enabled, synthesis runs on the calling model (see
+        `synthesizer` field).
         """
         t0 = now_ms()
         merged_context = dict(context or {})
         if session_id and "session_id" not in merged_context:
             merged_context["session_id"] = session_id
-        res = memory.chat_ask(
-            question,
-            k=k,
-            type_=type,
-            history=history,
-            context=merged_context or None,
-            snippet_chars=snippet_chars,
+        res, synthesizer = await run_synth(
+            memory,
+            ctx,
+            lambda: memory.chat_ask(
+                question,
+                k=k,
+                type_=type,
+                history=history,
+                context=merged_context or None,
+                snippet_chars=snippet_chars,
+            ),
         )
         out = res if isinstance(res, dict) else {"answer": str(res)}
+        out["synthesizer"] = synthesizer
         cites = out.get("citations") or out.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(
