@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import sqlite3
 import threading
 import warnings
 from pathlib import Path
@@ -18,6 +19,11 @@ from memo.versioning import VersionManager, VersionStore
 
 
 def _cleanup_without_warnings(factory) -> list[warnings.WarningMessage]:
+    # Drain unreachable objects left by earlier tests before attributing any
+    # ResourceWarning to the object created below.  This matters under xdist,
+    # where a worker may run unrelated SQLite tests immediately beforehand.
+    gc.collect()
+    gc.collect()
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always", ResourceWarning)
         obj = factory()
@@ -25,6 +31,19 @@ def _cleanup_without_warnings(factory) -> list[warnings.WarningMessage]:
         gc.collect()
         gc.collect()
     return captured
+
+
+def test_cleanup_warning_capture_ignores_preexisting_garbage(tmp_path: Path) -> None:
+    class CyclicConnectionHolder:
+        def __init__(self) -> None:
+            self.connection = sqlite3.connect(tmp_path / "ambient.db")
+            self.cycle = self
+
+    holder = CyclicConnectionHolder()
+    del holder
+
+    warnings_seen = _cleanup_without_warnings(lambda: VersionStore(tmp_path / "versions.db"))
+    assert not any(issubclass(w.category, ResourceWarning) for w in warnings_seen)
 
 
 @pytest.mark.parametrize(
