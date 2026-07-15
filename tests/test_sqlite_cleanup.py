@@ -42,7 +42,13 @@ def test_cleanup_warning_capture_ignores_preexisting_garbage(tmp_path: Path) -> 
     holder = CyclicConnectionHolder()
     del holder
 
-    warnings_seen = _cleanup_without_warnings(lambda: VersionStore(tmp_path / "versions.db"))
+    # The preexisting connection is deliberately leaked to exercise the
+    # attribution boundary. Capture its warning here so it does not pollute the
+    # suite summary; the helper's inner filter still records warnings produced
+    # by VersionStore itself.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceWarning)
+        warnings_seen = _cleanup_without_warnings(lambda: VersionStore(tmp_path / "versions.db"))
     assert not any(issubclass(w.category, ResourceWarning) for w in warnings_seen)
 
 

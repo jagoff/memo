@@ -355,11 +355,19 @@ def main() -> None:
         _ensure_idle_daemon()
         port = flag_int("MEMO_MCP_PORT")
         # transport is validated against the allowed set just above.
+        transport_options: dict[str, Any] = {}
+        if transport != "sse":
+            # FastMCP's JSON response mode avoids allocating a long-lived SSE
+            # receive stream for each ordinary request. Besides fitting memo's
+            # request/response tools, this keeps SDK 1.28 from leaking that
+            # stream after a completed response.
+            transport_options["json_response"] = True
         server.run(
             transport=cast(Any, transport),
             host=host,
             port=port,
             middleware=build_http_middleware(),
+            **transport_options,
         )
     else:
         _start_background_tasks()
