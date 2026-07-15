@@ -9,12 +9,14 @@ updates:
         dependency-type: "production"
       python-development:
         dependency-type: "development"
-    # transformers 5.13 is incompatible with the current mlx-lm tokenizer
-    # registration path. Keep Dependabot from widening pyproject's <5.13 cap
-    # and downgrading mlx-vlm/mlx-audio to manufacture a resolution.
+    # Keep Dependabot from widening compatibility caps and manufacturing an
+    # invalid resolution. transformers 5.13 breaks the current mlx-lm
+    # tokenizer path; pytest 9 conflicts with pytest-textual-snapshot 1.1.
     ignore:
       - dependency-name: "transformers"
         versions: [">=5.13"]
+      - dependency-name: "pytest"
+        versions: [">=9"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

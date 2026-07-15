@@ -36,6 +36,7 @@ def test_dependabot_respects_mlx_and_test_dependency_caps() -> None:
     }
 
     assert ">=5.13" in ignored_versions["transformers"]
+    assert ">=9" in ignored_versions["pytest"]
     assert any(
         dependency.startswith("transformers<5.13;") for dependency in project["dependencies"]
     )
