@@ -1009,6 +1009,64 @@ SPECS: tuple[FlagSpec, ...] = (
         "this budget is rejected to protect the 5s recall-hook budget.",
         min_val=0.0,
     ),
+    _spec(
+        "MEMO_DREAM_FLAG_GRADUATION_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly dark-feature (flag) graduation pass inside `memo dream run`. "
+        "OFF by default. Every default-off *_ENABLED flag has a declared gate in "
+        "dream_flags.GATES; recall-gated flags get an ON/OFF A/B against the mined+curated "
+        "labels and graduate to ON via the tuned overlay after "
+        "MEMO_FLAG_GRADUATION_WIN_NIGHTS consecutive wins (latency + curated gates). "
+        "Reversible: a regression vs the graduation baseline reverts the flag. Flags that "
+        "never graduate within MEMO_FLAG_GRADUATION_DEADLINE_DAYS surface as cull "
+        "candidates in `memo dream graduate-flags --status` (deletion stays human).",
+    ),
+    _spec(
+        "MEMO_FLAG_GRADUATION_WIN_NIGHTS",
+        "int",
+        3,
+        "misc",
+        "Consecutive winning A/B measurements a recall-gated dark flag needs before the "
+        "flag-graduation pass flips it ON via the tuned overlay.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_FLAG_GRADUATION_MAX_PER_NIGHT",
+        "int",
+        3,
+        "misc",
+        "Max dark flags A/B-measured per flag-graduation night (cost ceiling; "
+        "least-recently-measured first).",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_FLAG_GRADUATION_DEADLINE_DAYS",
+        "int",
+        45,
+        "misc",
+        "Days a dark flag may stay tracked without graduating before it is reported as a "
+        "cull candidate (flip it with a real gate or delete the code path).",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_FLAG_GRADUATION_RETRY_DAYS",
+        "int",
+        14,
+        "misc",
+        "Cooldown after a flag-graduation revert before the same flag is A/B-measured again.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_FLAG_GRADUATION_MAX_PROMPTS",
+        "int",
+        80,
+        "misc",
+        "Label-corpus cap per flag-graduation measurement (each candidate costs two "
+        "retrieval evals over this many prompts).",
+        min_val=1,
+    ),
     _spec("MEMO_DREAM_TUNE_K", "int", 5, "misc", "K for precision@K/noise@K during dream tuning."),
     _spec(
         "MEMO_DREAM_TUNE_MAX_EVALS",

@@ -341,6 +341,16 @@ Wiring is `src/memo/cli_dream.py` (Click) + `src/memo/cli_dream_passes.py`
   - **Anticipate** (`dream_anticipate.py`, `MEMO_DREAM_ANTICIPATE_ENABLED`):
     surfaces recurring unmet gaps (`outcome.detect_gaps`) + hot queries into the
     receipt/briefing and pre-warms their embeddings. Never fabricates.
+  - **Flag graduation** (`dream_flags.py`, `MEMO_DREAM_FLAG_GRADUATION_ENABLED`):
+    every default-off `*_ENABLED` flag declares a gate in `dream_flags.GATES`
+    (`recall` A/B via the eval `flag_overrides` seam / `tuner`-owned / `manual`
+    + reason) — completeness CI-enforced by `test_dream_flags.py`, so a new
+    dark flag cannot merge without declaring its gate. Winners graduate to ON
+    via the overlay after `MEMO_FLAG_GRADUATION_WIN_NIGHTS` consecutive wins
+    (latency + curated gates), auto-revert on regression; flags un-graduated
+    past `MEMO_FLAG_GRADUATION_DEADLINE_DAYS` become cull candidates in
+    `memo dream graduate-flags --status` (deletion stays human). Distinct from
+    `dream_graduate.py` (quarantined-memory graduation).
 
 **Tuned-params overlay** (`src/memo/tuned_overlay.py`) is the only place
 auto-tuning touches live behavior: the tuner writes `state_dir/tuned_params.json`
