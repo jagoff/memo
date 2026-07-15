@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from memo import ask_gaps as ag
 
 
@@ -56,3 +58,27 @@ def test_never_fabricates_missing_gaps(monkeypatch, tmp_cfg):
     monkeypatch.setenv("MEMO_ASK_GAPS_ENABLED", "1")
     _write_receipt(tmp_cfg.state_dir, [])  # no gaps at all
     assert ag.briefing_lines(tmp_cfg, session_id="s4") == []
+
+
+def test_marker_rejects_session_id_traversal(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    outside = tmp_path / "outside.json"
+
+    with pytest.raises(ValueError, match="session_id"):
+        ag.note_asked(state_dir, "../../outside", "gap")
+
+    assert not outside.exists()
+
+
+def test_marker_rejects_symlinked_marker_directory(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (state_dir / ".ask_gaps_seen").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="unsafe"):
+        ag.note_asked(state_dir, "safe-session", "gap")
+
+    assert not (outside / "safe-session.json").exists()

@@ -9,6 +9,35 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.5.2] - 2026-07-15
+
+### Security
+
+- Hardened local HTTP surfaces against DNS rebinding, cross-site requests,
+  reflected errors, unsafe content types, XSS, and accidental unauthenticated
+  dashboard access; generated health pages are now offline-safe with a strict
+  CSP and capability-protected live data.
+- Hardened backups, restores, runtime state, release staging, and secret files
+  against archive bombs, path traversal, symlink races, partial publication,
+  permissive modes, and accidental credential inclusion.
+- Release and auto-update paths now require trusted tags descended from
+  `origin/master`; Docker builds use an explicit context allowlist, pinned
+  tooling, locked hashed dependencies, and the CPU-only PyTorch index.
+
+### Fixed
+
+- Made save, update, delete, reindex, backup, and restore operations atomic
+  across threads and processes, including topic-key compare-and-swap recovery,
+  path-collision rollback, live SQLite restore coherence, and stale pending
+  marker cleanup.
+- Rebuild now migrates embedding model, revision, and dimensions consistently
+  across the primary, HyPE, and episode indexes while preserving durable
+  deduplication and verification metadata and invalidating incompatible
+  derived watermarks.
+- Closed request-validation, session-isolation, traversal, timestamp, receipt,
+  resource-lifecycle, slow-test cleanup, and error-sanitization gaps across the
+  CLI, MCP transports, runtime updater, and background dashboard.
+
 ## [3.5.1] - 2026-07-13
 
 ### Fixed

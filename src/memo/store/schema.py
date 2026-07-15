@@ -513,7 +513,13 @@ class _SchemaMixin(_StoreBase):
         return _REQUIRED_SCHEMA_OBJECTS.issubset(present)
 
     def _vec_table_dims(self, table: str) -> int | None:
-        if table not in {"vec", "repo_vec", "source_feedback_vec"}:
+        if table not in {
+            "vec",
+            "repo_vec",
+            "source_feedback_vec",
+            "hype_vec",
+            "episode_vec",
+        }:
             raise ValueError(f"unknown vector table: {table!r}")
         row = self._conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",

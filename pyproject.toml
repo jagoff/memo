@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "3.5.1"
+version = "3.5.2"
 description = "Local-first semantic memory for AI agents — MLX (Apple Silicon) or CPU sentence-transformers (Linux/Ubuntu) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -126,21 +126,71 @@ memo = "memo.cli:main"
 memo-mcp = "memo.server:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build]
+# Defense in depth for both wheel and sdist. The sdist also uses a root
+# allowlist below; these patterns protect package subtrees from local runtime
+# state and credentials accidentally created below an included directory.
+exclude = [
+    "/.claude/",
+    "/.devin/",
+    "/.superpowers/",
+    "/.worktrees/",
+    "/build/",
+    "/dist/",
+    "/worktrees/",
+    "**/.DS_Store",
+    "**/.env",
+    "**/.env.*",
+    "**/.envrc",
+    "**/__pycache__/",
+    "**/*.db",
+    "**/*.py[cdo]",
+    "**/*.sqlite*",
+    "**/config.local.*",
+]
+skip-excluded-dirs = true
+
+[tool.hatch.build.targets.sdist]
+# An sdist is a build input, not a repository backup. Enumerating its release
+# surface prevents ignored IDE/agent state and worktree artefacts from being
+# published when a release is built from a dirty developer checkout.
+include = [
+    "/src/memo/",
+    "/.agents/plugins/marketplace.json",
+    "/.claude-plugin/marketplace.json",
+    "/.claude-plugin/plugin.json",
+    "/commands/memo.md",
+    "/hooks/hooks.json",
+    "/plugins/memo/.codex-plugin/plugin.json",
+    "/plugins/memo/.mcp.json",
+    "/plugins/memo/commands/memo.md",
+    "/skills/memo/SKILL.md",
+    "/statusline/memo-statusline.sh",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/README.md",
+    "/pyproject.toml",
+    "/server.json",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/memo"]
 
 [tool.hatch.build.targets.wheel.force-include]
-".agents" = "memo/agent_assets/.agents"
-".claude-plugin" = "memo/agent_assets/.claude-plugin"
-"commands" = "memo/agent_assets/commands"
-"hooks" = "memo/agent_assets/hooks"
-"plugins" = "memo/agent_assets/plugins"
+".agents/plugins/marketplace.json" = "memo/agent_assets/.agents/plugins/marketplace.json"
+".claude-plugin/marketplace.json" = "memo/agent_assets/.claude-plugin/marketplace.json"
+".claude-plugin/plugin.json" = "memo/agent_assets/.claude-plugin/plugin.json"
+"commands/memo.md" = "memo/agent_assets/commands/memo.md"
+"hooks/hooks.json" = "memo/agent_assets/hooks/hooks.json"
+"plugins/memo/.codex-plugin/plugin.json" = "memo/agent_assets/plugins/memo/.codex-plugin/plugin.json"
+"plugins/memo/.mcp.json" = "memo/agent_assets/plugins/memo/.mcp.json"
+"plugins/memo/commands/memo.md" = "memo/agent_assets/plugins/memo/commands/memo.md"
 "server.json" = "memo/agent_assets/server.json"
-"skills" = "memo/agent_assets/skills"
-"statusline" = "memo/agent_assets/statusline"
+"skills/memo/SKILL.md" = "memo/agent_assets/skills/memo/SKILL.md"
+"statusline/memo-statusline.sh" = "memo/agent_assets/statusline/memo-statusline.sh"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

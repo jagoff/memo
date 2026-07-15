@@ -180,7 +180,12 @@ def run_hype_pass(
     try:
         from .store.hype_store import HypeStore
 
-        store = HypeStore(cfg.db_path, cfg.embedder_dims)
+        identity = str(getattr(mem.store, "embedder_model", "") or "")
+        store = HypeStore(
+            cfg.db_path,
+            cfg.embedder_dims,
+            **({"embedder_model": identity} if identity else {}),
+        )
 
         backlog = select_backlog(mem, store, cap=night_cap)
         if not backlog:
@@ -254,7 +259,12 @@ def run_hype_reembed(cfg: Any, mem: Any) -> dict[str, Any]:
     try:
         from .store.hype_store import HypeStore
 
-        store = HypeStore(cfg.db_path, cfg.embedder_dims)
+        identity = str(getattr(mem.store, "embedder_model", "") or "")
+        store = HypeStore(
+            cfg.db_path,
+            cfg.embedder_dims,
+            **({"embedder_model": identity} if identity else {}),
+        )
         variant = _active_variant()
         stale_ids = store.memories_with_variant_other_than(variant)
         if not stale_ids:

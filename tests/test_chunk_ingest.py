@@ -8,6 +8,8 @@ Default behaviour (flag off) is unchanged.
 
 from __future__ import annotations
 
+import pytest
+
 from memo.chunker import DEFAULT_TARGET_CHARS
 
 # ---------------------------------------------------------------------------
@@ -129,6 +131,34 @@ def test_reindex_chunk_extra_fields(mock_memory, monkeypatch):
         assert "chunk_count" in extra, f"chunk {cid}: missing chunk_count"
 
 
+def test_derived_chunk_ids_remain_resolvable(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    rec = mock_memory.save(content=_long_body(), title="Resolvable Chunks", tags=["test"])
+    mock_memory.reindex(force=True)
+    chunk_id = _chunk_ids_for(mock_memory.store, rec.id)[0]
+
+    assert mock_memory.resolve_id(chunk_id) == chunk_id
+    fetched = mock_memory.get(chunk_id)
+    assert fetched is not None
+    assert fetched.id == chunk_id
+    assert mock_memory.around(chunk_id)["mode"] == "chunk_seq"
+
+
+def test_derived_chunk_ids_are_read_only(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    rec = mock_memory.save(content=_long_body(), title="Read-only chunks", tags=["test"])
+    mock_memory.reindex(force=True)
+    chunk_id = _chunk_ids_for(mock_memory.store, rec.id)[0]
+
+    with pytest.raises(ValueError, match="read-only"):
+        mock_memory.update(chunk_id, content="ghost mutation")
+    with pytest.raises(ValueError, match="read-only"):
+        mock_memory.forget(chunk_id)
+    with pytest.raises(ValueError, match="read-only"):
+        mock_memory.delete(chunk_id)
+    assert not any("#chunk-" in str(path) for path in mock_memory.cfg.memory_dir.rglob("*"))
+
+
 def test_reindex_chunk_title_contains_parent_title(mock_memory, monkeypatch):
     """Chunk titles include the parent note title."""
     monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
@@ -165,3 +195,53 @@ def test_reindex_chunk_idempotent(mock_memory, monkeypatch):
         f"Second reindex changed chunk set:\n  first: {chunk_ids_first}\n  second: {chunk_ids_second}"
     )
     assert len(chunk_ids_first) >= 2
+
+
+def test_gc_preserves_chunks_while_parent_markdown_exists(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    rec = mock_memory.save(content=_long_body(), title="GC Parent", tags=["test"])
+    mock_memory.reindex(force=True)
+    chunk_ids = _chunk_ids_for(mock_memory.store, rec.id)
+    assert chunk_ids
+
+    report = mock_memory.gc(fix=True)
+
+    assert set(chunk_ids).isdisjoint(report["orphan_store"])
+    assert all(mock_memory.store.get(chunk_id) is not None for chunk_id in chunk_ids)
+
+
+def test_delete_parent_removes_derived_chunks(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    rec = mock_memory.save(content=_long_body(), title="Delete Parent", tags=["test"])
+    mock_memory.reindex(force=True)
+    chunk_ids = _chunk_ids_for(mock_memory.store, rec.id)
+    assert chunk_ids
+
+    assert mock_memory.delete(rec.id) is True
+
+    assert mock_memory.store.chunks_by_parent_id(rec.id) == []
+    assert all(mock_memory.store.get(chunk_id) is None for chunk_id in chunk_ids)
+
+
+def test_reindex_long_to_short_prunes_stale_chunks(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    rec = mock_memory.save(content=_long_body(), title="Shortened Parent", tags=["test"])
+    mock_memory.reindex(force=True)
+    assert _chunk_ids_for(mock_memory.store, rec.id)
+
+    mock_memory.update(rec.id, content="now short")
+    mock_memory.reindex(force=True)
+
+    assert mock_memory.store.chunks_by_parent_id(rec.id) == []
+
+
+def test_disabling_chunk_ingest_prunes_existing_chunks(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    rec = mock_memory.save(content=_long_body(), title="Disabled Chunks", tags=["test"])
+    mock_memory.reindex(force=True)
+    assert _chunk_ids_for(mock_memory.store, rec.id)
+
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "0")
+    mock_memory.reindex(force=True)
+
+    assert mock_memory.store.chunks_by_parent_id(rec.id) == []

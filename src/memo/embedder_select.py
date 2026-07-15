@@ -31,6 +31,15 @@ def resolve_backend(cfg: Config) -> str:
     return "mlx" if mlx_available() else "st"
 
 
+def active_embedder_identity(cfg: Config) -> str:
+    """Return the exact model identity that owns vectors and cache entries."""
+    if resolve_backend(cfg) == "st":
+        model = cfg.st_embedder_model
+        revision = cfg.st_embedder_revision.strip() if cfg.st_embedder_revision else None
+        return f"{model}@{revision}" if revision else model
+    return cfg.embedder_model
+
+
 def make_embedder(cfg: Config, *, cache_size: int | None = None) -> EmbedderBase:
     """Construct the in-process embedder for this host/config.
 
@@ -42,6 +51,7 @@ def make_embedder(cfg: Config, *, cache_size: int | None = None) -> EmbedderBase
 
         return STEmbedder(
             model_path=cfg.st_embedder_model,
+            revision=cfg.st_embedder_revision,
             expected_dims=cfg.embedder_dims,
         )
     from memo.embedder import MLXEmbedder

@@ -102,12 +102,19 @@ def register(server: Any, memory: Memory) -> None:
         history_errors = 0
         with contextlib.suppress(Exception):
             history_errors = int(getattr(memory.history, "error_count", 0))
+        embedder_model = getattr(memory.store, "embedder_model", None)
+        if not isinstance(embedder_model, str) or not embedder_model:
+            # Lightweight test doubles and pre-identity stores may not expose
+            # the persisted owner yet.  The configured model is the honest
+            # compatibility fallback; real stores always carry the exact
+            # model@revision identity.
+            embedder_model = memory.cfg.embedder_model
         stats: dict[str, Any] = {
             "total": memory.store.count(),
             "data_dir": str(memory.cfg.data_dir),
             "vault_path": (str(memory.cfg.vault_path) if memory.cfg.vault_path else None),
             "db_path": str(memory.cfg.db_path),
-            "embedder_model": memory.cfg.embedder_model,
+            "embedder_model": embedder_model,
             "history_errors": history_errors,
         }
         with contextlib.suppress(Exception):

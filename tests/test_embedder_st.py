@@ -24,9 +24,16 @@ def _l2_normalize(vec: list[float]) -> list[float]:
 class _FakeSentenceTransformer:
     """Deterministic, normalized vectors; records encode() inputs."""
 
-    def __init__(self, model_path: str, device: str = "cpu", dim: int = 4) -> None:
+    def __init__(
+        self,
+        model_path: str,
+        device: str = "cpu",
+        dim: int = 4,
+        revision: str | None = None,
+    ) -> None:
         self.model_path = model_path
         self.device = device
+        self.revision = revision
         self._dim = dim
         self.max_seq_length = 0
         self.last_inputs: list[str] = []
@@ -54,8 +61,8 @@ class _FakeSentenceTransformer:
 def _install_fake_st(monkeypatch, *, dim: int = 4) -> dict:
     captured: dict = {}
 
-    def _factory(model_path, device="cpu"):
-        inst = _FakeSentenceTransformer(model_path, device=device, dim=dim)
+    def _factory(model_path, device="cpu", revision=None):
+        inst = _FakeSentenceTransformer(model_path, device=device, dim=dim, revision=revision)
         captured["instance"] = inst
         return inst
 
@@ -75,6 +82,16 @@ def test_embed_returns_normalized_vectors_of_expected_dim(monkeypatch):
     for vec in out:
         assert len(vec) == 4
         assert_valid_embedding(vec, 4)  # passes the norm≈1 boundary check
+
+
+def test_embedder_loads_exact_configured_revision(monkeypatch):
+    captured = _install_fake_st(monkeypatch, dim=4)
+    emb = STEmbedder(model_path="fake/model", revision="deadbeef", expected_dims=4)
+
+    emb.embed(["alpha"])
+
+    assert captured["instance"].revision == "deadbeef"
+    assert emb.model_name == "fake/model@deadbeef"
 
 
 def test_embed_empty_sequence_returns_empty(monkeypatch):

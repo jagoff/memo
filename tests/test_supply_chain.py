@@ -27,9 +27,15 @@ def test_dependabot_covers_every_shipped_dependency_surface() -> None:
     assert {entry["package-ecosystem"] for entry in updates} == {
         "docker",
         "github-actions",
+        "npm",
         "uv",
     }
-    assert all(entry["directory"] == "/" for entry in updates)
+    assert {(entry["package-ecosystem"], entry["directory"]) for entry in updates} == {
+        ("docker", "/"),
+        ("github-actions", "/"),
+        ("npm", "/editors/vscode"),
+        ("uv", "/"),
+    }
     assert all(entry["schedule"]["interval"] == "weekly" for entry in updates)
 
 

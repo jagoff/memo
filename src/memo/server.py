@@ -237,24 +237,57 @@ def build_server(memory: Memory | None = None, *, auth: Any | None = None) -> Fa
         """
         import json as _json
 
-        from starlette.responses import StreamingResponse
+        from starlette.responses import JSONResponse, StreamingResponse
+
+        # FastMCP protects its protocol endpoint when ``auth`` is configured,
+        # but custom routes are registered outside that auth wrapper.  The
+        # provider's global AuthenticationMiddleware still populates
+        # ``request.user``/``request.auth``, so enforce the same requirement
+        # explicitly before this route can expose memory context or invoke MLX.
+        if auth is not None:
+            if not getattr(request.user, "is_authenticated", False):
+                return JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            required_scopes = getattr(auth, "required_scopes", None) or ()
+            granted_scopes = getattr(request.auth, "scopes", ())
+            if any(scope not in granted_scopes for scope in required_scopes):
+                return JSONResponse({"error": "forbidden"}, status_code=403)
 
         try:
             body = await request.json()
         except Exception:
-            from starlette.responses import JSONResponse
-
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
 
-        question = str(body.get("question") or "")
+        question_value = body.get("question", "")
+        if not isinstance(question_value, str):
+            return JSONResponse({"error": "question must be a string"}, status_code=400)
+        question = question_value
         if not question.strip():
-            from starlette.responses import JSONResponse
-
             return JSONResponse({"error": "empty question"}, status_code=400)
-        k = int(body.get("k") or 7)
-        type_ = body.get("type") or None
-        history = body.get("history") or None
-        context = body.get("context") or None
+
+        k_value = body.get("k", 7)
+        if isinstance(k_value, bool) or not isinstance(k_value, int) or not 1 <= k_value <= 100:
+            return JSONResponse({"error": "k must be an integer from 1 to 100"}, status_code=400)
+        k = k_value
+
+        type_ = body.get("type")
+        if type_ is not None and not isinstance(type_, str):
+            return JSONResponse({"error": "type must be a string or null"}, status_code=400)
+        history = body.get("history")
+        if history is not None and (
+            not isinstance(history, list) or not all(isinstance(item, dict) for item in history)
+        ):
+            return JSONResponse(
+                {"error": "history must be an array of JSON objects or null"}, status_code=400
+            )
+        context = body.get("context")
+        if context is not None and not isinstance(context, dict):
+            return JSONResponse({"error": "context must be a JSON object or null"}, status_code=400)
 
         def _gen() -> Iterator[str]:
             try:
@@ -265,9 +298,18 @@ def build_server(memory: Memory | None = None, *, auth: Any | None = None) -> Fa
                     history=history,
                     context=context,
                 ):
+                    if isinstance(ev, dict) and ev.get("event") == "error":
+                        safe_ev: dict[str, Any] = {
+                            "event": "error",
+                            "message": "chat stream failed",
+                        }
+                        if isinstance(ev.get("answer_partial"), str):
+                            safe_ev["answer_partial"] = ev["answer_partial"]
+                        ev = safe_ev
                     yield f"data: {_json.dumps(ev, ensure_ascii=False)}\n\n"
-            except Exception as exc:  # never hang the client mid-stream
-                err = {"event": "error", "message": f"{type(exc).__name__}: {exc}"}
+            except Exception:  # never hang the client mid-stream
+                _log.exception("chat stream failed")
+                err = {"event": "error", "message": "chat stream failed"}
                 yield f"data: {_json.dumps(err, ensure_ascii=False)}\n\n"
 
         # Starlette drives the sync generator in a worker thread; the MLX
@@ -366,7 +408,7 @@ def main() -> None:
             transport=cast(Any, transport),
             host=host,
             port=port,
-            middleware=build_http_middleware(),
+            middleware=build_http_middleware(allow_no_auth=auth_cfg.allow_no_auth),
             **transport_options,
         )
     else:

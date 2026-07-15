@@ -133,8 +133,12 @@ class Memory(
             from memo.flags import flag_int as _flag_int
 
             self.embedder = make_embedder(cfg, cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"))
+        from memo.embedder_select import active_embedder_identity
+
         self.store = VecStore(
-            cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model
+            cfg.db_path,
+            dims=cfg.embedder_dims,
+            embedder_model=active_embedder_identity(cfg),
         )
         # History store — cheap to open (just sqlite); creating eagerly.
         # Audit failures never propagate to the caller — HistoryStore
@@ -178,7 +182,10 @@ class Memory(
         self._temporal: TemporalAnalyzer | None = None
         # Serialises unique-path allocation + .md creation in save() so two
         # concurrent same-title saves can't race the path probe (see write_ops).
-        self._save_path_lock = threading.Lock()
+        # Re-entrant because maintenance operations hold the shared data lock
+        # across a corpus transaction and may call helpers that take it again.
+        self._save_path_lock = threading.RLock()
+        self._data_lock_depth = 0
         # Write-generation counter; bumped by save/update/delete to bust the
         # RAG cache's corpus-version memo (see _corpus_version in ask_ops).
         self._write_gen = 0

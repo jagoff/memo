@@ -299,7 +299,13 @@ def ingest(
         return
 
     embedder = make_embedder(cfg)
-    store = VecStore(cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model)
+    from memo.embedder_select import active_embedder_identity
+
+    store = VecStore(
+        cfg.db_path,
+        dims=cfg.embedder_dims,
+        embedder_model=active_embedder_identity(cfg),
+    )
 
     skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0
     skipped_pdf_empty = pdf_added = orphan_added = orphan_skipped = 0

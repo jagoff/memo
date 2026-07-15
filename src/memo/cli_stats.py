@@ -25,6 +25,7 @@ def stats() -> None:
     try:
         cfg = mem.cfg
         state_dir = cfg.state_dir
+        embedder_identity = mem.store.embedder_model
 
         console.print(
             f"\n[bold cyan]memo stats — {datetime.now(UTC).strftime('%H:%M:%S')}[/bold cyan]"
@@ -50,7 +51,7 @@ def stats() -> None:
 
     console.print("\n[bold]🧠 Models[/bold]")
     console.print(f"  profile    {cfg.model_profile}")
-    console.print(f"  embedder  {cfg.embedder_model.split('/')[-1]}")
+    console.print(f"  embedder  {embedder_identity.split('/')[-1]}")
     console.print(f"  llm      {cfg.llm_model.split('/')[-1]}")
 
     console.print("\n[bold]⚡ Utility (last 7 days)[/bold]")

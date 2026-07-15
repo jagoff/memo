@@ -80,8 +80,12 @@ class RepoCorpus:
     ) -> None:
         self.cfg = cfg
         cfg.ensure_dirs()
+        from memo.embedder_select import active_embedder_identity
+
         self.store = store or VecStore(
-            cfg.db_path, dims=cfg.embedder_dims, embedder_model=cfg.embedder_model
+            cfg.db_path,
+            dims=cfg.embedder_dims,
+            embedder_model=active_embedder_identity(cfg),
         )
         # make_embedder picks MLX (Apple Silicon) or the CPU sentence-transformers
         # backend (Linux/Ubuntu) — never hard-construct MLXEmbedder here.

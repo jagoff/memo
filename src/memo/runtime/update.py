@@ -314,9 +314,13 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     # PyPI is skipped (these installs come from git+https://…/memo.git).
     if to_tag:
         from memo.flags import flag_str
-        from memo.runtime.autoupdate import DEFAULT_REPO
+        from memo.runtime.autoupdate import DEFAULT_REPO, tag_is_on_remote_master
 
         repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
+        if not tag_is_on_remote_master(repo, to_tag):
+            raise click.ClickException(
+                f"refusing untrusted tag {to_tag}: it is not reachable from remote master"
+            )
         spec = f"git+{repo}@{to_tag}"
         method = _detect_install_method()
         if method == "uv":
@@ -354,10 +358,20 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
 
     # Check git tags first — canonical for git-installed memo; also works for PyPI installs.
     from memo.flags import flag_str
-    from memo.runtime.autoupdate import DEFAULT_REPO, is_newer, latest_remote_tag
+    from memo.runtime.autoupdate import (
+        DEFAULT_REPO,
+        is_newer,
+        latest_remote_tag,
+        tag_is_on_remote_master,
+    )
 
     repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
     latest_tag = latest_remote_tag(repo)
+    if latest_tag is not None and not tag_is_on_remote_master(repo, latest_tag):
+        console.print(
+            f"[red]Refusing untrusted tag {latest_tag}:[/red] not reachable from remote master."
+        )
+        latest_tag = None
     if latest_tag is not None:
         console.print(f"[dim]latest tag:[/dim]           {latest_tag}")
         if not is_newer(latest_tag, current_version):

@@ -134,7 +134,7 @@ class MemoSynapseBackend:
             total = self.memory.store.count()
             available = True
             status = "ready"
-            detail = f"total={total} model={self.memory.cfg.embedder_model}"
+            detail = f"total={total} model={self.memory.store.embedder_model}"
         except Exception as exc:  # pragma: no cover - defensive
             available = False
             status = "unavailable"

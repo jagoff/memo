@@ -94,6 +94,56 @@ def test_episode_store_rejects_wrong_dims(tmp_path: Path) -> None:
             )
 
 
+def test_episode_store_migrates_model_and_dimensions_without_stale_watermarks(
+    tmp_path: Path,
+) -> None:
+    from memo.store.episode_store import EpisodeStore
+
+    db_path = tmp_path / "episodes.db"
+    with closing(EpisodeStore(db_path, _DIMS, embedder_model="vendor/old@rev-a")) as old:
+        old.upsert(
+            agent="claude",
+            session_id="old-session",
+            content_hash="unchanged-hash",
+            embedding=_unit(0),
+            cwd="/repo",
+            updated_at="2026-05-23T10:00:00Z",
+            summary="old vector space",
+            resume_command=[],
+            turn_count=1,
+        )
+
+    with closing(EpisodeStore(db_path, 5, embedder_model="vendor/new@rev-b")) as migrated:
+        assert migrated.count() == 0
+        assert migrated.content_hash_for("claude", "old-session") is None
+        ddl = migrated._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'episode_vec'"
+        ).fetchone()
+        assert ddl is not None and "FLOAT[5]" in str(ddl["sql"])
+        identity = {
+            str(row["key"]): str(row["value"])
+            for row in migrated._conn.execute(
+                "SELECT key, value FROM episode_schema_meta"
+            ).fetchall()
+        }
+        assert identity == {
+            "embedder_model": "vendor/new@rev-b",
+            "embedder_dims": "5",
+        }
+        migrated.upsert(
+            agent="claude",
+            session_id="new-session",
+            content_hash="new-hash",
+            embedding=[1.0, 0.0, 0.0, 0.0, 0.0],
+            cwd="/repo",
+            updated_at="2026-05-24T10:00:00Z",
+            summary="new vector space",
+            resume_command=[],
+            turn_count=1,
+        )
+        assert migrated.count() == 1
+
+
 # ── indexer: prompt_arc + index_candidate skip ────────────────────────────────
 
 
@@ -304,11 +354,26 @@ def test_cli_episodes_index_backfills(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_cli_episodes_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import memo.embedder_client as ec
     from memo.cli import cli
+    from memo.config import Config
+    from memo.embedder_select import active_embedder_identity
     from memo.store.episode_store import EpisodeStore
 
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    with closing(EpisodeStore(state_dir / "episodes.db", _DIMS)) as store:
+    cfg = Config(
+        state_dir=state_dir,
+        data_dir=tmp_path / "data",
+        embedder_backend="mlx",
+        embedder_model="vendor/test-embedder",
+        embedder_dims=_DIMS,
+    )
+    with closing(
+        EpisodeStore(
+            state_dir / "episodes.db",
+            _DIMS,
+            embedder_model=active_embedder_identity(cfg),
+        )
+    ) as store:
         for i, sid in enumerate(("alpha", "beta")):
             store.upsert(
                 agent="claude",
@@ -326,6 +391,8 @@ def test_cli_episodes_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     env = {
         "MEMO_STATE_DIR": str(state_dir),
         "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_EMBEDDER_BACKEND": "mlx",
+        "MEMO_EMBEDDER_MODEL": "vendor/test-embedder",
         "MEMO_EMBEDDER_DIMS": str(_DIMS),
         "MEMO_NONINTERACTIVE": "1",
     }

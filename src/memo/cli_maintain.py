@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -41,6 +42,7 @@ from memo.flags import flag_bool, flag_int
 from memo.util import safe_operation
 
 _log = logging.getLogger(__name__)
+_RUN_STAMP_RE = re.compile(r"\d{1,20}(?:-\d{1,20}-\d{1,30})?\Z")
 
 
 def _state_path(cfg: Config):
@@ -722,7 +724,14 @@ def maintain_undo_cmd(run_stamp: str | None, dry_run: bool, as_json: bool) -> No
     """
     cfg = Config.from_env()
     d = _state_path(cfg)
-    receipt_path = (d / "runs" / f"{run_stamp}.json") if run_stamp else (d / "last.json")
+    if run_stamp is not None and not _RUN_STAMP_RE.fullmatch(run_stamp):
+        raise click.ClickException("Invalid receipt stamp.")
+    receipt_root = (d / "runs") if run_stamp else d
+    receipt_path = (
+        receipt_root / f"{run_stamp}.json" if run_stamp is not None else receipt_root / "last.json"
+    )
+    if receipt_path.is_symlink() or receipt_path.resolve().parent != receipt_root.resolve():
+        raise click.ClickException("Invalid receipt path.")
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:

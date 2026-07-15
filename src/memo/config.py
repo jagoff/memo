@@ -282,6 +282,14 @@ class Config(BaseModel):
             "Used on Linux/Ubuntu and Intel macs."
         ),
     )
+    st_embedder_revision: str | None = Field(
+        default=None,
+        description=(
+            "Optional Hugging Face commit hash or revision for the CPU "
+            "sentence-transformers embedder. Set via MEMO_ST_EMBEDDER_REVISION "
+            "to make offline/container model loading reproducible."
+        ),
+    )
 
     # ── Reranker ─────────────────────────────────────────────────────────
     # Cross-encoder applied AFTER hybrid retrieval when enabled. Lifts
@@ -573,6 +581,7 @@ class Config(BaseModel):
             "MEMO_EMBEDDER_DIMS": "embedder_dims",
             "MEMO_EMBEDDER_BACKEND": "embedder_backend",
             "MEMO_ST_EMBEDDER_MODEL": "st_embedder_model",
+            "MEMO_ST_EMBEDDER_REVISION": "st_embedder_revision",
             "MEMO_MAX_CONTENT_CHARS": "max_content_chars",
             "MEMO_SEARCH_DEFAULT_LIMIT": "search_default_limit",
             "MEMO_RERANKER_ENABLED": "reranker_enabled",
@@ -712,6 +721,12 @@ class Config(BaseModel):
         ):
             try:
                 path.mkdir(parents=True, exist_ok=True)
+                if attr == "state_dir":
+                    # The SQLite index contains full memory bodies (FTS),
+                    # operational logs, and optionally encrypted secret rows.
+                    # A normal 022 umask would otherwise leave it traversable
+                    # by other local users and expose daemon sockets as well.
+                    path.chmod(0o700)
             except OSError as exc:
                 raise RuntimeError(
                     f"memo: cannot create {attr} at {path}: {exc}\n"

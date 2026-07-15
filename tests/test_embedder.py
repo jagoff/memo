@@ -9,6 +9,10 @@ model — so we can stub ``.embed`` and exercise ``embed_query`` without MLX.
 
 from __future__ import annotations
 
+import sys
+import types
+from contextlib import contextmanager
+
 import pytest
 
 from memo.embedder import (
@@ -158,3 +162,22 @@ def test_unload_is_idempotent_without_mlx():
     emb.unload()
     emb.unload()  # no model loaded, no MLX → must not raise
     assert emb._model is None
+
+
+def test_unload_cold_embedder_does_not_wait_for_gpu(monkeypatch):
+    """Closing a never-loaded embedder must not contend on the machine GPU lock."""
+    fake_core = types.ModuleType("mlx.core")
+    fake_core.clear_cache = lambda: None  # type: ignore[attr-defined]
+    fake_mlx = types.ModuleType("mlx")
+    fake_mlx.core = fake_core  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_core)
+
+    @contextmanager
+    def unexpected_gpu_guard():
+        raise AssertionError("a cold embedder must not acquire the GPU lock")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("memo.embedder.gpu_guard", unexpected_gpu_guard)
+
+    MLXEmbedder(expected_dims=4).unload()

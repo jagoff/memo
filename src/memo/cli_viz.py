@@ -2,7 +2,7 @@
 
 Extracted from cli.py (3a/2b god-module decomposition). Registered onto the
 root group in cli.py via `cli.add_command(map_cmd)`. Self-contained: reads
-embeddings straight from sqlite-vec (no MLX load) and renders a Plotly HTML.
+embeddings straight from sqlite-vec (no MLX load) and renders local Canvas HTML.
 """
 
 from __future__ import annotations
@@ -11,6 +11,21 @@ import click
 
 from memo.cli_common import console
 from memo.config import Config
+from memo.html_security import (
+    content_security_policy,
+    html_safe_json,
+    new_csp_nonce,
+)
+
+
+def _render_map_html(data: dict[str, object], *, nonce: str | None = None) -> str:
+    """Render corpus data without allowing it to escape into executable HTML."""
+    nonce = nonce or new_csp_nonce()
+    return (
+        _MAPA_HTML_TEMPLATE.replace("__DATA_JSON__", html_safe_json(data, ensure_ascii=True))
+        .replace("__CSP_NONCE__", nonce)
+        .replace("__CSP_POLICY__", content_security_policy(nonce, allow_local_fetch=False))
+    )
 
 
 @click.command(name="map")
@@ -42,7 +57,7 @@ def map_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -
 
     Projects all memory embeddings (stored in memvec.db) to 2D space using
     UMAP when available, falling back to PCA via numpy. Renders a
-    self-contained HTML file with Plotly — hover for preview, click to copy ID.
+    self-contained HTML file — hover for preview, click to copy ID.
 
     Requirements:
       Mandatory: numpy (already a transitive dep via mlx/scipy)
@@ -208,8 +223,7 @@ def map_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -
     out_path = _Path(output) if output else cfg.state_dir / "map.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Encode data as JSON to embed in the HTML script block
-    data_json = _json.dumps(
+    html = _render_map_html(
         {
             "xs": xs,
             "ys": ys,
@@ -223,11 +237,8 @@ def map_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -
             "method": method_name,
             "n": n_pts,
             "type_colors": TYPE_COLORS,
-        },
-        ensure_ascii=True,
+        }
     )
-
-    html = _MAPA_HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
     out_path.write_text(html, encoding="utf-8")
 
     console.print(f"[green]✓[/green] Map saved → [bold]{out_path}[/bold]")
@@ -245,7 +256,8 @@ _MAPA_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <title>The Map — memo</title>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="__CSP_POLICY__">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #0f172a; color: #e2e8f0; font-family: ui-monospace, 'Cascadia Code', monospace; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
@@ -254,7 +266,15 @@ _MAPA_HTML_TEMPLATE = r"""<!DOCTYPE html>
   #header .meta { font-size: 0.75rem; color: #64748b; }
   #search-box { margin-left: auto; background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 4px 12px; border-radius: 6px; font-size: 0.8rem; outline: none; width: 220px; }
   #search-box:focus { border-color: #4f8ef7; }
-  #plot { flex: 1; width: 100%; }
+  #plot { flex: 1; width: 100%; position: relative; min-height: 0; }
+  #plot-canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #plot-tooltip { position: absolute; display: none; pointer-events: none; z-index: 5;
+    max-width: 280px; padding: 7px 9px; border: 1px solid #334155; border-radius: 6px;
+    background: #1e293b; color: #e2e8f0; white-space: pre-line; font-size: 0.73rem; }
+  #timeline-wrap { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+    display: none; width: min(640px, 72vw); padding: 8px 12px; border: 1px solid #334155;
+    border-radius: 8px; background: rgba(30,41,59,.94); color: #94a3b8; font-size: .7rem; }
+  #timeline { width: 100%; accent-color: #4f8ef7; }
   #sidebar { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; background: #1e293b; border-left: 1px solid #334155; padding: 20px; transform: translateX(100%); transition: transform 0.2s ease; overflow-y: auto; z-index: 10; }
   #sidebar.open { transform: translateX(0); }
   #sidebar-close { float: right; cursor: pointer; color: #64748b; font-size: 1.2rem; line-height: 1; margin-bottom: 16px; }
@@ -280,105 +300,104 @@ _MAPA_HTML_TEMPLATE = r"""<!DOCTYPE html>
   <span class="meta" id="meta-label"></span>
   <input id="search-box" type="search" placeholder="Filter memories…" />
 </div>
-<div id="plot"></div>
+<div id="plot">
+  <canvas id="plot-canvas"></canvas>
+  <div id="plot-tooltip"></div>
+  <label id="timeline-wrap"><span id="timeline-label"></span><input id="timeline" type="range" min="0" step="1" /></label>
+</div>
 <div id="sidebar">
-  <span id="sidebar-close" onclick="closeSidebar()">✕</span>
+  <span id="sidebar-close">✕</span>
   <h2>Memory</h2>
   <div id="sidebar-title"></div>
   <div id="sidebar-meta"></div>
-  <div id="sidebar-id" onclick="copyId()" title="Click to copy ID"></div>
+  <div id="sidebar-id" title="Click to copy ID"></div>
   <div id="sidebar-tags"></div>
 </div>
 <div id="legend"><h3>Types</h3><div id="legend-items"></div></div>
 <div id="toast">ID copied</div>
 
-<script>
+<script nonce="__CSP_NONCE__">
 const DATA = __DATA_JSON__;
 let currentId = null;
+let screenPoints = [];
+let query = '';
+let cutoff = null;
+const plot = document.getElementById('plot');
+const canvas = document.getElementById('plot-canvas');
+const tooltip = document.getElementById('plot-tooltip');
+const ctx = canvas.getContext('2d');
 
 // Build legend
 const li = document.getElementById('legend-items');
 Object.entries(DATA.type_colors).forEach(([type, color]) => {
   const item = document.createElement('div');
   item.className = 'legend-item';
-  item.innerHTML = `<div class="legend-dot" style="background:${color}"></div><span>${type}</span>`;
+  const dot = document.createElement('span');
+  dot.className = 'legend-dot';
+  dot.style.backgroundColor = color;
+  const label = document.createElement('span');
+  label.textContent = type;
+  item.append(dot, label);
   li.appendChild(item);
 });
 document.getElementById('meta-label').textContent =
   `${DATA.n} memories · ${DATA.method}`;
 
-// Point colours from type
-const colors = DATA.types.map(t => DATA.type_colors[t] || '#94a3b8');
+const matches = i => !query || [DATA.titles[i], DATA.tags[i], DATA.types[i]]
+  .some(value => String(value || '').toLowerCase().includes(query));
+const isVisible = i => cutoff === null || String(DATA.created[i] || '') <= cutoff;
 
-const hovertext = DATA.ids.map((id, i) =>
-  `<b>${DATA.titles[i]}</b><br><span style="color:#94a3b8">${DATA.types[i]}</span>`
-  + (DATA.tags[i] ? `<br><span style="color:#64748b">${DATA.tags[i]}</span>` : '')
-  + `<br><span style="color:#475569">${DATA.created[i]}</span>`
-);
+function drawPlot() {
+  const box = plot.getBoundingClientRect();
+  const width = Math.max(1, box.width);
+  const height = Math.max(1, box.height);
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
 
-const trace = {
-  x: DATA.xs, y: DATA.ys,
-  mode: 'markers',
-  type: 'scatter',
-  marker: {
-    size: 8, color: colors, opacity: 0.85,
-    line: { width: 0.5, color: '#1e293b' }
-  },
-  text: hovertext,
-  hovertemplate: '%{text}<extra></extra>',
-  customdata: DATA.ids,
-};
+  const indices = DATA.xs.map((_, i) => i).filter(isVisible);
+  if (!indices.length) { screenPoints = []; return; }
+  const xs = indices.map(i => Number(DATA.xs[i]) || 0);
+  const ys = indices.map(i => Number(DATA.ys[i]) || 0);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const spanX = maxX - minX || 1, spanY = maxY - minY || 1;
+  const pad = 28;
 
-const layout = {
-  paper_bgcolor: '#0f172a',
-  plot_bgcolor: '#0f172a',
-  xaxis: { visible: false, zeroline: false },
-  yaxis: { visible: false, zeroline: false },
-  margin: { t: 10, l: 10, r: 10, b: 10 },
-  hovermode: 'closest',
-  hoverlabel: {
-    bgcolor: '#1e293b', bordercolor: '#334155',
-    font: { family: 'ui-monospace', size: 12, color: '#e2e8f0' }
-  },
-};
-
-let frames = [];
-let sliders = [];
-if (DATA.frames && DATA.frames.length > 1) {
-  frames = DATA.frames.map(f => ({
-    name: f.name,
-    data: [{
-      x: f.x, y: f.y,
-      text: f.ids.map((id, i) =>
-        `<b>${f.titles[i]}</b><br><span style="color:#94a3b8">${f.types[i]}</span>`
-      ),
-      marker: { color: f.types.map(t => DATA.type_colors[t] || '#94a3b8') },
-      customdata: f.ids,
-    }]
+  screenPoints = indices.map(i => ({
+    i,
+    x: pad + ((Number(DATA.xs[i]) - minX) / spanX) * Math.max(1, width - pad * 2),
+    y: height - pad - ((Number(DATA.ys[i]) - minY) / spanY) * Math.max(1, height - pad * 2),
+    active: matches(i),
   }));
-  sliders = [{
-    active: frames.length - 1,
-    steps: DATA.frames.map((f, i) => ({
-      label: f.name, method: 'animate',
-      args: [[f.name], { mode: 'immediate', frame: { duration: 0 }, transition: { duration: 0 } }],
-    })),
-    x: 0.05, y: 0, xanchor: 'left', yanchor: 'top',
-    len: 0.9,
-    bgcolor: '#1e293b', bordercolor: '#334155',
-    font: { color: '#64748b', size: 10 },
-    currentvalue: { prefix: 'Up to: ', font: { color: '#94a3b8', size: 11 }, xanchor: 'center' },
-  }];
-  layout.sliders = sliders;
+  for (const point of screenPoints) {
+    ctx.globalAlpha = point.active ? 0.88 : 0.08;
+    ctx.fillStyle = DATA.type_colors[DATA.types[point.i]] || '#94a3b8';
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, point.active ? 4.5 : 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 }
 
-Plotly.newPlot('plot', [trace], layout, { responsive: true, displayModeBar: false })
-  .then(gd => {
-    if (frames.length > 1) Plotly.addFrames(gd, frames);
-  });
+function pointAt(event) {
+  const box = canvas.getBoundingClientRect();
+  const x = event.clientX - box.left, y = event.clientY - box.top;
+  let best = null, bestDistance = 11;
+  for (const point of screenPoints) {
+    if (!point.active) continue;
+    const distance = Math.hypot(point.x - x, point.y - y);
+    if (distance < bestDistance) { best = point; bestDistance = distance; }
+  }
+  return best;
+}
 
-document.getElementById('plot').on('plotly_click', function(data) {
-  const pt = data.points[0];
-  const idx = pt.pointIndex;
+function openSidebar(idx) {
   currentId = DATA.ids[idx];
   document.getElementById('sidebar-title').textContent = DATA.titles[idx];
   document.getElementById('sidebar-meta').textContent =
@@ -393,34 +412,82 @@ document.getElementById('plot').on('plotly_click', function(data) {
     tagsEl.appendChild(chip);
   });
   document.getElementById('sidebar').classList.add('open');
-});
+}
 
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('open');
 }
 
-function copyId() {
+async function copyId() {
   if (!currentId) return;
-  navigator.clipboard.writeText(currentId).then(() => {
+  let copied = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(currentId);
+      copied = true;
+    }
+  } catch (_) {
+    copied = false;
+  }
+  if (!copied) {
+    const fallback = document.createElement('textarea');
+    fallback.value = currentId;
+    fallback.setAttribute('readonly', '');
+    fallback.style.position = 'fixed';
+    fallback.style.opacity = '0';
+    document.body.appendChild(fallback);
+    fallback.select();
+    copied = document.execCommand('copy');
+    fallback.remove();
+  }
+  if (copied) {
     const t = document.getElementById('toast');
     t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 1800);
-  });
+  }
 }
 
-// Search filter
-document.getElementById('search-box').addEventListener('input', function() {
-  const q = this.value.toLowerCase().trim();
-  if (!q) {
-    Plotly.restyle('plot', { 'marker.opacity': [0.85] });
-    return;
-  }
-  const opacities = DATA.titles.map((title, i) =>
-    title.toLowerCase().includes(q) || DATA.tags[i].toLowerCase().includes(q) ||
-    DATA.types[i].toLowerCase().includes(q) ? 0.9 : 0.08
-  );
-  Plotly.restyle('plot', { 'marker.opacity': [opacities] });
+canvas.addEventListener('mousemove', event => {
+  const point = pointAt(event);
+  if (!point) { tooltip.style.display = 'none'; return; }
+  const i = point.i;
+  tooltip.textContent = `${DATA.titles[i]}\n${DATA.types[i]}`
+    + (DATA.tags[i] ? `\n${DATA.tags[i]}` : '') + `\n${DATA.created[i]}`;
+  tooltip.style.display = 'block';
+  tooltip.style.left = Math.max(8, Math.min(event.offsetX + 12, plot.clientWidth - 292)) + 'px';
+  tooltip.style.top = Math.max(8, event.offsetY - 28) + 'px';
 });
+canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+canvas.addEventListener('click', event => {
+  const point = pointAt(event);
+  if (point) openSidebar(point.i);
+});
+document.getElementById('sidebar-close').addEventListener('click', closeSidebar);
+document.getElementById('sidebar-id').addEventListener('click', copyId);
+
+document.getElementById('search-box').addEventListener('input', function() {
+  query = this.value.toLowerCase().trim();
+  drawPlot();
+});
+
+if (DATA.frames && DATA.frames.length > 1) {
+  const slider = document.getElementById('timeline');
+  const wrap = document.getElementById('timeline-wrap');
+  const label = document.getElementById('timeline-label');
+  slider.max = String(DATA.frames.length - 1);
+  slider.value = slider.max;
+  wrap.style.display = 'block';
+  const selectFrame = () => {
+    cutoff = DATA.frames[Number(slider.value)].name;
+    label.textContent = `Up to: ${cutoff}`;
+    drawPlot();
+  };
+  slider.addEventListener('input', selectFrame);
+  selectFrame();
+} else {
+  drawPlot();
+}
+window.addEventListener('resize', drawPlot);
 </script>
 </body>
 </html>"""

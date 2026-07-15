@@ -82,6 +82,7 @@ def test_self_update_proceeds_for_isolated_install(monkeypatch):
     to a newer tag."""
     monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
     monkeypatch.setattr("memo.runtime.autoupdate.latest_remote_tag", lambda *a, **k: "v999.0.0")
+    monkeypatch.setattr("memo.runtime.autoupdate.tag_is_on_remote_master", lambda *a, **k: True)
     monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
     monkeypatch.setattr(upd, "_find_uv", lambda: "uv")
     monkeypatch.setattr(upd, "_clear_update_notify", lambda: None)
@@ -222,6 +223,7 @@ def test_self_update_to_tag_notifies_codex_after_success(monkeypatch):
     monkeypatch.setattr(upd, "_clear_update_notify", lambda: None)
     monkeypatch.setattr(upd, "_refresh_agent_artifacts", lambda: False)
     monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
+    monkeypatch.setattr("memo.runtime.autoupdate.tag_is_on_remote_master", lambda *a, **k: True)
     notified: list[bool] = []
     monkeypatch.setattr(
         upd, "_notify_codex_plugin_updated", lambda: notified.append(True), raising=False

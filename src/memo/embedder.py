@@ -380,10 +380,13 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
     def unload(self) -> None:  # type: ignore[no-redef]
         """Drop the model + tokenizer + query cache; clear the MLX cache. Idempotent."""
         with self._load_lock:
+            was_loaded = self._model is not None or self._tokenizer is not None
             self._model = None
             self._tokenizer = None
             if self._query_cache is not None:
                 self._query_cache = None
+            if not was_loaded:
+                return
             try:
                 import mlx.core as mx
 

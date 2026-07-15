@@ -11,6 +11,8 @@ import datetime
 import json
 import os
 import re
+import stat
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +21,12 @@ import click
 
 from memo.cli_common import console
 from memo.flags import flag_str
-from memo.release_mcpb import MCPB_MEMBERS, build_mcpb
+from memo.release_mcpb import (
+    MCPB_MEMBERS,
+    MCPB_NODE_MEMBERS,
+    build_mcpb,
+    build_mcpb_node,
+)
 
 # src/memo/cli_release.py -> repo root when running from a source checkout.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -235,17 +242,24 @@ def _check_mcpb_manifest(
         issues.append(f"{key} server.mcp_config.args must be a list")
         return
 
+    dependency_found = False
     for arg in args:
         if not isinstance(arg, str):
             continue
-        match = re.fullmatch(r"mlx-memo(?:==|>=)([^,\s]+)", arg)
+        match = re.fullmatch(r"mlx-memo(==|>=)([^,\s]+)", arg)
         if match is None:
             continue
+        dependency_found = True
         package_key = f"{key} mlx-memo"
-        package_version = match.group(1)
+        operator = match.group(1)
+        package_version = match.group(2)
         versions[package_key] = package_version
+        if operator != "==":
+            issues.append(f"{package_key} must use exact mlx-memo=={expected}")
         if package_version != expected:
             issues.append(f"{package_key} version {package_version!r} != pyproject {expected!r}")
+    if not dependency_found:
+        issues.append(f"{key} must include an exact mlx-memo=={expected} dependency")
 
 
 def _check_mcpb_node_manifest(
@@ -271,9 +285,17 @@ def _check_mcpb_node_manifest(
 
 
 def _check_mcpb_archive(
-    repo: Path, *, expected: str, versions: dict[str, str], issues: list[str]
+    repo: Path,
+    *,
+    expected: str,
+    versions: dict[str, str],
+    issues: list[str],
+    archive_name: str = "memo.mcpb",
+    source_dir_name: str = "mcpb",
+    members: tuple[str, ...] = MCPB_MEMBERS,
+    fallback_source_dir_name: str | None = None,
 ) -> None:
-    archive_path = repo / "packaging" / "memo.mcpb"
+    archive_path = repo / "packaging" / archive_name
     key = archive_path.relative_to(repo).as_posix()
     if not archive_path.is_file():
         issues.append(f"{key} is missing; run `memo release mcpb`")
@@ -282,7 +304,7 @@ def _check_mcpb_archive(
     try:
         with zipfile.ZipFile(archive_path) as archive:
             names = tuple(sorted(archive.namelist()))
-            expected_names = tuple(sorted(MCPB_MEMBERS))
+            expected_names = tuple(sorted(members))
             if names != expected_names:
                 missing = sorted(set(expected_names) - set(names))
                 unexpected = sorted(set(names) - set(expected_names))
@@ -292,7 +314,7 @@ def _check_mcpb_archive(
                     issues.append(f"{key} has unexpected member(s): {', '.join(unexpected)}")
 
             archived: dict[str, bytes] = {}
-            for member in MCPB_MEMBERS:
+            for member in members:
                 try:
                     archived[member] = archive.read(member)
                 except KeyError:
@@ -318,16 +340,22 @@ def _check_mcpb_archive(
                         f"{key} manifest.json version {found!r} != pyproject {expected!r}"
                     )
 
-    source_dir = repo / "packaging" / "mcpb"
+    source_dir = repo / "packaging" / source_dir_name
+    fallback_source_dir = (
+        repo / "packaging" / fallback_source_dir_name if fallback_source_dir_name else None
+    )
     for member, archived_bytes in archived.items():
         source_path = source_dir / member
+        if not source_path.exists() and fallback_source_dir is not None:
+            source_path = fallback_source_dir / member
         try:
             source_bytes = source_path.read_bytes()
         except OSError as exc:
             issues.append(f"could not read {source_path.relative_to(repo)}: {exc}")
             continue
         if archived_bytes != source_bytes:
-            issues.append(f"{key} member {member} differs from packaging/mcpb/{member}")
+            source_key = source_path.relative_to(repo).as_posix()
+            issues.append(f"{key} member {member} differs from {source_key}")
 
 
 def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseCheckReport:
@@ -374,6 +402,17 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
     _check_mcpb_manifest(repo, expected=version, versions=versions, issues=issues)
     _check_mcpb_node_manifest(repo, expected=version, versions=versions, issues=issues)
     _check_mcpb_archive(repo, expected=version, versions=versions, issues=issues)
+    if (repo / "packaging" / "mcpb-node" / "manifest.json").exists():
+        _check_mcpb_archive(
+            repo,
+            expected=version,
+            versions=versions,
+            issues=issues,
+            archive_name="memo-node.mcpb",
+            source_dir_name="mcpb-node",
+            members=MCPB_NODE_MEMBERS,
+            fallback_source_dir_name="mcpb",
+        )
 
     changelog = repo / "CHANGELOG.md"
     try:
@@ -433,22 +472,46 @@ def _replace_target_version(text: str, target: VersionTarget, version: str) -> s
 
 
 def _atomic_write_all(edits: dict[Path, str]) -> None:
-    """Write every file atomically. Stage all contents to sibling ``*.tmp``
-    files first, so a failure while staging touches no real file; then
-    ``os.replace`` each temp into place (each replace is atomic on POSIX).
-    Cleans up staged temps if staging fails."""
+    """Write every file atomically through private, unpredictable siblings."""
     staged: dict[Path, Path] = {}
     try:
         for path, content in edits.items():
-            tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(content, encoding="utf-8")
+            if path.is_symlink():
+                raise ValueError(f"release target must be a regular file: {path}")
+            if path.exists():
+                metadata = path.lstat()
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise ValueError(f"release target must be a regular file: {path}")
+                mode = stat.S_IMODE(metadata.st_mode)
+            else:
+                mode = 0o644
+            descriptor, temporary_name = tempfile.mkstemp(
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+            )
+            tmp = Path(temporary_name)
             staged[path] = tmp
-    except OSError:
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    descriptor = -1
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(tmp, mode)
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+    except BaseException:
         for tmp in staged.values():
             tmp.unlink(missing_ok=True)
         raise
-    for path, tmp in staged.items():
-        os.replace(tmp, path)
+    try:
+        for path, tmp in staged.items():
+            os.replace(tmp, path)
+    finally:
+        for tmp in staged.values():
+            tmp.unlink(missing_ok=True)
 
 
 def plan_release_edits(repo: Path, old: str, new: str, date: str) -> dict[Path, str]:
@@ -554,14 +617,21 @@ def release_sync(dry_run: bool) -> None:
     default=None,
     help="Archive destination; defaults to packaging/memo.mcpb.",
 )
-def release_mcpb(output: Path | None) -> None:
-    """Build the deterministic MCPB archive from its source directory."""
+@click.option(
+    "--node-output",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Node archive destination; defaults to packaging/memo-node.mcpb.",
+)
+def release_mcpb(output: Path | None, node_output: Path | None) -> None:
+    """Build both deterministic MCPB archives from their source directories."""
     repo = _resolve_repo()
     try:
-        destination = build_mcpb(repo, output)
+        destinations = (build_mcpb(repo, output), build_mcpb_node(repo, node_output))
     except OSError as exc:
         raise click.ClickException(f"could not build MCPB: {exc}") from exc
-    console.print(f"[green]✓[/green] built {destination}")
+    for destination in destinations:
+        console.print(f"[green]✓[/green] built {destination}")
 
 
 @release_group.command(name="check")

@@ -168,6 +168,17 @@ def test_embed_query_op_acquires_at_priority_zero() -> None:
     assert lock.calls[0]["timeout"] == 60.0
 
 
+def test_embed_query_prefers_store_model_identity_over_config() -> None:
+    """Wire responses expose the exact identity that owns stored vectors."""
+    lock = _RecordingLock()
+    server = _server(lock)
+    server._mem.store = SimpleNamespace(embedder_model="stub/exact@revision")
+
+    out = _serve(server, {"op": "embed_query", "text": "hola"})
+
+    assert json.loads(out)["model"] == "stub/exact@revision"
+
+
 def test_search_op_acquires_at_priority_zero(tmp_path) -> None:
     lock = _RecordingLock()
     out = _serve(_server(lock, state_dir=tmp_path), {"op": "search", "prompt": "hola"})

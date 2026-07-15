@@ -15,6 +15,7 @@ from memo.cli_release import (
     release_check_report,
     release_group,
 )
+from memo.release_mcpb import build_mcpb
 
 
 def test_bump_version_levels() -> None:
@@ -48,7 +49,7 @@ def _fake_repo(root: Path, version: str) -> Path:
     (root / "packaging" / "mcpb" / "manifest.json").write_text(
         f'{{\n  "manifest_version": "0.3",\n  "version": "{version}",\n'
         f'  "server": {{\n    "mcp_config": {{\n'
-        f'      "args": ["--from", "mlx-memo>={version}", "memo-mcp"]\n'
+        f'      "args": ["--from", "mlx-memo=={version}", "memo-mcp"]\n'
         f"    }}\n  }}\n}}\n",
         encoding="utf-8",
     )
@@ -56,6 +57,10 @@ def _fake_repo(root: Path, version: str) -> Path:
     (root / "packaging" / "mcpb-node" / "manifest.json").write_text(
         f'{{\n  "manifest_version": "0.3",\n  "version": "{version}",\n'
         f'  "server": {{\n    "type": "node",\n    "entry_point": "bootstrap.js"\n  }}\n}}\n',
+        encoding="utf-8",
+    )
+    (root / "packaging" / "mcpb-node" / "bootstrap.js").write_text(
+        "// test bootstrap\n",
         encoding="utf-8",
     )
     (root / "packaging" / "mcpb" / "icon.png").write_bytes(b"fake-icon")
@@ -67,6 +72,10 @@ def _fake_repo(root: Path, version: str) -> Path:
     with zipfile.ZipFile(root / "packaging" / "memo.mcpb", "w") as archive:
         for member in ("icon.png", "manifest.json", "server/main.py"):
             archive.write(root / "packaging" / "mcpb" / member, arcname=member)
+    with zipfile.ZipFile(root / "packaging" / "memo-node.mcpb", "w") as archive:
+        archive.write(root / "packaging" / "mcpb" / "icon.png", arcname="icon.png")
+        for member in ("manifest.json", "bootstrap.js"):
+            archive.write(root / "packaging" / "mcpb-node" / member, arcname=member)
     (root / "CHANGELOG.md").write_text(
         f"# Changelog\n\n## [Unreleased]\n\n## [{version}] - 2026-01-01\n\n- prior\n",
         encoding="utf-8",
@@ -90,6 +99,76 @@ def test_release_mcpb_build_is_reproducible(
     assert first_hash == second_hash
 
 
+def test_release_mcpb_builds_python_and_node_archives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "packaging" / "memo.mcpb").unlink()
+    (repo / "packaging" / "memo-node.mcpb").unlink()
+    monkeypatch.setenv("MEMO_DEV_REPO", str(repo))
+
+    result = CliRunner().invoke(release_group, ["mcpb"])
+
+    assert result.exit_code == 0, result.output
+    assert (repo / "packaging" / "memo.mcpb").is_file()
+    assert (repo / "packaging" / "memo-node.mcpb").is_file()
+    assert "memo.mcpb" in result.output
+    assert "memo-node.mcpb" in result.output
+
+
+def test_release_mcpb_ignores_predictable_temporary_symlink(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    destination = repo / "packaging" / "memo.mcpb"
+    destination.unlink()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not overwrite", encoding="utf-8")
+    destination.with_name(f"{destination.name}.tmp").symlink_to(victim)
+
+    build_mcpb(repo, destination)
+
+    assert victim.read_text(encoding="utf-8") == "do not overwrite"
+    assert destination.is_file()
+    assert not destination.is_symlink()
+
+
+def test_release_mcpb_rejects_symlinked_source_member(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    source = repo / "packaging" / "mcpb" / "server" / "main.py"
+    outside = tmp_path / "outside.py"
+    outside.write_text("raise SystemExit(9)\n", encoding="utf-8")
+    source.unlink()
+    source.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="symlink"):
+        build_mcpb(repo)
+
+
+def test_atomic_write_all_ignores_predictable_temporary_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "pyproject.toml"
+    target.write_text("old", encoding="utf-8")
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not overwrite", encoding="utf-8")
+    target.with_name(f"{target.name}.tmp").symlink_to(victim)
+
+    _atomic_write_all({target: "new"})
+
+    assert victim.read_text(encoding="utf-8") == "do not overwrite"
+    assert target.read_text(encoding="utf-8") == "new"
+    assert not target.is_symlink()
+
+
+def test_atomic_write_all_rejects_symlinked_target(tmp_path: Path) -> None:
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not overwrite", encoding="utf-8")
+    target = tmp_path / "pyproject.toml"
+    target.symlink_to(victim)
+
+    with pytest.raises(ValueError, match="regular file"):
+        _atomic_write_all({target: "new"})
+
+    assert victim.read_text(encoding="utf-8") == "do not overwrite"
+
+
 def test_release_check_report_rejects_archived_member_drift(tmp_path: Path) -> None:
     repo = _fake_repo(tmp_path, "1.2.3")
     (repo / "packaging" / "mcpb" / "server" / "main.py").write_text(
@@ -103,13 +182,28 @@ def test_release_check_report_rejects_archived_member_drift(tmp_path: Path) -> N
     assert any("server/main.py" in issue for issue in report.issues)
 
 
+def test_release_check_report_rejects_node_archived_member_drift(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "packaging" / "mcpb-node" / "manifest.json").write_text(
+        '{"manifest_version":"0.3","version":"1.2.4"}\n',
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any(
+        "packaging/memo-node.mcpb" in issue and "manifest.json" in issue for issue in report.issues
+    )
+
+
 def test_plan_release_edits_bumps_mcpb_manifest(tmp_path: Path) -> None:
     repo = _fake_repo(tmp_path, "1.2.3")
     edits = plan_release_edits(repo, "1.2.3", "1.2.4", "2026-06-25")
 
     manifest = edits[repo / "packaging" / "mcpb" / "manifest.json"]
     assert '"version": "1.2.4"' in manifest
-    assert "mlx-memo>=1.2.4" in manifest
+    assert "mlx-memo==1.2.4" in manifest
     # manifest_version is a schema version, not a release version.
     assert '"manifest_version": "0.3"' in manifest
 
@@ -315,6 +409,20 @@ def test_release_check_report_rejects_mcpb_manifest_drift(tmp_path: Path) -> Non
 
     assert report.ok is False
     assert any("packaging/mcpb/manifest.json" in issue for issue in report.issues)
+
+
+def test_release_check_report_rejects_non_exact_mcpb_dependency(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    manifest = repo / "packaging" / "mcpb" / "manifest.json"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace("mlx-memo==1.2.3", "mlx-memo>=1.2.3"),
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any("exact mlx-memo==" in issue for issue in report.issues)
 
 
 def test_release_check_report_rejects_changelog_todo(tmp_path: Path) -> None:

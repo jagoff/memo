@@ -27,6 +27,7 @@ _FM_TYPE_RE = re.compile(r"^type:\s*(\S+)", re.MULTILINE)
 _FM_TITLE_RE = re.compile(r"^title:\s*(.+)$", re.MULTILINE)
 _DATE_KEYS = ("created:", "created_at:", "updated:", "date:")
 _RECEIPT_KEYS = ("superseded", "merged", "archived_stale", "synthesized")
+_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 
 
 def chronicle_dir(cfg: Any) -> Path:
@@ -35,6 +36,14 @@ def chronicle_dir(cfg: Any) -> Path:
 
 
 def chronicle_path(cfg: Any, day: str) -> Path:
+    if not _DAY_RE.fullmatch(day):
+        raise ValueError("day must use canonical YYYY-MM-DD format")
+    try:
+        parsed = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("day must use canonical YYYY-MM-DD format") from exc
+    if parsed.isoformat() != day:
+        raise ValueError("day must use canonical YYYY-MM-DD format")
     return chronicle_dir(cfg) / f"{day}.md"
 
 

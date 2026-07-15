@@ -19,6 +19,7 @@ from memo.memory.record import (
     _extract_provenance,
     _normalise_tags,
     _now_iso,
+    is_derived_chunk_id,
 )
 from memo.util import sha256_short as _sha256_short
 
@@ -29,6 +30,33 @@ class _UpdateOpsMixin(_MemoryBase):
     # -- update -------------------------------------------------------------
 
     def update(
+        self,
+        id_: str,
+        *,
+        title: str | None = None,
+        type_: str | None = None,
+        tags: builtins.list[str] | None = None,
+        content: str | None = None,
+        replace: tuple[str, str] | None = None,
+        append: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> MemoryRecord | None:
+        """Patch a record while serializing its full read-modify-write cycle."""
+        if is_derived_chunk_id(id_):
+            raise ValueError("derived chunk records are read-only; update the parent memory")
+        with self._data_dir_write_lock():
+            return self._update_locked(
+                id_,
+                title=title,
+                type_=type_,
+                tags=tags,
+                content=content,
+                replace=replace,
+                append=append,
+                extra=extra,
+            )
+
+    def _update_locked(
         self,
         id_: str,
         *,
@@ -59,6 +87,7 @@ class _UpdateOpsMixin(_MemoryBase):
         r = self.store.get(id_)
         if r is None:
             return None
+        topic_key, normalized_hash = self.store.get_dedup_keys(id_)
         if type_ is not None and type_ not in _VALID_TYPES:
             raise ValueError(
                 f"`type_={type_!r}` not in valid set {sorted(_VALID_TYPES)}",
@@ -134,45 +163,55 @@ class _UpdateOpsMixin(_MemoryBase):
                 self._compose_for_embed(new_title, new_body),
                 ctx=f"update id={id_[:8]}",
             )
+            # A successful embedding discharges a prior defer/failure marker.
+            # Keeping it would make later metadata edits believe the vector is
+            # still absent and could suppress a required title re-embed.
+            new_extra.pop("_memo_embed_pending", None)
 
-        # Lock around file+store write so concurrent updates to the same id
-        # don't lose the first writer's changes (last-writer-wins).
-        with self._save_path_lock:
-            post = frontmatter.Post(
-                new_body,
-                id=id_,
+        post = frontmatter.Post(
+            new_body,
+            id=id_,
+            title=new_title,
+            type=new_type,
+            tags=new_tags,
+            created=r["created"],
+            updated=now_iso,
+        )
+        post["extra"] = new_extra or {}
+        post["verification_state"] = r.get("verification_state", "unverified")
+        if r.get("verified_at") is not None:
+            post["verified_at"] = r["verified_at"]
+        if topic_key is not None:
+            post["topic_key"] = topic_key
+        if normalized_hash is not None:
+            post["normalized_hash"] = normalized_hash
+        self._atomic_write_text(abs_path, frontmatter.dumps(post))
+
+        if embedding_required:
+            self.store.upsert(
+                id_=id_,
+                path=r["path"],
                 title=new_title,
-                type=new_type,
+                type_=new_type,
                 tags=new_tags,
                 created=r["created"],
                 updated=now_iso,
+                body_hash=new_body_hash,
+                embedding=embedding,
+                extra=new_extra,
+                body_text=new_body,
+                topic_key=topic_key,
+                normalized_hash=normalized_hash,
             )
-            post["extra"] = new_extra or {}
-            abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
-
-            if embedding_required:
-                self.store.upsert(
-                    id_=id_,
-                    path=r["path"],
-                    title=new_title,
-                    type_=new_type,
-                    tags=new_tags,
-                    created=r["created"],
-                    updated=now_iso,
-                    body_hash=new_body_hash,
-                    embedding=embedding,
-                    extra=new_extra,
-                    body_text=new_body,
-                )
-            else:
-                self.store.update_meta(
-                    id_=id_,
-                    title=new_title,
-                    type_=new_type,
-                    tags=new_tags,
-                    updated=now_iso,
-                    extra=new_extra,
-                )
+        else:
+            self.store.update_meta(
+                id_=id_,
+                title=new_title,
+                type_=new_type,
+                tags=new_tags,
+                updated=now_iso,
+                extra=new_extra,
+            )
 
         # Crossref edges (flag-gated): body edits can add/remove typed links.
         if body_changed:

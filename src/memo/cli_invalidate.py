@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ _log = logging.getLogger(__name__)
 
 INVALIDATED_TAG = "_invalidated"
 _SCAN_CAP = 10_000  # corpus scan ceiling; --limit caps the MATCHES
+_RECEIPT_ID_RE = re.compile(r"\d{8}T\d{6}\Z")
 
 
 def _receipt_dir(cfg: Config) -> Path:
@@ -177,7 +179,15 @@ def _do_undo(mem: Any, cfg: Config, undo_ts: str, as_json: bool) -> None:
     receipts = sorted(rd.glob("*.json")) if rd.is_dir() else []
     if not receipts:
         raise click.ClickException("No invalidate receipts found.")
-    path = receipts[-1] if undo_ts == "latest" else rd / f"{undo_ts}.json"
+    if undo_ts == "latest":
+        path = receipts[-1]
+    else:
+        if not _RECEIPT_ID_RE.fullmatch(undo_ts):
+            raise click.ClickException("Invalid receipt id; expected YYYYMMDDTHHMMSS.")
+        path = rd / f"{undo_ts}.json"
+    root = rd.resolve()
+    if path.is_symlink() or path.resolve().parent != root:
+        raise click.ClickException("Invalid receipt path.")
     if not path.is_file():
         raise click.ClickException(f"No receipt {path.name}.")
     receipt = json.loads(path.read_text(encoding="utf-8"))

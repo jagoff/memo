@@ -162,6 +162,81 @@ def test_shared_http_middleware_rate_limits_and_hardens_responses() -> None:
     assert first.headers["x-frame-options"] == "DENY"
 
 
+@pytest.mark.parametrize(
+    ("headers", "status_code"),
+    [
+        ({"Host": "attacker.example:18768", "Content-Type": "application/json"}, 403),
+        (
+            {
+                "Host": "127.0.0.1:18768",
+                "Origin": "https://attacker.example",
+                "Content-Type": "application/json",
+            },
+            403,
+        ),
+        (
+            {
+                "Host": "127.0.0.1:18768",
+                "Sec-Fetch-Site": "cross-site",
+                "Content-Type": "application/json",
+            },
+            403,
+        ),
+        ({"Host": "127.0.0.1:18768", "Content-Type": "text/plain"}, 415),
+        ({"Host": "127.0.0.1:18768"}, 415),
+        (
+            {
+                "Host": "127.0.0.1:18768",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            415,
+        ),
+    ],
+)
+def test_no_auth_http_guard_rejects_browser_cross_site_and_simple_posts(
+    headers: dict[str, str],
+    status_code: int,
+) -> None:
+    from memo.http_auth import build_http_middleware
+
+    async def sensitive(_request) -> PlainTextResponse:
+        pytest.fail("unsafe request reached the sensitive route")
+
+    app = Starlette(
+        routes=[Route("/chat/stream", sensitive, methods=["POST"])],
+        middleware=build_http_middleware(allow_no_auth=True),
+    )
+    with TestClient(app, base_url="http://127.0.0.1:18768") as client:
+        response = client.post("/chat/stream", headers=headers, content=b"{}")
+
+    assert response.status_code == status_code
+
+
+def test_no_auth_http_guard_allows_loopback_json_posts() -> None:
+    from memo.http_auth import build_http_middleware
+
+    async def sensitive(_request) -> PlainTextResponse:
+        return PlainTextResponse("ok")
+
+    app = Starlette(
+        routes=[Route("/chat/stream", sensitive, methods=["POST"])],
+        middleware=build_http_middleware(allow_no_auth=True),
+    )
+    with TestClient(app, base_url="http://localhost:18768") as client:
+        cli_response = client.post("/chat/stream", json={})
+        browser_response = client.post(
+            "/chat/stream",
+            json={},
+            headers={
+                "Origin": "http://localhost:18768",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+
+    assert cli_response.status_code == 200
+    assert browser_response.status_code == 200
+
+
 def test_memo_mcp_server_attaches_shared_auth_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -177,6 +252,152 @@ def test_memo_mcp_server_attaches_shared_auth_provider(
     server = build_server(memory=mock_memory, auth=auth)
 
     assert server.auth is auth
+
+
+def test_mcp_custom_chat_stream_requires_auth_but_health_stays_public(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMO_HTTP_API_TOKEN", _TOKEN)
+    monkeypatch.setattr(
+        mock_memory,
+        "chat_ask_stream",
+        lambda *_args, **_kwargs: iter([{"event": "done", "answer": "private"}]),
+    )
+
+    from memo.http_auth import build_mcp_auth, load_http_auth_config
+    from memo.server import build_server
+
+    auth = build_mcp_auth(load_http_auth_config(host="127.0.0.1"))
+    app = build_server(memory=mock_memory, auth=auth).http_app(
+        json_response=True,
+        stateless_http=True,
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        assert client.post("/chat/stream", json={"question": "secret"}).status_code == 401
+        assert (
+            client.post(
+                "/chat/stream",
+                json={"question": "secret"},
+                headers={"Authorization": "Bearer wrong"},
+            ).status_code
+            == 401
+        )
+        accepted = client.post(
+            "/chat/stream",
+            json={"question": "secret"},
+            headers={"Authorization": f"Bearer {_TOKEN}"},
+        )
+
+    assert accepted.status_code == 200
+    assert '"answer": "private"' in accepted.text
+
+
+@pytest.mark.parametrize(
+    "payload,error",
+    [
+        (["not", "an", "object"], "JSON object"),
+        ({"question": "ok", "k": "many"}, "k must"),
+        ({"question": "ok", "k": True}, "k must"),
+        ({"question": "ok", "k": 0}, "k must"),
+        ({"question": ["not", "text"]}, "question must"),
+        ({"question": "ok", "history": {}}, "history must"),
+        ({"question": "ok", "context": []}, "context must"),
+    ],
+)
+def test_mcp_custom_chat_stream_rejects_invalid_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+    payload,
+    error: str,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMO_HTTP_API_TOKEN", _TOKEN)
+    monkeypatch.setattr(
+        mock_memory,
+        "chat_ask_stream",
+        lambda *_args, **_kwargs: pytest.fail("invalid request reached memory"),
+    )
+
+    from memo.http_auth import build_mcp_auth, load_http_auth_config
+    from memo.server import build_server
+
+    auth = build_mcp_auth(load_http_auth_config(host="127.0.0.1"))
+    app = build_server(memory=mock_memory, auth=auth).http_app(
+        json_response=True,
+        stateless_http=True,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat/stream",
+            json=payload,
+            headers={"Authorization": f"Bearer {_TOKEN}"},
+        )
+
+    assert response.status_code == 400
+    assert error in response.json()["error"]
+
+
+def test_mcp_custom_chat_stream_does_not_expose_exception_details(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+
+    def fail_stream(*_args, **_kwargs):
+        raise RuntimeError("private database path and credential")
+
+    monkeypatch.setattr(mock_memory, "chat_ask_stream", fail_stream)
+
+    from memo.server import build_server
+
+    app = build_server(memory=mock_memory).http_app(json_response=True, stateless_http=True)
+    with TestClient(app) as client:
+        response = client.post("/chat/stream", json={"question": "secret"})
+
+    assert response.status_code == 200
+    assert '"event": "error"' in response.text
+    assert '"message": "chat stream failed"' in response.text
+    assert "RuntimeError" not in response.text
+    assert "private database path and credential" not in response.text
+
+
+def test_mcp_custom_chat_stream_sanitizes_upstream_error_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        mock_memory,
+        "chat_ask_stream",
+        lambda *_args, **_kwargs: iter(
+            [
+                {
+                    "event": "error",
+                    "message": "KeyError: /private/path/token-value",
+                    "answer_partial": "safe partial answer",
+                }
+            ]
+        ),
+    )
+
+    from memo.server import build_server
+
+    app = build_server(memory=mock_memory).http_app(json_response=True, stateless_http=True)
+    with TestClient(app) as client:
+        response = client.post("/chat/stream", json={"question": "secret"})
+
+    assert '"message": "chat stream failed"' in response.text
+    assert '"answer_partial": "safe partial answer"' in response.text
+    assert "KeyError" not in response.text
+    assert "/private/path/token-value" not in response.text
 
 
 def test_mcp_main_rejects_unacknowledged_network_bind(
@@ -253,3 +474,50 @@ def test_mcp_main_runs_http_with_shared_auth(
         "json_response": True,
     }
     assert len(middleware) == 2
+
+
+def test_mcp_main_installs_local_request_guard_when_auth_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    import memo.flags
+    import memo.server as server_module
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        memo.flags,
+        "flag_str",
+        lambda name: {
+            "MEMO_MCP_TRANSPORT": "http",
+            "MEMO_MCP_HOST": "127.0.0.1",
+        }.get(name),
+    )
+    monkeypatch.setattr(
+        memo.flags,
+        "flag_bool",
+        lambda name: name == "MEMO_MCP_ALLOW_NO_AUTH",
+    )
+    monkeypatch.setattr(memo.flags, "flag_int", lambda _name: 18768)
+    monkeypatch.setattr(server_module, "_start_background_tasks", lambda: ())
+    monkeypatch.setattr(server_module, "_ensure_idle_daemon", lambda: None)
+    captured = {}
+
+    class _Server:
+        def run(self, **kwargs) -> None:
+            captured["run"] = kwargs
+
+    def _build_server(**kwargs):
+        captured["auth"] = kwargs["auth"]
+        return _Server()
+
+    monkeypatch.setattr(server_module, "build_server", _build_server)
+
+    server_module.main()
+
+    from memo.http_auth import LocalRequestGuardMiddleware
+
+    assert captured["auth"] is None
+    assert any(
+        middleware.cls is LocalRequestGuardMiddleware
+        for middleware in captured["run"]["middleware"]
+    )

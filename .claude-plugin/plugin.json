@@ -1,7 +1,7 @@
 {
   "name": "memo",
   "description": "Local MCP memory for AI agents — MLX on Apple Silicon or CPU sentence-transformers on Linux/Ubuntu, sqlite-vec store, markdown-on-disk in your Obsidian vault. Zero Ollama, zero cloud APIs.",
-  "version": "3.5.1",
+  "version": "3.5.2",
   "author": {
     "name": "Fernando Ferrari",
     "email": "fernandoferrari@gmail.com",

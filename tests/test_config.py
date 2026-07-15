@@ -312,6 +312,18 @@ def test_ensure_dirs_creates_state_and_data(tmp_path: Path):
     assert cfg.data_dir.is_dir()
 
 
+def test_ensure_dirs_enforces_private_state_directory(tmp_path: Path):
+    import stat
+
+    cfg = Config(data_dir=tmp_path / "data", state_dir=tmp_path / "state")
+    cfg.state_dir.mkdir(mode=0o777)
+    cfg.state_dir.chmod(0o777)
+
+    cfg.ensure_dirs()
+
+    assert stat.S_IMODE(cfg.state_dir.stat().st_mode) == 0o700
+
+
 def test_memories_in_vault_derives_memory_dir(tmp_path: Path):
     """When the toggle is on AND a vault is set, memorias live under the vault."""
     cfg = Config(

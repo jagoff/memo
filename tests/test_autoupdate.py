@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
         ("v1.2.3", (1, 2, 3)),
         ("1.0.0", (1, 0, 0)),
         ("v2.10.4", (2, 10, 4)),
-        ("v1.2.3-rc1", (1, 2, 3)),
+        ("v1.2.3-rc1", None),
+        ("v1.2.3+build.4", None),
         ("v1.2", None),
         ("latest", None),
         ("v1.x.0", None),
@@ -58,12 +59,47 @@ def test_latest_remote_tag_picks_highest(monkeypatch):
     assert au.latest_remote_tag("https://example/repo.git") == "v1.2.0"
 
 
+def test_latest_remote_tag_ignores_prereleases_and_build_metadata(monkeypatch):
+    stdout = "abc123\trefs/tags/v2.0.0-rc1\ndef456\trefs/tags/v2.0.0+build.4\n"
+
+    def fake_run(*a, **k):
+        return subprocess.CompletedProcess(a, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(au.subprocess, "run", fake_run)
+
+    assert au.latest_remote_tag("https://example/repo.git") is None
+
+
 def test_latest_remote_tag_none_on_failure(monkeypatch):
     def boom(*a, **k):
         raise FileNotFoundError("git missing")
 
     monkeypatch.setattr(au.subprocess, "run", boom)
     assert au.latest_remote_tag("https://example/repo.git") is None
+
+
+def test_tag_provenance_requires_successful_fetch_and_master_ancestry(monkeypatch):
+    returncodes = iter((0, 0, 0))
+    monkeypatch.setattr(
+        au.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], next(returncodes), stdout="", stderr=""
+        ),
+    )
+    assert au.tag_is_on_remote_master("https://example/repo.git", "v1.2.3") is True
+
+
+def test_tag_provenance_rejects_tag_outside_master(monkeypatch):
+    returncodes = iter((0, 0, 1))
+    monkeypatch.setattr(
+        au.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], next(returncodes), stdout="", stderr=""
+        ),
+    )
+    assert au.tag_is_on_remote_master("https://example/repo.git", "v1.2.3") is False
 
 
 def test_throttle_first_check_then_blocked(tmp_cfg):
@@ -126,6 +162,7 @@ def test_bundled_plugin_does_not_force_auto_update() -> None:
 def test_maybe_auto_update_spawns_when_newer_tag(tmp_cfg, monkeypatch):
     monkeypatch.setenv("MEMO_AUTO_UPDATE", "1")
     monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v999.0.0")
+    monkeypatch.setattr(au, "tag_is_on_remote_master", lambda *a, **k: True)
     calls = {"n": 0}
 
     def fake_popen(*a, **k):
@@ -148,5 +185,6 @@ def test_maybe_auto_update_spawns_when_newer_tag(tmp_cfg, monkeypatch):
 def test_maybe_auto_update_no_spawn_when_not_newer(tmp_cfg, monkeypatch):
     monkeypatch.setenv("MEMO_AUTO_UPDATE", "1")
     monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v0.0.1")
+    monkeypatch.setattr(au, "tag_is_on_remote_master", lambda *a, **k: True)
     monkeypatch.setattr(au.subprocess, "Popen", lambda *a, **k: pytest.fail("should not spawn"))
     assert au.maybe_auto_update(tmp_cfg) is False

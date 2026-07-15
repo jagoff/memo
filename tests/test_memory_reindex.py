@@ -1,6 +1,25 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
+import frontmatter
+import pytest
+
+from memo.config import Config
+from memo.errors import StorageError
 from memo.memory import Memory
+from memo.store import VecStore
+
+
+def _index_snapshot(mem: Memory, ids: list[str]) -> dict[str, tuple[dict, object, str]]:
+    return {
+        id_: (
+            mem.store.get(id_) or {},
+            mem.store.get_embedding_blob(id_),
+            mem.store.get_fts_body(id_),
+        )
+        for id_ in ids
+    }
 
 
 def test_save_index_failure_recovers_on_reindex(mem_with_stub: Memory, monkeypatch):
@@ -57,6 +76,264 @@ def test_reindex_rebuild_preserves_signal(mem_with_stub: Memory):
     assert mem_with_stub.get(b.id) is not None
 
 
+def test_reindex_rebuild_migrates_vector_dimensions_and_model_identity(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """The documented model/profile migration works across FLOAT[N] widths.
+
+    The rebuild must atomically recreate every model-owned vec0 table, preserve
+    non-vector feedback rows, re-embed their queries, and leave schema_meta in a
+    state that a normal (non-bypassed) next process can open.
+    """
+    data_dir = tmp_path / "data"
+    state_dir = tmp_path / "state"
+    data_dir.mkdir()
+    state_dir.mkdir()
+    record_id = "a" * 32
+    old = VecStore(state_dir / "memvec.db", dims=4, embedder_model="vendor/old-model")
+    old.upsert(
+        id_=record_id,
+        path="memory.md",
+        title="Old",
+        type_="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body_hash="old",
+        embedding=[1.0, 0.0, 0.0, 0.0],
+        body_text="old body",
+    )
+    feedback_id = old.record_source_feedback(
+        source_id=record_id,
+        query_text="old query",
+        query_emb=[1.0, 0.0, 0.0, 0.0],
+        rating=1,
+    )
+    old.close()
+    from memo.store.episode_store import EpisodeStore
+    from memo.store.hype_store import HypeStore
+
+    hype = HypeStore(
+        state_dir / "memvec.db",
+        dims=4,
+        embedder_model="vendor/old-model",
+    )
+    hype.replace_for_memory(
+        record_id,
+        "old",
+        "helper-model",
+        [("old question", [1.0, 0.0, 0.0, 0.0])],
+    )
+    hype.close()
+    episodes = EpisodeStore(
+        state_dir / "memvec.db",
+        dims=4,
+        embedder_model="vendor/old-model",
+    )
+    episodes.upsert(
+        agent="claude",
+        session_id="old-session",
+        content_hash="old-hash",
+        embedding=[1.0, 0.0, 0.0, 0.0],
+        cwd="/repo",
+        updated_at="2026-01-01T00:00:00+00:00",
+        summary="old episode",
+        resume_command=[],
+        turn_count=1,
+    )
+    episodes.close()
+
+    post = frontmatter.Post(
+        "new body",
+        id=record_id,
+        title="New",
+        type="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-02T00:00:00+00:00",
+    )
+    (data_dir / "memory.md").write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
+    cfg = Config(
+        data_dir=data_dir,
+        state_dir=state_dir,
+        embedder_backend="mlx",
+        embedder_model="vendor/new-model",
+        embedder_dims=5,
+        reranker_enabled=False,
+    )
+    memory = Memory(cfg)
+    memory.embedder.embed = lambda inputs: [  # type: ignore[method-assign]
+        [1.0, 0.0, 0.0, 0.0, 0.0] for _ in inputs
+    ]
+    try:
+        counts = memory.reindex(rebuild=True)
+        assert counts["added"] == 1
+    finally:
+        memory.close()
+    monkeypatch.delenv("MEMO_SKIP_MODEL_VERSION_CHECK")
+
+    reopened = VecStore(
+        state_dir / "memvec.db",
+        dims=5,
+        embedder_model="vendor/new-model",
+    )
+    try:
+        assert reopened.get_fts_body(record_id) == "new body"
+        assert [
+            reopened._vec_table_dims(table)
+            for table in (
+                "vec",
+                "repo_vec",
+                "source_feedback_vec",
+                "hype_vec",
+                "episode_vec",
+            )
+        ] == [5, 5, 5, 5, 5]
+        schema = {
+            str(row["key"]): str(row["value"])
+            for row in reopened.connection.execute("SELECT key, value FROM schema_meta").fetchall()
+        }
+        assert schema["embedder_model"] == "vendor/new-model"
+        assert schema["embedder_dims"] == "5"
+        assert reopened.list_source_feedback(source_id=record_id)[0]["id"] == feedback_id
+        assert reopened.find_feedback_for_source(
+            record_id,
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+            threshold=0.99,
+        )
+        assert reopened.connection.execute("SELECT COUNT(*) FROM hype_questions").fetchone()[0] == 0
+        assert reopened.connection.execute("SELECT COUNT(*) FROM episode_meta").fetchone()[0] == 0
+        assert (
+            reopened.connection.execute(
+                "SELECT value FROM hype_schema_meta WHERE key = 'embedder_model'"
+            ).fetchone()[0]
+            == "vendor/new-model"
+        )
+        assert (
+            reopened.connection.execute(
+                "SELECT value FROM episode_schema_meta WHERE key = 'embedder_model'"
+            ).fetchone()[0]
+            == "vendor/new-model"
+        )
+    finally:
+        reopened.close()
+
+
+def test_reindex_dimension_migration_rolls_back_ddl_on_row_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    data_dir = tmp_path / "data"
+    state_dir = tmp_path / "state"
+    data_dir.mkdir()
+    state_dir.mkdir()
+    record_id = "b" * 32
+    old = VecStore(state_dir / "memvec.db", dims=4, embedder_model="vendor/old-model")
+    old.upsert(
+        id_=record_id,
+        path="old.md",
+        title="Old",
+        type_="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body_hash="old",
+        embedding=[1.0, 0.0, 0.0, 0.0],
+        body_text="old body",
+    )
+    old.close()
+    post = frontmatter.Post(
+        "new body",
+        id=record_id,
+        title="New",
+        type="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-02T00:00:00+00:00",
+    )
+    (data_dir / "new.md").write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
+    memory = Memory(
+        Config(
+            data_dir=data_dir,
+            state_dir=state_dir,
+            embedder_backend="mlx",
+            embedder_model="vendor/new-model",
+            embedder_dims=5,
+            reranker_enabled=False,
+        )
+    )
+    memory.embedder.embed = lambda inputs: [  # type: ignore[method-assign]
+        [1.0, 0.0, 0.0, 0.0, 0.0] for _ in inputs
+    ]
+    monkeypatch.setattr(
+        memory.store,
+        "_upsert_memory_row",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("injected row failure")),
+    )
+    try:
+        with pytest.raises(StorageError, match="atomic index replace failed"):
+            memory.reindex(rebuild=True)
+        assert memory.store._vec_table_dims("vec") == 4
+        assert memory.store.get_fts_body(record_id) == "old body"
+        row = memory.store.connection.execute(
+            "SELECT value FROM schema_meta WHERE key = 'embedder_model'"
+        ).fetchone()
+        assert row is not None and row["value"] == "vendor/old-model"
+    finally:
+        memory.close()
+
+
+def test_reindex_rebuild_upgrades_legacy_st_index_identity(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """3.5.1 stamped ST-built vectors with the unrelated MLX config model."""
+    data_dir = tmp_path / "data"
+    state_dir = tmp_path / "state"
+    data_dir.mkdir()
+    state_dir.mkdir()
+    legacy_model = "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
+    VecStore(state_dir / "memvec.db", dims=4, embedder_model=legacy_model).close()
+    post = frontmatter.Post(
+        "legacy ST body",
+        id="c" * 32,
+        title="Legacy ST",
+        type="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+    )
+    (data_dir / "legacy.md").write_text(frontmatter.dumps(post), encoding="utf-8")
+    cfg = Config(
+        data_dir=data_dir,
+        state_dir=state_dir,
+        embedder_backend="st",
+        st_embedder_model="Qwen/Qwen3-Embedding-0.6B",
+        st_embedder_revision="pinned-revision",
+        embedder_dims=4,
+        reranker_enabled=False,
+    )
+
+    monkeypatch.setenv("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
+    memory = Memory(cfg)
+    memory.embedder.embed = lambda inputs: [  # type: ignore[method-assign]
+        [1.0, 0.0, 0.0, 0.0] for _ in inputs
+    ]
+    try:
+        memory.reindex(rebuild=True)
+    finally:
+        memory.close()
+    monkeypatch.delenv("MEMO_SKIP_MODEL_VERSION_CHECK")
+
+    reopened = Memory(cfg)
+    try:
+        assert reopened.store.embedder_model == ("Qwen/Qwen3-Embedding-0.6B@pinned-revision")
+    finally:
+        reopened.close()
+
+
 def test_reindex_rebuild_refused_when_data_dir_empty(mem_with_stub: Memory):
     """Rebuild against a data_dir with 0 .md must refuse, not wipe the index.
     Markdown is the only source that can repopulate it — if it vanished (deleted
@@ -81,6 +358,26 @@ def test_reindex_rebuild_refused_when_data_dir_empty(mem_with_stub: Memory):
     assert mem_with_stub.get(b.id) is not None
 
 
+def test_reindex_rebuild_refused_when_only_invalid_markdown_remains(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="no me borres", title="Canonical")
+    (mem_with_stub.cfg.memory_dir / rec.path).unlink()
+    invalid = frontmatter.Post(
+        "not a canonical memory",
+        id="../../invalid",
+        title="Invalid",
+        type="note",
+    )
+    (mem_with_stub.cfg.memory_dir / "invalid.md").write_text(
+        frontmatter.dumps(invalid), encoding="utf-8"
+    )
+
+    with pytest.raises(StorageError, match="refused"):
+        mem_with_stub.reindex(rebuild=True)
+
+    assert mem_with_stub.store.count() == 1
+    assert mem_with_stub.get(rec.id) is not None
+
+
 def test_reindex_rebuild_drops_orphans(mem_with_stub: Memory):
     a = mem_with_stub.save(content="vive", title="A")
     b = mem_with_stub.save(content="muere", title="B")
@@ -91,6 +388,73 @@ def test_reindex_rebuild_drops_orphans(mem_with_stub: Memory):
     assert mem_with_stub.get(a.id) is not None
     assert mem_with_stub.get(b.id) is None
     assert mem_with_stub.store.count() == 1
+
+
+def test_reindex_rebuild_embed_failure_keeps_previous_index(mem_with_stub: Memory, monkeypatch):
+    a = mem_with_stub.save(content="alpha survives", title="A")
+    b = mem_with_stub.save(content="beta survives", title="B")
+    before = _index_snapshot(mem_with_stub, [a.id, b.id])
+    with mem_with_stub.store._conn:
+        mem_with_stub.store._conn.execute("DELETE FROM repo_embedding_cache")
+
+    real_embed = mem_with_stub.embedder.embed
+    calls = {"n": 0}
+
+    def _fail_second(inputs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("second embed failed (injected)")
+        return real_embed(inputs)
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _fail_second)
+
+    with pytest.raises(StorageError, match="rebuild preflight failed"):
+        mem_with_stub.reindex(rebuild=True)
+
+    assert _index_snapshot(mem_with_stub, [a.id, b.id]) == before
+    assert mem_with_stub.store.count() == 2
+
+
+def test_reindex_rebuild_parse_failure_keeps_previous_index(mem_with_stub: Memory):
+    a = mem_with_stub.save(content="alpha survives", title="A")
+    b = mem_with_stub.save(content="beta survives", title="B")
+    before = _index_snapshot(mem_with_stub, [a.id, b.id])
+    (mem_with_stub.cfg.memory_dir / b.path).write_bytes(b"\xff\xfeinvalid utf8")
+
+    with pytest.raises(StorageError, match="rebuild preflight failed"):
+        mem_with_stub.reindex(rebuild=True)
+
+    assert _index_snapshot(mem_with_stub, [a.id, b.id]) == before
+    assert mem_with_stub.store.count() == 2
+
+
+def test_reindex_rebuild_row_failure_rolls_back_previous_index(mem_with_stub: Memory, monkeypatch):
+    a = mem_with_stub.save(content="alpha survives", title="A")
+    b = mem_with_stub.save(content="beta survives", title="B")
+    before = _index_snapshot(mem_with_stub, [a.id, b.id])
+    real_upsert_row = getattr(mem_with_stub.store, "_upsert_memory_row", None)
+    calls = {"n": 0}
+
+    def _fail_second_row(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("second row failed (injected)")
+        assert real_upsert_row is not None
+        return real_upsert_row(*args, **kwargs)
+
+    monkeypatch.setattr(
+        mem_with_stub.store,
+        "_upsert_memory_row",
+        _fail_second_row,
+        raising=False,
+    )
+
+    with pytest.raises(StorageError, match="atomic index replace failed"):
+        mem_with_stub.reindex(rebuild=True)
+
+    assert calls["n"] == 2
+    assert _index_snapshot(mem_with_stub, [a.id, b.id]) == before
+    assert mem_with_stub.store.count() == 2
 
 
 def test_reindex_embedding_reuse_skips_second_pass(mem_with_stub: Memory, monkeypatch):
@@ -249,6 +613,43 @@ def test_reindex_updates_fact_edges_when_frontmatter_changes(mem_with_stub: Memo
     assert [r["object"] for r in rows] == ["new"]
 
 
+def test_reindex_path_collision_embed_failure_preserves_previous_row(
+    mem_with_stub: Memory, monkeypatch: pytest.MonkeyPatch
+):
+    previous = mem_with_stub.save(content="old searchable body", title="Path owner")
+    mem_with_stub.store.touch([previous.id])
+    before = _index_snapshot(mem_with_stub, [previous.id])
+    md = mem_with_stub.cfg.memory_dir / previous.path
+    replacement_id = "d" * 32
+    post = frontmatter.loads(md.read_text(encoding="utf-8"))
+    post["id"] = replacement_id
+    post.content = "new replacement body"
+    md.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    real_embed = mem_with_stub.embedder.embed
+    monkeypatch.setattr(
+        mem_with_stub.embedder,
+        "embed",
+        lambda _inputs: (_ for _ in ()).throw(RuntimeError("injected embed failure")),
+    )
+
+    failed = mem_with_stub.reindex()
+
+    assert failed["skipped"] == 1
+    assert _index_snapshot(mem_with_stub, [previous.id]) == before
+    assert mem_with_stub.store.get(replacement_id) is None
+    assert mem_with_stub.store.get_access(previous.id)["access_count"] == 1
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", real_embed)
+    recovered = mem_with_stub.reindex()
+
+    assert recovered["added"] == 1
+    assert mem_with_stub.store.get(previous.id) is None
+    replacement = mem_with_stub.store.get(replacement_id)
+    assert replacement is not None and replacement["path"] == previous.path
+    assert mem_with_stub.store.get_fts_body(replacement_id) == "new replacement body"
+
+
 def test_reindex_rebuild_drops_fact_edges_for_deleted_markdown(mem_with_stub: Memory):
     mem_with_stub.save(content="keep this markdown", title="Keep")
     rec = mem_with_stub.save(
@@ -330,3 +731,205 @@ def test_gc_reports_and_fixes_orphans(mem_with_stub: Memory):
     assert mem_with_stub.store.get(b.id) is not None
     mem_with_stub.gc(fix=True)
     assert mem_with_stub.store.get(b.id) is None
+
+
+def test_reindex_updates_store_path_after_markdown_move_without_embedding(
+    mem_with_stub: Memory, monkeypatch
+):
+    rec = mem_with_stub.save(content="same body", title="Moved")
+    old_path = mem_with_stub.cfg.memory_dir / rec.path
+    new_path = mem_with_stub.cfg.memory_dir / "new-bucket" / old_path.name
+    new_path.parent.mkdir(parents=True)
+    old_path.rename(new_path)
+    new_rel = str(new_path.relative_to(mem_with_stub.cfg.memory_dir))
+    with mem_with_stub.store._conn:
+        mem_with_stub.store._conn.execute("DELETE FROM repo_embedding_cache")
+    embed_calls: list[list[str]] = []
+
+    def _unexpected_embed(inputs):
+        embed_calls.append(inputs)
+        raise AssertionError("path-only reindex must preserve the existing vector")
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _unexpected_embed)
+
+    counts = mem_with_stub.reindex()
+
+    row = mem_with_stub.store.get(rec.id)
+    assert row is not None
+    assert row["path"] == new_rel
+    assert counts["reindexed"] == 1
+    assert embed_calls == []
+    assert rec.id not in mem_with_stub.gc(fix=True)["orphan_store"]
+    assert mem_with_stub.store.get(rec.id) is not None
+
+
+def test_reindex_never_decreases_schema_user_version(mem_with_stub: Memory):
+    mem_with_stub.save(content="versioned", title="Versioned")
+    before = mem_with_stub.store.get_user_version()
+    assert before >= 4
+
+    mem_with_stub.reindex()
+
+    assert mem_with_stub.store.get_user_version() == before
+
+
+def test_reindex_title_only_change_refreshes_embedding(mem_with_stub: Memory, monkeypatch):
+    rec = mem_with_stub.save(content="unchanged body", title="Old title")
+    before_blob = mem_with_stub.store.get_embedding_blob(rec.id)
+    md_path = mem_with_stub.cfg.memory_dir / rec.path
+    post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+    post["title"] = "New title"
+    md_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    real_embed = mem_with_stub.embedder.embed
+    embed_inputs: list[str] = []
+
+    def _spy(inputs):
+        embed_inputs.extend(inputs)
+        return real_embed(inputs)
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed", _spy)
+
+    counts = mem_with_stub.reindex()
+
+    row = mem_with_stub.store.get(rec.id)
+    assert row is not None and row["title"] == "New title"
+    assert counts["reindexed"] == 1
+    assert any("New title" in text for text in embed_inputs)
+    assert mem_with_stub.store.get_embedding_blob(rec.id) != before_blob
+
+
+def test_reindex_pending_marker_cleanup_does_not_overwrite_concurrent_edit(
+    mem_with_stub: Memory, monkeypatch: pytest.MonkeyPatch
+):
+    rec = mem_with_stub.save(
+        content="old pending body",
+        title="Pending race",
+        defer_embed=True,
+        auto_project=False,
+    )
+    path = mem_with_stub.cfg.memory_dir / rec.path
+    entered = False
+
+    @contextmanager
+    def _edit_while_cleanup_locks():
+        nonlocal entered
+        if not entered:
+            entered = True
+            current = frontmatter.loads(path.read_text(encoding="utf-8"))
+            current.content = "NEW concurrent body"
+            current["updated"] = "2026-07-15T12:00:00+00:00"
+            path.write_text(frontmatter.dumps(current), encoding="utf-8")
+        yield
+
+    monkeypatch.setattr(mem_with_stub, "_data_dir_write_lock", _edit_while_cleanup_locks)
+    mem_with_stub._reindex_locked(force=True)
+
+    current = frontmatter.loads(path.read_text(encoding="utf-8"))
+    assert current.content.strip() == "NEW concurrent body"
+    assert (current.metadata.get("extra") or {}).get("_memo_embed_pending") is True
+
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_reindex_preserves_topic_and_hash_identity(mem_with_stub: Memory, rebuild: bool):
+    rec = mem_with_stub.save(
+        content="identity body",
+        title="Identity",
+        topic_key="identity-topic",
+        normalized_hash="identity-hash",
+        auto_project=False,
+    )
+
+    mem_with_stub.reindex(force=True, rebuild=rebuild)
+
+    assert mem_with_stub.store.get_dedup_keys(rec.id) == (
+        "identity-topic",
+        "identity-hash",
+    )
+    same = mem_with_stub.save(
+        content="updated identity body",
+        title="Identity",
+        topic_key="identity-topic",
+        auto_project=False,
+    )
+    assert same.id == rec.id
+    assert mem_with_stub.store.count() == 1
+
+
+def test_reindex_rebuild_preserves_verification_state(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="verified body", title="Verified")
+    verified_at = 1_752_600_000
+    with mem_with_stub.store._conn:
+        mem_with_stub.store._conn.execute(
+            "UPDATE meta SET verification_state = 'verified', verified_at = ? WHERE id = ?",
+            (verified_at, rec.id),
+        )
+    path = mem_with_stub.cfg.memory_dir / rec.path
+    post = frontmatter.loads(path.read_text(encoding="utf-8"))
+    post["verification_state"] = "verified"
+    post["verified_at"] = verified_at
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    mem_with_stub.reindex(rebuild=True)
+
+    current = mem_with_stub.get(rec.id)
+    assert current is not None
+    assert current.verification_state.value == "verified"
+    assert current.verified_at == verified_at
+
+
+def test_reindex_rejects_noncanonical_memory_id(mem_with_stub: Memory):
+    malicious_id = "../../outside"
+    md_path = mem_with_stub.cfg.memory_dir / "malicious-id.md"
+    post = frontmatter.Post(
+        "untrusted body",
+        id=malicious_id,
+        title="Malicious id",
+        type="note",
+        tags=["test"],
+        created="2026-07-15T00:00:00+00:00",
+        updated="2026-07-15T00:00:00+00:00",
+    )
+    md_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    counts = mem_with_stub.reindex()
+
+    assert counts["added"] == 0
+    assert counts["skipped"] == 1
+    assert mem_with_stub.store.get(malicious_id) is None
+    assert mem_with_stub.resolve_id(malicious_id) is None
+
+
+def test_reindex_refuses_symlinked_markdown(mem_with_stub: Memory, tmp_path):
+    outside = tmp_path / "outside.md"
+    post = frontmatter.Post(
+        "EXTERNAL SECRET MARKER",
+        id="aabbccdd00112233445566778899ffee",
+        title="External",
+        type="note",
+    )
+    outside.write_text(frontmatter.dumps(post), encoding="utf-8")
+    (mem_with_stub.cfg.memory_dir / "linked.md").symlink_to(outside)
+
+    counts = mem_with_stub.reindex()
+    assert counts["skipped"] == 1
+    assert mem_with_stub.store.get("aabbccdd00112233445566778899ffee") is None
+    with pytest.raises(StorageError, match="symlinked canonical path"):
+        mem_with_stub.reindex(rebuild=True)
+
+
+def test_reindex_rebuild_rejects_duplicate_canonical_ids(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="canonical A", title="A")
+    original = frontmatter.loads(
+        (mem_with_stub.cfg.memory_dir / rec.path).read_text(encoding="utf-8")
+    )
+    original.content = "conflicting B"
+    (mem_with_stub.cfg.memory_dir / "zz-duplicate.md").write_text(
+        frontmatter.dumps(original), encoding="utf-8"
+    )
+
+    with pytest.raises(StorageError, match="duplicate canonical id"):
+        mem_with_stub.reindex(rebuild=True)
+
+    assert mem_with_stub.store.count() == 1
+    assert mem_with_stub.get(rec.id) is not None

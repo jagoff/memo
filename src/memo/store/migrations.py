@@ -38,9 +38,11 @@ class _MigrationsMixin(_StoreBase):
         return int(row[0]) if row else 0
 
     def set_user_version(self, version: int) -> None:
-        """Bump the on-disk schema version. Run inside a write tx."""
+        """Monotonically bump the on-disk schema version. Run inside a write tx."""
         if not isinstance(version, int) or version < 0:
             raise ValueError(f"user_version must be a non-negative int, got {version!r}")
+        if version <= self.get_user_version():
+            return
         self._conn.execute(f"PRAGMA user_version = {version}")
 
     def _run_migrations(self) -> None:

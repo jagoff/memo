@@ -13,6 +13,9 @@ jobs:
   slow:
     # MLX slow tests require Apple Silicon — use macos runner for real inference
     runs-on: macos-14
+    # Native Metal calls cannot always be interrupted by pytest-timeout. Keep a
+    # hard outer limit so a wedged model never consumes a runner indefinitely.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:

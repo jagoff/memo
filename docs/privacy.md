@@ -30,6 +30,12 @@ is expected when the user explicitly requests:
   present in the local Hugging Face cache; or
 - benchmark downloads for evaluation commands that use external corpora.
 
+`memo map` and `memo dashboard` are offline browser views. Both use small
+Canvas/SVG renderers bundled in memo's generated HTML and make no third-party
+request. The local renderer keeps filtering, hover, click details, timelines,
+and bar charts, but intentionally omits Plotly's advanced pan/zoom/export
+controls.
+
 Local search, recall, save, history, briefing, and normal MCP startup do not send
 prompts or memories to a hosted memo service. A separately configured model,
 sync remote, HTTP integration, or external helper has its own privacy boundary.

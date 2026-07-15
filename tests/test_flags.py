@@ -86,6 +86,15 @@ def test_owned_config_vars_not_flagged_unknown() -> None:
     assert flags.unknown_memo_vars(env=env) == []
 
 
+def test_http_api_token_is_owned_without_being_exposed_as_an_active_flag() -> None:
+    token = "s" * 32
+    env = {"MEMO_HTTP_API_TOKEN": token}
+
+    assert flags.unknown_memo_vars(env=env) == []
+    assert flags.validate(env=env) == []
+    assert flags.active_flags(env=env) == {}
+
+
 def test_internal_shim_state_vars_not_flagged_unknown() -> None:
     env = {
         "MEMO_STARTUP_BANNER_SHOWN": "1",

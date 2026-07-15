@@ -17,6 +17,8 @@ is `requires_mlx` + `slow` and auto-skips on non-Apple-Silicon / CI.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 from memo.config import Config
@@ -44,6 +46,14 @@ _FILLERS = [
     "The production database has read replicas across two availability zones.",
     "Production database schema changes are reviewed before every release.",
 ]
+
+
+@pytest.fixture
+def real_mlx_memory(tmp_cfg: Config) -> Iterator[Memory]:
+    """Release SQLite handles and Metal model/cache between slow cases."""
+    mem = Memory(tmp_cfg)
+    yield mem
+    mem.close()
 
 
 def _seed(mem: Memory) -> tuple[str, str, str]:
@@ -88,9 +98,9 @@ def _recall_of(mem: Memory, prompt: Prompt) -> float:
 @pytest.mark.requires_mlx
 @pytest.mark.slow
 def test_dedup_collapse_rescues_distinct_fact_from_paraphrase_crowding(
-    tmp_cfg: Config, monkeypatch
+    real_mlx_memory: Memory, monkeypatch
 ) -> None:
-    mem = Memory(tmp_cfg)
+    mem = real_mlx_memory
     distinct_id, _older, _newer = _seed(mem)
     prompt = Prompt(
         "what does the nightly deploy pipeline do after the rollout finishes",
@@ -112,8 +122,10 @@ def test_dedup_collapse_rescues_distinct_fact_from_paraphrase_crowding(
 
 @pytest.mark.requires_mlx
 @pytest.mark.slow
-def test_declare_disputes_surfaces_both_sides_of_open_pair(tmp_cfg: Config, monkeypatch) -> None:
-    mem = Memory(tmp_cfg)
+def test_declare_disputes_surfaces_both_sides_of_open_pair(
+    real_mlx_memory: Memory, monkeypatch
+) -> None:
+    mem = real_mlx_memory
     _distinct, older_id, newer_id = _seed(mem)
     prompt = Prompt(
         "what engine does the production database run",

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from memo import interject as ij
 
 
@@ -36,3 +38,27 @@ def test_shadow_log_roundtrip(tmp_path: Path):
     assert rows[0]["prompt"] == "revert that"
     assert rows[0]["rendered"] is True
     assert rows[1]["rendered"] is False
+
+
+def test_marker_rejects_session_id_traversal(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    outside = tmp_path / "outside.json"
+
+    with pytest.raises(ValueError, match="session_id"):
+        ij.note_rendered(state_dir, "../../outside")
+
+    assert not outside.exists()
+
+
+def test_marker_rejects_symlinked_marker_directory(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (state_dir / ".interject_seen").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="unsafe"):
+        ij.note_rendered(state_dir, "safe-session")
+
+    assert not (outside / "safe-session.json").exists()

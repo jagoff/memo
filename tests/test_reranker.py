@@ -18,6 +18,7 @@ removing it would let "looks fine, totally broken" regressions through.
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from dataclasses import replace
 from types import ModuleType
 from typing import TYPE_CHECKING
@@ -251,17 +252,25 @@ def test_rerank_hits_logs_score_failures(caplog):
 # ── real MLX smoke ────────────────────────────────────────────────────────
 
 
+@pytest.fixture
+def real_reranker() -> Iterator[MLXReranker]:
+    """Function-scoped real model with deterministic Metal cache teardown."""
+    reranker = MLXReranker(
+        model_path="vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
+        revision="9655b27c01d2ff1c49f7e672a04b70d630161b46",
+    )
+    yield reranker
+    reranker.unload()
+
+
 @pytest.mark.requires_mlx
 @pytest.mark.slow
-def test_score_real_model_separates_relevant_from_irrelevant():
+def test_score_real_model_separates_relevant_from_irrelevant(real_reranker: MLXReranker):
     """Loads the pinned Qwen3-Reranker-4B MLX model and verifies
     that a relevant doc scores >> an irrelevant one. This is the only
     test that catches end-to-end wiring breakage (token id mismatch,
     prompt-template drift, dtype regression)."""
-    rr = MLXReranker(
-        model_path="vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
-        revision="9655b27c01d2ff1c49f7e672a04b70d630161b46",
-    )
+    rr = real_reranker
     query = "favourite TV series"
     relevant = "List of best TV series: Breaking Bad, The Office, Dexter, True Detective."
     irrelevant = "Quarterly revenue report for Q3 2024 — supply chain logistics."
@@ -280,7 +289,7 @@ def test_score_real_model_separates_relevant_from_irrelevant():
 
 @pytest.mark.requires_mlx
 @pytest.mark.slow
-def test_head_slice_matches_full_forward_ranking():
+def test_head_slice_matches_full_forward_ranking(real_reranker: MLXReranker):
     """`score` projects only the last token's hidden state through the LM
     head (head-slice) instead of running the head over all T positions.
 
@@ -298,10 +307,7 @@ def test_head_slice_matches_full_forward_ranking():
 
     from memo.mlx_gpu import gpu_guard
 
-    rr = MLXReranker(
-        model_path="vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
-        revision="9655b27c01d2ff1c49f7e672a04b70d630161b46",
-    )
+    rr = real_reranker
     rr._ensure_loaded()
     model = rr._model
     query = "favourite TV series"

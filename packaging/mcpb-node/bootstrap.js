@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 // Zero-dep bootstrap: stderr for diagnostics, stdout belongs to the child (MCP).
-const { spawnSync, spawn } = require("node:child_process");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
@@ -29,92 +29,74 @@ function readPin() {
 }
 
 function which(cmd) {
-  const finder = process.platform === "win32" ? "where" : "which";
-  const result = spawnSync(finder, [cmd], { encoding: "utf8" });
-  if (result.status !== 0 || !result.stdout) return null;
-  const first = result.stdout.split(/\r?\n/).find((line) => line.trim().length > 0);
-  return first ? first.trim() : null;
-}
-
-function localBinPath(name) {
-  const candidate = path.join(os.homedir(), ".local", "bin", name);
-  return fs.existsSync(candidate) ? candidate : null;
+  const extensions = process.platform === "win32"
+    ? (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";")
+    : [""];
+  for (const directory of (process.env.PATH || "").split(path.delimiter)) {
+    if (!directory) continue;
+    for (const extension of extensions) {
+      const candidate = path.join(directory, cmd + extension);
+      try {
+        if (fs.statSync(candidate).isFile()) {
+          fs.accessSync(candidate, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
+          return candidate;
+        }
+      } catch (_) {
+        // Missing, non-executable, or inaccessible: continue searching PATH.
+      }
+    }
+  }
+  return null;
 }
 
 function uvBin() {
-  // fresh installs land in ~/.local/bin, often outside the PATH of GUI apps
-  return which("uv") || localBinPath("uv");
+  const onPath = which("uv");
+  if (onPath) return onPath;
+  // GUI apps often omit ~/.local/bin even after the official uv installer.
+  const local = path.join(os.homedir(), ".local", "bin", "uv");
+  try {
+    if (!fs.statSync(local).isFile()) return null;
+    fs.accessSync(local, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
+    return local;
+  } catch (_) {
+    return null;
+  }
 }
 
 function ensureUv() {
   const existing = uvBin();
   if (existing) return existing;
-
-  log("uv not found — installing via astral.sh installer");
-  const install = spawnSync("sh", ["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"], {
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-  if (install.status !== 0) {
-    throw new Error(`uv installer failed (exit ${install.status}) — install uv manually: https://docs.astral.sh/uv/`);
-  }
-
-  const found = uvBin();
-  if (!found) {
-    throw new Error("uv installed but still not found on PATH or ~/.local/bin — install uv manually: https://docs.astral.sh/uv/");
-  }
-  return found;
-}
-
-function memoMcpBin() {
-  return which("memo-mcp") || localBinPath("memo-mcp");
-}
-
-function isPinInstalled(uv, pin) {
-  const list = spawnSync(uv, ["tool", "list"], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-  if (list.status !== 0 || !list.stdout) return false;
-  // Remove ANSI escape sequences to handle colored output
-  const clean = list.stdout.replace(/\x1b\[[0-9;]*m/g, "");
-  // Match per line against 'mlx-memo vX.Y.Z' format (uv tool list output)
-  return clean.split("\n").some((line) => {
-    const t = line.trim();
-    return t === `mlx-memo v${pin}` || t.startsWith(`mlx-memo v${pin} `);
-  });
-}
-
-function ensureMemo(uv, pin) {
-  if (memoMcpBin() && isPinInstalled(uv, pin)) return; // fast path: nothing to do
-
-  log(`installing mlx-memo==${pin} via uv tool install`);
-  const install = spawnSync(uv, ["tool", "install", "--force", `mlx-memo==${pin}`], {
-    stdio: ["ignore", "ignore", "inherit"],
-  });
-  if (install.status !== 0) {
-    throw new Error(`uv tool install mlx-memo==${pin} failed (exit ${install.status})`);
-  }
+  throw new Error(
+    "uv not found on PATH or ~/.local/bin. Automatic remote shell execution is disabled; "
+    + "install uv from https://docs.astral.sh/uv/getting-started/installation/ and retry."
+  );
 }
 
 function main() {
   let pin, uv;
   try {
     pin = readPin();
-    uv = uvBin() || ensureUv();
-    ensureMemo(uv, pin);
+    uv = ensureUv();
   } catch (err) {
     log(err.message);
     process.exit(1);
   }
 
-  const bin = memoMcpBin();
-  if (!bin) {
-    log("memo-mcp not found after install — see https://github.com/jagoff/memo#readme");
+  // Execute the command from the exact package pin. Never hand control to a
+  // stale or malicious `memo-mcp` that happens to appear earlier on PATH.
+  const child = spawn(
+    uv,
+    ["tool", "run", "--from", `mlx-memo==${pin}`, "memo-mcp"],
+    { stdio: "inherit" },
+  ); // stdout/stdin = MCP passthrough
+  child.on("error", (err) => {
+    log(`failed to launch mlx-memo==${pin}: ${err.message}`);
     process.exit(1);
-  }
-
-  const child = spawn(bin, [], { stdio: "inherit" }); // stdout/stdin = MCP passthrough
+  });
   child.on("exit", (code, sig) => process.exit(code ?? (sig ? 1 : 0)));
   for (const s of ["SIGINT", "SIGTERM"]) process.on(s, () => child.kill(s));
 }
 
 if (require.main === module) main();
 
-module.exports = { readPin, which, uvBin, ensureUv, memoMcpBin, isPinInstalled, ensureMemo, main };
+module.exports = { readPin, which, uvBin, ensureUv, main };

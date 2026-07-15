@@ -223,6 +223,15 @@ FIELD_BINDINGS: tuple[FieldBinding, ...] = (
         restart_targets=("recall-daemon", "reindex"),
     ),
     FieldBinding(
+        "models.st_embedder_revision",
+        "st_embedder_revision",
+        "MEMO_ST_EMBEDDER_REVISION",
+        "Models",
+        "Embeddings",
+        SettingKind.STR,
+        restart_targets=("recall-daemon", "reindex"),
+    ),
+    FieldBinding(
         "models.reranker_enabled",
         "reranker_enabled",
         "MEMO_RERANKER_ENABLED",

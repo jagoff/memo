@@ -131,6 +131,40 @@ def test_save_survives_total_store_failure_and_recovers(mem_with_stub: Memory, m
     assert mem_with_stub.store.has_vector(rec.id) is True
 
 
+def test_topic_reservation_failure_never_raises_or_duplicates_on_retry(
+    mem_with_stub: Memory, monkeypatch
+):
+    real_upsert = mem_with_stub.store.upsert_text_only
+    monkeypatch.setattr(
+        mem_with_stub.store,
+        "upsert_text_only",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("store down")),
+    )
+
+    first = mem_with_stub.save(
+        content="first survives",
+        title="Reservation failure",
+        topic_key="reservation-failure-topic",
+        defer_embed=True,
+        auto_project=False,
+    )
+    assert len(list(mem_with_stub.cfg.memory_dir.rglob("*.md"))) == 1
+    assert mem_with_stub.store.get(first.id) is None
+
+    monkeypatch.setattr(mem_with_stub.store, "upsert_text_only", real_upsert)
+    second = mem_with_stub.save(
+        content="retry updates canonical file",
+        title="Reservation failure",
+        topic_key="reservation-failure-topic",
+        defer_embed=True,
+        auto_project=False,
+    )
+
+    assert second.id == first.id
+    assert len(list(mem_with_stub.cfg.memory_dir.rglob("*.md"))) == 1
+    assert mem_with_stub.store.count() == 1
+
+
 # ── delete(): unlink failure rolls back and stays consistent ─────────────────
 
 
@@ -246,3 +280,93 @@ def test_successful_delete_still_logs_history_event(mem_with_stub: Memory):
 
     events = mem_with_stub.history.list_recent(op="delete", record_id=rec.id)
     assert len(events) == 1
+
+
+def _poison_store_path(mem: Memory, *, id_: str, path: str) -> None:
+    """Insert a text-only row as if a corrupt/imported DB supplied its path."""
+    mem.store.upsert_text_only(
+        id_=id_,
+        path=path,
+        title="Poisoned path",
+        type_="note",
+        tags=["test"],
+        created="2026-07-15T00:00:00+00:00",
+        updated="2026-07-15T00:00:00+00:00",
+        body_hash="deadbeef",
+        body_text="indexed body",
+    )
+
+
+def test_get_rejects_store_path_outside_memory_dir(mem_with_stub: Memory):
+    record_id = "a" * 32
+    victim = mem_with_stub.cfg.memory_dir.parent / "read-victim.md"
+    victim.write_text("outside secret", encoding="utf-8")
+    _poison_store_path(mem_with_stub, id_=record_id, path="../read-victim.md")
+
+    with pytest.raises(StorageError, match="outside memory_dir"):
+        mem_with_stub.get(record_id)
+
+    assert victim.read_text(encoding="utf-8") == "outside secret"
+
+
+def test_update_rejects_store_path_outside_memory_dir(mem_with_stub: Memory):
+    record_id = "b" * 32
+    victim = mem_with_stub.cfg.memory_dir.parent / "update-victim.md"
+    victim.write_text("outside original", encoding="utf-8")
+    _poison_store_path(mem_with_stub, id_=record_id, path="../update-victim.md")
+
+    with pytest.raises(StorageError, match="outside memory_dir"):
+        mem_with_stub.update(record_id, content="overwritten")
+
+    assert victim.read_text(encoding="utf-8") == "outside original"
+    assert mem_with_stub.store.get(record_id) is not None
+
+
+def test_delete_rejects_store_path_outside_memory_dir_before_mutating_store(
+    mem_with_stub: Memory,
+):
+    record_id = "c" * 32
+    victim = mem_with_stub.cfg.memory_dir.parent / "delete-victim.md"
+    victim.write_text("outside original", encoding="utf-8")
+    _poison_store_path(mem_with_stub, id_=record_id, path="../delete-victim.md")
+
+    with pytest.raises(StorageError, match="outside memory_dir"):
+        mem_with_stub.delete(record_id)
+
+    assert victim.read_text(encoding="utf-8") == "outside original"
+    assert mem_with_stub.store.get(record_id) is not None
+
+
+def test_update_rejects_symlinked_canonical_markdown(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="inside original", title="Symlinked")
+    md_path = mem_with_stub.cfg.memory_dir / rec.path
+    victim = mem_with_stub.cfg.memory_dir.parent / "symlink-victim.md"
+    victim.write_text("outside original", encoding="utf-8")
+    md_path.unlink()
+    md_path.symlink_to(victim)
+
+    with pytest.raises(StorageError, match="symlink"):
+        mem_with_stub.update(rec.id, content="overwritten")
+
+    assert victim.read_text(encoding="utf-8") == "outside original"
+    assert md_path.is_symlink()
+
+
+def test_delete_unlink_failure_restores_text_only_row(mem_with_stub: Memory, monkeypatch):
+    rec = mem_with_stub.save(
+        content="sin vector pero recuperable",
+        title="TextOnlyRollback",
+        topic_key="tk-text-only",
+        defer_embed=True,
+    )
+    assert mem_with_stub.store.has_vector(rec.id) is False
+
+    _unlink_boom_for_md(mem_with_stub, monkeypatch)
+    with pytest.raises(StorageError, match="delete partially failed"):
+        mem_with_stub.delete(rec.id)
+
+    restored = mem_with_stub.store.get(rec.id)
+    assert restored is not None
+    assert mem_with_stub.store.has_vector(rec.id) is False
+    assert mem_with_stub.store.get_fts_body(rec.id) == "sin vector pero recuperable"
+    assert mem_with_stub.store.find_by_topic_key("tk-text-only") is not None

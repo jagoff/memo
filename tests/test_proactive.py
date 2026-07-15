@@ -1,5 +1,7 @@
 """Tests for proactive suggestions module."""
 
+import json
+
 import pytest
 
 from memo.proactive import (
@@ -11,12 +13,13 @@ from memo.proactive import (
 
 @pytest.fixture
 def proactive_suggester(mock_memory):
-    """Fixture providing ProactiveSuggester instance."""
-    return ProactiveSuggester(mock_memory)
+    """Provide a hermetic suggester without loading the real MLX model."""
+    return ProactiveSuggester(mock_memory, chat=mock_memory._chat)
 
 
-def test_proactive_suggester_init(proactive_suggester):
+def test_proactive_suggester_init(mock_memory):
     """Test ProactiveSuggester initialization."""
+    proactive_suggester = ProactiveSuggester(mock_memory)
     assert proactive_suggester.memory is not None
     assert proactive_suggester._chat is None  # Lazy
 
@@ -135,15 +138,62 @@ def test_suggestion_feedback_dataclass():
     assert f.accepted is True
 
 
-def test_analyze_conversation_low_confidence_filtering(proactive_suggester):
-    """Test that low-confidence suggestions are filtered out."""
-    # This test would require mocking the LLM response
-    # For now, just verify the logic exists
-    pass
+def test_analyze_conversation_low_confidence_filtering(proactive_suggester, monkeypatch):
+    """Low-confidence model output must not become a user-visible suggestion."""
+    payload = {
+        "suggestions": [
+            {
+                "title": "weak",
+                "type": "note",
+                "tags": [],
+                "body_snippet": "guess",
+                "confidence": 0.59,
+                "rationale": "uncertain",
+            },
+            {
+                "title": "strong",
+                "type": "decision",
+                "tags": ["test"],
+                "body_snippet": "confirmed",
+                "confidence": 0.8,
+                "rationale": "explicit decision",
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        proactive_suggester._chat,
+        "chat",
+        lambda **_kwargs: {"message": {"content": json.dumps(payload)}},
+    )
+
+    suggestions = proactive_suggester.analyze_conversation([{"user": "decided", "assistant": "ok"}])
+
+    assert [suggestion.title for suggestion in suggestions] == ["strong"]
 
 
-def test_analyze_conversation_sorting(proactive_suggester):
+def test_analyze_conversation_sorting(proactive_suggester, monkeypatch):
     """Test that suggestions are sorted by confidence descending."""
-    # This test would require mocking the LLM response
-    # For now, just verify the logic exists
-    pass
+    payload = {
+        "suggestions": [
+            {
+                "title": title,
+                "type": "note",
+                "tags": [],
+                "body_snippet": title,
+                "confidence": confidence,
+                "rationale": "test",
+            }
+            for title, confidence in (("medium", 0.7), ("high", 0.95), ("low", 0.6))
+        ]
+    }
+    monkeypatch.setattr(
+        proactive_suggester._chat,
+        "chat",
+        lambda **_kwargs: {"message": {"content": json.dumps(payload)}},
+    )
+
+    suggestions = proactive_suggester.analyze_conversation(
+        [{"user": "three items", "assistant": "noted"}]
+    )
+
+    assert [suggestion.title for suggestion in suggestions] == ["high", "medium", "low"]

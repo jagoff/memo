@@ -36,6 +36,26 @@ from memo.tiers import DURABLE_TYPES, REFERENCE_TYPES, VerificationState
 
 _log = logging.getLogger(__name__)
 
+_CANONICAL_MEMORY_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+_MEMORY_ID_PREFIX_RE = re.compile(r"^[0-9a-f]{1,32}$", re.IGNORECASE)
+_DERIVED_CHUNK_ID_RE = re.compile(r"^[0-9a-f]{32}_chunk_[0-9]+$", re.IGNORECASE)
+
+
+def is_canonical_memory_id(value: object) -> bool:
+    """Return whether ``value`` is memo's canonical 32-hex record id."""
+    return isinstance(value, str) and _CANONICAL_MEMORY_ID_RE.fullmatch(value) is not None
+
+
+def is_memory_id_prefix(value: object) -> bool:
+    """Return whether ``value`` is a safe canonical-id prefix."""
+    return isinstance(value, str) and _MEMORY_ID_PREFIX_RE.fullmatch(value) is not None
+
+
+def is_derived_chunk_id(value: object) -> bool:
+    """Return whether ``value`` is an exact derived reference-chunk id."""
+    return isinstance(value, str) and _DERIVED_CHUNK_ID_RE.fullmatch(value) is not None
+
+
 # Derived-save scope: dream/consolidation passes save memories that are expected
 # to be near-duplicates of existing ones (the same run's consolidate pass merges
 # them). The interactive "consider `memo update` instead" dedup nag is noise in
@@ -61,10 +81,11 @@ def in_derived_save_scope() -> bool:
     return _derived_save.get()
 
 
-# Durable tiers + the bulk `reference` tier. The split (which types the recall
-# hook / briefing surface automatically vs. on-demand-only) lives in
-# `memo.tiers`; this set is just "every type a memory may legally carry".
-_VALID_TYPES = DURABLE_TYPES | REFERENCE_TYPES
+# Durable tiers + the bulk `reference` tier + the lifecycle-managed temporary
+# type. `temp` stays outside DURABLE_TYPES because it is explicitly eligible
+# for expiry, but it must be writable for LifecycleManager's documented
+# type-based policy to be reachable.
+_VALID_TYPES = DURABLE_TYPES | REFERENCE_TYPES | {"temp"}
 
 # Bulk `reference` chunks shorter than this with no heading and no link/URL
 # carry almost no semantic signal (stray punctuation, empty list items,

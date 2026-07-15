@@ -1,15 +1,36 @@
-.git
-.venv
-**/__pycache__
-**/*.pyc
-tests
-docs/superpowers
-.superpowers
-*.db
-*.db-wal
-*.db-shm
-.pytest_cache
-.mypy_cache
-.ruff_cache
-dist
-build
+# Allowlist-only build context: remote builders never receive vaults, state,
+# credentials, tests, backups, or unrelated developer files.
+**
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!server.json
+!src/
+!src/**
+!.agents/
+!.agents/**
+!.claude-plugin/
+!.claude-plugin/**
+!commands/
+!commands/**
+!hooks/
+!hooks/**
+!plugins/
+!plugins/**
+!skills/
+!skills/**
+!statusline/
+!statusline/**
+
+# Re-exclude local/runtime files below allowlisted directories. Docker uses
+# the last matching pattern, so these must remain after the inclusions above.
+**/.DS_Store
+**/.env
+**/.env.*
+**/.envrc
+**/__pycache__/
+**/*.db
+**/*.py[cdo]
+**/*.sqlite*
+**/config.local.*

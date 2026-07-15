@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from memo.llm import MLXChat
+    from memo.memory.record import MemoryRecord
 
 
 class _MemoryBase:
@@ -30,6 +31,7 @@ class _MemoryBase:
     _temporal: Any
     _contradict_store: Any
     _save_path_lock: Any
+    _data_lock_depth: int
     _write_gen: int
 
     # -- lazy @property managers (defined on the facade) -------------------
@@ -57,7 +59,7 @@ class _MemoryBase:
     # mixin type-checks standalone; the real impl wins via MRO.
     def save(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def search(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
-    def get(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def get(self, id_: str) -> MemoryRecord | None: ...  # type: ignore[empty-body]
     def update(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def resolve_id(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def ask(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
@@ -82,6 +84,8 @@ class _MemoryBase:
     def _chat_retrieval_question(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _compose_for_embed(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _derive_metadata(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _data_dir_write_lock(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _atomic_write_text(self, *a: Any, **k: Any) -> Any: ...
     def _embed_cached(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _emit_ledger(self, *a: Any, **k: Any) -> Any: ...
     def _emit_save_receipt(self, *a: Any, **k: Any) -> Any: ...
