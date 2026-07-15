@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-07-15
+
 ### Added
 
 - Dark-feature graduation pipeline (`memo dream graduate-flags`, module
