@@ -76,9 +76,7 @@ class HypeStore(_ConnectionMixin):
         # needs the column backfilled — its rows were all embedded with the
         # query prefix (the only variant that ever existed then), so 'query'
         # is the honest default for pre-existing rows.
-        cols = {
-            row["name"] for row in conn.execute("PRAGMA table_info(hype_questions)").fetchall()
-        }
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(hype_questions)").fetchall()}
         if "variant" not in cols:
             conn.execute(
                 "ALTER TABLE hype_questions ADD COLUMN variant TEXT NOT NULL DEFAULT 'query'"

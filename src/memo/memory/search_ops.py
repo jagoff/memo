@@ -776,11 +776,11 @@ class _SearchOpsMixin(_MemoryBase):
 
     def _hype_variant_mismatch_warning(self) -> str | None:
         """One cheap `stats()` query (cached for the life of this `Memory`
-        instance) checking whether the HyPE store's dominant embedding
-        variant matches the currently active `MEMO_HYPE_EMBED_RAW` setting.
+        instance) checking whether every HyPE row uses the currently active
+        `MEMO_HYPE_EMBED_RAW` embedding variant.
 
-        A mismatch means most stored question vectors were embedded on the
-        OTHER scale (query-prefixed vs raw) than what live queries now use —
+        A mismatch means some stored question vectors were embedded on a
+        different scale (query-prefixed vs raw) than what live queries use —
         the fold still runs (never hard-fails search), this only surfaces a
         trace note so the mismatch is diagnosable instead of silently
         degrading scores. Resolved by `memo dream hype --reembed`.
@@ -797,11 +797,14 @@ class _SearchOpsMixin(_MemoryBase):
             by_variant = store.stats().get("by_variant", {})
             if not by_variant:
                 return None
-            dominant = max(by_variant, key=lambda k: by_variant[k])
             active = _active_variant()
-            if dominant != active:
+            stale_variants = sorted(variant for variant in by_variant if variant != active)
+            if stale_variants:
+                counts = ", ".join(
+                    f"{variant}={by_variant[variant]}" for variant in sorted(by_variant)
+                )
                 warning = (
-                    f"hype store dominant variant={dominant!r} != active={active!r} "
+                    f"hype store variants ({counts}) include values != active={active!r} "
                     f"(run `memo dream hype --reembed`)"
                 )
                 self._hype_variant_warning = warning

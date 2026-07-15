@@ -1465,6 +1465,9 @@ def dream_chronicle_cmd(day: str | None, dry_run: bool, as_json: bool) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Emit the pass receipt as JSON.")
 def dream_hype_cmd(dry_run: bool, reembed: bool, as_json: bool) -> None:
     """Nightly HyPE pass — generate + index hypothetical questions per memory (see MEMO_DREAM_HYPE_ENABLED)."""
+    if dry_run and reembed:
+        raise click.UsageError("--dry-run cannot be combined with --reembed")
+
     from memo import dream_hype
     from memo.flags import flag_int
 

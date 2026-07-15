@@ -523,9 +523,7 @@ def test_dream_hype_subcommand_reembed_json(tmp_path, monkeypatch):
     from memo.cli import cli
 
     pass_called = []
-    monkeypatch.setattr(
-        dh_mod, "run_hype_pass", lambda cfg, mem, **kw: pass_called.append(1) or {}
-    )
+    monkeypatch.setattr(dh_mod, "run_hype_pass", lambda cfg, mem, **kw: pass_called.append(1) or {})
     monkeypatch.setattr(
         dh_mod,
         "run_hype_reembed",
@@ -543,6 +541,34 @@ def test_dream_hype_subcommand_reembed_json(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert '"reembedded": 3' in result.output
     assert not pass_called, "run_hype_pass must not run when --reembed is passed"
+
+
+def test_dream_hype_rejects_reembed_with_dry_run_before_writing(tmp_path, monkeypatch):
+    """`--dry-run` must never silently perform the mutating re-embed pass."""
+    from click.testing import CliRunner
+
+    from memo import dream_hype as dh_mod
+    from memo.cli import cli
+
+    pass_called = []
+    reembed_called = []
+    monkeypatch.setattr(dh_mod, "run_hype_pass", lambda cfg, mem, **kw: pass_called.append(1) or {})
+    monkeypatch.setattr(dh_mod, "run_hype_reembed", lambda cfg, mem: reembed_called.append(1) or {})
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+
+    result = CliRunner().invoke(cli, ["dream", "hype", "--reembed", "--dry-run", "--json"], env=env)
+
+    assert result.exit_code == 2
+    assert "cannot be combined" in result.output
+    assert not pass_called
+    assert not reembed_called
 
 
 def test_run_hype_pass_embed_failure_isolates_one_memory(tmp_path, monkeypatch):
