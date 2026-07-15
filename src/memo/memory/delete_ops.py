@@ -19,6 +19,7 @@ from memo.memory.record import (
     _extract_provenance,
     _log,
     _now_iso,
+    is_derived_chunk_id,
 )
 
 
@@ -67,6 +68,13 @@ class _DeleteOpsMixin(_MemoryBase):
     # -- delete -------------------------------------------------------------
 
     def delete(self, id_: str) -> bool:
+        """Serialize delete with save/update filesystem-index transitions."""
+        if is_derived_chunk_id(id_):
+            raise ValueError("derived chunk records are read-only; update the parent memory")
+        with self._data_dir_write_lock():
+            return self._delete_locked(id_)
+
+    def _delete_locked(self, id_: str) -> bool:
         """Remove from disk + store. Returns True if anything was deleted.
 
         Authority contract (markdown is the source of truth): the canonical
@@ -83,6 +91,11 @@ class _DeleteOpsMixin(_MemoryBase):
         if not r:
             return False
 
+        # Validate the untrusted store path before mutating any derived state.
+        # Otherwise a traversal row could both escape the vault and leave the
+        # index deleted before path validation had a chance to fail.
+        md_path = self._resolve_existing(r["path"])
+
         # Pre-fetch embedding + body text for rollback (store.get() omits them).
         # vec0 returns the embedding as a packed little-endian float32 blob —
         # deserialize it back to list[float] so upsert() can re-serialize on
@@ -90,7 +103,8 @@ class _DeleteOpsMixin(_MemoryBase):
         # matched the blob, so the embedding was silently dropped on rollback.)
         stored_embedding: list[float] = []
         stored_body_text: str = ""
-        blob = self.store.get_embedding_blob(id_) if self.store.has_vector(id_) else None
+        had_vector = self.store.has_vector(id_)
+        blob = self.store.get_embedding_blob(id_) if had_vector else None
         if isinstance(blob, (bytes, bytearray)):
             import struct
 
@@ -115,7 +129,6 @@ class _DeleteOpsMixin(_MemoryBase):
         # are mutated — so a failed unlink leaves history, graph edges, and
         # receipts untouched (no spurious 'delete' audit event, no dropped graph
         # edges for a memory that actually survives the failure).
-        md_path = self._resolve_existing(r["path"])
         try:
             md_path.unlink(missing_ok=True)
         except OSError as exc:
@@ -125,21 +138,24 @@ class _DeleteOpsMixin(_MemoryBase):
             from memo.errors import StorageError
 
             try:
-                self.store.upsert(
-                    id_=id_,
-                    path=r["path"],
-                    title=r["title"],
-                    type_=r["type"],
-                    tags=r.get("tags") or [],
-                    created=r["created"],
-                    updated=r["updated"],
-                    body_hash=r.get("body_hash") or "",
-                    embedding=stored_embedding,
-                    extra=r.get("extra"),
-                    body_text=stored_body_text,
-                    topic_key=stored_topic_key,
-                    normalized_hash=stored_normalized_hash,
-                )
+                restore_kwargs = {
+                    "id_": id_,
+                    "path": r["path"],
+                    "title": r["title"],
+                    "type_": r["type"],
+                    "tags": r.get("tags") or [],
+                    "created": r["created"],
+                    "updated": r["updated"],
+                    "body_hash": r.get("body_hash") or "",
+                    "extra": r.get("extra"),
+                    "body_text": stored_body_text,
+                    "topic_key": stored_topic_key,
+                    "normalized_hash": stored_normalized_hash,
+                }
+                if had_vector:
+                    self.store.upsert(embedding=stored_embedding, **restore_kwargs)
+                else:
+                    self.store.upsert_text_only(**restore_kwargs)
             except Exception as restore_exc:
                 raise StorageError(
                     f"delete partially failed AND rollback failed: {restore_exc}. "
@@ -155,6 +171,14 @@ class _DeleteOpsMixin(_MemoryBase):
         # Delete is now authoritative (index dropped + .md gone). Only now mutate
         # the derived/audit state — these run strictly after the point of no
         # return, so they never need rolling back on a failed delete.
+        # Chunk rows have no canonical files of their own; once their parent is
+        # authoritatively gone they must be hard-deleted as derived state.
+        try:
+            for chunk in self.store.chunks_by_parent_id(id_):
+                self.store.hard_delete(chunk["id"])
+        except Exception as exc:
+            _log.warning("delete(%s): derived chunk cleanup failed — %s", id_[:8], exc)
+
         # Step 3: log history (audit trail of a *completed* delete)
         self.history.log_delete(
             ts=_now_iso(),

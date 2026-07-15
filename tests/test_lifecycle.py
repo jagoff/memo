@@ -124,11 +124,16 @@ def test_should_demote(lifecycle_manager, mock_memory):
     assert "0" in reason
 
 
-def test_should_expire_temp_type(lifecycle_manager, mock_memory):
+def test_should_expire_temp_type(lifecycle_manager, mock_memory, monkeypatch):
     """Test expiration logic for temp type."""
-    # This would require a very old temp memoria, which is hard to test
-    # Just test the logic with a mock
-    pass
+    rec = mock_memory.save(content="short-lived", title="Temporary", type_="temp")
+    age = lifecycle_manager.policy.temp_expiration_days + 1
+    monkeypatch.setattr(lifecycle_manager, "get_days_since_update", lambda _id: age)
+
+    should, reason = lifecycle_manager.should_expire(rec.id)
+
+    assert should is True
+    assert f"{age} days old" in reason
 
 
 def test_should_expire_temp_tag(lifecycle_manager, mock_memory):

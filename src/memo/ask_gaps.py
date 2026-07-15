@@ -16,10 +16,11 @@ Deduped per session (a session asks at most one NEW gap and never repeats one).
 from __future__ import annotations
 
 import json as _json
-import os as _os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from memo.atomic_io import atomic_write_text
 
 SHADOW_LOG = "ask_shadow.log"
 _SHADOW_CAP = 1000
@@ -46,7 +47,20 @@ def _gap_key(gap: dict[str, Any]) -> str:
 
 
 def _marker_file(state_dir: Path, session_id: str) -> Path:
-    return Path(state_dir) / ".ask_gaps_seen" / f"{session_id}.json"
+    from memo.session import validate_session_id
+
+    # Internal fallback used by SessionStart when the client has no id yet.
+    safe_id = session_id if session_id == "_no_session" else validate_session_id(session_id)
+    state_root = Path(state_dir).resolve()
+    marker_dir = state_root / ".ask_gaps_seen"
+    path = marker_dir / f"{safe_id}.json"
+    if (
+        marker_dir.is_symlink()
+        or path.is_symlink()
+        or not path.resolve().is_relative_to(state_root)
+    ):
+        raise ValueError("session_id resolves to an unsafe ask-gaps marker path")
+    return path
 
 
 def _load_marker(state_dir: Path, session_id: str) -> dict[str, Any]:
@@ -63,9 +77,7 @@ def _load_marker(state_dir: Path, session_id: str) -> dict[str, Any]:
 def _save_marker(state_dir: Path, session_id: str, marker: dict[str, Any]) -> None:
     f = _marker_file(state_dir, session_id)
     f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".json.tmp")
-    tmp.write_text(_json.dumps(marker), encoding="utf-8")
-    _os.replace(tmp, f)
+    atomic_write_text(f, _json.dumps(marker))
 
 
 def already_asked(state_dir: Path, session_id: str, key: str) -> bool:

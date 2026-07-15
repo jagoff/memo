@@ -101,6 +101,34 @@ def test_checkpoint_creates_new_session(tmp_cfg, fake_git):
     assert p.is_file()
 
 
+def test_session_paths_reject_traversal(tmp_cfg, tmp_path, fake_git):
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"secret": true}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="session_id"):
+        checkpoint(
+            tmp_cfg.state_dir,
+            session_id="../../outside",
+            cwd=str(tmp_cfg.state_dir),
+        )
+
+    assert json.loads(outside.read_text(encoding="utf-8")) == {"secret": True}
+    assert get_session(tmp_cfg.state_dir, "../../outside") is None
+
+
+def test_checkpoint_rejects_symlinked_sessions_directory(tmp_path, fake_git):
+    state_dir = tmp_path / "state"
+    outside = tmp_path / "outside"
+    state_dir.mkdir()
+    outside.mkdir()
+    (state_dir / "sessions").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="unsafe sessions directory"):
+        checkpoint(state_dir, session_id="safe-session", cwd=str(tmp_path))
+
+    assert not (outside / "safe-session.json").exists()
+
+
 def test_recent_prompts_returns_last_n_oldest_first(tmp_cfg, fake_git):
     """recent_prompts feeds the recall-hook short-prompt expansion: it returns
     the most recent N prompt_trail entries, oldest first."""

@@ -23,6 +23,32 @@ def test_hype_flags_registered_defaults():
     assert REGISTRY["MEMO_HYPE_EMBED_RAW"].default is False
 
 
+def test_hype_store_invalidates_derived_rows_on_embedder_revision_change(tmp_path: Path):
+    db_path = tmp_path / "identity.db"
+    old = HypeStore(db_path, dims=DIMS, embedder_model="vendor/model@rev-a")
+    old.replace_for_memory(
+        "mem-1",
+        "hash-a",
+        "helper-model",
+        [("What is X?", [1.0, 0.0, 0.0, 0.0])],
+    )
+    old.close()
+
+    migrated = HypeStore(db_path, dims=DIMS, embedder_model="vendor/model@rev-b")
+    try:
+        assert migrated.stats() == {"memories": 0, "questions": 0, "by_variant": {}}
+        identity = {
+            str(row["key"]): str(row["value"])
+            for row in migrated._conn.execute("SELECT key, value FROM hype_schema_meta").fetchall()
+        }
+        assert identity == {
+            "embedder_model": "vendor/model@rev-b",
+            "embedder_dims": str(DIMS),
+        }
+    finally:
+        migrated.close()
+
+
 def test_variant_column_migration_backfills_existing_rows_as_query(tmp_path: Path):
     """A pre-existing hype_questions table created WITHOUT the `variant`
     column (the pre-migration schema) must not crash HypeStore's schema

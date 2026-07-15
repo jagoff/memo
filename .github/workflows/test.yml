@@ -71,6 +71,7 @@ jobs:
         run: .venv/bin/python -m pytest tests/test_contract_stub_compatibility.py
 
   private-contract-integration:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     # The default `test` job mirrors a CLEAN install: consciousness_contracts is
     # absent, so every contract import takes its fallback branch and the
     # INTEGRATION path (cache / uri / ledger / run_json / EmbedderProfile) is

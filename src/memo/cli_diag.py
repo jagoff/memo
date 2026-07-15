@@ -261,8 +261,10 @@ def _typed_embedder_profile(cfg: Config) -> dict[str, Any] | None:
         from consciousness_contracts import EmbedderProfile
     except ImportError:
         return None
+    from memo.embedder_select import active_embedder_identity
+
     profile = EmbedderProfile(
-        model_id=cfg.embedder_model,
+        model_id=active_embedder_identity(cfg),
         dims=int(cfg.embedder_dims),
         normalization="l2",
         provider="memo",

@@ -469,10 +469,10 @@ def embed_cmd(text: str | None, batch_json) -> None:
         if batch_json is not None:
             vecs = mem.embedder.embed(texts)
             dim = len(vecs[0]) if vecs else 0
-            out = {"vectors": vecs, "dim": dim, "model": mem.cfg.embedder_model}
+            out = {"vectors": vecs, "dim": dim, "model": mem.store.embedder_model}
         else:
             vec = mem.embedder.embed_query(text)
-            out = {"vector": vec, "dim": len(vec), "model": mem.cfg.embedder_model}
+            out = {"vector": vec, "dim": len(vec), "model": mem.store.embedder_model}
     finally:
         mem.close()
     sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")

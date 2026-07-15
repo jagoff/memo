@@ -7,12 +7,49 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  pypi:
-    name: PyPI
+  verify-release:
+    name: Verify release provenance
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.13"
+      - name: Require a version-matched tag from master
+        shell: bash
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            echo "publish requires a tag ref, got ${GITHUB_REF_TYPE}:${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_NAME" != "v${version}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} does not match pyproject version ${version}" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "release commit ${GITHUB_SHA} is not part of origin/master" >&2
+            exit 1
+          fi
+      - name: Validate committed release metadata
+        run: |
+          python -m pip install uv==0.11.21
+          uv sync --frozen --no-dev
+          uv run --no-sync memo release check
+
+  build:
+    name: Build distributions
+    needs: verify-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -27,15 +64,36 @@ jobs:
           uv build --out-dir dist
           test -n "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
           test -n "$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+      - name: Upload immutable distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  pypi:
+    name: PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download verified distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: distributions
+          path: dist/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
-        with:
-          skip-existing: true
 
   mcp-registry:
     name: MCP Registry
     runs-on: ubuntu-latest
     needs: pypi
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:

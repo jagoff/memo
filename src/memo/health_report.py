@@ -132,7 +132,7 @@ def build_health_report(memory: Memory, *, probe_embedder: bool = False) -> dict
             "fts_backend": flag_str("MEMO_FTS_BACKEND") or "auto",
         },
         "embedder": {
-            "model": getattr(cfg, "embedder_model", None),
+            "model": getattr(memory.store, "embedder_model", None),
             "dims": expected_dims,
             "latency_ms": _probe_embedder_ms(memory) if probe_embedder else None,
         },

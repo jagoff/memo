@@ -16,6 +16,7 @@ by `body_hash`) and prunable against the live memory id set.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import weakref
 from datetime import UTC, datetime
@@ -47,9 +48,15 @@ class HypeStore(_ConnectionMixin):
     mutable metadata column itself, to avoid duplicating it there.
     """
 
-    def __init__(self, db_path: Path | str, dims: int) -> None:
+    def __init__(
+        self,
+        db_path: Path | str,
+        dims: int,
+        embedder_model: str = "",
+    ) -> None:
         self.db_path = Path(db_path)
         self.dims = dims
+        self.embedder_model = embedder_model
         self._local = threading.local()
         self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
         self._conn_holders_lock = threading.Lock()
@@ -57,14 +64,7 @@ class HypeStore(_ConnectionMixin):
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        # vec0 CREATE is not transactional — run it outside `_tx` (matches the
-        # main store's schema setup).
         conn = self._conn
-        conn.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS hype_vec USING vec0("
-            f"question_id TEXT PRIMARY KEY, "
-            f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
-        )
         conn.execute(
             "CREATE TABLE IF NOT EXISTS hype_questions ("
             "question_id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, "
@@ -81,6 +81,94 @@ class HypeStore(_ConnectionMixin):
             conn.execute(
                 "ALTER TABLE hype_questions ADD COLUMN variant TEXT NOT NULL DEFAULT 'query'"
             )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hype_schema_meta ("
+            "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+
+        vec_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'hype_vec'"
+        ).fetchone()
+        actual_dims: int | None = None
+        if vec_row is not None and vec_row["sql"]:
+            match = re.search(r"FLOAT\[(\d+)\]", str(vec_row["sql"]), re.IGNORECASE)
+            if match:
+                actual_dims = int(match.group(1))
+        stored = {
+            str(row["key"]): str(row["value"])
+            for row in conn.execute(
+                "SELECT key, value FROM hype_schema_meta "
+                "WHERE key IN ('embedder_model', 'embedder_dims')"
+            ).fetchall()
+        }
+        current_model = self.embedder_model.strip()
+        if not current_model:
+            # HyPE is always collocated with VecStore.  Direct callers from
+            # older integrations may omit the identity argument, but the main
+            # DB is already self-describing; inherit its exact owner (including
+            # an ST ``@revision`` suffix) instead of stamping an anonymous
+            # sidecar that a later production open would have to invalidate.
+            has_main_schema = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'"
+            ).fetchone()
+            if has_main_schema is not None:
+                main_model = conn.execute(
+                    "SELECT value FROM schema_meta WHERE key = 'embedder_model'"
+                ).fetchone()
+                if main_model is not None and main_model["value"]:
+                    current_model = str(main_model["value"])
+        stamp_identity = bool(current_model and "stub" not in current_model.lower())
+        identity_changed = stamp_identity and stored.get("embedder_model") != current_model
+        dimensions_changed = actual_dims is not None and actual_dims != self.dims
+
+        # HyPE is derived from canonical Markdown.  Unknown legacy identity is
+        # treated as stale once a real identity is available: equal vector
+        # width does not make embeddings from two model revisions compatible.
+        if identity_changed or dimensions_changed:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if vec_row is not None:
+                    conn.execute("DROP TABLE hype_vec")
+                conn.execute("DELETE FROM hype_questions")
+                conn.execute(
+                    f"CREATE VIRTUAL TABLE hype_vec USING vec0("
+                    f"question_id TEXT PRIMARY KEY, "
+                    f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
+                )
+                if stamp_identity:
+                    conn.execute(
+                        "INSERT INTO hype_schema_meta (key, value) "
+                        "VALUES ('embedder_model', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (current_model,),
+                    )
+                    conn.execute(
+                        "INSERT INTO hype_schema_meta (key, value) "
+                        "VALUES ('embedder_dims', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (str(self.dims),),
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        else:
+            conn.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS hype_vec USING vec0("
+                f"question_id TEXT PRIMARY KEY, "
+                f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
+            )
+            if stamp_identity:
+                conn.execute(
+                    "INSERT OR IGNORE INTO hype_schema_meta (key, value) "
+                    "VALUES ('embedder_model', ?)",
+                    (current_model,),
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO hype_schema_meta (key, value) "
+                    "VALUES ('embedder_dims', ?)",
+                    (str(self.dims),),
+                )
         conn.commit()
 
     def replace_for_memory(

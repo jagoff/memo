@@ -14,6 +14,7 @@ import click
 from memo.cli_common import console
 
 _MCP_ENV_FORWARD_KEYS = (
+    "MEMO_CONFIG_DIR",
     "MEMO_CONFIG_FILE",
     "MEMO_DATA_DIR",
     "MEMO_STATE_DIR",
@@ -23,6 +24,9 @@ _MCP_ENV_FORWARD_KEYS = (
     "MEMO_MODEL_PROFILE",
     "MEMO_LLM_MODEL",
     "MEMO_HELPER_MODEL",
+    "MEMO_EMBEDDER_BACKEND",
+    "MEMO_ST_EMBEDDER_MODEL",
+    "MEMO_ST_EMBEDDER_REVISION",
     # MEMO_EMBEDDER_MODEL / MEMO_EMBEDDER_DIMS are NOT forwarded from env here —
     # they are derived from the live index (schema_meta) by _actual_embedder_config()
     # so the installed config always matches the existing index, regardless of what

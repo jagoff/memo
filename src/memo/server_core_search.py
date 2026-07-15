@@ -33,7 +33,7 @@ def register(server: Any, memory: Memory) -> None:
             from consciousness_contracts import EmbedderProfile
 
             profile = EmbedderProfile(
-                model_id=cfg.embedder_model,
+                model_id=memory.store.embedder_model,
                 dims=int(cfg.embedder_dims),
                 normalization="l2",
                 provider="memo",
@@ -42,7 +42,7 @@ def register(server: Any, memory: Memory) -> None:
         except ImportError:
             return {
                 "schema": "consciousness.embedder_profile.v1",
-                "model_id": cfg.embedder_model,
+                "model_id": memory.store.embedder_model,
                 "dims": int(cfg.embedder_dims),
                 "normalization": "l2",
                 "max_seq_len": None,
@@ -295,7 +295,7 @@ def register(server: Any, memory: Memory) -> None:
         if not text or not text.strip():
             raise ValueError("memo_embed_query: empty text")
         vec = memory.embedder.embed_query(text)
-        return {"vector": vec, "dim": len(vec), "model": memory.cfg.embedder_model}
+        return {"vector": vec, "dim": len(vec), "model": memory.store.embedder_model}
 
     @annotated_tool(server, **READ_ONLY)
     def memo_embed_batch(texts: list[str]) -> dict[str, Any]:
@@ -306,10 +306,10 @@ def register(server: Any, memory: Memory) -> None:
         of strings; an empty list returns no vectors without error.
         """
         if not texts:
-            return {"vectors": [], "dim": 0, "model": memory.cfg.embedder_model}
+            return {"vectors": [], "dim": 0, "model": memory.store.embedder_model}
         vecs = memory.embedder.embed(texts)
         dim = len(vecs[0]) if vecs else 0
-        return {"vectors": vecs, "dim": dim, "model": memory.cfg.embedder_model}
+        return {"vectors": vecs, "dim": dim, "model": memory.store.embedder_model}
 
     @annotated_tool(server, **READ_ONLY)
     def memo_ask(

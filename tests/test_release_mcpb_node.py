@@ -16,6 +16,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BOOTSTRAP = _REPO_ROOT / "packaging" / "mcpb-node" / "bootstrap.js"
 _NODE_MANIFEST = _REPO_ROOT / "packaging" / "mcpb-node" / "manifest.json"
 _PYTHON_MANIFEST = _REPO_ROOT / "packaging" / "mcpb" / "manifest.json"
+_PYTHON_STUB = _REPO_ROOT / "packaging" / "mcpb" / "server" / "main.py"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -42,6 +43,39 @@ def test_bootstrap_reads_pin_from_manifest() -> None:
     source = _BOOTSTRAP.read_text(encoding="utf8")
     assert "manifest.json" in source
     assert ".version" in source
+
+
+def test_bootstrap_never_downloads_and_executes_a_remote_shell_script() -> None:
+    source = _BOOTSTRAP.read_text(encoding="utf8")
+    assert "curl" not in source
+    assert "wget" not in source
+    assert '["-c"' not in source
+
+
+def test_python_stub_never_recommends_remote_shell_execution() -> None:
+    source = _PYTHON_STUB.read_text(encoding="utf8")
+    assert "curl" not in source
+    assert "wget" not in source
+    assert "| sh" not in source
+    assert "docs.astral.sh/uv/getting-started/installation" in source
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_bootstrap_path_lookup_does_not_depend_on_external_which(tmp_path: Path) -> None:
+    executable = tmp_path / "memo-mcp"
+    executable.write_text("#!/bin/sh\n", encoding="utf8")
+    executable.chmod(0o755)
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            f"process.env.PATH={str(tmp_path)!r}; process.stdout.write(require({str(_BOOTSTRAP)!r}).which('memo-mcp') || '')",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == str(executable)
 
 
 def test_node_manifest_required_fields() -> None:
@@ -81,16 +115,16 @@ def test_pin_chain_in_sync() -> None:
     pins = [
         match.group(1)
         for arg in python_manifest["server"]["mcp_config"]["args"]
-        if isinstance(arg, str) and (match := re.fullmatch(r"mlx-memo(?:==|>=)([^,\s]+)", arg))
+        if isinstance(arg, str) and (match := re.fullmatch(r"mlx-memo==([^,\s]+)", arg))
     ]
     assert pins, (
         "packaging/mcpb/manifest.json server.mcp_config.args has no mlx-memo pin — "
-        "expected an 'mlx-memo>=X' arg"
+        "expected an exact 'mlx-memo==X' arg"
     )
     for pin in pins:
         assert pin == project_version, (
             f"packaging/mcpb/manifest.json mlx-memo pin {pin!r} != pyproject.toml "
-            f"{project_version!r} — update the mlx-memo>=X arg in "
+            f"{project_version!r} — update the mlx-memo==X arg in "
             "packaging/mcpb/manifest.json server.mcp_config.args"
         )
 
@@ -172,30 +206,9 @@ def test_bootstrap_pin_matches_manifest() -> None:
     assert result.stdout == manifest["version"]
 
 
-def test_bootstrap_pin_check_uses_uv_tool_list_v_format() -> None:
-    """Ensure isPinInstalled matches 'uv tool list' output format 'mlx-memo vX.Y.Z'.
-
-    The bug: isPinInstalled was checking for `mlx-memo==X.Y.Z`, but `uv tool list`
-    actually prints `mlx-memo v3.4.0` (with 'v' prefix). This meant the fast path
-    never matched, causing unnecessary network reinstalls on every launch.
-    """
+def test_bootstrap_executes_mcp_from_exact_pin_instead_of_path() -> None:
+    """The checked package pin and the command that runs must be identical."""
     source = _BOOTSTRAP.read_text(encoding="utf-8")
-    # Verify the fix: source contains the correct format check
-    assert "mlx-memo v${pin}" in source, (
-        "isPinInstalled must match `uv tool list` output format 'mlx-memo vX.Y.Z', "
-        "never 'mlx-memo==X.Y.Z' (which uv tool list does not print)"
-    )
-    # Verify no accidental check for the wrong format in the isPinInstalled logic
-    # (the install arg legitimately uses mlx-memo==X.Y.Z, so we exclude that)
-    lines = source.split("\n")
-    in_is_pin_installed = False
-    for line in lines:
-        if "function isPinInstalled" in line:
-            in_is_pin_installed = True
-        elif in_is_pin_installed and line.strip().startswith("function "):
-            in_is_pin_installed = False
-        elif in_is_pin_installed and "includes" in line and "mlx-memo==" in line:
-            pytest.fail(
-                "isPinInstalled still checks for 'mlx-memo==X.Y.Z' format — "
-                "must check for 'mlx-memo vX.Y.Z' instead"
-            )
+    assert '["tool", "run", "--from", `mlx-memo==${pin}`, "memo-mcp"]' in source
+    assert "memoMcpBin" not in source
+    assert "spawn(bin" not in source

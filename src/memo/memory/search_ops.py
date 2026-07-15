@@ -26,6 +26,8 @@ from memo.memory.record import (
     _log,
     _rrf_confident_top,
     _rrf_fuse,
+    is_derived_chunk_id,
+    is_memory_id_prefix,
     record_from_row,
 )
 from memo.perf import timer
@@ -756,7 +758,11 @@ class _SearchOpsMixin(_MemoryBase):
 
             store = self._hype_store
             if store is None:
-                store = HypeStore(self.cfg.db_path, self.cfg.embedder_dims)
+                store = HypeStore(
+                    self.cfg.db_path,
+                    self.cfg.embedder_dims,
+                    embedder_model=self.store.embedder_model,
+                )
                 self._hype_store = store
             pool = flag_int("MEMO_HYPE_FOLD_POOL") or 30
 
@@ -1003,7 +1009,12 @@ class _SearchOpsMixin(_MemoryBase):
         Git-style 7-char prefixes are unique with overwhelming probability
         for the corpus sizes memo targets (~thousands).
         """
-        if not id_or_prefix:
+        # Derived reference chunks intentionally append a controlled suffix to
+        # their canonical parent id. They are exact-only (never prefix-resolved)
+        # but remain first-class anchors for get/around.
+        if is_derived_chunk_id(id_or_prefix):
+            return id_or_prefix if self.store.get(id_or_prefix) is not None else None
+        if not is_memory_id_prefix(id_or_prefix):
             return None
         # Fast path: full hex hit.
         if len(id_or_prefix) == 32 and self.store.get(id_or_prefix) is not None:
@@ -1040,7 +1051,8 @@ class _SearchOpsMixin(_MemoryBase):
             return {"anchor": None, "mode": None, "neighbors": []}
         extra = row.get("extra") or {}
         try:
-            seq = int(extra["chunk_seq"]) if extra.get("chunk_seq") is not None else None
+            raw_seq = extra.get("chunk_seq", extra.get("chunk_index"))
+            seq = int(raw_seq) if raw_seq is not None else None
         except (TypeError, ValueError):
             seq = None
         parent = extra.get("parent_path")

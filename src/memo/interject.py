@@ -30,11 +30,12 @@ MEMO_INTERJECT_ENABLED after reviewing ``memo interject shadow``.
 from __future__ import annotations
 
 import json as _json
-import os as _os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from memo.atomic_io import atomic_write_text
 
 INTERJECT_HEADER = "⚠ INTERJECT — a prior decision at high confidence conflicts"
 
@@ -101,7 +102,20 @@ _SHADOW_SIZE_LIMIT = 1_000_000
 
 
 def _marker_file(state_dir: Path, session_id: str) -> Path:
-    return Path(state_dir) / ".interject_seen" / f"{session_id}.json"
+    from memo.session import validate_session_id
+
+    # Internal fallback used by the recall hook when the client has no id yet.
+    safe_id = session_id if session_id == "_no_session" else validate_session_id(session_id)
+    state_root = Path(state_dir).resolve()
+    marker_dir = state_root / ".interject_seen"
+    path = marker_dir / f"{safe_id}.json"
+    if (
+        marker_dir.is_symlink()
+        or path.is_symlink()
+        or not path.resolve().is_relative_to(state_root)
+    ):
+        raise ValueError("session_id resolves to an unsafe interject marker path")
+    return path
 
 
 def _load_marker(state_dir: Path, session_id: str) -> dict[str, Any]:
@@ -118,9 +132,7 @@ def _load_marker(state_dir: Path, session_id: str) -> dict[str, Any]:
 def _save_marker(state_dir: Path, session_id: str, marker: dict[str, Any]) -> None:
     f = _marker_file(state_dir, session_id)
     f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".json.tmp")
-    tmp.write_text(_json.dumps(marker), encoding="utf-8")
-    _os.replace(tmp, f)
+    atomic_write_text(f, _json.dumps(marker))
 
 
 def should_render(state_dir: Path, session_id: str, *, max_per_session: int) -> bool:

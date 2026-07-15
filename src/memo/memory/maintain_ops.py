@@ -18,7 +18,7 @@ import frontmatter
 
 from memo.embedder import assert_valid_embedding
 from memo.errors import StorageError
-from memo.fact_extraction import upsert_declared_fact_edges
+from memo.fact_extraction import fact_edges_from_metadata, upsert_declared_fact_edges
 from memo.flags import flag_bool
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
 from memo.memory._base import _MemoryBase
@@ -33,6 +33,7 @@ from memo.memory.record import (
     _normalise_tags,
     _now_iso,
     chat_with_timeout,
+    is_canonical_memory_id,
     strip_llm_output,
 )
 from memo.prompt_overrides import resolve_prompt
@@ -183,8 +184,8 @@ class _MaintainOpsMixin(_MemoryBase):
         (it lives in `repo_embedding_cache`, untouched by the rebuild), so a
         full rebuild after the cache is warm issues zero embedder calls.
         """
-        model = self.cfg.embedder_model
-        dims = self.cfg.embedder_dims
+        model = self.store.embedder_model
+        dims = self.store.dims
         input_hash = _sha256_full(text)
         cached = self.store.get_repo_embedding_cache(
             model=model, dims=dims, input_hashes=[input_hash]
@@ -206,6 +207,11 @@ class _MaintainOpsMixin(_MemoryBase):
         return emb
 
     def reindex(self, *, force: bool = False, rebuild: bool = False) -> dict[str, int]:
+        """Reindex against a stable Markdown snapshot shared with all CRUD."""
+        with self._data_dir_write_lock():
+            return self._reindex_locked(force=force, rebuild=rebuild)
+
+    def _reindex_locked(self, *, force: bool = False, rebuild: bool = False) -> dict[str, int]:
         """Scan the memory dir, re-embed entries whose on-disk body
         diverged from `body_hash`. Picks up edits the user made in
         Obsidian directly. Also indexes any `.md` with a valid `id` in
@@ -217,9 +223,9 @@ class _MaintainOpsMixin(_MemoryBase):
         change to `_compose_for_embed`, or to refresh the index after
         a corruption/incident.
 
-        With `rebuild=True`, first TRUNCATES the markdown-derivable tables
-        (`meta`/`vec`/`fts`) and replays the whole index from disk — the
-        markdown-is-truth reset. User-signal tables (`access`,
+        With `rebuild=True`, first preflights the full markdown corpus and
+        atomically replaces the markdown-derivable tables (`meta`/`vec`/`fts`)
+        — the markdown-is-truth reset. User-signal tables (`access`,
         `memory_health`, `source_feedback*`) are preserved and re-join on the
         stable `id`, so a rebuild never destroys feedback/telemetry. Implies
         `force`. Embedding reuse (see `_embed_cached`) keeps it cheap once the
@@ -240,6 +246,11 @@ class _MaintainOpsMixin(_MemoryBase):
             return {"checked": 0, "reindexed": 0, "added": 0, "skipped": 0, "facts": 0}
 
         chunk_ingest = flag_bool("MEMO_CHUNK_INGEST")
+        rebuild_rows: list[dict[str, Any]] | None = [] if rebuild else None
+        rebuild_fact_edges: list[dict[str, Any]] = []
+        pending_marker_paths: list[tuple[Path, str]] = []
+        canonical_parent_count = 0
+        canonical_paths_by_id: dict[str, Path] = {}
 
         if rebuild:
             # Safety: never truncate a populated index against an empty disk.
@@ -255,43 +266,81 @@ class _MaintainOpsMixin(_MemoryBase):
                         "them. Restore the .md first (`memo sync bootstrap <url>`, or "
                         "`git -C <repo> restore .`), or run `memo reindex` (no --rebuild)."
                     )
-            # Wipe only the derivable tables; signal tables survive and re-join
-            # on id. Every file then takes the `existing is None` add path.
-            cleared = self.store.clear_memory_index()
-            cleared_facts = self.fact_edges.clear()
-            _log.info("reindex(rebuild): cleared %d derivable rows, replaying from disk", cleared)
-            _log.info("reindex(rebuild): cleared %d temporal fact edges", cleared_facts)
+            # Parse and embed everything before touching the current index.
+            # The final SQLite replacement is one transaction, so any row
+            # failure rolls back to the previous searchable state.
             force = True
 
         for md_path in sorted(memory_root.rglob("*.md")):
             checked += 1
+            relative_parts = md_path.relative_to(memory_root).parts
+            current = memory_root
+            has_symlink_component = False
+            for part in relative_parts:
+                current = current / part
+                if current.is_symlink():
+                    has_symlink_component = True
+                    break
+            if has_symlink_component:
+                message = f"reindex: refusing symlinked canonical path {md_path}"
+                if rebuild_rows is not None:
+                    raise StorageError(message)
+                _log.warning(message)
+                skipped += 1
+                continue
             try:
-                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+                source_text = md_path.read_text(encoding="utf-8")
+                post = frontmatter.loads(source_text)
             except Exception as exc:
+                if rebuild_rows is not None:
+                    raise StorageError(
+                        f"reindex rebuild preflight failed for {md_path}: {exc}"
+                    ) from exc
                 _log.warning("reindex: skipping %s (parse error): %s", md_path.name, exc)
                 skipped += 1
                 continue
             meta: dict[str, Any] = post.metadata
             md_id = meta.get("id")
-            if (
-                not md_id
-                or not isinstance(md_id, str)
-                or _purge_legacy_secret_index(
-                    self.store,
-                    md_path,
-                    self.cfg.memory_dir,
-                    md_id,
-                    meta,
-                )
-            ):
+            rel_path = md_path.relative_to(self.cfg.memory_dir)
+            is_secret = meta.get("type") == "secret" or rel_path.parts[:1] == ("secrets",)
+            if is_secret:
+                if rebuild_rows is None and isinstance(md_id, str):
+                    _purge_legacy_secret_index(
+                        self.store,
+                        md_path,
+                        self.cfg.memory_dir,
+                        md_id,
+                        meta,
+                    )
                 skipped += 1
                 continue
+            if not is_canonical_memory_id(md_id):
+                _log.warning("reindex: skipping %s (invalid memory id)", md_path.name)
+                skipped += 1
+                continue
+            md_id = str(md_id)
+            duplicate_path = canonical_paths_by_id.get(md_id)
+            if duplicate_path is not None:
+                message = (
+                    f"reindex: duplicate canonical id {md_id} in {duplicate_path} and {md_path}"
+                )
+                if rebuild_rows is not None:
+                    raise StorageError(message)
+                _log.warning(message)
+                skipped += 1
+                continue
+            canonical_paths_by_id[md_id] = md_path
+            canonical_parent_count += 1
             body = post.content or ""
             new_hash = _sha256_short(body)
-            existing = self.store.get(md_id)
+            existing = None if rebuild_rows is not None else self.store.get(md_id)
+            prior = existing if existing is not None else self.store.get(md_id)
+            prior_topic_key, prior_normalized_hash = self.store.get_dedup_keys(md_id)
+            topic_key = meta.get("topic_key", prior_topic_key)
+            normalized_hash = meta.get("normalized_hash", prior_normalized_hash)
             # Path relative to memory_dir — paths in the store no longer
             # carry the legacy `<vault>/<memory_subdir>/...` prefix.
-            rel = str(md_path.relative_to(self.cfg.memory_dir))
+            rel = str(rel_path)
 
             title = (meta.get("title") or _derive_title(body) or "untitled").strip()
             type_ = meta.get("type") or "note"
@@ -328,19 +377,35 @@ class _MaintainOpsMixin(_MemoryBase):
                     verified_at = int(verified_at)
                 except (ValueError, TypeError):
                     verified_at = None
+            raw_verification_state = meta.get(
+                "verification_state",
+                (prior or {}).get("verification_state", VerificationState.UNVERIFIED.value),
+            )
+            try:
+                verification_state = VerificationState(str(raw_verification_state)).value
+            except ValueError:
+                verification_state = VerificationState.UNVERIFIED.value
+            if "verified_at" not in meta and prior is not None:
+                verified_at = prior.get("verified_at")
 
             if existing is None:
                 # Path-collision guard: an .md may have its frontmatter id
                 # regenerated (manual edit, restore-from-backup, or a stale
                 # row pointing at a file whose id was rewritten) while the
                 # vault-relative path stays the same. The store's
-                # UNIQUE(meta.path) constraint blocks a plain INSERT, so we
-                # drop the orphan row before re-adding under the new id.
-                # include_deleted + hard_delete: a soft-deleted tombstone
+                # UNIQUE(meta.path) constraint blocks a plain INSERT, so the
+                # store transfers ownership to the new id atomically after the
+                # replacement embedding has succeeded.
+                # include_deleted also finds a soft-deleted tombstone, which
                 # still holds the path in the UNIQUE index (a soft delete
-                # would leave it there and the INSERT would fail again) —
-                # the disk file reclaims the path, so the tombstone is purged.
-                stale = self.store.get_by_path(rel, include_deleted=True)
+                # would leave it there and the INSERT would fail again). Do NOT
+                # hard-delete here: an embed/upsert failure must leave the
+                # previous searchable row intact.
+                stale = (
+                    self.store.get_by_path(rel, include_deleted=True)
+                    if rebuild_rows is None
+                    else None
+                )
                 if stale is not None:
                     _log.warning(
                         "reindex: path %r reused with new id (%s → %s); replacing stale row",
@@ -348,7 +413,6 @@ class _MaintainOpsMixin(_MemoryBase):
                         stale["id"][:8],
                         md_id[:8],
                     )
-                    self.store.hard_delete(stale["id"])
                 had_embed_pending = False
                 if isinstance(extra, dict):
                     extra = dict(extra)
@@ -357,7 +421,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     emb = self._embed_cached(
                         self._compose_for_embed(title, body), ctx=f"reindex add {md_id[:8]}"
                     )
-                    self.store.upsert(
+                    row = dict(
                         id_=md_id,
                         path=rel,
                         title=title,
@@ -369,25 +433,36 @@ class _MaintainOpsMixin(_MemoryBase):
                         embedding=emb,
                         extra=extra if extra else None,
                         body_text=body,
+                        topic_key=topic_key,
+                        normalized_hash=normalized_hash,
+                        verification_state=verification_state,
+                        verified_at=verified_at,
                     )
+                    if rebuild_rows is not None:
+                        rebuild_rows.append(row)
+                    else:
+                        if stale is not None:
+                            self.store.upsert_replacing_path_owner(
+                                stale_id=str(stale["id"]),
+                                **row,
+                            )
+                        else:
+                            verification = {
+                                "verification_state": row.pop("verification_state"),
+                                "verified_at": row.pop("verified_at"),
+                            }
+                            self.store.upsert(**row)
+                            self.store.update_verification(id_=md_id, **verification)
                 except Exception as exc:
+                    if rebuild_rows is not None:
+                        raise StorageError(
+                            f"reindex rebuild preflight failed for {md_path}: {exc}"
+                        ) from exc
                     _log.warning("reindex: skipping %s (embed failed): %s", md_path.name, exc)
                     skipped += 1
                     continue
                 if had_embed_pending:
-                    try:
-                        _post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
-                        _raw_extra = _post.metadata.get("extra")
-                        _post_extra = dict(_raw_extra) if isinstance(_raw_extra, dict) else {}
-                        _post_extra.pop("_memo_embed_pending", None)
-                        _post.metadata["extra"] = _post_extra
-                        md_path.write_text(frontmatter.dumps(_post), encoding="utf-8")
-                    except Exception as _pend_exc:
-                        _log.debug(
-                            "reindex: could not clear _memo_embed_pending from %s: %s",
-                            md_path.name,
-                            _pend_exc,
-                        )
+                    pending_marker_paths.append((md_path, source_text))
                 added += 1
                 if chunk_ingest:
                     added += self._reindex_emit_chunks(
@@ -399,10 +474,11 @@ class _MaintainOpsMixin(_MemoryBase):
                         created=created,
                         updated=updated,
                         force=force,
+                        rebuild_rows=rebuild_rows,
                     )
-                self.fact_edges.delete_for_source(md_id)
-                facts += upsert_declared_fact_edges(
-                    self.fact_edges,
+                elif rebuild_rows is None:
+                    self._prune_chunks(md_id)
+                declared_edges = fact_edges_from_metadata(
                     record_id=md_id,
                     title=title,
                     type_=type_,
@@ -411,9 +487,19 @@ class _MaintainOpsMixin(_MemoryBase):
                     extra=extra if isinstance(extra, dict) else None,
                     top_level=meta.get("fact_edges"),
                 )
+                facts += len(declared_edges)
+                if rebuild_rows is not None:
+                    rebuild_fact_edges.extend(declared_edges)
+                else:
+                    self.fact_edges.delete_for_source(md_id)
+                    for edge in declared_edges:
+                        self.fact_edges.upsert_fact(**edge)
                 continue
             missing_vector = not self.store.has_vector(md_id)
-            if force or existing["body_hash"] != new_hash or missing_vector:
+            path_changed = existing["path"] != rel
+            body_changed = existing["body_hash"] != new_hash
+            title_changed = title != existing["title"]
+            if force or body_changed or title_changed or missing_vector:
                 had_embed_pending = False
                 if isinstance(extra, dict):
                     extra = dict(extra)
@@ -429,48 +515,34 @@ class _MaintainOpsMixin(_MemoryBase):
                         type_=type_,
                         tags=tags,
                         created=existing["created"],
-                        updated=_now_iso() if existing["body_hash"] != new_hash else updated,
+                        updated=_now_iso() if body_changed or title_changed else updated,
                         body_hash=new_hash,
                         embedding=emb,
                         extra=extra if extra else None,
                         body_text=body,
+                        topic_key=topic_key,
+                        normalized_hash=normalized_hash,
+                    )
+                    self.store.update_verification(
+                        id_=md_id,
+                        verification_state=verification_state,
+                        verified_at=verified_at,
                     )
                 except Exception as exc:
                     _log.warning("reindex: skipping %s (re-embed failed): %s", md_path.name, exc)
                     skipped += 1
                     continue
                 if had_embed_pending:
-                    try:
-                        _post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
-                        _raw_extra = _post.metadata.get("extra")
-                        _post_extra = dict(_raw_extra) if isinstance(_raw_extra, dict) else {}
-                        _post_extra.pop("_memo_embed_pending", None)
-                        _post.metadata["extra"] = _post_extra
-                        md_path.write_text(frontmatter.dumps(_post), encoding="utf-8")
-                    except Exception as _pend_exc:
-                        _log.debug(
-                            "reindex: could not clear _memo_embed_pending from %s: %s",
-                            md_path.name,
-                            _pend_exc,
-                        )
+                    pending_marker_paths.append((md_path, source_text))
                 reindexed += 1
-                if chunk_ingest:
-                    reindexed += self._reindex_emit_chunks(
-                        parent_id=md_id,
-                        parent_rel=rel,
-                        title=title,
-                        body=body,
-                        tags=tags,
-                        created=created,
-                        updated=updated,
-                        force=force,
-                    )
             else:
+                if path_changed:
+                    self.store.update_path(md_id, rel)
+                    reindexed += 1
                 # Metadata-only frontmatter change (tags/type/extra changed,
                 # body unchanged) — update meta without re-embedding.
                 meta_changed = (
-                    title != existing["title"]
-                    or type_ != existing["type"]
+                    type_ != existing["type"]
                     or tags != existing["tags"]
                     or extra != (existing.get("extra") or {})
                 )
@@ -483,6 +555,25 @@ class _MaintainOpsMixin(_MemoryBase):
                         updated=_now_iso(),
                         extra=extra if extra else None,
                     )
+                self.store.update_verification(
+                    id_=md_id,
+                    verification_state=verification_state,
+                    verified_at=verified_at,
+                )
+            if chunk_ingest:
+                reindexed += self._reindex_emit_chunks(
+                    parent_id=md_id,
+                    parent_rel=rel,
+                    title=title,
+                    body=body,
+                    tags=tags,
+                    created=created,
+                    updated=updated,
+                    force=force,
+                    rebuild_rows=None,
+                )
+            else:
+                self._prune_chunks(md_id)
             self.fact_edges.delete_for_source(md_id)
             facts += upsert_declared_fact_edges(
                 self.fact_edges,
@@ -494,6 +585,74 @@ class _MaintainOpsMixin(_MemoryBase):
                 extra=extra if isinstance(extra, dict) else None,
                 top_level=meta.get("fact_edges"),
             )
+        if rebuild_rows is not None:
+            if canonical_parent_count == 0:
+                indexed = self.store.count()
+                if indexed > 0:
+                    raise StorageError(
+                        f"reindex --rebuild refused: data_dir {memory_root} has no valid "
+                        f"canonical memories but the index holds {indexed} memories — "
+                        "rebuilding would wipe them. Restore canonical Markdown first."
+                    )
+            try:
+                cleared = self.store.replace_memory_index(rebuild_rows)
+            except Exception as exc:
+                raise StorageError(
+                    f"reindex rebuild atomic index replace failed; previous index preserved: {exc}"
+                ) from exc
+            _log.info(
+                "reindex(rebuild): atomically replaced %d derivable rows with %d rows",
+                cleared,
+                len(rebuild_rows),
+            )
+            # A model/profile migration invalidates source-feedback vectors in
+            # the same transaction as the main index replacement. Rehydrate
+            # them from their preserved query_text rows now. This is
+            # best-effort: the canonical memory rebuild already committed and
+            # feedback boosting may safely remain disabled until a later run.
+            try:
+                feedback_reembedded = self.store.rebuild_feedback_vecs(self.embedder.embed_query)
+                if feedback_reembedded:
+                    _log.info(
+                        "reindex(rebuild): re-embedded %d source-feedback vectors",
+                        feedback_reembedded,
+                    )
+            except Exception as exc:
+                _log.warning(
+                    "reindex(rebuild): source-feedback vector refresh deferred: %s",
+                    exc,
+                )
+            cleared_facts = self.fact_edges.clear()
+            for edge in rebuild_fact_edges:
+                self.fact_edges.upsert_fact(**edge)
+            _log.info(
+                "reindex(rebuild): replaced %d temporal fact edges with %d edges",
+                cleared_facts,
+                len(rebuild_fact_edges),
+            )
+
+        for pending_path, expected_source_text in pending_marker_paths:
+            try:
+                with self._data_dir_write_lock():
+                    if pending_path.is_symlink():
+                        continue
+                    current_text = pending_path.read_text(encoding="utf-8")
+                    if current_text != expected_source_text:
+                        continue
+                    pending_post = frontmatter.loads(current_text)
+                    raw_extra = pending_post.metadata.get("extra")
+                    pending_extra = dict(raw_extra) if isinstance(raw_extra, dict) else {}
+                    pending_extra.pop("_memo_embed_pending", None)
+                    pending_post.metadata["extra"] = pending_extra
+                    pending_rel_path = pending_path.relative_to(self.cfg.memory_dir).as_posix()
+                    self._atomic_write_text(pending_rel_path, frontmatter.dumps(pending_post))
+            except Exception as exc:
+                _log.debug(
+                    "reindex: could not clear _memo_embed_pending from %s: %s",
+                    pending_path.name,
+                    exc,
+                )
+
         # Successful reindex: every meta.path now uses the current
         # memory_dir-relative layout, so future startups can skip the
         # legacy-path probe in `_maybe_warn_legacy_paths`.
@@ -549,6 +708,7 @@ class _MaintainOpsMixin(_MemoryBase):
         created: str,
         updated: str,
         force: bool,
+        rebuild_rows: list[dict[str, Any]] | None = None,
     ) -> int:
         """Split `body` into heading-aware chunks and upsert each as a
         reference-tier record with `extra.parent_id` pointing back.
@@ -563,6 +723,8 @@ class _MaintainOpsMixin(_MemoryBase):
         chunks = chunk_markdown(body, target_chars=DEFAULT_TARGET_CHARS)
         if len(chunks) <= 1:
             # Body is short or structurally unsplittable — no extra records.
+            if rebuild_rows is None:
+                self._prune_chunks(parent_id)
             return 0
 
         now = _now_iso()
@@ -577,27 +739,36 @@ class _MaintainOpsMixin(_MemoryBase):
             chunk_path = f"{parent_rel}#chunk-{seq}"
             valid_chunk_ids.append(chunk_id)
 
-            chunk_hash = _sha256_short(chunk_body)
-            existing_chunk = self.store.get(chunk_id)
-            if existing_chunk and existing_chunk["body_hash"] == chunk_hash and not force:
-                # Unchanged since last reindex — skip.
-                continue
-
             chunk_title = (
                 f"{title} § {heading}" if heading else f"{title} (§{seq + 1}/{len(chunks)})"
             )
             chunk_extra: dict[str, Any] = {
                 "parent_id": parent_id,
                 "chunk_index": seq,
+                "chunk_seq": seq,
                 "chunk_count": len(chunks),
                 "chunk_heading": heading,
                 "parent_path": parent_rel,
             }
+            chunk_hash = _sha256_short(chunk_body)
+            existing_chunk = None if rebuild_rows is not None else self.store.get(chunk_id)
+            if (
+                existing_chunk
+                and existing_chunk["body_hash"] == chunk_hash
+                and existing_chunk["path"] == chunk_path
+                and existing_chunk["title"] == chunk_title
+                and existing_chunk["tags"] == tags
+                and (existing_chunk.get("extra") or {}) == chunk_extra
+                and not force
+            ):
+                # Content and all parent-derived metadata are unchanged.
+                continue
+
             emb = self._embed_cached(
                 self._compose_for_embed(chunk_title, chunk_body),
                 ctx=f"chunk {parent_id[:8]}#{seq}",
             )
-            self.store.upsert(
+            row = dict(
                 id_=chunk_id,
                 path=chunk_path,
                 title=chunk_title,
@@ -610,18 +781,32 @@ class _MaintainOpsMixin(_MemoryBase):
                 extra=chunk_extra,
                 body_text=chunk_body,
             )
+            if rebuild_rows is not None:
+                rebuild_rows.append(row)
+            else:
+                self.store.upsert(**row)
             written += 1
 
         # Prune stale chunks from a previous reindex that had more chunks
         # (e.g. note was shortened or restructured into fewer sections).
-        for row in self.store.chunks_by_parent_id(parent_id):
-            if row["id"] not in valid_chunk_ids:
-                self.store.delete(row["id"])
-                _log.debug(
-                    "reindex: pruned stale chunk %s (parent %s)", row["id"][:12], parent_id[:8]
-                )
+        if rebuild_rows is None:
+            self._prune_chunks(parent_id, valid_chunk_ids=valid_chunk_ids)
 
         return written
+
+    def _prune_chunks(
+        self,
+        parent_id: str,
+        *,
+        valid_chunk_ids: builtins.list[str] | None = None,
+    ) -> None:
+        """Hard-delete derived chunks not present in the parent's current layout."""
+        keep = set(valid_chunk_ids or [])
+        for row in self.store.chunks_by_parent_id(parent_id):
+            if row["id"] in keep:
+                continue
+            self.store.hard_delete(row["id"])
+            _log.debug("reindex: pruned stale chunk %s (parent %s)", row["id"][:12], parent_id[:8])
 
     def lint(self) -> dict[str, builtins.list[dict[str, Any]]]:
         """Surface memories with quality issues.
@@ -821,10 +1006,25 @@ class _MaintainOpsMixin(_MemoryBase):
 
         # Store-side: walk meta, check file existence (with legacy fallback).
         for r in self.store.list_recent(limit=100_000):
-            if not self._resolve_existing(r["path"]).is_file():
+            extra = r.get("extra") or {}
+            parent_id = extra.get("parent_id") if isinstance(extra, dict) else None
+            try:
+                if parent_id:
+                    parent = self.store.get(str(parent_id))
+                    path_exists = (
+                        parent is not None and self._resolve_existing(parent["path"]).is_file()
+                    )
+                else:
+                    path_exists = self._resolve_existing(r["path"]).is_file()
+            except StorageError:
+                path_exists = False
+            if not path_exists:
                 orphan_store.append(r["id"])
                 if fix:
-                    self.store.delete(r["id"])
+                    if parent_id:
+                        self.store.hard_delete(r["id"])
+                    else:
+                        self.store.delete(r["id"])
 
         # Disk-side: walk memory dir, check ids in store.
         if self.cfg.memory_dir.is_dir():
@@ -916,10 +1116,10 @@ class _MaintainOpsMixin(_MemoryBase):
                     updated=mem_updated.updated,
                     extra=dict(mem_updated.extra) if mem_updated.extra else {},
                 )
-                # Update verification_state and verified_at directly in store
-                self.store._conn.execute(
-                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
-                    (mem_updated.verification_state.value, mem_updated.verified_at, mem_id),
+                self.store.update_verification(
+                    id_=mem_id,
+                    verification_state=mem_updated.verification_state.value,
+                    verified_at=mem_updated.verified_at,
                 )
                 self.memory_map[mem_id] = mem_updated
                 transitioned += 1
@@ -941,10 +1141,10 @@ class _MaintainOpsMixin(_MemoryBase):
                     updated=mem_updated.updated,
                     extra=dict(mem_updated.extra) if mem_updated.extra else {},
                 )
-                # Update verification_state and verified_at directly in store
-                self.store._conn.execute(
-                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
-                    (mem_updated.verification_state.value, mem_updated.verified_at, mem_id),
+                self.store.update_verification(
+                    id_=mem_id,
+                    verification_state=mem_updated.verification_state.value,
+                    verified_at=mem_updated.verified_at,
                 )
                 self.memory_map[mem_id] = mem_updated
                 transitioned += 1

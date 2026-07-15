@@ -186,6 +186,9 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_SEARCH_DEFAULT_LIMIT",
         "MEMO_CONFIG_DIR",
         "MEMO_CONFIG_FILE",
+        # Credential consumed by http_auth.py. Keep it out of the behavioral
+        # registry so `memo config show` / active_flags never expose its value.
+        "MEMO_HTTP_API_TOKEN",
         # Runtime shim/control vars. These are exported between wrapper processes
         # for IPC/idempotency, not user-configurable MEMO_* knobs.
         "MEMO_AGENT_TTY",

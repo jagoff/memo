@@ -31,6 +31,12 @@ The **only** way memory leaves your machine is if **you** explicitly configure a
 git `memo-sync` remote. In that case your memory markdown is pushed to **that
 remote, which you own and control** — memo neither hosts nor has access to it.
 
+The explicit `memo map` and `memo dashboard` browser views use Canvas/SVG
+renderers contained in their generated HTML. They make no third-party request
+and remain usable offline. The local renderer keeps filtering, hover, click
+details, timelines, and bar charts; it intentionally omits advanced
+pan/zoom/export controls to avoid a large browser dependency.
+
 ## Third-party sharing
 
 memo shares your data with **no third parties**. There is no server operated by

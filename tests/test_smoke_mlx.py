@@ -23,6 +23,7 @@ where we catch a broken model load or a wrong embedding dim):
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 
 import pytest
 
@@ -30,10 +31,18 @@ from memo.config import Config
 from memo.memory import Memory
 
 
+@pytest.fixture
+def real_mlx_memory(tmp_cfg: Config) -> Iterator[Memory]:
+    """Real embedder instance that always releases MLX/Metal state after a test."""
+    mem = Memory(tmp_cfg)
+    yield mem
+    mem.close()
+
+
 @pytest.mark.requires_mlx
 @pytest.mark.slow
-def test_embedder_produces_unit_vectors(tmp_cfg: Config):
-    mem = Memory(tmp_cfg)
+def test_embedder_produces_unit_vectors(real_mlx_memory: Memory, tmp_cfg: Config):
+    mem = real_mlx_memory
     [v] = mem.embedder.embed(["hola che, tracking de pruebas MLX"])
     assert len(v) == tmp_cfg.embedder_dims
     # L2 norm should be ~1 (cosine semantics depend on this).
@@ -43,8 +52,8 @@ def test_embedder_produces_unit_vectors(tmp_cfg: Config):
 
 @pytest.mark.requires_mlx
 @pytest.mark.slow
-def test_save_and_search_roundtrip(tmp_cfg: Config):
-    mem = Memory(tmp_cfg)
+def test_save_and_search_roundtrip(real_mlx_memory: Memory):
+    mem = real_mlx_memory
 
     rec_a = mem.save(
         content=(
@@ -77,12 +86,14 @@ def test_save_and_search_roundtrip(tmp_cfg: Config):
 
 @pytest.mark.requires_mlx
 @pytest.mark.slow
-def test_reindex_after_external_edit_picks_up_via_real_embedder(tmp_cfg: Config):
+def test_reindex_after_external_edit_picks_up_via_real_embedder(
+    real_mlx_memory: Memory, tmp_cfg: Config
+):
     """Real-MLX version of the reindex test — proves the embedder is
     actually re-invoked when a body changes on disk, not just stubbed."""
     import frontmatter as fm
 
-    mem = Memory(tmp_cfg)
+    mem = real_mlx_memory
     rec = mem.save(content="contenido inicial sobre fútbol argentino", title="X")
     md_path = tmp_cfg.memory_dir / rec.path
 

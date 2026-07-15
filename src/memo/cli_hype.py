@@ -26,7 +26,12 @@ def status_cmd(as_json: bool) -> None:
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
-    store = HypeStore(cfg.db_path, cfg.embedder_dims)
+    identity = str(getattr(mem.store, "embedder_model", "") or "")
+    store = HypeStore(
+        cfg.db_path,
+        cfg.embedder_dims,
+        **({"embedder_model": identity} if identity else {}),
+    )
 
     try:
         stats = store.stats()

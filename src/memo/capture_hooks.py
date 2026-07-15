@@ -16,12 +16,12 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
-import os
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
+from memo.atomic_io import atomic_write_text
 from memo.capture_core import (
     _capture_provenance,
     _extract_and_save,
@@ -58,9 +58,7 @@ def _save_state(state_dir: Path, state: dict[str, Any]) -> None:
     """
     state_dir.mkdir(parents=True, exist_ok=True)
     dest = _state_file(state_dir)
-    tmp = dest.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state), encoding="utf-8")
-    os.replace(tmp, dest)
+    atomic_write_text(dest, json.dumps(state))
 
 
 def run_capture(
@@ -163,7 +161,10 @@ def list_sessions_without_watermark(
         sid = sess.get("session_id")
         if not sid:
             continue
-        wm_file = wm_dir / f"{sid}.json"
+        try:
+            wm_file = _watermark_file(state_dir, str(sid))
+        except ValueError:
+            continue
         if not wm_file.is_file():
             pending.append(sess)
             if len(pending) >= limit:
@@ -178,7 +179,19 @@ def _watermark_file(state_dir: Path, session_id: str) -> Path:
     session_id is a Claude Code UUID — filename-safe, matching how
     session.py keys its per-session JSON files.
     """
-    return state_dir / ".capture_watermark" / f"{session_id}.json"
+    from memo.session import validate_session_id
+
+    safe_id = validate_session_id(session_id)
+    root = state_dir.resolve()
+    watermark_dir = state_dir / ".capture_watermark"
+    if watermark_dir.is_symlink():
+        raise ValueError(f"unsafe watermark directory: {watermark_dir}")
+    path = watermark_dir / f"{safe_id}.json"
+    if not path.resolve(strict=False).is_relative_to(root):
+        raise ValueError(f"unsafe watermark directory: {watermark_dir}")
+    if path.is_symlink():
+        raise ValueError("session_id resolves to an unsafe watermark path")
+    return path
 
 
 def _load_watermark(state_dir: Path, session_id: str) -> dict[str, Any]:
@@ -187,7 +200,10 @@ def _load_watermark(state_dir: Path, session_id: str) -> dict[str, Any]:
     A clobbered or hand-edited file degrades to a fresh full pass, never
     a crash.
     """
-    f = _watermark_file(state_dir, session_id)
+    try:
+        f = _watermark_file(state_dir, session_id)
+    except ValueError:
+        return {}
     if not f.is_file():
         return {}
     try:
@@ -199,7 +215,19 @@ def _load_watermark(state_dir: Path, session_id: str) -> dict[str, Any]:
 
 def _capture_lock_file(state_dir: Path, session_id: str) -> Path:
     """Path to the per-session capture lock file."""
-    return state_dir / ".capture_watermark" / f"{session_id}.capture.lock"
+    from memo.session import validate_session_id
+
+    safe_id = validate_session_id(session_id)
+    root = state_dir.resolve()
+    watermark_dir = state_dir / ".capture_watermark"
+    if watermark_dir.is_symlink():
+        raise ValueError(f"unsafe watermark directory: {watermark_dir}")
+    path = watermark_dir / f"{safe_id}.capture.lock"
+    if not path.resolve(strict=False).is_relative_to(root):
+        raise ValueError(f"unsafe watermark directory: {watermark_dir}")
+    if path.is_symlink():
+        raise ValueError("session_id resolves to an unsafe capture lock path")
+    return path
 
 
 def _save_watermark(state_dir: Path, session_id: str, watermark: dict[str, Any]) -> None:
@@ -209,10 +237,9 @@ def _save_watermark(state_dir: Path, session_id: str, watermark: dict[str, Any])
     """
     f = _watermark_file(state_dir, session_id)
     f.parent.mkdir(parents=True, exist_ok=True)
-    # Atomic write (see _save_state): never leave a torn watermark behind.
-    tmp = f.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(watermark), encoding="utf-8")
-    os.replace(tmp, f)
+    if f.parent.is_symlink():
+        raise ValueError(f"unsafe watermark directory: {f.parent}")
+    atomic_write_text(f, json.dumps(watermark))
 
 
 def incremental_tick_due(state_dir: Path, session_id: str, interval_s: int) -> bool:

@@ -2,6 +2,10 @@
 
 import hashlib
 import shutil
+import sqlite3
+import stat
+import tarfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -109,6 +113,28 @@ def test_backup_manager_init(backup_manager):
     assert backup_manager.backup_dir.is_dir()
 
 
+def test_backup_manager_lock_file_is_not_truncated(backup_manager):
+    lock_file = backup_manager.backup_dir / ".backup.lock"
+    lock_file.write_text("existing lock contents", encoding="utf-8")
+
+    backup_manager.create_backup(compress=False, name="keeps-lock")
+
+    assert lock_file.read_text(encoding="utf-8") == "existing lock contents"
+
+
+def test_backup_manager_rejects_symlink_lock_without_touching_target(
+    backup_manager, tmp_path: Path
+):
+    target = tmp_path / "lock-target.txt"
+    target.write_text("must survive", encoding="utf-8")
+    (backup_manager.backup_dir / ".backup.lock").symlink_to(target)
+
+    with pytest.raises(RuntimeError, match="backup lock"):
+        backup_manager.create_backup(compress=False, name="unsafe-lock")
+
+    assert target.read_text(encoding="utf-8") == "must survive"
+
+
 def test_backup_manager_create_backup(backup_manager, mock_memory):
     """Test creating a backup."""
     # Create a test memoria
@@ -139,6 +165,79 @@ def test_backup_manager_create_compressed_backup(backup_manager, mock_memory):
     assert metadata.compressed_size < metadata.original_size
 
 
+def test_backup_manager_compressed_archive_is_private(backup_manager, mock_memory):
+    mock_memory.save(content="private backup content", title="Private")
+
+    backup_manager.create_backup(compress=True, name="private")
+
+    archive = backup_manager.backup_dir / "private.tar.gz"
+    assert stat.S_IMODE(archive.stat().st_mode) == 0o600
+
+
+def test_backup_manager_restores_valid_compressed_archive(backup_manager):
+    original = backup_manager.memory_dir / "compressed.md"
+    original.write_text("compressed backup body", encoding="utf-8")
+    backup_manager.create_backup(compress=True, name="compressed")
+    original.unlink()
+
+    assert backup_manager.restore_backup("compressed", restore_dbs=False)
+    assert original.read_text(encoding="utf-8") == "compressed backup body"
+
+
+def test_backup_manager_normalizes_archive_suffix_as_logical_name(backup_manager):
+    original = backup_manager.memory_dir / "logical-name.md"
+    original.write_text("logical backup body", encoding="utf-8")
+
+    metadata = backup_manager.create_backup(compress=True, name="logical.tar.gz")
+
+    assert metadata.name == "logical"
+    assert (backup_manager.backup_dir / "logical.tar.gz").is_file()
+    assert not (backup_manager.backup_dir / "logical.tar.gz.tar.gz").exists()
+
+    original.unlink()
+    assert backup_manager.restore_backup("logical.tar.gz", restore_dbs=False)
+    assert original.read_text(encoding="utf-8") == "logical backup body"
+
+
+def test_backup_manager_rejects_tar_compression_bomb_before_extracting(backup_manager):
+    archive = backup_manager.backup_dir / "bomb.tar.gz"
+    payload = backup_manager.backup_dir / "payload.md"
+    payload.write_bytes(b"0" * (8 * 1024 * 1024))
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(payload, arcname="bomb/memories/payload.md")
+
+    with pytest.raises(ValueError, match="compression ratio"):
+        backup_manager.restore_backup("bomb", restore_dbs=False)
+
+    assert not (backup_manager.memory_dir / "payload.md").exists()
+
+
+def test_backup_manager_rejects_tar_links_before_extracting(backup_manager):
+    archive = backup_manager.backup_dir / "links.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        link = tarfile.TarInfo("links/memories/linked.md")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/etc/passwd"
+        tar.addfile(link)
+
+    with pytest.raises(ValueError, match="Unsupported archive member"):
+        backup_manager.restore_backup("links", restore_dbs=False)
+
+    assert not (backup_manager.memory_dir / "linked.md").exists()
+
+
+def test_backup_manager_skips_markdown_symlink_outside_root(backup_manager, tmp_path: Path):
+    outside = tmp_path / "outside-secret.md"
+    outside.write_text("NAMED_BACKUP_EXFILTRATION_MARKER", encoding="utf-8")
+    (backup_manager.memory_dir / "linked.md").symlink_to(outside)
+
+    metadata = backup_manager.create_backup(compress=False, name="no-symlink")
+
+    backed_up = backup_manager.backup_dir / "no-symlink" / "memories" / "linked.md"
+    assert metadata.memory_count == 0
+    assert not backed_up.exists()
+
+
 def test_backup_excludes_legacy_secret_markdown(backup_manager, mock_memory):
     mock_memory.save(content="safe memory", title="Safe")
     marker = mock_memory.cfg.memory_dir / "secrets" / "2026" / "07" / "key.md"
@@ -149,6 +248,125 @@ def test_backup_excludes_legacy_secret_markdown(backup_manager, mock_memory):
 
     assert metadata.memory_count == 1
     assert not (backup_manager.backup_dir / "without-secrets" / "memories" / "secrets").exists()
+
+
+def test_backup_manager_snapshots_wal_sanitizes_secrets_and_restores(
+    backup_manager,
+):
+    marker = b"MEMO_SECRET_NAMED_BACKUP_MARKER_91ac" * 16
+    source = backup_manager.db_dir / "wal-consistent.db"
+    writer = sqlite3.connect(source)
+    assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    writer.execute("PRAGMA wal_autocheckpoint=0")
+    writer.executescript(
+        "CREATE TABLE visible (value TEXT NOT NULL);"
+        "CREATE TABLE secret_store (encrypted_blob BLOB NOT NULL);"
+    )
+    writer.execute("INSERT INTO secret_store VALUES (?)", (marker,))
+    writer.commit()
+    writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    writer.execute("INSERT INTO visible VALUES ('committed-in-wal')")
+    writer.commit()
+    assert source.with_name(f"{source.name}-wal").stat().st_size > 0
+
+    try:
+        backup_manager.create_backup(compress=False, name="wal-safe")
+    finally:
+        writer.close()
+
+    snapshot = backup_manager.backup_dir / "wal-safe" / "db" / source.name
+    with closing(sqlite3.connect(snapshot)) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("SELECT COUNT(*) FROM secret_store").fetchone() == (0,)
+        assert connection.execute("SELECT value FROM visible").fetchall() == [("committed-in-wal",)]
+    assert marker not in snapshot.read_bytes()
+
+    for suffix in ("", "-wal", "-shm"):
+        source.with_name(f"{source.name}{suffix}").unlink(missing_ok=True)
+
+    assert backup_manager.restore_backup(
+        "wal-safe",
+        restore_memories=False,
+        restore_dbs=True,
+    )
+    with closing(sqlite3.connect(source)) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert connection.execute("SELECT value FROM visible").fetchall() == [("committed-in-wal",)]
+        assert connection.execute("SELECT COUNT(*) FROM secret_store").fetchone() == (0,)
+    assert marker not in source.read_bytes()
+
+
+def test_backup_manager_restores_sqlite_without_splitting_live_connections(
+    backup_manager, mock_memory, tmp_cfg
+):
+    before = mock_memory.save(content="included in backup", title="Before")
+    backup_manager.create_backup(compress=False, name="live-connections")
+    after = mock_memory.save(content="must disappear after restore", title="After")
+
+    observer = Memory(tmp_cfg)
+    database = tmp_cfg.db_path
+    inode_before = database.stat().st_ino
+    try:
+        assert mock_memory.store.get(after.id) is not None
+        assert observer.store.get(after.id) is not None
+
+        assert backup_manager.restore_backup(
+            "live-connections",
+            restore_memories=False,
+            restore_dbs=True,
+        )
+
+        assert database.stat().st_ino == inode_before
+        assert mock_memory.store.get(before.id) is not None
+        assert observer.store.get(before.id) is not None
+        assert mock_memory.store.get(after.id) is None
+        assert observer.store.get(after.id) is None
+    finally:
+        observer.close()
+
+
+def test_backup_manager_rolls_back_sqlite_logically_after_late_failure(backup_manager, monkeypatch):
+    first = backup_manager.db_dir / "a-first.db"
+    second = backup_manager.db_dir / "b-second.db"
+    for database in (first, second):
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("CREATE TABLE state (value TEXT NOT NULL)")
+            connection.execute("INSERT INTO state VALUES ('backup value')")
+            connection.commit()
+
+    backup_manager.create_backup(compress=False, name="logical-rollback")
+    for database in (first, second):
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("UPDATE state SET value = 'live value'")
+            connection.commit()
+
+    live_connection = sqlite3.connect(first)
+    inode_before = first.stat().st_ino
+    real_restore = backup_manager._restore_sqlite_in_place
+    failed = False
+
+    def fail_second(source: Path, destination: Path) -> None:
+        nonlocal failed
+        if destination.name == second.name and not failed:
+            failed = True
+            raise OSError("injected restore failure")
+        real_restore(source, destination)
+
+    monkeypatch.setattr(backup_manager, "_restore_sqlite_in_place", fail_second)
+    try:
+        with pytest.raises(OSError, match="injected restore failure"):
+            backup_manager.restore_backup(
+                "logical-rollback",
+                restore_memories=False,
+                restore_dbs=True,
+            )
+
+        assert first.stat().st_ino == inode_before
+        assert live_connection.execute("SELECT value FROM state").fetchone() == ("live value",)
+        with closing(sqlite3.connect(second)) as connection:
+            assert connection.execute("SELECT value FROM state").fetchone() == ("live value",)
+    finally:
+        live_connection.close()
 
 
 @pytest.mark.parametrize(
@@ -200,6 +418,87 @@ def test_backup_manager_restore_rejects_paths_outside_backup_dir(backup_manager,
         backup_manager.restore_backup(str(external))
 
     assert not (backup_manager.memory_dir / "injected.md").exists()
+
+
+def test_backup_manager_restore_rejects_symlinked_destination(backup_manager, tmp_path: Path):
+    project = backup_manager.memory_dir / "project"
+    project.mkdir()
+    (project / "memory.md").write_text("backup body", encoding="utf-8")
+    backup_manager.create_backup(compress=False, name="safe-source")
+    shutil.rmtree(project)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    project.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlinked restore destination"):
+        backup_manager.restore_backup("safe-source", restore_dbs=False)
+
+    assert not (outside / "memory.md").exists()
+
+
+def test_backup_manager_restore_verifies_checksum_before_writing(backup_manager):
+    original = backup_manager.memory_dir / "original.md"
+    original.write_text("original", encoding="utf-8")
+    backup_manager.create_backup(compress=False, name="checksum")
+    original.unlink()
+    archived = backup_manager.backup_dir / "checksum" / "memories" / "original.md"
+    archived.write_text("tampered", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checksum"):
+        backup_manager.restore_backup("checksum", restore_dbs=False)
+
+    assert not original.exists()
+
+
+def test_backup_manager_restore_checks_staged_bytes_after_planning(backup_manager, monkeypatch):
+    original = backup_manager.memory_dir / "staged.md"
+    original.write_text("validated", encoding="utf-8")
+    backup_manager.create_backup(compress=False, name="staged-checksum")
+    original.unlink()
+
+    real_safe_regular_files = backup_manager._safe_regular_files
+    mutated = False
+
+    def mutate_during_restore(root: Path, pattern: str) -> list[Path]:
+        nonlocal mutated
+        if root.name == "memories" and not mutated:
+            (root / "staged.md").write_text("changed after initial check", encoding="utf-8")
+            mutated = True
+        return real_safe_regular_files(root, pattern)
+
+    monkeypatch.setattr(backup_manager, "_safe_regular_files", mutate_during_restore)
+
+    with pytest.raises(ValueError, match="checksum"):
+        backup_manager.restore_backup("staged-checksum", restore_dbs=False)
+
+    assert mutated
+    assert not original.exists()
+
+
+def test_backup_manager_restore_uses_staged_snapshot(backup_manager, monkeypatch):
+    original = backup_manager.memory_dir / "snapshot.md"
+    original.write_text("staged value", encoding="utf-8")
+    backup_manager.create_backup(compress=False, name="staged-snapshot")
+    original.unlink()
+
+    backup_path = backup_manager.backup_dir / "staged-snapshot"
+    archived = backup_path / "memories" / "snapshot.md"
+    real_copytree = shutil.copytree
+    staged = False
+
+    def copy_then_mutate_source(source, destination, *args, **kwargs):
+        nonlocal staged
+        result = real_copytree(source, destination, *args, **kwargs)
+        if Path(source) == backup_path:
+            archived.write_text("changed after staging", encoding="utf-8")
+            staged = True
+        return result
+
+    monkeypatch.setattr(shutil, "copytree", copy_then_mutate_source)
+
+    assert backup_manager.restore_backup("staged-snapshot", restore_dbs=False)
+    assert staged
+    assert original.read_text(encoding="utf-8") == "staged value"
 
 
 def test_backup_manager_list_backups(backup_manager):

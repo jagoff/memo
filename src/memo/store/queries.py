@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
@@ -36,23 +37,8 @@ def _parse_filter_ts(value: str | None) -> datetime | None:
 class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
     # -- public CRUD --------------------------------------------------------
 
-    def upsert(
-        self,
-        *,
-        id_: str,
-        path: str,
-        title: str,
-        type_: str,
-        tags: list[str],
-        created: str,
-        updated: str,
-        body_hash: str,
-        embedding: list[float],
-        extra: dict[str, Any] | None = None,
-        body_text: str = "",
-        topic_key: str | None = None,
-        normalized_hash: str | None = None,
-    ) -> None:
+    def _validate_embedding(self, id_: str, embedding: list[float]) -> None:
+        """Validate one vector before any transaction mutates index rows."""
         if len(embedding) != self.dims:
             raise ValueError(
                 f"Embedding dimension mismatch: got {len(embedding)}, store expects {self.dims}. "
@@ -80,74 +66,122 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 norm,
                 id_[:8],
             )
+
+    def _upsert_memory_row(
+        self,
+        cx: sqlite3.Connection,
+        *,
+        id_: str,
+        path: str,
+        title: str,
+        type_: str,
+        tags: list[str],
+        created: str,
+        updated: str,
+        body_hash: str,
+        embedding: list[float],
+        extra: dict[str, Any] | None = None,
+        body_text: str = "",
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
+    ) -> None:
+        """Write one complete memory row using the caller's transaction."""
+        if self._has_pattern_cols:
+            cx.execute(
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "path=excluded.path, title=excluded.title, type=excluded.type, "
+                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash",
+                (
+                    id_,
+                    path,
+                    title,
+                    type_,
+                    json.dumps(tags),
+                    created,
+                    updated,
+                    body_hash,
+                    json.dumps(extra, default=str) if extra is not None else None,
+                    topic_key,
+                    normalized_hash,
+                ),
+            )
+        else:
+            cx.execute(
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "path=excluded.path, title=excluded.title, type=excluded.type, "
+                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                "deleted_at=NULL, extra_json=excluded.extra_json",
+                (
+                    id_,
+                    path,
+                    title,
+                    type_,
+                    json.dumps(tags),
+                    created,
+                    updated,
+                    body_hash,
+                    json.dumps(extra, default=str) if extra is not None else None,
+                ),
+            )
+        cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+        cx.execute(
+            "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+            (id_, serialize_float32(embedding), type_),
+        )
+        cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+        cx.execute(
+            "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+            (id_, title, " ".join(tags), body_text),
+        )
+        cx.execute(
+            "INSERT OR IGNORE INTO access (id, access_count, last_accessed) VALUES (?, 0, ?)",
+            (id_, updated),
+        )
+        cx.execute(
+            "INSERT OR IGNORE INTO memory_health (id, confidence, roi_score, updated_at) "
+            "VALUES (?, 1.0, 1.0, datetime('now'))",
+            (id_,),
+        )
+
+    def upsert(
+        self,
+        *,
+        id_: str,
+        path: str,
+        title: str,
+        type_: str,
+        tags: list[str],
+        created: str,
+        updated: str,
+        body_hash: str,
+        embedding: list[float],
+        extra: dict[str, Any] | None = None,
+        body_text: str = "",
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
+    ) -> None:
+        self._validate_embedding(id_, embedding)
         with self._tx() as cx:
-            # Build query dynamically based on available columns. Pattern-column
-            # presence is cached at schema init (`_has_pattern_cols`) so writes
-            # skip a per-upsert PRAGMA table_info(meta).
-            if self._has_pattern_cols:
-                cx.execute(
-                    "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(id) DO UPDATE SET "
-                    "path=excluded.path, title=excluded.title, type=excluded.type, "
-                    "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                    "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash",
-                    (
-                        id_,
-                        path,
-                        title,
-                        type_,
-                        json.dumps(tags),
-                        created,
-                        updated,
-                        body_hash,
-                        json.dumps(extra, default=str) if extra is not None else None,
-                        topic_key,
-                        normalized_hash,
-                    ),
-                )
-            else:
-                cx.execute(
-                    "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(id) DO UPDATE SET "
-                    "path=excluded.path, title=excluded.title, type=excluded.type, "
-                    "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                    "deleted_at=NULL, extra_json=excluded.extra_json",
-                    (
-                        id_,
-                        path,
-                        title,
-                        type_,
-                        json.dumps(tags),
-                        created,
-                        updated,
-                        body_hash,
-                        json.dumps(extra, default=str) if extra is not None else None,
-                    ),
-                )
-            # `vec0` doesn't support `ON CONFLICT` syntax — we delete
-            # then insert. Within the same transaction this is atomic.
-            cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
-            cx.execute(
-                "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
-                (id_, serialize_float32(embedding), type_),
-            )
-            # Same dance for the FTS index — no upsert support.
-            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
-            cx.execute(
-                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
-                (id_, title, " ".join(tags), body_text),
-            )
-            # Seed signal rows so prune/eviction queries don't need COALESCE.
-            cx.execute(
-                "INSERT OR IGNORE INTO access (id, access_count, last_accessed) VALUES (?, 0, ?)",
-                (id_, updated),
-            )
-            cx.execute(
-                "INSERT OR IGNORE INTO memory_health (id, confidence, roi_score, updated_at) "
-                "VALUES (?, 1.0, 1.0, datetime('now'))",
-                (id_,),
+            self._upsert_memory_row(
+                cx,
+                id_=id_,
+                path=path,
+                title=title,
+                type_=type_,
+                tags=tags,
+                created=created,
+                updated=updated,
+                body_hash=body_hash,
+                embedding=embedding,
+                extra=extra,
+                body_text=body_text,
+                topic_key=topic_key,
+                normalized_hash=normalized_hash,
             )
         # Dual-write to tantivy (outside the sqlite tx — separate index).
         with self._tantivy_write_lock:
@@ -160,6 +194,255 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 except Exception as exc:
                     _log.warning("tantivy upsert failed (FTS5 still current): %s", exc)
                     self._mark_tantivy_unhealthy()
+
+    def upsert_replacing_path_owner(
+        self,
+        *,
+        stale_id: str,
+        id_: str,
+        path: str,
+        title: str,
+        type_: str,
+        tags: list[str],
+        created: str,
+        updated: str,
+        body_hash: str,
+        embedding: list[float],
+        extra: dict[str, Any] | None = None,
+        body_text: str = "",
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
+        verification_state: str = "unverified",
+        verified_at: int | None = None,
+    ) -> None:
+        """Atomically transfer one canonical path from ``stale_id`` to ``id_``.
+
+        Reindex uses this when a hand-edited/restored Markdown file keeps its
+        path but changes frontmatter id.  Embedding happens before this method;
+        the old row and its signals are deleted in the same transaction that
+        inserts the replacement, so either the complete transfer commits or the
+        previous searchable row survives.
+        """
+        self._validate_embedding(id_, embedding)
+        replaced_id: str | None = None
+        with self._tx() as cx:
+            owner = cx.execute(
+                "SELECT id FROM meta WHERE path = ?",
+                (path,),
+            ).fetchone()
+            if owner is not None and str(owner["id"]) != id_:
+                replaced_id = str(owner["id"])
+                if replaced_id != stale_id:
+                    raise RuntimeError(
+                        f"path owner changed during reindex: {path!r} "
+                        f"({stale_id[:8]} -> {replaced_id[:8]})"
+                    )
+                cx.execute("DELETE FROM meta WHERE id = ?", (replaced_id,))
+                cx.execute("DELETE FROM vec WHERE id = ?", (replaced_id,))
+                cx.execute("DELETE FROM fts WHERE id = ?", (replaced_id,))
+                cx.execute("DELETE FROM access WHERE id = ?", (replaced_id,))
+                cx.execute("DELETE FROM memory_health WHERE id = ?", (replaced_id,))
+                cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (replaced_id,))
+                cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (replaced_id,))
+            self._upsert_memory_row(
+                cx,
+                id_=id_,
+                path=path,
+                title=title,
+                type_=type_,
+                tags=tags,
+                created=created,
+                updated=updated,
+                body_hash=body_hash,
+                embedding=embedding,
+                extra=extra,
+                body_text=body_text,
+                topic_key=topic_key,
+                normalized_hash=normalized_hash,
+            )
+            cx.execute(
+                "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
+                (verification_state, verified_at, id_),
+            )
+
+        with self._tantivy_write_lock:
+            tantivy = self._get_tantivy()
+            if tantivy is not None:
+                try:
+                    if replaced_id is not None:
+                        tantivy.delete_document(replaced_id)
+                    tantivy.delete_document(id_)
+                    tantivy.add_document(id_, title, " ".join(tags), body_text)
+                    tantivy.commit()
+                except Exception as exc:
+                    _log.warning(
+                        "tantivy path-owner replacement failed (FTS5 still current): %s",
+                        exc,
+                    )
+                    self._mark_tantivy_unhealthy()
+
+    def replace_memory_index(self, rows: list[dict[str, Any]]) -> int:
+        """Atomically replace markdown-derived meta/vector/FTS rows.
+
+        All vectors are validated before the write transaction starts. If any
+        row insert fails, SQLite rolls the deletes and every prior insert back,
+        leaving the previous searchable index intact.
+
+        A rebuild is also the supported model/profile migration boundary.  When
+        dimensionality changes, all three vec0 tables must be recreated because
+        their ``FLOAT[N]`` shape is part of the SQLite schema.  When only the
+        model identity changes, repo/feedback vectors are invalidated even when
+        their dimensions happen to match; retaining them would silently mix two
+        embedding spaces.  Their non-vector source rows remain intact and can be
+        re-embedded lazily/by their normal rebuild paths.
+        """
+        for row in rows:
+            self._validate_embedding(str(row["id_"]), list(row["embedding"]))
+
+        stored_model_row = self._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'embedder_model'"
+        ).fetchone()
+        stored_dims_row = self._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'embedder_dims'"
+        ).fetchone()
+        stored_model = str(stored_model_row["value"]) if stored_model_row else ""
+        try:
+            stored_dims = int(stored_dims_row["value"]) if stored_dims_row else None
+        except (TypeError, ValueError):
+            stored_dims = None
+
+        current_model = str(self.embedder_model or "")
+        stamp_identity = bool(current_model and "stub" not in current_model.lower())
+        # Missing legacy metadata is an unknown vector space, not proof of a
+        # match. Invalidating dependent vectors once is safer than silently
+        # retaining repo/feedback embeddings under an assumed identity.
+        model_changed = bool(stamp_identity and stored_model != current_model)
+        derived_sidecars = [
+            ("hype_vec", "hype_questions", "hype_schema_meta", "question_id"),
+            ("episode_vec", "episode_meta", "episode_schema_meta", "id"),
+        ]
+        sidecar_dims: dict[str, int | None] = {}
+        present_sidecars: list[tuple[str, str, str, str]] = []
+        for sidecar in derived_sidecars:
+            vec_table = sidecar[0]
+            ddl_row = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (vec_table,),
+            ).fetchone()
+            if ddl_row is None:
+                continue
+            present_sidecars.append(sidecar)
+            match = re.search(r"FLOAT\[(\d+)\]", str(ddl_row["sql"] or ""), re.IGNORECASE)
+            sidecar_dims[vec_table] = int(match.group(1)) if match else None
+        dimensions_changed = any(
+            actual is not None and actual != self.dims
+            for actual in (
+                self._vec_table_dims("vec"),
+                self._vec_table_dims("repo_vec"),
+                self._vec_table_dims("source_feedback_vec"),
+                *(sidecar_dims[sidecar[0]] for sidecar in present_sidecars),
+            )
+        ) or (stored_dims is not None and stored_dims != self.dims)
+
+        with self._tx() as cx:
+            previous_count = int(cx.execute("SELECT COUNT(*) FROM meta").fetchone()[0])
+            cx.execute("DELETE FROM meta")
+            cx.execute("DELETE FROM fts")
+            if dimensions_changed:
+                # vec0 dimensionality is encoded in virtual-table DDL. SQLite
+                # DDL is transactional, so a later row failure restores the old
+                # tables and vectors together with meta/FTS.
+                cx.execute("DROP TABLE vec")
+                cx.execute("DROP TABLE repo_vec")
+                cx.execute("DROP TABLE source_feedback_vec")
+                self._create_vec_tables(cx)
+            else:
+                cx.execute("DELETE FROM vec")
+                if model_changed:
+                    # Same width does not imply the same vector space.
+                    cx.execute("DELETE FROM repo_vec")
+                    cx.execute("DELETE FROM source_feedback_vec")
+            if dimensions_changed or model_changed:
+                # HyPE and (under MEMO_SINGLE_DB) episode vectors share this
+                # file but have independent watermarks.  Invalidate the vector
+                # and metadata together, otherwise equal body/content hashes
+                # would make their rebuilders skip incompatible old vectors.
+                for vec_table, meta_table, schema_table, id_column in present_sidecars:
+                    if dimensions_changed:
+                        cx.execute(f"DROP TABLE {vec_table}")
+                        cx.execute(
+                            f"CREATE VIRTUAL TABLE {vec_table} USING vec0("
+                            f"{id_column} TEXT PRIMARY KEY, "
+                            f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
+                        )
+                    else:
+                        cx.execute(f"DELETE FROM {vec_table}")
+                    cx.execute(f"DELETE FROM {meta_table}")
+                    if stamp_identity:
+                        cx.execute(
+                            f"CREATE TABLE IF NOT EXISTS {schema_table} ("
+                            "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                        )
+                        cx.execute(
+                            f"INSERT INTO {schema_table} (key, value) "
+                            "VALUES ('embedder_model', ?) "
+                            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                            (current_model,),
+                        )
+                        cx.execute(
+                            f"INSERT INTO {schema_table} (key, value) "
+                            "VALUES ('embedder_dims', ?) "
+                            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                            (str(self.dims),),
+                        )
+            for source_row in rows:
+                row = dict(source_row)
+                verification_state = str(row.pop("verification_state", "unverified"))
+                verified_at = row.pop("verified_at", None)
+                self._upsert_memory_row(cx, **row)
+                cx.execute(
+                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
+                    (verification_state, verified_at, row["id_"]),
+                )
+            if stamp_identity:
+                cx.execute(
+                    "INSERT INTO schema_meta (key, value) VALUES ('embedder_model', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (current_model,),
+                )
+                cx.execute(
+                    "INSERT INTO schema_meta (key, value) VALUES ('embedder_dims', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (str(self.dims),),
+                )
+
+        try:
+            self._rebuild_tantivy_from_sqlite()
+        except Exception as exc:
+            _log.warning("tantivy rebuild failed after atomic sqlite replace: %s", exc)
+            self._mark_tantivy_unhealthy()
+        return previous_count
+
+    def update_verification(
+        self,
+        *,
+        id_: str,
+        verification_state: str,
+        verified_at: int | None,
+    ) -> bool:
+        """Update Markdown-derived verification metadata for one memory."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
+                (verification_state, verified_at, id_),
+            )
+        return cur.rowcount > 0
+
+    def update_path(self, id_: str, path: str) -> bool:
+        """Update only ``meta.path`` while preserving vector and FTS rows."""
+        with self._tx() as cx:
+            cur = cx.execute("UPDATE meta SET path = ? WHERE id = ?", (path, id_))
+        return cur.rowcount > 0
 
     def upsert_text_only(
         self,
@@ -597,8 +880,10 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             f"SELECT {META_SELECT_COLUMNS} "
             "FROM meta "
             "WHERE json_extract(extra_json, '$.parent_path') = ? "
-            "AND CAST(json_extract(extra_json, '$.chunk_seq') AS INTEGER) BETWEEN ? AND ? "
-            "ORDER BY CAST(json_extract(extra_json, '$.chunk_seq') AS INTEGER) ASC",
+            "AND CAST(coalesce(json_extract(extra_json, '$.chunk_seq'), "
+            "json_extract(extra_json, '$.chunk_index')) AS INTEGER) BETWEEN ? AND ? "
+            "ORDER BY CAST(coalesce(json_extract(extra_json, '$.chunk_seq'), "
+            "json_extract(extra_json, '$.chunk_index')) AS INTEGER) ASC",
             (parent_path, seq - before, seq + after),
         ).fetchall()
         return [_row_to_dict(r) for r in rows]

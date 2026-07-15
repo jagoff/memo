@@ -32,6 +32,7 @@ def test_health_report_empty_corpus(mock_memory):
     assert report["index"]["expected_dims"] == mock_memory.cfg.embedder_dims
     # An empty corpus should surface at least one warning.
     assert report["warnings"], "empty corpus should warn"
+    assert report["embedder"]["model"] == mock_memory.store.embedder_model
 
 
 def test_health_report_counts_memorias(mock_memory):

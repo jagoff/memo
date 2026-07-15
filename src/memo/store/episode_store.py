@@ -15,6 +15,7 @@ when `MEMO_SINGLE_DB` is on; otherwise lives in its own `episodes.db`.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import weakref
 from datetime import UTC, datetime
@@ -38,9 +39,15 @@ class EpisodeStore(_ConnectionMixin):
     vec0 load, `_tx`) from `_ConnectionMixin`, with its own two-table schema.
     """
 
-    def __init__(self, db_path: Path | str, dims: int) -> None:
+    def __init__(
+        self,
+        db_path: Path | str,
+        dims: int,
+        embedder_model: str = "",
+    ) -> None:
         self.db_path = Path(db_path)
         self.dims = dims
+        self.embedder_model = embedder_model
         self._local = threading.local()
         self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
         self._conn_holders_lock = threading.Lock()
@@ -48,19 +55,84 @@ class EpisodeStore(_ConnectionMixin):
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:
-        # vec0 CREATE is not transactional — run it outside `_tx` (matches the
-        # main store's schema setup).
         conn = self._conn
-        conn.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS episode_vec USING vec0("
-            f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
-        )
         conn.execute(
             "CREATE TABLE IF NOT EXISTS episode_meta ("
             "id TEXT PRIMARY KEY, agent TEXT, session_id TEXT, content_hash TEXT, "
             "cwd TEXT, updated_at TEXT, summary TEXT, resume_command TEXT, "
             "turn_count INTEGER, indexed_at TEXT)"
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS episode_schema_meta ("
+            "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+
+        vec_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'episode_vec'"
+        ).fetchone()
+        actual_dims: int | None = None
+        if vec_row is not None and vec_row["sql"]:
+            match = re.search(r"FLOAT\[(\d+)\]", str(vec_row["sql"]), re.IGNORECASE)
+            if match:
+                actual_dims = int(match.group(1))
+        stored = {
+            str(row["key"]): str(row["value"])
+            for row in conn.execute(
+                "SELECT key, value FROM episode_schema_meta "
+                "WHERE key IN ('embedder_model', 'embedder_dims')"
+            ).fetchall()
+        }
+        current_model = self.embedder_model.strip()
+        stamp_identity = bool(current_model and "stub" not in current_model.lower())
+        identity_changed = stamp_identity and stored.get("embedder_model") != current_model
+        dimensions_changed = actual_dims is not None and actual_dims != self.dims
+
+        # Episodes are a derived transcript index.  Clear them on any model or
+        # width change so content_hash watermarks cannot retain stale vectors.
+        if identity_changed or dimensions_changed:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if vec_row is not None:
+                    conn.execute("DROP TABLE episode_vec")
+                conn.execute("DELETE FROM episode_meta")
+                conn.execute(
+                    f"CREATE VIRTUAL TABLE episode_vec USING vec0("
+                    f"id TEXT PRIMARY KEY, "
+                    f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
+                )
+                if stamp_identity:
+                    conn.execute(
+                        "INSERT INTO episode_schema_meta (key, value) "
+                        "VALUES ('embedder_model', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (current_model,),
+                    )
+                    conn.execute(
+                        "INSERT INTO episode_schema_meta (key, value) "
+                        "VALUES ('embedder_dims', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (str(self.dims),),
+                    )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        else:
+            conn.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS episode_vec USING vec0("
+                f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine)"
+            )
+            if stamp_identity:
+                conn.execute(
+                    "INSERT OR IGNORE INTO episode_schema_meta (key, value) "
+                    "VALUES ('embedder_model', ?)",
+                    (current_model,),
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO episode_schema_meta (key, value) "
+                    "VALUES ('embedder_dims', ?)",
+                    (str(self.dims),),
+                )
         conn.commit()
 
     @staticmethod

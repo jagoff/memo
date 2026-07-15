@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -78,3 +79,23 @@ def test_undo_without_receipts_errors(mock_memory, tmp_path):
         result = CliRunner().invoke(cli, ["invalidate", "--undo"], env=_env(tmp_path))
     assert result.exit_code != 0
     assert "No invalidate receipts" in result.output
+
+
+def test_undo_rejects_receipt_path_traversal(mock_memory, tmp_path):
+    receipts = tmp_path / "state" / "invalidate"
+    receipts.mkdir(parents=True)
+    (receipts / "20260715T000000.json").write_text('{"entries": []}', encoding="utf-8")
+    victim = tmp_path / "victim.json"
+    victim.write_text(json.dumps({"entries": []}), encoding="utf-8")
+
+    with patch("memo.cli_invalidate._get_memory", return_value=mock_memory):
+        result = CliRunner().invoke(
+            cli,
+            ["invalidate", "--undo", "../../victim"],
+            env=_env(tmp_path),
+        )
+
+    assert result.exit_code != 0
+    assert "receipt" in result.output.lower()
+    assert victim.is_file()
+    assert not victim.with_suffix(".json.undone").exists()

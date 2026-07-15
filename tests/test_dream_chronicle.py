@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 
 class _Cfg:
     """Minimal cfg fake — same shape test_dream_profile.py uses."""
@@ -35,6 +37,17 @@ def test_chronicle_path_lives_in_underscore_bucket(tmp_path):
     cfg = _mk_cfg(tmp_path)
     p = dc.chronicle_path(cfg, "2026-07-13")
     assert p == Path(cfg.memory_dir) / "_chronicle" / "2026-07-13.md"
+
+
+def test_chronicle_path_rejects_noncanonical_or_traversal_day(tmp_path):
+    from memo import dream_chronicle as dc
+
+    cfg = _mk_cfg(tmp_path)
+    for day in ("../../outside", "20260713", "2026-07-13/../../outside"):
+        with pytest.raises(ValueError, match="YYYY-MM-DD"):
+            dc.chronicle_path(cfg, day)
+
+    assert not (tmp_path / "outside.md").exists()
 
 
 def test_default_day_is_previous_day_before_6am():

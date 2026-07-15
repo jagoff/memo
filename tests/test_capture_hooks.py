@@ -12,6 +12,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from memo.capture_hooks import (
     _load_state,
     _load_watermark,
@@ -108,6 +110,30 @@ def test_watermark_load_save(tmp_path: Path):
     loaded = _load_watermark(state_dir, session_id)
     assert loaded["session_id"] == session_id
     assert loaded["exchange_count"] == 5
+
+
+def test_watermark_path_rejects_session_id_traversal(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    outside = tmp_path / "outside.json"
+
+    with pytest.raises(ValueError, match="session_id"):
+        _save_watermark(state_dir, "../../outside", {"exchange_count": 1})
+
+    assert not outside.exists()
+
+
+def test_watermark_rejects_symlinked_state_directory(tmp_path: Path):
+    state_dir = tmp_path / "state"
+    outside = tmp_path / "outside"
+    state_dir.mkdir()
+    outside.mkdir()
+    (state_dir / ".capture_watermark").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="unsafe watermark directory"):
+        _save_watermark(state_dir, "sess-123", {"exchange_count": 1})
+
+    assert not (outside / "sess-123.json").exists()
 
 
 def test_watermark_corrupted_degrades(tmp_path: Path):

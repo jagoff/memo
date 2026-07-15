@@ -13,7 +13,9 @@ import json
 import logging
 import os
 import re
+import tempfile
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +152,53 @@ def _graph_entities_from_extra(extra: dict[str, Any]) -> list[dict[str, str]]:
 
 class _WriteOpsMixin(_MemoryBase):
     # -- save ---------------------------------------------------------------
+
+    @contextlib.contextmanager
+    def _data_dir_write_lock(self) -> Iterator[None]:
+        """Serialize path-sensitive markdown writes across instances/processes."""
+        with self._save_path_lock:
+            if self._data_lock_depth:
+                self._data_lock_depth += 1
+                try:
+                    yield
+                finally:
+                    self._data_lock_depth -= 1
+                return
+            from memo.atomic_io import authority_write_lock
+
+            with authority_write_lock(self.cfg.memory_dir):
+                self._data_lock_depth = 1
+                try:
+                    yield
+                finally:
+                    self._data_lock_depth = 0
+
+    def _atomic_write_text(self, rel_path: str, text: str) -> None:
+        """Publish UTF-8 text atomically without exposing a partial target."""
+        path = self._safe_path_under(self.cfg.memory_dir, rel_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+            # Persist the directory entry where the platform supports it.
+            with contextlib.suppress(OSError):
+                dir_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                tmp_path.unlink()
 
     def _presence_bump_save(self) -> None:
         try:
@@ -476,6 +525,7 @@ class _WriteOpsMixin(_MemoryBase):
         # comment on the lock for why holding it across the SELECT matters.
         use_existing_id: str | None = None
         existing_path: str | None = None
+        reservation_error: Exception | None = None
 
         body_hash = _sha256_short(content)
 
@@ -520,7 +570,7 @@ class _WriteOpsMixin(_MemoryBase):
         # The topic_key lookup runs under the SAME lock: its result (existing
         # id/path) is consumed by the file write below, so holding the lock
         # across the SELECT closes the TOCTOU vs a concurrent delete.
-        with self._save_path_lock:
+        with self._data_dir_write_lock():
             # If topic_key provided, check for an existing record with the same
             # topic_key and reuse its id/path (update instead of create).
             if topic_key:
@@ -529,6 +579,9 @@ class _WriteOpsMixin(_MemoryBase):
                     if existing is not None and existing["id"]:
                         use_existing_id = existing["id"]
                         existing_path = existing["path"]
+                        _, existing_normalized_hash = self.store.get_dedup_keys(use_existing_id)
+                        if normalized_hash is None:
+                            normalized_hash = existing_normalized_hash
                         # Preserve original creation date when caller didn't supply one
                         if not created and existing["created"]:
                             created_iso = existing["created"]
@@ -542,6 +595,36 @@ class _WriteOpsMixin(_MemoryBase):
                         bump_support_if_enabled(self.store, [use_existing_id])
                 except Exception as exc:
                     _log.debug("topic_key lookup failed: %s", exc)
+
+                # A prior save may have reached Markdown while SQLite was
+                # unavailable. Recover that canonical reservation from disk so
+                # retrying the same topic cannot create a second memory.
+                if use_existing_id is None:
+                    for candidate in sorted(self.cfg.memory_dir.rglob("*.md")):
+                        try:
+                            if candidate.is_symlink():
+                                continue
+                            candidate_post = frontmatter.loads(
+                                candidate.read_text(encoding="utf-8")
+                            )
+                            candidate_id = str(candidate_post.metadata.get("id") or "")
+                            if (
+                                candidate_post.metadata.get("topic_key") != topic_key
+                                or re.fullmatch(r"[0-9a-f]{32}", candidate_id) is None
+                            ):
+                                continue
+                            candidate_rel = str(candidate.relative_to(self.cfg.memory_dir))
+                            self._safe_path_under(self.cfg.memory_dir, candidate_rel)
+                            use_existing_id = candidate_id
+                            existing_path = candidate_rel
+                            if not created and candidate_post.metadata.get("created"):
+                                created_iso = str(candidate_post.metadata["created"])
+                            if normalized_hash is None:
+                                disk_hash = candidate_post.metadata.get("normalized_hash")
+                                normalized_hash = str(disk_hash) if disk_hash else None
+                            break
+                        except (OSError, ValueError):
+                            continue
 
             record_id = use_existing_id or uuid.uuid4().hex
 
@@ -558,40 +641,80 @@ class _WriteOpsMixin(_MemoryBase):
             # Add verification state (always UNVERIFIED for new saves unless overridden)
             post["verification_state"] = "unverified"
             # verified_at is omitted for new saves (None)
+            if topic_key is not None:
+                post["topic_key"] = topic_key
+            if normalized_hash is not None:
+                post["normalized_hash"] = normalized_hash
 
             # For topic key upserts, reuse the existing path instead of creating a new one
             rel_path = (
                 existing_path if existing_path else self._build_rel_path(title, now_iso, norm_tags)
             )
-            abs_path = self.cfg.memory_dir / rel_path
-            # Containment guard: the canonical .md must land INSIDE memory_dir.
-            # A traversal-shaped rel_path (e.g. from a `project:../..` tag or a
-            # poisoned index path) must never write outside the vault.
-            if not abs_path.resolve().is_relative_to(self.cfg.memory_dir.resolve()):
-                from memo.errors import StorageError
+            abs_path = self._safe_path_under(self.cfg.memory_dir, rel_path)
+            written_disk_text = frontmatter.dumps(post)
+            self._atomic_write_text(rel_path, written_disk_text)
 
-                raise StorageError(
-                    f"refusing to write memory outside memory_dir: {rel_path!r} "
-                    f"resolves out of {self.cfg.memory_dir}"
-                )
-            abs_path.parent.mkdir(parents=True, exist_ok=True)
-            abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+            # Publish every topic-key write text-only before releasing the
+            # shared lock. This both reserves a new canonical id and makes an
+            # existing-topic update coherent immediately: Markdown + FTS point
+            # to the new body and the old vector is removed while embedding.
+            if topic_key:
+                try:
+                    self.store.upsert_text_only(
+                        id_=record_id,
+                        path=rel_path,
+                        title=title,
+                        type_=type_,
+                        tags=norm_tags,
+                        created=created_iso,
+                        updated=now_iso,
+                        body_hash=body_hash,
+                        extra=extra_for_store,
+                        body_text=content,
+                        topic_key=topic_key,
+                        normalized_hash=normalized_hash,
+                    )
+                except Exception as exc:
+                    reservation_error = exc
 
-        if defer_embed:
-            self.store.upsert_text_only(
-                id_=record_id,
-                path=rel_path,
+        if reservation_error is not None:
+            self._presence_bump_save()
+            return self._save_index_pending(
+                exc=reservation_error,
+                record_id=record_id,
+                rel_path=rel_path,
+                abs_path=abs_path,
+                post=post,
                 title=title,
                 type_=type_,
-                tags=norm_tags,
-                created=created_iso,
-                updated=now_iso,
+                norm_tags=norm_tags,
+                created_iso=created_iso,
+                now_iso=now_iso,
                 body_hash=body_hash,
-                extra=extra_for_store,
-                body_text=content,
+                content=content,
+                extra_for_store=extra_for_store,
+                skip_memflow_receipt=skip_memflow_receipt,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
+                expected_disk_text=written_disk_text,
             )
+
+        if defer_embed:
+            if not topic_key:
+                self.store.upsert_text_only(
+                    id_=record_id,
+                    path=rel_path,
+                    title=title,
+                    type_=type_,
+                    tags=norm_tags,
+                    created=created_iso,
+                    updated=now_iso,
+                    body_hash=body_hash,
+                    extra=extra_for_store,
+                    body_text=content,
+                    topic_key=topic_key,
+                    normalized_hash=normalized_hash,
+                )
             self._record_graph_entities_from_extra(
                 record_id=record_id,
                 created_iso=created_iso,
@@ -645,6 +768,7 @@ class _WriteOpsMixin(_MemoryBase):
         # (so `memo reindex` re-embeds it) and best-effort index it text-only
         # so BM25 still finds it, then return the record. Never raise past a
         # successful disk write.
+        topic_write_superseded = False
         try:
             # Content-addressed embed cache (keyed model+dims+sha256(text)):
             # re-saving identical content — or reverting an edit — reuses the
@@ -655,7 +779,7 @@ class _WriteOpsMixin(_MemoryBase):
                 self._compose_for_embed(title, content),
                 ctx=f"save id={record_id[:8]}",
             )
-            self.store.upsert(
+            upsert_args: dict[str, Any] = dict(
                 id_=record_id,
                 path=rel_path,
                 title=title,
@@ -670,20 +794,38 @@ class _WriteOpsMixin(_MemoryBase):
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
             )
-            self._record_graph_entities_from_extra(
-                record_id=record_id,
-                created_iso=created_iso,
-                extra=extra_for_store,
-            )
-            _upsert_declared_fact_edges_best_effort(
-                self,
-                record_id=record_id,
-                title=title,
-                type_=type_,
-                created=created_iso,
-                updated=now_iso,
-                extra=extra_for_store,
-            )
+            if topic_key:
+                # Embedding is intentionally outside the global file lock.
+                # Revalidate the exact canonical bytes before publishing its
+                # vector: a newer same-topic writer may have won meanwhile.
+                with self._data_dir_write_lock():
+                    try:
+                        topic_write_superseded = (
+                            abs_path.is_symlink()
+                            or abs_path.read_text(encoding="utf-8") != written_disk_text
+                        )
+                    except OSError:
+                        topic_write_superseded = True
+                    if not topic_write_superseded:
+                        self.store.upsert(**upsert_args)
+            else:
+                self.store.upsert(**upsert_args)
+
+            if not topic_write_superseded:
+                self._record_graph_entities_from_extra(
+                    record_id=record_id,
+                    created_iso=created_iso,
+                    extra=extra_for_store,
+                )
+                _upsert_declared_fact_edges_best_effort(
+                    self,
+                    record_id=record_id,
+                    title=title,
+                    type_=type_,
+                    created=created_iso,
+                    updated=now_iso,
+                    extra=extra_for_store,
+                )
         except ValueError:
             # A dims/norm validation failure signals a misconfigured embedder
             # or model (e.g. wrong MEMO_EMBEDDER_DIMS) — fail loudly so it isn't
@@ -691,7 +833,18 @@ class _WriteOpsMixin(_MemoryBase):
             # Stamp pending marker on the already-written .md so reindex picks it up.
             extra_for_store["_memo_embed_pending"] = True
             post["extra"] = extra_for_store
-            abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+            with self._data_dir_write_lock():
+                should_mark_pending = not topic_key
+                if topic_key:
+                    try:
+                        should_mark_pending = (
+                            not abs_path.is_symlink()
+                            and abs_path.read_text(encoding="utf-8") == written_disk_text
+                        )
+                    except OSError:
+                        should_mark_pending = False
+                if should_mark_pending:
+                    self._atomic_write_text(rel_path, frontmatter.dumps(post))
             raise
         except Exception as exc:
             self._presence_bump_save()
@@ -712,15 +865,17 @@ class _WriteOpsMixin(_MemoryBase):
                 skip_memflow_receipt=skip_memflow_receipt,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
+                expected_disk_text=written_disk_text,
             )
 
-        self.history.log_save(
-            ts=now_iso,
-            record_id=record_id,
-            title=title,
-            type_=type_,
-            provenance=_extract_provenance(extra_for_store),
-        )
+        if not topic_write_superseded:
+            self.history.log_save(
+                ts=now_iso,
+                record_id=record_id,
+                title=title,
+                type_=type_,
+                provenance=_extract_provenance(extra_for_store),
+            )
 
         rec = MemoryRecord(
             id=record_id,
@@ -733,6 +888,13 @@ class _WriteOpsMixin(_MemoryBase):
             body=content,
             extra=extra_for_store,
         )
+        if topic_write_superseded:
+            _log.info(
+                "topic_key upsert %s superseded during embedding; discarding stale vector",
+                record_id[:8],
+            )
+            self._write_gen += 1
+            return self.get(record_id) or rec
         self._emit_save_receipt(rec, deferred=False, disabled=skip_memflow_receipt)
         # Cache-tier: write policy (push/dirty) then capacity bound. Both
         # no-op unless MEMO_CACHE_MODE is on. Guarded so a backend hiccup
@@ -777,6 +939,7 @@ class _WriteOpsMixin(_MemoryBase):
         skip_memflow_receipt: bool,
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        expected_disk_text: str | None = None,
     ) -> MemoryRecord:
         """Recovery path when indexing fails AFTER the canonical `.md` is on disk.
 
@@ -787,39 +950,75 @@ class _WriteOpsMixin(_MemoryBase):
         it in the meantime, and (3) return the record. The exception is logged,
         not raised.
         """
-        _log.warning(
-            "save: indexing failed after .md write (id=%s, path=%s) — marking "
-            "embed-pending for `memo reindex` to replay: %s",
-            record_id[:8],
-            rel_path,
-            exc,
-        )
-        extra_for_store["_memo_embed_pending"] = True
-        # Re-stamp the on-disk frontmatter with the pending marker so a later
-        # `memo reindex` knows to re-embed. Best-effort: if even this rewrite
-        # fails, the original .md is still on disk and reindex picks it up by
-        # re-scanning disk on its next run.
-        with contextlib.suppress(Exception):
-            post["extra"] = extra_for_store
-            abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
-        # Best-effort text-only index so the memory is at least BM25-searchable
-        # before the next reindex. A fully-down store leaves only the .md, which
-        # reindex will still recover.
-        with contextlib.suppress(Exception):
-            self.store.upsert_text_only(
-                id_=record_id,
+        superseded = False
+        with self._data_dir_write_lock():
+            if topic_key and expected_disk_text is not None:
+                try:
+                    superseded = (
+                        abs_path.is_symlink()
+                        or abs_path.read_text(encoding="utf-8") != expected_disk_text
+                    )
+                except OSError:
+                    superseded = True
+            if not superseded:
+                _log.warning(
+                    "save: indexing failed after .md write (id=%s, path=%s) — marking "
+                    "embed-pending for `memo reindex` to replay: %s",
+                    record_id[:8],
+                    rel_path,
+                    exc,
+                )
+                extra_for_store["_memo_embed_pending"] = True
+                post["extra"] = extra_for_store
+                # Marker write and text-only index publication are one critical
+                # section for topic-key writes. A newer writer cannot land
+                # between the compare and either recovery mutation.
+                with contextlib.suppress(Exception):
+                    self._atomic_write_text(rel_path, frontmatter.dumps(post))
+                with contextlib.suppress(Exception):
+                    self.store.upsert_text_only(
+                        id_=record_id,
+                        path=rel_path,
+                        title=title,
+                        type_=type_,
+                        tags=norm_tags,
+                        created=created_iso,
+                        updated=now_iso,
+                        body_hash=body_hash,
+                        extra=extra_for_store,
+                        body_text=content,
+                        topic_key=topic_key,
+                        normalized_hash=normalized_hash,
+                    )
+        if superseded:
+            _log.info(
+                "topic_key upsert %s was superseded after an embed failure; "
+                "leaving the newer canonical write untouched",
+                record_id[:8],
+            )
+            current = self.get(record_id)
+            if current is not None:
+                self._write_gen += 1
+                return current
+            # Defensive fallback: the canonical file won the comparison but
+            # the derived index is temporarily unavailable.
+            rec = MemoryRecord(
+                id=record_id,
                 path=rel_path,
                 title=title,
-                type_=type_,
+                type=type_,
                 tags=norm_tags,
                 created=created_iso,
                 updated=now_iso,
-                body_hash=body_hash,
+                body=content,
                 extra=extra_for_store,
-                body_text=content,
-                topic_key=topic_key,
-                normalized_hash=normalized_hash,
             )
+            self._write_gen += 1
+            return rec
+
+        # Best-effort graph projection after the canonical Markdown + FTS
+        # recovery has been atomically published above.
+        with contextlib.suppress(Exception):
             self._record_graph_entities_from_extra(
                 record_id=record_id,
                 created_iso=created_iso,
@@ -1032,6 +1231,36 @@ class _WriteOpsMixin(_MemoryBase):
             n += 1
         return candidate
 
+    def _safe_path_under(self, root: Path, rel_path: str) -> Path:
+        """Resolve a store-provided relative path without following symlinks.
+
+        Store rows are rebuildable and may come from an old/corrupt/imported DB,
+        so they are not trusted as filesystem capabilities.  Every component
+        below ``root`` must be a real path component (not a symlink), and the
+        resolved target must remain inside the configured root.
+        """
+        from memo.errors import StorageError
+
+        relative = Path(rel_path)
+        if not rel_path or relative.is_absolute() or ".." in relative.parts:
+            raise StorageError(f"refusing store path outside memory_dir: {rel_path!r}")
+
+        # Use CodeQL's recognized normalize-then-prefix validation pattern.
+        # ``realpath`` also resolves every existing symlink component before
+        # the path reaches a filesystem sink. The separator suffix prevents
+        # sibling-prefix confusion (``/safe/root-evil`` vs ``/safe/root``).
+        safe_root = os.path.realpath(root)
+        candidate = os.path.realpath(os.path.join(safe_root, rel_path))
+        root_prefix = safe_root.rstrip(os.sep) + os.sep
+        if not candidate.startswith(root_prefix):
+            raise StorageError(f"refusing store path outside memory_dir: {rel_path!r}")
+        cursor = Path(safe_root)
+        for part in relative.parts:
+            cursor = cursor / part
+            if cursor.is_symlink():
+                raise StorageError(f"refusing symlink in canonical memory path: {rel_path!r}")
+        return Path(candidate)
+
     def _resolve_existing(self, rel_path: str) -> Path:
         """Resolve a DB-stored path to an absolute `Path`.
 
@@ -1044,11 +1273,11 @@ class _WriteOpsMixin(_MemoryBase):
         either branch — callers that need to CREATE a file always write
         to the new layout.
         """
-        new_path: Path = self.cfg.memory_dir / rel_path
+        new_path = self._safe_path_under(self.cfg.memory_dir, rel_path)
         if new_path.is_file():
             return new_path
         if self.cfg.vault_path is not None:
-            legacy: Path = self.cfg.vault_path / rel_path
+            legacy = self._safe_path_under(self.cfg.vault_path, rel_path)
             if legacy.is_file():
                 return legacy
         return new_path

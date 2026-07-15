@@ -37,6 +37,8 @@ class STEmbedder(EmbedderBase):
     Args:
         model_path: HF id loadable by `SentenceTransformer` (fp weights, NOT an
             `mlx-community/*` quant — those need MLX).
+        revision: Optional exact Hugging Face commit or revision. Pinning keeps
+            preloaded/offline images and runtime model selection identical.
         expected_dims: Asserted against the loaded model's reported dimension.
             A mismatch (e.g. config pinned to a 2560-dim profile while this model
             yields 1024) raises early instead of corrupting the vec0 table.
@@ -48,12 +50,14 @@ class STEmbedder(EmbedderBase):
     def __init__(
         self,
         model_path: str = _DEFAULT_ST_MODEL,
+        revision: str | None = None,
         expected_dims: int = 1024,
         max_seq_len: int = 512,
         device: str = "cpu",
         batch_size: int = 32,
     ) -> None:
         self.model_path = model_path
+        self.revision = revision.strip() if revision else None
         self.expected_dims = expected_dims
         self.max_seq_len = max_seq_len
         self.device = device
@@ -79,7 +83,11 @@ class STEmbedder(EmbedderBase):
                     "dependency. Install with: pipx install 'mlx-memo[cpu]' "
                     "(or pip install 'mlx-memo[cpu]'). See docs/ubuntu.md."
                 ) from exc
-            model = SentenceTransformer(self.model_path, device=self.device)
+            model = SentenceTransformer(
+                self.model_path,
+                device=self.device,
+                revision=self.revision,
+            )
             # Not all backbones expose a settable max_seq_length; non-fatal.
             with contextlib.suppress(AttributeError, TypeError):
                 model.max_seq_length = self.max_seq_len
@@ -144,7 +152,7 @@ class STEmbedder(EmbedderBase):
 
     @property
     def model_name(self) -> str:
-        return self.model_path
+        return f"{self.model_path}@{self.revision}" if self.revision else self.model_path
 
     @property
     def is_warm(self) -> bool:

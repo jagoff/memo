@@ -12,7 +12,8 @@ import sys
 if shutil.which("uv") is None and shutil.which("uvx") is None:
     sys.stderr.write(
         "memo needs the `uv` runtime (https://docs.astral.sh/uv/). "
-        "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh\n"
+        "Follow the verified installation options at "
+        "https://docs.astral.sh/uv/getting-started/installation/ and retry.\n"
     )
     sys.exit(1)
 

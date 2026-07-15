@@ -235,8 +235,18 @@ def _repo_flush_batch_size() -> int:
 
 
 def _embed_cache_model(embedder: EmbedderBase, cfg: Config) -> str:
-    model = getattr(embedder, "model_path", None)
-    return str(model or cfg.embedder_model)
+    # STEmbedder.model_name includes its pinned revision; model_path alone does
+    # not. The revision is part of the vector space and therefore of every
+    # content-addressed embedding-cache key.
+    model_name = getattr(embedder, "model_name", None)
+    if model_name:
+        return str(model_name)
+    model_path = getattr(embedder, "model_path", None)
+    if model_path:
+        return str(model_path)
+    from memo.embedder_select import active_embedder_identity
+
+    return active_embedder_identity(cfg)
 
 
 # ---------------------------------------------------------------------------

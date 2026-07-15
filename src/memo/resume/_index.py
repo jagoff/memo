@@ -41,9 +41,14 @@ def open_store(cfg: Config) -> EpisodeStore | None:
 
     if not flag_bool("MEMO_EPISODIC_ENABLED"):
         return None
+    from memo.embedder_select import active_embedder_identity
     from memo.store.episode_store import EpisodeStore
 
-    return EpisodeStore(cfg.episode_db, cfg.embedder_dims)
+    return EpisodeStore(
+        cfg.episode_db,
+        cfg.embedder_dims,
+        embedder_model=active_embedder_identity(cfg),
+    )
 
 
 def _gather_user_prompts(

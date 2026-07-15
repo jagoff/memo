@@ -11,8 +11,13 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import shutil
+import sqlite3
+import stat
 import sys
-from pathlib import Path
+import tempfile
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import click
@@ -23,6 +28,161 @@ from memo.cli_common import _resolved, console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
 from memo.errors import StorageError
+
+_RESTORE_MAX_MEMBERS = 20_000
+_RESTORE_MAX_MANIFEST_BYTES = 1024 * 1024
+_RESTORE_MAX_MEMORY_BYTES = 64 * 1024 * 1024
+_RESTORE_MAX_STATE_BYTES = 8 * 1024 * 1024 * 1024
+_RESTORE_MAX_TOTAL_BYTES = 12 * 1024 * 1024 * 1024
+_RESTORE_RATIO_MIN_BYTES = 1024 * 1024
+_RESTORE_MAX_COMPRESSION_RATIO = 100
+
+
+def _safe_restore_relative_path(name: str, *, prefix: str) -> Path:
+    """Return a canonical relative archive path, rejecting ambiguous names."""
+    if not name.startswith(prefix) or "\\" in name or "\x00" in name:
+        raise click.ClickException(f"invalid restore archive member: {name!r}")
+    raw = name[len(prefix) :]
+    posix_path = PurePosixPath(raw)
+    if (
+        not raw
+        or posix_path.is_absolute()
+        or any(part in {"", ".", ".."} for part in posix_path.parts)
+        or posix_path.as_posix() != raw
+    ):
+        raise click.ClickException(f"invalid restore archive member: {name!r}")
+    return Path(*posix_path.parts)
+
+
+def _reject_symlinked_restore_destination(root: Path, relative: Path) -> Path:
+    """Keep a restore below its configured root and never traverse a symlink."""
+    root_resolved = root.resolve()
+    candidate = root
+    for part in relative.parts:
+        candidate /= part
+        if candidate.is_symlink():
+            raise click.ClickException(f"symlinked restore destination: {candidate}")
+    destination = root / relative
+    if not destination.resolve(strict=False).is_relative_to(root_resolved):
+        raise click.ClickException(f"restore destination escapes configured root: {relative}")
+    return destination
+
+
+def _write_restored_member(zf: Any, info: Any, destination: Path) -> None:
+    """Stream one validated member to an atomic sibling temporary file."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Re-check after mkdir so pre-existing symlink components cannot be silently
+    # followed.  The final os.replace also avoids exposing partial DBs/files.
+    if destination.is_symlink() or destination.parent.is_symlink():
+        raise click.ClickException(f"symlinked restore destination: {destination}")
+    tmp_name: str | None = None
+    try:
+        with (
+            tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                suffix=".restore-tmp",
+                delete=False,
+            ) as tmp,
+            zf.open(info, "r") as source,
+        ):
+            tmp_name = tmp.name
+            shutil.copyfileobj(source, tmp, length=1024 * 1024)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, destination)
+        tmp_name = None
+    finally:
+        if tmp_name is not None:
+            Path(tmp_name).unlink(missing_ok=True)
+
+
+def _validate_restored_sqlite(path: Path, archive_name: str) -> None:
+    """Reject corrupt/non-SQLite state before it can replace a live DB."""
+    try:
+        uri = f"{path.resolve().as_uri()}?mode=ro"
+        with contextlib.closing(sqlite3.connect(uri, uri=True)) as connection:
+            result = connection.execute("PRAGMA integrity_check").fetchone()
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+                )
+            }
+        if result != ("ok",):
+            raise sqlite3.DatabaseError(str(result[0]) if result else "no integrity result")
+        required = (
+            {"events"} if Path(archive_name).name == "history.db" else {"schema_meta", "meta"}
+        )
+        missing = required - tables
+        if missing:
+            raise sqlite3.DatabaseError(
+                "not a Memo state database (missing: " + ", ".join(sorted(missing)) + ")"
+            )
+    except sqlite3.DatabaseError as exc:
+        raise click.ClickException(
+            f"invalid SQLite database in restore archive: {archive_name!r}: {exc}"
+        ) from exc
+
+
+def _atomic_copy_restored_file(source: Path, destination: Path) -> None:
+    """Copy a staged file into a same-directory temp and atomically publish it."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".restore-tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with source.open("rb") as input_file, os.fdopen(descriptor, "wb") as output_file:
+            descriptor = -1
+            shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, destination)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+def _copy_restored_sqlite_in_place(source: Path, destination: Path) -> None:
+    """Restore a logical SQLite snapshot without replacing its live inode."""
+    if source.is_symlink() or destination.is_symlink():
+        raise click.ClickException("refusing symlinked SQLite restore path")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source_uri = f"{source.resolve(strict=True).as_uri()}?mode=ro"
+    with (
+        contextlib.closing(sqlite3.connect(source_uri, uri=True)) as source_connection,
+        contextlib.closing(sqlite3.connect(destination, timeout=10.0)) as destination_connection,
+    ):
+        destination_connection.execute("PRAGMA busy_timeout = 10000")
+        source_connection.backup(destination_connection)
+        if destination_connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+            raise click.ClickException(f"restored SQLite failed integrity check: {destination}")
+    os.chmod(destination, 0o600)
+
+
+def _move_restore_target_aside(path: Path) -> Path | None:
+    """Move an existing regular restore target to a private sibling rollback slot."""
+    if path.is_symlink():
+        raise click.ClickException(f"symlinked restore destination: {path}")
+    if not path.exists():
+        return None
+    descriptor, rollback_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".restore-rollback",
+    )
+    os.close(descriptor)
+    rollback = Path(rollback_name)
+    rollback.unlink()
+    os.replace(path, rollback)
+    return rollback
 
 
 @click.command()
@@ -609,10 +769,73 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
     cfg.ensure_dirs()
 
     with zipfile.ZipFile(zip_path, "r") as zf:
+        infos = zf.infolist()
+        if len(infos) > _RESTORE_MAX_MEMBERS:
+            raise click.ClickException("restore archive contains too many members")
+
+        allowed_state_names = {cfg.db_path.name, cfg.history_db.name}
+        restore_plan: list[tuple[zipfile.ZipInfo, Path, str]] = []
+        seen_names: set[str] = set()
+        total_size = 0
+        manifest_info: zipfile.ZipInfo | None = None
+
+        # Validate the complete archive before prompting or writing anything.
+        # This makes rejection fail closed even if a malicious entry follows
+        # otherwise valid memory files.
+        for info in infos:
+            name = info.filename
+            if name in seen_names:
+                raise click.ClickException(f"duplicate restore archive member: {name!r}")
+            seen_names.add(name)
+            mode = info.external_attr >> 16
+            if stat.S_ISLNK(mode):
+                raise click.ClickException(f"symlink archive member is not allowed: {name!r}")
+            if info.is_dir():
+                if name != "memory/" and name != "state/":
+                    raise click.ClickException(f"unexpected restore archive member: {name!r}")
+                continue
+            if info.file_size < 0 or info.compress_size < 0:
+                raise click.ClickException(f"invalid restore archive member size: {name!r}")
+            if (
+                info.file_size >= _RESTORE_RATIO_MIN_BYTES
+                and info.file_size / max(info.compress_size, 1) > _RESTORE_MAX_COMPRESSION_RATIO
+            ):
+                raise click.ClickException(f"suspicious compression ratio: {name!r}")
+            total_size += info.file_size
+            if total_size > _RESTORE_MAX_TOTAL_BYTES:
+                raise click.ClickException("restore archive is too large")
+
+            if name == "manifest.json":
+                if info.file_size > _RESTORE_MAX_MANIFEST_BYTES:
+                    raise click.ClickException("restore manifest is too large")
+                manifest_info = info
+                continue
+            if name.startswith("memory/"):
+                if info.file_size > _RESTORE_MAX_MEMORY_BYTES:
+                    raise click.ClickException(f"memory archive member is too large: {name!r}")
+                relative = _safe_restore_relative_path(name, prefix="memory/")
+                if relative.suffix != ".md":
+                    raise click.ClickException(f"unexpected memory archive member: {name!r}")
+                destination = _reject_symlinked_restore_destination(cfg.memory_dir, relative)
+                restore_plan.append((info, destination, "memory"))
+                continue
+            if name.startswith("state/"):
+                relative = _safe_restore_relative_path(name, prefix="state/")
+                if len(relative.parts) != 1 or relative.name not in allowed_state_names:
+                    raise click.ClickException(f"unexpected state archive member: {name!r}")
+                if info.file_size > _RESTORE_MAX_STATE_BYTES:
+                    raise click.ClickException(f"state archive member is too large: {name!r}")
+                destination = _reject_symlinked_restore_destination(cfg.state_dir, relative)
+                restore_plan.append((info, destination, "state"))
+                continue
+            raise click.ClickException(f"unexpected restore archive member: {name!r}")
+
         try:
-            manifest = json.loads(zf.read("manifest.json"))
-        except (KeyError, json.JSONDecodeError):
-            manifest = None
+            manifest = json.loads(zf.read(manifest_info)) if manifest_info is not None else None
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise click.ClickException(f"restore manifest is invalid JSON: {exc}") from exc
+        if manifest is not None and not isinstance(manifest, dict):
+            raise click.ClickException("restore manifest must be a JSON object")
         if manifest:
             console.print(
                 f"backup created: {manifest.get('created')}  "
@@ -625,29 +848,89 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
                 "Existing files will be overwritten.",
                 abort=True,
             )
-        # Stream entries.
         n_md = n_db = 0
-        for info in zf.infolist():
-            if info.filename == "manifest.json":
-                continue
-            data = zf.read(info)
-            if info.filename.startswith("memory/"):
-                rel = info.filename[len("memory/") :]
-                memory_root = cfg.memory_dir
-                dest = memory_root / rel
-                if not dest.resolve().is_relative_to(memory_root.resolve()):
-                    continue
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(data)
-                n_md += 1
-            elif info.filename.startswith("state/"):
-                rel = info.filename[len("state/") :]
-                dest = cfg.state_dir / rel
-                if not dest.resolve().is_relative_to(cfg.state_dir.resolve()):
-                    continue
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(data)
-                n_db += 1
+        with tempfile.TemporaryDirectory(prefix="memo-restore-stage-") as scratch_name:
+            scratch = Path(scratch_name)
+            required_free = total_size * 2 + 64 * 1024 * 1024
+            if shutil.disk_usage(scratch).free < required_free:
+                raise click.ClickException("insufficient free disk space for safe restore staging")
+            staged_plan: list[tuple[Path, Path, str]] = []
+            try:
+                # Fully decompress and CRC-check every member before replacing
+                # any canonical file. State DBs also pass SQLite integrity.
+                for index, (info, destination, kind) in enumerate(restore_plan):
+                    staged = scratch / str(index)
+                    _write_restored_member(zf, info, staged)
+                    if staged.stat().st_size != info.file_size:
+                        raise click.ClickException(
+                            f"restore member size mismatch: {info.filename!r}"
+                        )
+                    if kind == "state":
+                        _validate_restored_sqlite(staged, info.filename)
+                    staged_plan.append((staged, destination, kind))
+            except click.ClickException:
+                raise
+            except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+                raise click.ClickException(f"could not stage restore archive: {exc}") from exc
+
+            from memo.atomic_io import authority_write_lock
+
+            file_plan = [entry for entry in staged_plan if entry[2] == "memory"]
+            database_plan = [entry for entry in staged_plan if entry[2] == "state"]
+            with (
+                authority_write_lock(cfg.memory_dir),
+                tempfile.TemporaryDirectory(
+                    prefix="memo-portable-sqlite-rollback-"
+                ) as rollback_name,
+            ):
+                rollback_root = Path(rollback_name)
+                database_journal: list[tuple[Path, Path | None]] = []
+                for index, (_source, destination, _kind) in enumerate(database_plan):
+                    rollback = None
+                    if destination.exists():
+                        rollback = rollback_root / f"{index}-{destination.name}"
+                        _copy_restored_sqlite_in_place(destination, rollback)
+                    database_journal.append((destination, rollback))
+
+                file_journal: list[tuple[Path, Path | None]] = []
+                attempted_databases: list[tuple[Path, Path | None]] = []
+                try:
+                    for staged, destination, _kind in file_plan:
+                        relative = destination.relative_to(cfg.memory_dir)
+                        destination = _reject_symlinked_restore_destination(
+                            cfg.memory_dir, relative
+                        )
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        rollback = _move_restore_target_aside(destination)
+                        file_journal.append((destination, rollback))
+                        _atomic_copy_restored_file(staged, destination)
+                        n_md += 1
+                    for (staged, _destination, _kind), (
+                        destination,
+                        rollback,
+                    ) in zip(database_plan, database_journal, strict=True):
+                        attempted_databases.append((destination, rollback))
+                        _copy_restored_sqlite_in_place(staged, destination)
+                        n_db += 1
+                except Exception as exc:
+                    for destination, rollback in reversed(attempted_databases):
+                        if rollback is None:
+                            destination.unlink(missing_ok=True)
+                        else:
+                            _copy_restored_sqlite_in_place(rollback, destination)
+                    for published, rollback in reversed(file_journal):
+                        published.unlink(missing_ok=True)
+                        if rollback is not None and rollback.exists():
+                            os.replace(rollback, published)
+                    if isinstance(exc, click.ClickException):
+                        raise
+                    raise click.ClickException(
+                        f"restore failed; prior files were restored: {exc}"
+                    ) from exc
+                else:
+                    for _published, rollback in file_journal:
+                        if rollback is not None:
+                            rollback.unlink(missing_ok=True)
 
     console.print(
         f"[green]✓[/green] restored {n_md} memories + {n_db} state DB(s) into {cfg.data_dir}",

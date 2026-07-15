@@ -174,6 +174,17 @@ def test_mcp_server_env_clears_pythonpath(monkeypatch):
     assert env["PYTHONPATH"] == ""
 
 
+def test_mcp_server_env_forwards_custom_markdown_config_dir(monkeypatch, tmp_path):
+    _clear_memo_env(monkeypatch)
+    config_dir = tmp_path / "memo-config"
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(mcp_mod, "_actual_embedder_config", lambda: {})
+
+    env = mcp_mod._mcp_server_env()
+
+    assert env["MEMO_CONFIG_DIR"] == str(config_dir)
+
+
 def test_mcp_command_codex(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setattr(
@@ -267,6 +278,26 @@ def test_mcp_command_forwards_model_env(monkeypatch):
     assert result.exit_code == 0
     assert "--env MEMO_EMBEDDER_MODEL=mlx-community/Qwen3-Embedding-4B-4bit-DWQ" in result.output
     assert "--env MEMO_EMBEDDER_DIMS=2560" in result.output
+
+
+def test_mcp_command_forwards_st_revision(monkeypatch):
+    _clear_memo_env(monkeypatch)
+    monkeypatch.setenv("MEMO_EMBEDDER_BACKEND", "st")
+    monkeypatch.setenv("MEMO_ST_EMBEDDER_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+    monkeypatch.setenv("MEMO_ST_EMBEDDER_REVISION", "deadbeef")
+    monkeypatch.setattr(mcp_mod, "_actual_embedder_config", lambda: {})
+    monkeypatch.setattr(
+        install_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+
+    result = CliRunner().invoke(cli, ["mcp-command", "--client", "codex"])
+
+    assert result.exit_code == 0
+    assert "--env MEMO_EMBEDDER_BACKEND=st" in result.output
+    assert "--env MEMO_ST_EMBEDDER_MODEL=Qwen/Qwen3-Embedding-0.6B" in result.output
+    assert "--env MEMO_ST_EMBEDDER_REVISION=deadbeef" in result.output
 
 
 def test_install_slash_dry_run(monkeypatch):

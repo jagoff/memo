@@ -20,6 +20,7 @@ import contextlib
 import logging
 import subprocess
 import sys
+import tempfile
 
 from memo.config import Config
 from memo.flags import flag_bool, flag_int, flag_str
@@ -35,11 +36,12 @@ _SPAWNED_STAMP = "auto_update_spawned"  # tag last spawned; prevents re-spawn sa
 def _parse_semver(tag: str) -> tuple[int, int, int] | None:
     """``v1.2.3`` / ``1.2.3`` → ``(1, 2, 3)``. Anything non-numeric → None.
 
-    Pre-release/build suffixes (``1.2.3-rc1``) are ignored on the patch field so
-    they sort below the plain release, which is fine for an "is there a newer
-    stable" check.
+    Pre-release/build suffixes (``1.2.3-rc1`` / ``1.2.3+build``) are rejected:
+    automatic updates track stable release tags only.
     """
-    core = tag.strip().lstrip("vV").split("-", 1)[0].split("+", 1)[0]
+    core = tag.strip().lstrip("vV")
+    if "-" in core or "+" in core:
+        return None
     parts = core.split(".")
     if len(parts) != 3:
         return None
@@ -88,6 +90,57 @@ def latest_remote_tag(repo_url: str, *, timeout: int = 10) -> str | None:
         if ver is not None and (best is None or ver > best):
             best, best_tag = ver, ref
     return best_tag
+
+
+def tag_is_on_remote_master(repo_url: str, tag: str, *, timeout: int = 60) -> bool:
+    """Verify a release tag resolves to a commit reachable from remote master."""
+    if _parse_semver(tag) is None:
+        return False
+    try:
+        with tempfile.TemporaryDirectory(prefix="memo-update-provenance-") as directory:
+            init = subprocess.run(
+                ["git", "init", "--bare", directory],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if init.returncode != 0:
+                return False
+            fetch = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    directory,
+                    "fetch",
+                    "--quiet",
+                    "--filter=blob:none",
+                    repo_url,
+                    "+refs/heads/master:refs/heads/master",
+                    f"+refs/tags/{tag}:refs/tags/{tag}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if fetch.returncode != 0:
+                return False
+            ancestry = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    directory,
+                    "merge-base",
+                    "--is-ancestor",
+                    f"refs/tags/{tag}",
+                    "refs/heads/master",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            return ancestry.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
 
 
 def latest_pypi_version(*, timeout: int = 10) -> str | None:
@@ -180,7 +233,7 @@ def notify_if_newer(cfg: Config | None = None, *, force: bool = False) -> str | 
 
         repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
         tag = latest_remote_tag(repo)
-        if tag and is_newer(tag, __version__):
+        if tag and is_newer(tag, __version__) and tag_is_on_remote_master(repo, tag):
             _write_notify(cfg, tag)
             return tag
         else:
@@ -220,7 +273,7 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
         # Fast path: if notify_if_newer already confirmed a newer version
         # (wrote the update_available file), trust it and skip the network call.
         tag = pending_update_tag(cfg) or latest_remote_tag(repo)
-        if not tag or not is_newer(tag, __version__):
+        if not tag or not is_newer(tag, __version__) or not tag_is_on_remote_master(repo, tag):
             _clear_notify(cfg)
             return False
 

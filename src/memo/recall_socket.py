@@ -30,6 +30,21 @@ _MAX_LINE_BYTES = MAX_LINE_BYTES
 _LOCK_WAIT_LOG_MS = 500.0
 
 
+def _embedder_model_identity(mem: Any, cfg: Any) -> str:
+    """Resolve the wire identity, preferring the store's exact vector owner.
+
+    Production ``Memory`` instances stamp the backend-specific identity on
+    their store (including an ST revision). Lightweight adapters and test
+    doubles may only expose the legacy config model, so retain that protocol
+    compatibility as a fallback.
+    """
+    store = getattr(mem, "store", None)
+    store_model = getattr(store, "embedder_model", None)
+    if isinstance(store_model, str) and store_model:
+        return store_model
+    return str(cfg.embedder_model)
+
+
 def _log_lock_contention(event: str, wait_ms: float, held_by: str | None) -> None:
     """One structured line per contended recall — grep the daemon stderr log
     for ``recall_lock`` to see who a slow/bailed recall waited behind."""
@@ -79,7 +94,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                 "vector": vec,
                 "dim": len(vec),
                 "dims": len(vec),
-                "model": self.server._cfg.embedder_model,
+                "model": _embedder_model_identity(self.server._mem, self.server._cfg),
             },
             ensure_ascii=False,
         )
@@ -148,7 +163,12 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             return json.dumps({"error": "embed_batch: `texts` must be a list"})
         if not texts:
             return json.dumps(
-                {"vectors": [], "dim": 0, "dims": 0, "model": self.server._cfg.embedder_model}
+                {
+                    "vectors": [],
+                    "dim": 0,
+                    "dims": 0,
+                    "model": _embedder_model_identity(self.server._mem, self.server._cfg),
+                }
             )
         if not all(isinstance(t, str) for t in texts):
             return json.dumps({"error": "embed_batch: every element of `texts` must be a string"})
@@ -173,7 +193,12 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                 return json.dumps({"error": "embed_batch: timeout acquiring lock"})
         dim = len(vectors[0]) if vectors else 0
         return json.dumps(
-            {"vectors": vectors, "dim": dim, "dims": dim, "model": self.server._cfg.embedder_model},
+            {
+                "vectors": vectors,
+                "dim": dim,
+                "dims": dim,
+                "model": _embedder_model_identity(self.server._mem, self.server._cfg),
+            },
             ensure_ascii=False,
         )
 
@@ -183,7 +208,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         return json.dumps(
             {
                 "ok": True,
-                "model": self.server._cfg.embedder_model,
+                "model": _embedder_model_identity(self.server._mem, self.server._cfg),
                 "dims": self.server._cfg.embedder_dims,
                 "started_at": snap.get("started_at"),
                 "uptime_s": snap.get("uptime_s"),
@@ -470,7 +495,9 @@ class _RecallServer(socketserver.ThreadingUnixStreamServer):
                 print(f"# recall-daemon: failed to init micro-embedder: {exc}", file=sys.stderr)
 
         self._stats = _DaemonStats(
-            started_at=time.time(), model=cfg.embedder_model, dims=cfg.embedder_dims
+            started_at=time.time(),
+            model=_embedder_model_identity(mem, cfg),
+            dims=cfg.embedder_dims,
         )
         super().__init__(sock_path, _RecallHandler)
 

@@ -371,3 +371,38 @@ def test_maintain_undo_cli_dry_run_reads_receipt(tmp_cfg):
     out = _json.loads(res.output)
     assert out["dry_run"] is True
     assert out["missing"] == ["a" * 32]  # nothing in inactive/ to restore
+
+
+def test_maintain_undo_rejects_receipt_path_traversal(tmp_cfg):
+    from click.testing import CliRunner
+
+    from memo.cli_maintain import maintain_cmd
+
+    (tmp_cfg.state_dir / "maintain" / "runs").mkdir(parents=True)
+    victim = tmp_cfg.state_dir / "victim.json"
+    victim.write_text(
+        json.dumps(
+            {
+                "superseded": [],
+                "merged": [],
+                "archived_stale": [],
+                "dead_archived": [],
+                "forgotten": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    res = CliRunner().invoke(
+        maintain_cmd,
+        ["undo", "--run", "../../victim", "--dry-run", "--json"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        },
+    )
+
+    assert res.exit_code != 0
+    assert "receipt" in res.output.lower()
+    assert victim.is_file()

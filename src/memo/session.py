@@ -59,11 +59,12 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from memo.atomic_io import atomic_write_text
 from memo.flags import flag_int
 from memo.session_sources import (
     _COMMAND_WRAPPER_PREFIXES,
@@ -101,12 +102,30 @@ _PROMPT_TRAIL_MAX = 5
 _PROMPT_TRAIL_CHARS = 100
 _RUNNING_SUMMARY_CHARS = 400
 _SUMMARY_MIN_NEW_TURNS = 3
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+
+
+def validate_session_id(session_id: str) -> str:
+    """Return a filename-safe session id or raise ``ValueError``.
+
+    Session ids cross MCP/hook trust boundaries and are used as sidecar
+    filenames.  Keep the accepted form compatible with Claude/Codex UUIDs and
+    the short slugs used by other clients while rejecting separators, glob
+    metacharacters, dot segments, control characters, and oversized names.
+    """
+    if not isinstance(session_id, str) or not _SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError("session_id must be 1-128 ASCII letters, digits, underscores, or hyphens")
+    return session_id
 
 
 def sessions_dir(state_dir: Path) -> Path:
     """Where per-session JSON lives. Created on first use."""
     d = state_dir / "sessions"
+    if d.is_symlink():
+        raise ValueError(f"unsafe sessions directory: {d}")
     d.mkdir(parents=True, exist_ok=True)
+    if d.is_symlink() or not d.resolve().is_relative_to(state_dir.resolve()):
+        raise ValueError(f"unsafe sessions directory: {d}")
     return d
 
 
@@ -115,7 +134,11 @@ def _now_iso() -> str:
 
 
 def _session_path(state_dir: Path, session_id: str) -> Path:
-    return sessions_dir(state_dir) / f"{session_id}.json"
+    safe_id = validate_session_id(session_id)
+    path = sessions_dir(state_dir) / f"{safe_id}.json"
+    if path.is_symlink():
+        raise ValueError("session_id resolves to an unsafe session path")
+    return path
 
 
 def find_transcript_path(session_id: str) -> str | None:
@@ -128,6 +151,10 @@ def find_transcript_path(session_id: str) -> str | None:
     if not session_id:
         return None
     try:
+        session_id = validate_session_id(session_id)
+    except ValueError:
+        return None
+    try:
         matches = list((Path.home() / ".claude" / "projects").glob(f"*/{session_id}.jsonl"))
     except OSError:
         return None
@@ -135,7 +162,10 @@ def find_transcript_path(session_id: str) -> str | None:
 
 
 def _load(state_dir: Path, session_id: str) -> dict[str, Any] | None:
-    p = _session_path(state_dir, session_id)
+    try:
+        p = _session_path(state_dir, session_id)
+    except ValueError:
+        return None
     if not p.is_file():
         return None
     try:
@@ -146,11 +176,7 @@ def _load(state_dir: Path, session_id: str) -> dict[str, Any] | None:
 
 def _write(state_dir: Path, session_id: str, data: dict[str, Any]) -> Path:
     p = _session_path(state_dir, session_id)
-    # Atomic-ish: write to .tmp, replace. Avoids a torn read if the
-    # process is killed mid-write (Stop hook racing a SIGTERM).
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, p)
+    atomic_write_text(p, json.dumps(data, ensure_ascii=False, indent=2))
     return p
 
 
@@ -348,6 +374,8 @@ def list_sessions(
     out: list[dict[str, Any]] = []
     d = sessions_dir(state_dir)
     for p in d.glob("*.json"):
+        if p.is_symlink():
+            continue
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
@@ -375,9 +403,13 @@ def get_session(state_dir: Path, session_id_or_prefix: str) -> dict[str, Any] | 
     isn't worth it here."""
     if not session_id_or_prefix or len(session_id_or_prefix) < 4:
         return None
+    try:
+        session_id_or_prefix = validate_session_id(session_id_or_prefix)
+    except ValueError:
+        return None
     d = sessions_dir(state_dir)
     # Fast path: exact filename hit.
-    exact = d / f"{session_id_or_prefix}.json"
+    exact = _session_path(state_dir, session_id_or_prefix)
     if exact.is_file():
         try:
             return json.loads(exact.read_text(encoding="utf-8"))
@@ -385,6 +417,8 @@ def get_session(state_dir: Path, session_id_or_prefix: str) -> dict[str, Any] | 
             return None
     # Prefix scan.
     for p in d.glob(f"{session_id_or_prefix}*.json"):
+        if p.is_symlink():
+            continue
         try:
             return json.loads(p.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):

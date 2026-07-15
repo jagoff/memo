@@ -16,6 +16,7 @@ import pytest
 
 from memo.cli_diag import _profile_status_report, _typed_embedder_profile
 from memo.config import Config
+from memo.embedder_select import active_embedder_identity
 
 cc = pytest.importorskip("consciousness_contracts")
 
@@ -24,13 +25,14 @@ def test_typed_embedder_profile_returns_contract_shape(tmp_cfg: Config) -> None:
     typed = _typed_embedder_profile(tmp_cfg)
     assert typed is not None
     assert typed["schema"] == "consciousness.embedder_profile.v1"
-    assert typed["model_id"] == tmp_cfg.embedder_model
+    expected_model = active_embedder_identity(tmp_cfg)
+    assert typed["model_id"] == expected_model
     assert typed["dims"] == int(tmp_cfg.embedder_dims)
     assert typed["normalization"] == "l2"
     assert typed["provider"] == "memo"
 
     restored = cc.EmbedderProfile.from_dict(typed)
-    assert restored.model_id == tmp_cfg.embedder_model
+    assert restored.model_id == expected_model
     assert restored.dims == int(tmp_cfg.embedder_dims)
 
 
@@ -64,6 +66,6 @@ def test_mcp_tool_exposes_typed_profile(tmp_cfg: Config) -> None:
 
     payload = tool.fn()
     assert payload["schema"] == "consciousness.embedder_profile.v1"
-    assert payload["model_id"] == tmp_cfg.embedder_model
+    assert payload["model_id"] == active_embedder_identity(tmp_cfg)
     assert payload["dims"] == int(tmp_cfg.embedder_dims)
     assert payload["provider"] == "memo"
