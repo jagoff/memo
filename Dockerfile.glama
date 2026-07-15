@@ -1,13 +1,13 @@
 # Glama sandbox image: build memo from this checkout, then run the packaged
 # MCP stdio server for protocol introspection.
-FROM python:3.13-slim@sha256:eb43ff125d8d58d7449dcba7d336c23bcac412f526d861db493b9994d8010280 AS builder
+FROM python:3.14-slim@sha256:d3400aa122fa42cf0af0dbe8ec3091b047eac5c8f7e3539f7135e86d855dc015 AS builder
 
 WORKDIR /src
 COPY . .
 RUN python -m pip install --no-cache-dir build \
     && python -m build --wheel --outdir /dist
 
-FROM python:3.13-slim@sha256:eb43ff125d8d58d7449dcba7d336c23bcac412f526d861db493b9994d8010280 AS runtime
+FROM python:3.14-slim@sha256:d3400aa122fa42cf0af0dbe8ec3091b047eac5c8f7e3539f7135e86d855dc015 AS runtime
 
 ARG EXPECTED_VERSION
 ENV PYTHONUNBUFFERED=1 \
