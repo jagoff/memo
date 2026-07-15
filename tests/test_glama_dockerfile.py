@@ -1,3 +1,5 @@
+import re
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -5,9 +7,23 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def test_glama_dockerfile_builds_and_installs_checkout_wheel() -> None:
     dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 
-    assert "FROM python:3.13-slim@sha256:" in dockerfile
-    assert "AS builder" in dockerfile
+    stages = re.findall(
+        r"^FROM (python:(3\.\d+)-slim@sha256:[0-9a-f]{64}) AS (builder|runtime)$",
+        dockerfile,
+        re.MULTILINE,
+    )
+    assert len(stages) == 2
+    assert stages[0] == (*stages[1][:2], "builder")
+    assert stages[1][2] == "runtime"
+
+    supported_python = {
+        classifier.rsplit(" :: ", maxsplit=1)[-1]
+        for classifier in project["classifiers"]
+        if classifier.startswith("Programming Language :: Python :: 3.")
+    }
+    assert stages[0][1] in supported_python
     assert "python -m build --wheel" in dockerfile
     assert "--outdir /dist" in dockerfile
     assert "COPY --from=builder /dist/ /tmp/dist/" in dockerfile
