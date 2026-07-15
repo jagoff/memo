@@ -131,11 +131,87 @@ def grounding_chat(chat: Any) -> Any:
     return fn() if callable(fn) else chat
 
 
+def make_bridge(
+    ctx: Any,
+    *,
+    loop: Any,
+    timeout_s: float,
+    max_tokens: int,
+) -> Sampler:
+    """Build a sync Sampler that bridges to ``ctx.sample()`` on ``loop``.
+
+    The returned callable runs in a worker thread (synthesis code is sync);
+    it schedules the coroutine on the server event loop and blocks up to
+    ``timeout_s``. Any exception (timeout, refusal, transport) propagates —
+    ``SamplingChat`` turns it into the sticky MLX fallback.
+    """
+    import asyncio
+
+    def _sample(messages: list[dict[str, str]], options: dict[str, Any]) -> str:
+        system_parts = [m["content"] for m in messages if m.get("role") == "system"]
+        convo = [m["content"] for m in messages if m.get("role") != "system"]
+        opts = options or {}
+        want = int(opts.get("num_predict") or opts.get("max_tokens") or max_tokens)
+        fut = asyncio.run_coroutine_threadsafe(
+            ctx.sample(
+                convo or [""],
+                system_prompt="\n\n".join(system_parts) or None,
+                temperature=opts.get("temperature"),
+                max_tokens=min(want, max_tokens),
+            ),
+            loop,
+        )
+        result = fut.result(timeout=timeout_s)
+        text = getattr(result, "text", None)
+        if not isinstance(text, str) or not text:
+            text = str(getattr(result, "content", "") or result)
+        return text
+
+    return _sample
+
+
+def state_from_ctx(ctx: Any) -> SamplingState | None:
+    """Build the per-request state, or None when sampling should not run.
+
+    None when: flag off, no ctx (direct/test invocation), no running event
+    loop, or the client is positively known not to support sampling. On any
+    capability-introspection doubt we return a state — a failed first sample
+    falls back sticky anyway.
+    """
+    import asyncio
+
+    from memo.flags import flag_bool, flag_float, flag_int
+
+    if not flag_bool("MEMO_SAMPLING_SYNTH_ENABLED") or ctx is None:
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    try:
+        caps = ctx.session.client_params.capabilities
+        if getattr(caps, "sampling", None) is None:
+            return None
+    except Exception:  # noqa: S110 — capability introspection is best-effort
+        pass
+    return SamplingState(
+        sampler=make_bridge(
+            ctx,
+            loop=loop,
+            timeout_s=float(flag_float("MEMO_SAMPLING_TIMEOUT_S") or 30.0),
+            max_tokens=int(flag_int("MEMO_SAMPLING_MAX_TOKENS") or 2000),
+        ),
+        calls_left=int(flag_int("MEMO_SAMPLING_MAX_CALLS") or 3),
+    )
+
+
 __all__ = [
     "Sampler",
     "SamplingChat",
     "SamplingState",
     "current_state",
     "grounding_chat",
+    "make_bridge",
     "sampling_scope",
+    "state_from_ctx",
 ]
