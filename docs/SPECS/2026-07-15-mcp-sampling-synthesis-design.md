@@ -103,7 +103,7 @@ five tools.
 | `MEMO_SAMPLING_SYNTH_ENABLED` | OFF (dark) | master switch |
 | `MEMO_SAMPLING_TIMEOUT_S` | 30 | per-sample timeout |
 | `MEMO_SAMPLING_MAX_CALLS` | 3 | samples per MCP request, then MLX |
-| `MEMO_SAMPLING_MAX_TOKENS` | (impl-chosen) | budget for the sample prompt |
+| `MEMO_SAMPLING_MAX_TOKENS` | 2000 | max tokens requested per sample |
 
 `MEMO_SAMPLING_SYNTH_ENABLED` declares a `manual` gate (+ reason) in
 `dream_flags.GATES` — completeness is CI-enforced by `test_dream_flags.py`;
