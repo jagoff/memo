@@ -139,3 +139,108 @@ def test_grounding_chat_fails_open_when_mlx_unavailable():
     backend = grounding_chat(router)
     with pytest.raises(RuntimeError):
         backend.chat("m", [{"role": "user", "content": "q"}])
+
+
+# --- Task 2: bridge + state_from_ctx -----------------------------------------
+
+
+def test_make_bridge_joins_messages_and_calls_ctx_sample():
+    import asyncio
+
+    from memo.sampling import make_bridge
+
+    captured: dict[str, Any] = {}
+
+    class _FakeResult:
+        text = "BRIDGED"
+
+    class _FakeCtx:
+        async def sample(self, messages, *, system_prompt=None, temperature=None, max_tokens=None):
+            captured["messages"] = messages
+            captured["system_prompt"] = system_prompt
+            captured["temperature"] = temperature
+            captured["max_tokens"] = max_tokens
+            return _FakeResult()
+
+    async def _run() -> str:
+        loop = asyncio.get_running_loop()
+        sampler = make_bridge(_FakeCtx(), loop=loop, timeout_s=5.0, max_tokens=2000)
+        msgs = [
+            {"role": "system", "content": "sys prompt"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "prior"},
+        ]
+        return await asyncio.to_thread(sampler, msgs, {"temperature": 0.2, "num_predict": 512})
+
+    text = asyncio.run(_run())
+    assert text == "BRIDGED"
+    assert captured["system_prompt"] == "sys prompt"
+    assert "hello" in captured["messages"]
+    assert "prior" in captured["messages"]
+    assert captured["temperature"] == 0.2
+    assert captured["max_tokens"] == 512  # min(num_predict, cap)
+
+
+def test_make_bridge_caps_max_tokens():
+    import asyncio
+
+    from memo.sampling import make_bridge
+
+    captured: dict[str, Any] = {}
+
+    class _FakeResult:
+        text = "OK"
+
+    class _FakeCtx:
+        async def sample(self, messages, *, system_prompt=None, temperature=None, max_tokens=None):
+            captured["max_tokens"] = max_tokens
+            return _FakeResult()
+
+    async def _run() -> str:
+        loop = asyncio.get_running_loop()
+        sampler = make_bridge(_FakeCtx(), loop=loop, timeout_s=5.0, max_tokens=100)
+        return await asyncio.to_thread(
+            sampler, [{"role": "user", "content": "q"}], {"num_predict": 9999}
+        )
+
+    asyncio.run(_run())
+    assert captured["max_tokens"] == 100
+
+
+def test_state_from_ctx_none_when_flag_off(monkeypatch):
+    from memo.sampling import state_from_ctx
+
+    monkeypatch.delenv("MEMO_SAMPLING_SYNTH_ENABLED", raising=False)
+
+    class _FakeCtx:
+        pass
+
+    assert state_from_ctx(_FakeCtx()) is None
+
+
+def test_state_from_ctx_none_without_ctx(monkeypatch):
+    from memo.sampling import state_from_ctx
+
+    monkeypatch.setenv("MEMO_SAMPLING_SYNTH_ENABLED", "1")
+    assert state_from_ctx(None) is None
+
+
+def test_state_from_ctx_builds_state_when_enabled(monkeypatch):
+    import asyncio
+
+    from memo.sampling import state_from_ctx
+
+    monkeypatch.setenv("MEMO_SAMPLING_SYNTH_ENABLED", "1")
+    monkeypatch.setenv("MEMO_SAMPLING_MAX_CALLS", "5")
+
+    class _FakeCtx:
+        async def sample(self, *a, **k):  # pragma: no cover - not called here
+            raise AssertionError
+
+    async def _run():
+        return state_from_ctx(_FakeCtx())
+
+    st = asyncio.run(_run())
+    assert st is not None
+    assert st.calls_left == 5
+    assert st.usable()
