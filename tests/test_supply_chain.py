@@ -67,6 +67,12 @@ def test_dependency_security_workflow_is_frozen_and_enforcing() -> None:
     assert "schedule:" in workflow
 
 
+def test_slow_test_workflow_installs_test_collection_dependencies() -> None:
+    workflow = (WORKFLOWS / "slow-tests.yml").read_text(encoding="utf-8")
+
+    assert "uv sync --frozen --extra dev --extra http" in workflow
+
+
 def test_every_workflow_job_declares_explicit_permissions() -> None:
     jobs_without_permissions: list[str] = []
 

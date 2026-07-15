@@ -20,7 +20,7 @@ jobs:
       - name: Install Python 3.13 + uv via Homebrew
         run: brew install python@3.13 uv
       - name: Install package + dev deps
-        run: uv sync --frozen --extra dev --python "$(brew --prefix python@3.13)/bin/python3.13"
+        run: uv sync --frozen --extra dev --extra http --python "$(brew --prefix python@3.13)/bin/python3.13"
       - name: Run slow tests
         run: .venv/bin/python -m pytest -m "slow" --timeout=300 -v
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 # These tests intentionally exercise rejection/acknowledgement of wildcard binds.
 # ruff: noqa: S104
+import gc
 import stat
+import warnings
 
 import pytest
 from fastmcp import FastMCP
@@ -97,7 +99,9 @@ def test_mcp_http_auth_protects_protocol_endpoint(
     def ping() -> str:
         return "pong"
 
-    app = server.http_app(stateless_http=True)
+    # JSON responses avoid allocating the SDK's SSE stream for ordinary RPC
+    # replies. MCP SDK 1.28 leaves that receive stream open after the response.
+    app = server.http_app(json_response=True, stateless_http=True)
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -110,24 +114,29 @@ def test_mcp_http_auth_protects_protocol_endpoint(
     }
     accept = {"Accept": "application/json, text/event-stream"}
 
-    with TestClient(app) as client:
-        assert client.post("/mcp", json=payload, headers=accept).status_code == 401
-        assert (
-            client.post(
-                "/mcp",
-                json=payload,
-                headers={**accept, "Authorization": "Bearer wrong"},
-            ).status_code
-            == 401
-        )
-        assert (
-            client.post(
-                "/mcp",
-                json=payload,
-                headers={**accept, "Authorization": f"Bearer {_TOKEN}"},
-            ).status_code
-            == 200
-        )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        with TestClient(app) as client:
+            assert client.post("/mcp", json=payload, headers=accept).status_code == 401
+            assert (
+                client.post(
+                    "/mcp",
+                    json=payload,
+                    headers={**accept, "Authorization": "Bearer wrong"},
+                ).status_code
+                == 401
+            )
+            assert (
+                client.post(
+                    "/mcp",
+                    json=payload,
+                    headers={**accept, "Authorization": f"Bearer {_TOKEN}"},
+                ).status_code
+                == 200
+            )
+        gc.collect()
+
+    assert not [warning for warning in caught if issubclass(warning.category, ResourceWarning)]
 
 
 def test_shared_http_middleware_rate_limits_and_hardens_responses() -> None:
@@ -241,5 +250,6 @@ def test_mcp_main_runs_http_with_shared_auth(
         "transport": "http",
         "host": "127.0.0.1",
         "port": 18768,
+        "json_response": True,
     }
     assert len(middleware) == 2
