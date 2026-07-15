@@ -150,5 +150,5 @@ def mcp_profile_token_cost(profile: str | None = None) -> tuple[str, str, bool]:
     (or the active profile when ``None``). ``is_reduced`` is False only for the
     full/default surface — the costly one doctor warns about."""
     resolved = profile if profile is not None else mcp_profile()
-    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("129", "~15k"))
+    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("131", "~15k"))
     return count, cost, resolved in _PROFILE_TOKEN_COST

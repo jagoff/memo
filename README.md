@@ -87,7 +87,7 @@ exact flags and boundaries.
 
 memo is built to **spend fewer tokens, not more**.
 
-- **~90% smaller MCP surface.** The default `agent` profile exposes **14 tools / ~1.4k schema tokens**, versus **129 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **~90% smaller MCP surface.** The default `agent` profile exposes **14 tools / ~1.4k schema tokens**, versus **131 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -112,7 +112,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
 - **Exact transcript lookup (opt-in).** `memo verbatim search` can find the precise wording of past local transcript turns through a private, lexical-only FTS5 index. It never enters ambient recall.
-- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 14 tools, not 129.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 14 tools, not 131.
 
 ## Requirements
 
@@ -369,20 +369,20 @@ memo runs four background daemons:
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
-### All 112 visible CLI commands
+### All 125 top-level CLI commands
 
 <details>
 <summary>Click to expand</summary>
 
 **Core:** `save` `search` `ask` `get` `edit` `rename` `delete` `list`
 
-**Recall & Hooks:** `recall` `recall-hook` `context` `briefing` `continuity` `prewarm` `capture-tick` `capture-stop`
+**Recall & Hooks:** `recall` `recall-hook` `context` `briefing` `continuity` `prewarm` `capture-tick` `capture-stop` `interject` `ask-gaps` `guard`
 
-**Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes`
+**Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes` `chronicle`
 
 **Maintenance:** `reindex` `maintain` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `invalidate` `temporal` `compress-context`
 
-**Analysis & Quality:** `health` `stats` `doctor` `lint` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile`
+**Analysis & Quality:** `health` `stats` `doctor` `lint` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile` `confidence` `graduation` `hype`
 
 **Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version` `related`
 
@@ -392,11 +392,11 @@ memo runs four background daemons:
 
 **Visualization:** `tui` `dashboard` `map` `logs` `hook-log`
 
-**Setup & Config:** `init` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `watch` `release`
+**Setup & Config:** `init` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `upgrade` `self-update` `watch` `release` `onboard`
 
 **Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon` `idle-daemon`
 
-**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `sleep-cycle` `ocr-image` `provenance` `secret` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate`
+**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `sleep-cycle` `ocr-image` `provenance` `secret` `verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate` `fix` `undo`
 
 </details>
 
@@ -406,7 +406,7 @@ memo runs four background daemons:
 |---|---|---|---|
 | `agent` (default) | 14 | ~1.4k | Standard agent work — max token economy |
 | `core` / `slim` | 34 | ~3.0k | Constrained clients (Codex, OpenCode), admin-lite |
-| `full` / `default` | 129 | ~15k | Power users, debugging |
+| `full` / `default` | 131 | ~15k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 

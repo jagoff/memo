@@ -1,0 +1,42 @@
+name: dependency security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: Set up Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.13"
+      - name: Install pinned uv
+        run: pip install uv==0.11.21
+      - name: Export the committed runtime lock
+        run: |
+          uv export --frozen --no-dev --all-extras --no-extra dev --no-extra contracts \
+            --no-emit-project --output-file /tmp/memo-requirements.txt
+      - name: Audit known Python vulnerabilities
+        run: |
+          uv tool run --from pip-audit==2.10.1 \
+            pip-audit --strict --disable-pip --require-hashes \
+              --requirement /tmp/memo-requirements.txt
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: Reject vulnerable dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
