@@ -49,7 +49,7 @@ dependencies = [
     # transformers 5.13 broke AutoTokenizer.register(str) which mlx-lm (<=0.31.3)
     # still calls at import — fresh installs crash on any embed. Lift the cap
     # once mlx-lm ships a release compatible with transformers >=5.13.
-    "transformers<5.13; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "transformers<5.14; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [project.urls]
@@ -67,7 +67,7 @@ dev = [
     "pytest-asyncio>=1.4,<2",
     "pytest-textual-snapshot>=1.1,<2",
     "freezegun>=1.5",
-    "ruff==0.15.20",
+    "ruff==0.15.21",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
 ]
