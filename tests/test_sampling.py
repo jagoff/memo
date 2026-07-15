@@ -244,3 +244,59 @@ def test_state_from_ctx_builds_state_when_enabled(monkeypatch):
     assert st is not None
     assert st.calls_left == 5
     assert st.usable()
+
+
+# --- Task 4: facade routing + chat_with_timeout context propagation ----------
+
+
+def _mem(tmp_cfg, monkeypatch):
+    from memo.config import Config
+    from memo.memory import Memory
+
+    cfg = Config(
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    return Memory(cfg)
+
+
+def test_ensure_chat_returns_router_when_flag_on(tmp_cfg, monkeypatch):
+    monkeypatch.setenv("MEMO_SAMPLING_SYNTH_ENABLED", "1")
+    mem = _mem(tmp_cfg, monkeypatch)
+    try:
+        chat = mem._ensure_chat()
+        assert isinstance(chat, SamplingChat)
+        assert mem._ensure_chat() is chat  # cached
+    finally:
+        mem.close()
+
+
+def test_ensure_chat_mlx_path_when_flag_off(tmp_cfg, monkeypatch):
+    monkeypatch.delenv("MEMO_SAMPLING_SYNTH_ENABLED", raising=False)
+    monkeypatch.setattr("memo.platform_detect.mlx_available", lambda: True)
+    monkeypatch.setattr("memo.llm.MLXChat.__init__", lambda self: None)
+    mem = _mem(tmp_cfg, monkeypatch)
+    try:
+        chat = mem._ensure_chat()
+        assert not isinstance(chat, SamplingChat)
+    finally:
+        mem.close()
+
+
+def test_chat_with_timeout_propagates_sampling_context():
+    from memo.memory.record import chat_with_timeout
+
+    router = SamplingChat(lambda: (_ for _ in ()).throw(RuntimeError("no mlx")))
+    st = SamplingState(sampler=lambda m, o: "VIA EXECUTOR", calls_left=3)
+    with sampling_scope(st):
+        out = chat_with_timeout(
+            router, timeout=5.0, model="m", messages=[{"role": "user", "content": "q"}]
+        )
+    assert out == {"message": {"content": "VIA EXECUTOR"}}
+    assert st.used_client is True

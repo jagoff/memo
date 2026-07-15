@@ -14,7 +14,7 @@ import contextlib
 import logging
 import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from memo.config import Config
 from memo.consolidation import AdvancedConsolidator
@@ -22,7 +22,10 @@ from memo.contextual_retrieval import get_or_generate_context, prepend_context
 from memo.contradict import ContradictionScanner, ContradictionStore
 from memo.errors import MemoError
 from memo.graph import GraphStore
-from memo.llm import MLXChat
+from memo.llm import ChatBackend, MLXChat
+
+if TYPE_CHECKING:
+    from memo.sampling import SamplingChat
 from memo.memory.ask_ops import _AskOpsMixin
 from memo.memory.capabilities import OPTIONAL_CAPABILITIES
 from memo.memory.chat_ask_ops import _ChatAskOpsMixin
@@ -149,6 +152,9 @@ class Memory(
         # Helper LLM is lazy — only constructed when a helper-backed path
         # is requested. Users who don't opt in pay nothing.
         self._chat: MLXChat | None = None
+        # SamplingChat router (MEMO_SAMPLING_SYNTH_ENABLED) — cached like
+        # `_chat`; safe because it holds no request state (contextvar does).
+        self._sampling_chat: SamplingChat | None = None
         # Guards lazy `_chat` construction — the FastMCP HTTP transport
         # dispatches tool calls on a worker threadpool, so two concurrent
         # requests could otherwise both build a (multi-GB) MLXChat.
@@ -190,8 +196,8 @@ class Memory(
         # RAG cache's corpus-version memo (see _corpus_version in ask_ops).
         self._write_gen = 0
 
-    def _ensure_chat(self) -> MLXChat:
-        """Construct the chat wrapper without loading model weights yet.
+    def _build_mlx_chat(self) -> MLXChat:
+        """Construct the MLX chat wrapper without loading model weights yet.
 
         Thread-safe (double-checked lock) so concurrent MCP requests share one
         wrapper instead of racing two constructions.
@@ -209,6 +215,27 @@ class Memory(
                 if self._chat is None:
                     self._chat = MLXChat()
         return self._chat
+
+    def _ensure_chat(self) -> ChatBackend:
+        """Resolve the chat backend for synthesis.
+
+        With MEMO_SAMPLING_SYNTH_ENABLED on, returns a cached SamplingChat
+        router that consults the per-request sampling contextvar at every
+        call (client model inside MCP scope, MLX everywhere else). The MLX
+        availability check moves to first actual use in that mode — a host
+        without MLX can still answer via a sampling-capable client.
+        """
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_SAMPLING_SYNTH_ENABLED"):
+            if self._sampling_chat is None:
+                from memo.sampling import SamplingChat
+
+                with self._chat_lock:
+                    if self._sampling_chat is None:
+                        self._sampling_chat = SamplingChat(self._build_mlx_chat)
+            return self._sampling_chat
+        return self._build_mlx_chat()
 
     def _ensure_reranker(self) -> Any:
         """Lazily construct the cross-encoder reranker (thread-safe). Shared by

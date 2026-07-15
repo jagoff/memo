@@ -349,7 +349,11 @@ def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, 
                 max_workers=1, thread_name_prefix="chat-timeout"
             )
             ex = _CHAT_EXECUTOR
-    fut = ex.submit(_run)
+    # copy_context: the sampling contextvar (memo.sampling) must survive the
+    # executor hop or client-sampling silently degrades to MLX mid-request.
+    import contextvars
+
+    fut = ex.submit(contextvars.copy_context().run, _run)
     try:
         return fut.result(timeout=timeout)
     except _futures.TimeoutError:

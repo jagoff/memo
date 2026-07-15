@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from memo.llm import MLXChat
+from memo.llm import ChatBackend, MLXChat
 from memo.memory.record import bump_support_if_enabled, chat_with_timeout, derived_save_scope
 from memo.prompt_overrides import resolve_prompt
 
@@ -105,12 +105,12 @@ class AdvancedConsolidator:
             If None, a new one is created on first use.
     """
 
-    def __init__(self, memory: Any, chat: MLXChat | None = None) -> None:
+    def __init__(self, memory: Any, chat: ChatBackend | None = None) -> None:
         self.memory = memory
         self._chat = chat
         self._archival_dir = memory.cfg.memory_dir / "archived"
 
-    def _ensure_chat(self) -> MLXChat:
+    def _ensure_chat(self) -> ChatBackend:
         if self._chat is None:
             self._chat = MLXChat()
         return self._chat
