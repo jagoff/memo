@@ -644,7 +644,8 @@ class _MaintainOpsMixin(_MemoryBase):
                     pending_extra = dict(raw_extra) if isinstance(raw_extra, dict) else {}
                     pending_extra.pop("_memo_embed_pending", None)
                     pending_post.metadata["extra"] = pending_extra
-                    self._atomic_write_text(pending_path, frontmatter.dumps(pending_post))
+                    pending_rel_path = pending_path.relative_to(self.cfg.memory_dir).as_posix()
+                    self._atomic_write_text(pending_rel_path, frontmatter.dumps(pending_post))
             except Exception as exc:
                 _log.debug(
                     "reindex: could not clear _memo_embed_pending from %s: %s",

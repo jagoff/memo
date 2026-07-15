@@ -173,8 +173,9 @@ class _WriteOpsMixin(_MemoryBase):
                 finally:
                     self._data_lock_depth = 0
 
-    def _atomic_write_text(self, path: Path, text: str) -> None:
+    def _atomic_write_text(self, rel_path: str, text: str) -> None:
         """Publish UTF-8 text atomically without exposing a partial target."""
+        path = self._safe_path_under(self.cfg.memory_dir, rel_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(
             prefix=f".{path.name}.",
@@ -651,7 +652,7 @@ class _WriteOpsMixin(_MemoryBase):
             )
             abs_path = self._safe_path_under(self.cfg.memory_dir, rel_path)
             written_disk_text = frontmatter.dumps(post)
-            self._atomic_write_text(abs_path, written_disk_text)
+            self._atomic_write_text(rel_path, written_disk_text)
 
             # Publish every topic-key write text-only before releasing the
             # shared lock. This both reserves a new canonical id and makes an
@@ -843,7 +844,7 @@ class _WriteOpsMixin(_MemoryBase):
                     except OSError:
                         should_mark_pending = False
                 if should_mark_pending:
-                    self._atomic_write_text(abs_path, frontmatter.dumps(post))
+                    self._atomic_write_text(rel_path, frontmatter.dumps(post))
             raise
         except Exception as exc:
             self._presence_bump_save()
@@ -973,7 +974,7 @@ class _WriteOpsMixin(_MemoryBase):
                 # section for topic-key writes. A newer writer cannot land
                 # between the compare and either recovery mutation.
                 with contextlib.suppress(Exception):
-                    self._atomic_write_text(abs_path, frontmatter.dumps(post))
+                    self._atomic_write_text(rel_path, frontmatter.dumps(post))
                 with contextlib.suppress(Exception):
                     self.store.upsert_text_only(
                         id_=record_id,
@@ -1244,16 +1245,21 @@ class _WriteOpsMixin(_MemoryBase):
         if not rel_path or relative.is_absolute() or ".." in relative.parts:
             raise StorageError(f"refusing store path outside memory_dir: {rel_path!r}")
 
-        candidate = root / relative
-        cursor = root
+        # Use CodeQL's recognized normalize-then-prefix validation pattern.
+        # ``realpath`` also resolves every existing symlink component before
+        # the path reaches a filesystem sink. The separator suffix prevents
+        # sibling-prefix confusion (``/safe/root-evil`` vs ``/safe/root``).
+        safe_root = os.path.realpath(root)
+        candidate = os.path.realpath(os.path.join(safe_root, rel_path))
+        root_prefix = safe_root.rstrip(os.sep) + os.sep
+        if not candidate.startswith(root_prefix):
+            raise StorageError(f"refusing store path outside memory_dir: {rel_path!r}")
+        cursor = Path(safe_root)
         for part in relative.parts:
             cursor = cursor / part
             if cursor.is_symlink():
                 raise StorageError(f"refusing symlink in canonical memory path: {rel_path!r}")
-
-        if not candidate.resolve(strict=False).is_relative_to(root.resolve()):
-            raise StorageError(f"refusing store path outside memory_dir: {rel_path!r}")
-        return candidate
+        return Path(candidate)
 
     def _resolve_existing(self, rel_path: str) -> Path:
         """Resolve a DB-stored path to an absolute `Path`.

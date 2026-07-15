@@ -185,7 +185,7 @@ class _UpdateOpsMixin(_MemoryBase):
             post["topic_key"] = topic_key
         if normalized_hash is not None:
             post["normalized_hash"] = normalized_hash
-        self._atomic_write_text(abs_path, frontmatter.dumps(post))
+        self._atomic_write_text(str(r["path"]), frontmatter.dumps(post))
 
         if embedding_required:
             self.store.upsert(
