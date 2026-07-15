@@ -53,6 +53,14 @@ def test_dependency_security_workflow_is_frozen_and_enforcing() -> None:
     assert "schedule:" in workflow
 
 
+def test_macos_model_cache_survives_tooling_only_project_changes() -> None:
+    workflow = (WORKFLOWS / "macos-smoke.yml").read_text(encoding="utf-8")
+
+    assert "key: macos-hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}" in workflow
+    assert "restore-keys: |" in workflow
+    assert "macos-hf-${{ runner.os }}-" in workflow
+
+
 def test_contract_ci_has_public_gate_and_clearly_optional_private_integration() -> None:
     workflow = (WORKFLOWS / "test.yml").read_text(encoding="utf-8")
 
