@@ -23,6 +23,11 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: macos-hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          # A tooling-only pyproject change must not force a multi-GB model
+          # download. Hugging Face snapshots are content-addressed, so an
+          # older project cache is a safe seed when the exact key changes.
+          restore-keys: |
+            macos-hf-${{ runner.os }}-
       - name: Install package + dev deps
         run: uv sync --frozen --extra dev --python "$(brew --prefix python@3.13)/bin/python3.13"
       - name: Confirm Apple Silicon runner

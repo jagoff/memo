@@ -60,14 +60,16 @@ Changelog = "https://github.com/jagoff/memo/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",  # <9 pinned transitively by pytest-textual-snapshot→syrupy; dependabot #10 dismissed (dev-only)
+    # pytest-textual-snapshot 1.1.0 pulls syrupy 4.8.0, which requires pytest <9.
+    # Keep the direct constraint honest so universal-lock and Dependabot resolution agree.
+    "pytest>=8.0,<9",
     "pytest-cov>=5.0",
     "pytest-xdist>=3.6",
     "pytest-timeout>=2.3",
     "pytest-asyncio>=1.4,<2",
     "pytest-textual-snapshot>=1.1,<2",
     "freezegun>=1.5",
-    "ruff==0.15.20",
+    "ruff==0.15.21",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
 ]

@@ -26,6 +26,22 @@ def test_dependabot_covers_every_shipped_dependency_surface() -> None:
     assert all(entry["schedule"]["interval"] == "weekly" for entry in updates)
 
 
+def test_dependabot_respects_mlx_and_test_dependency_caps() -> None:
+    config = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+
+    uv_update = next(entry for entry in config["updates"] if entry["package-ecosystem"] == "uv")
+    ignored_versions = {
+        entry["dependency-name"]: entry.get("versions", []) for entry in uv_update["ignore"]
+    }
+
+    assert ">=5.13" in ignored_versions["transformers"]
+    assert any(
+        dependency.startswith("transformers<5.13;") for dependency in project["dependencies"]
+    )
+    assert "pytest>=8.0,<9" in project["optional-dependencies"]["dev"]
+
+
 def test_dependency_security_workflow_is_frozen_and_enforcing() -> None:
     workflow = (WORKFLOWS / "dependency-security.yml").read_text(encoding="utf-8")
 
@@ -35,6 +51,14 @@ def test_dependency_security_workflow_is_frozen_and_enforcing() -> None:
     assert "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294" in workflow
     assert "pull_request:" in workflow
     assert "schedule:" in workflow
+
+
+def test_macos_model_cache_survives_tooling_only_project_changes() -> None:
+    workflow = (WORKFLOWS / "macos-smoke.yml").read_text(encoding="utf-8")
+
+    assert "key: macos-hf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}" in workflow
+    assert "restore-keys: |" in workflow
+    assert "macos-hf-${{ runner.os }}-" in workflow
 
 
 def test_contract_ci_has_public_gate_and_clearly_optional_private_integration() -> None:
