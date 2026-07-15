@@ -9,6 +9,12 @@ updates:
         dependency-type: "production"
       python-development:
         dependency-type: "development"
+    # transformers 5.13 is incompatible with the current mlx-lm tokenizer
+    # registration path. Keep Dependabot from widening pyproject's <5.13 cap
+    # and downgrading mlx-vlm/mlx-audio to manufacture a resolution.
+    ignore:
+      - dependency-name: "transformers"
+        versions: [">=5.13"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -22,4 +28,3 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-
