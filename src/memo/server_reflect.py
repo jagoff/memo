@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from fastmcp import Context
+
 from memo.server_annotations import WRITE, annotated_tool
+from memo.server_common import run_synth
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -14,16 +17,19 @@ if TYPE_CHECKING:
 
 def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **WRITE)
-    def memo_reflect(
+    async def memo_reflect(
         session_id: str | None = None,
         last: bool = True,
         if_due: bool = False,
         dry_run: bool = False,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Synthesize a past coding session into durable memories.
 
         Reads the full session transcript and extracts decisions, facts, bugs, and
         follow-ups as structured memories, then saves a session arc note linking them.
+        With client sampling enabled, synthesis runs on the calling model (see
+        `synthesizer` field).
 
         Args:
             session_id: Specific session id (full or prefix). Omit to use the most recent.
@@ -58,4 +64,9 @@ def register(server: FastMCP, memory: Memory) -> None:
         # Thread-safe lazy init — concurrent reflect calls share one wrapper.
         memory._ensure_chat()
 
-        return _reflect_session(target_id, memory, cfg, dry_run=dry_run)
+        out, synthesizer = await run_synth(
+            memory, ctx, lambda: _reflect_session(target_id, memory, cfg, dry_run=dry_run)
+        )
+        if isinstance(out, dict):
+            out["synthesizer"] = synthesizer
+        return out

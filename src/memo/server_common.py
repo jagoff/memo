@@ -33,7 +33,11 @@ async def run_synth[T](memory: Memory, ctx: Any, fn: Callable[[], T]) -> tuple[T
     if state is not None and state.used_client:
         label = f"client:{state.model_hint}"
     else:
-        label = f"mlx:{memory.cfg.llm_model}"
+        # Attribution is cosmetic — never let a label lookup break the tool.
+        try:
+            label = f"mlx:{memory.cfg.llm_model}"
+        except Exception:
+            label = "mlx:unknown"
     return result, label
 
 
