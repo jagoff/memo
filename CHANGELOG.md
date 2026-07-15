@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- Dark-feature graduation pipeline (`memo dream graduate-flags`, module
+  `dream_flags.py`): every default-off `*_ENABLED` flag now declares a
+  graduation gate (`recall` = nightly ON/OFF A/B through the recall-faithful
+  eval; `tuner` = owned by an existing tuner pass; `manual` = documented
+  reason). Recall-gated flags that win `MEMO_FLAG_GRADUATION_WIN_NIGHTS`
+  consecutive measurements (latency + curated no-regression gated) graduate
+  to ON via the tuned overlay, reversibly — a later regression reverts them.
+  Flags still dark after `MEMO_FLAG_GRADUATION_DEADLINE_DAYS` surface as
+  cull candidates in `--status`. Gate completeness is CI-enforced: a new
+  dark flag cannot merge without declaring its gate. Nightly pass gated by
+  `MEMO_DREAM_FLAG_GRADUATION_ENABLED` (default off).
+
 ## [3.5.2] - 2026-07-15
 
 ### Security
