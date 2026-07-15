@@ -50,7 +50,7 @@ master advances underneath you, and a `git checkout` in another session moves
 
 ## Architecture
 
-**`Memory` facade** (`src/memo/memory/facade.py`) multiply-inherits ten operation mixins — `_WriteOpsMixin`, `_UpdateOpsMixin`, `_DeleteOpsMixin`, `_SearchOpsMixin`, `_AskOpsMixin`, `_RerankOpsMixin`, `_RepoOpsMixin`, `_MaintainOpsMixin`, `_ConsolidateOpsMixin`, `_ReplayOpsMixin` — each in their own `src/memo/memory/<op>_ops.py` file. Module-level constants, prompts, and pure helpers are in `src/memo/memory/record.py`. Never import from a mixin directly; always go through `Memory`.
+**`Memory` facade** (`src/memo/memory/facade.py`) multiply-inherits twelve operation mixins — `_WriteOpsMixin`, `_UpdateOpsMixin`, `_DeleteOpsMixin`, `_SearchOpsMixin`, `_AskOpsMixin`, `_ChatAskOpsMixin`, `_RerankOpsMixin`, `_RepoOpsMixin`, `_MaintainOpsMixin`, `_ConsolidateOpsMixin`, `_ReplayOpsMixin`, `_SecretOpsMixin` — each in their own `src/memo/memory/<op>_ops.py` file. Module-level constants, prompts, and pure helpers are in `src/memo/memory/record.py`. Never import from a mixin directly; always go through `Memory`.
 
 **MCP server** (`src/memo/server.py`) registers tools via `build_server()`. Each domain is a `server_<domain>.py` module that exports `register(server, memory)` — called once in `build_server()`. Adding a new MCP tool = create `src/memo/server_<domain>.py` + add one `register` call in `server.py`. The `_MaintainOpsMixin` method is directly callable from tests via `mock_memory.<method>()`.
 
@@ -58,7 +58,7 @@ master advances underneath you, and a `git checkout` in another session moves
 
 **CLI** is in `src/memo/cli.py` (entry-point wiring only) + `src/memo/cli_<domain>.py` files. Each domain file exports a Click command or group imported and registered in `cli.py`.
 
-**Flags** (`src/memo/flags.py`) is the single registry for all `MEMO_*` env vars — it aggregates `FlagSpec`s defined in the per-domain `flags_<group>.py` modules (`flags_recall/search/behavior/ingest/misc.py`, base types in `flags_base.py`). Add a new flag in the matching `flags_<group>.py`. Use `flag_bool/int/float/str(name)` — never `os.environ.get("MEMO_...")` inline. `memo config validate` parses every set flag.
+**Flags** (`src/memo/flags.py`) is the single registry for all `MEMO_*` env vars — it aggregates `FlagSpec`s defined in the per-domain `flags_<group>.py` modules (`flags_recall/search/behavior/capture/ingest/misc.py`, base types in `flags_base.py`). Add a new flag in the matching `flags_<group>.py`. Use `flag_bool/int/float/str(name)` — never `os.environ.get("MEMO_...")` inline. `memo config validate` parses every set flag.
 
 **Cache** (`src/memo/embedder.py`): query embeddings use shared LRU cache from `consciousness_contracts.cache` when `MEMO_QUERY_CACHE_SIZE > 0`. This eliminates duplication with Synapse's embed cache and ensures consistent cache behavior across the trinity.
 
@@ -210,6 +210,7 @@ The `.md` files are canonical; the sqlite index is **derived and replayable**:
 ## Config & errors
 
 - `MEMO_*` behavioral flags live in `src/memo/flags.py` (registry + typed accessors). Storage/model config lives in `src/memo/config.py` (typed `Config` dataclass). Prefer `flag_bool/int/float/str` over raw `os.environ`. `memo config validate` catches typos.
+- **User-facing config is the persistent Markdown config** (`src/memo/config_md.py`): `memo config` / `memo config set <key> <value>` (dotted keys, e.g. `recall.top_k`) writes `~/.config/memo/*-config.md` — reaches daemons/MCP/hooks, unlike a per-terminal `export MEMO_*`. Flag resolution: **env var > markdown config > tuned overlay > built-in default**.
 - Domain errors live in `src/memo/errors.py` (`MemoError` base). Raise/catch
   those rather than bare `Exception` in non-defensive code.
 
@@ -343,8 +344,9 @@ Wiring is `src/memo/cli_dream.py` (Click) + `src/memo/cli_dream_passes.py`
 
 **Tuned-params overlay** (`src/memo/tuned_overlay.py`) is the only place
 auto-tuning touches live behavior: the tuner writes `state_dir/tuned_params.json`
-and `flags.flag()` consults it, so flag resolution is **env var > overlay >
-built-in default** (an explicit `MEMO_*` env var is never overridden). Delete the
+and `flags.flag()` consults it, so flag resolution is **env var > markdown
+config > overlay > built-in default** (an explicit `MEMO_*` env var or
+`memo config set` value is never overridden). Delete the
 file or `memo dream tune --rollback` to revert. The enable flags live in the
 nightly LaunchAgent's `EnvironmentVariables` (launchd does not inherit the shell)
 — see `~/repos/memo/launchd/com.memo.dream.plist`.
