@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-07-16
+
 ### Added
 
 - MCP client-sampling synthesis (dark flag `MEMO_SAMPLING_SYNTH_ENABLED`):
