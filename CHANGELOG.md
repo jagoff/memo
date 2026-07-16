@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- MCP client-sampling synthesis (dark flag `MEMO_SAMPLING_SYNTH_ENABLED`):
+  `memo_ask`, `memo_chat_ask`, `memo_reflect`, `memo_synthesize_run`, and
+  `memo_consolidate` delegate synthesis to the connected client's model via
+  MCP sampling, with sticky per-request MLX fallback, a per-request call cap
+  (`MEMO_SAMPLING_MAX_CALLS`), and a `synthesizer` attribution field on
+  dict-shaped responses. Grounding judgement stays local by design.
+  Companion flags: `MEMO_SAMPLING_TIMEOUT_S`, `MEMO_SAMPLING_MAX_TOKENS`.
+
 ## [3.6.0] - 2026-07-15
 
 ### Added
