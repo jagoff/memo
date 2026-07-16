@@ -56,6 +56,7 @@ class ChatBackend(Protocol):
         options: dict[str, Any] | None = None,
     ) -> Iterator[str]: ...
 
+
 _log = logging.getLogger(__name__)
 _MAX_LOADED_MODELS = 2
 
