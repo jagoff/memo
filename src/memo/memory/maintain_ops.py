@@ -794,6 +794,47 @@ class _MaintainOpsMixin(_MemoryBase):
 
         return written
 
+    def maybe_emit_chunks(
+        self,
+        *,
+        parent_id: str,
+        parent_rel: str,
+        title: str,
+        body: str,
+        tags: builtins.list[str],
+        created: str,
+        updated: str,
+    ) -> int:
+        """Best-effort chunk emission for one just-written memory.
+
+        save()/update() call this so long documents get section-level
+        retrieval immediately instead of waiting for the next manual
+        reindex. Flag off → no-op. `_reindex_emit_chunks` handles every
+        layout case (≤1 chunk prunes stale rows; unchanged sections are
+        body_hash cache hits). Never raises: chunks are derived data and
+        the next reindex heals — a write must not fail because of them.
+        """
+        if not flag_bool("MEMO_CHUNK_INGEST"):
+            return 0
+        try:
+            return self._reindex_emit_chunks(
+                parent_id=parent_id,
+                parent_rel=parent_rel,
+                title=title,
+                body=body,
+                tags=tags,
+                created=created,
+                updated=updated,
+                force=False,
+            )
+        except Exception:
+            _log.warning(
+                "chunk emission failed for %s (next reindex heals)",
+                parent_id[:8],
+                exc_info=True,
+            )
+            return 0
+
     def _prune_chunks(
         self,
         parent_id: str,

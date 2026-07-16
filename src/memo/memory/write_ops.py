@@ -812,6 +812,15 @@ class _WriteOpsMixin(_MemoryBase):
                 self.store.upsert(**upsert_args)
 
             if not topic_write_superseded:
+                self.maybe_emit_chunks(
+                    parent_id=record_id,
+                    parent_rel=rel_path,
+                    title=title,
+                    body=content,
+                    tags=norm_tags,
+                    created=created_iso,
+                    updated=now_iso,
+                )
                 self._record_graph_entities_from_extra(
                     record_id=record_id,
                     created_iso=created_iso,
