@@ -558,8 +558,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         2000,
         "sampling",
-        "Hard cap on max_tokens requested per sample call (caller options are "
-        "clamped to this).",
+        "Hard cap on max_tokens requested per sample call (caller options are clamped to this).",
         min_val=64,
     ),
 )

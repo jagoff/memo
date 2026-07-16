@@ -525,9 +525,7 @@ def dream_run(
                     receipt["errors"].append(f"flag_graduation: {_fg.get('error')}")
                 progress.update(
                     step,
-                    description=(
-                        f"[graduate] dark flags [green]✓[/green]  {_fg.get('status')}"
-                    ),
+                    description=(f"[graduate] dark flags [green]✓[/green]  {_fg.get('status')}"),
                 )
             except Exception as exc:
                 receipt["errors"].append(f"flag_graduation: {type(exc).__name__}: {exc}")
