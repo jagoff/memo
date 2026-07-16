@@ -1,6 +1,8 @@
-"""EXPERIMENTAL — not covered by the test suite, not exposed via MCP. API may change without notice.
+"""Heading-aware markdown chunker.
 
-Heading-aware markdown chunker.
+Wired behind `MEMO_CHUNK_INGEST` (default off) into reindex and
+save()/update() — see `maintain_ops._reindex_emit_chunks` /
+`maybe_emit_chunks`. Covered by `tests/test_chunk_ingest.py`.
 
 memo uses single-vector-per-doc by default — each `.md` produces one
 embedding regardless of length. Works well for short notes (<2000 chars)

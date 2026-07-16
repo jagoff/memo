@@ -94,6 +94,7 @@ class _MemoryBase:
     def _ensure_reranker(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _generate_contextual_summary(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _mark_dirty(self, *a: Any, **k: Any) -> Any: ...
+    def maybe_emit_chunks(self, *a: Any, **k: Any) -> int: ...  # type: ignore[empty-body]
     def _maybe_warn_legacy_paths(self, *a: Any, **k: Any) -> Any: ...
     def _normalize_chat_history(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _normalize_rating(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]

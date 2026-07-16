@@ -203,6 +203,17 @@ class _UpdateOpsMixin(_MemoryBase):
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
             )
+            # Body/title changed → refresh derived chunk rows in step
+            # (metadata-only edits skip, same as the skipped re-embed).
+            self.maybe_emit_chunks(
+                parent_id=id_,
+                parent_rel=str(r["path"]),
+                title=new_title,
+                body=new_body,
+                tags=new_tags,
+                created=r["created"],
+                updated=now_iso,
+            )
         else:
             self.store.update_meta(
                 id_=id_,
