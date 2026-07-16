@@ -18,6 +18,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   (`MEMO_SAMPLING_MAX_CALLS`), and a `synthesizer` attribution field on
   dict-shaped responses. Grounding judgement stays local by design.
   Companion flags: `MEMO_SAMPLING_TIMEOUT_S`, `MEMO_SAMPLING_MAX_TOKENS`.
+- Chunk emission at save/update time (`MEMO_CHUNK_INGEST`): long documents
+  get their heading-aware chunk records immediately on `save()`/`update()`
+  instead of waiting for the next manual `memo reindex`. Best-effort — a
+  chunk-emission failure never fails the write; metadata-only updates skip
+  emission. Docs for the chunker refreshed to match its real wired state.
+
+### Fixed
+
+- Release metadata realigned for v3.6.0: rebuilt `.mcpb` archives,
+  regenerated `uv.lock`, SECURITY.md supported line bumped to `3.6.x`.
 
 ## [3.6.0] - 2026-07-15
 
