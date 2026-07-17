@@ -1,0 +1,31 @@
+name: linux-cpu-smoke-noop
+
+# No-op twin of linux-cpu-smoke.yml for the "Ubuntu CPU backend (real)"
+# required status check. The real workflow is path-filtered, so a PR that does
+# not touch the CPU backend never runs it and the required context stays
+# "expected" forever, blocking the merge. This twin runs on the inverse path
+# set with the SAME job name, satisfying the requirement — GitHub's documented
+# pattern for skipped-but-required checks:
+# https://docs.github.com/en/actions/using-workflows/troubleshooting-workflows#handling-skipped-but-required-checks
+#
+# Keep `paths-ignore` here in exact sync with the real workflow's `paths` list.
+
+on:
+  pull_request:
+    paths-ignore:
+      - "src/memo/embedder_st.py"
+      - "src/memo/embedder_select.py"
+      - "src/memo/platform_detect.py"
+      - "src/memo/runtime/**"
+      - "pyproject.toml"
+      - ".github/workflows/linux-cpu-smoke.yml"
+
+permissions: {}
+
+jobs:
+  smoke:
+    name: Ubuntu CPU backend (real)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "No CPU-backend paths touched; real smoke not required."
