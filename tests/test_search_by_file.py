@@ -241,9 +241,16 @@ def test_memo_ask_does_not_run_capture_inline(tmp_cfg, monkeypatch):
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    out = tools["memo_ask"](question="what changed?", k=1)
+    import asyncio
 
-    assert out == {"answer": "ok", "citations": [], "notification": ""}
+    out = asyncio.run(tools["memo_ask"](question="what changed?", k=1))
+
+    assert out == {
+        "answer": "ok",
+        "citations": [],
+        "synthesizer": f"mlx:{tmp_cfg.llm_model}",
+        "notification": "",
+    }
     mem.ask.assert_called_once_with(
         "what changed?",
         k=1,

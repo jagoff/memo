@@ -502,6 +502,35 @@ def dream_run(
                 receipt["errors"].append(f"hyde_tuner: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[tune] hyde A/B [yellow]warn[/yellow]")
 
+        # Dark-feature (flag) graduation: A/B-measure default-off *_ENABLED
+        # flags with a recall gate, flip winners ON via the overlay, sweep
+        # deadline cull candidates (separate opt-in).
+        if flag_bool("MEMO_DREAM_FLAG_GRADUATION_ENABLED"):
+            progress.update(step, description="[graduate] dark flags A/B...")
+            try:
+                from memo import dream_flags
+                from memo.flags import flag_float
+
+                receipt["flag_graduation"] = dream_flags.run_flag_graduation_pass(
+                    cfg,
+                    mem,
+                    k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
+                    min_used_score=0.5
+                    if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
+                    else _mus,
+                    dry_run=dry_run,
+                )
+                _fg = receipt["flag_graduation"]
+                if _fg.get("status") == "error":
+                    receipt["errors"].append(f"flag_graduation: {_fg.get('error')}")
+                progress.update(
+                    step,
+                    description=(f"[graduate] dark flags [green]✓[/green]  {_fg.get('status')}"),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"flag_graduation: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[graduate] dark flags [yellow]warn[/yellow]")
+
         # Online-only project-boost explorer (separate opt-in; no offline gate).
         if flag_bool("MEMO_DREAM_TUNE_BOOST_ENABLED"):
             try:
@@ -1673,6 +1702,57 @@ def dream_tune_cmd(dry_run: bool, do_rollback: bool, show_status: bool) -> None:
         mem,
         k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
         max_evals=20 if (_me := flag_int("MEMO_DREAM_TUNE_MAX_EVALS")) is None else _me,
+        min_used_score=0.5
+        if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
+        else _mus,
+        dry_run=dry_run,
+    )
+    click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+
+
+@dream_cmd.command(name="graduate-flags")
+@click.option("--dry-run", is_flag=True, help="Measure, write nothing (no state, no overlay).")
+@click.option("--status", "show_status", is_flag=True, help="Inventory: every dark flag + verdict.")
+@click.option("--json", "as_json", is_flag=True, help="Emit result as JSON.")
+def dream_graduate_flags_cmd(dry_run: bool, show_status: bool, as_json: bool) -> None:
+    """Dark-feature graduation: A/B-measure default-off *_ENABLED flags and
+    flip winners ON via the tuned overlay (reversible); report cull candidates."""
+    from memo import dream_flags
+    from memo.flags import flag_float, flag_int
+
+    cfg = Config.from_env()
+    if show_status:
+        rows = dream_flags.status_rows(cfg)
+        if as_json:
+            click.echo(json.dumps(rows, indent=2, ensure_ascii=False))
+            return
+        from rich.table import Table
+
+        table = Table(title="dark-flag graduation")
+        for col in ("flag", "kind", "status", "streak", "days left", "reason"):
+            table.add_column(col)
+        for r in rows:
+            style = {
+                "graduated": "green",
+                "human_graduated": "green",
+                "cull_candidate": "red",
+                "reverted": "yellow",
+            }.get(str(r["status"]), "")
+            table.add_row(
+                r["flag"],
+                r["kind"],
+                f"[{style}]{r['status']}[/{style}]" if style else str(r["status"]),
+                str(r["streak"]),
+                "-" if r["days_left"] is None else str(r["days_left"]),
+                r["reason"],
+            )
+        console.print(table)
+        return
+    mem = _get_memory(cfg)
+    res = dream_flags.run_flag_graduation_pass(
+        cfg,
+        mem,
+        k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
         min_used_score=0.5
         if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
         else _mus,

@@ -47,8 +47,11 @@ expensive (O(n²) vec lookups).
 Heading-aware markdown chunker. Splits long memories into sub-document
 chunks so that individual sections get their own embedding — useful for
 audit reports, long notes, or multi-section documents where a single
-1024-dim vector dilutes retrieval signal. Not yet wired into the reindex
-pipeline.
+1024-dim vector dilutes retrieval signal. Wired (behind `MEMO_CHUNK_INGEST`,
+default off) into `memo reindex` AND `save()`/`update()`: chunk records are
+reference-tier rows with `extra.parent_id`; explicit search resolves them
+back to the parent. Covered by `tests/test_chunk_ingest.py`. Still
+experimental only in the sense that the flag defaults off.
 
 ## crossref.py
 

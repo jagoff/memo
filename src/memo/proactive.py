@@ -40,7 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from memo.llm import MLXChat
+from memo.llm import ChatBackend, MLXChat
 from memo.prompt_overrides import resolve_prompt
 
 _log = logging.getLogger(__name__)
@@ -101,12 +101,12 @@ class ProactiveSuggester:
         chat: Optional MLXChat instance for LLM-based suggestions.
     """
 
-    def __init__(self, memory: Any, chat: MLXChat | None = None) -> None:
+    def __init__(self, memory: Any, chat: ChatBackend | None = None) -> None:
         self.memory = memory
         self._chat = chat
         self._feedback_log: list[SuggestionFeedback] = []
 
-    def _ensure_chat(self) -> MLXChat:
+    def _ensure_chat(self) -> ChatBackend:
         if self._chat is None:
             self._chat = MLXChat()
         return self._chat

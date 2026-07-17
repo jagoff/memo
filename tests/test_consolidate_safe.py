@@ -52,7 +52,7 @@ def test_server_consolidate_defaults_to_read_only():
     server = FastMCP("t")
     server_core_records.register(server, spy)
     tool = asyncio.run(server.get_tool("memo_consolidate")).fn
-    tool()  # no dry_run arg → must default to a non-destructive preview
+    asyncio.run(tool())  # no dry_run arg → must default to a non-destructive preview
     assert spy.consolidator.calls[0]["dry_run"] is True
 
 

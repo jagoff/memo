@@ -9,6 +9,44 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-07-16
+
+### Added
+
+- MCP client-sampling synthesis (dark flag `MEMO_SAMPLING_SYNTH_ENABLED`):
+  `memo_ask`, `memo_chat_ask`, `memo_reflect`, `memo_synthesize_run`, and
+  `memo_consolidate` delegate synthesis to the connected client's model via
+  MCP sampling, with sticky per-request MLX fallback, a per-request call cap
+  (`MEMO_SAMPLING_MAX_CALLS`), and a `synthesizer` attribution field on
+  dict-shaped responses. Grounding judgement stays local by design.
+  Companion flags: `MEMO_SAMPLING_TIMEOUT_S`, `MEMO_SAMPLING_MAX_TOKENS`.
+- Chunk emission at save/update time (`MEMO_CHUNK_INGEST`): long documents
+  get their heading-aware chunk records immediately on `save()`/`update()`
+  instead of waiting for the next manual `memo reindex`. Best-effort — a
+  chunk-emission failure never fails the write; metadata-only updates skip
+  emission. Docs for the chunker refreshed to match its real wired state.
+
+### Fixed
+
+- Release metadata realigned for v3.6.0: rebuilt `.mcpb` archives,
+  regenerated `uv.lock`, SECURITY.md supported line bumped to `3.6.x`.
+
+## [3.6.0] - 2026-07-15
+
+### Added
+
+- Dark-feature graduation pipeline (`memo dream graduate-flags`, module
+  `dream_flags.py`): every default-off `*_ENABLED` flag now declares a
+  graduation gate (`recall` = nightly ON/OFF A/B through the recall-faithful
+  eval; `tuner` = owned by an existing tuner pass; `manual` = documented
+  reason). Recall-gated flags that win `MEMO_FLAG_GRADUATION_WIN_NIGHTS`
+  consecutive measurements (latency + curated no-regression gated) graduate
+  to ON via the tuned overlay, reversibly — a later regression reverts them.
+  Flags still dark after `MEMO_FLAG_GRADUATION_DEADLINE_DAYS` surface as
+  cull candidates in `--status`. Gate completeness is CI-enforced: a new
+  dark flag cannot merge without declaring its gate. Nightly pass gated by
+  `MEMO_DREAM_FLAG_GRADUATION_ENABLED` (default off).
+
 ## [3.5.2] - 2026-07-15
 
 ### Security

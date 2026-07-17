@@ -9,22 +9,24 @@ import logging
 from typing import Any
 
 import frontmatter
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from memo.memory import Memory
 from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE, annotated_tool
+from memo.server_common import run_synth
 
 _log = logging.getLogger(__name__)
 
 
 def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **WRITE)
-    def memo_synthesize_run(
+    async def memo_synthesize_run(
         dry_run: bool = True,
         threshold: float | None = None,
         min_cluster_size: int | None = None,
         max_clusters: int | None = None,
         min_confidence: str | None = None,
+        ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
         """Generate emergent insights from semantically related memory clusters.
 
@@ -33,6 +35,9 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Results are saved as type=synthesis memories with provenance links to
         the contributing source memories. Safe by default (dry_run=True).
+        With client sampling enabled, synthesis runs on the calling model up
+        to MEMO_SAMPLING_MAX_CALLS, then local MLX (list return — no
+        synthesizer field).
 
         Args:
             dry_run: If True (default), propose without saving.
@@ -50,7 +55,10 @@ def register(server: FastMCP, memory: Memory) -> None:
             kwargs["max_clusters"] = max_clusters
         if min_confidence is not None:
             kwargs["min_confidence"] = min_confidence
-        return memory.synthesize_cross_cluster(**kwargs)
+        res, _synthesizer = await run_synth(
+            memory, ctx, lambda: memory.synthesize_cross_cluster(**kwargs)
+        )
+        return res
 
     @annotated_tool(server, **READ_ONLY)
     def memo_synthesize_list(

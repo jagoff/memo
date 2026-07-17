@@ -29,6 +29,7 @@ from memo.memory.record import (
     record_from_row,
 )
 from memo.prompt_overrides import resolve_prompt
+from memo.sampling import grounding_chat
 
 # Max provenance memories pulled into the ask context per _build_ask_context
 # call when MEMO_ASK_EXPAND_SYNTHESIS is on (bounds disk reads + tokens).
@@ -878,7 +879,9 @@ class _AskOpsMixin(_MemoryBase):
         _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
         if _ask_min > 0.0 and answer:
             _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
-            _entail = score_grounding(chat, self.cfg.llm_model, source=_src_text, claim=answer)
+            _entail = score_grounding(
+                grounding_chat(chat), self.cfg.llm_model, source=_src_text, claim=answer
+            )
             if _entail is not None and _entail < _ask_min:
                 from memo.flags import flag_str
 
@@ -984,7 +987,9 @@ class _AskOpsMixin(_MemoryBase):
         _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
         if _ask_min > 0.0 and answer:
             _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
-            _entail = score_grounding(chat, self.cfg.llm_model, source=_src_text, claim=answer)
+            _entail = score_grounding(
+                grounding_chat(chat), self.cfg.llm_model, source=_src_text, claim=answer
+            )
             if _entail is not None and _entail < _ask_min:
                 from memo.flags import flag_str
 

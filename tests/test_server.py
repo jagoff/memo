@@ -120,11 +120,15 @@ def test_memory_chat_ask_returns_v2_envelope(mem: Memory, monkeypatch):
 
     server = build_server(memory=mem)
     chat_ask = _tool(server, "memo_chat_ask")
-    out = chat_ask(
-        question="what did alpha decide?",
-        k=2,
-        history=[{"role": "user", "text": "previous alpha question"}],
-        context={"packet_status": "ready"},
+    import asyncio
+
+    out = asyncio.run(
+        chat_ask(
+            question="what did alpha decide?",
+            k=2,
+            history=[{"role": "user", "text": "previous alpha question"}],
+            context={"packet_status": "ready"},
+        )
     )
 
     assert out["schema"] == "memo.chat_ask.v2"
@@ -138,7 +142,9 @@ def test_memory_chat_ask_returns_v2_envelope(mem: Memory, monkeypatch):
 def test_memory_chat_ask_no_hits_returns_unavailable(mem: Memory):
     server = build_server(memory=mem)
     chat_ask = _tool(server, "memo_chat_ask")
-    out = chat_ask(question="missing context")
+    import asyncio
+
+    out = asyncio.run(chat_ask(question="missing context"))
 
     assert out["schema"] == "memo.chat_ask.v2"
     assert out["synthesis_status"] == "unavailable"

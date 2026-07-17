@@ -245,3 +245,112 @@ def test_disabling_chunk_ingest_prunes_existing_chunks(mock_memory, monkeypatch)
     mock_memory.reindex(force=True)
 
     assert mock_memory.store.chunks_by_parent_id(rec.id) == []
+
+
+# ---------------------------------------------------------------------------
+# Save/update-time emission (no reindex required)
+# ---------------------------------------------------------------------------
+
+
+def test_save_emits_chunks_immediately(mock_memory, monkeypatch):
+    """MEMO_CHUNK_INGEST=1: a long save produces chunk records without reindex."""
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+
+    body = _long_body(n_sections=3, words_per_section=300)
+    rec = mock_memory.save(content=body, title="Immediate Chunks", tags=["test"])
+
+    chunk_ids = _chunk_ids_for(mock_memory.store, rec.id)
+    assert len(chunk_ids) >= 2, f"Expected chunks right after save, got: {chunk_ids}"
+
+
+def test_save_flag_off_no_immediate_chunks(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "0")
+
+    body = _long_body()
+    rec = mock_memory.save(content=body, title="No Chunks Off", tags=["test"])
+
+    assert _chunk_ids_for(mock_memory.store, rec.id) == []
+
+
+def test_save_short_body_no_immediate_chunks(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+
+    rec = mock_memory.save(content="brief. " * 10, title="Short Immediate", tags=["test"])
+
+    assert _chunk_ids_for(mock_memory.store, rec.id) == []
+
+
+def test_update_refreshes_changed_chunk(mock_memory, monkeypatch):
+    """Editing one section refreshes that chunk row; chunk set stays consistent."""
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+
+    body = _long_body(n_sections=3, words_per_section=300)
+    rec = mock_memory.save(content=body, title="Edited Chunks", tags=["test"])
+    before = {
+        cid: mock_memory.store.get(cid)["body_hash"]
+        for cid in _chunk_ids_for(mock_memory.store, rec.id)
+    }
+    assert before
+
+    new_body = body.replace("word1 word1", "edited1 edited1", 1)
+    assert new_body != body
+    mock_memory.update(rec.id, content=new_body)
+
+    after = {
+        cid: mock_memory.store.get(cid)["body_hash"]
+        for cid in _chunk_ids_for(mock_memory.store, rec.id)
+    }
+    assert after, "chunks must survive an update"
+    changed = [cid for cid in before if cid in after and after[cid] != before[cid]]
+    assert changed, "the edited section's chunk row must be refreshed"
+
+
+def test_update_shrink_prunes_chunks(mock_memory, monkeypatch):
+    """Shrinking the body below the chunk threshold prunes stale chunk rows."""
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+
+    body = _long_body(n_sections=3, words_per_section=300)
+    rec = mock_memory.save(content=body, title="Shrinking Note", tags=["test"])
+    assert _chunk_ids_for(mock_memory.store, rec.id)
+
+    mock_memory.update(rec.id, content="now tiny.")
+
+    assert _chunk_ids_for(mock_memory.store, rec.id) == []
+
+
+def test_save_survives_chunk_emission_failure(mock_memory, monkeypatch):
+    """A chunk-emission crash must never fail the save (derived data heals on reindex)."""
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    from memo.memory import Memory
+
+    def _boom(self, **kwargs):
+        raise RuntimeError("chunk emission exploded")
+
+    monkeypatch.setattr(Memory, "_reindex_emit_chunks", _boom)
+
+    body = _long_body()
+    rec = mock_memory.save(content=body, title="Resilient Save", tags=["test"])
+
+    assert rec is not None
+    assert mock_memory.store.get(rec.id) is not None
+
+
+def test_metadata_only_update_skips_emission(mock_memory, monkeypatch):
+    """Tag-only updates don't re-run chunk emission (no body change → no embed)."""
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    from memo.memory import Memory
+
+    body = _long_body()
+    rec = mock_memory.save(content=body, title="Retag Only", tags=["test"])
+
+    calls = {"n": 0}
+    real = Memory.maybe_emit_chunks
+
+    def _spy(self, **kwargs):
+        calls["n"] += 1
+        return real(self, **kwargs)
+
+    monkeypatch.setattr(Memory, "maybe_emit_chunks", _spy)
+    mock_memory.update(rec.id, tags=["test", "retagged"])
+
+    assert calls["n"] == 0

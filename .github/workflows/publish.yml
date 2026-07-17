@@ -1,6 +1,8 @@
 name: publish
 
 on:
+  push:
+    tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch:
@@ -43,6 +45,39 @@ jobs:
           python -m pip install uv==0.11.21
           uv sync --frozen --no-dev
           uv run --no-sync memo release check
+
+  github-release:
+    # Pushing a release tag is the only manual step: this job creates the
+    # GitHub Release from the tag's CHANGELOG section, so the publish chain
+    # (Release -> PyPI -> MCP registry) can never silently freeze again.
+    # No-op when the release already exists (release-event and re-run paths).
+    name: GitHub Release
+    needs: verify-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Create GitHub Release from CHANGELOG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            /^## \[/ { if (found) exit; if (index($0, "[" ver "]")) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > /tmp/notes.md
+          if ! [ -s /tmp/notes.md ]; then
+            echo "See CHANGELOG.md for details." > /tmp/notes.md
+          fi
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+            --notes-file /tmp/notes.md --verify-tag
 
   build:
     name: Build distributions

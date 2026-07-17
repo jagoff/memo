@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastmcp import Context
+
 from memo.memory import AmbiguousIdError, Memory
 from memo.server_annotations import (
     DESTRUCTIVE,
@@ -251,29 +253,40 @@ def register(server: Any, memory: Memory) -> None:
         return {"unforgotten": True, "id": rec.id}
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_consolidate(
+    async def memo_consolidate(
         threshold: float = 0.85,
         max_clusters: int = 20,
         type: str | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Detect near-duplicate clusters and propose merges.
 
         Read-only — returns proposals without modifying the corpus.
         Uses the AdvancedConsolidator under the hood (same as
-        ``memo_consolidate_list_archived``).
+        ``memo_consolidate_list_archived``). With client sampling enabled,
+        merge synthesis runs on the calling model up to
+        MEMO_SAMPLING_MAX_CALLS (see `synthesizer` field).
 
         Args:
             threshold: Cosine similarity threshold (default 0.85).
             max_clusters: Maximum clusters to process (default 20).
             type: Optional filter by memory type.
         """
-        return memory.consolidator.consolidate_all(
-            threshold=threshold,
-            max_clusters=max_clusters,
-            type_=type,
-            auto_apply=False,
-            dry_run=True,
+        from memo.server_common import run_synth
+
+        out, synthesizer = await run_synth(
+            memory,
+            ctx,
+            lambda: memory.consolidator.consolidate_all(
+                threshold=threshold,
+                max_clusters=max_clusters,
+                type_=type,
+                auto_apply=False,
+                dry_run=True,
+            ),
         )
+        out["synthesizer"] = synthesizer
+        return out
 
     @annotated_tool(server, **READ_ONLY)
     def memo_lint() -> dict[str, list[dict[str, Any]]]:

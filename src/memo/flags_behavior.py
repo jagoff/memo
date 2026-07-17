@@ -523,4 +523,42 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
+    # client sampling (MCP synthesis via the caller's model)
+    _spec(
+        "MEMO_SAMPLING_SYNTH_ENABLED",
+        "bool",
+        False,
+        "sampling",
+        "When on, MCP synthesis tools (memo_ask / memo_chat_ask / memo_reflect / "
+        "memo_synthesize_run / memo_consolidate) delegate LLM synthesis to the "
+        "connected client's model via MCP sampling, falling back to local MLX on "
+        "any failure. Off = local MLX only (legacy).",
+    ),
+    _spec(
+        "MEMO_SAMPLING_TIMEOUT_S",
+        "float",
+        30.0,
+        "sampling",
+        "Per-sample timeout (seconds) for a client-sampling round trip. On "
+        "timeout the request falls back to MLX for its remainder.",
+        min_val=1.0,
+    ),
+    _spec(
+        "MEMO_SAMPLING_MAX_CALLS",
+        "int",
+        3,
+        "sampling",
+        "Max client-sampling calls per MCP request; past the cap, remaining "
+        "synthesis in the same request uses MLX (multi-call flows like "
+        "synthesize/consolidate stay bounded).",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_SAMPLING_MAX_TOKENS",
+        "int",
+        2000,
+        "sampling",
+        "Hard cap on max_tokens requested per sample call (caller options are clamped to this).",
+        min_val=64,
+    ),
 )
