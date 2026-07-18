@@ -147,13 +147,13 @@ Several surfaces initially considered “new submissions” already contain memo
 - [mcpservers.org already has a memo page](https://mcpservers.org/servers/jagoff/memo),
   although displayed repository statistics can lag.
 
-Therefore the launch action on those surfaces is to verify version, description,
-links, categories, and imagery, then request a refresh only where stale. Do not
-create duplicate entries. The missing high-value contribution is a rules-compliant
-pull request to
-[`punkpeye/awesome-mcp-servers`](https://github.com/punkpeye/awesome-mcp-servers).
-PulseMCP is checked for an existing memo entry; an update/submission is attempted
-only if memo is absent and an official free route exists.
+The Knowledge & Memory section of
+[`punkpeye/awesome-mcp-servers`](https://github.com/punkpeye/awesome-mcp-servers)
+also already contains `jagoff/memo`. Therefore the launch action on all of these
+surfaces is to verify version, description, links, categories, and imagery, then
+request a refresh only where stale. Do not create duplicate entries or pull
+requests. PulseMCP is checked for an existing memo entry; an update/submission is
+attempted only if memo is absent and an official free route exists.
 
 ## Platform constraints
 
@@ -303,7 +303,7 @@ displayed timezone is authoritative. Other times are America/Argentina/Cordoba.
 | 11:00 ART | Submit Show HN |
 | 12:30 ART | Publish DEV technical article |
 | 14:00–17:00 ART | Publish approved Reddit posts one at a time |
-| 17:00–19:00 ART | Open awesome-list PR and verify/request refreshes on MCP directories |
+| 17:00–19:00 ART | Verify awesome-list/MCP entries and request refreshes only where stale |
 
 The posts share a launch day but not a single timestamp. The stagger preserves
 capacity to answer early questions and catch broken links before the next row.
@@ -350,7 +350,7 @@ displayed target. This preserves the approved progress curve and always ends at
 - Platform impressions and engagements.
 - Vercel visitors, pageviews, and referrers.
 - GitHub repository views, unique visitors, clones, and top referrers.
-- Meaningful technical comments, issues, contributions, and accepted directory
+- Meaningful technical comments, issues, contributions, and refreshed directory
   or awesome-list entries.
 
 GitHub Traffic covers the previous 14 days and is available to repository users
