@@ -6,6 +6,8 @@
 
 **Local-first semantic memory for AI agents — with time-travel, contradiction radar, and automatic synthesis.**
 
+**[Explore the memo website →](https://memo-web-sigma.vercel.app)**
+
 [![PyPI](https://img.shields.io/pypi/v/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
 [![Downloads](https://static.pepy.tech/badge/mlx-memo)](https://pepy.tech/project/mlx-memo)
 [![Python](https://img.shields.io/pypi/pyversions/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
