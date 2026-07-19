@@ -64,6 +64,43 @@ exact flags and boundaries.
 
 </div>
 
+## Install — one step
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+```
+
+The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, Devin Desktop, OpenCode).
+
+Prefer a manual install? Any of these expose the same two binaries — `memo` (CLI) and `memo-mcp` (MCP server):
+
+```bash
+uv tool install mlx-memo          # recommended
+pipx install mlx-memo
+brew tap jagoff/memo && brew install mlx-memo
+```
+
+> Keep memo **isolated as its own tool** (uv tool / pipx / Homebrew). Don't vendor it inside another project's `.venv`. `memo doctor --strict-runtime` verifies the install.
+
+**On Linux, or just want to try it without installing anything?** Run the Docker
+image (CPU backend, cross-platform — search/recall/save; the reranker + `ask`/
+`synthesize`/`dream` verbs are Apple-Silicon-only):
+
+```bash
+docker run --rm ghcr.io/jagoff/memo:latest memo doctor
+```
+
+Details in **[docs/docker.md](docs/docker.md)**.
+
+First install downloads ~8 GB of MLX models (5–15 min); later installs hit the HuggingFace cache. Full installer knobs and "move to a new Mac" steps: **[docs/reference.md › Install](docs/reference.md#install-detail)**.
+
+**Migrating from another Mac?** Install first, then restore your corpus:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
+```
+
 ## What makes memo different
 
 | Capability | memo | mem0 | letta | cognee | engram | basic-memory | cipher |
@@ -124,43 +161,6 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - *Optional:* an Obsidian vault. Without one, memo defaults to `~/Documents/memo/`.
 
 > Python ≥ 3.13 is required if you install without uv. The `curl | bash` installer handles this automatically — it detects `uv` and uses its managed Python if no system Python ≥ 3.13 is on PATH.
-
-## Install — one step
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
-```
-
-The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, Devin Desktop, OpenCode).
-
-Prefer a manual install? Any of these expose the same two binaries — `memo` (CLI) and `memo-mcp` (MCP server):
-
-```bash
-uv tool install mlx-memo          # recommended
-pipx install mlx-memo
-brew tap jagoff/memo && brew install mlx-memo
-```
-
-> Keep memo **isolated as its own tool** (uv tool / pipx / Homebrew). Don't vendor it inside another project's `.venv`. `memo doctor --strict-runtime` verifies the install.
-
-**On Linux, or just want to try it without installing anything?** Run the Docker
-image (CPU backend, cross-platform — search/recall/save; the reranker + `ask`/
-`synthesize`/`dream` verbs are Apple-Silicon-only):
-
-```bash
-docker run --rm ghcr.io/jagoff/memo:latest memo doctor
-```
-
-Details in **[docs/docker.md](docs/docker.md)**.
-
-First install downloads ~8 GB of MLX models (5–15 min); later installs hit the HuggingFace cache. Full installer knobs and "move to a new Mac" steps: **[docs/reference.md › Install](docs/reference.md#install-detail)**.
-
-**Migrating from another Mac?** Install first, then restore your corpus:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
-memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
-```
 
 ## Hand it to your agent
 
