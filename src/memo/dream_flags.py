@@ -125,6 +125,7 @@ GATES: dict[str, GateSpec] = dict(
         _g("MEMO_DREAM_HYPE_ENABLED", "manual", "meta: gates the nightly HyPE indexer"),
         _g("MEMO_DREAM_COMMUNITIES_ENABLED", "manual", "meta: gates the communities pass"),
         _g("MEMO_DREAM_ENTITY_CANON_ENABLED", "manual", "meta: gates the entity-canon pass"),
+        _g("MEMO_DREAM_EDGE_VERIFY_ENABLED", "manual", "meta: gates the edge-verify pass"),
         _g("MEMO_DREAM_FOLDER_ABSTRACTS_ENABLED", "manual", "meta: gates folder abstracts"),
         _g("MEMO_DREAM_DISTILL_ENABLED", "manual", "meta: gates the distill pass"),
         _g("MEMO_DREAM_BRIDGES_ENABLED", "manual", "meta: gates the bridges pass"),

@@ -8,7 +8,7 @@ nudge slot (`.id`, `.title`). Degrades to `[]` on any error.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC
 from typing import Any
 
@@ -21,6 +21,10 @@ class NudgeItem:
     id: str
     title: str
     via: str
+    # True when the hit shares a memory↔memory semantic_relations edge with a
+    # seed at confidence >= dream_edge_verify.VERIFIED_CONFIDENCE (earned by
+    # the nightly grounded co-use pass). Drives the label only, never ranking.
+    verified: bool = False
 
 
 def _codegraph_adj() -> dict[str, set[str]] | None:
@@ -77,9 +81,50 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
             adj = h.activation * _recency_weight(getattr(rec, "updated", "") or "")
             scored.append((adj, NudgeItem(id=h.id, title=getattr(rec, "title", h.id), via=h.via)))
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [item for _, item in scored[:limit]]
+        top = [item for _, item in scored[:limit]]
+        ver = _verified_pair_ids(memory.graph, [i.id for i in top], seed_ids)
+        if ver:
+            top = [replace(i, verified=True) if i.id in ver else i for i in top]
+        return top
     except Exception:
         return []
+
+
+def _verified_pair_ids(graph: Any, hit_ids: list[str], seed_ids: list[str]) -> set[str]:
+    """Hit ids that share a memory↔memory ``semantic_relations`` edge with any
+    seed at confidence >= ``dream_edge_verify.VERIFIED_CONFIDENCE`` — the one
+    shared threshold the nightly edge-verify pass promotes toward, so the
+    recall label and the pass agree by construction.
+
+    One batch query per nudge (hook-budget-friendly): the confidence filter
+    alone keeps the scan tiny — extractor priors max out at 0.82, so only
+    pass-promoted edges clear it. Ids are matched on their 8-char prefixes
+    (grounding.log convention). Degrades to ``set()`` on any error.
+    """
+    try:
+        from memo.dream_edge_verify import VERIFIED_CONFIDENCE
+
+        conn = getattr(graph, "_conn", None)
+        if conn is None or not hit_ids or not seed_ids:
+            return set()
+        rows = conn.execute(
+            "SELECT source_id, target_id FROM semantic_relations "
+            "WHERE source_kind = 'memory' AND target_kind = 'memory' "
+            "AND confidence >= ?",
+            (VERIFIED_CONFIDENCE,),
+        ).fetchall()
+        hits8 = {str(h)[:8]: h for h in hit_ids}
+        seeds8 = {str(s)[:8] for s in seed_ids}
+        out: set[str] = set()
+        for row in rows:
+            s8, t8 = str(row[0])[:8], str(row[1])[:8]
+            if s8 in hits8 and t8 in seeds8:
+                out.add(hits8[s8])
+            if t8 in hits8 and s8 in seeds8:
+                out.add(hits8[t8])
+        return out
+    except Exception:
+        return set()
 
 
 def _recency_weight(updated_iso: str) -> float:
@@ -103,13 +148,23 @@ def render_associative_line(context: str, nudge: list[Any], *, token_budget: int
 
         _🔗 Also connected (via graph · unverified): [id8] title — via via; …_
 
+    The "· unverified" framing drops only when EVERY shown item is verified —
+    i.e. carries an edge the nightly ``dream_edge_verify`` pass promoted past
+    ``VERIFIED_CONFIDENCE`` from grounded co-use (conservative on a mixed
+    nudge). Label text only; ranking is untouched.
+
     ``token_budget <= 0`` means no cap (always append).  Otherwise the line is
     skipped when ``len(context) + len(line) > token_budget * 4``.
     """
     if not nudge:
         return context
     parts = "; ".join(f"[{h.id[:8]}] {h.title} — via {h.via}" for h in nudge)
-    line = f"\n_🔗 Also connected (via graph · unverified): {parts}._"
+    label = (
+        "via graph"
+        if all(getattr(h, "verified", False) for h in nudge)
+        else "via graph · unverified"
+    )
+    line = f"\n_🔗 Also connected ({label}): {parts}._"
     if token_budget > 0 and len(context) + len(line) > token_budget * 4:
         return context
     return context + line

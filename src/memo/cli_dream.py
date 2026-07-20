@@ -849,6 +849,31 @@ def dream_run(
                 receipt["errors"].append(f"entity_canon: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[entity-canon] [yellow]warn[/yellow]")
 
+        # Phase 2c — graph hygiene: grounded co-use edge verification ---------
+        if flag_bool("MEMO_DREAM_EDGE_VERIFY_ENABLED"):
+            progress.update(step, description="[edge-verify] grounded co-use...")
+            try:
+                from memo import dream_edge_verify
+
+                receipt["edge_verify"] = dream_edge_verify.run_edge_verify(
+                    cfg,
+                    mem,
+                    dry_run=dry_run,
+                )
+                _evf = receipt["edge_verify"]
+                if _evf.get("status") == "error":
+                    receipt["errors"].append(f"edge_verify: {_evf.get('error')}")
+                progress.update(
+                    step,
+                    description=(
+                        f"[edge-verify] [green]✓[/green]  "
+                        f"{_evf.get('promoted', 0)} promoted, {_evf.get('decayed', 0)} decayed"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"edge_verify: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[edge-verify] [yellow]warn[/yellow]")
+
         # Phase 2d — reference tier: per-folder vault abstracts (K4)
         if flag_bool("MEMO_DREAM_FOLDER_ABSTRACTS_ENABLED"):
             progress.update(step, description="[folder-abstracts] grouping vault...")

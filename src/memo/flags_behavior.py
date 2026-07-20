@@ -466,6 +466,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "Eager Synthesis: automatically ingest .memflow session data during the sleep cycle.",
     ),
     _spec(
+        "MEMO_DREAM_EDGE_VERIFY_ENABLED",
+        "bool",
+        False,
+        "maintain",
+        "Nightly Dream pass: memory↔memory knowledge-graph edges EARN their "
+        "confidence from grounded co-use evidence (grounding.log turns where "
+        "both endpoints were recalled AND actually used in the answer), while "
+        "edges that never accumulate evidence decay gently — floored, "
+        "reversible, never deleted. Curation of edge confidence only; never "
+        "touches recall ranking. Default off.",
+    ),
+    _spec(
         "MEMO_MEMFLOW_DIR",
         "str",
         ".memflow",
