@@ -549,6 +549,40 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         row = self._conn.execute("SELECT embedding FROM vec WHERE id = ?", (id_,)).fetchone()
         return row["embedding"] if row else None
 
+    def export_embed_rows(self, *, limit: int = 0) -> list[dict[str, Any]]:
+        """Rows whose embeddings are safe to export to the cross-machine sync
+        repo (see `sync_embed_cache`): durable-tier memories plus chunk rows of
+        a durable parent — never bulk-ingested reference rows, because the
+        vault is not part of the sync corpus and its embeddings must not leak
+        into it. `title` + `body` are exactly what `_compose_for_embed` was
+        given at index time.
+
+        ``limit`` > 0 caps the export to the N most-recently-updated durable
+        parents (their chunks ride along) — the shard-size bound: a 2560-dim
+        vector is ~13.7KB in base64, so an uncapped mature corpus would put
+        tens of MB in the sync repo. Regularly-syncing peers still converge to
+        full coverage because the receiving `repo_embedding_cache` persists;
+        only a fresh bootstrap of pre-window rows falls back to re-embedding.
+        """
+        from memo.tiers import DURABLE_TYPES
+
+        durable = sorted(DURABLE_TYPES)
+        ph = ",".join("?" for _ in durable)
+        rows = self._conn.execute(
+            "WITH durable_parents AS ("
+            "  SELECT id FROM meta "
+            f"  WHERE deleted_at IS NULL AND type IN ({ph}) "
+            "  ORDER BY updated DESC, id LIMIT ?"
+            ") "
+            "SELECT m.id, m.title, f.body AS body "
+            "FROM meta m JOIN fts f ON f.id = m.id "
+            "WHERE m.deleted_at IS NULL AND ("
+            "  m.id IN (SELECT id FROM durable_parents) OR "
+            "  json_extract(m.extra_json, '$.parent_id') IN (SELECT id FROM durable_parents))",
+            (*durable, limit if limit > 0 else -1),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_fts_body(self, id_: str) -> str:
         """Return the FTS body text for ``id_``, or empty string."""
         row = self._conn.execute("SELECT body FROM fts WHERE id = ?", (id_,)).fetchone()

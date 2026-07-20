@@ -259,9 +259,20 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
     dest_path = Path(dest).expanduser() if dest else Path.home() / "repos" / "memo-sync"
     out = bootstrap_clone(url, dest_path)
 
-    # Reindex + import signal against the freshly-pointed data_dir.
+    # Reindex + import signal against the freshly-pointed data_dir. Peer
+    # embed-cache shards import FIRST so the rebuild resolves through the
+    # cache instead of cold-embedding the whole corpus on this new machine.
     cfg = Config.from_env(data_dir=Path(out["memories_dir"]))
     mem = _get_memory(cfg)
+    from memo.flags import flag_bool
+
+    if flag_bool("MEMO_SYNC_EMBED_CACHE"):
+        from memo.sync_embed_cache import embed_cache_dir_for, import_embed_cache
+
+        try:
+            out["embed_cache"] = import_embed_cache(mem.store, embed_cache_dir_for(cfg))
+        except Exception as exc:  # derived data — degrade to cold re-embed, never abort
+            out["embed_cache"] = {"error": str(exc)}
     out["reindexed"] = mem.reindex(rebuild=True)
     out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
     out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)

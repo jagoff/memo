@@ -621,6 +621,32 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0,
     ),
     _spec(
+        "MEMO_SYNC_EMBED_CACHE",
+        "bool",
+        True,
+        "sync",
+        "Carry the content-addressed embedding cache through the memo-sync repo "
+        "(one embed_cache/<machine>.json shard per Mac). A pulling or "
+        "bootstrapping machine imports peers' shards before the post-pull "
+        "reindex, so memories saved on another Mac index with ~zero local MLX "
+        "embed calls. Derived data only (vectors of already-synced .md bodies; "
+        "reference/vault tier never exports) — set 0 to keep the sync payload "
+        "markdown+signal only.",
+    ),
+    _spec(
+        "MEMO_SYNC_EMBED_CACHE_MAX_ROWS",
+        "int",
+        1000,
+        "sync",
+        "Cap the embed-cache shard to the N most-recently-updated durable "
+        "memories (their chunks ride along). Bounds the shard file: a 2560-dim "
+        "vector is ~13.7KB in base64, so an uncapped mature corpus would put "
+        "tens of MB in the sync repo. Peers that sync regularly still converge "
+        "to full coverage (their local cache persists); only a fresh bootstrap "
+        "re-embeds rows older than the window. 0 = no cap.",
+        min_val=0,
+    ),
+    _spec(
         "MEMO_SYNC_SECRET_GATE",
         "bool",
         True,

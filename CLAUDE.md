@@ -76,7 +76,13 @@ master advances underneath you, and a `git checkout` in another session moves
   **pull-rebase-before-push** so an advanced remote rebases instead of rejecting.
   Triggers: per-prompt `memo sync auto` (debounced via `MEMO_SYNC_PUSH_DEBOUNCE_S`
   / `MEMO_SYNC_PULL_INTERVAL_S`, async hook) + `memo sync once` on Stop. A failed
-  push stamps `state_dir/sync_pending` and retries next trigger.
+  push stamps `state_dir/sync_pending` and retries next trigger. The repo also
+  carries per-machine **embed-cache shards** (`embed_cache/<device_id>.json`,
+  `sync_embed_cache.py`, `MEMO_SYNC_EMBED_CACHE` default on): document/chunk
+  embeddings of the durable corpus, imported into `repo_embedding_cache` before
+  the post-pull reindex — so memories saved on another Mac (and `memo sync
+  bootstrap` on a fresh one) index with ~zero local MLX embed calls. Derived
+  data only; reference/vault tier never exports.
 - **Identity** (`identity.py`): stable `machine_id` (= persisted `cfg.device_id`,
   also `history.device_id`) + `hostname` (cross-tool match key) + `session_id` +
   `terminal`. Commits are attributed `[<hostname>·<session>]`. memflow can
