@@ -227,3 +227,71 @@ def test_recency_weight_prefers_recent():
     assert _recency_weight(today) > _recency_weight(old)
     assert _recency_weight("") == 1.0  # unknown -> neutral
     assert 0.0 < _recency_weight(old) <= 1.0
+
+
+# --- verified edges drop the "· unverified" framing (dream_edge_verify loop) --
+
+
+def test_render_associative_line_verified_drops_unverified():
+    from memo.recall_assoc import NudgeItem, render_associative_line
+
+    nudge = [NudgeItem(id="aaa11111bbb", title="Alpha", via="x", verified=True)]
+    result = render_associative_line("ctx", nudge, token_budget=0)
+    assert "via graph" in result
+    assert "unverified" not in result
+
+
+def test_render_associative_line_mixed_or_default_keeps_unverified():
+    from memo.recall_assoc import NudgeItem, render_associative_line
+
+    mixed = [
+        NudgeItem(id="aaa11111bbb", title="Alpha", via="x", verified=True),
+        NudgeItem(id="bbb22222ccc", title="Beta", via="y"),  # default False
+    ]
+    assert "via graph · unverified" in render_associative_line("ctx", mixed, token_budget=0)
+    default = [NudgeItem(id="aaa11111bbb", title="Alpha", via="x")]
+    assert "via graph · unverified" in render_associative_line("ctx", default, token_budget=0)
+
+
+class _VerifiedConn:
+    """Fake sqlite conn: one memory↔memory edge (a1, s1) above threshold."""
+
+    def __init__(self):
+        self.params = None
+
+    def execute(self, sql, params=()):
+        self.params = params
+
+        class _Cur:
+            def fetchall(_self):
+                return [("a1", "s1")]
+
+        return _Cur()
+
+
+def test_build_nudge_marks_verified_from_graph_edge(monkeypatch):
+    import memo.recall_assoc as ra
+    from memo.dream_edge_verify import VERIFIED_CONFIDENCE
+
+    monkeypatch.setattr(ra, "_codegraph_adj", lambda: None)
+    monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "1")
+
+    mem = _Mem()
+    conn = _VerifiedConn()
+    mem.graph._conn = conn
+    nudge = ra.build_nudge(mem, [_Rec("s1", "seed")])
+    assert any(h.id == "a1" and h.verified for h in nudge)
+    # the batch query filters on the SAME shared threshold the nightly pass uses
+    assert conn.params == (VERIFIED_CONFIDENCE,)
+
+
+def test_build_nudge_without_conn_stays_unverified(monkeypatch):
+    """Graph stores without a raw _conn (or query errors) degrade to the
+    conservative unverified framing."""
+    import memo.recall_assoc as ra
+
+    monkeypatch.setattr(ra, "_codegraph_adj", lambda: None)
+    monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "1")
+
+    nudge = ra.build_nudge(_Mem(), [_Rec("s1", "seed")])
+    assert nudge and all(not h.verified for h in nudge)
