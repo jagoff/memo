@@ -281,7 +281,7 @@ def sync_once(
                 result["pull_error"] = str(exc)
         if do_push:
             try:
-                push_out = sync_push(cfg, store, remote=remote)
+                push_out = sync_push(cfg, store, mem, remote=remote)
                 result["pushed"] = bool(push_out.get("pushed"))
                 result["push"] = push_out
             except SyncGitError as exc:
@@ -502,8 +502,31 @@ def _commit_local(cfg: Config, store: VecStore) -> tuple[Path, str, int]:
     return root, branch, n_files
 
 
-def sync_push(cfg: Config, store: VecStore, *, remote: str = "origin") -> dict:
-    """Commit any local changes and push. Returns a summary dict."""
+def sync_push(
+    cfg: Config, store: VecStore, mem: Memory | None = None, *, remote: str = "origin"
+) -> dict:
+    """Commit any local changes and push. Returns a summary dict.
+
+    When ``mem`` is given, the embed-cache shard exports first — on the
+    coordinator's path this runs AFTER ``sync_pull``'s reindex, so the shard
+    always reflects the reconciled index (a just-masked secret's stale
+    embedding can't ride out; the secret gate below still blocks the commit
+    whenever the plaintext is staged).
+    """
+    if mem is not None:
+        from memo.flags import flag_bool as _flag_bool
+
+        if _flag_bool("MEMO_SYNC_EMBED_CACHE"):
+            from memo.sync_embed_cache import embed_cache_dir_for, export_embed_cache
+
+            try:
+                export_embed_cache(mem, embed_cache_dir_for(cfg))
+            except Exception as exc:  # derived data — never let it break the sync
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "sync: embed-cache export failed (sync continues): %s", exc
+                )
     root, branch, n_files = _commit_local(cfg, store)
 
     # Stranded-commit retry: a prior push may have failed AFTER committing
@@ -610,7 +633,13 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
                 "sync) — not resuming it: " + rebase.stderr.strip()
             )
         conflicts = _git(root, "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
-        non_signal = [c for c in conflicts if not c.startswith("signal/")]
+        # signal/ and embed_cache/ are both regenerable derived data — safe to
+        # take theirs and let the next export rewrite ours. (Shards normally
+        # can't conflict — per-machine filenames — but a cloned/restored
+        # state_dir duplicates device_id, and that must not strand the sync.)
+        non_signal = [
+            c for c in conflicts if not (c.startswith("signal/") or c.startswith("embed_cache/"))
+        ]
         if non_signal or not conflicts:
             # Empty commit after resolving all signal conflicts: git rebase --continue
             # exits non-zero with 'nothing to stage' / '--skip'. Handle it before aborting.
@@ -632,11 +661,29 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
                 "rebase conflict needs manual resolution: "
                 + (", ".join(non_signal) or rebase.stderr.strip())
             )
-        # only signal/*.json conflicts — DB already holds the union, take theirs
+        # only derived-data conflicts (signal/, embed_cache/) — take theirs
         for c in conflicts:
             _git(root, "checkout", "--theirs", "--", c, check=False)
             _git(root, "add", "--", c)
         rebase = _git(root, "rebase", "--continue", check=False)
+
+    # 2b) peer embed-cache shards → repo_embedding_cache, BEFORE the reindex so
+    # the new memories the pull brought in index via cache hits (~zero local
+    # embedder calls). Derived data — a failure degrades to re-embedding.
+    embed_cache_imported = 0
+    from memo.flags import flag_bool as _flag_bool
+
+    if _flag_bool("MEMO_SYNC_EMBED_CACHE"):
+        from memo.sync_embed_cache import embed_cache_dir_for, import_embed_cache
+
+        try:
+            embed_cache_imported = import_embed_cache(store, embed_cache_dir_for(cfg))["imported"]
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "sync_pull: embed-cache import failed (will re-embed locally): %s", exc
+            )
 
     # 3) load any new/changed memories the pull brought in
     reindexed = mem.reindex()
@@ -658,7 +705,13 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     # 4) re-export the merged signal so the next push carries the union
     export_signal(store, signal_dir_for(cfg))
 
-    out = {"pulled": True, "branch": branch, "reindexed": reindexed, "pruned": len(pruned)}
+    out = {
+        "pulled": True,
+        "branch": branch,
+        "reindexed": reindexed,
+        "pruned": len(pruned),
+        "embed_cache_imported": embed_cache_imported,
+    }
     if stale_rebase_aborted:
         out["stale_rebase_aborted"] = True
     return out

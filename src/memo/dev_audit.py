@@ -111,13 +111,13 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, int]] = {
     ("store/queries.py", 277),
     ("store/queries.py", 421),
     ("store/queries.py", 539),
-    ("store/queries.py", 688),
-    ("store/queries.py", 1085),
-    ("store/queries.py", 1096),
-    ("store/queries.py", 1111),
-    ("store/queries.py", 1134),
-    ("store/queries.py", 1156),
-    ("store/queries.py", 1179),
+    ("store/queries.py", 722),
+    ("store/queries.py", 1119),
+    ("store/queries.py", 1130),
+    ("store/queries.py", 1145),
+    ("store/queries.py", 1168),
+    ("store/queries.py", 1190),
+    ("store/queries.py", 1213),
 }
 
 
