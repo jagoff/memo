@@ -391,7 +391,15 @@ def recall_hook() -> None:
                 mem.graph, extract_query_entities(prompt, mem.graph), weight=_gpw
             )
 
+    # Epistemic gate for the empty marker: "memo has no record" may only be
+    # asserted after a search that RAN successfully and qualified nothing. A
+    # search exception (locked DB, store error) keeps the silent `{}` bail —
+    # parity with the daemon path, whose search except in recall_logic returns
+    # "{}" before the marker gate.
+    _search_ok = False
+
     def _rank(query_text: str) -> list:
+        nonlocal _search_ok
         try:
             hits = mem.search(
                 query_text, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
@@ -400,6 +408,7 @@ def recall_hook() -> None:
             if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: search failed: {exc}", file=sys.stderr)
             return []
+        _search_ok = True
         return rank_hits(
             hits, knobs, vec_cosine=_vec_cosine, preferences=_prefs, graph_boost=_graph_boost
         )
@@ -467,6 +476,9 @@ def recall_hook() -> None:
     # Precision gate (Lever 3): suppress when the top hit's score falls in a
     # band that has historically never been grounded.  Reads a small cached
     # JSON — cheap for the 5 s recall-hook budget.  Default OFF.
+    # Decision: this suppresses an EXISTING record, so the empty-recall marker
+    # ("no recorded memories") would be epistemically false here — the gate
+    # stays a silent `{}` bail, same as the daemon path (recall_logic).
     if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
         try:
             from memo.token_meter import load_precision_bands
@@ -516,6 +528,30 @@ def recall_hook() -> None:
 
     if not relevant:
         _stamp_metrics(0)
+        if not _search_ok:
+            # No search ran successfully — absence of record is UNPROVEN, so
+            # the epistemic marker must not fire. Silent `{}`, daemon parity.
+            _bail("search failed — absence unproven, no marker")
+            return
+        # Search ran, nothing qualified — in a real session, emit the one-line
+        # epistemic marker (MEMO_RECALL_EMPTY_MARKER, default on) instead of a
+        # silent bail, so "memo has no record" is distinguishable from "memo
+        # did not look". Pure formatting; the empty recall-log entry above
+        # already recorded the event.
+        if _sid:
+            from memo.recall_logic import render_empty_recall_output
+
+            _empty = render_empty_recall_output()
+            if _empty is not None:
+                if flag_bool("MEMO_RECALL_DEBUG"):
+                    print(
+                        f"# memo recall-hook: no hits above min_sim={knobs.min_sim}"
+                        " — emitting empty marker",
+                        file=sys.stderr,
+                    )
+                _close_memory()
+                print(_empty)
+                sys.exit(0)
         _bail(f"no hits above min_sim={knobs.min_sim}")
         return
 

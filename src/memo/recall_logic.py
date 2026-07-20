@@ -30,6 +30,31 @@ CITE_INSTRUCTION = (
     "id — e.g. `per your memory [a1b2c3d4]` — so the user sees where it came "
     "from._"
 )
+# Epistemic empty-recall marker (MEMO_RECALL_EMPTY_MARKER, default on): emitted
+# only when a search actually RAN and produced zero qualifying hits — never on
+# bails (empty stdin, short/trivial prompts, errors, session dedup) — so the
+# reading agent can distinguish "memo has no record of X" from "X is false".
+EMPTY_RECALL_MARKER = (
+    "<memo-recall readonly>\n"
+    "_no recorded memories for this — absence of record, not evidence of absence._\n"
+    "</memo-recall>"
+)
+
+
+def render_empty_recall_output() -> str | None:
+    """Hook-JSON string carrying the one-line empty-recall marker, or None when
+    MEMO_RECALL_EMPTY_MARKER is off. Pure formatting — no store/MLX work."""
+    if not flag_bool("MEMO_RECALL_EMPTY_MARKER"):
+        return None
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": EMPTY_RECALL_MARKER,
+            }
+        },
+        ensure_ascii=False,
+    )
 
 
 def _render_footer(turn: int | None = None) -> str:
@@ -1210,6 +1235,8 @@ def _recall_logic(
                 query=prompt,
             )
     except Exception as exc:
+        # Search FAILED — absence of record is unproven, so this stays a bare
+        # "{}" and never the empty marker (parity: cli_recall_hook _search_ok).
         print(f"# recall-daemon: search failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return "{}", None
 
@@ -1294,6 +1321,8 @@ def _recall_logic(
 
             _pg_bands = load_precision_bands(cfg.state_dir)
             if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
+                # Suppression of an EXISTING hit — "no record" would be false,
+                # so no empty marker here (mirrors the subprocess path).
                 return "{}", None
         except Exception as _pg_exc:
             _logger.debug("precision gate check failed: %s", _pg_exc)
@@ -1312,6 +1341,12 @@ def _recall_logic(
         kept = {h.id for h in qualifying}
         omitted.extend(h for h in pre_filter if h.id not in kept)
     if not relevant:
+        # Search ran, nothing qualified. In a real session (session_id present —
+        # UserPromptSubmit always sends one) emit the epistemic empty marker so
+        # "no record" is distinguishable from a silent bail; sessionless callers
+        # (tests, eval, debug) keep the bare "{}" contract.
+        if session_id and (_empty := render_empty_recall_output()) is not None:
+            return _empty, None
         return "{}", None
 
     # Session dedup + recalled-id marking — mirror the subprocess path
