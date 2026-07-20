@@ -35,6 +35,7 @@
 - Stores memories as **plain Markdown** (version-controllable, human-readable)
 - Syncs **across machines** via serverless git
 - Detects & resolves **contradictions** automatically
+- Builds a **knowledge graph** (entities + relations) you can query and reason over
 - Time-travels to any date (audit trail)
 
 No Ollama, no Qdrant, no cloud APIs, no keys.
@@ -200,6 +201,7 @@ help and the existing `config show|validate|set|unset` commands remain headless.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery.
 - **Cross-agent resume** — `memo resume` reopens any recent session from **any** agent (Claude Code, Codex, Devin, Gemini, OpenCode) in one arrow-key picker, resumed natively. [Details ↓](#-resume-any-session--from-any-agent)
 - **Visible memory context** — `memo context "<question>"` (and the `memo_context` MCP tool) show exactly what memory *would* be injected before an agent answers — the recall block on demand, with no LLM call. Add `--explain` to `memo search` to see why each hit ranked where it did.
+- **Knowledge graph** — entities and semantic relations extracted from every memory; query it (`memo graph neighbors/path/why`, `memo_graph` MCP tool) or let it boost recall ranking (opt-in). [Details ↓](#-knowledge-graph)
 
 ## Key capabilities
 
