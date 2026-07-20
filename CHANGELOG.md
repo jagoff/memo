@@ -9,6 +9,32 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.8.0] - 2026-07-20
+
+### Added
+
+- **Embed-cache sync** — per-machine shards (`embed_cache/<device_id>.json`) carry
+  document/chunk embeddings through the memo-sync repo; a pulling or bootstrapping
+  machine imports them before the post-pull reindex and indexes peer memories with
+  ~zero local MLX embed calls. Capped by recency (`MEMO_SYNC_EMBED_CACHE_MAX_ROWS`,
+  default 1000); vault/reference tier never exports; disable with
+  `MEMO_SYNC_EMBED_CACHE=0`.
+- **`memo eval ab`** — blind-judge A/B eval: same prompts answered with and without
+  memo's recall context by the local LLM, scored by a blind judge (symmetric
+  prompts, pre-judge leak scrub, recall-faithful ON condition). Raw runs persist
+  under `state_dir/eval/` for audit.
+- **Dream edge-verify pass** (`MEMO_DREAM_EDGE_VERIFY_ENABLED`, default off) —
+  knowledge-graph edges earn confidence from grounded co-use evidence, with an
+  idempotent sidecar ledger, gentle reversible decay, and rebuild survival; the
+  associative recall nudge drops its "· unverified" qualifier only above the shared
+  verified threshold.
+- **Empty-recall epistemic marker** (`MEMO_RECALL_EMPTY_MARKER`, default on) — a
+  successful search with zero relevant hits now injects "absence of record, not
+  evidence of absence" instead of silence; a failed search still emits nothing.
+- **Measured benchmark** — `docs/BENCHMARK.md` with real command output only,
+  negative results included, plus a published adversarial challenger review of the
+  doc's own claims; README carries the surviving numbers.
+
 ## [3.7.0] - 2026-07-16
 
 ### Added
