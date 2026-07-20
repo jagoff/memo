@@ -40,6 +40,17 @@
 
 No Ollama, no Qdrant, no cloud APIs, no keys.
 
+### Measured results
+
+Numbers from real command output on the author's live corpus (4,933 memories, measured 2026-07-20). Methodology, reproduction commands, and limitations: **[docs/BENCHMARK.md](docs/BENCHMARK.md)**.
+
+| Metric | Result | Command |
+|---|---|---|
+| Retrieval regression set (37 prompts) — precision@5 / noise@5 | 0.75–0.83 / 0.00 | `memo eval recall` |
+| LongMemEval oracle (retrieval-only, 60 stratified questions) — recall@5 | 0.746 weighted micro | `memo eval bench` |
+| Live recall hit rate (1,226 hook fires, last 7 days) | 99% (97% strong) | `memo stats` |
+| Tokens saved — estimated usage ledger, all-time | 1.21M | `memo tokens` |
+
 ### Offline by default
 
 Normal `memo-mcp` startup makes no outbound network request and does not rewrite
