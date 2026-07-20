@@ -96,6 +96,19 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_RECALL_EMPTY_MARKER",
+        "bool",
+        True,
+        "recall",
+        "When a recall search actually ran in a session and nothing qualified, "
+        "inject a one-line <memo-recall> marker stating memo has no record — "
+        "so the agent can distinguish 'no recorded memory of X' from 'X is "
+        "false'. Bails (empty stdin, short/trivial prompts, errors, session "
+        "dedup) and sessionless invocations still emit nothing. ~15 tokens. "
+        "Default on; opt out with MEMO_RECALL_EMPTY_MARKER=0.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_ASSOCIATIVE_HOPS",
         "int",
         2,
