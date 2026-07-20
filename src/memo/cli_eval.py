@@ -421,6 +421,144 @@ def eval_tokens_cmd(
         )
 
 
+@eval_group.command(name="ab")
+@click.option("--k", type=int, default=5, show_default=True, help="Recall top-K used as context.")
+@click.option(
+    "--labels",
+    "labels_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default="eval/regression_labels.json",
+    show_default=True,
+    help="Label set (schema memo.eval_recall.labels.v1); only answerable prompts run.",
+)
+@click.option("--seed", type=int, default=42, show_default=True, help="Pair-order seed.")
+@click.option(
+    "--tie-band",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help="Judge-score delta treated as a tie.",
+)
+@click.option(
+    "--max-prompts",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Run only the first N answerable prompts (3 MLX chat calls each).",
+)
+@click.option("--model", "model_name", default=None, help="Chat model (default: cfg.llm_model).")
+@click.option("--json", "as_json", is_flag=True, help="Emit raw JSON.")
+def eval_ab_cmd(
+    k: int,
+    labels_path: str,
+    seed: int,
+    tie_band: float,
+    max_prompts: int | None,
+    model_name: str | None,
+    as_json: bool,
+) -> None:
+    """Blind-judge A/B: answer each labeled prompt WITH recall context vs
+    WITHOUT, judged blind by the local LLM (0-1 rubric, deterministic pair
+    order, tie band). Reports win/tie/loss + context-token cost; the raw run
+    persists under state_dir/eval/ for audit.
+
+    Offline batch (3 MLX chat calls per prompt) — never the recall hook.
+
+      memo eval ab --labels eval/regression_labels.json --k 5
+    """
+    from memo import eval_ab
+
+    cfg = Config.from_env()
+    try:
+        labels = eval_recall.load_labels(Path(labels_path))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    prompts = eval_ab.answerable_prompts(labels)
+    if max_prompts is not None:
+        prompts = prompts[:max_prompts]
+    if not prompts:
+        raise click.ClickException(f"no answerable prompts in {labels_path}")
+
+    mem = _get_memory(cfg)
+    model = model_name or cfg.llm_model
+
+    # Recall-faithful ON retrieval: the shared rank_hits pipeline under the
+    # live flag resolution — the same path the eval_recall gate measures — not
+    # a raw search (see eval_ab.recall_search_fn).
+    _search = eval_ab.recall_search_fn(mem, k=k)
+
+    from memo.llm import MLXChat  # deferred — MLX invariant
+
+    chat_backend = MLXChat()
+
+    def _chat(system: str, user: str) -> str:
+        out = chat_backend.chat(
+            model,
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            options={"temperature": 0.0, "max_tokens": 512},
+        )
+        return str((out.get("message") or {}).get("content") or "")
+
+    def _progress(index: int, total: int) -> None:
+        if not as_json:
+            console.print(f"[dim]ab: prompt {index}/{total} (3 chat calls)[/dim]")
+
+    results = eval_ab.run_ab(
+        prompts, search=_search, chat=_chat, k=k, seed=seed, tie_band=tie_band, progress=_progress
+    )
+    summary = eval_ab.summarize(results)
+    payload = {
+        "schema": eval_ab.AB_SCHEMA,
+        "prompts_version": eval_ab.PROMPTS_VERSION,
+        "model": model,
+        "k": k,
+        "seed": seed,
+        "tie_band": tie_band,
+        "labels_fingerprint": labels.fingerprint(),
+        "summary": summary,
+        "pairs": [r.__dict__ for r in results],
+    }
+    detail_path = eval_ab.write_detail(cfg.state_dir, payload)
+
+    if as_json:
+        click.echo(json.dumps({**payload, "detail_path": str(detail_path)}, ensure_ascii=False))
+        return
+
+    for r in results:
+        mark = {"on": "green", "off": "red", "tie": "yellow"}[r.winner]
+        flag = " (judge parse error)" if r.judge_parse_error else ""
+        if r.leaked:
+            flag = " (leaked — forced tie)"
+        console.print(
+            f"[{mark}]{r.winner.upper():<4}[/{mark}] on {r.mean_on:.2f} vs off {r.mean_off:.2f}  "
+            f"ctx {r.context_tokens_on:>5} tok  {r.prompt[:56]}{flag}"
+        )
+    console.print(
+        f"\n[bold]A/B (memo ON vs OFF):[/bold] {summary['wins_on']} win / "
+        f"{summary['ties']} tie / {summary['losses_on']} loss over {summary['prompts']} prompts "
+        f"(win rate {summary['win_rate_on']:.0%}, mean Δ {summary['mean_delta']:+.3f})"
+    )
+    sd = summary["sub_deltas"]
+    console.print(
+        f"  Δ correctness {sd['correctness']:+.3f} · groundedness {sd['groundedness']:+.3f} · "
+        f"specificity {sd['specificity']:+.3f}"
+    )
+    console.print(
+        f"  context tokens: ON {summary['context_tokens_on']} vs OFF "
+        f"{summary['context_tokens_off']}"
+    )
+    if summary["judge_parse_errors"]:
+        console.print(
+            f"  [yellow]⚠ {summary['judge_parse_errors']} judge parse error(s) "
+            f"(counted as ties)[/yellow]"
+        )
+    if summary["leaked_pairs"]:
+        console.print(
+            f"  [yellow]⚠ {summary['leaked_pairs']} leaked pair(s) — an answer named its "
+            f"sources; judged blind impossible, forced tie[/yellow]"
+        )
+    console.print(f"  [dim]raw detail → {detail_path}[/dim]")
+
+
 @eval_group.command(name="baseline")
 @click.option("--k", type=int, default=5, help="Top-K for the offline recall metrics (default: 5).")
 @click.option(
