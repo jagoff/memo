@@ -393,6 +393,17 @@ def _scan_staged_secrets(root: Path) -> list[str]:
     return findings
 
 
+def _remote_ref_absent(root: Path, remote: str, branch: str) -> bool:
+    """True when the remote-tracking ref (``refs/remotes/<remote>/<branch>``)
+    does not exist — fresh clone of an empty repo, renamed branch, or a repo
+    that never fetched/pushed. Ahead/unpushed counts against a missing ref fail
+    and must not be read as "0 ahead"."""
+    cp = _git(
+        root, "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}", check=False
+    )
+    return cp.returncode != 0
+
+
 def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = False) -> dict:
     """Read-only health of the git-sync repo — never raises.
 
@@ -433,6 +444,13 @@ def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = Fal
         parts = counts.stdout.split()
         if len(parts) == 2:
             behind, ahead = int(parts[0]), int(parts[1])
+    elif remote_url and _remote_ref_absent(root, remote, branch):
+        # Missing remote-tracking ref: the count above fails and used to fail
+        # OPEN ("ahead 0"), hiding a never-pushed corpus from status/doctor.
+        # Every local commit is unpushed — report them all instead of a false 0.
+        local = _git(root, "rev-list", "--count", "HEAD", check=False).stdout.strip()
+        if local.isdigit():
+            ahead = int(local)
     last = _git(root, "log", "-1", "--format=%cI", check=False).stdout.strip()
 
     # Self-heal a stale pending marker: a prior push failed and stamped it, but a
@@ -462,6 +480,17 @@ def sync_status(cfg: Config, *, remote: str = "origin", check_remote: bool = Fal
     }
 
 
+def _export_signal_or_raise(store: VecStore, cfg: Config) -> None:
+    """``export_signal`` raises RuntimeError (lock) / OSError (disk) — convert
+    them to the domain error here at the sync_git boundary so ``sync_once``'s
+    SyncGitError-only per-step handling (and the hooks' --quiet path) degrades
+    quietly instead of crashing the caller with a raw traceback."""
+    try:
+        export_signal(store, signal_dir_for(cfg))
+    except (OSError, RuntimeError) as exc:
+        raise SyncGitError(f"signal export failed: {exc}") from exc
+
+
 def _commit_local(cfg: Config, store: VecStore) -> tuple[Path, str, int]:
     """Export signal, stage everything (incl. deletions), and commit if dirty.
 
@@ -488,7 +517,7 @@ def _commit_local(cfg: Config, store: VecStore) -> tuple[Path, str, int]:
             "unmerged paths in sync repo (interrupted merge/rebase) — refusing to "
             "commit conflict markers: " + ", ".join(line[3:] for line in unmerged)
         )
-    export_signal(store, signal_dir_for(cfg))
+    _export_signal_or_raise(store, cfg)
     _git(root, "add", "-A")
     # Pre-isolation releases wrote metadata-only credential markers below a
     # reserved secrets/ directory. They contain no ciphertext, but even names
@@ -547,10 +576,19 @@ def sync_push(
     # (offline/auth), leaving local commits unpushed. Detect that and push even
     # when there's nothing new to commit this round — otherwise the early return
     # would strand the work until the next save.
-    unpushed = _git(
-        root, "rev-list", "--count", f"{remote}/{branch}..HEAD", check=False
-    ).stdout.strip()
+    counts_cp = _git(root, "rev-list", "--count", f"{remote}/{branch}..HEAD", check=False)
+    unpushed = counts_cp.stdout.strip()
     has_unpushed = unpushed.isdigit() and int(unpushed) > 0
+    if counts_cp.returncode != 0 and _remote_ref_absent(root, remote, branch):
+        # No remote-tracking ref (fresh clone of an empty repo, renamed branch,
+        # never fetched/pushed): the rev-list above fails and used to fail OPEN
+        # — "0 unpushed" — silently stranding a never-pushed corpus. When the
+        # ref is provably absent, a configured remote plus any local commit
+        # means everything is unpushed; engage the push path (push -u below
+        # sets the upstream and creates the ref).
+        remote_configured = _git(root, "remote", "get-url", remote, check=False).returncode == 0
+        local = _git(root, "rev-list", "--count", "HEAD", check=False).stdout.strip()
+        has_unpushed = remote_configured and local.isdigit() and int(local) > 0
     if n_files == 0 and not has_unpushed and not _pending_marker(cfg).is_file():
         return {"pushed": False, "reason": "nothing to commit", "branch": branch}
 
@@ -717,7 +755,7 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
         )
 
     # 4) re-export the merged signal so the next push carries the union
-    export_signal(store, signal_dir_for(cfg))
+    _export_signal_or_raise(store, cfg)
 
     out = {
         "pulled": True,
@@ -745,9 +783,17 @@ def sync_init_home(cfg: Config, private: bool = True) -> dict:
         # First-time setup: initialize the local git repo so git_root_for() works
         # and gh repo create --source can push. Via _git so a failure/timeout
         # raises SyncGitError instead of CalledProcessError/TimeoutExpired.
-        _git(root_candidate, "init")
+        _git(root_candidate, "init", "-b", "main")
 
     root = git_root_for(cfg)
+
+    # Unborn HEAD (fresh init, or an existing repo with no commits yet): `gh
+    # repo create --push` has nothing to push and _current_branch() fails.
+    # Mirror the byo path — stage whatever exists and make a (possibly empty)
+    # initial commit so HEAD is born before gh pushes.
+    if _git(root, "rev-parse", "HEAD", check=False).returncode != 0:
+        _git(root, "add", "-A")
+        _git(root, "commit", "--allow-empty", "-m", "memo: initial memory corpus")
 
     owner = "private" if private else "public"
     repo_name = "memo-sync"

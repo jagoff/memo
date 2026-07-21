@@ -179,3 +179,58 @@ def test_sync_bootstrap_cli_end_to_end(remote: Path, tmp_path: Path, monkeypatch
     # config.toml repointed at the clone
     storage = (load_config_file(tmp_path / "config.toml") or {})["storage"]
     assert storage["data_dir"] == str(dest / "memorias")
+
+
+def test_sync_bootstrap_cli_survives_signal_schema_mismatch(
+    remote: Path, tmp_path: Path, monkeypatch
+):
+    """Regression: a signal snapshot from a newer memo (version skew between
+    Macs) raised a raw ValueError AFTER the config was already repointed —
+    aborting new-machine onboarding mid-flight. The bootstrap must complete
+    (exit 0), degrade the signal import to an error entry, and keep the
+    repointed config."""
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    # seed the remote with a signal snapshot carrying an unknown (newer) schema
+    seed = tmp_path / "seed"  # the fixture's seed clone
+    (seed / "signal").mkdir()
+    (seed / "signal" / "access.json").write_text(
+        '{"schema": "memo.sync.signal.v999", "rows": []}\n'
+    )
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "-m", "newer signal")
+    _git(seed, "push", "origin", "main")
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
+    dest = tmp_path / "memo-sync"
+    env = {
+        "MEMO_CONFIG_FILE": str(tmp_path / "config.toml"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_EMBEDDER_DIMS": "4",
+        "MEMO_EMBEDDER_MODEL": "stub",
+        "MEMO_RERANKER_ENABLED": "0",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+    }
+    result = CliRunner().invoke(
+        cli, ["sync", "bootstrap", str(remote), "--dest", str(dest), "--json"], env=env
+    )
+
+    assert result.exit_code == 0, result.output
+    import json as _json
+
+    out = _json.loads(result.output)
+    assert "unexpected schema" in out["signal"]["error"]
+    assert out["reindexed"]["added"] == 1  # corpus indexed despite the skew
+    # config stayed repointed at the clone (the bootstrap did not abort)
+    storage = (load_config_file(tmp_path / "config.toml") or {})["storage"]
+    assert storage["data_dir"] == str(dest / "memorias")
+
+    # human output: clean degrade message + recovery guidance, no traceback
+    r2 = CliRunner().invoke(cli, ["sync", "bootstrap", str(remote), "--dest", str(dest)], env=env)
+    assert r2.exit_code == 0, r2.output
+    assert "signal import skipped" in r2.output
+    assert "import-signal" in r2.output
+    assert "Traceback" not in r2.output

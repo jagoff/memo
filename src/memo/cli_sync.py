@@ -274,8 +274,16 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
         except Exception as exc:  # derived data — degrade to cold re-embed, never abort
             out["embed_cache"] = {"error": str(exc)}
     out["reindexed"] = mem.reindex(rebuild=True)
-    out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
-    out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
+    try:
+        out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
+        out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
+    except ValueError as exc:
+        # Signal schema mismatch (version skew between Macs) must not abort with
+        # a raw traceback AFTER the config was already repointed: the clone,
+        # config, and reindex all succeeded — signal is derived ranking data.
+        # Degrade like the embed_cache guard above and tell the user how to
+        # finish once versions match.
+        out["signal"] = {"error": str(exc)}
 
     if as_json:
         click.echo(json.dumps(out, indent=2))
@@ -286,7 +294,14 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
     if out.get("config_backup"):
         console.print(f"previous config backup → [cyan]{out['config_backup']}[/cyan]")
     console.print(f"reindexed: {out['reindexed']}")
-    console.print(f"signal merged: {out['signal']}")
+    if out["signal"].get("error"):
+        console.print(f"[yellow]signal import skipped:[/yellow] {out['signal']['error']}")
+        console.print(
+            "  Config is already updated and memories are indexed. Upgrade memo on "
+            "both Macs to the same version, then run [cyan]memo sync import-signal[/cyan]."
+        )
+    else:
+        console.print(f"signal merged: {out['signal']}")
     console.print("[bold green]Ready.[/bold green] memo now reads the git-synced corpus.")
 
 
@@ -524,8 +539,13 @@ def _run_sync_setup(cfg: Config, choice: str, url: str | None, *, gh_ok: bool) -
         cfg2 = Config.from_env(data_dir=Path(out["memories_dir"]))
         mem = _get_memory(cfg2)
         out["reindexed"] = mem.reindex(rebuild=True)
-        out["signal"] = import_signal(mem.store, signal_dir_for(cfg2))
-        out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
+        try:
+            out["signal"] = import_signal(mem.store, signal_dir_for(cfg2))
+            out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
+        except ValueError as exc:
+            # Same degrade as `sync bootstrap`: version skew on the signal
+            # schema must not abort after the config was already repointed.
+            out["signal"] = {"error": str(exc)}
         return out
     return None
 
