@@ -23,10 +23,21 @@ console = Console(force_terminal=False)
 
 def get_memory(cfg: Config) -> Any:
     """Build a Memory instance. Deferred import keeps module load light and
-    avoids a cli -> memory -> … import cycle at startup."""
+    avoids a cli -> memory -> … import cycle at startup.
+
+    Click may run commands in-process (CliRunner, notebooks, SDK wrappers), so
+    process exit is not a valid SQLite lifecycle boundary.  Register the
+    instance with the active command context to close every sidecar database
+    deterministically after the command finishes.  Callers outside Click keep
+    the normal explicit ``Memory.close()`` contract.
+    """
     from memo.memory import Memory
 
-    return Memory(cfg)
+    memory = Memory(cfg)
+    context = click.get_current_context(silent=True)
+    if context is not None:
+        context.call_on_close(memory.close)
+    return memory
 
 
 def log_cli_consult(
