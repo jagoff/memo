@@ -65,6 +65,44 @@ def test_delete_aborts_when_md_unlink_fails(mem_with_stub: Memory, monkeypatch):
     assert mem_with_stub.store.has_vector(rec.id) is True
 
 
+def test_hard_delete_rollback_preserves_signal_tables(mem_with_stub: Memory, monkeypatch):
+    """With MEMO_SOFT_DELETE=0, store.delete() wipes the user-signal tables
+    (access, memory_health, source_feedback) — PRIMARY data not in the .md.
+    A hard-delete that must roll back (unlink fails) must restore them, not
+    reset access counts / drop feedback to defaults."""
+    monkeypatch.setenv("MEMO_SOFT_DELETE", "0")
+    from memo.errors import StorageError
+
+    rec = mem_with_stub.save(content="con señal", title="Señal")
+    # Accumulate user signal: an access hit + a 👍 on a query.
+    mem_with_stub.store.touch([rec.id])
+    mem_with_stub.store.touch([rec.id])
+    mem_with_stub.store.record_source_feedback(
+        source_id=rec.id,
+        query_text="una consulta",
+        query_emb=[0.0, 1.0, 0.0, 0.0],
+        rating=1,
+    )
+    assert mem_with_stub.store.get_access(rec.id)["access_count"] == 2
+    assert mem_with_stub.store.sources_with_feedback([rec.id]) == {rec.id}
+
+    real_unlink = type(mem_with_stub.cfg.memory_dir).unlink
+
+    def _boom(self, *a, **k):
+        if self.name.endswith(".md"):
+            raise OSError("permission denied")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr("pathlib.Path.unlink", _boom)
+    with pytest.raises(StorageError, match="delete partially failed"):
+        mem_with_stub.delete(rec.id)
+
+    # Meta row restored, AND its signal preserved (not reset to defaults).
+    assert mem_with_stub.store.count() == 1
+    assert mem_with_stub.store.get_access(rec.id)["access_count"] == 2
+    assert mem_with_stub.store.sources_with_feedback([rec.id]) == {rec.id}
+
+
 def test_delete_proceeds_when_md_already_missing(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="huérfano", title="X")
     (mem_with_stub.cfg.memory_dir / rec.path).unlink()

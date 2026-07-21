@@ -109,6 +109,48 @@ def test_memo_search_as_of_type_filter(tmp_cfg) -> None:
     assert result["results"][0]["type"] == "fact"
 
 
+def test_memo_search_as_of_type_filter_applied_before_limit(tmp_cfg) -> None:
+    """A type-filtered as-of search must over-fetch, filter, THEN trim — so it
+    returns up to `limit` type-matching hits even when the top-`limit` slots
+    were spent on other-typed rows. Filtering after the limit (the old bug)
+    would starve the result to whatever matched inside the first `limit`."""
+    from memo.memory import Memory
+    from memo.server_asof import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    def _search(query, *, limit, mode):
+        # Build `limit` ranked hits where only every 5th is a decision. At
+        # limit=10 only 2 decisions exist; the over-fetch (limit*4=40) exposes 8.
+        hits = []
+        for i in range(limit):
+            h = MagicMock()
+            h.type = "decision" if i % 5 == 0 else "note"
+            h.to_dict.return_value = {"id": f"h{i}", "type": h.type}
+            hits.append(h)
+        return hits
+
+    mock_snap = MagicMock()
+    mock_snap.as_of = datetime(2025, 6, 1, tzinfo=UTC)
+    mock_snap.__len__ = MagicMock(return_value=100)
+    mock_snap.search.side_effect = _search
+
+    with patch("memo.time_machine.reconstruct", return_value=mock_snap):
+        result = tools["memo_search_as_of"](
+            query="q", as_of="2025-06-01", limit=10, type="decision"
+        )
+
+    # Over-fetch happened: snap.search called with a widened limit.
+    assert mock_snap.search.call_args.kwargs["limit"] > 10
+    # And it returns the full limit of decisions (8 available > 2 within top-10).
+    assert len(result["results"]) == 8
+    assert all(r["type"] == "decision" for r in result["results"])
+
+
 def test_memo_search_as_of_no_type_filter_returns_all(tmp_cfg) -> None:
     """memo_search_as_of must return all hits when no type filter is given."""
     from memo.memory import Memory

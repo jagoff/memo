@@ -561,6 +561,33 @@ def test_save_index_failure_keeps_md_and_marks_pending(mem_with_stub: Memory, mo
     assert mem_with_stub.store.get(rec.id) is not None
 
 
+def test_defer_embed_index_failure_marks_pending(mem_with_stub: Memory, monkeypatch):
+    """A defer_embed save WITHOUT topic_key whose text-only reservation fails
+    must route through _save_index_pending: the .md stays on disk stamped
+    embed-pending and the save returns a record instead of raising — matching
+    the topic_key path's recovery (the save-never-silently-vanishes guarantee)."""
+    real_upsert = mem_with_stub.store.upsert_text_only
+    calls = {"n": 0}
+
+    def _boom_once(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("database is locked")
+        return real_upsert(*a, **k)
+
+    monkeypatch.setattr(mem_with_stub.store, "upsert_text_only", _boom_once)
+    rec = mem_with_stub.save(content="cuerpo diferido", title="Diferido", defer_embed=True)
+
+    abs_path = mem_with_stub.cfg.memory_dir / rec.path
+    assert abs_path.is_file()
+    text = abs_path.read_text(encoding="utf-8")
+    assert "_memo_embed_pending" in text
+    assert rec.extra.get("_memo_embed_pending") is True
+    # The recovery's best-effort text-only index (2nd upsert) succeeded, so the
+    # record is retrievable rather than stranded until a manual reindex.
+    assert mem_with_stub.store.get(rec.id) is not None
+
+
 def test_tags_lower_dedup(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="x", title="X", tags=["MLX", "mlx", "Local"])
     assert rec.tags == ["mlx", "local"]

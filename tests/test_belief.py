@@ -66,6 +66,63 @@ def test_trust_dominance_archives_weaker(monkeypatch):
     assert d.dominant_id == "OLD"
 
 
+def test_support_lookup_error_holds_open_legacy_mode(monkeypatch):
+    """Fail CLOSED: a store error in the support lookup must NOT archive a
+    possibly-supported memory — it holds open instead of bypassing the gate."""
+    monkeypatch.setenv("MEMO_BELIEF_COMPETING", "0")
+    monkeypatch.setenv("MEMO_SUPERSEDE_SUPPORT_GATE", "3")
+
+    def _boom(ids):
+        raise RuntimeError("memory_health table locked")
+
+    store = SimpleNamespace(get_support_batch=_boom, get_health_batch=lambda ids: {})
+    mem = SimpleNamespace(store=store)
+    d = belief.supersede_decision(mem, older_id="OLD", newer_id="NEW")
+    assert d.action == "hold_open"  # NOT archive
+    assert "fail-closed" in d.reason
+
+
+def test_support_lookup_error_holds_open_belief_mode(monkeypatch):
+    """Same fail-closed guard on the trust-dominance path: a support-lookup error
+    on the dominated side holds open rather than archiving it."""
+    monkeypatch.setenv("MEMO_BELIEF_COMPETING", "1")
+    monkeypatch.setenv("MEMO_SUPERSEDE_MARGIN", "0.05")
+    monkeypatch.setenv("MEMO_SUPERSEDE_SUPPORT_GATE", "3")
+
+    def _boom(ids):
+        raise RuntimeError("store error")
+
+    store = SimpleNamespace(
+        get_health_batch=lambda ids: {
+            "OLD": {"confidence": 0.95, "roi_score": 1.0},
+            "NEW": {"confidence": 0.40, "roi_score": 1.0},
+        },
+        get_support_batch=_boom,
+    )
+    mem = SimpleNamespace(store=store)
+    d = belief.supersede_decision(mem, older_id="OLD", newer_id="NEW")
+    # OLD dominates NEW by trust, but the dominated-side support lookup errored
+    # → hold open rather than archive a possibly-protected memory.
+    assert d.action == "hold_open"
+    assert "fail-closed" in d.reason
+
+
+def test_support_lookup_error_gate_disabled_still_archives(monkeypatch):
+    """When the support gate is OFF (0) the lookup is irrelevant: a lookup error
+    must not change the legacy recency outcome (archive newer-wins)."""
+    monkeypatch.setenv("MEMO_BELIEF_COMPETING", "0")
+    monkeypatch.setenv("MEMO_SUPERSEDE_SUPPORT_GATE", "0")
+
+    def _boom(ids):
+        raise RuntimeError("store error")
+
+    store = SimpleNamespace(get_support_batch=_boom, get_health_batch=lambda ids: {})
+    mem = SimpleNamespace(store=store)
+    d = belief.supersede_decision(mem, older_id="OLD", newer_id="NEW")
+    assert d.action == "archive"
+    assert d.dominated_id == "OLD"
+
+
 def test_nway_competing_pairs_flags_triangle():
     # A-B, B-C, C-A : component {A,B,C} size 3 -> all three pairs competing
     pairs = [(1, "A", "B"), (2, "B", "C"), (3, "C", "A")]

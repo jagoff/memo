@@ -143,6 +143,61 @@ def test_second_immediate_pass_captures_nothing_new(tmp_path: Path, monkeypatch)
     assert _watermark(state, sid)["exchange_count"] == 1
 
 
+def test_extraction_llm_failure_does_not_advance_watermark(tmp_path: Path, monkeypatch):
+    """A TRANSIENT helper-LLM failure must not advance the watermark.
+
+    Losing insight on a save failure is already guarded; this covers the
+    extraction-call failure (LLM timeout / MLX busy): the new turns were never
+    examined, so the watermark must stay put and the turn be retried, distinct
+    from a legit empty extraction (which advances).
+    """
+    state = _setup_env(tmp_path, monkeypatch)
+
+    def _failing_extract(
+        chat, model, user_text, assistant_text, *, state_dir=None, on_call_failure=None, **kwargs
+    ):
+        # Simulate extract_insights' own contract: chat() raised → it records the
+        # failure via the out-param and still returns [].
+        if on_call_failure is not None:
+            on_call_failure.append(RuntimeError("helper LLM timeout"))
+        return []
+
+    monkeypatch.setattr("memo.capture.extract_insights", _failing_extract)
+
+    transcript = tmp_path / "t.jsonl"
+    sid = "sess-extract-fail"
+    _write_transcript(transcript, _exchange("pregunta", "ALPHAMARK"))
+
+    out = run_capture_incremental(transcript, sid)
+    assert out["status"] == "error"
+    assert out.get("extraction_failed") is True
+    # Watermark NOT stamped → the unexamined turn is retried on a later tick.
+    assert not (state / ".capture_watermark" / f"{sid}.json").exists()
+    # Backoff sidecar set so the idle daemon doesn't hammer the LLM every tick.
+    assert out["retry_after"] > 0
+
+
+def test_legit_empty_extraction_still_advances_watermark(tmp_path: Path, monkeypatch):
+    """Contrast case: the LLM ran and returned [] (nothing notable) — no failure
+    signal — so the watermark advances normally (turn is not re-scanned)."""
+    state = _setup_env(tmp_path, monkeypatch)
+
+    def _empty_extract(
+        chat, model, user_text, assistant_text, *, state_dir=None, on_call_failure=None, **kwargs
+    ):
+        return []  # ran fine, found nothing — do NOT touch on_call_failure
+
+    monkeypatch.setattr("memo.capture.extract_insights", _empty_extract)
+
+    transcript = tmp_path / "t.jsonl"
+    sid = "sess-empty-ok"
+    _write_transcript(transcript, _exchange("pregunta", "ALPHAMARK"))
+
+    out = run_capture_incremental(transcript, sid)
+    assert out["status"] == "ok"
+    assert _watermark(state, sid)["exchange_count"] == 1
+
+
 def test_incremental_saves_new_insight(tmp_path: Path, monkeypatch):
     """End-to-end: a survived insight is saved and the watermark advances."""
     _setup_env(tmp_path, monkeypatch)

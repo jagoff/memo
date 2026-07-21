@@ -36,6 +36,7 @@ from memo.memory.record import (
     is_canonical_memory_id,
     strip_llm_output,
 )
+from memo.project import LIFECYCLE_ARCHIVE_DIRS
 from memo.prompt_overrides import resolve_prompt
 from memo.tiers import VerificationState
 from memo.util import sha256_full as _sha256_full
@@ -284,11 +285,13 @@ class _MaintainOpsMixin(_MemoryBase):
         for md_path in sorted(memory_root.rglob("*.md")):
             checked += 1
             relative_parts = md_path.relative_to(memory_root).parts
-            if relative_parts[:1] in {("inactive",), ("archived",)}:
+            if relative_parts[:1] and relative_parts[0] in LIFECYCLE_ARCHIVE_DIRS:
                 # Current lifecycle archives live under ``inactive``; older
                 # vaults used ``archived``.  Both may retain a canonical id so
                 # a human can recover a note by moving it back out, but neither
-                # may be re-absorbed automatically on reindex/sync.
+                # may be re-absorbed automatically on reindex/sync.  A project
+                # bucket can never collide here — project_bucket() remaps those
+                # two slugs to ``_inactive``/``_archived`` (see project.py).
                 skipped += 1
                 continue
             if _path_has_symlink_component(memory_root, relative_parts):
@@ -1080,13 +1083,12 @@ class _MaintainOpsMixin(_MemoryBase):
         if not self.cfg.memory_dir.is_dir():
             return orphan_disk
         for md_path in self.cfg.memory_dir.rglob("*.md"):
-            if md_path.relative_to(self.cfg.memory_dir).parts[:1] in {
-                ("inactive",),
-                ("archived",),
-            }:
+            _parts = md_path.relative_to(self.cfg.memory_dir).parts
+            if _parts[:1] and _parts[0] in LIFECYCLE_ARCHIVE_DIRS:
                 # Archived memories are intentionally out of the index — not
                 # orphans, and "reindex to absorb" would resurrect them.  The
-                # second name is the legacy vault convention.
+                # second name is the legacy vault convention.  Project buckets
+                # never collide (project_bucket() remaps those two slugs).
                 continue
             try:
                 post = frontmatter.loads(md_path.read_text(encoding="utf-8"))

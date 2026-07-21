@@ -31,11 +31,21 @@ def _write_jsonl_entry(
 ) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        if path.stat().st_size > size_limit:
-            lines = path.read_text(encoding="utf-8").splitlines()[-cap:]
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
+        # Exclusive flock around append+trim. Concurrent sessions share one
+        # data_dir, so an unlocked read-then-truncate rewrite would drop a
+        # sibling's O_APPEND write landing in the read→truncate window (lost
+        # update) or leave a half-written line. Matches _update_daily_trend.
+        with path.open("a+", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.write(line)
+            f.flush()
+            if path.stat().st_size > size_limit:
+                f.seek(0)
+                kept = f.read().splitlines()[-cap:]
+                f.seek(0)
+                f.truncate()
+                f.write("\n".join(kept) + "\n")
     except OSError as exc:
         _log.debug("dashboard: jsonl write/trim failed for %s: %s", path, exc)
 

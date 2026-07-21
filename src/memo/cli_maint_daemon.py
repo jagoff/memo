@@ -36,7 +36,7 @@ def maint_daemon_start() -> None:
     import subprocess as _subprocess
 
     from memo import maint_client
-    from memo.maint_server import _is_pid_alive, _read_pid, _socket_path
+    from memo.maint_server import _is_pid_alive, _read_pid
 
     cfg = Config.from_env()
     pid = _read_pid(cfg.state_dir)
@@ -44,11 +44,11 @@ def maint_daemon_start() -> None:
         console.print(f"[dim]maint daemon already running (pid={pid})[/dim]")
         return
 
-    # A stale socket file left by a crashed daemon would fool the readiness
-    # probe below into reporting success for a child that failed to boot.
-    sock_path = _socket_path(cfg.state_dir)
-    sock_path.unlink(missing_ok=True)
-
+    # No parent-side socket unlink: a concurrent daemon that has already bound
+    # its socket but not yet written its pid would look "not running" here and
+    # get its live socket unlinked (orphaned). The child unlinks any stale
+    # socket under its own start flock; the connect-based probe below is not
+    # fooled by a leftover file (a stale socket answers no ping).
     log_dir = Path.home() / "Library" / "Logs" / "memo"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "maint-daemon.log"

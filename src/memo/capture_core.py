@@ -749,10 +749,17 @@ def extract_insights(
     assistant_text: str,
     *,
     state_dir: Path | None = None,
+    on_call_failure: list[Exception] | None = None,
 ) -> list[dict[str, Any]]:
     """Run the helper LLM to extract insights.
 
-    Returns a list of insight dicts; empty on parse failure or model refusal.
+    Returns a list of insight dicts; empty on parse failure, model refusal, or a
+    transient LLM-call failure. A raised ``chat()`` (LLM timeout / MLX busy /
+    daemon unreachable) is a TRANSIENT failure — categorically different from
+    the model running and deliberately returning ``[]`` (nothing notable). When
+    ``on_call_failure`` is provided it receives the exception so callers (the
+    incremental capture path) can tell the two apart and retry, instead of
+    advancing a watermark past turns whose insight was never actually examined.
     The helper model is configured by `cfg.helper_model`; warm latency is
     typically ~1-3s.
     """
@@ -773,7 +780,12 @@ def extract_insights(
         )
         raw = (resp.get("message") or {}).get("content") or ""
     except Exception as exc:
+        # Transient extraction failure — surface it (out-param) so the caller can
+        # distinguish it from a legit empty result, but still return [] to keep
+        # every caller's contract unchanged.
         _log.warning("capture: helper LLM call failed: %s", exc)
+        if on_call_failure is not None:
+            on_call_failure.append(exc)
         return []
 
     raw = raw.strip()
@@ -972,12 +984,14 @@ def _extract_and_save(
         user_text,
         cfg,
     )
+    _extraction_failures: list[Exception] = []
     insights = extract_insights(
         _helper_chat,
         cfg.helper_model,
         user_text,
         assistant_for_extraction,
         state_dir=cfg.state_dir,
+        on_call_failure=_extraction_failures,
     )
     _ground_on = _capture_flag_bool("MEMO_GROUNDING_JUDGE")
     _ground_min = _capture_flag_float("MEMO_GROUNDING_WRITE_MIN") or 0.4
@@ -1232,6 +1246,9 @@ def _extract_and_save(
         "saved_titles": saved_titles,
         "saved_records": saved_records,
         "save_failures": save_failures,
+        # True only when the helper LLM call itself failed transiently (not a
+        # legit empty extraction) — the incremental path holds the watermark.
+        "extraction_failed": bool(_extraction_failures),
         "facts": facts,
         "extract_stats": {
             "fact_edges_declared": fact_edges_declared,

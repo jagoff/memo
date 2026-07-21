@@ -252,6 +252,147 @@ def test_collect_data_is_json_serializable(tmp_cfg: Config):
     json.dumps(data, ensure_ascii=False, default=str)  # must not raise
 
 
+_MEMVEC_DOCTOR_DB = [
+    {
+        "label": "memvec",
+        "exists": True,
+        "records": 5,
+        "vec_dims": 1024,
+        "integrity_check": "ok",
+        "path": "/x/memvec.db",
+        "size_bytes": 4096,
+        "latest_memory_update": "2026-07-21",
+    }
+]
+_SQLITE_VEC_OK = {"label": "sqlite_vec", "ok": True, "error": ""}
+
+
+# -- finding #5: the body_hash drift scan is a full-build-only step ---------
+
+
+def test_poll_mode_skips_body_hash_drift_scan(tmp_cfg: Config, monkeypatch):
+    """The cheap poll must not re-scan the whole corpus (rglob + double
+    frontmatter parse) every interval — body_hash drift is full-build only."""
+    import memo.web_build as wb
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        wb,
+        "_body_hash_drift",
+        lambda cfg: (
+            calls.append(cfg) or {"checked": 0, "drifted": 0, "missing_file": 0, "untracked_md": 0}
+        ),
+    )
+    build.collect_data(tmp_cfg, include_projection=False)
+    assert calls == []
+
+
+def test_full_build_runs_body_hash_drift_scan(tmp_cfg: Config, monkeypatch):
+    import memo.web_build as wb
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        wb,
+        "_body_hash_drift",
+        lambda cfg: (
+            calls.append(cfg) or {"checked": 0, "drifted": 0, "missing_file": 0, "untracked_md": 0}
+        ),
+    )
+    build.collect_data(tmp_cfg, include_projection=True)
+    assert len(calls) == 1
+
+
+def test_pillar_vector_db_marks_drift_unchecked_when_none():
+    import memo.web_build as wb
+
+    doctor = {"db": _MEMVEC_DOCTOR_DB, "imports": [_SQLITE_VEC_OK]}
+    pillar = wb._pillar_vector_db(doctor, None)
+    assert pillar["status"] == "green"
+    assert any("not checked" in d for d in pillar["detail"])
+
+
+def test_pillar_vector_db_flags_drift_when_present():
+    import memo.web_build as wb
+
+    doctor = {"db": _MEMVEC_DOCTOR_DB, "imports": [_SQLITE_VEC_OK]}
+    drift = {"checked": 5, "drifted": 2, "missing_file": 0, "untracked_md": 1}
+    pillar = wb._pillar_vector_db(doctor, drift)
+    assert pillar["status"] == "yellow"
+
+
+# -- finding #3: backend-aware embedder probe (no false-RED on CPU) ---------
+
+
+def test_imports_probe_is_backend_aware_for_st(tmp_cfg: Config, monkeypatch):
+    import memo.web_build as wb
+
+    monkeypatch.setattr(wb, "resolve_backend", lambda cfg: "st")
+    monkeypatch.setattr(wb, "_probe_sentence_transformers", lambda: None)
+    labels = {p["label"] for p in wb._imports_probe(tmp_cfg)}
+    assert "sentence_transformers" in labels
+    assert "mlx" not in labels  # the CPU install is not probed for MLX
+
+
+def test_imports_probe_surfaces_real_error(tmp_cfg: Config, monkeypatch):
+    import memo.web_build as wb
+
+    monkeypatch.setattr(wb, "resolve_backend", lambda cfg: "mlx")
+
+    def boom() -> None:
+        raise ImportError("No module named 'mlx'")
+
+    monkeypatch.setattr(wb, "_probe_mlx", boom)
+    mlx = next(p for p in wb._imports_probe(tmp_cfg) if p["label"] == "mlx")
+    assert mlx["ok"] is False
+    assert "No module named 'mlx'" in mlx["error"]  # not swallowed as "probe unavailable"
+
+
+def _healthy_profile() -> dict:
+    return {
+        "ok": True,
+        "status": "ok",
+        "profile": "cpu",
+        "active": {
+            "embedder_model": "BAAI/bge-small",
+            "embedder_dims": 384,
+            "llm_model": None,
+            "helper_model": None,
+            "reranker_model": None,
+        },
+        "models": [{"cached": True, "role": "embedder"}],
+    }
+
+
+def test_pillar_embedder_green_on_healthy_cpu_backend():
+    import memo.web_build as wb
+
+    doctor = {
+        "profile": _healthy_profile(),
+        "imports": [
+            _SQLITE_VEC_OK,
+            {"label": "sentence_transformers", "ok": True, "error": ""},
+        ],
+    }
+    pillar = wb._pillar_embedder(doctor)
+    assert pillar["status"] == "green"  # healthy CPU install is NOT false-RED
+    assert pillar["label"] == "Embedder (CPU)"
+
+
+def test_pillar_embedder_red_surfaces_real_import_error():
+    import memo.web_build as wb
+
+    doctor = {
+        "profile": _healthy_profile(),
+        "imports": [
+            _SQLITE_VEC_OK,
+            {"label": "mlx", "ok": False, "error": "No module named 'mlx'"},
+        ],
+    }
+    pillar = wb._pillar_embedder(doctor)
+    assert pillar["status"] == "red"
+    assert "No module named 'mlx'" in pillar["summary"]  # real error, not swallowed
+
+
 def test_consult_trend_today_survives_trimmed_recall_log(tmp_path: Path):
     """daily_trend.json is the synchronous, complete accumulator; recall.log is
     size-capped and trims to its last lines. On a busy day the trimmed log holds

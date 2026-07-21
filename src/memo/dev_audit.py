@@ -91,6 +91,10 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("memory/write_ops.py", "_WriteOpsMixin.save", 7),
     ("memory/write_ops.py", "_WriteOpsMixin.save", 8),
     ("memory/write_ops.py", "_WriteOpsMixin.save", 9),
+    # defer_embed save without topic_key: index failure routes through
+    # _save_index_pending (stamps _memo_embed_pending + text-only index) so the
+    # .md never silently vanishes — recovery, not a swallow.
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 10),
     ("memory/write_ops.py", "_WriteOpsMixin._apply_write_policy", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._absorb_into_existing", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._read_body", 1),

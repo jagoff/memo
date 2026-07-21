@@ -74,3 +74,69 @@ def test_restart_starts_fresh_when_no_respawn(
 
     assert result.exit_code == 0, result.output
     assert started["called"] is True
+
+
+# -- `recall-daemon start` readiness probe ---------------------------------
+
+
+def test_start_not_fooled_by_stale_socket_when_child_dies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a stale recall.sock left by a crashed daemon must not make
+    `recall-daemon start` report success. The old bare exists() probe trusted
+    the file; the connect-based probe + proc.poll fail-fast does not."""
+    import subprocess
+
+    from memo.cli import cli
+    from memo.recall_socket import _socket_path
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    stale = _socket_path(state)
+    stale.touch()  # leftover from a crash — nothing is listening
+
+    class _DeadChild:
+        pid = 4242
+
+        def poll(self) -> int:
+            return 1  # child exited immediately (failed to boot)
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _DeadChild())
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)  # keep logs out of ~/Library
+    monkeypatch.setattr("memo.recall_server._read_pid", lambda _s: None)
+    monkeypatch.setattr("memo.recall_server._is_pid_alive", lambda _p: False)
+    # A stale socket answers no ping.
+    monkeypatch.setattr("memo.recall_server.connect_and_send", lambda *a, **k: None)
+
+    result = CliRunner().invoke(cli, ["recall-daemon", "start"], env=_env(tmp_path))
+
+    assert result.exit_code == 1
+    assert "failed to start" in result.stderr
+
+
+def test_start_succeeds_when_child_answers_ping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The connect-based probe reports success only once the (fake) child
+    answers a ping on the freshly bound socket."""
+    import subprocess
+
+    from memo.cli import cli
+
+    class _LiveChild:
+        pid = 4242
+
+        def poll(self) -> None:
+            return None  # still running
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _LiveChild())
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(crd.time, "sleep", lambda _s: None)
+    monkeypatch.setattr("memo.recall_server._read_pid", lambda _s: None)
+    monkeypatch.setattr("memo.recall_server._is_pid_alive", lambda _p: False)
+    monkeypatch.setattr("memo.recall_server.connect_and_send", lambda *a, **k: '{"ok": true}')
+
+    result = CliRunner().invoke(cli, ["recall-daemon", "start"], env=_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert "started" in result.stderr

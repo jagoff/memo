@@ -80,7 +80,9 @@ def _start_env(tmp_path: Path) -> dict[str, str]:
 
 def test_start_fails_on_stale_socket_when_child_dies(tmp_path: Path, monkeypatch) -> None:
     """Regression: a stale socket file left by a crashed daemon must not make
-    `maint-daemon start` report success for a child that failed to boot."""
+    `maint-daemon start` report success for a child that failed to boot. The
+    connect-based probe + proc.poll fail-fast rejects it even though the file
+    (which a bare exists() check would trust) is present."""
     import subprocess
 
     from click.testing import CliRunner
@@ -103,7 +105,9 @@ def test_start_fails_on_stale_socket_when_child_dies(tmp_path: Path, monkeypatch
 
     assert result.exit_code == 1
     assert "failed to start" in result.stderr
-    assert not stale.exists()  # the stale socket was removed before the probe
+    # Parent must NOT unlink the socket — the child owns that under its start
+    # flock (a parent-side unlink can orphan a live concurrent daemon).
+    assert stale.exists()
 
 
 def test_start_succeeds_when_child_binds_fresh_socket(tmp_path: Path, monkeypatch) -> None:
@@ -127,7 +131,9 @@ def test_start_succeeds_when_child_binds_fresh_socket(tmp_path: Path, monkeypatc
     started: list[_MaintServer] = []
 
     def fake_popen(*a: object, **k: object) -> _LiveChild:
-        # Simulate the child binding a fresh socket after the stale unlink.
+        # Simulate the real child: under its own start flock, run_server unlinks
+        # any stale socket before binding a fresh one.
+        _socket_path(tmp_path).unlink(missing_ok=True)
         server = _MaintServer(str(_socket_path(tmp_path)), lambda op, params: {"ok": True})
         threading.Thread(target=server.serve_forever, daemon=True).start()
         started.append(server)
@@ -144,6 +150,41 @@ def test_start_succeeds_when_child_binds_fresh_socket(tmp_path: Path, monkeypatc
         for server in started:
             server.shutdown()
             server.server_close()
+
+
+def test_start_does_not_unlink_live_daemon_socket(tmp_path: Path, monkeypatch) -> None:
+    """Regression (parent-side unlink orphan): a concurrent daemon that has
+    bound its socket but not yet written its pid looks 'not running' to a second
+    `start`. The parent must not unlink that live socket — the connect probe
+    finds the daemon and leaves it serving."""
+    import subprocess
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    # A live daemon already bound (no pid file yet → _read_pid returns None).
+    live = _MaintServer(str(_socket_path(tmp_path)), lambda op, params: {"ok": True})
+    threading.Thread(target=live.serve_forever, daemon=True).start()
+
+    class _LiveChild:
+        pid = 4242
+
+        def poll(self) -> None:
+            return None
+
+    # The faked spawn does NOT bind — the parent must reuse the already-live one.
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _LiveChild())
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    try:
+        result = CliRunner().invoke(cli, ["maint-daemon", "start"], env=_start_env(tmp_path))
+        assert result.exit_code == 0, result.output
+        # The live daemon is still reachable — the parent did not orphan it.
+        assert maint_client.ping(state_dir=tmp_path) is not None
+    finally:
+        live.shutdown()
+        live.server_close()
 
 
 # -- flag-gated Memory.consolidate ----------------------------------------

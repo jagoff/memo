@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _pkg_version() -> str:
+    """Canonical package version — install.sh pins this exact release, so the
+    expected pin must track it instead of a hard-coded literal that breaks on
+    every version bump."""
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return str(data["project"]["version"])
 
 
 def _executable(path: Path, content: str) -> None:
@@ -48,7 +57,7 @@ def test_failed_uv_install_preserves_existing_tool_and_uses_release_pin(tmp_path
 
     assert result.returncode != 0
     assert sentinel.read_text(encoding="utf-8") == "keep"
-    assert "tool install mlx-memo==3.8.1 --force" in log.read_text(encoding="utf-8")
+    assert f"tool install mlx-memo=={_pkg_version()} --force" in log.read_text(encoding="utf-8")
     assert "uninstall" not in log.read_text(encoding="utf-8")
 
 
@@ -77,7 +86,7 @@ def test_failed_pipx_install_preserves_existing_tool(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert sentinel.read_text(encoding="utf-8") == "keep"
     commands = log.read_text(encoding="utf-8")
-    assert "install mlx-memo==3.8.1 --force" in commands
+    assert f"install mlx-memo=={_pkg_version()} --force" in commands
     assert "uninstall" not in commands
 
 

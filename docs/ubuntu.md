@@ -53,7 +53,11 @@ verbs degrade with an explicit message rather than a cryptic import error.
 - `auto` — MLX when the runtime is importable (Apple Silicon), else the CPU
   backend. No configuration needed on Ubuntu.
 - `mlx` — force MLX.
-- `st` — force the CPU `sentence-transformers` backend (useful to test on a Mac).
+- `st` — force the CPU `sentence-transformers` backend. On a Mac this
+  dependency is **not installed by default** (the wheel is gated to
+  `sys_platform == 'linux'`), so testing this path first needs an explicit
+  `pip install sentence-transformers` (+ CPU torch); otherwise `STEmbedder`
+  raises a clear "sentence-transformers not installed" error.
 
 The CPU model is `MEMO_ST_EMBEDDER_MODEL` (default `Qwen/Qwen3-Embedding-0.6B`,
 **1024-dim** — same family and dimensionality as the default MLX quant, so the
