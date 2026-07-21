@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 
@@ -17,10 +18,15 @@ _log = logging.getLogger(__name__)
 
 
 class _ConnectionHolder:
-    """Close a thread-local connection when its owning thread exits."""
+    """Track one thread's sqlite connection for deterministic cleanup.
+
+    Strongly held by the store: closed by ``close()`` at shutdown, or by the
+    dead-owner sweep in ``_connect()`` once the owning thread has exited —
+    never by platform-dependent thread-local finalization order."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn: sqlite3.Connection | None = conn
+        self.owner: threading.Thread = threading.current_thread()
 
     def close(self) -> None:
         conn, self.conn = self.conn, None
@@ -77,6 +83,14 @@ class _ConnectionMixin(_StoreBase):
         holders_lock = getattr(self, "_conn_holders_lock", None)
         if holders is not None and holders_lock is not None:
             with holders_lock:
+                # Sweep holders owned by exited threads: a thread-local
+                # connection can never be reused after its thread dies, so
+                # without this every dead worker/request thread would leak
+                # one open connection for the life of the process (the
+                # always-on recall daemon spawns one thread per client).
+                for stale in [h for h in holders if h.conn is None or not h.owner.is_alive()]:
+                    stale.close()
+                    holders.discard(stale)
                 holders.add(holder)
         return conn
 
