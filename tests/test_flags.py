@@ -15,6 +15,23 @@ def test_every_spec_has_a_group_and_help() -> None:
         assert spec.kind in ("bool", "int", "float", "str")
 
 
+def test_no_duplicate_flag_names_across_spec_modules() -> None:
+    """A flag defined in two flags_* modules silently shadows the earlier spec
+    in REGISTRY (dict comprehension — last wins). Regression: the stale
+    MEMO_GRAPH_SEMANTIC_RELATIONS 'stub' spec in flags_behavior.py shadowed
+    the live flags_search.py spec."""
+    names = [s.name for s in flags._SPECS]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    assert not dupes, f"flags defined in more than one flags_* module: {dupes}"
+    assert len(flags._SPECS) == len(flags.REGISTRY)
+
+
+def test_graph_semantic_relations_uses_the_live_search_spec() -> None:
+    spec = flags.REGISTRY["MEMO_GRAPH_SEMANTIC_RELATIONS"]
+    assert spec.group == "search"
+    assert "stub" not in spec.help.lower()
+
+
 def test_flag_returns_default_when_unset() -> None:
     env: dict[str, str] = {}
     assert flags.flag("MEMO_RECALL_TOP_K", env=env) == 3
@@ -75,6 +92,82 @@ def test_validate_flags_bad_int_and_unknown_var() -> None:
 
 def test_validate_clean_env_is_empty() -> None:
     assert flags.validate(env={"MEMO_RECALL_TOP_K": "5", "MEMO_RECALL_MODE": "vec"}) == []
+
+
+def test_validate_rejects_invalid_mcp_runtime_values() -> None:
+    env = {
+        "MEMO_MCP_TRANSPORT": "htpp",
+        "MEMO_MCP_PROFILE": "typo",
+        "MEMO_MCP_PORT": "0",
+    }
+
+    by_flag = {problem["flag"]: problem for problem in flags.validate(env=env)}
+
+    assert "expected one of" in by_flag["MEMO_MCP_TRANSPORT"]["error"]
+    assert "expected one of" in by_flag["MEMO_MCP_PROFILE"]["error"]
+    assert "must be >= 1" in by_flag["MEMO_MCP_PORT"]["error"]
+
+
+def test_validate_rejects_mcp_port_above_tcp_limit() -> None:
+    problems = flags.validate(env={"MEMO_MCP_PORT": "70000"})
+
+    assert len(problems) == 1
+    assert problems[0]["flag"] == "MEMO_MCP_PORT"
+    assert "must be <= 65535" in problems[0]["error"]
+
+
+def test_validate_rejects_garbage_config_owned_typed_vars(tmp_path: Path) -> None:
+    """config.py-owned vars are outside REGISTRY, but Config.from_env() feeds
+    their raw strings to pydantic — a garbage value must fail `memo config
+    validate` instead of passing green and then hard-crashing every command."""
+    env = {
+        "MEMO_CONFIG_DIR": str(tmp_path),
+        "MEMO_EMBEDDER_DIMS": "10z4",
+        "MEMO_MAX_CONTENT_CHARS": "64k",
+        "MEMO_SEARCH_DEFAULT_LIMIT": "500",
+        "MEMO_RERANK_INPUT_K": "lots",
+        "MEMO_RERANK_FUSION_ALPHA": "high",
+        "MEMO_RERANKER_ENABLED": "maybe",
+    }
+    by_flag = {p["flag"]: p for p in flags.validate(env=env)}
+    for name in env:
+        if name == "MEMO_CONFIG_DIR":
+            continue
+        assert name in by_flag, f"garbage {name} passed validate()"
+    assert "must be <= 100" in by_flag["MEMO_SEARCH_DEFAULT_LIMIT"]["error"]
+
+
+def test_validate_accepts_valid_config_owned_typed_vars(tmp_path: Path) -> None:
+    env = {
+        "MEMO_CONFIG_DIR": str(tmp_path),
+        "MEMO_EMBEDDER_DIMS": "2560",
+        "MEMO_MAX_CONTENT_CHARS": "64000",
+        "MEMO_SEARCH_DEFAULT_LIMIT": "10",
+        "MEMO_RERANK_INPUT_K": "30",
+        "MEMO_RERANK_FUSION_ALPHA": "0.7",
+        "MEMO_RERANKER_ENABLED": "1",
+    }
+    assert flags.validate(env=env) == []
+
+
+def test_config_owned_typed_specs_stay_out_of_registry() -> None:
+    # They exist for validate() only; REGISTRY (and active_flags/config show)
+    # must keep excluding config.py-owned storage/model vars.
+    for spec in flags._CONFIG_OWNED_TYPED_SPECS:
+        assert spec.name not in flags.REGISTRY, spec.name
+        assert flags.unknown_memo_vars(env={spec.name: "x"}) == []
+
+
+def test_inert_secret_knobs_are_marked_in_help() -> None:
+    """MEMO_CAPTURE_DETECT_SECRETS / MEMO_SECRET_DAEMON_CACHE_* have no
+    consumer; their help must say so until they are actually wired (a user
+    must not believe capture routes secrets to encrypted storage)."""
+    for name in (
+        "MEMO_CAPTURE_DETECT_SECRETS",
+        "MEMO_SECRET_DAEMON_CACHE_MAX",
+        "MEMO_SECRET_DAEMON_CACHE_TTL_SECONDS",
+    ):
+        assert "INERT" in flags.REGISTRY[name].help, f"{name} help must mark it inert"
 
 
 def test_owned_config_vars_not_flagged_unknown() -> None:

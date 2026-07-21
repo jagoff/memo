@@ -99,9 +99,24 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     # MCP transport
-    _spec("MEMO_MCP_TRANSPORT", "str", "stdio", "mcp", "MCP transport: stdio | http."),
+    _spec(
+        "MEMO_MCP_TRANSPORT",
+        "str",
+        "stdio",
+        "mcp",
+        "MCP transport: stdio | http | streamable-http | sse.",
+        choices=("stdio", "http", "streamable-http", "sse"),
+    ),
     _spec("MEMO_MCP_HOST", "str", "127.0.0.1", "mcp", "Bind host for the HTTP MCP transport."),
-    _spec("MEMO_MCP_PORT", "int", 18768, "mcp", "Bind port for the HTTP MCP transport."),
+    _spec(
+        "MEMO_MCP_PORT",
+        "int",
+        18768,
+        "mcp",
+        "Bind port for the HTTP MCP transport.",
+        min_val=1,
+        max_val=65535,
+    ),
     _spec(
         "MEMO_MCP_ALLOW_NON_LOOPBACK",
         "bool",
@@ -151,6 +166,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "agent",
         "mcp",
         "MCP surface profile: agent (default, 14 tools) | core/slim (stable core) | full/default (all tools).",
+        choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(
         "MEMO_RESOURCE_BODY_CHARS",
@@ -1477,7 +1493,9 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "secret",
-        "Auto-detect and save secrets from captured transcripts (opt-in).",
+        "INERT/unimplemented — no consumer reads this flag; setting it does NOT "
+        "make ambient capture detect secrets or route them to encrypted storage. "
+        "Kept registered so set values still validate.",
     ),
     _spec(
         "MEMO_DETECT_SECRETS_LLM",
@@ -1491,7 +1509,8 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         100,
         "secret",
-        "Max decrypted secrets in daemon cache.",
+        "INERT/unimplemented — no daemon secret cache reads this yet. "
+        "Kept registered so set values still validate.",
         min_val=1,
     ),
     _spec(
@@ -1499,7 +1518,8 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         3600,
         "secret",
-        "Cache TTL for decrypted secrets (1h default).",
+        "INERT/unimplemented — no daemon secret cache reads this yet. "
+        "Kept registered so set values still validate.",
         min_val=60,
     ),
 )
