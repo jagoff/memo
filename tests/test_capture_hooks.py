@@ -669,3 +669,53 @@ def test_run_capture_incremental_save_failure_does_not_advance_watermark_and_ret
     assert second["processed_turns"] == 1
     assert attempts == 2
     assert _load_watermark(state_dir, session_id)["exchange_count"] == 1
+
+
+# ── Sidecar cleanup (bounded, throttled) ────────────────────────────────────
+
+
+def test_prune_stale_sidecars_removes_old_keeps_recent(tmp_path: Path):
+    """Dead-session `*.json`/`*.lock` past the TTL are pruned; recent files and
+    non-matching files are left alone, and the throttle marker is stamped."""
+    import os
+
+    from memo.capture_hooks import _SIDECAR_TTL_S, _prune_stale_sidecars
+
+    d = tmp_path / ".capture_stop"
+    d.mkdir()
+    old_json = d / "dead-session.json"
+    old_lock = d / "dead-session.lock"
+    fresh_json = d / "live-session.json"
+    other = d / "keep.txt"  # non-matching suffix → never touched
+    for p in (old_json, old_lock, fresh_json, other):
+        p.write_text("{}", encoding="utf-8")
+    old = time.time() - _SIDECAR_TTL_S - 3600
+    os.utime(old_json, (old, old))
+    os.utime(old_lock, (old, old))
+
+    _prune_stale_sidecars(d)
+
+    assert not old_json.exists()  # past TTL → pruned
+    assert not old_lock.exists()  # past TTL → pruned
+    assert fresh_json.exists()  # recent → kept (never unlink a live session's file)
+    assert other.exists()  # wrong suffix → untouched
+    assert (d / ".pruned").exists()  # throttle marker stamped
+
+
+def test_prune_stale_sidecars_is_throttled(tmp_path: Path):
+    """A recent `.pruned` marker skips the scan entirely (once/day)."""
+    import os
+
+    from memo.capture_hooks import _SIDECAR_TTL_S, _prune_stale_sidecars
+
+    d = tmp_path / ".capture_watermark"
+    d.mkdir()
+    (d / ".pruned").touch()  # fresh marker → this call must not scan
+    dead = d / "dead.json"
+    dead.write_text("{}", encoding="utf-8")
+    old = time.time() - _SIDECAR_TTL_S - 3600
+    os.utime(dead, (old, old))
+
+    _prune_stale_sidecars(d)
+
+    assert dead.exists()  # throttled — not scanned this call

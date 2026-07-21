@@ -13,6 +13,7 @@ dedup → save pipeline.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import logging
@@ -34,6 +35,48 @@ from memo.capture_core import (
 _log = logging.getLogger(__name__)
 _INCREMENTAL_FAILURE_BACKOFF_S = 60.0
 
+# Per-session sidecar files (Stop state/lock, watermark/retry/lock) accumulate
+# one small file per session with nothing ever removing them. Sessions are
+# short-lived, so any sidecar past this TTL belongs to a long-dead session — the
+# TTL also guarantees no live session's flock is ever unlinked. The scan is
+# throttled to once/day per directory via a marker so it never hits the hot path.
+_SIDECAR_TTL_S = 30 * 24 * 3600
+_SIDECAR_PRUNE_THROTTLE_S = 24 * 3600
+_PRUNE_MARKER = ".pruned"
+
+
+def _prune_stale_sidecars(directory: Path) -> None:
+    """Bounded, best-effort cleanup of dead per-session sidecar files.
+
+    Removes ``*.json`` / ``*.lock`` files older than the TTL from ``directory``
+    (``.capture_stop`` / ``.capture_watermark``). Throttled to once/day and
+    fully soft-fail: any error leaves the directory untouched.
+    """
+    now = time.time()
+    marker = directory / _PRUNE_MARKER
+    try:
+        if now - marker.stat().st_mtime < _SIDECAR_PRUNE_THROTTLE_S:
+            return
+    except OSError:
+        pass  # marker missing/unreadable → due for a scan
+    cutoff = now - _SIDECAR_TTL_S
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if entry.name == _PRUNE_MARKER or entry.is_symlink():
+            continue
+        if entry.suffix not in (".json", ".lock"):
+            continue
+        try:
+            if entry.is_file() and entry.stat().st_mtime < cutoff:
+                entry.unlink(missing_ok=True)
+        except OSError:
+            continue
+    with contextlib.suppress(OSError):
+        marker.touch()
+
 
 def _stop_state_dir(state_dir: Path) -> Path:
     """Secure directory for per-session Stop-hook state and locks."""
@@ -44,6 +87,7 @@ def _stop_state_dir(state_dir: Path) -> Path:
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     if directory.is_symlink() or not directory.resolve().is_relative_to(root):
         raise ValueError(f"unsafe Stop state directory: {directory}")
+    _prune_stale_sidecars(directory)
     return directory
 
 
@@ -316,6 +360,7 @@ def _save_watermark(state_dir: Path, session_id: str, watermark: dict[str, Any])
     f.parent.mkdir(parents=True, exist_ok=True)
     if f.parent.is_symlink():
         raise ValueError(f"unsafe watermark directory: {f.parent}")
+    _prune_stale_sidecars(f.parent)
     atomic_write_text(f, json.dumps(watermark))
 
 
@@ -391,10 +436,10 @@ def run_capture_incremental(
 
     Statuses: ``no_pair`` (empty/unreadable transcript), ``no_new`` (watermark
     already current), ``no_trigger`` (new turns but no insight keyword),
-    ``error``/``partial`` (save failure; watermark remains retryable), ``ok``.
-    Failed batches use a separate one-minute retry sidecar, so the watermark
-    remains unchanged without letting the idle daemon repeat the LLM call every
-    few seconds.
+    ``error``/``partial`` (save failure OR a transient extraction-LLM failure;
+    watermark remains retryable), ``ok``. Failed batches use a separate
+    one-minute retry sidecar, so the watermark remains unchanged without letting
+    the idle daemon repeat the LLM call every few seconds.
     """
     from memo.capture_core import (
         _hash_assistant,
@@ -467,7 +512,13 @@ def run_capture_incremental(
             mem.close()
 
         failures = int(result.get("save_failures", 0) or 0)
-        if failures:
+        # A transient helper-LLM extraction failure must NOT advance the
+        # watermark: the new turns were never actually examined, so stamping
+        # would lose their insight forever. Treat it like a save failure —
+        # back off and leave the watermark retryable — distinct from a legit
+        # empty extraction (LLM ran, found nothing notable), which advances.
+        extraction_failed = bool(result.get("extraction_failed"))
+        if failures or extraction_failed:
             status = "partial" if result.get("saved") else "error"
             retry_after = _mark_retry_backoff(cfg.state_dir, session_id)
             return {

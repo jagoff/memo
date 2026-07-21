@@ -9,10 +9,13 @@ maintenance path, never the 5s recall hook.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from memo.flags import flag_bool, flag_float, flag_int
+
+_log = logging.getLogger(__name__)
 
 # actions
 ARCHIVE = "archive"  # supersede the dominated side
@@ -51,21 +54,37 @@ def supersede_decision(mem: Any, *, older_id: str, newer_id: str) -> SupersedeDe
     gate = flag_int("MEMO_SUPERSEDE_SUPPORT_GATE") or 0
 
     def _support(ids: list[str]) -> dict[str, int]:
-        try:
-            return {i: int(v) for i, v in mem.store.get_support_batch(ids).items()}
-        except Exception:
-            return {}
+        # Deliberately does NOT swallow: a failed lookup must not be silently
+        # read as "zero support" (that fails OPEN — the support gate would be
+        # bypassed and a protected memory archived). Callers below fail CLOSED.
+        return {i: int(v) for i, v in mem.store.get_support_batch(ids).items()}
 
     if not flag_bool("MEMO_BELIEF_COMPETING"):
-        support_older = _support([older_id]).get(older_id, 0) if gate > 0 else 0
-        if gate > 0 and support_older >= gate:
-            return SupersedeDecision(
-                HOLD_OPEN,
-                newer_id,
-                older_id,
-                f"support {support_older} >= gate {gate}",
-                support_older,
-            )
+        support_older = 0
+        if gate > 0:
+            try:
+                support_older = _support([older_id]).get(older_id, 0)
+            except Exception as exc:
+                # Fail CLOSED: without a confirmed support count we cannot prove
+                # the older side is unprotected, so hold it open rather than
+                # archive a possibly heavily-reinforced memory on a transient
+                # store error.
+                _log.warning(
+                    "belief: support lookup failed for %s; holding open (fail-closed): %s",
+                    older_id,
+                    exc,
+                )
+                return SupersedeDecision(
+                    HOLD_OPEN, newer_id, older_id, "support lookup failed — fail-closed", 0
+                )
+            if support_older >= gate:
+                return SupersedeDecision(
+                    HOLD_OPEN,
+                    newer_id,
+                    older_id,
+                    f"support {support_older} >= gate {gate}",
+                    support_older,
+                )
         return SupersedeDecision(ARCHIVE, newer_id, older_id, "recency: newer wins", support_older)
 
     # belief mode: dominance by trust score
@@ -77,8 +96,20 @@ def supersede_decision(mem: Any, *, older_id: str, newer_id: str) -> SupersedeDe
     # tie (or newer stronger) → newer dominates, preserving legacy lean on exact ties
     dominant = newer_id if s_new >= s_old else older_id
     dominated = older_id if dominant == newer_id else newer_id
-    support = _support([older_id, newer_id])
-    support_dominated = support.get(dominated, 0)
+    # Fail CLOSED on the support gate: a lookup error must not let a supported
+    # (protected) dominated memory slip through to ARCHIVE.
+    support_failed = False
+    try:
+        support_dominated = _support([older_id, newer_id]).get(dominated, 0)
+    except Exception as exc:
+        _log.warning(
+            "belief: support lookup failed for (%s, %s); assuming protected (fail-closed): %s",
+            older_id,
+            newer_id,
+            exc,
+        )
+        support_dominated = 0
+        support_failed = True
 
     margin = flag_float("MEMO_SUPERSEDE_MARGIN")
     margin = 0.15 if margin is None else margin
@@ -90,14 +121,13 @@ def supersede_decision(mem: Any, *, older_id: str, newer_id: str) -> SupersedeDe
             f"within margin ({s_old:.3f} vs {s_new:.3f} <= {margin:g})",
             support_dominated,
         )
-    if gate > 0 and support_dominated >= gate:
-        return SupersedeDecision(
-            HOLD_OPEN,
-            dominant,
-            dominated,
-            f"dominated support {support_dominated} >= gate {gate}",
-            support_dominated,
+    if gate > 0 and (support_failed or support_dominated >= gate):
+        reason = (
+            "support lookup failed — fail-closed"
+            if support_failed
+            else f"dominated support {support_dominated} >= gate {gate}"
         )
+        return SupersedeDecision(HOLD_OPEN, dominant, dominated, reason, support_dominated)
     return SupersedeDecision(
         ARCHIVE,
         dominant,

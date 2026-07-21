@@ -128,7 +128,7 @@ def test_shared_extract_path_crushes_for_extraction_but_grounds_on_original(
         seen["crusher"] = (content, context, config)
         return "CRUSHED FOR EXTRACTION", "abc123"
 
-    def fake_extract(helper, model, user, assistant, *, state_dir):
+    def fake_extract(helper, model, user, assistant, *, state_dir, **_kwargs):
         del helper, model, user, state_dir
         seen["extract_assistant"] = assistant
         return [
