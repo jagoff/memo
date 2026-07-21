@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import TracebackType
 
 from .nudge import Nudge
 
@@ -107,11 +108,22 @@ class ProactiveStore:
                 "INSERT INTO proactive_feedback VALUES (?,?,?,?)", (nudge_id, kind, outcome, ts)
             )
 
-    def kind_multipliers(self, floor: float) -> dict[str, float]:
+    def kind_multipliers(self, floor: float, *, since: str | None = None) -> dict[str, float]:
+        """Aggregate `proactive_feedback` into a per-kind demotion multiplier.
+
+        `since` (ISO timestamp), when given, windows the aggregation to rows
+        with `ts >= since` so old dismissals don't cause permanent decay —
+        callers thread a rolling window (e.g. `compute_routed` passes
+        `now - 30d`). `None` (the direct-call default) aggregates all rows.
+        """
         out: dict[str, float] = {}
-        rows = self._conn.execute(
-            "SELECT kind, outcome, COUNT(*) c FROM proactive_feedback GROUP BY kind, outcome"
-        ).fetchall()
+        query = "SELECT kind, outcome, COUNT(*) c FROM proactive_feedback"
+        params: tuple[str, ...] = ()
+        if since is not None:
+            query += " WHERE ts >= ?"
+            params = (since,)
+        query += " GROUP BY kind, outcome"
+        rows = self._conn.execute(query, params).fetchall()
         agg: dict[str, dict[str, int]] = {}
         for r in rows:
             agg.setdefault(r["kind"], {})[r["outcome"]] = r["c"]
@@ -136,3 +148,17 @@ class ProactiveStore:
             "SELECT COUNT(*) c FROM proactive_push_log WHERE ts LIKE ?", (day + "%",)
         ).fetchone()
         return int(r["c"])
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> ProactiveStore:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()

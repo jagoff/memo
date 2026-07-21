@@ -24,7 +24,6 @@ def route(
     digest_top: int,
     urgent_min: float,
     can_push: bool,
-    floor: float,
 ) -> Routed:
     def mult(n: Nudge) -> float:
         return multipliers.get(n.kind, 1.0)
@@ -33,7 +32,12 @@ def route(
     urgent: Nudge | None = None
     if can_push:
         for n in ranked:
-            if n.kind == KIND_RELIABILITY and score(n, mult(n)) >= urgent_min:
+            # Urgent eligibility uses the RAW urgency-based score (mult=1.0), not
+            # the adaptive kind multiplier — the multiplier demotes digest RANK
+            # only. Otherwise repeated dismissals of a kind floor its multiplier
+            # and permanently self-mute the safety alert it's meant to protect
+            # (I2 review fix).
+            if n.kind == KIND_RELIABILITY and score(n, 1.0) >= urgent_min:
                 urgent = n
                 break
     return Routed(

@@ -493,9 +493,14 @@ class Memory(
                 if not superseded_by:
                     continue
                 stale_id = str(post.get("id") or "")
+                if not stale_id:
+                    continue
                 title = str(post.get("title") or "—")
                 out.append((stale_id, str(superseded_by), title))
-            except (OSError, ValueError):
+            except Exception:  # noqa: S112 — a malformed archive entry (bad YAML
+                # frontmatter, unreadable file, etc.) must not sink reliability
+                # nudges for every OTHER valid pair (I3 review fix: frontmatter.loads
+                # can raise yaml.YAMLError, which (OSError, ValueError) missed).
                 continue
         return out
 

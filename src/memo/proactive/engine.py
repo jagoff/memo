@@ -8,6 +8,8 @@ from .detectors.continuity import detect_continuity
 from .detectors.reliability import detect_reliability
 from .store import ProactiveStore
 
+_FEEDBACK_WINDOW_DAYS = 30
+
 
 def _parse(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
@@ -42,11 +44,12 @@ def compute_routed(store: ProactiveStore, *, now: str, day: str) -> Routed:
     daily_cap = flag_int("MEMO_PROACTIVE_DAILY_CAP")
     daily_cap = 3 if daily_cap is None else daily_cap
 
+    since = (_parse(now) - timedelta(days=_FEEDBACK_WINDOW_DAYS)).isoformat()
+
     return route(
         store.active_candidates(now),
-        store.kind_multipliers(floor),
+        store.kind_multipliers(floor, since=since),
         digest_top=digest_top,
         urgent_min=urgent_min,
         can_push=push_gate(store, now=now, day=day, cooldown_h=cooldown_h, daily_cap=daily_cap),
-        floor=floor,
     )
