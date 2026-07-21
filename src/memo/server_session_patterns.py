@@ -23,6 +23,25 @@ from typing import Any
 from memo.identity import _session_id
 from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
+# Fallback session id for MCP clients that export no session env var
+# (Claude Desktop, most non-Claude-Code clients). Process-scoped: a stdio MCP
+# server lives exactly as long as its client session, so one generated id per
+# process keeps start/end/upsert rows joined instead of silently NULL.
+_fallback_session_id: str | None = None
+
+
+def _effective_session_id() -> str:
+    global _fallback_session_id
+    sid = _session_id()
+    if sid:
+        return sid
+    if _fallback_session_id is None:
+        import uuid
+
+        _fallback_session_id = f"mcp-{uuid.uuid4().hex[:12]}"
+    return _fallback_session_id
+
+
 _log = logging.getLogger(__name__)
 
 _VALID_RELATIONS = {
@@ -221,15 +240,21 @@ def register(server: Any, memory: Any) -> None:
         """
         dir_override = directory or cwd
         project = _project_from_cwd()
-        session_id = _session_id()
+        session_id = _effective_session_id()
         now = datetime.datetime.now(datetime.UTC).isoformat()
 
         _ensure_session_table(memory)
 
         with memory.store._tx() as cx:
+            # Upsert, NOT INSERT OR REPLACE: REPLACE deletes the row and would
+            # wipe a completed session's summary/ended_at on process restart
+            # with a stable MEMO_SESSION_ID.
             cx.execute(
-                "INSERT OR REPLACE INTO sessions (id, project, directory, started_at, status) "
-                "VALUES (?, ?, ?, ?, 'active')",
+                "INSERT INTO sessions (id, project, directory, started_at, status) "
+                "VALUES (?, ?, ?, ?, 'active') "
+                "ON CONFLICT(id) DO UPDATE SET project = excluded.project, "
+                "directory = excluded.directory, started_at = excluded.started_at, "
+                "status = 'active'",
                 (session_id, project, dir_override or _session_directory(), now),
             )
 
@@ -255,7 +280,7 @@ def register(server: Any, memory: Any) -> None:
 
         Returns session ended confirmation.
         """
-        session_id = _session_id()
+        session_id = _effective_session_id()
         now = datetime.datetime.now(datetime.UTC).isoformat()
 
         _ensure_session_table(memory)
@@ -387,7 +412,7 @@ def register(server: Any, memory: Any) -> None:
             "after": [dict(r) for r in after_rows],
         }
 
-    @annotated_tool(server, **READ_ONLY)
+    @annotated_tool(server, **WRITE)
     def mem_judge(
         relation_id: int,
         relation: str,
@@ -411,11 +436,12 @@ def register(server: Any, memory: Any) -> None:
 
         if relation not in _VALID_RELATIONS:
             return {"error": f"invalid relation, must be one of {_VALID_RELATIONS}"}
+        confidence = max(0.0, min(1.0, confidence))
 
         _ensure_session_table(memory)
 
         with memory.store._tx() as cx:
-            cx.execute(
+            cur = cx.execute(
                 """
                 UPDATE memory_relations
                 SET judgment_status = 'judged', relation = ?, reason = ?, confidence = ?, updated_at = ?
@@ -423,10 +449,16 @@ def register(server: Any, memory: Any) -> None:
                 """,
                 (relation, reason, confidence, now, relation_id),
             )
+            updated = cur.rowcount > 0
 
-        return {"relation_id": relation_id, "relation": relation, "status": "judged"}
+        return {
+            "relation_id": relation_id,
+            "relation": relation,
+            "status": "judged" if updated else "not_found",
+            "updated": updated,
+        }
 
-    @annotated_tool(server, **READ_ONLY)
+    @annotated_tool(server, **WRITE)
     def mem_compare(
         memory_id_a: str,
         memory_id_b: str,
