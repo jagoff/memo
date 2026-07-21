@@ -31,6 +31,16 @@ def slugify_project(name: str) -> str:
 
 GLOBAL_BUCKET = "_global"
 
+# Directory names owned by the lifecycle archive (lifecycle.archive_memory /
+# consolidation write `<id>.md` under these). A project slug must NEVER land in
+# one of them: reindex/gc deliberately SKIP these dirs (they hold de-indexed
+# archives), so a project-bucket memory written there would become invisible to
+# search and unrecoverable by `reindex` — breaking markdown-is-source-of-truth.
+# `slugify_project` can never emit a leading underscore (it collapses every
+# non-`[a-z0-9]` run to `-`), so the `_`-prefixed remap below is provably
+# collision-free with real slugs — the same property that makes `_global` safe.
+LIFECYCLE_ARCHIVE_DIRS: frozenset[str] = frozenset({"inactive", "archived"})
+
 
 def project_bucket(tags: list[str]) -> str:
     """On-disk folder bucket for a memory: the project slug, or `_global`.
@@ -46,7 +56,10 @@ def project_bucket(tags: list[str]) -> str:
     for tag in tags:
         if tag.startswith(_PROJECT_PREFIX):
             slug = slugify_project(tag[len(_PROJECT_PREFIX) :])
-            return slug or GLOBAL_BUCKET
+            if not slug:
+                return GLOBAL_BUCKET
+            # Keep project buckets out of the lifecycle-archive keyspace.
+            return f"_{slug}" if slug in LIFECYCLE_ARCHIVE_DIRS else slug
     return GLOBAL_BUCKET
 
 

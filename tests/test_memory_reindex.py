@@ -742,6 +742,22 @@ def test_reindex_reclaims_path_held_by_soft_deleted_tombstone(mem_with_stub: Mem
     assert row is not None and row["id"] == new_id
 
 
+def test_reindex_indexes_project_bucket_named_like_lifecycle_dir(mem_with_stub: Memory):
+    """A memory whose project bucket would slugify to `inactive`/`archived` is
+    remapped to `_inactive`/`_archived` (project.py), so reindex must NOT skip
+    it — the lifecycle-archive skip only covers the bare dirs. Regression for
+    the collision the inactive/-skip fix introduced."""
+    rec = mem_with_stub.save(
+        content="memoria en proyecto inactive", title="P", tags=["project:inactive"]
+    )
+    assert rec.path.startswith("_inactive/"), rec.path  # remapped bucket
+    out = mem_with_stub.reindex(rebuild=True)
+    assert out["added"] == 1  # NOT skipped
+    assert mem_with_stub.get(rec.id) is not None
+    # gc must not flag it as a disk orphan either.
+    assert rec.id not in mem_with_stub.gc(fix=False)["orphan_disk"]
+
+
 def test_gc_reports_and_fixes_orphans(mem_with_stub: Memory):
     a = mem_with_stub.save(content="vivo", title="A")
     b = mem_with_stub.save(content="vivo", title="B")

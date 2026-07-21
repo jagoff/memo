@@ -97,6 +97,19 @@ def test_project_bucket_fully_invalid_slug_falls_back_to_global() -> None:
     assert project_bucket(["project:../.."]) == GLOBAL_BUCKET
 
 
+def test_project_bucket_avoids_lifecycle_archive_dirs() -> None:
+    # A project literally named `inactive`/`archived` must NOT land in the
+    # lifecycle-archive keyspace — reindex/gc skip those dirs, so a memory
+    # written there would be invisible to search and unrecoverable by reindex.
+    # The `_`-prefix remap is collision-free (slugify never emits a leading `_`).
+    assert project_bucket(["project:inactive"]) == "_inactive"
+    assert project_bucket(["project:archived"]) == "_archived"
+    # A git repo basename `Inactive` slugifies to `inactive` and must remap too.
+    assert project_bucket(["project:Inactive"]) == "_inactive"
+    # Non-bare variants are already disjoint and stay verbatim.
+    assert project_bucket(["project:archived-notes"]) == "archived-notes"
+
+
 def test_global_bucket_constant_value() -> None:
     assert GLOBAL_BUCKET == "_global"
 
