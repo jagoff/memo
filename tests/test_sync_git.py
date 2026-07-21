@@ -229,6 +229,52 @@ def test_sync_push_retries_stranded_commit(remote: Path, tmp_path: Path, monkeyp
         mem.close()
 
 
+def test_sync_push_pushes_stranded_commits_when_tracking_ref_missing(
+    remote: Path, tmp_path: Path, monkeypatch
+):
+    """Regression: with no remote-tracking ref (fresh clone of an empty repo,
+    renamed branch, never fetched), the unpushed rev-list count failed OPEN →
+    "nothing to commit" — silently stranding every local commit. The push path
+    must engage instead (push -u creates the ref)."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        sync_push(mem.cfg, mem.store)  # initial push (signal files)
+        # a stranded local commit + a MISSING tracking ref
+        (clone / "memorias" / "stray.md").write_text("---\nid: y\n---\nstray\n")
+        _git(clone, "add", "-A")
+        _git(clone, "commit", "-m", "stranded")
+        _git(clone, "update-ref", "-d", "refs/remotes/origin/main")
+        out = sync_push(mem.cfg, mem.store)
+        assert out["pushed"] is True
+        # the stranded commit actually reached the remote
+        subjects = subprocess.run(
+            ["git", "-C", str(remote), "log", "--format=%s", "main"],
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "stranded" in subjects
+    finally:
+        mem.close()
+
+
+def test_sync_status_reports_all_local_when_tracking_ref_missing(
+    remote: Path, tmp_path: Path, monkeypatch
+):
+    """Regression: a missing remote-tracking ref made the ahead count fail open
+    to 0, hiding a never-pushed corpus from status/doctor. Every local commit
+    must report as ahead instead."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    try:
+        _git(clone, "update-ref", "-d", "refs/remotes/origin/main")
+        st = sync_status(mem.cfg)  # offline default — no fetch resurrects the ref
+        assert st["is_git_clone"] is True
+        assert st["ahead"] == 1  # the seed commit is unpushed as far as we know
+    finally:
+        mem.close()
+
+
 def test_sync_status_fetches_and_self_heals_stale_pending(
     remote: Path, tmp_path: Path, monkeypatch
 ):
@@ -674,6 +720,33 @@ def test_sync_once_stale_rebase_never_skipped_local_commit_survives(
         mem_b.close()
 
 
+def test_sync_once_skips_pull_after_non_stale_commit_failure(
+    remote: Path, tmp_path: Path, monkeypatch
+):
+    """Uncommitted work must not enter pull --autostash after commit fails."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+    pull_called = False
+
+    def fail_commit(*_args, **_kwargs):
+        raise SyncGitError("synthetic commit failure")
+
+    def unexpected_pull(*_args, **_kwargs):
+        nonlocal pull_called
+        pull_called = True
+        raise AssertionError("pull must be skipped after a non-stale commit failure")
+
+    monkeypatch.setattr("memo.sync_git._commit_local", fail_commit)
+    monkeypatch.setattr("memo.sync_git.sync_pull", unexpected_pull)
+    try:
+        result = sync_once(mem.cfg, mem.store, mem, do_push=False)
+        assert result["commit_error"] == "synthetic commit failure"
+        assert result["pulled"] is False
+        assert pull_called is False
+    finally:
+        mem.close()
+
+
 def test_sync_pull_aborts_stale_rebase_then_recovers(remote: Path, tmp_path: Path, monkeypatch):
     """A stale rebase over signal-only divergence: sync_pull must abort the
     stale state, restart its OWN rebase, auto-resolve, and finish — reporting
@@ -781,6 +854,43 @@ def test_sync_once_survives_git_timeout(remote: Path, tmp_path: Path, monkeypatc
         res = sync_once(mem.cfg, mem.store, mem)  # must not raise
         assert "timed out" in res.get("pull_error", "")
         assert res["pulled"] is False
+    finally:
+        mem.close()
+
+
+def test_sync_once_survives_signal_export_failure(remote: Path, tmp_path: Path, monkeypatch):
+    """Regression: export_signal raises RuntimeError (signal lock) / OSError
+    (disk) — not SyncGitError — so it escaped sync_once's per-step handling and
+    crashed the hook caller with a raw traceback. It must land in the status
+    dict as a domain error instead."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("Could not acquire signal lock: /x")
+
+    monkeypatch.setattr("memo.sync_git.export_signal", boom)
+    try:
+        res = sync_once(mem.cfg, mem.store, mem)  # must not raise
+        assert "signal export failed" in res.get("commit_error", "")
+        assert res["pushed"] is False
+    finally:
+        mem.close()
+
+
+def test_sync_pull_signal_export_failure_is_domain_error(remote: Path, tmp_path: Path, monkeypatch):
+    """The re-export at the end of sync_pull can fail the same way (OSError) —
+    it must surface as SyncGitError so sync_once's pull step records it."""
+    clone = _make_clone(remote, tmp_path / "A")
+    mem = _mem_for(clone, tmp_path / "stateA", monkeypatch)
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("memo.sync_git.export_signal", boom)
+    try:
+        with pytest.raises(SyncGitError, match="signal export failed"):
+            sync_pull(mem.cfg, mem.store, mem)
     finally:
         mem.close()
 
@@ -1040,6 +1150,55 @@ def test_sync_init_home_byo_pushes_existing_memories(tmp_path: Path, monkeypatch
         text=True,
     )
     assert ls.returncode == 0 and ls.stdout.strip()
+
+
+def test_sync_init_home_makes_initial_commit_before_gh(tmp_path: Path, monkeypatch):
+    """Regression: sync_init_home on a fresh (never-committed) memories dir left
+    HEAD unborn — `gh repo create --push` then had nothing to push and failed.
+    It must mirror the byo path: stage + initial commit so HEAD is born BEFORE
+    gh runs."""
+    from memo.sync_git import sync_init_home
+
+    memories = tmp_path / "repo" / "memorias"
+    memories.mkdir(parents=True)
+    (memories / "a.md").write_text("---\nid: a\n---\nbody\n")
+    cfg = Config(data_dir=memories, state_dir=tmp_path / "state", embedder_dims=4)
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "t")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "t@t.t")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "t")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@t.t")
+
+    real_run = subprocess.run
+    head_born_at_gh: list[bool] = []
+
+    def fake_run(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and cmd[0] == "gh":
+            probe = real_run(
+                ["git", "-C", str(tmp_path / "repo"), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+            )
+            head_born_at_gh.append(probe.returncode == 0)
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="https://github.com/t/memo-sync\n", stderr=""
+            )
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("memo.sync_git.subprocess.run", fake_run)
+
+    out = sync_init_home(cfg)
+
+    assert head_born_at_gh == [True], "HEAD must be born before `gh repo create --push`"
+    assert out["repo_url"] == "https://github.com/t/memo-sync"
+    assert out["branch"] == "main"
+    # the initial commit exists and carried the existing memory
+    log = real_run(
+        ["git", "-C", str(tmp_path / "repo"), "log", "--format=%s", "--name-only"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "initial memory corpus" in log
+    assert "memorias/a.md" in log
 
 
 def test_sync_init_home_byo_empty_dir_initializes(tmp_path: Path, monkeypatch):
