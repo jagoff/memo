@@ -509,10 +509,21 @@ class Memory(
 
         Thin read over the `memory_health` signal table (`store/schema.py`),
         lowest confidence first. Feeds the proactive health detector's
-        "worth reviewing" nudge.
+        "worth reviewing" nudge. Joins `meta` and excludes soft-deleted rows
+        (`MEMO_SOFT_DELETE` leaves `memory_health` rows around for up to 90
+        days after `meta.deleted_at` is stamped — see `dead_memory_ids` for
+        the same deleted-filter idiom) so a deleted memory never gets cited.
         """
         rows = self.store._conn.execute(
-            "SELECT id FROM memory_health WHERE confidence < ? ORDER BY confidence ASC LIMIT ?",
+            """
+            SELECT mh.id
+              FROM memory_health mh
+              JOIN meta m ON m.id = mh.id
+             WHERE mh.confidence < ?
+               AND (m.deleted_at IS NULL OR m.deleted_at = '')
+             ORDER BY mh.confidence ASC
+             LIMIT ?
+            """,
             (threshold, limit),
         ).fetchall()
         return [str(r["id"]) for r in rows]
@@ -567,9 +578,13 @@ class Memory(
             if q:
                 counts[q] += 1
 
+        # Cap candidate queries examined — sparse matches would otherwise walk
+        # the full most_common() list, firing one search() per candidate
+        # (dream-only path, but still not unbounded).
+        max_candidates = max(limit * 4, 20)
         out: list[tuple[str, str]] = []
-        for query, count in counts.most_common():
-            if len(out) >= limit:
+        for candidates, (query, count) in enumerate(counts.most_common()):
+            if len(out) >= limit or candidates >= max_candidates:
                 break
             if count < min_count:
                 break

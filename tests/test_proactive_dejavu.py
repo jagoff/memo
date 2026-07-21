@@ -55,3 +55,32 @@ def test_real_facade_recurring_pattern_pairs_drops_unmatched_prompt(mock_memory)
     pairs = mock_memory.recurring_pattern_pairs()
 
     assert pairs == []
+
+
+def test_real_facade_recurring_pattern_pairs_bounds_search_calls(mock_memory):
+    """When matches are sparse, the candidate loop must stop after
+    `max(limit * 4, 20)` distinct queries instead of walking the whole
+    recall-log tail and calling `search()` once per unmatched candidate."""
+    from memo.dashboard_logs import append_recall_log
+
+    # 30 distinct recurring prompts, none with a matching memory — far more
+    # than the max_candidates cap for the default limit=5 (max(5*4, 20) = 20).
+    for i in range(30):
+        prompt = f"unmatched recurring question number {i}"
+        append_recall_log(mock_memory.cfg.state_dir, prompt=prompt, hits=[])
+        append_recall_log(mock_memory.cfg.state_dir, prompt=prompt, hits=[])
+
+    call_count = 0
+    real_search = mock_memory.search
+
+    def _counting_search(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return real_search(*args, **kwargs)
+
+    mock_memory.search = _counting_search  # type: ignore[method-assign]
+
+    pairs = mock_memory.recurring_pattern_pairs(limit=5, min_count=2)
+
+    assert pairs == []
+    assert call_count <= 20

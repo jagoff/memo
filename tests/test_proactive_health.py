@@ -40,3 +40,16 @@ def test_real_facade_low_confidence_ids_reads_memory_health(mock_memory):
     ids = mock_memory.low_confidence_ids(threshold=0.4)
 
     assert rec.id in ids
+
+
+def test_low_confidence_ids_excludes_soft_deleted_memory(mock_memory):
+    """MEMO_SOFT_DELETE (default on) keeps the `memory_health` row for up to
+    90 days after `meta.deleted_at` is stamped — a deleted low-confidence
+    memory must not keep getting cited in the nightly KIND_HEALTH nudge."""
+    rec = mock_memory.save(content="a shaky OCR'd note, since deleted", type_="note")
+    mock_memory.store.set_confidence_batch([(rec.id, 0.2)])
+    assert mock_memory.delete(rec.id) is True
+
+    ids = mock_memory.low_confidence_ids(threshold=0.4)
+
+    assert rec.id not in ids
