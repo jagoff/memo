@@ -108,6 +108,12 @@ GATES: dict[str, GateSpec] = dict(
         _g("MEMO_VLM_CAPTION_ENABLED", "manual", "ingest-time VLM cost; gate = ingest quality"),
         _g("MEMO_UPDATE_CHECK_ENABLED", "manual", "ops/update policy; human-only"),
         _g("MEMO_ASK_GAPS_ENABLED", "manual", "ask-path UX nudge; no retrieval metric"),
+        _g(
+            "MEMO_PROACTIVE_ENABLED",
+            "manual",
+            "proactive engine (statusline badge, urgent push, memo digest); UX/ops "
+            "surface, not recall-measurable",
+        ),
         _g("MEMO_SECRET_STORAGE_ENABLED", "manual", "security opt-in; human-only, never auto"),
         _g(
             "MEMO_SAMPLING_SYNTH_ENABLED",
