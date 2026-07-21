@@ -24,6 +24,7 @@ from memo.memory.record import (
     strip_llm_output,
 )
 from memo.prompt_overrides import resolve_prompt
+from memo.tiers import SENSITIVE_TYPES
 
 
 def _sort_updated_utc(value: Any) -> _dt.datetime:
@@ -392,7 +393,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
         if type_ is not None:
             items = self._pull_embeddings(type_filter=type_)
         else:
-            items = self._pull_embeddings(exclude_types={"reference", "secret"})
+            items = self._pull_embeddings(exclude_types={"reference"} | SENSITIVE_TYPES)
         if not items:
             return []
         clusters = self._greedy_cluster(items, threshold)
@@ -561,7 +562,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
         # 1) Pull all non-synthesis, non-reference embeddings and
         # 2) greedy single-link cluster (shared with consolidation; numpy fast
         #    path applies here too now).
-        items = self._pull_embeddings(exclude_types={"reference", "synthesis"})
+        items = self._pull_embeddings(exclude_types={"reference", "synthesis"} | SENSITIVE_TYPES)
         if not items:
             return []
         clusters = self._greedy_cluster(items, threshold)
