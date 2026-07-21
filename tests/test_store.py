@@ -699,3 +699,138 @@ def test_embedder_version_error_message_is_actionable(tmp_path: Path):
     assert "vendor/OldModel" in msg
     assert "vendor/NewModel" in msg
     assert "memo reindex --rebuild" in msg
+
+
+def test_embedder_version_legacy_index_not_silently_stamped(tmp_path: Path, caplog):
+    """Regression: opening a pre-schema_meta index that already contains
+    vectors must NOT stamp the current model onto it — that vector space is
+    unknown (possibly a different same-width model) and stamping would disarm
+    the mismatch guard forever. It warns (pointing at reindex --rebuild) and
+    leaves schema_meta unstamped until a real rebuild stamps it."""
+    import logging
+
+    db = tmp_path / "legacy.db"
+    _legacy_vec_db(db)
+
+    with caplog.at_level(logging.WARNING, logger="memo.store.schema"):
+        s = VecStore(db, dims=4, embedder_model="vendor/Model-B")
+    keys = {r["key"] for r in s._conn.execute("SELECT key FROM schema_meta").fetchall()}
+    assert "embedder_model" not in keys, "legacy index must not be blessed as the current model"
+    assert any("reindex --rebuild" in rec.getMessage() for rec in caplog.records)
+    s.close()
+
+    # Reopening — even with another model — must neither raise a bogus
+    # mismatch nor adopt that model either.
+    s2 = VecStore(db, dims=4, embedder_model="vendor/Model-C")
+    keys = {r["key"] for r in s2._conn.execute("SELECT key FROM schema_meta").fetchall()}
+    assert "embedder_model" not in keys
+    s2.close()
+
+
+# ── Soft-delete visibility on meta read surfaces ──────────────────────────
+
+
+def test_soft_deleted_rows_hidden_from_meta_queries(store: VecStore):
+    """Regression: list_by_tag / records_around_created / chunks_by_parent /
+    chunks_adjacent must not resurface soft-deleted tombstones (soft delete
+    is default ON). chunks_by_parent_id deliberately still returns them so
+    delete/maintain can cascade hard-deletes over stale chunks."""
+
+    def _put(id_: str, created: str, seq: int) -> None:
+        store.upsert(
+            id_=id_,
+            path=f"memory/{id_}.md",
+            title=f"T {id_}",
+            type_="note",
+            tags=["shared-tag"],
+            created=created,
+            updated=created,
+            body_hash="h",
+            embedding=_emb(1, 0, 0, 0),
+            extra={"parent_path": "notes/parent.md", "parent_id": "parent-1", "chunk_seq": seq},
+        )
+
+    _put("keep1", "2026-01-01T00:00:00+00:00", 1)
+    _put("gone1", "2026-01-02T00:00:00+00:00", 2)
+    _put("keep2", "2026-01-03T00:00:00+00:00", 3)
+    assert store.delete("gone1") is True
+    # The meta row survives as a tombstone (soft delete keeps it for restore).
+    row = store._conn.execute("SELECT deleted_at FROM meta WHERE id = 'gone1'").fetchone()
+    assert row is not None and row["deleted_at"]
+
+    assert {r["id"] for r in store.list_by_tag("shared-tag")} == {"keep1", "keep2"}
+    around = store.records_around_created("2026-01-01T12:00:00+00:00", before=2, after=2)
+    assert {r["id"] for r in around} == {"keep1", "keep2"}
+    assert {r["id"] for r in store.chunks_by_parent("notes/parent.md", limit=10)} == {
+        "keep1",
+        "keep2",
+    }
+    assert {r["id"] for r in store.chunks_adjacent("notes/parent.md", 2, before=1, after=1)} == {
+        "keep1",
+        "keep2",
+    }
+    # Cascade/prune path must still see the tombstone.
+    assert {r["id"] for r in store.chunks_by_parent_id("parent-1")} == {"keep1", "gone1", "keep2"}
+
+
+# ── Tantivy dual-write ordering ───────────────────────────────────────────
+
+
+def test_tantivy_write_lock_spans_sqlite_commit(tmp_path: Path):
+    """Regression: the tantivy dual-write must follow sqlite commit order.
+    The write lock has to be held across the sqlite tx, so a writer that is
+    mid-tantivy-write blocks a concurrent writer's sqlite COMMIT — not just
+    its tantivy write. Otherwise B can commit sqlite v2 after A committed v1
+    but index tantivy v2 BEFORE A indexes v1, leaving tantivy permanently
+    serving the older version."""
+    import threading
+
+    s = VecStore(tmp_path / "vec.db", dims=4)
+    in_tantivy = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    class _StubTantivy:
+        def delete_document(self, id_: str) -> None:
+            pass
+
+        def add_document(self, id_: str, title: str, tags: str, body: str) -> None:
+            calls.append(title)
+            in_tantivy.set()
+            release.wait(timeout=10)
+
+        def commit(self) -> None:
+            pass
+
+    s._get_tantivy = lambda: _StubTantivy()  # type: ignore[method-assign]
+
+    def _upsert(title: str) -> None:
+        s.upsert(
+            id_="abc",
+            path="memory/x.md",
+            title=title,
+            type_="note",
+            tags=[],
+            created="t",
+            updated="t",
+            body_hash="h",
+            embedding=_emb(1, 0, 0, 0),
+        )
+
+    a = threading.Thread(target=_upsert, args=("v1",))
+    a.start()
+    assert in_tantivy.wait(timeout=10)  # A committed sqlite v1, now mid-tantivy-write
+    b = threading.Thread(target=_upsert, args=("v2",))
+    b.start()
+    b.join(timeout=0.5)  # give B time to (wrongly) commit / (rightly) block
+    row = s._conn.execute("SELECT title FROM meta WHERE id = 'abc'").fetchone()
+    assert row["title"] == "v1", "concurrent writer committed sqlite while A held the dual-write"
+    release.set()
+    a.join(timeout=10)
+    b.join(timeout=10)
+    assert not a.is_alive() and not b.is_alive()
+    row = s._conn.execute("SELECT title FROM meta WHERE id = 'abc'").fetchone()
+    assert row["title"] == "v2"
+    # tantivy write order matches sqlite commit order.
+    assert calls == ["v1", "v2"]
+    s.close()

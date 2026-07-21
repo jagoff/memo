@@ -694,6 +694,11 @@ class _SchemaMixin(_StoreBase):
         On subsequent opens: SELECT and compare. A mismatch raises StorageError
         with a clear instruction to run 'memo reindex --rebuild'.
 
+        A legacy (pre-schema_meta) index that already contains vectors is
+        never stamped with the current model — that would silently bless an
+        unknown vector space. It warns and stays unstamped until
+        'memo reindex --rebuild' re-embeds and stamps it.
+
         Bypassed when:
         - MEMO_SKIP_MODEL_VERSION_CHECK=1  (tests with stub embedders)
         - The stored model name is 'stub'  (legacy test DBs)
@@ -719,6 +724,30 @@ class _SchemaMixin(_StoreBase):
         # or model contains "stub").
         if not current_model or "stub" in current_model.lower():
             return
+
+        stamped_row = self._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'embedder_model'"
+        ).fetchone()
+        if stamped_row is None:
+            # A pre-schema_meta index that already contains vectors is an
+            # UNKNOWN vector space: stamping the current model would silently
+            # bless it and permanently disarm the mismatch guard (the vectors
+            # may have been built by a different same-width model). Warn and
+            # leave it unstamped — `memo reindex --rebuild` re-embeds from the
+            # markdown source of truth and stamps (replace_memory_index).
+            # Absent stamps keep the pre-stamp behaviour in the self-describing
+            # readers (config._index_embedder_profile derives the model from
+            # dims; runtime.mcp._actual_embedder_config falls back gracefully).
+            has_vectors = self._conn.execute("SELECT 1 FROM vec LIMIT 1").fetchone() is not None
+            if has_vectors:
+                _log.warning(
+                    "index predates embedder version stamping and already has "
+                    "vectors; cannot verify they were built with %s (%dd). "
+                    "Run 'memo reindex --rebuild' to re-embed and stamp the index.",
+                    current_model,
+                    current_dims,
+                )
+                return
 
         with self._tx() as cx:
             cx.execute(
