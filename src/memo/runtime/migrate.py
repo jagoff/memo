@@ -195,7 +195,10 @@ def migrate_vault(
         moved = _bucket_by_project(cfg)
         console.print(f"[green]✓[/green] bucketed {moved} memory file(s) by project")
         mem = Memory(cfg)
-        mem.reindex()
+        try:
+            mem.reindex()
+        finally:
+            mem.close()
         console.print(
             "[dim]reindexed (paths updated). [[id]] wikilinks are unaffected; "
             "Obsidian path-links to moved files would change.[/dim]"
@@ -262,17 +265,27 @@ def migrate_vault(
     if existing_cfg.is_file():
         shutil.copy2(existing_cfg, snapshot)
         console.print(f"[green]✓[/green] config snapshot → {snapshot} (use --rollback to restore)")
+    # Preserve single_db: rewriting the config without it silently reverts a
+    # consolidated install to sidecar mode, orphaning the folded-in stores.
     if into_vault:
         cfg_path = write_config_file(
-            data_dir=cfg.data_dir, vault_path=chosen_vault, memories_in_vault=True
+            data_dir=cfg.data_dir,
+            vault_path=chosen_vault,
+            memories_in_vault=True,
+            single_db=cfg.single_db,
         )
     else:
-        cfg_path = write_config_file(data_dir=dst, vault_path=chosen_vault)
+        cfg_path = write_config_file(
+            data_dir=dst, vault_path=chosen_vault, single_db=cfg.single_db
+        )
     console.print(f"[green]✓[/green] config: {cfg_path}")
 
     new_cfg = Config.from_env()
     mem = Memory(new_cfg)
-    counts = mem.reindex()
+    try:
+        counts = mem.reindex()
+    finally:
+        mem.close()
     console.print(
         f"[green]✓[/green] reindex: checked {counts['checked']}  "
         f"added {counts['added']}  reindexed {counts['reindexed']}  "
