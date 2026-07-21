@@ -268,9 +268,9 @@ class _RerankOpsMixin(_MemoryBase):
         hits: list[MemoryRecord],
         query_emb: list[float],
         *,
-        sim_threshold: float = 0.85,
-        boost_per_vote: float = 0.15,
-        boost_cap: float = 0.6,
+        sim_threshold: float | None = None,
+        boost_per_vote: float | None = None,
+        boost_cap: float | None = None,
     ) -> list[MemoryRecord]:
         """Filter/boost hits using prior votes for the user query.
 
@@ -293,15 +293,19 @@ class _RerankOpsMixin(_MemoryBase):
         from memo.flags import flag_float
 
         # Knobs live in the flags registry (typed + validated by `memo config
-        # validate`); the kwargs above are the in-code defaults the registry
-        # mirrors. `flag_float` returns env-or-registry-default — never raw
-        # os.environ (CLAUDE.md rule). Caller override > env flag > function kwarg.
-        sim_threshold_flag = flag_float("MEMO_FEEDBACK_SIM_THRESHOLD")
-        sim_threshold = sim_threshold if sim_threshold is not None else sim_threshold_flag
-        boost_per_vote_flag = flag_float("MEMO_FEEDBACK_BOOST_PER_VOTE")
-        boost_per_vote = boost_per_vote if boost_per_vote is not None else boost_per_vote_flag
-        boost_cap_flag = flag_float("MEMO_FEEDBACK_BOOST_CAP")
-        boost_cap = boost_cap if boost_cap is not None else boost_cap_flag
+        # validate`); the registry defaults mirror the documented
+        # 0.85 / 0.15 / 0.6. `flag_float` returns env-or-registry-default —
+        # never raw os.environ (CLAUDE.md rule). Kwargs default to None so
+        # resolution is: caller override > env flag > registry default.
+        if sim_threshold is None:
+            _flag = flag_float("MEMO_FEEDBACK_SIM_THRESHOLD")
+            sim_threshold = 0.85 if _flag is None else _flag
+        if boost_per_vote is None:
+            _flag = flag_float("MEMO_FEEDBACK_BOOST_PER_VOTE")
+            boost_per_vote = 0.15 if _flag is None else _flag
+        if boost_cap is None:
+            _flag = flag_float("MEMO_FEEDBACK_BOOST_CAP")
+            boost_cap = 0.6 if _flag is None else _flag
         # Temporal decay: a positive vote's boost fades with its age (half-life
         # MEMO_FEEDBACK_HALFLIFE_DAYS, default 180; 0 disables). Keeps recent
         # feedback authoritative without letting a year-old 👍 pin a stale

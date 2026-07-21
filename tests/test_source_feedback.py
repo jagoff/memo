@@ -197,3 +197,39 @@ def test_rebuild_feedback_vecs_uses_embed_query_signature(mem_with_stub: Memory)
     assert store.rebuild_feedback_vecs(mem_with_stub.embedder.embed_query) == 1
     # Idempotent: a second pass finds nothing to rebuild.
     assert store.rebuild_feedback_vecs(mem_with_stub.embedder.embed_query) == 0
+
+
+def test_feedback_sim_threshold_flag_takes_effect(mem_with_stub: Memory, monkeypatch):
+    """MEMO_FEEDBACK_SIM_THRESHOLD must reach `_apply_source_feedback`.
+
+    Regression: the kwargs carried non-None defaults, so the `is not None`
+    flag fallback never fired and the env flag was silently ignored. With an
+    impossible cosine threshold (>1.0) the up-vote can never match, so the
+    boost must NOT apply."""
+    rec = mem_with_stub.save(content="alpha body", title="Alpha")
+    baseline = mem_with_stub.search("alpha", limit=5)
+    score_before = next(h.score for h in baseline if h.id == rec.id)
+    mem_with_stub.feedback_record(rec.id, query_text="alpha", rating="up")
+    monkeypatch.setenv("MEMO_FEEDBACK_SIM_THRESHOLD", "1.5")
+    after = mem_with_stub.search("alpha", limit=5)
+    score_after = next(h.score for h in after if h.id == rec.id)
+    assert score_after == pytest.approx(score_before or 0.0)
+
+
+def test_feedback_boost_cap_flag_takes_effect(mem_with_stub: Memory, monkeypatch):
+    """MEMO_FEEDBACK_BOOST_CAP must cap the applied boost (same regression
+    class as above: env flag discarded by non-None kwarg defaults). A fresh
+    thumbs_up contributes 0.15, so a 0.01 cap must clamp the delta. Unit-level
+    against `_apply_source_feedback` so downstream score scaling in the search
+    pipeline can't mask the cap."""
+    from dataclasses import replace
+
+    rec = mem_with_stub.save(content="alpha body", title="Alpha")
+    mem_with_stub.feedback_record(rec.id, query_text="alpha", rating="up")
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    hits = [replace(fetched, score=0.5)]
+    emb = mem_with_stub.embedder.embed_query("alpha")
+    monkeypatch.setenv("MEMO_FEEDBACK_BOOST_CAP", "0.01")
+    out = mem_with_stub._apply_source_feedback(hits, emb)
+    assert out[0].score == pytest.approx(0.51, abs=1e-4)
