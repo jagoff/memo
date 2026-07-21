@@ -72,8 +72,9 @@ After every `pyproject.toml` version bump and PyPI publish:
 ```bash
 # In the memo repo
 NEW_VERSION=<next-version>
-URL="https://github.com/jagoff/memo/archive/refs/tags/v${NEW_VERSION}.tar.gz"
-SHA=$(curl -sL "$URL" | shasum -a 256 | awk '{print $1}')
+PYPI_JSON=$(curl -fsSL "https://pypi.org/pypi/mlx-memo/${NEW_VERSION}/json")
+URL=$(jq -r '.urls[] | select(.packagetype == "sdist") | .url' <<<"$PYPI_JSON")
+SHA=$(jq -r '.urls[] | select(.packagetype == "sdist") | .digests.sha256' <<<"$PYPI_JSON")
 
 # Update the formula in this repo (docs/homebrew/mlx-memo.rb):
 #   url "..."  ← new URL
@@ -85,10 +86,10 @@ git commit -am "mlx-memo $NEW_VERSION"
 git push
 ```
 
-Do not bump this formula to a version until the matching GitHub tag exists and
-its source tarball `sha256` has been calculated. Between a source-tree version
-bump and a published tag, `memo release check` reports formula drift as a
-warning; use `memo release check --strict-docs` after tagging.
+Do not bump this formula to a version until the matching PyPI sdist exists and
+its published `sha256` has been copied into the formula. Between a source-tree
+version bump and a published sdist, `memo release check` reports formula drift
+as a warning; use `memo release check --strict-docs` after publishing.
 
 ## Why a personal tap, not homebrew-core?
 

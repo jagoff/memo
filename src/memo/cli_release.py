@@ -471,6 +471,25 @@ def _check_formula(
     if match and match.group(1) != version:
         _add_doc_drift(destination, path=formula, expected=version, found=match.group(1))
 
+    url_match = re.search(r'^\s*url\s+"(?P<url>[^"]+)"', text, flags=re.MULTILINE)
+    if url_match:
+        url = url_match.group("url")
+        if not re.fullmatch(
+            rf"https://files\.pythonhosted\.org/packages/(?!source/)[^\s]+/"
+            rf"mlx_memo-{re.escape(version)}\.tar\.gz",
+            url,
+        ):
+            destination.append(
+                f"{formula.relative_to(repo)} should use the exact PyPI source distribution URL"
+            )
+
+    arch_dependency = text.find("depends_on arch:")
+    macos_dependency = text.find("depends_on :macos")
+    if arch_dependency >= 0 and macos_dependency >= 0 and arch_dependency > macos_dependency:
+        destination.append(
+            f"{formula.relative_to(repo)} dependency order should put arch before macos"
+        )
+
 
 def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseCheckReport:
     """Validate that the checkout is release-ready.
