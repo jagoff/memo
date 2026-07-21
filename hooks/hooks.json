@@ -8,7 +8,7 @@
           {
             "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo sync pull --quiet",
-            "timeout": 90000,
+            "timeout": 90,
             "async": true,
             "statusMessage": "memo: pulling cross-Mac memories\u2026",
             "comment": "Cross-Mac git pull + signal merge + reindex (F5). --quiet soft-fails (exit 0) when the memorias dir isn't a git clone, so non-synced installs are unaffected. Async so startup isn't blocked."
@@ -21,7 +21,7 @@
           {
             "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo reflect --last --if-due --quiet",
-            "timeout": 90000,
+            "timeout": 90,
             "async": true,
             "comment": "Synthesize the previous session into durable memorias before briefing. --if-due skips if already done. Runs async so startup isn't blocked."
           },
@@ -89,7 +89,7 @@
           {
             "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo sync auto",
-            "timeout": 90000,
+            "timeout": 90,
             "async": true,
             "comment": "Durable in-session GitHub sync: self-throttled (MEMO_SYNC_PUSH_DEBOUNCE_S / MEMO_SYNC_PULL_INTERVAL_S) so a crashed/long session doesn't strand hours of memorias until Stop, and a long session converges on another Mac's pushes without a restart. Cheap no-op (timestamp check, no git) when not due; soft no-ops on non-git installs. Async so it never touches the recall 5s budget. Disable with MEMO_SYNC_AUTO=0."
           }
@@ -121,7 +121,7 @@
           {
             "type": "command",
             "command": "MEMO_NONINTERACTIVE=1 memo sync once --quiet",
-            "timeout": 90000,
+            "timeout": 90,
             "async": true,
             "statusMessage": "memo: pushing memories cross-Mac\u2026",
             "comment": "Final flush via the single lock-guarded machine coordinator (pull-rebase-before-push). Listed last so this session's capture-stop write is on disk first. Lock-guarded so it never races the per-prompt `sync auto` or a sibling session. --quiet soft no-ops on local-tier (no remote) installs."

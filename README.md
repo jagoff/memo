@@ -62,7 +62,7 @@ exact flags and boundaries.
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
-`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your own machine** — **macOS on Apple Silicon** via [Apple MLX](https://github.com/ml-explore/mlx), or **Linux / Ubuntu on a CPU `sentence-transformers` backend** (`pipx install "mlx-memo[cpu]"`, see [docs/ubuntu.md](docs/ubuntu.md)). Each memory is a plain Markdown file; embeddings live in a single sqlite file; the embedder, reranker, and LLM run in-process — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
+`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your own machine** — **macOS on Apple Silicon** via [Apple MLX](https://github.com/ml-explore/mlx), or **Linux / Ubuntu on a CPU `sentence-transformers` backend** (see [docs/ubuntu.md](docs/ubuntu.md)). Each memory is a plain Markdown file; embeddings live in a single sqlite file; the embedder, reranker, and LLM run in-process — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
 
 <div align="center">
 
@@ -79,7 +79,7 @@ exact flags and boundaries.
 ## Install — one step
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | bash
 ```
 
 The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, Devin Desktop, OpenCode).
@@ -95,7 +95,7 @@ brew tap jagoff/memo && brew install mlx-memo
 > Keep memo **isolated as its own tool** (uv tool / pipx / Homebrew). Don't vendor it inside another project's `.venv`. `memo doctor --strict-runtime` verifies the install.
 
 **On Linux, or just want to try it without installing anything?** Run the Docker
-image (CPU backend, cross-platform — search/recall/save; the reranker + `ask`/
+image (CPU backend on Linux — search/recall/save; the reranker + `ask`/
 `synthesize`/`dream` verbs are Apple-Silicon-only):
 
 ```bash
@@ -109,7 +109,7 @@ First install downloads ~8 GB of MLX models (5–15 min); later installs hit the
 **Migrating from another Mac?** Install first, then restore your corpus:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 ```
 
@@ -168,7 +168,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 ## Requirements
 
 - **macOS on Apple Silicon** (M1–M4) — MLX is the load-bearing piece and the only path with the reranker + LLM features (ask / synthesize / dream).
-- **Linux / Ubuntu / Intel Mac** — supported as a **standalone** install via a CPU `sentence-transformers` backend (search + recall + save, no MLX). One command: `pipx install "mlx-memo[cpu]"`. See **[docs/ubuntu.md](docs/ubuntu.md)** for what works and the trade-offs.
+- **Linux / Ubuntu** — supported as a **standalone** install via a CPU `sentence-transformers` backend (search + recall + save, no MLX). The install command in **[docs/ubuntu.md](docs/ubuntu.md)** uses the official PyTorch CPU index to avoid downloading CUDA libraries. Intel Macs are unsupported because current PyTorch releases do not ship Python 3.13 wheels for that platform.
 - **~8 GB** free disk for the default model set (the installer downloads it).
 - *Optional:* an Obsidian vault. Without one, memo defaults to `~/Documents/memo/`.
 
@@ -179,7 +179,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 memo installs itself if you hand the repo (or just the install line) to an AI agent:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | bash
 memo doctor --strict-runtime     # verify runtime is healthy
 ```
 
@@ -207,7 +207,7 @@ help and the existing `config show|validate|set|unset` commands remain headless.
 
 ## Core features
 
-- **Ambient recall** — every prompt silently consults memory and injects top hits as context. Warm recall daemon keeps it under **<200 ms**. No `/remember` calls.
+- **Ambient recall** — every prompt silently consults memory and injects top hits as context. A warm recall daemon keeps it fast (p50 ~0.6 s on the benchmark corpus — see [docs/BENCHMARK.md](docs/BENCHMARK.md)). No `/remember` calls.
 - **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate. The corpus grows on its own.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery.
 - **Cross-agent resume** — `memo resume` reopens any recent session from **any** agent (Claude Code, Codex, Devin, Gemini, OpenCode) in one arrow-key picker, resumed natively. [Details ↓](#-resume-any-session--from-any-agent)
@@ -278,7 +278,7 @@ memo dream if-due              # no-op unless > 24h since last run (for cron)
 
 The 7 phases: **(1) Orientation** (inventory corpus), **(2) Signal gather** (mine transcript labels), **(3) Heal** (resolve conflicts + consolidate duplicates), **(4) Prune** (archive 365d+ untouched, decay idle >30d), **(5) Enrich** (synthesize cross-cluster insights, extract entities), **(6) Optimize** (prune low-quality, evict if full, compress context), **(7) Prewarm** (cache top-100 query embeddings for <200ms recall next session).
 
-Every phase logs to a **receipt** (`~/.memo-state/dream/last.json`): timestamp, duration, phase counts (resolved, consolidated, archived, synthesized, etc.), and any errors. Failures never silently vanish — they live in the receipt. A failed phase doesn't stop the pipeline; subsequent phases run anyway.
+Every phase logs to a **receipt** (`<state_dir>/dream/last.json` — `~/.local/share/memo/dream/last.json` by default): timestamp, duration, phase counts (resolved, consolidated, archived, synthesized, etc.), and any errors. Failures never silently vanish — they live in the receipt. A failed phase doesn't stop the pipeline; subsequent phases run anyway.
 
 <div align="center">
 
@@ -289,7 +289,7 @@ Every phase logs to a **receipt** (`~/.memo-state/dream/last.json`): timestamp, 
 **Optional self-improvement** (all default OFF):
 
 - **Tuner** (`MEMO_DREAM_TUNE_ENABLED=1`) — mines ground-truth labels from real usage, auto-tunes `MEMO_RECALL_MIN_SIM`, auto-reverts if eval baseline regresses. `memo dream tune`.
-- **Consolidate** (`MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED=1`) — abstracts recurring cross-session work into synthesis memories. `memo dream consolidate`.
+- **Consolidate** (`MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED=1`) — abstracts recurring cross-session work into synthesis memories. `memo dream consolidate-episodes`.
 - **Anticipate** (`MEMO_DREAM_ANTICIPATE_ENABLED=1`) — surfaces unmet gaps + hot queries, pre-warms their embeddings. `memo dream anticipate`.
 
 memo is the **only MCP memory system that self-optimizes**: auto-tuning recall quality, auto-detecting gaps, consolidating patterns — all from real usage, all nightly, all without asking.
@@ -325,7 +325,7 @@ memo entities                          # list extracted entities
 memo links --id abc123                 # backlinks + outlinks
 ```
 
-Entity extraction uses a dependency-free regex backend. For code-heavy corpora, memo can merge a **[codegraph](https://github.com/colbymchenry/codegraph) symbol graph** as the graph's primary layer (opt-in, `MEMO_GRAPH_USE_CODEGRAPH`) — callers, callees, and imports become first-class edges, so recall and `memo graph path` reason over real code structure, not just text similarity. The merged graph also powers the `memo_graph` MCP tool and the entity-centric "Knowledge map" briefing.
+Entity extraction uses a dependency-free regex backend. For code-heavy corpora, memo can merge a **[codegraph](https://github.com/colbymchenry/codegraph) symbol graph** as the graph's primary layer (on by default; disable with `MEMO_GRAPH_USE_CODEGRAPH=0`) — callers, callees, and imports become first-class edges, so recall and `memo graph path` reason over real code structure, not just text similarity. The merged graph also powers the `memo_graph` MCP tool and the entity-centric "Knowledge map" briefing.
 
 Graph ranking is opt-in and hub-suppressed: `MEMO_GRAPH_SIGNAL_ENABLED=1 MEMO_GRAPH_REASON_ENABLED=1 memo search "recall hook budget" --explain` adds bounded graph boosts plus a human/JSON `graph_reason` field on graph-touched hits. Semantic graph relations are also opt-in (`MEMO_GRAPH_SEMANTIC_RELATIONS=1`) and live in the rebuildable graph DB; Markdown remains the source of truth. `memo eval recall --graph-ab` compares the same recall configs with graph signal off/on before you make graph ranking part of a gate.
 
@@ -461,7 +461,9 @@ For an authenticated network bind, use `memo http-api --host 0.0.0.0 --allow-non
 | `Qwen3-Embedding-4B-4bit` | 2560 | ~3 GB | Higher recall quality |
 | `Qwen3-Embedding-8B-4bit` | 4096 | ~5 GB | Maximum quality |
 
-Switch with `MEMO_EMBEDDER_MODEL` + `MEMO_EMBEDDER_DIMS` (requires `memo reindex --rebuild`).
+Switch with `MEMO_EMBEDDER_MODEL` + its exact 40-character
+`MEMO_EMBEDDER_REVISION` + `MEMO_EMBEDDER_DIMS` (requires
+`memo reindex --rebuild`). Audited built-in models already carry immutable pins.
 
 ## Documentation
 

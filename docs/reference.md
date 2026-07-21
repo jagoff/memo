@@ -25,9 +25,9 @@ inside another project's `.venv`; the MLX runtime, model cache, MCP server,
 sqlite state, and CLI should move together as one subsystem.
 
 ```bash
-# One-line installer (pipx under the hood, installs GitHub master,
+# One-line installer (uv/pipx under the hood, pins the matching release,
 # and configures Claude Code + Codex + OpenCode + Devin Desktop when available)
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | bash
 # or install the latest published PyPI release explicitly
 pipx install mlx-memo
 # or
@@ -43,8 +43,8 @@ your shell.
 
 > The PyPI distribution is **`mlx-memo`** as of 0.5.0. Earlier versions shipped
 > as `memo-mcp`; the binary names haven't changed, so existing MCP configs keep
-> working. The one-line installer installs GitHub `master` by default so it can
-> deploy repo changes before the next PyPI release exists.
+> working. The one-line installer pins the package version matching the script's
+> release tag. Development checkouts remain available through `MEMO_INSTALL_SPEC`.
 
 If you are developing this repo and want the real system install to use your
 checkout:
@@ -59,22 +59,22 @@ memo --version
 
 ```bash
 # Install the latest published PyPI release instead of GitHub master.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
 
 # Pin a published PyPI version.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_VERSION=0.6.0 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | MEMO_VERSION=0.6.0 bash
 
 # Install from an explicit pipx spec (local checkout, git ref, wheel, etc.).
 MEMO_INSTALL_SPEC=/path/to/memo ./install.sh
 
 # Skip agent-client configuration during install.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
 
 # Force-skip the MLX model download (models load lazily on first use).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
 
 # Force-yes the MLX model download (skip the interactive confirmation).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
 ```
 
 **Model download** is part of memo's structure (embedder + reranker + chat
@@ -111,11 +111,11 @@ hf download mlx-community/Qwen3-4B-Instruct-2507-4bit-DWQ-2510
 ### Installing on another Mac
 
 For a fresh Apple Silicon Mac, run the one-line installer first, then bring over
-the corpus. (On **Linux / Ubuntu**, install the CPU backend with
-`pipx install "mlx-memo[cpu]"` instead — see [ubuntu.md](ubuntu.md).)
+the corpus. On **Linux / Ubuntu**, use the CPU-index install command in
+[ubuntu.md](ubuntu.md).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | bash
 memo doctor --strict-runtime
 memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
 ```
@@ -672,7 +672,7 @@ memo session checkpoint           # snapshot current session state (Stop hook)
 memo session recent --limit 5     # list recent sessions
 
 # ── Semantic map ───────────────────────────────────────────────────────────
-memo map                         # generate + open in browser (UMAP or PCA → Plotly HTML)
+memo map                         # generate + open in browser (UMAP or PCA → local Canvas HTML)
 memo map --output ~/Desktop/map.html --no-open
 memo map --limit 200 --no-animate
 
@@ -749,7 +749,7 @@ names remain hidden compatibility aliases.
 ## Configuration
 
 All env vars are optional; defaults aim at a fresh Apple Silicon Mac (or a
-Linux/Ubuntu `[cpu]` install — see [ubuntu.md](ubuntu.md)). In an interactive
+Linux/Ubuntu CPU install — see [ubuntu.md](ubuntu.md)). In an interactive
 terminal, `memo config` opens memo's terminal-only configuration center. It is a
 native TUI, not a browser or web server. On first run, its four-step wizard covers
 storage, model profile, integrations/recall, and privacy/capture before showing an
@@ -815,13 +815,21 @@ read-only, `$EDITOR`, and backup restore paths.
 |---|---|---|
 | `MEMO_MODEL_PROFILE` | `balanced` | Model bundle: `light`, `balanced`, or `quality` |
 | `MEMO_LLM_MODEL` | `mlx-community/Qwen2.5-7B-Instruct-4bit` | Chat tier |
+| `MEMO_LLM_REVISION` | pinned 40-char commit | Immutable chat weights |
 | `MEMO_HELPER_MODEL` | `mlx-community/Qwen3-4B-4bit` | Helper tier in the default `balanced` profile |
+| `MEMO_HELPER_REVISION` | pinned 40-char commit | Immutable helper weights |
 | `MEMO_EMBEDDER_MODEL` | `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Embedder |
+| `MEMO_EMBEDDER_REVISION` | pinned 40-char commit | Immutable MLX embedder weights |
 | `MEMO_EMBEDDER_DIMS` | `1024` | Embedding dim — must match the embedder |
 | `MEMO_RERANKER_ENABLED` | `1` in `balanced`/`quality` | Enable cross-encoder rerank for hybrid search |
 | `MEMO_RERANKER_MODEL` | `mku64/Qwen3-Reranker-0.6B-mlx-8Bit` | MLX reranker model |
+| `MEMO_RERANKER_REVISION` | pinned 40-char commit | Immutable reranker weights |
 | `MEMO_RERANK_INPUT_K` | `30` | Hybrid candidates sent to the reranker |
 | `MEMO_RERANK_FUSION_ALPHA` | `0.7` | Weight of reranker score vs RRF position bonus |
+
+Custom remote model IDs must be paired with an exact 40-character commit SHA
+using the corresponding `*_REVISION` setting (or `repo@sha`). Local filesystem
+paths are loaded directly. Branches, tags, and short hashes are rejected.
 
 **Search**
 
@@ -958,8 +966,6 @@ federation, and orchestration belong outside memo's surface.
 | Module | What it does |
 |---|---|
 | `collaborative` | Shared knowledge graph across multiple users |
-| `sharing` | Per-memory sharing links and permission grants |
-| `encryption` | AES-256-GCM file-level primitives (gated OFF; `MEMO_ENCRYPTION_ENABLED=1`) |
 | `contradict` | Contradiction and staleness radar with triage workflow |
 | `chunker` | Heading-aware sub-document chunking for long memories |
 | `crossref` | Obsidian `[[wikilink]]` backlink index and multi-hop traversal |
