@@ -487,3 +487,30 @@ def test_release_check_reports_homebrew_formula_drift(tmp_path: Path) -> None:
     assert any("mlx-memo.rb" in warning for warning in report.warnings)
     assert strict.ok is False
     assert any("mlx-memo.rb" in issue for issue in strict.issues)
+
+
+def test_release_check_reports_homebrew_formula_audit_drift(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
+    formula.parent.mkdir(parents=True)
+    formula.write_text(
+        "\n".join(
+            [
+                'url "https://github.com/jagoff/memo/archive/refs/tags/v1.2.3.tar.gz"',
+                "depends_on :macos",
+                "depends_on arch: :arm64",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+    strict = release_check_report(repo, strict_docs=True)
+
+    assert report.ok is True
+    assert any("PyPI source distribution" in warning for warning in report.warnings)
+    assert any("dependency order" in warning for warning in report.warnings)
+    assert strict.ok is False
+    assert any("PyPI source distribution" in issue for issue in strict.issues)
+    assert any("dependency order" in issue for issue in strict.issues)
