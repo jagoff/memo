@@ -452,6 +452,22 @@ class Memory(
 
         return _project_from_cwd()
 
+    def open_loops(self, limit: int = 5, *, days: int = 7) -> list[tuple[str, str]]:
+        """Recently-updated non-reference memories as `(id, title)` pairs.
+
+        Same "open loops" query as `briefing.py`'s "Open loops" section —
+        durable memories touched in the last `days` days, most-recent first.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(tz=UTC) - timedelta(days=days)).isoformat()
+        rows = self.store.list_recent(
+            limit=limit,
+            exclude_types={"reference", "secret"},
+            updated_since=cutoff,
+        )
+        return [(r.get("id") or "", r.get("title") or "—") for r in rows]
+
     def capability(self, name: str) -> Any:
         """Build and memoize an optional subsystem by registry name."""
         if name not in OPTIONAL_CAPABILITIES:
