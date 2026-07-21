@@ -153,9 +153,7 @@ def test_rebuild_flip_bypasses_guard_via_skip_env(
 # --------------------------------------------------------------------------- #
 # quant-flip rebuild recreates ONLY `vec`; repo_vec (reference tier) survives #
 # --------------------------------------------------------------------------- #
-def test_rebuild_flip_preserves_repo_vec(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_rebuild_flip_preserves_repo_vec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "vec.db"
     off = VecStore(db, dims=DIMS, embedder_model="realmodel", vec_quant="off")
     _row(off, "m1", _unit(1, 0))
@@ -229,9 +227,7 @@ def test_sync_int8_shard_imports_into_int8_store(tmp_path: Path) -> None:
         out = import_embed_cache(store, cache_dir)
         assert out["shards"] == 1
         assert out["imported"] == 1
-        cached = store.get_repo_embedding_cache(
-            model="realmodel", dims=DIMS, input_hashes=["h1"]
-        )
+        cached = store.get_repo_embedding_cache(model="realmodel", dims=DIMS, input_hashes=["h1"])
         assert "h1" in cached
         assert 0.5 < math.sqrt(sum(x * x for x in cached["h1"])) < 1.5
     finally:
