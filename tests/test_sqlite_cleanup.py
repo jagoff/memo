@@ -99,9 +99,15 @@ def test_vec_store_closes_worker_thread_connections(tmp_path: Path) -> None:
             thread.start()
         for thread in threads:
             thread.join()
-        # The store must retain every worker connection until explicit close;
-        # relying on thread-local finalizers is platform dependent.
-        assert len(store._conn_holders) == 5  # main thread + four workers
+        # Worker connections are strongly retained (never left to
+        # platform-dependent thread-local finalizers) until either close()
+        # or the dead-owner sweep on a later thread's _connect prunes them.
+        assert 2 <= len(store._conn_holders) <= 5  # main + last worker at minimum
+        # A new thread's _connect sweeps the (now dead) workers' holders.
+        sweeper = threading.Thread(target=store.count)
+        sweeper.start()
+        sweeper.join()
+        assert len(store._conn_holders) == 2  # main + sweeper; dead workers pruned
         store.close()
         gc.collect()
 
