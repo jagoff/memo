@@ -25,15 +25,31 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             image_path: Absolute path to the image file. The caller is
                 responsible for resolving Obsidian `![[...]]` syntax
-                to a real path on disk.
+                to a real path on disk. Must live under the configured
+                vault/data dir, the current working directory, Downloads,
+                Desktop, or Documents.
         """
         from pathlib import Path
 
         from memo.ocr import extract_text_cached, vision_available
+        from memo.server_import_export import _get_allowed_base_dirs, _is_subdir
 
         if not vision_available():
             return {"text": "", "cached": False, "error": "vision unavailable"}
-        path = Path(image_path)
+        path = Path(image_path).expanduser().resolve(strict=False)
+        # Allow-list: the same roots as the import/export tools plus the
+        # configured vault / data dirs (where indexed screenshots live).
+        # Blocks prompt-injected OCR reads of arbitrary files on disk.
+        allowed = [memory.cfg.data_dir, *_get_allowed_base_dirs()]
+        if memory.cfg.vault_path is not None:
+            allowed.append(memory.cfg.vault_path)
+        bases = [base.expanduser().resolve(strict=False) for base in allowed]
+        if not any(path == base or _is_subdir(path, base) for base in bases):
+            return {
+                "text": "",
+                "cached": False,
+                "error": "image path outside allowed directories",
+            }
         if not path.exists():
             return {"text": "", "cached": False, "error": "file not found"}
         cache_dir = memory.cfg.state_dir / "ocr_cache"
