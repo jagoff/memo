@@ -18,6 +18,20 @@ from memo.html_security import (
 )
 
 
+def _decode_embedding(blob: bytes, dims: int) -> list[float]:
+    """Decode a raw `vec` blob to floats, dtype-aware by length.
+
+    int8 (MEMO_VEC_QUANTIZE=int8) is 1 B/dim, dequantized (÷127); float32 is
+    4 B/dim. Length-based detection keeps this independent of the running
+    config, since the blob's dtype is whatever it was indexed with.
+    """
+    import struct
+
+    if len(blob) == dims:
+        return [x / 127.0 for x in struct.unpack(f"{dims}b", blob)]
+    return list(struct.unpack(f"<{len(blob) // 4}f", blob))
+
+
 def _render_map_html(data: dict[str, object], *, nonce: str | None = None) -> str:
     """Render corpus data without allowing it to escape into executable HTML."""
     nonce = nonce or new_csp_nonce()
@@ -66,7 +80,6 @@ def map_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -
     """
     import json as _json
     import sqlite3 as _sqlite3
-    import struct
     import webbrowser as _wb
     from pathlib import Path as _Path
 
@@ -126,8 +139,7 @@ def map_cmd(output: str | None, open_browser: bool, limit: int, animate: bool) -
         blob = row["embedding"]
         if blob is None:
             continue
-        n = len(blob) // 4
-        vec = list(struct.unpack(f"<{n}f", blob))
+        vec = _decode_embedding(blob, cfg.embedder_dims)
         if not vec:
             continue
         ids.append(row["id"])

@@ -218,11 +218,11 @@ class _ConsolidateOpsMixin(_MemoryBase):
         items: builtins.list[dict[str, Any]] = []
         for r in rows:
             blob = r["emb"]
-            if not blob or len(blob) % 4 != 0:
+            if not blob:
                 _log.warning("consolidate: skipping corrupt embedding for %s", r["id"][:12])
                 continue
             try:
-                emb = list(struct.unpack(f"<{len(blob) // 4}f", blob))
+                emb = self.store.unpack_embedding(blob)
             except struct.error:
                 _log.warning("consolidate: skipping corrupt embedding for %s", r["id"][:12])
                 continue
