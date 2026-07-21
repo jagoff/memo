@@ -108,9 +108,7 @@ class _DeleteOpsMixin(_MemoryBase):
         had_vector = self.store.has_vector(id_)
         blob = self.store.get_embedding_blob(id_) if had_vector else None
         if isinstance(blob, (bytes, bytearray)):
-            import struct
-
-            stored_embedding = list(struct.unpack(f"<{len(blob) // 4}f", blob))
+            stored_embedding = self.store.unpack_embedding(bytes(blob))
         elif isinstance(blob, (list, tuple)):
             stored_embedding = list(blob)
         stored_body_text = self.store.get_fts_body(id_)

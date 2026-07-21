@@ -351,6 +351,9 @@ class _SchemaMixin(_StoreBase):
         # whether the DB was just created or already existed — a binary upgraded
         # over an old DB hits the second path. Both are cheap no-ops once current.
         self._validate_vec_dims()
+        # Guard quant mode BEFORE _validate_vec_schema, whose in-place migration
+        # re-inserts stored `vec` blobs — a dtype mismatch there would corrupt.
+        self._validate_vec_quant()
         self._validate_vec_schema()
         self._ensure_secondary_indices()
         self._ensure_schema_meta_table()
@@ -528,9 +531,48 @@ class _SchemaMixin(_StoreBase):
         if not row or not row["sql"]:
             return None
         # Matches `embedding FLOAT[N]` (vec/repo_vec) and `query_emb FLOAT[N]`
-        # (source_feedback_vec) alike.
-        match = re.search(r"FLOAT\[(\d+)\]", str(row["sql"]))
+        # (source_feedback_vec) alike. Also `int8[N]` once the `vec` table is
+        # quantized — otherwise an int8 DDL would return None and silently
+        # disable the dims-mismatch guard.
+        match = re.search(r"(?:FLOAT|int8)\[(\d+)\]", str(row["sql"]))
         return int(match.group(1)) if match else None
+
+    def _vec_table_dtype(self, table: str) -> str:
+        """Physical vec0 element dtype for `table`, derived from its live DDL.
+
+        Returns ``"int8"`` when the column is declared ``int8[N]``, else
+        ``"off"`` (float32 — the historical default). The DDL is the single
+        source of truth for the quant guard: a self-written schema_meta stamp
+        would self-bless a legacy float32 DB opened under an int8 flag.
+        """
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+        if not row or not row["sql"]:
+            return "off"
+        return "int8" if re.search(r"\bint8\[\d+\]", str(row["sql"])) else "off"
+
+    def _vec_dtype_ddl(self) -> str:
+        """vec0 column type token for the main `vec` table (quant-dependent)."""
+        return "int8" if self._quant_int8 else "FLOAT"
+
+    def _vec_bind_new(self) -> str:
+        """Bind expression for a FRESH float32 embedding param going into `vec`.
+
+        Under int8 the L2-normalised float32 vector is quantized in SQL via
+        vec_quantize_int8(...,'unit'); the bound param stays serialize_float32
+        bytes either way (embeddings never leave float32 in RAM — MLX invariant).
+        """
+        return "vec_quantize_int8(vec_f32(?), 'unit')" if self._quant_int8 else "?"
+
+    def _vec_bind_stored(self) -> str:
+        """Bind expression for re-inserting a blob ALREADY read from `vec`.
+
+        Under int8 that blob is already 1 B/dim int8 bytes, so it must be typed
+        with vec_int8() (never re-quantized through vec_f32, which would
+        reinterpret the bytes as float32 and corrupt the vector)."""
+        return "vec_int8(?)" if self._quant_int8 else "?"
 
     def _create_vec_tables(self, conn: sqlite3.Connection) -> None:
         """(Re)create the three vec0 virtual tables at the current dimensionality.
@@ -552,7 +594,7 @@ class _SchemaMixin(_StoreBase):
         """
         conn.execute(
             f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0("
-            f"id TEXT PRIMARY KEY, embedding FLOAT[{self.dims}] distance_metric=cosine, "
+            f"id TEXT PRIMARY KEY, embedding {self._vec_dtype_ddl()}[{self.dims}] distance_metric=cosine, "
             f"type TEXT)"
         )
         conn.execute(
@@ -634,9 +676,13 @@ class _SchemaMixin(_StoreBase):
                 cx.execute(f"DROP TABLE {table}")
                 self._create_vec_tables(cx)
                 if payload:
+                    # The `vec` blob is already the stored dtype (int8 bytes
+                    # when quantized) — re-type it with vec_int8(), never
+                    # re-quantize. repo_vec/source_feedback_vec stay float32.
+                    vec_bind = self._vec_bind_stored() if table == "vec" else "?"
                     cx.executemany(
                         f"INSERT INTO {table} ({pk_col}, {new_col}, {vec_col}) "  # noqa: S608
-                        f"VALUES (?, ?, ?)",
+                        f"VALUES (?, ?, {vec_bind})",
                         payload,
                     )
             _log.info("migrated `%s`: %d vectors preserved", table, len(payload))
@@ -675,6 +721,36 @@ class _SchemaMixin(_StoreBase):
                     f"Or check your model profile: MEMO_MODEL_PROFILE (current: {self.dims}D) "
                     f"or MEMO_EMBEDDER_DIMS (current: {self.dims})."
                 )
+
+    def _validate_vec_quant(self) -> None:
+        """Guard the on-disk `vec` element dtype against the configured quant mode.
+
+        DDL-derived (never a self-written stamp): the physical `vec` column type
+        is the source of truth. A float32 index opened under MEMO_VEC_QUANTIZE=int8
+        (or vice-versa) would bind the wrong SQL expression and corrupt vectors,
+        so raise before any read/write. Honours MEMO_SKIP_MODEL_VERSION_CHECK so
+        `memo reindex --rebuild` can open a mismatched store to rebuild it.
+        """
+        import os
+
+        # See _validate_vec_dims for why the store layer reads env directly.
+        if os.environ.get("MEMO_SKIP_MODEL_VERSION_CHECK", "").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return
+        stored = self._vec_table_dtype("vec")
+        if stored != self.vec_quant:
+            from ..errors import StorageError
+
+            raise StorageError(
+                f"vec storage precision mismatch: index `vec` table is "
+                f"{stored!r} but config expects MEMO_VEC_QUANTIZE={self.vec_quant!r}. "
+                f"Switching int8 <-> float32 changes the vec0 column type.\n"
+                f"Fix: Run 'memo reindex --rebuild' to rebuild `vec` at the new precision."
+            )
 
     def _ensure_schema_meta_table(self) -> None:
         """Create schema_meta if it does not exist (existing DBs predate it).

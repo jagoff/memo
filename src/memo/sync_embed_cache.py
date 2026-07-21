@@ -97,6 +97,42 @@ def _contextual_evidence(cfg: Config) -> bool:
     return False
 
 
+def _decode_shard_row(
+    encoded: object, dims: int, shard_quant: str, shard_bpd: int
+) -> list[float] | None:
+    """Decode one base64 shard vector to a validated ~unit-norm float list.
+
+    Returns None to skip the row (non-string, corrupt base64, wrong width, or a
+    poisoned NaN/Inf/zero-norm vector that would fail the vec-table write and
+    de-index the memory on reindex). int8 shards are dequantized (÷127) back to
+    the ~unit float range; float32 bytes round-trip exactly (LE serialize_float32).
+    """
+    if not isinstance(encoded, str):
+        return None
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        return None
+    if len(raw) != dims * shard_bpd:
+        return None
+    if shard_quant == "int8":
+        vec = [x / 127.0 for x in struct.unpack(f"{dims}b", raw)]
+    else:
+        vec = list(struct.unpack(f"{dims}f", raw))
+    norm = math.fsum(x * x for x in vec) ** 0.5
+    if not math.isfinite(norm) or not (0.5 < norm < 1.5):
+        return None
+    return vec
+
+
+def _shard_model_id(store: VecStore) -> str:
+    """Shard identity used for cross-machine matching. Appends `+int8` under
+    quantization so a lossy int8 shard is never merged into a float32 index
+    (and vice-versa). The LOCAL `repo_embedding_cache` row key stays the plain
+    `store.embedder_model`, so a warm rebuild still hits it with ~zero embeds."""
+    return f"{store.embedder_model}+int8" if store.vec_quant == "int8" else store.embedder_model
+
+
 def export_embed_cache(mem: Memory, cache_dir: Path) -> dict:
     """Write this machine's shard: `{sha256(embed_text): b64(f32 vector)}` for
     every durable memory (and durable-parented chunk) in the live index.
@@ -113,18 +149,24 @@ def export_embed_cache(mem: Memory, cache_dir: Path) -> dict:
     store = mem.store
     if _contextual_evidence(mem.cfg):
         return {"rows": 0, "written": False, "path": "", "skipped": "contextual-retrieval"}
+    # Under int8 the vec blob is 1 B/dim, so the shard is ~4x smaller for free.
+    bytes_per_dim = 1 if store.vec_quant == "int8" else 4
     pairs: dict[str, str] = {}
     for row in store.export_embed_rows(limit=flag_int("MEMO_SYNC_EMBED_CACHE_MAX_ROWS")):
         blob = store.get_embedding_blob(str(row["id"]))
-        if blob is None or len(blob) != store.dims * 4:
-            continue  # embed-pending or dims drift — nothing exportable for this row
+        if blob is None or len(blob) != store.dims * bytes_per_dim:
+            continue  # embed-pending or dims/quant drift — nothing exportable for this row
         text = _compose_plain(str(row["title"]), str(row["body"]))
         pairs[sha256_full(text)] = base64.b64encode(bytes(blob)).decode("ascii")
 
     payload = {
         "schema": EMBED_CACHE_SCHEMA,
-        "model": store.embedder_model,
+        # `+int8` isolates a quantized shard so a float32 index never imports
+        # lossy int8 vectors (and vice-versa) — cross-precision shards are
+        # skipped whole and re-embedded locally.
+        "model": _shard_model_id(store),
         "dims": store.dims,
+        "quant": store.vec_quant,
         "rows": pairs,
     }
     data = json.dumps(payload, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
@@ -162,11 +204,15 @@ def import_embed_cache(store: VecStore, cache_dir: Path) -> dict:
         if (
             not isinstance(rows, dict)
             or doc.get("schema") != EMBED_CACHE_SCHEMA
-            or doc.get("model") != store.embedder_model
+            or doc.get("model") != _shard_model_id(store)
             or doc.get("dims") != store.dims
         ):
+            # A float32 shard vs an int8 index (or vice-versa) fails the
+            # `+int8`-tagged model match and is skipped whole → re-embed locally.
             out["skipped_shards"] += 1
             continue
+        shard_quant = "int8" if doc.get("quant") == "int8" else "off"
+        shard_bpd = 1 if shard_quant == "int8" else 4
         out["shards"] += 1
         hashes = [h for h in rows if isinstance(h, str)]
         present = store.get_repo_embedding_cache(
@@ -176,25 +222,9 @@ def import_embed_cache(store: VecStore, cache_dir: Path) -> dict:
         for input_hash in hashes:
             if input_hash in present:
                 continue
-            encoded = rows[input_hash]
-            if not isinstance(encoded, str):
-                continue
-            try:
-                raw = base64.b64decode(encoded, validate=True)
-            except (ValueError, TypeError):
-                continue
-            if len(raw) != store.dims * 4:
-                continue
-            # Native f32 order mirrors sqlite-vec's serialize_float32 (LE on
-            # every supported platform), so the bytes round-trip exactly.
-            vec = list(struct.unpack(f"{store.dims}f", raw))
-            # A poisoned/corrupt row (NaN/Inf/zero-norm) must be skipped here:
-            # a cached hit is served into the vec table on reindex, and a bad
-            # vector would fail that write and de-index the memory.
-            norm = math.fsum(x * x for x in vec) ** 0.5
-            if not math.isfinite(norm) or not (0.5 < norm < 1.5):
-                continue
-            to_add.append((input_hash, vec))
+            vec = _decode_shard_row(rows[input_hash], store.dims, shard_quant, shard_bpd)
+            if vec is not None:
+                to_add.append((input_hash, vec))
         if to_add:
             store.upsert_repo_embedding_cache(
                 model=store.embedder_model,

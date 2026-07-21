@@ -146,10 +146,13 @@ class Memory(
             from memo.flags import flag_int as _flag_int
 
             self.embedder = make_embedder(cfg, cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"))
+        from memo.flags import flag_str as _flag_str
+
         self.store = VecStore(
             cfg.db_path,
             dims=cfg.embedder_dims,
             embedder_model=_expected_embedder_model,
+            vec_quant=_flag_str("MEMO_VEC_QUANTIZE"),
         )
         # History store — cheap to open (just sqlite); creating eagerly.
         # Audit failures never propagate to the caller — HistoryStore

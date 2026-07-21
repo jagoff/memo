@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- `MEMO_VEC_QUANTIZE=int8` (default `off`, dark flag): store the main `vec`
+  table as `int8[dims]` (1 B/dim) instead of `float32[dims]` (4 B/dim) via
+  sqlite-vec `vec_quantize_int8(...,'unit')`, cutting the vec table and the
+  cross-machine embed-cache sync shard ~4×. Safe only for L2-normalised vectors
+  (memo's are). It changes the vec0 column *type*, so it takes effect on
+  `memo reindex --rebuild` only; a DDL-derived guard raises `StorageError` on a
+  precision/index mismatch. Manual, eval-gated graduation — never auto-tuned.
+
 ## [3.8.2] - 2026-07-21
 
 Second-round QA hardening pass (bug fixes only, no behavior/API changes).

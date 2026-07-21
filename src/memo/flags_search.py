@@ -468,4 +468,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "dossier's ⚔ marker) instead of silently demoting the older side by "
         "MEMO_CONTRADICT_PENALTY. Default off = legacy silent demote.",
     ),
+    _spec(
+        "MEMO_VEC_QUANTIZE",
+        "str",
+        "off",
+        "search",
+        "vec0 storage precision for the main `vec` table. 'off' = float32[dims] "
+        "(4 B/dim); 'int8' = int8[dims] (1 B/dim, ~4x smaller on disk and in the "
+        "base64 sync shard) via vec_quantize_int8(...,'unit'). SAFE only for "
+        "L2-normalised vectors (norm-guard store/queries.py). This is a vec0 column "
+        "TYPE change: it takes effect ONLY on `memo reindex --rebuild`, never at "
+        "runtime. Rebuild-required flag — MANUAL graduation only; never register in "
+        "dream_flags.GATES. Eval-gate before flipping.",
+        choices=("off", "int8"),
+    ),
 )
