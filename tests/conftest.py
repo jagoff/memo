@@ -23,23 +23,43 @@ import os
 import tempfile
 from pathlib import Path
 
-import pytest
-from freezegun import configure as configure_freezegun
+# Sanitize process-wide configuration before importing memo.config. A developer's
+# live model/vault settings must never influence collection or touch real state.
+os.environ["MEMO_NONINTERACTIVE"] = "1"
+os.environ["MEMO_CONFIG_FILE"] = str(
+    Path(tempfile.gettempdir()) / "memo-test-nonexistent-config.toml"
+)
+# Unique per test process (mkdtemp), NOT a fixed shared path: a fixed fallback
+# accumulates a live sqlite index across runs, leaking one run's state (and a
+# possibly stale schema) into every later run on the machine.
+os.environ["MEMO_STATE_DIR"] = tempfile.mkdtemp(prefix="memo-test-state-")
+for _model_flag in (
+    "MEMO_MODEL_PROFILE",
+    "MEMO_LLM_MODEL",
+    "MEMO_LLM_REVISION",
+    "MEMO_HELPER_MODEL",
+    "MEMO_HELPER_REVISION",
+    "MEMO_EMBEDDER_MODEL",
+    "MEMO_EMBEDDER_REVISION",
+    "MEMO_EMBEDDER_DIMS",
+    "MEMO_EMBEDDER_BACKEND",
+    "MEMO_ST_EMBEDDER_MODEL",
+    "MEMO_ST_EMBEDDER_REVISION",
+    "MEMO_RERANKER_MODEL",
+    "MEMO_RERANKER_REVISION",
+    "MEMO_RERANKER_ENABLED",
+):
+    os.environ.pop(_model_flag, None)
 
-from memo.config import Config
+import pytest  # noqa: E402
+from freezegun import configure as configure_freezegun  # noqa: E402
+
+from memo.config import Config  # noqa: E402
 
 configure_freezegun(extend_ignore_list=["transformers"])
 
-# Test-wide defaults applied at conftest import. These are `setdefault` so
-# individual tests can still override via `monkeypatch.setenv` /
-# `CliRunner().invoke(env=...)`. Goal: even tests that forget to pin these
-# explicitly never read the developer's real `~/.config/memo/config.toml`
-# and never trigger the first-run picker mid-test.
-os.environ.setdefault("MEMO_NONINTERACTIVE", "1")
-os.environ.setdefault(
-    "MEMO_CONFIG_FILE",
-    str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-config.toml"),
-)
+# Test-wide defaults were hard-set before importing memo.config above. Individual
+# tests can still override them with monkeypatch or CliRunner env mappings.
 # `memo.config_md.config_dir()` defaults to `~/.config/memo/config` when
 # `MEMO_CONFIG_DIR` is unset, so tests that build a `Config` via `from_env()`
 # without pinning it read the developer's REAL markdown config (data_dir,
@@ -73,10 +93,6 @@ os.environ.setdefault("MEMO_MCP_PROFILE", "full")
 # socket. Tests that exercise daemon routing opt back in via `monkeypatch.setenv`
 # / `CliRunner(...).invoke(env=...)`.
 os.environ["MEMO_EMBEDDER_VIA_DAEMON"] = "0"
-os.environ.setdefault(
-    "MEMO_STATE_DIR",
-    str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-state"),
-)
 
 # Neutralize production trinity flags that a developer's shell exports for live
 # behavior but that break tests asserting a flag's *default* (support-lift 0.0,
