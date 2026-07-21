@@ -50,7 +50,7 @@ master advances underneath you, and a `git checkout` in another session moves
 
 ## Architecture
 
-**`Memory` facade** (`src/memo/memory/facade.py`) multiply-inherits twelve operation mixins — `_WriteOpsMixin`, `_UpdateOpsMixin`, `_DeleteOpsMixin`, `_SearchOpsMixin`, `_AskOpsMixin`, `_ChatAskOpsMixin`, `_RerankOpsMixin`, `_RepoOpsMixin`, `_MaintainOpsMixin`, `_ConsolidateOpsMixin`, `_ReplayOpsMixin`, `_SecretOpsMixin` — each in their own `src/memo/memory/<op>_ops.py` file. Module-level constants, prompts, and pure helpers are in `src/memo/memory/record.py`. Never import from a mixin directly; always go through `Memory`.
+**`Memory` facade** (`src/memo/memory/facade.py`) multiply-inherits thirteen operation mixins — `_WriteOpsMixin`, `_UpdateOpsMixin`, `_DeleteOpsMixin`, `_SearchOpsMixin`, `_SearchScoringMixin`, `_AskOpsMixin`, `_ChatAskOpsMixin`, `_RerankOpsMixin`, `_RepoOpsMixin`, `_MaintainOpsMixin`, `_ConsolidateOpsMixin`, `_ReplayOpsMixin`, `_SecretOpsMixin` — each in their own `src/memo/memory/<op>_ops.py` file. Module-level constants, prompts, and pure helpers are in `src/memo/memory/record.py`. Never import from a mixin directly; always go through `Memory`.
 
 **MCP server** (`src/memo/server.py`) registers tools via `build_server()`. Each domain is a `server_<domain>.py` module that exports `register(server, memory)` — called once in `build_server()`. Adding a new MCP tool = create `src/memo/server_<domain>.py` + add one `register` call in `server.py`. The `_MaintainOpsMixin` method is directly callable from tests via `mock_memory.<method>()`.
 
@@ -301,8 +301,10 @@ across the whole regression set — never per-question.
 - Gate (fast, no MLX — retrieval only, ~0.5s/prompt):
   `memo eval recall --labels eval/regression_labels.json --k 5 --force`.
   A retrieval/ingest change must keep **precision@K** high and **noise@K** low
-  across ALL prompts. Baseline today: prec@5=0.2 (max for a single-answer
-  prompt), noise@5=0.0. Runs against the live index (machine-local, not GitHub CI).
+  across ALL prompts (the label set grows with every incident — 37 prompts as of
+  2026-07; the authoritative numbers are the per-machine saved baseline below,
+  not any figure hard-coded here). Runs against the live index (machine-local,
+  not GitHub CI).
 - **Enforced gate (machine-local, opt-in):** seed once with
   `memo eval recall --labels eval/regression_labels.json --k 5 --update-baseline`,
   then `--gate` (instead of printing) exits non-zero if precision dropped or

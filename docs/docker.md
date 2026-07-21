@@ -4,7 +4,7 @@ Docker image runs memo's **CPU-only backend** — ideal for Linux, testing, or c
 
 > For full memo (reranking + LLM verbs), use native install on Apple Silicon Mac:
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+> curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | bash
 > ```
 
 ## Quick start (10 seconds)
@@ -56,7 +56,7 @@ Pass `MEMO_*` flags via `docker run -e`:
 
 ```bash
 docker run -e MEMO_DATA_DIR=/data \
-  -e MEMO_SEARCH_MODE=hybrid \
+  -e MEMO_RECALL_MODE=hybrid \
   -v memo-data:/data \
   ghcr.io/jagoff/memo:latest \
   memo search 'query'
@@ -64,7 +64,7 @@ docker run -e MEMO_DATA_DIR=/data \
 
 Common flags:
 - `MEMO_DATA_DIR` — data directory (default: `/data`)
-- `MEMO_SEARCH_MODE` — `vec`, `bm25`, or `hybrid` (default: `hybrid`)
+- `MEMO_RECALL_MODE` — `vec`, `hybrid`, or `bm25` (default: `vec`)
 - `MEMO_EMBEDDER_DIMS` — embedding dimension (CPU default is 1024-dim, `Qwen/Qwen3-Embedding-0.6B`; only override to match a different model)
 - `MEMO_NONINTERACTIVE=1` — suppress prompts
 
@@ -128,7 +128,7 @@ services:
       - memo-data:/data
     environment:
       MEMO_DATA_DIR: /data
-      MEMO_SEARCH_MODE: hybrid
+      MEMO_RECALL_MODE: hybrid
       MEMO_MCP_TRANSPORT: http
       MEMO_MCP_HOST: 0.0.0.0
       MEMO_MCP_PORT: "8765"
