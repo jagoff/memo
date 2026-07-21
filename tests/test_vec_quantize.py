@@ -251,6 +251,31 @@ def test_sync_int8_shard_skipped_by_float32_store(tmp_path: Path) -> None:
         store.close()
 
 
+# --------------------------------------------------------------------------- #
+# consolidate dedup pass: _pull_embeddings must dequantize int8, not read it   #
+# as float32 (regression — an int8 blob is 1 B/dim, quietly divisible by 4     #
+# too, so a naive float32 unpack "succeeds" and returns garbage magnitudes).   #
+# --------------------------------------------------------------------------- #
+def test_consolidate_pull_embeddings_decodes_int8_blob(tmp_path: Path) -> None:
+    from memo.memory.consolidate_ops import _ConsolidateOpsMixin
+
+    class _Harness(_ConsolidateOpsMixin):
+        def __init__(self, store: VecStore) -> None:
+            self.store = store
+
+    store = VecStore(tmp_path / "i8.db", dims=DIMS, vec_quant="int8")
+    try:
+        _row(store, "a", _unit(0.6, 0.5, 0.4, 0.3))
+        items = _Harness(store)._pull_embeddings()
+        assert len(items) == 1
+        emb = items[0]["emb"]
+        assert len(emb) == DIMS
+        norm = math.sqrt(sum(x * x for x in emb))
+        assert 0.5 < norm < 1.5
+    finally:
+        store.close()
+
+
 def test_shard_model_id_tags_int8(tmp_path: Path) -> None:
     from memo.sync_embed_cache import _shard_model_id
 

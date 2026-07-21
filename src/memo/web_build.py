@@ -80,7 +80,19 @@ def _iso_to_dt(value: str) -> datetime | None:
         return None
 
 
-def _read_vectors(db_path: Path, limit: int) -> list[dict[str, Any]]:
+def _decode_embedding(blob: bytes, dims: int) -> list[float]:
+    """Decode a raw `vec` blob to floats, dtype-aware by length.
+
+    int8 (MEMO_VEC_QUANTIZE=int8) is 1 B/dim, dequantized (÷127); float32 is
+    4 B/dim. Length-based detection keeps this independent of the running
+    config, since the blob's dtype is whatever it was indexed with.
+    """
+    if len(blob) == dims:
+        return [x / 127.0 for x in struct.unpack(f"{dims}b", blob)]
+    return list(struct.unpack(f"<{len(blob) // 4}f", blob))
+
+
+def _read_vectors(db_path: Path, limit: int, dims: int) -> list[dict[str, Any]]:
     """Pull embeddings + metadata straight from sqlite-vec (no MLX load)."""
     try:
         from memo.sqlite_compat import import_sqlite_vec
@@ -109,8 +121,7 @@ def _read_vectors(db_path: Path, limit: int) -> list[dict[str, Any]]:
         blob = row["embedding"]
         if blob is None:
             continue
-        n = len(blob) // 4
-        vec = list(struct.unpack(f"<{n}f", blob))
+        vec = _decode_embedding(blob, dims)
         if not vec:
             continue
         try:
@@ -869,7 +880,7 @@ def collect_data(
     drift: dict[str, int] | None = None
     if include_projection:
         drift = _body_hash_drift(cfg)
-        rows = _read_vectors(cfg.db_path, limit=limit)
+        rows = _read_vectors(cfg.db_path, limit=limit, dims=cfg.embedder_dims)
         if len(rows) >= 3:
             xs, ys, zs, method = _project_3d([r["vec"] for r in rows])
         else:
