@@ -9,8 +9,21 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-07-21
+
 ### Added
 
+- **Proactive engine** (`MEMO_PROACTIVE_ENABLED`, default `off`): a unified
+  engine that surfaces useful, non-annoying messages to the human and the agent.
+  Guarded detectors — **reliability** (superseded facts), **continuity** (open
+  loops), **health** (low-confidence memories), **roi** (never-surfaced
+  memories), **dejavu** (recurring patterns) — feed a precomputed sqlite pool
+  written by the nightly `dream` pass (never the 5s recall path). A single
+  arbiter scores, budgets, and suppresses candidates with adaptive per-kind
+  demotion learned from feedback, and routes them to three surfaces: `memo
+  digest` (pull), a compact El Briefing section, and a Stop-hook urgent push
+  (reliability only, cooldown + daily-cap gated). Never fabricates — every nudge
+  cites a real memory; an empty corpus surfaces nothing.
 - `MEMO_VEC_QUANTIZE=int8` (default `off`, dark flag): store the main `vec`
   table as `int8[dims]` (1 B/dim) instead of `float32[dims]` (4 B/dim) via
   sqlite-vec `vec_quantize_int8(...,'unit')`, cutting the vec table and the
@@ -18,6 +31,15 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   (memo's are). It changes the vec0 column *type*, so it takes effect on
   `memo reindex --rebuild` only; a DDL-derived guard raises `StorageError` on a
   precision/index mismatch. Manual, eval-gated graduation — never auto-tuned.
+
+### Fixed
+
+- int8: `vec` embedding blobs are now decoded dtype-aware in the consolidate
+  pass and the viz tools (`web_build`, `cli_viz`) — reading a 1 B/dim int8 blob
+  as float32 produced garbage (numpy overflow in the nightly consolidate). The
+  reliability/continuity urgent-push feedback loop now also records `acted`
+  (previously the multiplier could only decay), and a demoted reliability kind
+  can still break silence for an urgent push.
 
 ## [3.8.2] - 2026-07-21
 
