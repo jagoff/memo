@@ -209,6 +209,7 @@ def test_single_apply_guard_picks_one_best_knob(tmp_path, monkeypatch):
 
     monkeypatch.setattr(dt, "search_rank_knob", _fake_search)
     monkeypatch.setattr(dt, "curated_gate", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(dt, "curated_gate_min_sim", lambda *a, **k: {"ok": True})
 
     res = dt.run_tuning_pass(_cfg(tmp_path), _StubMem(), k=5)
     assert res["status"] == "applied"
@@ -310,6 +311,55 @@ def test_curated_gate_vacuous_without_curated_labels(tmp_path, monkeypatch):
     )
     assert gate["ok"] is True
     assert gate["reason"] == "no_curated_labels"
+
+
+def test_min_sim_curated_gate_rejects_regressing_floor(tmp_path, monkeypatch):
+    """A floor that wins on mined labels but buries a curated must-surface
+    memory is rejected — the min_sim candidate passes the same curated bar as
+    the rank knobs."""
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir(parents=True)
+    (eval_dir / "regression_labels.json").write_text(
+        json.dumps(
+            {
+                "schema": "memo.eval_recall.labels.v1",
+                "prompts": [{"text": "curated-q", "relevant": True, "expect_ids": ["cccc3333"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dt, "build_labels", lambda cfg, **k: _one_label())
+    monkeypatch.setattr(dt, "load_baseline", lambda sd: None)
+    # min_sim wins on the mined labels...
+    monkeypatch.setattr(
+        dt, "search_min_sim", lambda *a, **k: (0.65, _metrics(0.2), _metrics(0.4))
+    )
+    # ...rank knobs don't move...
+    monkeypatch.setattr(
+        dt,
+        "search_rank_knob",
+        lambda mem, labels, *, k, floor, knob, current, grid, max_evals: (
+            current,
+            _metrics(0.2),
+            _metrics(0.2),
+            [],
+        ),
+    )
+
+    # ...but on the CURATED set the new floor regresses (0.5 -> 0.1)
+    def _fake_measure(mem, labels, *, k, floor):
+        assert labels.prompts[0].text == "curated-q"  # gate measures curated-only
+        return _metrics(0.5 if floor == 0.5 else 0.1)
+
+    monkeypatch.setattr(dt, "measure", _fake_measure)
+
+    res = dt.run_tuning_pass(_cfg(tmp_path), _StubMem(), k=5)
+    assert res["status"] == "noop"
+    assert res["knobs"]["MEMO_RECALL_MIN_SIM"]["verdict"] == "curated_rejected"
+    assert res["knobs"]["MEMO_RECALL_MIN_SIM"]["curated"]["ok"] is False
+    assert dt.read_overlay(tmp_path) == {}  # nothing applied
+    assert dream_tune_online.read_pending(tmp_path) is None
 
 
 def _write_curated_with_noise(state_dir):

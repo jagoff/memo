@@ -77,6 +77,7 @@ def test_apply_writes_pending(tmp_path, monkeypatch):
     # patch both so the pending reflects the mocked version token.
     monkeypatch.setattr(dream_tune_online, "params_version", lambda sd: "vNEW")
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.5, 10))
+    monkeypatch.setattr(dream_tune, "curated_gate_min_sim", lambda *a, **k: {"ok": True})
 
     res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "applied"
@@ -139,6 +140,7 @@ def test_graph_weight_apply_records_pending(tmp_path, monkeypatch):
     monkeypatch.setattr(dream_tune, "save_graph_baseline", lambda sd, m: None)
     monkeypatch.setattr(dream_tune, "params_version", lambda sd: "vGW")
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.5, 10))
+    monkeypatch.setattr(dream_tune, "_curated_label_set", lambda sd: None)
 
     res = dream_tune.run_graph_weight_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "applied"

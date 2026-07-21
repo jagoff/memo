@@ -769,6 +769,15 @@ def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]
                 return result
 
         if not dry_run:
+            from memo import dream_tune_online
+
+            if dream_tune_online.has_unresolved_pending(
+                mem.cfg.state_dir
+            ) or dream_tune_online.in_revert_cooldown(mem.cfg.state_dir):
+                # One overlay change per proof cycle: writing now would bump
+                # params_version and expire the pending online verification.
+                result["floor_calibration"]["gate"] = "deferred_pending"
+                return result
             params = _scalar_overlay(mem.cfg.state_dir)
             params["MEMO_RECALL_MIN_SIM"] = floor
             write_overlay(mem.cfg.state_dir, params, {"source": "floor_calibration"})

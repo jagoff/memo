@@ -359,7 +359,15 @@ def run_tuning_pass(
             "verdict": "improved" if min_sim_improved else "noop",
         }
         if min_sim_improved:
-            candidates.append((_MIN_SIM, current, best_floor, before, after))
+            # Curated no-regression gate — same bar the rank knobs pass below.
+            gate = curated_gate_min_sim(
+                mem, cfg.state_dir, k=k, floor_before=current, floor_after=best_floor
+            )
+            knob_results[_MIN_SIM]["curated"] = gate
+            if gate["ok"]:
+                candidates.append((_MIN_SIM, current, best_floor, before, after))
+            else:
+                knob_results[_MIN_SIM]["verdict"] = "curated_rejected"
 
         # Fase 3 — line-search the rank knobs (mmr_lambda / synthesis_boost)
         # via Cfg.knob_overrides against the SAME label corpus. A per-knob
@@ -600,6 +608,26 @@ def curated_gate(
     return {"ok": not _regressed(cur_after, cur_before), "before": cur_before, "after": cur_after}
 
 
+def curated_gate_min_sim(
+    mem: Any,
+    state_dir: Path,
+    *,
+    k: int,
+    floor_before: float,
+    floor_after: float,
+) -> dict[str, Any]:
+    """Curated-labels no-regression gate for the min_sim candidate — same
+    contract as :func:`curated_gate`, but the knob under test IS the floor.
+    Without this, a floor that wins on mined labels could bury a curated
+    must-surface memory and still be applied."""
+    curated = _curated_label_set(state_dir)
+    if curated is None:
+        return {"ok": True, "reason": "no_curated_labels"}
+    cur_before = measure(mem, curated, k=k, floor=floor_before)
+    cur_after = measure(mem, curated, k=k, floor=floor_after)
+    return {"ok": not _regressed(cur_after, cur_before), "before": cur_before, "after": cur_after}
+
+
 # --- HyDE A/B (MEMO_HYDE_ENABLED — shipped default-off, never measured) ------
 
 _HYDE_FLAG = "MEMO_HYDE_ENABLED"
@@ -643,6 +671,13 @@ def run_hyde_pass(
     res: dict[str, Any] = {"status": "noop", "knob": _HYDE_FLAG}
     if flag_bool(_HYDE_FLAG):
         res["status"] = "already_on"
+        return res
+    # One overlay change per proof cycle: an ungated write here would bump
+    # params_version and expire the proof loop's pending verification.
+    if dream_tune_online.has_unresolved_pending(
+        cfg.state_dir
+    ) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
+        res["status"] = "deferred_pending"
         return res
     live_mode = (flag_str("MEMO_RECALL_MODE") or "vec").strip().lower()
     if live_mode == "hybrid":
@@ -861,6 +896,15 @@ def run_graph_weight_pass(
         if not improved or best_weight == current:
             res["status"] = "noop"
             return res
+        # Curated no-regression gate — same bar as the rank knobs.
+        curated = _curated_label_set(cfg.state_dir)
+        if curated is not None:
+            cur_before = measure_graph_weight(mem, curated, k=k, weight=current, floor=floor)
+            cur_after = measure_graph_weight(mem, curated, k=k, weight=best_weight, floor=floor)
+            res["curated"] = {"before": cur_before, "after": cur_after}
+            if _regressed(cur_after, cur_before):
+                res["status"] = "curated_rejected"
+                return res
         if dry_run:
             res["status"] = "would_apply"
             return res
@@ -1108,6 +1152,20 @@ def run_graph_retrieval_pass(
         if not improved or best_cfg["name"] == "vec":
             res["status"] = "noop"
             return res
+        # Curated no-regression gate — same bar as the rank knobs.
+        curated = _curated_label_set(cfg.state_dir)
+        if curated is not None:
+            vec_cfg = RETRIEVAL_CONFIGS[0]
+            cur_before = measure_retrieval_config(
+                mem, curated, k=k, mode=vec_cfg["mode"], flags=vec_cfg["flags"]
+            )
+            cur_after = measure_retrieval_config(
+                mem, curated, k=k, mode=best_cfg["mode"], flags=best_cfg["flags"]
+            )
+            res["curated"] = {"before": cur_before, "after": cur_after}
+            if _regressed(cur_after, cur_before):
+                res["status"] = "curated_rejected"
+                return res
         if dry_run:
             res["status"] = "would_apply"
             res["would_apply"] = best_cfg["name"]

@@ -360,8 +360,17 @@ def run_flag_graduation_pass(
                 verdict["streak"] = entry["streak"]
                 verdict["verdict"] = "win" if win else "lose"
                 if win and entry["streak"] >= knobs["win_nights"]:
+                    from memo import dream_tune_online
+
                     if dry_run:
                         verdict["verdict"] = "would_graduate"
+                    elif dream_tune_online.has_unresolved_pending(
+                        cfg.state_dir
+                    ) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
+                        # One overlay change per proof cycle: writing now would
+                        # bump params_version and expire the pending online
+                        # verification. Keep the streak; graduate next night.
+                        verdict["verdict"] = "deferred_pending"
                     else:
                         params = _scalar_overlay(cfg.state_dir)
                         params[name] = True
