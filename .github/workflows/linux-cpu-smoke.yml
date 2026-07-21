@@ -65,14 +65,14 @@ jobs:
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
           tool_python="$(uv tool dir)/mlx-memo/bin/python"
           test -x "$tool_python"
-          echo "MEMO_TOOL_PYTHON=$tool_python" >> "$GITHUB_ENV"
+          echo "TOOL_PYTHON=$tool_python" >> "$GITHUB_ENV"
       - name: Prepare data + state dirs
         # A real install creates these via `memo init` / first save; `memo doctor`
         # flags a missing data_dir on any OS, so set them up for the smoke.
         run: mkdir -p "$MEMO_DATA_DIR" "$MEMO_STATE_DIR"
       - name: import + backend resolves to ST (no MLX on Linux)
         run: |
-          "$MEMO_TOOL_PYTHON" - <<'PY'
+          "$TOOL_PYTHON" - <<'PY'
           import memo  # must import with no MLX present
           from memo.config import Config
           from memo.embedder_select import resolve_backend
@@ -84,7 +84,7 @@ jobs:
           PY
       - name: sqlite-vec + FTS5 loadable on this Python (the Linux gotcha)
         run: |
-          "$MEMO_TOOL_PYTHON" - <<'PY'
+          "$TOOL_PYTHON" - <<'PY'
           import sqlite3
           import sqlite_vec
 
@@ -111,7 +111,7 @@ jobs:
             echo "REGRESSION: reranker attempted on Linux" >&2
             exit 1
           fi
-          "$MEMO_TOOL_PYTHON" - <<'PY'
+          "$TOOL_PYTHON" - <<'PY'
           import json
 
           hits = json.load(open("out.json"))
@@ -120,7 +120,7 @@ jobs:
           PY
       - name: memo-mcp real stdio MCP handshake (initialize -> tools/list -> tools/call)
         run: |
-          "$MEMO_TOOL_PYTHON" - <<'PY'
+          "$TOOL_PYTHON" - <<'PY'
           import json
           import select
           import subprocess

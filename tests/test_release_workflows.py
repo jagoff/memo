@@ -58,7 +58,8 @@ def test_python_ci_uses_committed_frozen_uv_lock() -> None:
     linux = (WORKFLOWS / "linux-cpu-smoke.yml").read_text(encoding="utf-8")
     assert "uv tool install --python 3.13" in linux
     assert "--find-links https://download.pytorch.org/whl/cpu/torch/" in linux
-    assert '"$MEMO_TOOL_PYTHON"' in linux
+    assert '"$TOOL_PYTHON"' in linux
+    assert "MEMO_TOOL_PYTHON" not in linux
 
 
 def test_publish_workflow_builds_from_project_metadata_with_uv() -> None:
