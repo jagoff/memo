@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import subprocess
 from pathlib import Path
@@ -151,6 +152,27 @@ def test_repo_chunker_splits_single_huge_line():
     assert all(line_start == 1 and line_end == 1 for _, line_start, line_end, _ in chunks)
     assert all(len(body) <= 3500 for _, _, _, body in chunks)
     assert "".join(body for _, _, _, body in chunks) == "x" * 10_500
+
+
+def test_repo_chunker_prose_long_lines_no_one_line_sliding_window():
+    """Líneas de ~600 chars (prosa párrafo-por-línea): la ventana no debe
+    degradar a avance de 1 línea con ~6x chunks casi duplicados — el overlap
+    se acota a la mitad del span del propio chunk."""
+    # Arrange — 60 líneas de ~600 chars (cada chunk abarca ~6 líneas)
+    lines = [f"line-{i:02d} " + "palabra " * 74 for i in range(60)]
+
+    # Act
+    chunks = _chunk_lines(lines, target_chars=3500, overlap_lines=8)
+
+    # Assert — antes: ~55 chunks casi idénticos (avance de 1 línea por chunk)
+    assert len(chunks) <= 25, f"near-duplicate chunk inflation: {len(chunks)} chunks"
+    starts = [line_start for _, line_start, _, _ in chunks]
+    assert all(b - a >= 2 for a, b in itertools.pairwise(starts)), starts
+    # Cobertura completa: cada línea aparece en algún chunk.
+    covered: set[int] = set()
+    for _, line_start, line_end, _ in chunks:
+        covered.update(range(line_start, line_end + 1))
+    assert covered == set(range(1, 61))
 
 
 def test_repo_index_never_embeds_single_huge_line(tmp_path: Path, monkeypatch):
