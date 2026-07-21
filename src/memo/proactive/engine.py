@@ -5,7 +5,10 @@ from typing import Any
 
 from .arbiter import Routed, route
 from .detectors.continuity import detect_continuity
+from .detectors.dejavu import detect_dejavu
+from .detectors.health import detect_health
 from .detectors.reliability import detect_reliability
+from .detectors.roi import detect_roi
 from .store import ProactiveStore
 
 _FEEDBACK_WINDOW_DAYS = 30
@@ -25,7 +28,13 @@ def push_gate(
 
 
 def refresh_candidates(mem: Any, store: ProactiveStore, *, now: str) -> int:
-    nudges = detect_reliability(mem, now=now) + detect_continuity(mem, now=now)
+    nudges = (
+        detect_reliability(mem, now=now)
+        + detect_continuity(mem, now=now)
+        + detect_health(mem, now=now)
+        + detect_roi(mem, now=now)
+        + detect_dejavu(mem, now=now)
+    )
     store.put_candidates(nudges)
     return len(nudges)
 
