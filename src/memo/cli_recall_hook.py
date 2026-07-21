@@ -241,15 +241,22 @@ def recall_hook() -> None:
     try:
         from memo.recall_server import connect_and_recall
 
+        _daemon_timeout = max(
+            0.2,
+            (2000 if (_dmt := flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS")) is None else _dmt)
+            / 1000.0,
+        )
+        # Float alias wins only when moved off its registry default —
+        # otherwise its default (2.0) would shadow an explicit _MS setting.
+        from memo.flags import REGISTRY as _REG
+
         _raw_float = flag_float("MEMO_RECALL_DAEMON_TIMEOUT")
-        if _raw_float is not None and _raw_float >= 0.1:
+        if (
+            _raw_float is not None
+            and _raw_float >= 0.1
+            and _raw_float != _REG["MEMO_RECALL_DAEMON_TIMEOUT"].default
+        ):
             _daemon_timeout = _raw_float
-        else:
-            _daemon_timeout = max(
-                0.2,
-                (2000 if (_dmt := flag_int("MEMO_RECALL_DAEMON_TIMEOUT_MS")) is None else _dmt)
-                / 1000.0,
-            )
         _daemon_result = connect_and_recall(
             cfg.state_dir,
             prompt=prompt,

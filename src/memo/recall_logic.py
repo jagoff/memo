@@ -1354,6 +1354,7 @@ def _recall_logic(
     # never populates session recalled_ids, so cited-grounding can never
     # match ([id8] cites validate against this map) and the same hits are
     # re-injected every turn.
+    _ids_to_mark: dict[str, int] = {}
     if session_id:
         _prev_recalled: dict[str, int] = {}
         with contextlib.suppress(Exception):
@@ -1365,14 +1366,12 @@ def _recall_logic(
         if not relevant:
             return "{}", None
         if turn is not None:
-            with contextlib.suppress(Exception):
-                from memo import session as _session_mod
-
-                _session_mod.mark_ids_recalled(
-                    cfg.state_dir,
-                    session_id,
-                    {h.id: turn for h in relevant},
-                )
+            # Marking is deferred into the delivered-gated log closure below:
+            # marking here (before the socket write) let a client timeout
+            # permanently suppress these hits for the rest of the session —
+            # marked recalled, never actually delivered, and the subprocess
+            # fallback then filtered them out.
+            _ids_to_mark = {h.id: turn for h in relevant}
 
     if contextual:
         with contextlib.suppress(Exception):
@@ -1424,6 +1423,11 @@ def _recall_logic(
     ]
 
     def _log() -> None:
+        if _ids_to_mark and session_id:
+            with contextlib.suppress(Exception):
+                from memo import session as _session_mod
+
+                _session_mod.mark_ids_recalled(cfg.state_dir, session_id, _ids_to_mark)
         latency_ms: int | None = int((time.time() - t0) * 1000) if t0 is not None else None
         try:
             from memo.dashboard import append_context_cost_log, append_recall_log

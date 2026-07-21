@@ -8,14 +8,16 @@ from memo import embed_protocol
 _log = logging.getLogger(__name__)
 
 
-def _send_request(state_dir: Path, payload: dict, timeout: float) -> str | None:
+def _send_request(
+    state_dir: Path, payload: dict, timeout: float, max_retries: int = 3
+) -> str | None:
     from memo.recall_socket import _socket_path
 
     return embed_protocol.send_request_with_retry(
         _socket_path(state_dir),
         payload,
         timeout=timeout,
-        max_retries=3,
+        max_retries=max_retries,
         base_delay=0.1,
     )
 
@@ -37,7 +39,10 @@ def connect_and_recall(
         req["turn"] = turn
     if client is not None:
         req["client"] = client
-    return _send_request(state_dir, req, timeout)
+    # No retries on the hook path: 4 attempts x 2s timeout + backoff was ~9s
+    # worst case against the 5s hook budget. One failed attempt -> subprocess
+    # fallback immediately.
+    return _send_request(state_dir, req, timeout, max_retries=0)
 
 
 def connect_and_send(state_dir: Path, payload: dict, timeout: float = 5.0) -> str | None:
