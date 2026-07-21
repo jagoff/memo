@@ -25,6 +25,7 @@ import sqlite3
 import struct
 import webbrowser
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,8 @@ from memo.dashboard import (  # noqa: E402
     verdict,
 )
 from memo.dashboard_panels import _fetch_memflow_utility  # noqa: E402
+from memo.embedder_select import resolve_backend  # noqa: E402
+from memo.errors import MemoError  # noqa: E402
 from memo.html_security import (  # noqa: E402
     content_security_policy,
     html_safe_json,
@@ -257,7 +260,7 @@ def _contradictions_stats(cfg: Config) -> dict[str, int] | None:
 # signal); the others are the traffic-light contract from the spec.
 
 
-def _pillar_vector_db(doctor: dict[str, Any], drift: dict[str, int]) -> dict[str, Any]:
+def _pillar_vector_db(doctor: dict[str, Any], drift: dict[str, int] | None) -> dict[str, Any]:
     memvec = next((d for d in doctor["db"] if d.get("label") == "memvec"), None)
     if not memvec or not memvec.get("exists"):
         return {
@@ -300,7 +303,7 @@ def _pillar_vector_db(doctor: dict[str, Any], drift: dict[str, int]) -> dict[str
             "summary": f"integrity_check={memvec['integrity_check']}",
             "detail": ["sqlite reports DB corruption — restore from backup."],
         }
-    if drift["drifted"] or drift["untracked_md"]:
+    if drift is not None and (drift["drifted"] or drift["untracked_md"]):
         return {
             "label": "Vector DB",
             "status": "yellow",
@@ -314,34 +317,53 @@ def _pillar_vector_db(doctor: dict[str, Any], drift: dict[str, int]) -> dict[str
                 "Run `memo reindex` to re-embed only changed entries.",
             ],
         }
+    detail = [
+        f"path: {memvec['path']}",
+        f"size: {memvec.get('size_bytes', 0):,} bytes",
+        f"integrity: {memvec.get('integrity_check', '?')}",
+        f"latest update: {memvec.get('latest_memory_update', '—')}",
+    ]
+    if drift is None:
+        # Cheap poll path skips the full-corpus body_hash scan (rglob + parse).
+        detail.append("body_hash drift: not checked (live poll)")
     return {
         "label": "Vector DB",
         "status": "green",
         "summary": f"{memvec.get('records')} memories · {memvec.get('vec_dims')}D",
-        "detail": [
-            f"path: {memvec['path']}",
-            f"size: {memvec.get('size_bytes', 0):,} bytes",
-            f"integrity: {memvec.get('integrity_check', '?')}",
-            f"latest update: {memvec.get('latest_memory_update', '—')}",
-        ],
+        "detail": detail,
     }
 
 
 def _pillar_embedder(doctor: dict[str, Any]) -> dict[str, Any]:
     profile = doctor["profile"]
-    mlx_ok = next((i for i in doctor["imports"] if i["label"] == "mlx"), {"ok": False})["ok"]
-    if not mlx_ok:
+    imports = doctor["imports"]
+    # Backend-aware: a CPU/ST install has a "sentence_transformers" probe, an
+    # Apple-Silicon install an "mlx" probe. Keying off "mlx" alone showed every
+    # healthy Linux/CPU install a false-RED "mlx not importable".
+    st_probe = next((i for i in imports if i["label"] == "sentence_transformers"), None)
+    if st_probe is not None:
+        pillar_label = "Embedder (CPU)"
+        backend_import = st_probe
+        install_hint = "Install with `pip install sentence-transformers`."
+    else:
+        pillar_label = "Embedder (MLX)"
+        backend_import = next(
+            (i for i in imports if i["label"] == "mlx"), {"ok": False, "error": ""}
+        )
+        install_hint = "Install with `pip install mlx mlx-lm` on Apple Silicon."
+    if not backend_import["ok"]:
         return {
-            "label": "Embedder (MLX)",
+            "label": pillar_label,
             "status": "red",
-            "summary": "mlx / mlx_lm not importable",
-            "detail": ["Install with `pip install mlx mlx-lm` on Apple Silicon."],
+            # Surface the real import error instead of a swallowed generic string.
+            "summary": backend_import.get("error") or "embedder runtime not importable",
+            "detail": [install_hint],
         }
     embedder_model = profile["active"].get("embedder_model", "?")
     cached = any(m["cached"] and m["role"] == "embedder" for m in profile["models"])
     if not cached:
         return {
-            "label": "Embedder (MLX)",
+            "label": pillar_label,
             "status": "yellow",
             "summary": "model weights not in HF cache",
             "detail": [
@@ -351,13 +373,13 @@ def _pillar_embedder(doctor: dict[str, Any]) -> dict[str, Any]:
         }
     if not profile["ok"]:
         return {
-            "label": "Embedder (MLX)",
+            "label": pillar_label,
             "status": "red",
             "summary": profile["status"],
             "detail": [f"model: {embedder_model}", "See `memo profile status`."],
         }
     return {
-        "label": "Embedder (MLX)",
+        "label": pillar_label,
         "status": "green",
         "summary": f"{profile['profile']} · {profile['active']['embedder_dims']}D",
         "detail": [
@@ -827,11 +849,10 @@ def collect_data(
             },
         },
         "profile": _profile_status_report(cfg, include_db=True),
-        "imports": _imports_probe(),
+        "imports": _imports_probe(cfg),
         "db": _db_health_report(cfg),
     }
 
-    drift = _body_hash_drift(cfg)
     recall_log = read_recall_log(cfg.state_dir, limit=200)
     recall_health_data = recall_health(cfg.state_dir, limit=500)
     history = _history_recent(cfg, limit=50)
@@ -842,7 +863,12 @@ def collect_data(
     # here so the `len(rows) if rows else _vec_count` fallback is always bound,
     # even on a full build whose corpus read came back empty.
     _vec_count = 0
+    # body_hash drift also scans the whole corpus (rglob + double frontmatter
+    # parse), so it too is a full-build-only step; the cheap poll leaves it None
+    # and the Vector DB pillar renders "drift: not checked".
+    drift: dict[str, int] | None = None
     if include_projection:
+        drift = _body_hash_drift(cfg)
         rows = _read_vectors(cfg.db_path, limit=limit)
         if len(rows) >= 3:
             xs, ys, zs, method = _project_3d([r["vec"] for r in rows])
@@ -961,17 +987,27 @@ def build(
     return out_path
 
 
-def _imports_probe() -> list[dict[str, Any]]:
+def _imports_probe(cfg: Config) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for label, fn in (
-        ("sqlite_vec", _probe_sqlite_vec),
-        ("mlx", _probe_mlx),
-    ):
+    try:
+        backend = resolve_backend(cfg)
+    except MemoError:
+        # Undecidable platform (auto on non-Linux/non-Apple-Silicon): keep the
+        # MLX probe so its real ImportError reaches the pillar, not a swallow.
+        backend = "mlx"
+    probes: list[tuple[str, Callable[[], None]]] = [("sqlite_vec", _probe_sqlite_vec)]
+    if backend == "st":
+        probes.append(("sentence_transformers", _probe_sentence_transformers))
+    else:
+        probes.append(("mlx", _probe_mlx))
+    for label, fn in probes:
         try:
             fn()
             out.append({"label": label, "ok": True, "error": ""})
-        except Exception:
-            out.append({"label": label, "ok": False, "error": "probe unavailable"})
+        except Exception as exc:
+            # Preserve the real error (e.g. "No module named 'mlx'") instead of a
+            # generic "probe unavailable" that hides why the pillar is red.
+            out.append({"label": label, "ok": False, "error": str(exc) or type(exc).__name__})
     return out
 
 
@@ -989,6 +1025,10 @@ def _probe_sqlite_vec() -> None:
 def _probe_mlx() -> None:
     import mlx.core  # noqa: F401
     import mlx_lm  # noqa: F401
+
+
+def _probe_sentence_transformers() -> None:
+    import sentence_transformers  # noqa: F401
 
 
 # ── HTML / JS template ───────────────────────────────────────────────────

@@ -33,7 +33,7 @@ def recall_daemon_start() -> None:
     """Start the recall daemon in the background."""
     import subprocess as _subprocess
 
-    from memo.recall_server import _is_pid_alive, _read_pid, _socket_path
+    from memo.recall_server import _is_pid_alive, _read_pid, connect_and_send
 
     cfg = Config.from_env()
     pid = _read_pid(cfg.state_dir)
@@ -58,14 +58,20 @@ def recall_daemon_start() -> None:
             env=env,
         )
 
-    # Wait briefly for the socket to appear
-    sock_path = _socket_path(cfg.state_dir)
+    # Readiness = the child answers a ping on the freshly bound socket. A bare
+    # exists() check would report success for a stale socket file left by a
+    # crashed daemon; the child unlinks + rebinds that file under its own start
+    # flock, so the parent probes by connecting instead of racing an unlink.
+    ready = False
     for _ in range(20):
         time.sleep(0.1)
-        if sock_path.exists():
+        if proc.poll() is not None:
+            break  # child already exited — it can never become ready
+        if connect_and_send(cfg.state_dir, {"op": "ping"}, timeout=0.5) is not None:
+            ready = True
             break
 
-    if not sock_path.exists():
+    if not ready:
         click.echo("recall daemon failed to start — check logs", err=True)
         sys.exit(1)
 
