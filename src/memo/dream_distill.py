@@ -236,13 +236,14 @@ def run_distill(
     """One nightly distillation pass. Never raises. OFF unless the flag is set.
     ADDITIVE + LINKING only — never supersedes/archives/deletes a source."""
     from memo.flags import flag_bool
+    from memo.tiers import SENSITIVE_TYPES
 
     res: dict[str, Any] = {"status": "noop", "distilled": []}
     if not flag_bool("MEMO_DREAM_DISTILL_ENABLED"):
         res["status"] = "disabled"
         return res
     try:
-        items = mem._pull_embeddings(exclude_types={"reference", "synthesis"})
+        items = mem._pull_embeddings(exclude_types={"reference", "synthesis"} | SENSITIVE_TYPES)
         if not items:
             res["status"] = "skipped"
             return res

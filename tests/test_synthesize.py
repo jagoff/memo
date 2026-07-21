@@ -242,6 +242,21 @@ def test_synthesize_excludes_existing_synthesis_from_source_pool(mock_memory):
     assert all(r["type"] != "synthesis" for r in source_rows)
 
 
+def test_synthesize_excludes_secret_rows_from_source_pool(mock_memory, monkeypatch):
+    """Legacy `type: secret` index rows must never reach the synthesis LLM prompt."""
+    captured: dict[str, set[str]] = {}
+    orig = mock_memory._pull_embeddings
+
+    def spy(*args: Any, **kwargs: Any):
+        exclude = kwargs.get("exclude_types") or (args[1] if len(args) > 1 else None)
+        captured["exclude_types"] = set(exclude or ())
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mock_memory, "_pull_embeddings", spy)
+    mock_memory.synthesize_cross_cluster()
+    assert "secret" in captured["exclude_types"]
+
+
 def test_synthesize_result_structure(mock_memory):
     """Each result has the expected keys."""
     _force_close_embeddings(mock_memory)
