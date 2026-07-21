@@ -589,6 +589,16 @@ def test_run_capture_incremental_no_new_turns(tmp_path: Path, monkeypatch):
 
     session_id = "sess-test"
 
+    # Stub extraction so the watermark logic is exercised deterministically on
+    # every backend. On Linux/CPU there is no MLX chat, so the real extractor
+    # errors — which (correctly, since the fail-closed capture fix) now yields
+    # status "error" instead of the old silent swallow. This test is about the
+    # no-new-turns watermark, not real LLM extraction.
+    monkeypatch.setattr(
+        "memo.capture_hooks._extract_and_save",
+        lambda *a, **k: {"saved": ["m1"], "save_failures": 0},
+    )
+
     # First pass — should process both exchanges
     result1 = run_capture_incremental(transcript, session_id, debug=False)
     assert result1["status"] == "ok"
