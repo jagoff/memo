@@ -31,7 +31,7 @@ def detect_reliability(mem: Any, *, now: str, limit: int = 20) -> list[Nudge]:
                 value=0.8,
                 title=f"You may be relying on a superseded fact: {title}",
                 evidence=(superseding_id, stale_id),
-                action=f"memo review {stale_id}",
+                action=f"memo get {stale_id}",
                 created_at=now,
             )
         )

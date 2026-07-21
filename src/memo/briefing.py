@@ -279,6 +279,38 @@ def dream_digest_lines(state_dir: Path, *, max_age_h: float = 24.0) -> list[str]
         return []
 
 
+def proactive_lines(mem: Any, *, max_lines: int = 3) -> list[str]:
+    """Compact proactive-engine digest — reliability/continuity/etc nudges.
+
+    Reads `ProactiveStore(mem.cfg.state_dir/"proactive.db")`, populated by the
+    nightly dream refresh pass — this never recomputes candidates, only routes
+    what is already there. Gated by `MEMO_PROACTIVE_ENABLED` (default off).
+    Empty list when disabled, the store has no active candidates, or on any
+    failure — a nudge is a nice-to-have, never a briefing blocker.
+    """
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_PROACTIVE_ENABLED"):
+        return []
+    try:
+        from memo.proactive.engine import compute_routed
+        from memo.proactive.store import ProactiveStore
+        from memo.proactive.surfaces import render_digest
+
+        store = ProactiveStore(mem.cfg.state_dir / "proactive.db")
+        now_dt = datetime.now(tz=UTC)
+        routed = compute_routed(store, now=now_dt.isoformat(), day=now_dt.date().isoformat())
+        if not routed.digest:
+            return []
+        body = render_digest(routed).splitlines()[:max_lines]
+        if not body:
+            return []
+        return ["### Proactive", "", *body, ""]
+    except Exception as exc:
+        _log.debug("briefing: proactive section failed: %s", exc)
+        return []
+
+
 _PROFILE_MAX_CHARS = 6000  # defensive cap; the dream pass already budgets the file
 
 
@@ -366,6 +398,11 @@ def memo_native_briefing_lines(
     if flag_bool("MEMO_FACT_SURFACE_ENABLED"):
         with contextlib.suppress(Exception):
             lines.extend(temporal_fact_lines(mem))
+
+    # ── Proactive engine: reliability/continuity/etc nudges (dark by default) ─
+    if flag_bool("MEMO_PROACTIVE_ENABLED"):
+        with contextlib.suppress(Exception):
+            lines.extend(proactive_lines(mem))
 
     # ── Open loops: recently updated memories ────────────────────────────
     try:
@@ -463,6 +500,7 @@ __all__ = [
     "dream_digest_lines",
     "install_seed_lines",
     "memo_native_briefing_lines",
+    "proactive_lines",
     "profile_lines",
     "synapse_briefing_lines",
     "temporal_fact_lines",

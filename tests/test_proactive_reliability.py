@@ -14,7 +14,7 @@ def test_reliability_nudges_cite_superseding_id():
     n = ns[0]
     assert n.kind == KIND_RELIABILITY
     assert "new1" in n.evidence and n.urgency >= 0.7
-    assert n.action == "memo review old1"
+    assert n.action == "memo get old1"
 
 
 def test_reliability_guarded_returns_empty_on_error():
