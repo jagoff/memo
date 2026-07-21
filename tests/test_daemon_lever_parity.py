@@ -183,6 +183,8 @@ def test_session_budget_decay_triggers_when_over_budget(mem: Memory, monkeypatch
     _base_env(monkeypatch)
     monkeypatch.setenv("MEMO_RECALL_SESSION_TOKEN_BUDGET", "10")  # very low session budget
     monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "600")  # base budget
+    monkeypatch.setenv("MEMO_RECALL_ADAPTIVE_BUDGET", "0")
+    monkeypatch.setenv("MEMO_RECALL_FORMAT", "full")
 
     mem.save(content="fix del flock fue ok", title="Flock fix", type_="fact")
 
@@ -232,6 +234,8 @@ def test_session_budget_no_decay_when_flag_off(mem: Memory, monkeypatch):
     _base_env(monkeypatch)
     monkeypatch.delenv("MEMO_RECALL_SESSION_TOKEN_BUDGET", raising=False)
     monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "600")
+    monkeypatch.setenv("MEMO_RECALL_ADAPTIVE_BUDGET", "0")
+    monkeypatch.setenv("MEMO_RECALL_FORMAT", "full")
 
     mem.save(content="fix del flock fue ok", title="Flock fix", type_="fact")
 

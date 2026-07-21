@@ -392,6 +392,25 @@ def test_reindex_rebuild_drops_orphans(mem_with_stub: Memory):
     assert mem_with_stub.store.count() == 1
 
 
+def test_reindex_rebuild_does_not_resurrect_legacy_archived_directory(
+    mem_with_stub: Memory,
+):
+    active = mem_with_stub.save(content="sigue activa", title="Active")
+    archived = mem_with_stub.save(content="ya fue archivada", title="Archived")
+    source = mem_with_stub.cfg.memory_dir / archived.path
+    archive_dir = mem_with_stub.cfg.memory_dir / "archived"
+    archive_dir.mkdir()
+    source.rename(archive_dir / source.name)
+
+    out = mem_with_stub.reindex(rebuild=True)
+
+    assert out["skipped"] == 1
+    assert mem_with_stub.get(active.id) is not None
+    assert mem_with_stub.get(archived.id) is None
+    assert mem_with_stub.store.count() == 1
+    assert mem_with_stub._gc_disk_orphans() == []
+
+
 def test_reindex_rebuild_embed_failure_keeps_previous_index(mem_with_stub: Memory, monkeypatch):
     a = mem_with_stub.save(content="alpha survives", title="A")
     b = mem_with_stub.save(content="beta survives", title="B")

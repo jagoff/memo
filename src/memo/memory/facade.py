@@ -105,6 +105,10 @@ class Memory(
         # flag_bool() can't do this because it collapses unset → False (the default).
         import os as _os
 
+        from memo.embedder_select import active_embedder_identity
+
+        _expected_embedder_model = active_embedder_identity(cfg)
+
         _via_daemon_raw = _os.environ.get("MEMO_EMBEDDER_VIA_DAEMON")
         if _via_daemon_raw == "1":
             _use_socket = True
@@ -114,15 +118,21 @@ class Memory(
             # Auto-detect: probe the socket with a cheap ping (< 1 ms on loopback).
             # Returns None when the daemon is absent — including during the daemon's
             # own startup, where cleanup() has already removed the old socket file.
+            from memo.embedder_client import daemon_is_compatible as _daemon_is_compatible
             from memo.embedder_client import ping as _ping
 
-            _use_socket = _ping(state_dir=cfg.state_dir) is not None
+            _use_socket = _daemon_is_compatible(
+                _ping(state_dir=cfg.state_dir),
+                expected_model=_expected_embedder_model,
+                expected_dims=cfg.embedder_dims,
+            )
 
         if _use_socket:
             from memo.embedder_client import SocketEmbedder
 
             self.embedder: Any = SocketEmbedder(
                 cfg.embedder_dims,
+                expected_model=_expected_embedder_model,
                 state_dir=cfg.state_dir,
             )
         else:
@@ -131,17 +141,15 @@ class Memory(
             # itself, and a raw env read there defaults to 0/off, silently
             # disabling the cache on every Memory-backed path (recall hook, CLI).
             # make_embedder picks MLX (Apple Silicon) or the CPU sentence-
-            # transformers backend (Linux/Ubuntu, Intel mac). See embedder_select.
+            # transformers backend (Linux/Ubuntu). See embedder_select.
             from memo.embedder_select import make_embedder
             from memo.flags import flag_int as _flag_int
 
             self.embedder = make_embedder(cfg, cache_size=_flag_int("MEMO_QUERY_CACHE_SIZE"))
-        from memo.embedder_select import active_embedder_identity
-
         self.store = VecStore(
             cfg.db_path,
             dims=cfg.embedder_dims,
-            embedder_model=active_embedder_identity(cfg),
+            embedder_model=_expected_embedder_model,
         )
         # History store — cheap to open (just sqlite); creating eagerly.
         # Audit failures never propagate to the caller — HistoryStore
@@ -213,7 +221,12 @@ class Memory(
                 )
             with self._chat_lock:
                 if self._chat is None:
-                    self._chat = MLXChat()
+                    self._chat = MLXChat(
+                        model_revisions={
+                            self.cfg.llm_model: self.cfg.llm_revision,
+                            self.cfg.helper_model: self.cfg.helper_revision,
+                        }
+                    )
         return self._chat
 
     def _ensure_chat(self) -> ChatBackend:

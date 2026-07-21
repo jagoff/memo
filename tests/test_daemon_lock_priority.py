@@ -29,6 +29,7 @@ from types import SimpleNamespace
 
 from memo.recall_socket import (
     _LOCK_WAIT_LOG_MS,
+    BUSY_RESPONSE,
     PriorityLock,
     _RecallHandler,
     _SimpleLockWrapper,
@@ -205,7 +206,8 @@ def test_lock_busy_recall_bails_empty_within_budget(monkeypatch, capsys) -> None
     out = _serve(_server(lock), {"op": "recall", "prompt": "hola que tal"})
     elapsed_s = time.monotonic() - t0
 
-    assert out == "{}", "lock-busy recall must keep the empty-bail contract"
+    assert out == BUSY_RESPONSE, "lock-busy recall must emit the busy marker"
+    assert json.loads(out) == {"busy": True}  # frozen wire shape the hook client parses
     assert elapsed_s < 1.0, f"bail must respect the ms budget, took {elapsed_s:.2f}s"
     assert lock.calls[0]["timeout"] == 0.2
 
@@ -220,13 +222,15 @@ def test_lock_busy_recall_bails_empty_within_budget(monkeypatch, capsys) -> None
 
 def test_recall_bails_fast_while_warming(capsys) -> None:
     """While the background model load runs (warm event unset), a recall op
-    returns "{}" immediately — the hook client falls back to subprocess
-    instead of queueing behind the cold load."""
+    returns the busy marker immediately — distinguishable from a legit empty
+    recall ("{}") so the hook client falls back to subprocess instead of
+    queueing behind the cold load."""
     srv = _server(_RecordingLock(result=True))
     srv._warm_event = threading.Event()  # unset = warming
     t0 = time.monotonic()
     out = _serve(srv, {"op": "recall", "prompt": "hola que tal"})
-    assert out == "{}"
+    assert out == BUSY_RESPONSE
+    assert json.loads(out) == {"busy": True}
     assert time.monotonic() - t0 < 0.5
     err = capsys.readouterr().err
     row = json.loads(next(ln for ln in err.splitlines() if "recall_warming" in ln))

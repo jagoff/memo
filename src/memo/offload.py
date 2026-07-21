@@ -12,6 +12,7 @@ memo keeps cognition off its surface and only ships the handle primitive.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -93,16 +94,27 @@ def offload(memory: Any, content: str, *, title: str | None = None) -> dict[str,
             "drill_down": f"memo_get('{existing[:12]}')",
         }
     label = title or f"offload:{kind} {sha[:12]}"
-    # Prefix a self-describing markdown heading so the payload clears the
-    # reference-tier noise gate in `save()` (rejects <60-char reference bodies
-    # with no heading/link); sha/synopsis/dedup stay over the raw payload and
-    # the payload remains retrievable verbatim via the drill-down.
+    # Prefix a self-describing markdown heading when it fits. Otherwise keep a
+    # searchable heading/synopsis in the body and persist the raw payload as a
+    # versioned lossless field; Memory.get decodes it only after SHA validation.
+    prefixed_content = f"# {label}\n\n{content}"
+    extra = {"offload_sha256": sha, "offload_kind": kind}
+    if len(prefixed_content) <= memory.cfg.max_content_chars:
+        stored_content = prefixed_content
+    else:
+        stored_content = f"# offload\n\n{synopsis}"
+        extra.update(
+            {
+                "offload_payload_encoding": "base64:utf-8:v1",
+                "offload_payload_b64": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+            }
+        )
     rec = memory.save(
-        content=f"# {label}\n\n{content}",
+        content=stored_content,
         title=label,
         type_="reference",
         tags=["offload"],
-        extra={"offload_sha256": sha, "offload_kind": kind},
+        extra=extra,
     )
     index[sha] = rec.id
     try:

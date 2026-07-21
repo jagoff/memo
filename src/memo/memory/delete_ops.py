@@ -187,8 +187,14 @@ class _DeleteOpsMixin(_MemoryBase):
             type_=r["type"],
         )
 
-        # Step 4: drop graph edges (derived; rebuildable via reindex)
-        self.graph.drop_for_memoria(id_)
+        # Step 4: drop graph edges (derived; rebuildable via reindex). Runs
+        # after the point of no return, so a graph-sidecar failure (e.g. a
+        # locked graph.db) must not make the already-completed delete report
+        # failure — a leftover edge is recoverable via `memo reindex`.
+        try:
+            self.graph.drop_for_memoria(id_)
+        except Exception as exc:
+            _log.warning("delete(%s): graph edge cleanup failed — %s", id_[:8], exc)
 
         # Step 5: drop contradiction pairs (non-critical, suppress errors)
         if self._contradict_store is not None:
@@ -196,7 +202,9 @@ class _DeleteOpsMixin(_MemoryBase):
                 self._contradict_store.drop_for_memoria(id_)
 
         # Step 6: emit receipts/events (non-critical, suppress errors)
-        try:
+        # Optional receipt delivery crosses an integration boundary. No
+        # integration failure may reverse an authoritative completed delete.
+        with contextlib.suppress(Exception):
             from memo.receipts import emit_receipt
 
             emit_receipt(
@@ -209,8 +217,6 @@ class _DeleteOpsMixin(_MemoryBase):
                     "path": r["path"],
                 },
             )
-        except Exception:  # noqa: S110
-            pass  # non-critical: file deletion is the authoritative step
 
         try:
             from memo.consciousness_ledger import emit_event

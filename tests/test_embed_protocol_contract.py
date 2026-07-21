@@ -136,3 +136,28 @@ def test_non_json_response_returns_none(echo_socket: tuple[Path, dict]) -> None:
     sock_path, captured = echo_socket
     captured["reply"] = "not json at all"
     assert ep.send_request(sock_path, {"op": "ping"}, timeout=2.0) is None
+
+
+def test_truncated_response_without_newline_returns_none(tmp_path: Path) -> None:
+    """A peer that closes mid-line (no '\\n' terminator) sent an INCOMPLETE
+    response — both send helpers must fail (None), never return the truncated
+    line as if complete. Every complete daemon response is newline-terminated."""
+    sock_path = Path("/tmp") / f"memo-ep-trunc-{os.getpid()}-{uuid.uuid4().hex}.sock"
+
+    class TruncatingHandler(socketserver.StreamRequestHandler):
+        def handle(self) -> None:
+            self.rfile.readline(ep.MAX_LINE_BYTES)
+            # Write a partial JSON line and close WITHOUT the terminator.
+            self.wfile.write(b'{"vector": [0.1, 0.2')
+
+    server = socketserver.ThreadingUnixStreamServer(str(sock_path), TruncatingHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    try:
+        req = {"op": "embed_query", "text": "q"}
+        assert ep.send_request_line(sock_path, req, timeout=2.0) is None
+        assert ep.send_request(sock_path, req, timeout=2.0) is None
+    finally:
+        server.shutdown()
+        server.server_close()
+        sock_path.unlink(missing_ok=True)

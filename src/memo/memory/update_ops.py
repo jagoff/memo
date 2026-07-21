@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import builtins
 import logging
+from contextlib import suppress
 from typing import Any
 
 import frontmatter
@@ -24,6 +25,33 @@ from memo.memory.record import (
 from memo.util import sha256_short as _sha256_short
 
 _log = logging.getLogger(__name__)
+
+
+def _resolve_updated_body(
+    old_body: str,
+    id_: str,
+    *,
+    content: str | None,
+    replace: tuple[str, str] | None,
+    append: str | None,
+) -> str:
+    if replace is not None:
+        old, new = replace
+        if not old:
+            raise ValueError("replace: old string must be non-empty")
+        occurrences = old_body.count(old)
+        if occurrences == 0:
+            raise ValueError(f"replace: old string not found in body of {id_[:8]}")
+        if occurrences > 1:
+            raise ValueError(
+                f"replace: old string occurs {occurrences} times in {id_[:8]}; must be unique"
+            )
+        return old_body.replace(old, new, 1)
+    if append is not None:
+        return (
+            old_body.rstrip("\n") + "\n\n" + append.strip() if old_body.strip() else append.strip()
+        )
+    return content if content is not None else old_body
 
 
 class _UpdateOpsMixin(_MemoryBase):
@@ -103,25 +131,13 @@ class _UpdateOpsMixin(_MemoryBase):
 
         # Body resolution: provided > on-disk > empty.
         old_body = self._read_body(r["path"])
-        if replace is not None:
-            old_str, new_str = replace
-            if not old_str:
-                raise ValueError("replace: old string must be non-empty")
-            occurrences = old_body.count(old_str)
-            if occurrences == 0:
-                raise ValueError(f"replace: old string not found in body of {id_[:8]}")
-            if occurrences > 1:
-                raise ValueError(
-                    f"replace: old string occurs {occurrences} times in {id_[:8]}; must be unique"
-                )
-            content = old_body.replace(old_str, new_str, 1)
-        elif append is not None:
-            content = (
-                old_body.rstrip("\n") + "\n\n" + append.strip()
-                if old_body.strip()
-                else append.strip()
-            )
-        new_body = content if content is not None else old_body
+        new_body = _resolve_updated_body(
+            old_body,
+            id_,
+            content=content,
+            replace=replace,
+            append=append,
+        )
         new_body = new_body[: self.cfg.max_content_chars]
         new_body_hash = _sha256_short(new_body)
         body_changed = new_body_hash != r["body_hash"]
@@ -139,7 +155,7 @@ class _UpdateOpsMixin(_MemoryBase):
         # extra/provenance bumps (e.g. the cache dirty-bit) don't spam version
         # rows. Best-effort: a versioning failure must never break the update.
         if body_changed or title_changed or new_type != r["type"] or new_tags != r["tags"]:
-            try:
+            with suppress(Exception):
                 self.versioning.track_update(
                     id_,
                     r["title"],
@@ -148,11 +164,18 @@ class _UpdateOpsMixin(_MemoryBase):
                     old_body,
                     reason="pre-update snapshot",
                 )
-            except Exception as exc:
-                _log.debug("update(%s): version snapshot failed — %s", id_[:8], exc)
 
-        abs_path = self._resolve_existing(r["path"])
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path = self._resolve_existing(r["path"])
+        source_markdown = source_path.read_bytes() if source_path.exists() else None
+        target_path = self.cfg.memory_dir / r["path"]
+        previous_target_markdown = (
+            source_markdown
+            if source_path == target_path
+            else target_path.read_bytes()
+            if target_path.exists()
+            else None
+        )
+        target_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Re-embed when the body OR title changed — both are part of the
         # embed input now (see `_compose_for_embed`). Pure retag/type
@@ -187,22 +210,61 @@ class _UpdateOpsMixin(_MemoryBase):
             post["normalized_hash"] = normalized_hash
         self._atomic_write_text(str(r["path"]), frontmatter.dumps(post))
 
+        try:
+            if embedding_required:
+                self.store.upsert(
+                    id_=id_,
+                    path=r["path"],
+                    title=new_title,
+                    type_=new_type,
+                    tags=new_tags,
+                    created=r["created"],
+                    updated=now_iso,
+                    body_hash=new_body_hash,
+                    embedding=embedding,
+                    extra=new_extra,
+                    body_text=new_body,
+                    topic_key=topic_key,
+                    normalized_hash=normalized_hash,
+                )
+            else:
+                self.store.update_meta(
+                    id_=id_,
+                    title=new_title,
+                    type_=new_type,
+                    tags=new_tags,
+                    updated=now_iso,
+                    extra=new_extra,
+                )
+        except Exception:
+            if previous_target_markdown is None:
+                target_path.unlink(missing_ok=True)
+            else:
+                self._atomic_write_text(
+                    str(r["path"]),
+                    previous_target_markdown.decode("utf-8"),
+                )
+            raise
+
+        # Legacy vault-layout migration: `_resolve_existing` may have read the
+        # body from `vault_path / rel` (pre-migrate row) while the rewrite
+        # above landed at `memory_dir / rel`. Remove the stale vault copy so
+        # exactly one canonical .md exists — otherwise a later reindex can
+        # resurrect the pre-update body from the leftover duplicate.
+        # Best-effort: the new-layout file + index row are already canonical,
+        # so a failed unlink degrades to the old (duplicate) state, no worse.
+        if source_path != target_path and source_markdown is not None:
+            try:
+                source_path.unlink(missing_ok=True)
+            except OSError as exc:
+                _log.warning(
+                    "update(%s): stale legacy copy %s left in place — %s",
+                    id_[:8],
+                    source_path,
+                    exc,
+                )
+
         if embedding_required:
-            self.store.upsert(
-                id_=id_,
-                path=r["path"],
-                title=new_title,
-                type_=new_type,
-                tags=new_tags,
-                created=r["created"],
-                updated=now_iso,
-                body_hash=new_body_hash,
-                embedding=embedding,
-                extra=new_extra,
-                body_text=new_body,
-                topic_key=topic_key,
-                normalized_hash=normalized_hash,
-            )
             # Body/title changed → refresh derived chunk rows in step
             # (metadata-only edits skip, same as the skipped re-embed).
             self.maybe_emit_chunks(
@@ -213,15 +275,6 @@ class _UpdateOpsMixin(_MemoryBase):
                 tags=new_tags,
                 created=r["created"],
                 updated=now_iso,
-            )
-        else:
-            self.store.update_meta(
-                id_=id_,
-                title=new_title,
-                type_=new_type,
-                tags=new_tags,
-                updated=now_iso,
-                extra=new_extra,
             )
 
         # Crossref edges (flag-gated): body edits can add/remove typed links.

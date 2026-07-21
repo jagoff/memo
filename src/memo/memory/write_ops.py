@@ -38,6 +38,7 @@ from memo.memory.record import (
     bump_support_if_enabled,
     in_derived_save_scope,
     is_reference_noise,
+    markdown_body,
 )
 from memo.prompt_overrides import resolve_prompt
 from memo.save_gate import resolve_gate
@@ -1298,7 +1299,7 @@ class _WriteOpsMixin(_MemoryBase):
             try:
                 text = abs_path.read_text(encoding="utf-8")
                 post = frontmatter.loads(text)
-                return str(post.content)
+                return markdown_body(post)
             except (OSError, UnicodeDecodeError) as exc:
                 _log.debug("_read_body: disk read failed for %s: %s", rel_path, exc)
         # Fallback: vault-ingest rows (e.g. `notes/01-Projects/Foo.md`,

@@ -423,6 +423,66 @@ def test_update_atomic_markdown_replace_failure_preserves_original(
     assert not list(path.parent.glob(f".{path.name}.*.tmp"))
 
 
+@pytest.mark.parametrize("file_existed", [True, False])
+def test_update_store_failure_restores_previous_markdown_state(
+    mem_with_stub: Memory, file_existed: bool
+):
+    rec = mem_with_stub.save(
+        content="original body",
+        title="Store rollback",
+        defer_embed=True,
+    )
+    path = mem_with_stub.cfg.memory_dir / rec.path
+    original = path.read_bytes()
+    if not file_existed:
+        path.unlink()
+
+    mem_with_stub.store.connection.execute(
+        "CREATE TRIGGER fail_meta_update BEFORE UPDATE ON meta "
+        "BEGIN SELECT RAISE(ABORT, 'forced store update failure'); END"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced store update failure"):
+        mem_with_stub.update(rec.id, title="Must roll back")
+
+    if file_existed:
+        assert path.read_bytes() == original
+    else:
+        assert not path.exists()
+
+
+def test_update_store_failure_preserves_legacy_only_markdown_topology(
+    mem_with_stub: Memory,
+):
+    rec = mem_with_stub.save(
+        content="legacy body",
+        title="Legacy rollback",
+        defer_embed=True,
+    )
+    canonical_path = mem_with_stub.cfg.memory_dir / rec.path
+    assert mem_with_stub.cfg.vault_path is not None
+    legacy_path = mem_with_stub.cfg.vault_path / rec.path
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_path.replace(legacy_path)
+    legacy_bytes = legacy_path.read_bytes()
+    assert mem_with_stub.get(rec.id).body == "legacy body"
+
+    mem_with_stub.store.connection.execute(
+        "CREATE TRIGGER fail_legacy_meta_update BEFORE UPDATE ON meta "
+        "BEGIN SELECT RAISE(ABORT, 'forced legacy store failure'); END"
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced legacy store failure"):
+        mem_with_stub.update(rec.id, title="Must roll back legacy")
+
+    assert legacy_path.read_bytes() == legacy_bytes
+    assert not canonical_path.exists()
+    restored = mem_with_stub.get(rec.id)
+    assert restored is not None
+    assert restored.title == "Legacy rollback"
+    assert restored.body == "legacy body"
+
+
 def test_save_indexes_entities_in_graph_db(mem_with_stub: Memory):
     rec = mem_with_stub.save(
         content="MLX and MCP share retrieval context.",

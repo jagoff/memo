@@ -89,9 +89,9 @@ _MODEL_PROFILE_CHOICES = (
     SettingChoice("Quality", "quality", "Larger embedder and higher memory use."),
 )
 _EMBEDDER_BACKEND_CHOICES = (
-    SettingChoice("Automatic", "auto", "MLX on Apple Silicon, CPU elsewhere."),
+    SettingChoice("Automatic", "auto", "MLX on Apple Silicon, CPU on Linux."),
     SettingChoice("MLX", "mlx", "Apple Silicon MLX runtime."),
-    SettingChoice("Sentence Transformers", "st", "Portable CPU backend."),
+    SettingChoice("Sentence Transformers", "st", "Linux CPU backend."),
 )
 
 
@@ -174,6 +174,15 @@ FIELD_BINDINGS: tuple[FieldBinding, ...] = (
         restart_targets=("recall-daemon",),
     ),
     FieldBinding(
+        "models.llm_revision",
+        "llm_revision",
+        "MEMO_LLM_REVISION",
+        "Models",
+        "Model IDs",
+        SettingKind.STR,
+        restart_targets=("recall-daemon",),
+    ),
+    FieldBinding(
         "models.helper_model",
         "helper_model",
         "MEMO_HELPER_MODEL",
@@ -183,9 +192,28 @@ FIELD_BINDINGS: tuple[FieldBinding, ...] = (
         restart_targets=("recall-daemon",),
     ),
     FieldBinding(
+        "models.helper_revision",
+        "helper_revision",
+        "MEMO_HELPER_REVISION",
+        "Models",
+        "Model IDs",
+        SettingKind.STR,
+        restart_targets=("recall-daemon",),
+    ),
+    FieldBinding(
         "models.embedder_model",
         "embedder_model",
         "MEMO_EMBEDDER_MODEL",
+        "Models",
+        "Embeddings",
+        SettingKind.STR,
+        risk=RiskLevel.CAUTION,
+        restart_targets=("recall-daemon", "reindex"),
+    ),
+    FieldBinding(
+        "models.embedder_revision",
+        "embedder_revision",
+        "MEMO_EMBEDDER_REVISION",
         "Models",
         "Embeddings",
         SettingKind.STR,
@@ -457,6 +485,10 @@ def _flag_specs(bound_env_names: frozenset[str]) -> list[SettingSpec]:
                 env_name=env_name,
                 minimum=flag.min_val,
                 maximum=flag.max_val,
+                choices=tuple(
+                    SettingChoice(choice.replace("-", " ").title(), choice)
+                    for choice in flag.choices
+                ),
                 visibility=visibility,
                 policy=policy,
                 restart_targets=FLAG_RESTART_TARGETS.get(env_name, ()),

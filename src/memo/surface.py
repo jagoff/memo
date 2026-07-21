@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memo.flags import flag_bool, flag_str
+from memo import flags
 
 CORE_CLI_COMMANDS: frozenset[str] = frozenset(
     {
@@ -101,8 +101,11 @@ CORE_MCP_TOOLS: frozenset[str] = frozenset(
 )
 
 
-def _profile(name: str, *, default: str = "default") -> str:
-    value = flag_str(name).strip().lower()
+def _profile(name: str, *, default: str = "default", strict: bool = False) -> str:
+    # Resolve through the module on every call. Importing a function alias here
+    # can permanently capture a temporary monkeypatch when this module is first
+    # imported, poisoning all later CLI/MCP profile checks in that process.
+    value = (flags.flag_str(name, strict=strict) or default).strip().lower()
     return value or default
 
 
@@ -121,12 +124,10 @@ def mcp_include_advanced_tools() -> bool:
 
 def mcp_profile() -> str:
     """Resolve the MCP surface profile, defaulting agent clients to 14 tools."""
-    profile = _profile("MEMO_MCP_PROFILE", default="agent")
-    if flag_bool("MEMO_MCP_SLIM"):
+    profile = _profile("MEMO_MCP_PROFILE", default="agent", strict=True)
+    if flags.flag_bool("MEMO_MCP_SLIM"):
         return "core"
-    if profile in {"agent", *_CORE_PROFILES, *_FULL_PROFILES}:
-        return profile
-    return "agent"
+    return profile
 
 
 def mcp_tools_to_remove() -> frozenset[str]:

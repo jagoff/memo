@@ -13,24 +13,24 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from starlette.responses import JSONResponse
 
 from memo import __version__
 from memo.config import Config
 from memo.http_auth import (
+    MAX_HTTP_REQUEST_BYTES,
     HttpAuthConfig,
     HttpAuthRejected,
-    RateLimitMiddleware,
-    SecurityHeadersMiddleware,
+    build_http_middleware,
     load_http_auth_config,
     validate_http_bind,
     verify_http_auth,
 )
-from memo.memory import Memory
+from memo.memory import AmbiguousIdError, Memory
 
 _log = logging.getLogger(__name__)
 
@@ -42,72 +42,16 @@ _memory: Memory | None = None
 _memory_lock = threading.Lock()
 _auth_config: HttpAuthConfig | None = None
 
-MAX_REQUEST_BYTES = 1_048_576
+MAX_REQUEST_BYTES = MAX_HTTP_REQUEST_BYTES
 MAX_CONTENT_CHARS = 900_000
 
 
-class _PayloadTooLarge(Exception):
-    pass
+def _initial_http_middleware() -> list[Any]:
+    """Build import-safe middleware for uvicorn reload/direct app imports."""
 
+    from memo.flags import flag_bool
 
-class RequestSizeLimitMiddleware:
-    """Reject oversized declared and streamed request bodies before parsing."""
-
-    def __init__(self, app: Any, *, max_bytes: int) -> None:
-        self.app = app
-        self.max_bytes = max_bytes
-
-    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get("type") != "http":
-            await self.app(scope, receive, send)
-            return
-
-        length_error = self._content_length_error(scope)
-        if length_error is not None:
-            await length_error(scope, receive, send)
-            return
-
-        received = 0
-        response_started = False
-
-        async def limited_receive() -> dict[str, Any]:
-            nonlocal received
-            message = await receive()
-            if message.get("type") == "http.request":
-                received += len(message.get("body", b""))
-                if received > self.max_bytes:
-                    raise _PayloadTooLarge
-            return message
-
-        async def tracked_send(message: dict[str, Any]) -> None:
-            nonlocal response_started
-            if message.get("type") == "http.response.start":
-                response_started = True
-            await send(message)
-
-        try:
-            await self.app(scope, limited_receive, tracked_send)
-        except _PayloadTooLarge:
-            if not response_started:
-                await self._reject(scope, receive, send)
-
-    @staticmethod
-    async def _reject(scope: dict[str, Any], receive: Any, send: Any) -> None:
-        await JSONResponse({"detail": "Request body too large"}, status_code=413)(
-            scope, receive, send
-        )
-
-    def _content_length_error(self, scope: dict[str, Any]) -> JSONResponse | None:
-        raw_length = dict(scope.get("headers") or []).get(b"content-length")
-        if raw_length is None:
-            return None
-        try:
-            content_length = int(raw_length)
-        except ValueError:
-            return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
-        if content_length > self.max_bytes:
-            return JSONResponse({"detail": "Request body too large"}, status_code=413)
-        return None
+    return build_http_middleware(allow_no_auth=flag_bool("MEMO_HTTP_ALLOW_NO_AUTH"))
 
 
 def configure_auth(*, host: str = "127.0.0.1", allow_no_auth: bool = False) -> None:
@@ -115,6 +59,11 @@ def configure_auth(*, host: str = "127.0.0.1", allow_no_auth: bool = False) -> N
 
     global _auth_config
     _auth_config = load_http_auth_config(host=host, allow_no_auth=allow_no_auth)
+    # The unauthenticated mode is local-only and needs browser origin/Host
+    # protection. Configuration is guaranteed to run before uvicorn starts, so
+    # rebuild Starlette's middleware definition before the stack is materialized.
+    app.user_middleware = build_http_middleware(allow_no_auth=_auth_config.allow_no_auth)
+    app.middleware_stack = None
 
 
 def _auth_dependency(authorization: str | None = Header(default=None)) -> None:
@@ -144,14 +93,26 @@ def _get_memory() -> Memory:
     return _memory
 
 
+@asynccontextmanager
+async def _lifespan(_app):  # type: ignore[no-untyped-def]
+    try:
+        yield
+    finally:
+        global _memory
+        with _memory_lock:
+            memory, _memory = _memory, None
+        if memory is not None:
+            with suppress(Exception):
+                memory.close()
+
+
 app = FastAPI(
     title="memo HTTP API",
     description="Local-first semantic memory REST API",
     version=__version__,
+    middleware=_initial_http_middleware(),
+    lifespan=_lifespan,
 )
-app.add_middleware(RequestSizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
-app.add_middleware(RateLimitMiddleware)
-app.add_middleware(SecurityHeadersMiddleware)
 
 _AUTH = [Depends(_auth_dependency)]
 
@@ -199,10 +160,22 @@ def save_memory(input_: SaveInput) -> dict[str, Any]:
     return {"id": result.id, "title": result.title, "status": "saved"}
 
 
+def _ambiguous_http_error(exc: AmbiguousIdError) -> HTTPException:
+    """Map an ambiguous id prefix to a 409 carrying the candidate matches."""
+
+    return HTTPException(
+        status_code=409,
+        detail={"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches},
+    )
+
+
 @app.get("/api/memory/{id_}", dependencies=_AUTH)
 def get_memory(id_: str) -> dict[str, Any]:
     mem = _get_memory()
-    rec = mem.get(id_)
+    try:
+        rec = mem.get(id_)
+    except AmbiguousIdError as exc:
+        raise _ambiguous_http_error(exc) from exc
     if not rec:
         raise HTTPException(status_code=404, detail="Memory not found")
     return {
@@ -227,7 +200,12 @@ def list_memory(
 @app.delete("/api/memory/{id_}", dependencies=_AUTH)
 def delete_memory(id_: str) -> dict[str, Any]:
     mem = _get_memory()
-    mem.delete(id_)
+    try:
+        deleted = mem.delete(id_)
+    except AmbiguousIdError as exc:
+        raise _ambiguous_http_error(exc) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Memory not found")
     return {"id": id_, "status": "deleted"}
 
 

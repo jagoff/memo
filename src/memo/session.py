@@ -60,11 +60,13 @@ import contextlib
 import json
 import logging
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from memo.atomic_io import atomic_write_text
+from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.flags import flag_int
 from memo.session_sources import (
     _COMMAND_WRAPPER_PREFIXES,
@@ -180,6 +182,13 @@ def _write(state_dir: Path, session_id: str, data: dict[str, Any]) -> Path:
     return p
 
 
+@contextmanager
+def _session_write_lock(state_dir: Path, session_id: str) -> Iterator[None]:
+    """Cross-process write lock keyed to one validated session sidecar."""
+    with authority_write_lock(_session_path(state_dir, session_id)):
+        yield
+
+
 def checkpoint(
     state_dir: Path,
     *,
@@ -204,8 +213,6 @@ def checkpoint(
         raise ValueError("session_id required")
 
     cwd_path = Path(cwd).expanduser().resolve()
-    existing = _load(state_dir, session_id) or {}
-
     git_state = gather_git_state(cwd_path)
 
     last_user_msg: str | None = None
@@ -215,56 +222,52 @@ def checkpoint(
         last_user_msg = read_last_user_msg(tp)
         last_assistant_tail = read_last_assistant_tail(tp)
 
-    # prompt_trail: ring buffer of last N user prompts, crash-resilient
-    # because it's updated on UserPromptSubmit (not just Stop). Slash-command
-    # plumbing is stripped so "Open loops" never lists wrapper noise.
-    trail = list(existing.get("prompt_trail") or [])
-    if prompt:
-        clean_prompt = _strip_command_wrappers(prompt.strip())
-        if clean_prompt and not clean_prompt.startswith(_COMMAND_WRAPPER_PREFIXES):
-            trail.append(clean_prompt[:_PROMPT_TRAIL_CHARS])
-            trail = trail[-_PROMPT_TRAIL_MAX:]
+    # Git/transcript inspection above can be slow. Re-load only after acquiring
+    # the per-session lock, then merge onto the latest snapshot so stamps made
+    # while that work ran are not clobbered.
+    with _session_write_lock(state_dir, session_id):
+        existing = _load(state_dir, session_id) or {}
 
-    now = _now_iso()
-    snapshot: dict[str, Any] = {
-        "session_id": session_id,
-        "cwd": str(cwd_path),
-        "project": cwd_path.name,
-        "branch": git_state["branch"],
-        "head_commit": git_state["head_commit"],
-        "modified_files": git_state["modified_files"],
-        "transcript_path": str(transcript_path)
-        if transcript_path
-        else existing.get("transcript_path"),
-        "last_user_msg": last_user_msg or existing.get("last_user_msg"),
-        "last_assistant_tail": last_assistant_tail or existing.get("last_assistant_tail"),
-        "prompt_trail": trail,
-        "running_summary": existing.get("running_summary"),
-        "summary_turn": int(existing.get("summary_turn") or 0),
-        # Default summary to last user msg head; an external enricher
-        # (e.g. capture-stop with MLX warm) may overwrite later. A previously
-        # stored command-noise summary is NOT preserved — recompute so old junk
-        # heals on the next checkpoint.
-        "summary": (
-            existing.get("summary")
-            if existing.get("summary") and not is_command_noise(existing.get("summary"))
-            else ((last_user_msg or "")[:_SUMMARY_FALLBACK_CHARS] or None)
-        ),
-        "created": existing.get("created") or now,
-        "updated": now,
-        "turn_count": int(existing.get("turn_count") or 0) + 1,
-        # Correlation stamp written by the recall-hook (next_turn/stamp_recall_turn).
-        # Preserved across checkpoints so the Stop-hook grounding detector can read
-        # back the turn label the recall used. See grounding.score_turn.
-        "last_recall_turn": existing.get("last_recall_turn"),
-        # Cadence watermark written by cli_recap.maybe_write_recap (stamp_recap_turn).
-        # Preserved across checkpoints the same way as last_recall_turn above, so
-        # due_for_recap's turn_count - last_recap_turn throttle holds across turns
-        # instead of resetting to 0 on the next Stop-hook checkpoint.
-        "last_recap_turn": existing.get("last_recap_turn"),
-    }
+        # prompt_trail: ring buffer of last N user prompts, crash-resilient
+        # because it's updated on UserPromptSubmit (not just Stop).
+        trail = list(existing.get("prompt_trail") or [])
+        if prompt:
+            clean_prompt = _strip_command_wrappers(prompt.strip())
+            if clean_prompt and not clean_prompt.startswith(_COMMAND_WRAPPER_PREFIXES):
+                trail.append(clean_prompt[:_PROMPT_TRAIL_CHARS])
+                trail = trail[-_PROMPT_TRAIL_MAX:]
 
-    _write(state_dir, session_id, snapshot)
+        now = _now_iso()
+        snapshot: dict[str, Any] = {
+            **existing,
+            "session_id": session_id,
+            "cwd": str(cwd_path),
+            "project": cwd_path.name,
+            "branch": git_state["branch"],
+            "head_commit": git_state["head_commit"],
+            "modified_files": git_state["modified_files"],
+            "transcript_path": str(transcript_path)
+            if transcript_path
+            else existing.get("transcript_path"),
+            "last_user_msg": last_user_msg or existing.get("last_user_msg"),
+            "last_assistant_tail": last_assistant_tail or existing.get("last_assistant_tail"),
+            "prompt_trail": trail,
+            "running_summary": existing.get("running_summary"),
+            "summary_turn": int(existing.get("summary_turn") or 0),
+            # Default summary to last user msg head; an external enricher
+            # (e.g. capture-stop with MLX warm) may overwrite later.
+            "summary": (
+                existing.get("summary")
+                if existing.get("summary") and not is_command_noise(existing.get("summary"))
+                else ((last_user_msg or "")[:_SUMMARY_FALLBACK_CHARS] or None)
+            ),
+            "created": existing.get("created") or now,
+            "updated": now,
+            "turn_count": int(existing.get("turn_count") or 0) + 1,
+            "last_recall_turn": existing.get("last_recall_turn"),
+            "last_recap_turn": existing.get("last_recap_turn"),
+        }
+        _write(state_dir, session_id, snapshot)
     cap = lru_cap if lru_cap is not None else (flag_int("MEMO_SESSION_LRU_CAP") or _LRU_CAP_DEFAULT)
     prune_lru(state_dir, cap=cap)
     return snapshot
@@ -281,8 +284,9 @@ def next_turn(state_dir: Path, session_id: str) -> int:
     """
     if not session_id:
         return 1
-    existing = _load(state_dir, session_id) or {}
-    return int(existing.get("turn_count") or 0) + 1
+    with _session_write_lock(state_dir, session_id):
+        existing = _load(state_dir, session_id) or {}
+        return int(existing.get("turn_count") or 0) + 1
 
 
 def stamp_recall_turn(state_dir: Path, session_id: str, turn: int) -> None:
@@ -293,14 +297,13 @@ def stamp_recall_turn(state_dir: Path, session_id: str, turn: int) -> None:
     if not session_id:
         return
     try:
-        existing = _load(state_dir, session_id) or {}
-        existing["session_id"] = session_id
-        existing["last_recall_turn"] = int(turn)
-        # Refresh `updated` — the session GC evicts oldest-by-updated, and a
-        # session that only ever got hook stamps would sort first and lose its
-        # recalled_ids (cited-grounding depends on them).
-        existing["updated"] = _now_iso()
-        _write(state_dir, session_id, existing)
+        with _session_write_lock(state_dir, session_id):
+            existing = _load(state_dir, session_id) or {}
+            existing["session_id"] = session_id
+            existing["last_recall_turn"] = int(turn)
+            # Refresh `updated` — the session GC evicts oldest-by-updated.
+            existing["updated"] = _now_iso()
+            _write(state_dir, session_id, existing)
     except (OSError, ValueError, TypeError) as exc:
         _log.debug("session: failed to checkpoint recall turn: %s", exc)
 
@@ -314,10 +317,11 @@ def stamp_recap_turn(state_dir: Path, session_id: str, turn: int) -> None:
     if not session_id:
         return
     try:
-        existing = _load(state_dir, session_id) or {}
-        existing["session_id"] = session_id
-        existing["last_recap_turn"] = int(turn)
-        _write(state_dir, session_id, existing)
+        with _session_write_lock(state_dir, session_id):
+            existing = _load(state_dir, session_id) or {}
+            existing["session_id"] = session_id
+            existing["last_recap_turn"] = int(turn)
+            _write(state_dir, session_id, existing)
     except (OSError, ValueError, TypeError) as exc:
         _log.debug("session: failed to checkpoint recap turn: %s", exc)
 
@@ -521,12 +525,43 @@ def check_autosave(
 
 def mark_autosaved(state_dir: Path, session_id: str) -> None:
     """Stamp last_autosave_at in the session JSON (best-effort, silent)."""
-    existing = _load(state_dir, session_id)
-    if existing is None:
-        return
-    existing["last_autosave_at"] = _now_iso()
-    with contextlib.suppress(OSError):
+    with (
+        contextlib.suppress(OSError, ValueError),
+        _session_write_lock(state_dir, session_id),
+    ):
+        existing = _load(state_dir, session_id)
+        if existing is None:
+            return
+        existing["last_autosave_at"] = _now_iso()
         _write(state_dir, session_id, existing)
+
+
+def _recent_summary_exchanges(transcript_path: Path) -> list[str]:
+    """Read the compact user/assistant lines used by summary refresh."""
+
+    try:
+        lines = transcript_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    exchanges: list[str] = []
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        role = obj.get("type") or obj.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        msg = obj.get("message", obj)
+        content = msg.get("content") if isinstance(msg, dict) else None
+        text = _extract_text(content)
+        if text:
+            label = "User" if role == "user" else "Assistant"
+            exchanges.append(f"[{label}] {text[:300]}")
+    return exchanges
 
 
 def refresh_summary(
@@ -545,46 +580,24 @@ def refresh_summary(
     Idempotent: if `turn_count - summary_turn < min_new_turns`, skip.
     On crash the last written `running_summary` is preserved in the snapshot.
     """
-    existing = _load(state_dir, session_id)
-    if existing is None:
-        return False
+    with _session_write_lock(state_dir, session_id):
+        existing = _load(state_dir, session_id)
+        if existing is None:
+            return False
 
-    turn_count = int(existing.get("turn_count") or 0)
-    summary_turn = int(existing.get("summary_turn") or 0)
-    if turn_count - summary_turn < min_new_turns:
-        return False
-
-    transcript_path_str = existing.get("transcript_path")
+        turn_count = int(existing.get("turn_count") or 0)
+        summary_turn = int(existing.get("summary_turn") or 0)
+        if turn_count - summary_turn < min_new_turns:
+            return False
+        transcript_path_str = existing.get("transcript_path")
     if not transcript_path_str:
         return False
     transcript_path = Path(transcript_path_str).expanduser()
     if not transcript_path.is_file():
         return False
 
-    try:
-        lines = transcript_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return False
-
     # Collect last ~10 user+assistant exchanges for the LLM prompt.
-    exchanges: list[str] = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        role = obj.get("type") or obj.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        msg = obj.get("message", obj)
-        content = msg.get("content") if isinstance(msg, dict) else None
-        text = _extract_text(content)
-        if text:
-            label = "User" if role == "user" else "Assistant"
-            exchanges.append(f"[{label}] {text[:300]}")
+    exchanges = _recent_summary_exchanges(transcript_path)
     if not exchanges:
         return False
 
@@ -615,20 +628,30 @@ def refresh_summary(
     if not summary:
         return False
 
-    existing["running_summary"] = summary[:_RUNNING_SUMMARY_CHARS]
-    existing["summary_turn"] = turn_count
-    _write(state_dir, session_id, existing)
-    return True
+    with _session_write_lock(state_dir, session_id):
+        latest = _load(state_dir, session_id)
+        if latest is None:
+            return False
+        # Another concurrent refresh may already have summarized this turn.
+        if int(latest.get("summary_turn") or 0) >= turn_count:
+            return False
+        latest["running_summary"] = summary[:_RUNNING_SUMMARY_CHARS]
+        latest["summary_turn"] = turn_count
+        _write(state_dir, session_id, latest)
+        return True
 
 
 def mark_reflected(state_dir: Path, session_id: str) -> bool:
     """Stamp `reflected_at` in the session JSON so `memo reflect --if-due`
     can skip already-processed sessions. Best-effort, never raises."""
-    existing = _load(state_dir, session_id)
-    if existing is None:
-        return False
-    existing["reflected_at"] = _now_iso()
-    with contextlib.suppress(OSError):
+    with (
+        contextlib.suppress(OSError, ValueError),
+        _session_write_lock(state_dir, session_id),
+    ):
+        existing = _load(state_dir, session_id)
+        if existing is None:
+            return False
+        existing["reflected_at"] = _now_iso()
         _write(state_dir, session_id, existing)
         return True
     return False
@@ -651,15 +674,16 @@ def mark_ids_recalled(
     if not new_ids:
         return
     try:
-        existing = _load(state_dir, session_id) or {}
-        recalled = dict(existing.get("recalled_ids", {}))
-        # Only record first-seen turn; don't overwrite if already present
-        for mid, turn in new_ids.items():
-            if mid not in recalled:
-                recalled[mid] = turn
-        existing["recalled_ids"] = recalled
-        existing["updated"] = _now_iso()
-        _write(state_dir, session_id, existing)
+        with _session_write_lock(state_dir, session_id):
+            existing = _load(state_dir, session_id) or {}
+            recalled = dict(existing.get("recalled_ids", {}))
+            # Only record first-seen turn; don't overwrite if already present
+            for mid, turn in new_ids.items():
+                if mid not in recalled:
+                    recalled[mid] = turn
+            existing["recalled_ids"] = recalled
+            existing["updated"] = _now_iso()
+            _write(state_dir, session_id, existing)
     except Exception:  # noqa: S110
         pass
 
@@ -673,15 +697,16 @@ def update_summary(
     capture-stop pipeline (which already has MLXChat warm) to enrich
     the cheap heuristic summary set by `checkpoint()`. Returns True
     on success, False if the session doesn't exist."""
-    existing = _load(state_dir, session_id)
-    if existing is None:
-        return False
     summary = (summary or "").strip()
     if not summary:
         return False
-    existing["summary"] = summary[:200]
-    _write(state_dir, session_id, existing)
-    return True
+    with _session_write_lock(state_dir, session_id):
+        existing = _load(state_dir, session_id)
+        if existing is None:
+            return False
+        existing["summary"] = summary[:200]
+        _write(state_dir, session_id, existing)
+        return True
 
 
 def _clean_snapshot_summary(snapshot: dict[str, Any], width: int) -> str:

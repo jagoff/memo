@@ -472,6 +472,25 @@ def test_synthesize_delete_nonexistent_id(mock_memory):
     assert "reason" in result
 
 
+def test_synthesize_delete_ambiguous_prefix_returns_structured_error(mock_memory, monkeypatch):
+    """An ambiguous id prefix returns the documented structured payload
+    (mirrors server_core_records) instead of leaking AmbiguousIdError as a
+    raw, unstructured tool error."""
+    from memo.errors import AmbiguousIdError
+
+    matches = ["a1b2" + "0" * 28, "a1b2" + "f" * 28]
+
+    def _raise(prefix):
+        raise AmbiguousIdError(prefix, matches)
+
+    monkeypatch.setattr(mock_memory, "resolve_id", _raise)
+    delete_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_delete")
+
+    result = delete_fn(id="a1b2")
+
+    assert result == {"error": "ambiguous", "prefix": "a1b2", "matches": matches}
+
+
 # ── 3.3c: dedup on re-run (synthesis_sources_hash) ──────────────────────────
 
 

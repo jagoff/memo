@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="mlx-memo"
 OLD_APP_NAME="memo-mcp"
 PYPI_SPEC="mlx-memo"
-GIT_SPEC="git+https://github.com/jagoff/memo.git"
+DEFAULT_VERSION="3.8.1"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13
 
@@ -165,7 +165,7 @@ install_spec() {
   elif [[ "${MEMO_INSTALL_FROM_PYPI:-0}" == "1" ]]; then
     printf '%s\n' "$PYPI_SPEC"
   else
-    printf '%s\n' "$GIT_SPEC"
+    printf '%s==%s\n' "$PYPI_SPEC" "$DEFAULT_VERSION"
   fi
 }
 
@@ -263,6 +263,7 @@ explain_models() {
   printf '  %sambient recall cannot run. Downloads land in ~/.cache/huggingface:%s\n' "$DIM" "$RESET"
   printf '      %s•%s embedder   Qwen3-Embedding-0.6B-4bit   ~0.4 GB  %s(required · now)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
   printf '      %s•%s reranker   Qwen3-Reranker-0.6B          ~0.6 GB  %s(required · now)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
+  # shellcheck disable=SC2016  # backticks are intentional user-facing Markdown
   printf '      %s•%s chat LLM   7B + 4B helper               ~6   GB  %s(for `memo ask` · background)%s\n' "$CYAN" "$RESET" "$DIM" "$RESET"
   printf '  %sRequired models (~1 GB) download now (~3 min); chat models continue%s\n' "$DIM" "$RESET"
   printf '  %sin the background so the install finishes without waiting on them.%s\n' "$DIM" "$RESET"
@@ -346,32 +347,22 @@ main() {
     ok "Python: $PYTHON_BIN"
     phase "Preparing pipx"
     ensure_pipx
-    clean_old_pipx_package
   fi
 
   phase "Installing $APP_NAME"
   local spec
   spec="$(install_spec)"
   if [[ "$USE_UV" == "1" ]]; then
-    # Remove any existing uv tool install so --force always starts clean.
-    "$UV_BIN" tool uninstall "$APP_NAME" 2>/dev/null || true
     spin "installing from $spec" "$UV_BIN" tool install "$spec" --force \
       || die "uv tool install failed (see log above)"
     # Ensure ~/.local/bin is on PATH for this session.
     export PATH="$HOME/.local/bin:$PATH"
   else
-    # pipx 1.13 uses uv as its venv backend; uninstall + hard-remove stale venv
-    # so --force always starts from a clean slate.
-    if run_pipx list --short 2>/dev/null | awk '{print $1}' | grep -qx "$APP_NAME"; then
-      spin "removing existing $APP_NAME (clean reinstall)" run_pipx uninstall "$APP_NAME" || true
-    fi
-    local venvs_dir
-    venvs_dir="$(run_pipx environment --value PIPX_LOCAL_VENVS 2>/dev/null || true)"
-    [[ -n "$venvs_dir" ]] || venvs_dir="$HOME/.local/pipx/venvs"
-    [[ -d "$venvs_dir/$APP_NAME" ]] && rm -rf "$venvs_dir/$APP_NAME"
-    spin "installing from $spec" run_pipx install "$spec" \
+    spin "installing from $spec" run_pipx install "$spec" --force \
       || die "pipx install failed (see log above)"
     run_pipx ensurepath >/dev/null 2>&1 || true
+    # Remove the historical package only after the replacement is healthy.
+    clean_old_pipx_package
   fi
 
   local memo_bin

@@ -173,6 +173,12 @@ def _send_request_line_impl(
                     break  # runaway response — stop buffering
     except (FileNotFoundError, ConnectionRefusedError, OSError, TimeoutError):
         return None
+    if b"\n" not in buf:
+        # Peer closed mid-line (or the response hit max_bytes without a
+        # terminator): the response is incomplete — fail instead of returning
+        # a truncated line as if complete. Every complete daemon response is
+        # "\n"-terminated (see the wire contract above).
+        return None
     line = buf.decode("utf-8", errors="replace").strip()
     return line if line else None
 

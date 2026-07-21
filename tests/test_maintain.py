@@ -406,3 +406,87 @@ def test_maintain_undo_rejects_receipt_path_traversal(tmp_cfg):
     assert res.exit_code != 0
     assert "receipt" in res.output.lower()
     assert victim.is_file()
+
+
+# -- receipt honesty: only actual successes are recorded ---------------------
+
+
+def test_stale_archive_failure_is_not_recorded_as_archived(tmp_path: Path):
+    """archive_memory() returning False (e.g. memory deleted concurrently)
+    must not land in receipt['archived_stale'] — `memo maintain undo` would
+    chase ids that were never moved."""
+    from unittest.mock import MagicMock
+
+    mem = MagicMock()
+    mem.lifecycle.enforce_forget_ttl.return_value = []
+    mem.temporal.detect_stale_memories.return_value = [
+        {"id": "aaaa1111", "days_since_update": 400},
+        {"id": "bbbb2222", "days_since_update": 500},
+    ]
+    mem.lifecycle.archive_memory.side_effect = [True, False]
+
+    env = {**_env(tmp_path), "MEMO_OUTCOME_RANKING_ENABLED": "0"}
+    with patch("memo.cli_maintain._get_memory", return_value=mem):
+        result = CliRunner().invoke(
+            cli,
+            ["maintain", "--skip-contradict", "--skip-consolidate", "--skip-synthesize", "--json"],
+            env=env,
+        )
+
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.output)
+    assert [e["id"] for e in receipt["archived_stale"]] == ["aaaa1111"]
+    assert any("stale: archive failed for bbbb2222" in e for e in receipt["errors"])
+
+
+def test_supersede_archive_failure_is_not_recorded_as_superseded(tmp_path: Path):
+    """When the archive/delete of the dominated side fails, the pair stays
+    open and must NOT be listed in receipt['superseded']."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from memo.belief import ARCHIVE
+
+    mem = MagicMock()
+    mem.lifecycle.enforce_forget_ttl.return_value = []
+    mem.temporal.detect_stale_memories.return_value = []
+    mem.contradict_store.list_open.return_value = [
+        SimpleNamespace(
+            pair_id="p1",
+            memory_id_a="aaaa1111",
+            memory_id_b="bbbb2222",
+            relationship="contradicts",
+            confidence=0.95,
+        )
+    ]
+    updated = {
+        "aaaa1111": "2026-01-01T00:00:00+00:00",
+        "bbbb2222": "2026-01-02T00:00:00+00:00",
+    }
+    mem.get.side_effect = lambda i: SimpleNamespace(updated=updated[i])
+    mem.lifecycle.archive_memory.return_value = False
+
+    decision = SimpleNamespace(
+        action=ARCHIVE,
+        dominated_id="aaaa1111",
+        dominant_id="bbbb2222",
+        reason="test",
+        support_dominated=0,
+    )
+
+    env = {**_env(tmp_path), "MEMO_OUTCOME_RANKING_ENABLED": "0", "MEMO_CROSSREF_INDEX": "0"}
+    with (
+        patch("memo.cli_maintain._get_memory", return_value=mem),
+        patch("memo.cli_maintain.supersede_decision", return_value=decision),
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["maintain", "--skip-consolidate", "--skip-stale", "--skip-synthesize", "--json"],
+            env=env,
+        )
+
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.output)
+    assert receipt["superseded"] == []
+    assert any("supersede: archive failed for aaaa1111" in e for e in receipt["errors"])
+    mem.contradict_store.resolve.assert_not_called()

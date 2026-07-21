@@ -311,6 +311,28 @@ _READ_TOOLS = frozenset({"Read", "Grep", "Glob", "NotebookRead"})
 _WRITE_TOOLS = frozenset({"Edit", "MultiEdit", "Write", "NotebookEdit"})
 
 
+def _record_tool_file(
+    block: Any,
+    files_read: dict[str, None],
+    files_mod: dict[str, None],
+) -> None:
+    """Record one path-bearing tool block in its recency-ordered bucket."""
+    if not isinstance(block, dict) or block.get("type") != "tool_use":
+        return
+    inp = block.get("input")
+    if not isinstance(inp, dict):
+        return
+    path = str(inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or "").strip()
+    if not path or "/" not in path:
+        return
+    name = str(block.get("name") or "")
+    bucket = files_mod if name in _WRITE_TOOLS else files_read if name in _READ_TOOLS else None
+    if bucket is None:
+        return
+    bucket.pop(path, None)  # re-insert → most-recent-last ordering
+    bucket[path] = None
+
+
 def collect_tool_files(transcript_path: Path, max_files: int = 10) -> dict[str, list[str]]:
     """Structured projection of the session's tool stream: files read vs modified.
 
@@ -342,24 +364,7 @@ def collect_tool_files(transcript_path: Path, max_files: int = 10) -> dict[str, 
         if not isinstance(content, list):
             continue
         for block in content:
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
-                continue
-            name = str(block.get("name") or "")
-            inp = block.get("input")
-            if not isinstance(inp, dict):
-                continue
-            path = str(
-                inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or ""
-            ).strip()
-            if not path or "/" not in path:
-                continue
-            bucket = (
-                files_mod if name in _WRITE_TOOLS else files_read if name in _READ_TOOLS else None
-            )
-            if bucket is None:
-                continue
-            bucket.pop(path, None)  # re-insert → most-recent-last ordering
-            bucket[path] = None
+            _record_tool_file(block, files_read, files_mod)
     return {
         "files_read": list(files_read)[-max_files:],
         "files_modified": list(files_mod)[-max_files:],

@@ -280,6 +280,39 @@ def _build_reflect_prompt(
     return f"Transcript:\n{transcript}"
 
 
+def _save_reflect_arc(
+    mem: Any,
+    snap: dict[str, Any],
+    session_title: str,
+    arc_summary: str,
+    saved_ids: list[str],
+    *,
+    debug: bool,
+) -> str | None:
+    """Save the optional session-arc note and return its id."""
+    if not arc_summary:
+        return None
+    project = snap.get("project") or "unknown"
+    branch = snap.get("branch") or ""
+    id_refs = " ".join(f"[{i[:8]}]" for i in saved_ids if not i.startswith("("))
+    arc_body = f"{arc_summary}"
+    if id_refs:
+        arc_body += f"\n\nInsights: {id_refs}"
+    arc_title = session_title or f"{project} session"
+    try:
+        arc_tags = ["session-arc", f"project:{project}"]
+        if branch:
+            arc_tags.append(f"branch:{branch}")
+        arc_rec = mem.save(content=arc_body, title=arc_title, type_="note", tags=arc_tags)
+        if debug:
+            print(f"# memo reflect: arc note [{arc_rec.id[:8]}] {arc_title}", file=sys.stderr)
+        return arc_rec.id
+    except Exception as exc:
+        if debug:
+            print(f"# memo reflect: arc save failed: {exc}", file=sys.stderr)
+        return None
+
+
 def _reflect_session(
     session_id: str,
     mem: Any,
@@ -414,26 +447,16 @@ def _reflect_session(
                 saved_ids.append(f"(dry-run) {title}")
 
     # Arc note — a single note linking the session narrative.
-    arc_id: str | None = None
-    if arc_summary and not dry_run:
-        project = snap.get("project") or "unknown"
-        branch_str = snap.get("branch") or ""
-        id_refs = " ".join(f"[{i[:8]}]" for i in saved_ids if not i.startswith("("))
-        arc_body = f"{arc_summary}"
-        if id_refs:
-            arc_body += f"\n\nInsights: {id_refs}"
-        arc_title = session_title or f"{project} session"
-        try:
-            arc_tags = ["session-arc", f"project:{project}"]
-            if branch_str:
-                arc_tags.append(f"branch:{branch_str}")
-            arc_rec = mem.save(content=arc_body, title=arc_title, type_="note", tags=arc_tags)
-            arc_id = arc_rec.id
-            if debug:
-                print(f"# memo reflect: arc note [{arc_id[:8]}] {arc_title}", file=sys.stderr)
-        except Exception as exc:
-            if debug:
-                print(f"# memo reflect: arc save failed: {exc}", file=sys.stderr)
+    arc_id = None
+    if not dry_run:
+        arc_id = _save_reflect_arc(
+            mem,
+            snap,
+            session_title,
+            arc_summary,
+            saved_ids,
+            debug=debug,
+        )
 
     if not dry_run:
         mark_reflected(cfg.state_dir, session_id)
@@ -447,6 +470,32 @@ def _reflect_session(
         "arc_id": arc_id,
         "dry_run": dry_run,
     }
+
+
+def _emit_reflect_terminal_status(result: dict[str, Any], target_id: str) -> bool:
+    """Render non-success reflect outcomes; return whether the command is done."""
+    status = result.get("status")
+    if status == "not_found":
+        console.print(f"[red]session not found:[/red] {target_id}")
+        sys.exit(1)
+    if status == "no_transcript":
+        console.print(f"[yellow]no transcript for session:[/yellow] {target_id[:8]}")
+        return True
+    if status == "too_short":
+        console.print(
+            f"[dim]session too short ({result.get('user_turns')} user turns) — skipping[/dim]",
+        )
+        return True
+    if status == "llm_error":
+        console.print(f"[red]LLM error:[/red] {result.get('error')}")
+        sys.exit(1)
+    if status == "parse_error":
+        console.print(f"[red]parse error (will retry next run):[/red] {result.get('error')}")
+        sys.exit(1)
+    if status == "already_reflected":
+        console.print(f"[dim]already reflected: {target_id[:8]}[/dim]")
+        return True
+    return False
 
 
 @click.command(name="reflect")
@@ -567,26 +616,7 @@ def reflect(
             click.echo(json.dumps(result, ensure_ascii=False))
             return
 
-        status = result.get("status")
-        if status == "not_found":
-            console.print(f"[red]session not found:[/red] {target_id}")
-            sys.exit(1)
-        if status == "no_transcript":
-            console.print(f"[yellow]no transcript for session:[/yellow] {target_id[:8]}")
-            return
-        if status == "too_short":
-            console.print(
-                f"[dim]session too short ({result.get('user_turns')} user turns) — skipping[/dim]",
-            )
-            return
-        if status == "llm_error":
-            console.print(f"[red]LLM error:[/red] {result.get('error')}")
-            sys.exit(1)
-        if status == "parse_error":
-            console.print(f"[red]parse error (will retry next run):[/red] {result.get('error')}")
-            sys.exit(1)
-        if status == "already_reflected":
-            console.print(f"[dim]already reflected: {target_id[:8]}[/dim]")
+        if _emit_reflect_terminal_status(result, target_id):
             return
 
         saved = list(result.get("saved") or [])

@@ -33,10 +33,11 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Any, Protocol
 
 from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
+from memo.model_pins import resolve_model_snapshot
 
 
 class ChatBackend(Protocol):
@@ -102,7 +103,7 @@ class MLXChat:
         # → {"message": {"content": "..."}}
     """
 
-    def __init__(self) -> None:
+    def __init__(self, model_revisions: Mapping[str, str | None] | None = None) -> None:
         # OrderedDict used as an LRU cache: most-recently-used moves to end.
         self._loaded: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._load_lock = threading.Lock()
@@ -114,6 +115,7 @@ class MLXChat:
         # serialized (the cache mutates in place during decode).
         self._prompt_cache: dict[str, tuple[Any, list[int], int]] = {}
         self._gen_lock = threading.Lock()
+        self._model_revisions = dict(model_revisions or {})
 
     # -- internal -----------------------------------------------------------
 
@@ -223,7 +225,8 @@ class MLXChat:
                         exc,
                     )
 
-            loaded = _mlx_load(model)
+            load_path = resolve_model_snapshot(model, self._model_revisions.get(model))
+            loaded = _mlx_load(load_path)
             self._loaded[model] = (loaded[0], loaded[1])
         finally:
             self._load_lock.release()

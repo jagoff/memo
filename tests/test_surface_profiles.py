@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from click.testing import CliRunner
 
 from memo.cli import cli
 from memo.config import Config
+from memo.errors import ValidationError
 from memo.memory import Memory
 from memo.server import build_server
 
@@ -116,6 +118,15 @@ def test_mcp_agent_profile_is_default_and_exposes_core_tools(tmp_path, monkeypat
         assert "memo_contradict_scan" not in tool_names
     finally:
         mem.close()
+
+
+def test_mcp_profile_rejects_unknown_value(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_MCP_PROFILE", "typo")
+
+    from memo.surface import mcp_profile
+
+    with pytest.raises(ValidationError, match=r"MEMO_MCP_PROFILE.*typo"):
+        mcp_profile()
 
 
 def test_mcp_full_profile_keeps_advanced_tools(tmp_path, monkeypatch) -> None:

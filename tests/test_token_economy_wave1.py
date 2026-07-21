@@ -44,7 +44,7 @@ def test_crush_cache_ttl_expiration():
     with tempfile.TemporaryDirectory() as tmpdir:
         cache = CrushCache(Path(tmpdir))
         original = json.dumps([{"id": 1}])
-        hash_val = "abc123"
+        hash_val = "abc123abc123abc1"
 
         with freeze_time("2026-07-07"):
             cache.cache(hash_val, original)
@@ -95,22 +95,22 @@ def test_crush_cache_evict_expired_with_multiple_entries():
         cache = CrushCache(Path(tmpdir))
 
         with freeze_time("2026-07-07"):
-            cache.cache("old1", json.dumps({"data": "old"}))
-            cache.cache("old2", json.dumps({"data": "old"}))
+            cache.cache("01d10000deadbeef", json.dumps({"data": "old"}))
+            cache.cache("01d20000deadbeef", json.dumps({"data": "old"}))
 
         with freeze_time("2026-08-10"):  # 34 days later
-            cache.cache("new1", json.dumps({"data": "new"}))
+            cache.cache("4e100000deadbeef", json.dumps({"data": "new"}))
 
             # Evict at the future time: old1/old2 are 34d old (expired), new1 is fresh
             evicted = cache.evict_expired(ttl_days=30)
             assert evicted == 2
 
             # Fresh entry survived
-            assert cache.retrieve("new1", ttl_days=30) is not None
+            assert cache.retrieve("4e100000deadbeef", ttl_days=30) is not None
 
         # Verify fresh entry still there
-        assert cache.retrieve("new1") == json.dumps({"data": "new"})
-        assert cache.retrieve("old1") is None
+        assert cache.retrieve("4e100000deadbeef") == json.dumps({"data": "new"})
+        assert cache.retrieve("01d10000deadbeef") is None
 
 
 def test_crush_cache_retrieve_respects_ttl_parameter():
@@ -119,13 +119,13 @@ def test_crush_cache_retrieve_respects_ttl_parameter():
         cache = CrushCache(Path(tmpdir))
 
         with freeze_time("2026-07-07"):
-            cache.cache("test", json.dumps({"id": 1}))
+            cache.cache("7e57000000000000", json.dumps({"id": 1}))
 
         with freeze_time("2026-08-10"):  # 34 days later
             # With 30-day TTL, should be expired
-            assert cache.retrieve("test", ttl_days=30) is None
+            assert cache.retrieve("7e57000000000000", ttl_days=30) is None
             # With 40-day TTL, should still be there
-            assert cache.retrieve("test", ttl_days=40) == json.dumps({"id": 1})
+            assert cache.retrieve("7e57000000000000", ttl_days=40) == json.dumps({"id": 1})
 
 
 def test_crush_marker_with_different_dropped_counts():
@@ -197,7 +197,7 @@ def test_crush_cache_unicode_content():
     with tempfile.TemporaryDirectory() as tmpdir:
         cache = CrushCache(Path(tmpdir))
         original = json.dumps([{"name": "José"}, {"name": "François"}], ensure_ascii=False)
-        hash_val = "unicode_test"
+        hash_val = "0123456789abcdef"
 
         cache.cache(hash_val, original)
         retrieved = cache.retrieve(hash_val)

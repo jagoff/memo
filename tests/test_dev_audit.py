@@ -32,9 +32,10 @@ def test_broad_exception_policy_targets_are_classified() -> None:
         "store/queries.py",
     }
     unclassified = [
-        f"{site.path}:{site.line}"
+        f"{site.path}:{site.line}:{site.scope}:{site.ordinal}"
         for site in found
-        if site.relpath in target_files and (site.relpath, site.line) not in BROAD_EXCEPTION_ALLOWED
+        if site.relpath in target_files
+        and (site.relpath, site.scope, site.ordinal) not in BROAD_EXCEPTION_ALLOWED
     ]
     assert unclassified == []
 

@@ -6,6 +6,7 @@ from typing import ClassVar
 import pytest
 
 from memo import server
+from memo.errors import ValidationError
 
 
 class _RecordingThread:
@@ -64,3 +65,27 @@ def test_background_tasks_are_individually_opted_in(
 
     assert started == expected
     assert tuple(_RecordingThread.names) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("MEMO_MCP_TRANSPORT", "htpp"),
+        ("MEMO_MCP_PORT", "0"),
+        ("MEMO_MCP_PORT", "70000"),
+    ],
+)
+def test_main_rejects_invalid_mcp_runtime_config_before_build(
+    name: str,
+    value: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(name, value)
+    monkeypatch.setattr(
+        server,
+        "build_server",
+        lambda *args, **kwargs: pytest.fail("server built with invalid MCP config"),
+    )
+
+    with pytest.raises(ValidationError, match=name):
+        server.main()

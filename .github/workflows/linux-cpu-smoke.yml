@@ -2,20 +2,19 @@ name: linux-cpu-smoke
 
 # Real end-to-end validation of the CPU (sentence-transformers) backend on
 # Ubuntu — the path the unit suite only exercises with a stub. Proves:
-#   1. `pip install ".[cpu]"` resolves (torch + sentence-transformers, no MLX)
+#   1. A bare project install resolves torch + sentence-transformers, no MLX
 #   2. sqlite-vec + FTS5 load on the distro Python (the loadable-extensions gotcha)
 #   3. the real Qwen3-Embedding-0.6B model loads at 1024-dim
-#   4. `memo doctor` is green (exit 0) on a healthy [cpu] install
+#   4. `memo doctor` is green (exit 0) on a healthy Linux install
 #   5. the save -> search roundtrip works with real CPU embeddings
 #   6. `memo-mcp` builds + registers every tool without MLX
 #
-# Heavy (downloads torch + a ~1.2 GB model); runs on release tags + on demand,
-# and on PRs that touch the backend, not on every commit.
+# Heavy (downloads torch + a ~1.2 GB model); runs inside the blocking release
+# gate, on demand, and on PRs that touch the backend, not on every commit.
 
 on:
+  workflow_call:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
   pull_request:
     paths:
       - "src/memo/embedder_st.py"
@@ -29,7 +28,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: linux-cpu-smoke-${{ github.ref }}
+  # github.workflow is the caller name for reusable invocations, so publish and
+  # docker gates cannot cancel one another while validating the same tag.
+  group: ${{ github.workflow }}-linux-cpu-smoke-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -58,15 +59,20 @@ jobs:
       - name: Install (CPU backend)
         run: |
           python -m pip install uv==0.11.21
-          uv sync --frozen --extra cpu --python 3.13
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          uv tool install --python 3.13 \
+            --find-links https://download.pytorch.org/whl/cpu/torch/ \
+            "$GITHUB_WORKSPACE"
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+          tool_python="$(uv tool dir)/mlx-memo/bin/python"
+          test -x "$tool_python"
+          echo "MEMO_TOOL_PYTHON=$tool_python" >> "$GITHUB_ENV"
       - name: Prepare data + state dirs
         # A real install creates these via `memo init` / first save; `memo doctor`
         # flags a missing data_dir on any OS, so set them up for the smoke.
         run: mkdir -p "$MEMO_DATA_DIR" "$MEMO_STATE_DIR"
       - name: import + backend resolves to ST (no MLX on Linux)
         run: |
-          python - <<'PY'
+          "$MEMO_TOOL_PYTHON" - <<'PY'
           import memo  # must import with no MLX present
           from memo.config import Config
           from memo.embedder_select import resolve_backend
@@ -78,7 +84,7 @@ jobs:
           PY
       - name: sqlite-vec + FTS5 loadable on this Python (the Linux gotcha)
         run: |
-          python - <<'PY'
+          "$MEMO_TOOL_PYTHON" - <<'PY'
           import sqlite3
           import sqlite_vec
 
@@ -105,7 +111,7 @@ jobs:
             echo "REGRESSION: reranker attempted on Linux" >&2
             exit 1
           fi
-          python - <<'PY'
+          "$MEMO_TOOL_PYTHON" - <<'PY'
           import json
 
           hits = json.load(open("out.json"))
@@ -114,7 +120,7 @@ jobs:
           PY
       - name: memo-mcp real stdio MCP handshake (initialize -> tools/list -> tools/call)
         run: |
-          python - <<'PY'
+          "$MEMO_TOOL_PYTHON" - <<'PY'
           import json
           import select
           import subprocess

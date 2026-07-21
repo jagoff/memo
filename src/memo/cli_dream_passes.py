@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import logging as _logging
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -260,12 +262,25 @@ def _run_prewarm_queries(cfg: Any, mem: Memory, n: int) -> dict:
         return {"queries_warmed": 0, "queries_available": 0, "error": str(exc)}
 
 
-def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[dict]:
-    """Pre-synthesize clusters for the top recurring queries.
+def _guard_presynthesis(operation: Callable[[], Any], context: str) -> Any | None:
+    """Run one fail-open pre-synthesis operation with consistent logging."""
+    try:
+        return operation()
+    except Exception as exc:
+        _log.warning("presynthesis: %s: %s", context, exc)
+        return None
 
-    Reads recall.log, picks the top_n most frequent queries, runs a focused
-    synthesis pass on the memories each query surfaces. Returns a list of
-    synthesis results per query.
+
+def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[dict]:
+    """Pre-warm synthesis ahead of the top recurring queries.
+
+    Reads recall.log and picks the top_n most frequent queries. Because
+    ``synthesize_cross_cluster`` takes no source_ids/cluster param — synthesis
+    runs GLOBALLY over all clusters, not scoped to a query's hits — it is run
+    at most ONCE per pass (re-running it per query repeats the same global
+    pass), and the receipt attributes the result to the global run, listing
+    the hot queries that motivated it rather than pretending each query got
+    its own scoped synthesis.
     """
     try:
         from collections import Counter
@@ -283,28 +298,28 @@ def _run_presynthesis(cfg: Any, mem: Memory, top_n: int, dry_run: bool) -> list[
         if not top_queries:
             return []
 
-        all_results = []
+        queries_meta: list[dict] = []
         for query in top_queries:
-            try:
-                hits = mem.search(query, limit=20, disable_reranker=True)
-                if len(hits) < 3:
-                    continue
-                # NOTE: synthesize_cross_cluster takes no source_ids/cluster param —
-                # synthesis runs GLOBALLY over all clusters, not scoped to these hits.
-                result = mem.synthesize_cross_cluster(
-                    dry_run=dry_run, min_cluster_size=3, max_clusters=1
-                )
-                if result:
-                    all_results.append(
-                        {
-                            "query": query[:80],
-                            "hits": len(hits),
-                            "synthesized": len(result),
-                        }
-                    )
-            except Exception as exc:
-                _log.warning("presynthesis: failed for query %r: %s", query[:50], exc)
-        return all_results
+            hits = _guard_presynthesis(
+                partial(mem.search, query, limit=20, disable_reranker=True),
+                f"search failed for query {query[:50]!r}",
+            )
+            if hits is None:
+                continue
+            if len(hits) >= 3:
+                queries_meta.append({"query": query[:80], "hits": len(hits)})
+        if not queries_meta:
+            return []
+
+        result = _guard_presynthesis(
+            lambda: mem.synthesize_cross_cluster(
+                dry_run=dry_run, min_cluster_size=3, max_clusters=1
+            ),
+            "synthesis failed",
+        )
+        if not result:
+            return []
+        return [{"scope": "global", "queries": queries_meta, "synthesized": len(result)}]
     except Exception as exc:
         return [{"error": str(exc)}]
 
@@ -692,6 +707,22 @@ def _run_synthesis(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     return result
 
 
+def _shuffled_title_probes(rows: Any) -> list[str]:
+    """Build deterministic semantic-null probes from title query rows."""
+    import random
+
+    titles = [row["title"] for row in rows if row["title"]]
+    rng = random.Random(0)  # noqa: S311 — deterministic probe shuffle, not security-sensitive
+    probes: list[str] = []
+    for title in titles:
+        words = title.split()
+        rng.shuffle(words)
+        shuffled = " ".join(words)
+        if shuffled:
+            probes.append(shuffled)
+    return probes
+
+
 def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     """Noise-quantile MEMO_RECALL_MIN_SIM floor calibration (MEMO_FLOOR_CALIBRATION).
 
@@ -714,8 +745,6 @@ def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]
         if not flag_bool("MEMO_FLOOR_CALIBRATION"):
             return result
 
-        import random
-
         from memo import floor_calibration
         from memo.dream_tune import _curated_label_set, _regressed, _scalar_overlay, measure
         from memo.tuned_overlay import write_overlay
@@ -729,15 +758,7 @@ def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]
             "SELECT title FROM meta WHERE type != 'reference' ORDER BY updated DESC LIMIT ?",
             (n_probes,),
         ).fetchall()
-        titles = [r["title"] for r in rows if r["title"]]
-        rng = random.Random(0)  # noqa: S311 — deterministic probe shuffle, not security-sensitive
-        probes: list[str] = []
-        for t in titles:
-            words = t.split()
-            rng.shuffle(words)
-            shuffled = " ".join(words)
-            if shuffled:
-                probes.append(shuffled)
+        probes = _shuffled_title_probes(rows)
 
         floor = floor_calibration.estimate_noise_floor(
             mem.embedder, probes=probes, quantile=quantile, dims=mem.cfg.embedder_dims
@@ -914,7 +935,8 @@ def _render_run_summary(receipt: dict[str, Any], dry_run: bool) -> None:
     if pw.get("queries_warmed"):
         console.print(f"  cache pre-warmed:          {pw['queries_warmed']} queries")
     if receipt.get("presynthesis"):
-        console.print(f"  pre-syntheses:             {len(receipt['presynthesis'])} clusters")
+        _presynth = sum(e.get("synthesized", 0) for e in receipt["presynthesis"])
+        console.print(f"  pre-syntheses:             {_presynth} clusters")
     sg = receipt.get("signal_gathered", {})
     if sg.get("files_processed") or sg.get("memories_saved"):
         console.print(

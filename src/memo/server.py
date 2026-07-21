@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, suppress
 from typing import Any, cast
 
 from fastmcp import FastMCP
@@ -116,6 +117,96 @@ _SERVER_INSTRUCTIONS = (
 )
 
 
+async def _health_route_handler(request):  # type: ignore[no-untyped-def]
+    """Lightweight HTTP liveness probe without touching Memory."""
+
+    import importlib.metadata
+
+    from starlette.responses import JSONResponse
+
+    try:
+        version = importlib.metadata.version("mlx-memo")
+    except Exception:
+        version = "unknown"
+    return JSONResponse({"ok": True, "version": version})
+
+
+def _chat_event_stream(
+    memory: Memory,
+    question: str,
+    *,
+    k: int,
+    type_: str | None,
+    history: list[dict[str, Any]] | None,
+    context: dict[str, Any] | None,
+) -> Iterator[str]:
+    import json as _json
+
+    try:
+        for event in memory.chat_ask_stream(
+            question,
+            k=k,
+            type_=type_,
+            history=history,
+            context=context,
+        ):
+            if isinstance(event, dict) and event.get("event") == "error":
+                safe_event: dict[str, Any] = {
+                    "event": "error",
+                    "message": "chat stream failed",
+                }
+                if isinstance(event.get("answer_partial"), str):
+                    safe_event["answer_partial"] = event["answer_partial"]
+                event = safe_event
+            yield f"data: {_json.dumps(event, ensure_ascii=False)}\n\n"
+    except Exception:
+        _log.exception("chat stream failed")
+        error = {"event": "error", "message": "chat stream failed"}
+        yield f"data: {_json.dumps(error, ensure_ascii=False)}\n\n"
+
+
+def _make_chat_stream_route(memory: Memory, auth: Any | None) -> Any:
+    async def chat_stream_route(request):  # type: ignore[no-untyped-def]
+        """Expose real token streaming for chat synthesis as SSE."""
+
+        from starlette.responses import JSONResponse, StreamingResponse
+
+        from memo.server_chat import ChatPayloadError, validate_chat_payload
+
+        if auth is not None:
+            if not getattr(request.user, "is_authenticated", False):
+                return JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            required_scopes = getattr(auth, "required_scopes", None) or ()
+            granted_scopes = getattr(request.auth, "scopes", ())
+            if any(scope not in granted_scopes for scope in required_scopes):
+                return JSONResponse({"error": "forbidden"}, status_code=403)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        try:
+            question, k, type_, history, context = validate_chat_payload(body)
+        except ChatPayloadError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+        events = _chat_event_stream(
+            memory,
+            question,
+            k=k,
+            type_=type_,
+            history=history,
+            context=context,
+        )
+        return StreamingResponse(events, media_type="text/event-stream")
+
+    return chat_stream_route
+
+
 def build_server(memory: Memory | None = None, *, auth: Any | None = None) -> FastMCP:
     """Build the MCP server. Accepts an explicit `Memory` for tests.
 
@@ -123,8 +214,39 @@ def build_server(memory: Memory | None = None, *, auth: Any | None = None) -> Fa
     pick up `MEMO_*` env vars set by the calling shell or by Claude
     Code's `claude mcp add` invocation.
     """
+    # Validate the surface before constructing Memory or registering tools.
+    # Invalid profiles must never silently collapse to the agent surface.
+    from memo.surface import mcp_profile
+
+    mcp_profile()
+
+    owns_memory = memory is None
     if memory is None:
         memory = Memory(Config.from_env())
+    try:
+        return _build_server(memory, auth=auth, owns_memory=owns_memory)
+    except BaseException:
+        if owns_memory:
+            with suppress(Exception):
+                memory.close()
+        raise
+
+
+def _build_server(
+    memory: Memory,
+    *,
+    auth: Any | None,
+    owns_memory: bool,
+) -> FastMCP:
+    """Register the complete surface around an already constructed Memory."""
+
+    @asynccontextmanager
+    async def lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
+        try:
+            yield {}
+        finally:
+            if owns_memory:
+                memory.close()
 
     from memo import __version__ as _memo_version
 
@@ -133,6 +255,7 @@ def build_server(memory: Memory | None = None, *, auth: Any | None = None) -> Fa
         instructions=_SERVER_INSTRUCTIONS,
         version=_memo_version,
         auth=auth,
+        lifespan=lifespan,
     )
 
     # Stitch the synapse trace header into the shared trace contextvar so
@@ -205,117 +328,8 @@ def build_server(memory: Memory | None = None, *, auth: Any | None = None) -> Fa
     for tool_name in mcp_tools_to_remove():
         server.local_provider.remove_tool(tool_name)
 
-    @server.custom_route("/health", methods=["GET"])
-    async def health_route(request):  # type: ignore[no-untyped-def]
-        """Lightweight liveness probe for HTTP transport.
-
-        Returns HTTP 200 + JSON ``{"ok": true, "version": "x.y.z"}`` so
-        external monitors and CI can confirm the daemon is alive without
-        calling a real tool (which may touch the embedder or DB).
-        """
-        import importlib.metadata
-
-        from starlette.responses import JSONResponse
-
-        try:
-            version = importlib.metadata.version("mlx-memo")
-        except Exception:
-            version = "unknown"
-        return JSONResponse({"ok": True, "version": version})
-
-    @server.custom_route("/chat/stream", methods=["POST"])
-    async def chat_stream_route(request):  # type: ignore[no-untyped-def]
-        """Real token streaming for chat synthesis (SSE).
-
-        MCP `tools/call` can only return a single result, so the warm-daemon
-        chat path otherwise has to buffer the whole answer before the client
-        sees anything. This route exposes `Memory.chat_ask_stream` directly:
-        emits one SSE `data:` line per event (context → token* → done), so the
-        first token reaches the caller right after prefill instead of after the
-        full decode. Output is identical to the non-streaming tool; only the
-        delivery is incremental. Consumed by Synapse's MemoBackend.
-        """
-        import json as _json
-
-        from starlette.responses import JSONResponse, StreamingResponse
-
-        # FastMCP protects its protocol endpoint when ``auth`` is configured,
-        # but custom routes are registered outside that auth wrapper.  The
-        # provider's global AuthenticationMiddleware still populates
-        # ``request.user``/``request.auth``, so enforce the same requirement
-        # explicitly before this route can expose memory context or invoke MLX.
-        if auth is not None:
-            if not getattr(request.user, "is_authenticated", False):
-                return JSONResponse(
-                    {"error": "unauthorized"},
-                    status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            required_scopes = getattr(auth, "required_scopes", None) or ()
-            granted_scopes = getattr(request.auth, "scopes", ())
-            if any(scope not in granted_scopes for scope in required_scopes):
-                return JSONResponse({"error": "forbidden"}, status_code=403)
-
-        try:
-            body = await request.json()
-        except Exception:
-            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-        if not isinstance(body, dict):
-            return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-
-        question_value = body.get("question", "")
-        if not isinstance(question_value, str):
-            return JSONResponse({"error": "question must be a string"}, status_code=400)
-        question = question_value
-        if not question.strip():
-            return JSONResponse({"error": "empty question"}, status_code=400)
-
-        k_value = body.get("k", 7)
-        if isinstance(k_value, bool) or not isinstance(k_value, int) or not 1 <= k_value <= 100:
-            return JSONResponse({"error": "k must be an integer from 1 to 100"}, status_code=400)
-        k = k_value
-
-        type_ = body.get("type")
-        if type_ is not None and not isinstance(type_, str):
-            return JSONResponse({"error": "type must be a string or null"}, status_code=400)
-        history = body.get("history")
-        if history is not None and (
-            not isinstance(history, list) or not all(isinstance(item, dict) for item in history)
-        ):
-            return JSONResponse(
-                {"error": "history must be an array of JSON objects or null"}, status_code=400
-            )
-        context = body.get("context")
-        if context is not None and not isinstance(context, dict):
-            return JSONResponse({"error": "context must be a JSON object or null"}, status_code=400)
-
-        def _gen() -> Iterator[str]:
-            try:
-                for ev in memory.chat_ask_stream(
-                    question,
-                    k=k,
-                    type_=type_,
-                    history=history,
-                    context=context,
-                ):
-                    if isinstance(ev, dict) and ev.get("event") == "error":
-                        safe_ev: dict[str, Any] = {
-                            "event": "error",
-                            "message": "chat stream failed",
-                        }
-                        if isinstance(ev.get("answer_partial"), str):
-                            safe_ev["answer_partial"] = ev["answer_partial"]
-                        ev = safe_ev
-                    yield f"data: {_json.dumps(ev, ensure_ascii=False)}\n\n"
-            except Exception:  # never hang the client mid-stream
-                _log.exception("chat stream failed")
-                err = {"event": "error", "message": "chat stream failed"}
-                yield f"data: {_json.dumps(err, ensure_ascii=False)}\n\n"
-
-        # Starlette drives the sync generator in a worker thread; the MLX
-        # forward is GIL/Metal-bound and already serialized, so one stream at
-        # a time is fine for the single-user daemon.
-        return StreamingResponse(_gen(), media_type="text/event-stream")
+    server.custom_route("/health", methods=["GET"])(_health_route_handler)
+    server.custom_route("/chat/stream", methods=["POST"])(_make_chat_stream_route(memory, auth))
 
     return server
 
@@ -367,7 +381,13 @@ def main() -> None:
     """
     from memo.flags import flag_bool, flag_int, flag_str
 
-    transport = (flag_str("MEMO_MCP_TRANSPORT") or "stdio").strip().lower()
+    # Resolve every constrained MCP setting before building or running the
+    # server, even when a setting is irrelevant to the selected transport.
+    transport = (flag_str("MEMO_MCP_TRANSPORT", strict=True) or "stdio").strip().lower()
+    port = flag_int("MEMO_MCP_PORT", strict=True)
+    from memo.surface import mcp_profile
+
+    mcp_profile()
     if transport in ("http", "streamable-http", "sse"):
         from memo.http_auth import (
             build_http_middleware,
@@ -395,7 +415,6 @@ def main() -> None:
         os.environ.setdefault("MEMO_QUERY_CACHE_SIZE", "500")
         server = build_server(auth=build_mcp_auth(auth_cfg))
         _ensure_idle_daemon()
-        port = flag_int("MEMO_MCP_PORT")
         # transport is validated against the allowed set just above.
         transport_options: dict[str, Any] = {}
         if transport != "sse":
@@ -424,6 +443,7 @@ def _ensure_idle_daemon() -> None:
     This enables auto-capture for MCP-only clients (opencode, Devin, Devin Desktop)
     that don't have Claude Code hooks to trigger idle-maintenance.
     """
+    import fcntl as _fcntl
     import subprocess as _subprocess
     import sys as _sys
 
@@ -432,24 +452,48 @@ def _ensure_idle_daemon() -> None:
 
     cfg = Config.from_env()
     pid_file = cfg.state_dir / "idle-daemon.pid"
-    if pid_file.exists():
+
+    def _running() -> bool:
         pid = read_pid(pid_file)
-        if pid and is_pid_alive(pid):
-            return  # already running
-        pid_file.unlink(missing_ok=True)
+        return bool(pid and is_pid_alive(pid))
+
+    if _running():
+        return  # already running
     try:
-        log_file = cfg.state_dir / "idle_capture.log"
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_file, "a") as log_fh:
-            proc = _subprocess.Popen(
-                [_sys.executable, "-m", "memo.cli", "idle-daemon", "_serve"],
-                stdout=log_fh,
-                stderr=_subprocess.STDOUT,
-                env={**os.environ, "MEMO_NONINTERACTIVE": "1"},
-                start_new_session=True,
-            )
-        pid_file.write_text(str(proc.pid))
-        _log.info("idle daemon started (pid=%d)", proc.pid)
+        cfg.state_dir.mkdir(parents=True, exist_ok=True)
+        # Serialize concurrent MCP startups (e.g. Claude Code + opencode in
+        # the same second). Without this spawn lock both parents fork a child
+        # and both write their child's pid — last writer wins, and when the
+        # losing child (which exits on the daemon's own startup flock) lands
+        # last, the pid file points at a dead process while the real daemon
+        # runs untracked. Non-blocking: a busy lock means a concurrent
+        # starter owns the spawn.
+        spawn_lock = os.open(
+            str(cfg.state_dir / "idle-daemon.spawn.lock"),
+            os.O_CREAT | os.O_RDWR,
+            0o644,
+        )
+        try:
+            try:
+                _fcntl.flock(spawn_lock, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+            except OSError:
+                return  # a concurrent starter is spawning the daemon
+            if _running():
+                return  # the concurrent starter won and wrote the pid file
+            pid_file.unlink(missing_ok=True)
+            log_file = cfg.state_dir / "idle_capture.log"
+            with open(log_file, "a") as log_fh:
+                proc = _subprocess.Popen(
+                    [_sys.executable, "-m", "memo.cli", "idle-daemon", "_serve"],
+                    stdout=log_fh,
+                    stderr=_subprocess.STDOUT,
+                    env={**os.environ, "MEMO_NONINTERACTIVE": "1"},
+                    start_new_session=True,
+                )
+            pid_file.write_text(str(proc.pid))
+            _log.info("idle daemon started (pid=%d)", proc.pid)
+        finally:
+            os.close(spawn_lock)
     except Exception as exc:
         _log.warning("idle daemon start failed: %s", exc)
 

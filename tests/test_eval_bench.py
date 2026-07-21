@@ -170,6 +170,29 @@ def test_fetch_dataset_unknown_name_and_url_override(tmp_path):
     assert seen == ["https://example.com/d.json"]
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.com/d.json",
+        "file:///tmp/dataset.json",
+        "https:///missing-host.json",
+        "https://user:secret@example.com/d.json",
+    ],
+)
+def test_fetch_dataset_rejects_non_https_or_credentialed_urls(tmp_path, url):
+    with pytest.raises(MemoError, match="HTTPS"):
+        eval_bench.fetch_dataset("custom", tmp_path, url=url, fetcher=lambda _url: b"[]")
+
+
+def test_dataset_redirect_handler_rejects_https_downgrade():
+    handler = eval_bench._HTTPSRedirectHandler()
+
+    with pytest.raises(MemoError, match="HTTPS"):
+        handler.redirect_request(
+            object(), None, 302, "Found", {}, "http://example.com/dataset.json"
+        )
+
+
 # --- isolated store config --------------------------------------------------------
 
 
@@ -384,6 +407,37 @@ def test_judge_from_flags_api_env_gated(tmp_cfg, monkeypatch):
     assert isinstance(j, eval_bench.APIJudge)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://api.example.com/v1",
+        "ftp://api.example.com/v1",
+        "http://192.168.1.10/v1",
+        "https:///missing-host",
+    ],
+)
+def test_judge_from_flags_rejects_insecure_remote_urls(tmp_cfg, monkeypatch, url):
+    monkeypatch.setenv("MEMO_BENCH_JUDGE", "api")
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_URL", url)
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_MODEL", "judge-1")
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_API_KEY_ENV", "TEST_BENCH_KEY")
+    monkeypatch.setenv("TEST_BENCH_KEY", "sk-test")
+
+    with pytest.raises(MemoError, match=r"HTTPS|loopback"):
+        eval_bench.judge_from_flags(tmp_cfg)
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8000/v1", "http://[::1]:8000/v1"])
+def test_judge_from_flags_allows_http_loopback(tmp_cfg, monkeypatch, url):
+    monkeypatch.setenv("MEMO_BENCH_JUDGE", "api")
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_URL", url)
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_MODEL", "judge-1")
+    monkeypatch.setenv("MEMO_BENCH_JUDGE_API_KEY_ENV", "TEST_BENCH_KEY")
+    monkeypatch.setenv("TEST_BENCH_KEY", "sk-test")
+
+    assert isinstance(eval_bench.judge_from_flags(tmp_cfg), eval_bench.APIJudge)
+
+
 def test_api_judge_posts_openai_shape(monkeypatch):
     captured = {}
 
@@ -397,21 +451,39 @@ def test_api_judge_posts_openai_shape(monkeypatch):
         def read(self):
             return b'{"choices": [{"message": {"content": "yes"}}]}'
 
-    def fake_urlopen(req, timeout=0):
-        captured["url"] = req.full_url
-        captured["auth"] = req.get_header("Authorization")
-        captured["body"] = json.loads(req.data.decode("utf-8"))
-        return _Resp()
+    class _Opener:
+        def open(self, req, timeout=0):
+            captured["url"] = req.full_url
+            captured["auth"] = req.get_header("Authorization")
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _Resp()
+
+    def fake_build_opener(*handlers):
+        captured["handlers"] = handlers
+        return _Opener()
 
     import urllib.request
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
     j = eval_bench.APIJudge("https://api.example.com/v1", "judge-1", "sk-test")
     assert j.grade(question="q", gold="Rex", answer="the dog is Rex", abstention=False)
     assert captured["url"] == "https://api.example.com/v1/chat/completions"
     assert captured["auth"] == "Bearer sk-test"
     assert captured["body"]["model"] == "judge-1"
     assert captured["body"]["temperature"] == 0
+    assert any(
+        isinstance(handler, eval_bench._NoRedirectHandler) for handler in captured["handlers"]
+    )
+
+
+def test_api_judge_redirect_handler_rejects_credential_forwarding():
+    handler = eval_bench._NoRedirectHandler()
+
+    redirected = handler.redirect_request(
+        object(), None, 302, "Found", {}, "http://attacker.example/steal"
+    )
+
+    assert redirected is None
 
 
 # --- contradiction scan (bench faithfulness for knowledge-update) ----------------------

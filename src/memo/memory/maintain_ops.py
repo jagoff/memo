@@ -58,6 +58,16 @@ def _purge_legacy_secret_index(
     return True
 
 
+def _path_has_symlink_component(memory_root: Path, relative_parts: tuple[str, ...]) -> bool:
+    """Return whether any component in a canonical Markdown path is a symlink."""
+    current = memory_root
+    for part in relative_parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
 class _MaintainOpsMixin(_MemoryBase):
     def _enforce_synapse_freeze(
         self,
@@ -274,22 +284,14 @@ class _MaintainOpsMixin(_MemoryBase):
         for md_path in sorted(memory_root.rglob("*.md")):
             checked += 1
             relative_parts = md_path.relative_to(memory_root).parts
-            if relative_parts[:1] == ("inactive",):
-                # Archived memories (lifecycle.archive_memory) keep their id:
-                # frontmatter so a human can recover one by moving it back out,
-                # but they must NOT be re-absorbed automatically — reindex runs
-                # after every sync pull, which would resurrect every archived/
-                # superseded memory.
+            if relative_parts[:1] in {("inactive",), ("archived",)}:
+                # Current lifecycle archives live under ``inactive``; older
+                # vaults used ``archived``.  Both may retain a canonical id so
+                # a human can recover a note by moving it back out, but neither
+                # may be re-absorbed automatically on reindex/sync.
                 skipped += 1
                 continue
-            current = memory_root
-            has_symlink_component = False
-            for part in relative_parts:
-                current = current / part
-                if current.is_symlink():
-                    has_symlink_component = True
-                    break
-            if has_symlink_component:
+            if _path_has_symlink_component(memory_root, relative_parts):
                 message = f"reindex: refusing symlinked canonical path {md_path}"
                 if rebuild_rows is not None:
                     raise StorageError(message)
@@ -1037,25 +1039,11 @@ class _MaintainOpsMixin(_MemoryBase):
             counts["links_written"] += n
         return counts
 
-    def gc(self, *, fix: bool = False) -> dict[str, builtins.list[str]]:
-        """Find orphans between the store and the memory dir.
-
-        - `orphan_store`: store rows whose `.md` is missing on disk.
-        - `orphan_disk`: `.md` files with an `id` frontmatter that the
-          store doesn't know about. (Untagged `.md` files — no `id` —
-          are ignored: they're user-authored content, not memories.)
-
-        With `fix=True`, deletes orphan store rows. `.md` files are
-        never deleted automatically — that's destructive and the user
-        should review them first. Use `memo reindex` to absorb
-        orphan disk files into the store.
-        """
+    def _gc_store_orphans(self, *, fix: bool) -> builtins.list[str]:
+        """Find store rows whose canonical source cannot be verified."""
         orphan_store: list[str] = []
-        orphan_disk: list[str] = []
-
-        # Store-side: walk meta, check file existence (with legacy fallback).
-        for r in self.store.list_recent(limit=100_000):
-            extra = r.get("extra") or {}
+        for row in self.store.list_recent(limit=100_000):
+            extra = row.get("extra") or {}
             parent_id = extra.get("parent_id") if isinstance(extra, dict) else None
             ingest_abs = extra.get("abs_path") if isinstance(extra, dict) else None
             try:
@@ -1070,72 +1058,94 @@ class _MaintainOpsMixin(_MemoryBase):
                     # source file instead of mass-deleting every labeled row.
                     path_exists = Path(str(ingest_abs)).is_file()
                 else:
-                    path_exists = self._resolve_existing(r["path"]).is_file()
-                    if not path_exists and r.get("type") == "reference":
+                    path_exists = self._resolve_existing(row["path"]).is_file()
+                    if not path_exists and row.get("type") == "reference":
                         # Legacy ingest rows without abs_path provenance:
                         # existence can't be verified here — never mass-delete.
                         continue
             except StorageError:
                 path_exists = False
             if not path_exists:
-                orphan_store.append(r["id"])
+                orphan_store.append(row["id"])
                 if fix:
                     if parent_id:
-                        self.store.hard_delete(r["id"])
+                        self.store.hard_delete(row["id"])
                     else:
-                        self.store.delete(r["id"])
+                        self.store.delete(row["id"])
+        return orphan_store
 
-        # Disk-side: walk memory dir, check ids in store.
-        if self.cfg.memory_dir.is_dir():
-            for md_path in self.cfg.memory_dir.rglob("*.md"):
-                if md_path.relative_to(self.cfg.memory_dir).parts[:1] == ("inactive",):
-                    # Archived memories are intentionally out of the index —
-                    # not orphans, and "reindex to absorb" would resurrect them.
-                    continue
-                try:
-                    post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
-                except Exception as exc:
-                    _log.debug("gc: skipping %s (parse error): %s", md_path.name, exc)
-                    continue
-                md_id = post.get("id")
-                if not md_id or not isinstance(md_id, str):
-                    continue
-                if self.store.get(md_id) is None:
-                    orphan_disk.append(str(md_path.relative_to(self.cfg.memory_dir)))
+    def _gc_disk_orphans(self) -> builtins.list[str]:
+        """Find canonical Markdown ids absent from the derived store."""
+        orphan_disk: list[str] = []
+        if not self.cfg.memory_dir.is_dir():
+            return orphan_disk
+        for md_path in self.cfg.memory_dir.rglob("*.md"):
+            if md_path.relative_to(self.cfg.memory_dir).parts[:1] in {
+                ("inactive",),
+                ("archived",),
+            }:
+                # Archived memories are intentionally out of the index — not
+                # orphans, and "reindex to absorb" would resurrect them.  The
+                # second name is the legacy vault convention.
+                continue
+            try:
+                post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                _log.debug("gc: skipping %s (parse error): %s", md_path.name, exc)
+                continue
+            md_id = post.get("id")
+            if isinstance(md_id, str) and md_id and self.store.get(md_id) is None:
+                orphan_disk.append(str(md_path.relative_to(self.cfg.memory_dir)))
+        return orphan_disk
 
-        # Stale synthesis: type=synthesis memories where ≥1 source no longer
-        # exists in the store. The synthesis is derived knowledge — if its
-        # sources are gone the insight is unverifiable and should be archived.
+    def _gc_stale_syntheses(self, *, fix: bool) -> builtins.list[str]:
+        """Find synthesis records whose declared source has disappeared."""
         stale_synthesis: list[str] = []
         synth_rows = self.store._conn.execute(
             "SELECT meta.id, meta.path FROM meta WHERE meta.type = 'synthesis'",
         ).fetchall()
-        for sr in synth_rows:
-            p = sr["path"]
-            if not p:
+        for row in synth_rows:
+            path = row["path"]
+            if not path:
                 continue
-            sp = self._resolve_existing(p)
-            if not sp.is_file():
-                continue  # already caught above by orphan_store walk
+            source_path = self._resolve_existing(path)
+            if not source_path.is_file():
+                continue  # already caught by the orphan-store walk
             try:
-                post = frontmatter.loads(sp.read_text(encoding="utf-8"))
-                _extra: dict = post.get("extra") or {}  # type: ignore[assignment]
-                source_ids = _extra.get("synthesis_sources") or []
-                if not source_ids:
-                    continue
-                for sid in source_ids:
-                    if self.store.get(sid) is None:
-                        stale_synthesis.append(sr["id"])
+                post = frontmatter.loads(source_path.read_text(encoding="utf-8"))
+                extra: dict = post.get("extra") or {}  # type: ignore[assignment]
+                source_ids = extra.get("synthesis_sources") or []
+                for source_id in source_ids:
+                    if self.store.get(source_id) is None:
+                        stale_synthesis.append(row["id"])
                         if fix:
-                            self.lifecycle.archive_memory(sr["id"])
+                            self.lifecycle.archive_memory(row["id"])
                         break
             except Exception as exc:
-                _log.debug("gc: stale-synthesis check failed for %s: %s", sr["id"][:8], exc)
+                _log.debug(
+                    "gc: stale-synthesis check failed for %s: %s",
+                    row["id"][:8],
+                    exc,
+                )
+        return stale_synthesis
 
+    def gc(self, *, fix: bool = False) -> dict[str, builtins.list[str]]:
+        """Find orphans between the store and the memory dir.
+
+        - `orphan_store`: store rows whose `.md` is missing on disk.
+        - `orphan_disk`: `.md` files with an `id` frontmatter that the
+          store doesn't know about. (Untagged `.md` files — no `id` —
+          are ignored: they're user-authored content, not memories.)
+
+        With `fix=True`, deletes orphan store rows. `.md` files are
+        never deleted automatically — that's destructive and the user
+        should review them first. Use `memo reindex` to absorb
+        orphan disk files into the store.
+        """
         return {
-            "orphan_store": orphan_store,
-            "orphan_disk": orphan_disk,
-            "stale_synthesis": stale_synthesis,
+            "orphan_store": self._gc_store_orphans(fix=fix),
+            "orphan_disk": self._gc_disk_orphans(),
+            "stale_synthesis": self._gc_stale_syntheses(fix=fix),
         }
 
     def _transition_stale_memories(

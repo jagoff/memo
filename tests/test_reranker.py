@@ -197,6 +197,23 @@ def test_reranker_revision_downloads_pinned_snapshot(monkeypatch):
     }
 
 
+def test_default_reranker_revision_is_pinned(monkeypatch):
+    calls: dict[str, str] = {}
+    hf = ModuleType("huggingface_hub")
+
+    def snapshot_download(*, repo_id: str, revision: str) -> str:
+        calls.update(repo_id=repo_id, revision=revision)
+        return "/tmp/pinned-reranker"
+
+    hf.snapshot_download = snapshot_download  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hf)
+
+    rr = MLXReranker()
+
+    assert rr._resolve_model_path() == "/tmp/pinned-reranker"
+    assert len(calls["revision"]) == 40
+
+
 def test_memory_ensure_reranker_rejects_missing_local_model_path(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "memo.embedder.MLXEmbedder.embed",

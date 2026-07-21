@@ -45,6 +45,9 @@ def _fake_repo(root: Path, version: str) -> Path:
         f'{{\n  "version": "{version}",\n  "packages": [\n    {{\n      "version": "{version}"\n    }}\n  ]\n}}\n',
         encoding="utf-8",
     )
+    (root / "install.sh").write_text(
+        f'#!/usr/bin/env bash\nDEFAULT_VERSION="{version}"\n', encoding="utf-8"
+    )
     (root / "packaging" / "mcpb").mkdir(parents=True)
     (root / "packaging" / "mcpb" / "manifest.json").write_text(
         f'{{\n  "manifest_version": "0.3",\n  "version": "{version}",\n'
@@ -272,10 +275,23 @@ def test_plan_release_edits_syncs_versioned_release_files(tmp_path: Path) -> Non
     # server.json has TWO version occurrences — both must move.
     assert edits[repo / "server.json"].count('"version": "1.2.4"') == 2
     assert edits[repo / "server.json"].count('"version": "1.2.3"') == 0
+    assert 'DEFAULT_VERSION="1.2.4"' in edits[repo / "install.sh"]
     # CHANGELOG gains a new section right under Unreleased, above the old one.
     cl = edits[repo / "CHANGELOG.md"]
     assert "## [1.2.4] - 2026-06-25" in cl
     assert cl.index("## [1.2.4]") < cl.index("## [1.2.3]")
+
+
+def test_release_check_report_rejects_installer_default_version_drift(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    (repo / "install.sh").write_text(
+        '#!/usr/bin/env bash\nDEFAULT_VERSION="1.2.2"\n', encoding="utf-8"
+    )
+
+    report = release_check_report(repo)
+
+    assert report.ok is False
+    assert any("install.sh install pin" in issue for issue in report.issues)
 
 
 def test_plan_release_edits_realigns_drifted_manifest(tmp_path: Path) -> None:

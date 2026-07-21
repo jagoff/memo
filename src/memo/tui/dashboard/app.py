@@ -91,31 +91,34 @@ def run_tui(*, refresh: float = 1.0, no_clear: bool = False, once: bool = False)
     mem = Memory(cfg)
     console = Console()
 
-    # One-shot / headless: render a single frame and return. The rich.Live loop
-    # has no natural exit without a TTY (the key-reader thread bails when stdin
-    # isn't a tty), so it would otherwise hang forever in scripts/CI.
-    if once or not sys.stdout.isatty():
-        console.print(render(mem, cfg.state_dir))
-        return
+    try:
+        # One-shot / headless: render a single frame and return. The rich.Live loop
+        # has no natural exit without a TTY (the key-reader thread bails when stdin
+        # isn't a tty), so it would otherwise hang forever in scripts/CI.
+        if once or not sys.stdout.isatty():
+            console.print(render(mem, cfg.state_dir))
+            return
 
-    stop = threading.Event()
-    reader = threading.Thread(target=_spawn_key_reader, args=(stop,), daemon=True)
-    reader.start()
+        stop = threading.Event()
+        reader = threading.Thread(target=_spawn_key_reader, args=(stop,), daemon=True)
+        reader.start()
 
-    with Live(
-        render(mem, cfg.state_dir),
-        console=console,
-        refresh_per_second=max(1.0 / refresh, 1.0),
-        screen=not no_clear,
-        transient=False,
-    ) as live:
-        try:
-            while not stop.is_set():
-                time.sleep(refresh)
-                live.update(render(mem, cfg.state_dir))
-        except KeyboardInterrupt:
-            stop.set()
-    reader.join(timeout=1.0)
+        with Live(
+            render(mem, cfg.state_dir),
+            console=console,
+            refresh_per_second=max(1.0 / refresh, 1.0),
+            screen=not no_clear,
+            transient=False,
+        ) as live:
+            try:
+                while not stop.is_set():
+                    time.sleep(refresh)
+                    live.update(render(mem, cfg.state_dir))
+            except KeyboardInterrupt:
+                stop.set()
+        reader.join(timeout=1.0)
+    finally:
+        mem.close()
 
 
 __all__ = ["Group", "render", "run_tui"]

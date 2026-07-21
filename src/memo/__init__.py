@@ -5,7 +5,7 @@
 - LLM: `mlx-lm` running quantized Qwen models on Apple Silicon Metal
   (in-process, no daemon) for ask/synthesis/dream.
 - Embedder: MLX Qwen3-Embedding on Apple Silicon, or CPU
-  sentence-transformers (`STEmbedder`) on Linux/Intel macOS.
+  sentence-transformers (`STEmbedder`) on Linux.
 - Vector store: `sqlite-vec` (single file, no daemon, no Qdrant).
 - Storage of record: markdown files under `MEMO_DATA_DIR`, or under
   `<vault>/<SYSTEM_DIR>/AI/memory/` when `MEMO_MEMORIES_IN_VAULT=1`.

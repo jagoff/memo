@@ -32,6 +32,9 @@ class FlagSpec:
     # Optional inclusive bounds for numeric flags. Enforced in _coerce().
     min_val: float | None = None
     max_val: float | None = None
+    # Optional allowed values for string flags. Values are normalized to
+    # lowercase before matching so env configuration remains case-insensitive.
+    choices: tuple[str, ...] = ()
 
 
 def _spec(
@@ -43,5 +46,6 @@ def _spec(
     opt_out: bool = False,
     min_val: float | None = None,
     max_val: float | None = None,
+    choices: tuple[str, ...] = (),
 ) -> FlagSpec:
-    return FlagSpec(name, kind, default, group, help, opt_out, min_val, max_val)
+    return FlagSpec(name, kind, default, group, help, opt_out, min_val, max_val, choices)

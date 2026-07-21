@@ -56,6 +56,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
+from memo.model_pins import model_spec, resolve_model_snapshot
 
 _log = logging.getLogger(__name__)
 
@@ -105,8 +106,9 @@ class MLXReranker:
         max_seq_len: int = 4096,
         task: str | None = None,
     ) -> None:
-        self.model_path = model_path
-        self.revision = revision
+        spec = model_spec(model_path, revision)
+        self.model_path = spec.source
+        self.revision = spec.revision
         self.max_seq_len = max_seq_len
         self.task = task or _DEFAULT_TASK
 
@@ -118,11 +120,7 @@ class MLXReranker:
         self._loaded_at: float | None = None
 
     def _resolve_model_path(self) -> str:
-        if not self.revision:
-            return self.model_path
-        from huggingface_hub import snapshot_download
-
-        return snapshot_download(repo_id=self.model_path, revision=self.revision)
+        return resolve_model_snapshot(self.model_path, self.revision)
 
     def _ensure_loaded(self) -> None:
         if self._model is not None:

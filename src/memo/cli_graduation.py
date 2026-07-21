@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+
 import click
 
 from memo.config import Config
@@ -31,7 +33,8 @@ def explain_cmd() -> None:
     from memo.memory import Memory
 
     cfg = Config.from_env()
-    receipt = run_graduation_controller(cfg, Memory(cfg), dry_run=True)
+    with closing(Memory(cfg)) as memory:
+        receipt = run_graduation_controller(cfg, memory, dry_run=True)
     for r in receipt["candidates"]:
         if r["status"] == "vetoed":
             click.echo(f"{r['flag']:<34} vetoed (MEMO_* env var set)")

@@ -190,6 +190,35 @@ def test_regression_guard_reverts_graduated_flag(tmp_cfg, monkeypatch):
     assert entry["status"] == "reverted" and entry["streak"] == 0
 
 
+def test_overlay_rollback_unstrands_graduated_flag(tmp_cfg, monkeypatch):
+    """Deleting tuned_params.json (the documented overlay rollback) leaves
+    state saying 'graduated' with no overlay key: the flag resolves OFF live,
+    the guard skips it, and _eligible never re-measures it. The pass must
+    reset it to tracking so it re-enters the A/B pool."""
+    _mini_registry(monkeypatch)
+    _stub_measure(monkeypatch, on=_metrics(0.8), off=_metrics(0.4))
+    # Graduated in state, but the overlay was rolled back out-of-band (no key).
+    df.save_state(
+        tmp_cfg.state_dir,
+        {
+            "flags": {
+                _FLAG: {
+                    "first_tracked": TODAY.isoformat(),
+                    "streak": 3,
+                    "status": "graduated",
+                    "baseline": _metrics(0.8),
+                }
+            }
+        },
+    )
+    res = df.run_flag_graduation_pass(tmp_cfg, mem=None, today=TODAY + timedelta(days=3))
+    assert res["measured"] == [_FLAG]  # re-entered the A/B pool immediately
+    entry = df.load_state(tmp_cfg.state_dir)["flags"][_FLAG]
+    assert entry["status"] == "tracking"
+    assert entry["streak"] == 1  # fresh streak from this night's win, not the stale 3
+    assert "baseline" not in entry
+
+
 def test_reverted_flag_cools_down_before_remeasure(tmp_cfg, monkeypatch):
     _mini_registry(monkeypatch)
     _stub_measure(monkeypatch, on=_metrics(0.8), off=_metrics(0.4))

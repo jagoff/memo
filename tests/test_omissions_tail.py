@@ -86,3 +86,22 @@ def test_compact_budget_drop_appends_tail(monkeypatch):
     out = render_recall_compact(hits, token_budget=40)
     assert "+  " not in out  # sanity: no stray formatting
     assert "more:" in out
+
+
+def test_compact_tail_counts_hits_not_lines_with_dossier(monkeypatch):
+    """'+N more' must count omitted HITS. With MEMO_HIT_DOSSIER on, each hit
+    renders 2 lines, and the old len(hit_lines)-based count halved N."""
+    import re
+
+    from memo.recall_logic import render_recall_compact
+
+    monkeypatch.setenv("MEMO_RECALL_OMISSIONS_TAIL", "1")
+    monkeypatch.setenv("MEMO_HIT_DOSSIER", "1")
+    hits = [_hit(i, body_len=100) for i in range(1, 7)]  # 6 hits
+    out = render_recall_compact(hits, token_budget=80)
+
+    m = re.search(r"\+(\d+) more:", out)
+    assert m, f"expected an omissions tail in:\n{out}"
+    rendered = len(re.findall(r"^\[[0-9a-f]{8}\]", out, flags=re.M))
+    assert 0 < rendered < len(hits)  # the budget actually cut mid-list
+    assert int(m.group(1)) == len(hits) - rendered

@@ -332,9 +332,7 @@ def test_min_sim_curated_gate_rejects_regressing_floor(tmp_path, monkeypatch):
     monkeypatch.setattr(dt, "build_labels", lambda cfg, **k: _one_label())
     monkeypatch.setattr(dt, "load_baseline", lambda sd: None)
     # min_sim wins on the mined labels...
-    monkeypatch.setattr(
-        dt, "search_min_sim", lambda *a, **k: (0.65, _metrics(0.2), _metrics(0.4))
-    )
+    monkeypatch.setattr(dt, "search_min_sim", lambda *a, **k: (0.65, _metrics(0.2), _metrics(0.4)))
     # ...rank knobs don't move...
     monkeypatch.setattr(
         dt,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
 import click
 
@@ -10,6 +9,7 @@ from memo.cli_common import console
 from memo.cli_diag import (
     _db_health_report,
     _doctor_report,
+    _gc_report,
     _recall_daemon_health,
     freshness_report,
 )
@@ -168,7 +168,7 @@ def doctor(
             ok = False
         models: tuple[str, ...] = (cfg.embedder_model, cfg.llm_model, cfg.helper_model)
     else:
-        # CPU backend (Linux/Ubuntu, Intel mac): MLX is expected to be absent.
+        # CPU backend (Linux/Ubuntu): MLX is expected to be absent.
         # The load-bearing dependency is sentence-transformers instead.
         try:
             import sentence_transformers  # noqa: F401
@@ -176,13 +176,14 @@ def doctor(
             console.print("[green]✓[/green] sentence-transformers (CPU backend) importable")
         except Exception as exc:
             console.print(
-                f"[red]✗[/red] sentence-transformers: {exc}  "
-                "[dim](pip install 'mlx-memo[cpu]')[/dim]"
+                f"[red]✗[/red] sentence-transformers: {exc}  [dim](pip install mlx-memo)[/dim]"
             )
             ok = False
         models = (cfg.st_embedder_model,)
 
-    hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
+    from memo.model_pins import hf_hub_cache_dir
+
+    hf_cache = hf_hub_cache_dir()
     for model in models:
         cache_dir = hf_cache / f"models--{model.replace('/', '--')}"
         if cache_dir.is_dir():
@@ -289,10 +290,7 @@ def doctor(
                 ok = False
 
     if do_gc:
-        from memo.memory import Memory
-
-        mem = Memory(cfg)
-        report = mem.gc(fix=fix)
+        report = _gc_report(cfg, fix=fix)
         n_store = len(report["orphan_store"])
         n_disk = len(report["orphan_disk"])
         n_stale_synth = len(report.get("stale_synthesis", []))

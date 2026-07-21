@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import re
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
@@ -20,6 +21,40 @@ import click
 
 from memo.cli_common import console
 from memo.config import Config
+
+# Cap on the error root causes echoed in the final summary (full per-file
+# detail stays behind MEMO_INGEST_DEBUG).
+_MAX_ERROR_SAMPLES = 5
+
+
+@contextlib.contextmanager
+def _ingest_error_boundary(
+    context: str,
+    *,
+    strict: bool,
+    debug: bool,
+    debug_label: str,
+    note_error: Callable[[str, Exception], None],
+    on_done: Callable[[], None],
+) -> Iterator[None]:
+    """Apply the command's shared strict/debug policy to one ingest item."""
+    try:
+        yield
+    except Exception as exc:
+        if strict:
+            raise
+        note_error(context, exc)
+        if debug:
+            console.print(f"[red]{debug_label}[/] {context}: {exc}")
+    finally:
+        on_done()
+
+
+def _chunk_title(title: str, heading: str, seq: int, count: int) -> str:
+    """Return the stable display title for one emitted chunk."""
+    if heading:
+        return f"{title} — {heading}"
+    return f"{title} (§{seq + 1}/{count})"
 
 
 def _resolve_ingest_row(store, path_str):
@@ -219,16 +254,20 @@ def ingest(
             # importers. Kept case-sensitive — user globs are explicit.
             if pat.endswith("/**"):
                 base = pat[:-3]
-                if s.startswith(base) or f"/{base}/" in padded:
+                if s == base or s.startswith(base + "/") or f"/{base}/" in padded:
                     return True
                 continue
-            # Literal prefix or `/segment/` anywhere in the rel path — matched
-            # case-insensitively so archive-folder casing variants are caught.
+            # Literal path prefix (component boundary — `Archive` must exclude
+            # `Archive/x.md` but NOT `Archived Projects/x.md`) or `/segment/`
+            # anywhere in the rel path — matched case-insensitively so
+            # archive-folder casing variants are caught.
             pat_low = pat.lower()
             if (
-                s.startswith(pat)
+                s == pat
+                or s.startswith(pat + "/")
                 or f"/{pat}/" in padded
-                or s_low.startswith(pat_low)
+                or s_low == pat_low
+                or s_low.startswith(pat_low + "/")
                 or f"/{pat_low}/" in padded_low
             ):
                 return True
@@ -315,6 +354,8 @@ def ingest(
     # Abs-paths of every file seen on disk this walk (md + pdf + orphan imgs),
     # added BEFORE any skip so existing-but-skipped files are kept. The --prune
     # sweep deletes label rows whose abs_path is NOT here (file gone from disk).
+    # Content-state skips (gained id:, emptied, trimmed under min-chars)
+    # deliberately withdraw the file again so their now-stale rows get pruned.
     seen_abs: set[str] = set()
 
     def _reconcile_file(store_path: str, valid_paths: set[str]) -> None:
@@ -333,6 +374,16 @@ def ingest(
     strict_mode = flag_bool("MEMO_INGEST_STRICT")
     debug_mode = flag_bool("MEMO_INGEST_DEBUG")
 
+    # First few error root causes, echoed in the final summary so `errors=N`
+    # is diagnosable without MEMO_INGEST_DEBUG.
+    error_samples: list[str] = []
+
+    def _note_error(context: str, exc: Exception) -> None:
+        nonlocal errors
+        errors += 1
+        if len(error_samples) < _MAX_ERROR_SAMPLES:
+            error_samples.append(f"{context}: {exc}")
+
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
     def _emit_record(
@@ -347,13 +398,14 @@ def ingest(
         health_confidence: float | None = None,
     ) -> str | None:
         """Embed `title + body` (chunked if --chunk and large) and upsert
-        one row per chunk. Returns "added" / "updated" / None on error.
+        one row per chunk. Returns "added" / "updated" / None on error
+        or unchanged-skip.
 
         Single-chunk path keeps the canonical store_path so dedup +
         idempotence keep working. Multi-chunk path suffixes
         `#chunk-N` to the store_path so each chunk is its own row.
         """
-        nonlocal errors, chunks_emitted
+        nonlocal chunks_emitted, skipped_unchanged
         body, tags = _redact_secrets_for_index(body, tags)
         # Universal text-quality gate: down-weight garbled records (mojibake from
         # any source — pdftotext, broken encodings, future OCR) so they rank below
@@ -374,19 +426,25 @@ def ingest(
 
         if pieces is None or len(pieces) <= 1:
             composed = composed_full[: cfg.max_content_chars]
+            id_, existing = _resolve_ingest_row(store, store_path)
+            body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+            # Mirror of the multi-chunk skip: an unchanged body (PDF/audio/
+            # orphan-image re-run) is neither re-embedded nor upserted, so
+            # `updated` keeps its original timestamp.
+            if existing and existing["body_hash"] == body_hash and not force:
+                skipped_unchanged += 1
+                return None
             try:
                 emb = embedder.embed([composed])[0]
                 assert_valid_embedding(emb, cfg.embedder_dims, context=str(abs_path))
             except Exception as exc:
-                errors += 1
+                _note_error(str(abs_path), exc)
                 if strict_mode:
                     raise
                 if debug_mode:
                     console.print(f"[red]reject:[/] {exc}")
                 return None
             now = datetime.now(UTC).isoformat()
-            id_, existing = _resolve_ingest_row(store, store_path)
-            body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
             extra: dict[str, Any] = {"source": source, "vault": label, "abs_path": str(abs_path)}
             if extra_meta:
                 extra.update(extra_meta)
@@ -428,16 +486,14 @@ def ingest(
                 emb = embedder.embed([chunk_composed])[0]
                 assert_valid_embedding(emb, cfg.embedder_dims, context=f"{abs_path}#chunk-{seq}")
             except Exception as exc:
-                errors += 1
+                _note_error(f"{abs_path}#chunk-{seq}", exc)
                 if strict_mode:
                     raise
                 if debug_mode:
                     console.print(f"[red]reject:[/] {exc}")
                 continue
             now = datetime.now(UTC).isoformat()
-            chunk_title = f"{title} (§{seq + 1}/{len(pieces)})"
-            if heading:
-                chunk_title = f"{title} — {heading}"
+            chunk_title = _chunk_title(title, heading, seq, len(pieces))
             extra = {
                 "source": source,
                 "vault": label,
@@ -491,7 +547,14 @@ def ingest(
         task_id = progress.add_task(f"embed {label}", total=len(md_files))
 
         for path in md_files:
-            try:
+            with _ingest_error_boundary(
+                str(path),
+                strict=strict_mode,
+                debug=debug_mode,
+                debug_label="err",
+                note_error=_note_error,
+                on_done=lambda: progress.advance(task_id),
+            ):
                 rel = path.relative_to(vault)
                 store_path = f"{label}/{rel}" if label else str(rel)
                 seen_abs.add(str(path))
@@ -510,18 +573,27 @@ def ingest(
                     skipped_empty += 1
                     continue
 
-                # Skip curated memories (have explicit id).
+                # Skip curated memories (have explicit id). This and the two
+                # content-state skips below withdraw the file from seen_abs so
+                # a previously-indexed row whose note became skippable (gained
+                # id:, emptied, trimmed under min-chars) is dropped by the
+                # --prune sweep instead of serving stale content forever. The
+                # frontmatter-parse-error skip above deliberately stays in
+                # seen_abs — a corrupt/partial read must not nuke a good row.
                 if fm.metadata.get("id"):
                     skipped_id += 1
+                    seen_abs.discard(str(path))
                     continue
 
                 body = fm.content.strip()
                 if not body:
                     skipped_empty += 1
+                    seen_abs.discard(str(path))
                     continue
 
                 if len(body) < min_chars and not _is_high_signal(body, fm.metadata.get("tags")):
                     skipped_empty += 1
+                    seen_abs.discard(str(path))
                     continue
 
                 title = (
@@ -575,17 +647,18 @@ def ingest(
                     added += 1
                 elif outcome == "updated":
                     updated += 1
-            except Exception as exc:
-                errors += 1
-                if debug_mode:
-                    console.print(f"[red]err[/] {path}: {exc}")
-            finally:
-                progress.advance(task_id)
 
         if pdf_files:
             pdf_task = progress.add_task(f"PDF {label}", total=len(pdf_files))
             for pdf_path in pdf_files:
-                try:
+                with _ingest_error_boundary(
+                    str(pdf_path),
+                    strict=strict_mode,
+                    debug=debug_mode,
+                    debug_label="err pdf",
+                    note_error=_note_error,
+                    on_done=lambda: progress.advance(pdf_task),
+                ):
                     rel = pdf_path.relative_to(vault)
                     seen_abs.add(str(pdf_path))
                     text = extract_pdf_text(pdf_path).strip()
@@ -605,18 +678,19 @@ def ingest(
                     )
                     if outcome == "added":
                         pdf_added += 1
-                except Exception as exc:
-                    errors += 1
-                    if debug_mode:
-                        console.print(f"[red]err pdf[/] {pdf_path}: {exc}")
-                finally:
-                    progress.advance(pdf_task)
 
         if audio_files:
             audio_task = progress.add_task(f"Audio {label}", total=len(audio_files))
             audio_cache = cfg.state_dir / "audio_cache"
             for audio_path in audio_files:
-                try:
+                with _ingest_error_boundary(
+                    str(audio_path),
+                    strict=strict_mode,
+                    debug=debug_mode,
+                    debug_label="err audio",
+                    note_error=_note_error,
+                    on_done=lambda: progress.advance(audio_task),
+                ):
                     rel = audio_path.relative_to(vault)
                     seen_abs.add(str(audio_path))
                     text = transcribe_audio_cached(audio_path, cache_dir=audio_cache).strip()
@@ -637,12 +711,6 @@ def ingest(
                     )
                     if outcome == "added":
                         audio_added += 1
-                except Exception as exc:
-                    errors += 1
-                    if debug_mode:
-                        console.print(f"[red]err audio[/] {audio_path}: {exc}")
-                finally:
-                    progress.advance(audio_task)
 
         if include_orphan_images and ocr:
             orphans = find_orphan_images(vault, referenced_images, excluded_fn=_excluded)
@@ -657,7 +725,14 @@ def ingest(
 
                 cache_dir = cfg.state_dir / "ocr_cache"
                 for img_path in orphans:
-                    try:
+                    with _ingest_error_boundary(
+                        str(img_path),
+                        strict=strict_mode,
+                        debug=debug_mode,
+                        debug_label="err img",
+                        note_error=_note_error,
+                        on_done=lambda: progress.advance(orphan_task),
+                    ):
                         seen_abs.add(str(img_path))
                         ocr_text_raw, ocr_conf = extract_text_cached_with_confidence(
                             img_path, cache_dir=cache_dir
@@ -694,12 +769,6 @@ def ingest(
                         )
                         if outcome == "added":
                             orphan_added += 1
-                    except Exception as exc:
-                        errors += 1
-                        if debug_mode:
-                            console.print(f"[red]err img[/] {img_path}: {exc}")
-                    finally:
-                        progress.advance(orphan_task)
 
     # Prune: drop vault-ingest rows under this label whose source file is
     # gone from disk (moved/renamed/deleted). Per-file chunk reconciliation
@@ -755,6 +824,15 @@ def ingest(
         f"chunks_emitted={chunks_emitted} pruned={pruned} "
         f"errors={errors}"
     )
+    if errors:
+        for sample in error_samples:
+            console.print(f"[red]error:[/red] {sample}")
+        if errors > len(error_samples):
+            console.print(
+                f"[red]…and {errors - len(error_samples)} more "
+                f"(MEMO_INGEST_DEBUG=1 for full detail)[/red]"
+            )
+        raise SystemExit(1)
 
 
 _HIGH_SIGNAL_TAGS = frozenset(

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -42,7 +44,10 @@ from memo.session import (
     prune_lru,
     read_last_user_msg,
     recent_prompts,
+    refresh_summary,
     render_active_memory,
+    stamp_recall_turn,
+    stamp_recap_turn,
     update_summary,
 )
 
@@ -199,6 +204,129 @@ def test_checkpoint_idempotent_upsert(tmp_cfg, fake_git):
     # Only one file on disk.
     files = list((tmp_cfg.state_dir / "sessions").glob("*.json"))
     assert len(files) == 1
+
+
+def test_concurrent_checkpoints_preserve_turn_count_and_prompts(tmp_cfg, monkeypatch):
+    """Same-session checkpoint RMW operations serialize across threads."""
+    barrier = threading.Barrier(2)
+
+    def concurrent_git_state(cwd):
+        barrier.wait(timeout=3)
+        return {
+            "branch": "master",
+            "head_commit": "abc123 concurrent",
+            "modified_files": [],
+        }
+
+    monkeypatch.setattr(session_mod, "gather_git_state", concurrent_git_state)
+
+    def write(prompt):
+        return checkpoint(
+            tmp_cfg.state_dir,
+            session_id="concurrent-session",
+            cwd=str(tmp_cfg.state_dir),
+            prompt=prompt,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(write, prompt) for prompt in ("first prompt", "second prompt")]
+        for future in futures:
+            future.result(timeout=3)
+
+    snapshot = get_session(tmp_cfg.state_dir, "concurrent-session")
+    assert snapshot is not None
+    assert snapshot["turn_count"] == 2
+    assert set(snapshot["prompt_trail"]) == {"first prompt", "second prompt"}
+
+
+def test_checkpoint_merges_stamp_written_during_git_probe(tmp_cfg, fake_git, monkeypatch):
+    """A checkpoint must load latest state after its expensive probes."""
+    session_id = "checkpoint-stamp-merge"
+    checkpoint(tmp_cfg.state_dir, session_id=session_id, cwd=str(tmp_cfg.state_dir))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow_git_state(cwd):
+        entered.set()
+        assert release.wait(timeout=3)
+        return {"branch": "master", "head_commit": "abc123 merge", "modified_files": []}
+
+    monkeypatch.setattr(session_mod, "gather_git_state", slow_git_state)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            checkpoint,
+            tmp_cfg.state_dir,
+            session_id=session_id,
+            cwd=str(tmp_cfg.state_dir),
+            prompt="checkpoint prompt",
+        )
+        assert entered.wait(timeout=3)
+        stamp_recall_turn(tmp_cfg.state_dir, session_id, 7)
+        release.set()
+        future.result(timeout=3)
+
+    snapshot = get_session(tmp_cfg.state_dir, session_id)
+    assert snapshot is not None
+    assert snapshot["turn_count"] == 2
+    assert snapshot["last_recall_turn"] == 7
+    assert snapshot["prompt_trail"] == ["checkpoint prompt"]
+
+
+def test_refresh_summary_reacquires_and_merges_latest_snapshot(
+    tmp_cfg, fake_git, tmp_path, monkeypatch
+):
+    """LLM summary writeback never clobbers checkpoint/stamp fields."""
+    session_id = "summary-writeback-merge"
+    transcript = tmp_path / f"{session_id}.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "user", "message": {"content": "design the change"}}),
+                json.dumps(
+                    {"type": "assistant", "message": {"content": "implemented the decision"}}
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for _ in range(3):
+        checkpoint(
+            tmp_cfg.state_dir,
+            session_id=session_id,
+            cwd=str(tmp_cfg.state_dir),
+            transcript_path=str(transcript),
+        )
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class SlowChat:
+        def chat(self, *args, **kwargs):
+            entered.set()
+            assert release.wait(timeout=3)
+            return {"message": {"content": "Durable generated summary."}}
+
+    monkeypatch.setattr("memo.llm.MLXChat", SlowChat)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(refresh_summary, tmp_cfg.state_dir, session_id)
+        assert entered.wait(timeout=3)
+        checkpoint(
+            tmp_cfg.state_dir,
+            session_id=session_id,
+            cwd=str(tmp_cfg.state_dir),
+            prompt="new prompt while summarizing",
+        )
+        stamp_recap_turn(tmp_cfg.state_dir, session_id, 4)
+        release.set()
+        assert future.result(timeout=3) is True
+
+    snapshot = get_session(tmp_cfg.state_dir, session_id)
+    assert snapshot is not None
+    assert snapshot["turn_count"] == 4
+    assert snapshot["prompt_trail"] == ["new prompt while summarizing"]
+    assert snapshot["last_recap_turn"] == 4
+    assert snapshot["running_summary"] == "Durable generated summary."
+    assert snapshot["summary_turn"] == 3
 
 
 def test_list_sessions_sorted_recency(tmp_cfg, monkeypatch):

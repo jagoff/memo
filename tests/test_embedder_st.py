@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -37,8 +38,13 @@ class _FakeSentenceTransformer:
         self._dim = dim
         self.max_seq_length = 0
         self.last_inputs: list[str] = []
+        self.legacy_dimension_calls = 0
+
+    def get_embedding_dimension(self) -> int:
+        return self._dim
 
     def get_sentence_embedding_dimension(self) -> int:
+        self.legacy_dimension_calls += 1
         return self._dim
 
     def encode(
@@ -73,8 +79,8 @@ def _install_fake_st(monkeypatch, *, dim: int = 4) -> dict:
 
 
 def test_embed_returns_normalized_vectors_of_expected_dim(monkeypatch):
-    _install_fake_st(monkeypatch, dim=4)
-    emb = STEmbedder(model_path="fake/model", expected_dims=4)
+    captured = _install_fake_st(monkeypatch, dim=4)
+    emb = STEmbedder(model_path="/tmp/fake-model", expected_dims=4)
 
     out = emb.embed(["alpha", "beta gamma"])
 
@@ -82,16 +88,30 @@ def test_embed_returns_normalized_vectors_of_expected_dim(monkeypatch):
     for vec in out:
         assert len(vec) == 4
         assert_valid_embedding(vec, 4)  # passes the norm≈1 boundary check
+    assert captured["instance"].legacy_dimension_calls == 0
 
 
 def test_embedder_loads_exact_configured_revision(monkeypatch):
     captured = _install_fake_st(monkeypatch, dim=4)
-    emb = STEmbedder(model_path="fake/model", revision="deadbeef", expected_dims=4)
+    revision = "f" * 40
+    emb = STEmbedder(model_path="fake/model", revision=revision, expected_dims=4)
 
     emb.embed(["alpha"])
 
-    assert captured["instance"].revision == "deadbeef"
-    assert emb.model_name == "fake/model@deadbeef"
+    assert captured["instance"].revision == revision
+    assert emb.model_name == f"fake/model@{revision}"
+
+
+def test_non_linux_missing_st_dependency_does_not_recommend_reinstall(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "sentence_transformers", None)
+    emb = STEmbedder(model_path=str(Path("/tmp/local-model")), expected_dims=4)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        emb.embed(["alpha"])
+
+    assert "explicit ST backend" in str(excinfo.value)
+    assert "Reinstall" not in str(excinfo.value)
 
 
 def test_embed_empty_sequence_returns_empty(monkeypatch):
@@ -109,7 +129,7 @@ def test_embed_rejects_bare_string(monkeypatch):
 
 def test_embed_query_applies_asymmetric_prefix(monkeypatch):
     captured = _install_fake_st(monkeypatch, dim=4)
-    emb = STEmbedder(model_path="fake/model", expected_dims=4)
+    emb = STEmbedder(model_path="/tmp/fake-model", expected_dims=4)
 
     vec = emb.embed_query("astor terapia")
 

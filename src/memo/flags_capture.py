@@ -71,12 +71,14 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_CLAIM_SUPPORT",
         "bool",
-        False,
+        True,
         "capture",
         "At capture, an outcome claim (works/shipped/faster/secure/tested) with no "
-        "evidence ref — or a commit:<sha> that does not exist locally — DOWNGRADES "
-        "the saved memory's confidence to MEMO_CLAIM_SUPPORT_CONFIDENCE (never drops "
-        "it). Pure/no-LLM. Default off.",
+        "evidence ref — or a commit:<sha> that does not exist locally — is quarantined "
+        "with '_uncertain', annotated with the claim kind/reason, and DOWNGRADED to "
+        "MEMO_CLAIM_SUPPORT_CONFIDENCE (never dropped). Pure/no-LLM. Default on; "
+        "disable with MEMO_CLAIM_SUPPORT=0.",
+        opt_out=True,
     ),
     _spec(
         "MEMO_CLAIM_SUPPORT_CONFIDENCE",
@@ -85,7 +87,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "capture",
         "Absolute confidence stamped on an unsupported outcome claim (see "
         "MEMO_CLAIM_SUPPORT) so it ranks below grounded notes (score x confidence). "
-        "Only active when MEMO_CLAIM_SUPPORT is on.",
+        "Only active when MEMO_CLAIM_SUPPORT is on (the default).",
         min_val=0.1,
         max_val=1.0,
     ),

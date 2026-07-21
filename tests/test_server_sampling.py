@@ -57,7 +57,7 @@ def test_memo_ask_samples_client_model(mem: Memory, monkeypatch):
 def test_memo_ask_falls_back_to_mlx_without_handler(mem: Memory, monkeypatch):
     monkeypatch.setenv("MEMO_SAMPLING_SYNTH_ENABLED", "1")
     monkeypatch.setattr("memo.platform_detect.mlx_available", lambda: True)
-    monkeypatch.setattr("memo.llm.MLXChat.__init__", lambda self: None)
+    monkeypatch.setattr("memo.llm.MLXChat.__init__", lambda self, *args, **kwargs: None)
     monkeypatch.setattr(
         "memo.llm.MLXChat.chat",
         lambda self, model, messages, options=None: {"message": {"content": "MLX ANSWER"}},
@@ -70,7 +70,7 @@ def test_memo_ask_falls_back_to_mlx_without_handler(mem: Memory, monkeypatch):
 def test_memo_ask_flag_off_never_samples(mem: Memory, monkeypatch):
     monkeypatch.delenv("MEMO_SAMPLING_SYNTH_ENABLED", raising=False)
     monkeypatch.setattr("memo.platform_detect.mlx_available", lambda: True)
-    monkeypatch.setattr("memo.llm.MLXChat.__init__", lambda self: None)
+    monkeypatch.setattr("memo.llm.MLXChat.__init__", lambda self, *args, **kwargs: None)
     monkeypatch.setattr(
         "memo.llm.MLXChat.chat",
         lambda self, model, messages, options=None: {"message": {"content": "MLX ANSWER"}},

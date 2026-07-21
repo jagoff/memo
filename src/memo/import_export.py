@@ -12,10 +12,33 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import tempfile
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_EXPORT_PAGE_SIZE = 10_000
+
+
+@contextmanager
+def _atomic_output_path(output_path: Path) -> Iterator[Path]:
+    """Yield a sibling temporary path and publish it only after a clean write."""
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        dir=output_path.parent,
+    )
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        yield tmp_path
+        os.replace(tmp_path, output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 @dataclass
@@ -191,6 +214,24 @@ class Exporter:
     def __init__(self, memory: Any) -> None:
         self.memory = memory
 
+    def _list_all(self) -> list[Any]:
+        """Expand the list window until the complete corpus is represented."""
+        total_hint: int | None = None
+        store = getattr(self.memory, "store", None)
+        count = getattr(store, "count", None)
+        if callable(count):
+            total_hint = max(0, int(count()))
+
+        requested = _EXPORT_PAGE_SIZE
+        while True:
+            memories = self.memory.list(limit=requested)
+            if total_hint is not None:
+                if requested >= total_hint:
+                    return memories
+            elif len(memories) < requested:
+                return memories
+            requested *= 2
+
     def export_json(self, output_path: Path) -> ExportResult:
         """Export memories to JSON.
 
@@ -200,7 +241,7 @@ class Exporter:
         Returns:
             ExportResult with statistics.
         """
-        memories = self.memory.list(limit=10000)
+        memories = self._list_all()
 
         data = [
             {
@@ -215,7 +256,8 @@ class Exporter:
             for m in memories
         ]
 
-        output_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        with _atomic_output_path(output_path) as tmp_path:
+            tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
         return ExportResult(
             exported_count=len(memories),
@@ -232,9 +274,12 @@ class Exporter:
         Returns:
             ExportResult with statistics.
         """
-        memories = self.memory.list(limit=10000)
+        memories = self._list_all()
 
-        with open(output_path, "w", newline="", encoding="utf-8") as f:
+        with (
+            _atomic_output_path(output_path) as tmp_path,
+            open(tmp_path, "w", newline="", encoding="utf-8") as f,
+        ):
             writer = csv.writer(f)
             writer.writerow(["id", "title", "body", "tags", "type", "created", "updated"])
 
@@ -266,9 +311,12 @@ class Exporter:
         Returns:
             ExportResult with statistics.
         """
-        memories = self.memory.list(limit=10000)
+        memories = self._list_all()
 
-        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        with (
+            _atomic_output_path(output_path) as tmp_path,
+            zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf,
+        ):
             for m in memories:
                 # Create markdown content with frontmatter
                 frontmatter = f"""---

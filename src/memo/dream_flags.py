@@ -250,6 +250,25 @@ def _age_days(entry: dict[str, Any], field: str, today: date) -> int | None:
         return None
 
 
+def _finalize_pass_status(res: dict[str, Any]) -> None:
+    """Set the aggregate receipt status from its per-flag outcomes."""
+    if res["status"] == "noop" and res["measured"]:
+        res["status"] = "measured"
+    if res["graduated"] or res["reverted"]:
+        res["status"] = "applied"
+
+
+def _reset_rolled_back_flags(
+    flags_state: dict[str, Any], overlay: dict[str, Any], outcomes: dict[str, Any]
+) -> None:
+    """Return graduated flags missing from the live overlay to tracking."""
+    for name, entry in flags_state.items():
+        if entry.get("status") == "graduated" and not overlay.get(name):
+            entry.update({"status": "tracking", "streak": 0})
+            entry.pop("baseline", None)
+            outcomes[name] = {"verdict": "overlay_rollback_reset"}
+
+
 def run_flag_graduation_pass(
     cfg: Any,
     mem: Any,
@@ -289,6 +308,14 @@ def run_flag_graduation_pass(
         floor = flag_float(_MIN_SIM)
         floor = 0.5 if floor is None else floor
         overlay = read_overlay(cfg.state_dir)
+
+        # Out-of-band overlay rollback (deleting tuned_params.json or
+        # `memo dream tune --rollback` — both documented) removes graduated
+        # keys without touching graduation state. A flag still 'graduated' in
+        # state but absent from the overlay is stranded: it resolves OFF live,
+        # the regression guard skips it, and _eligible never re-measures it.
+        # Reset it to tracking so it re-enters the A/B pool and deadline sweep.
+        _reset_rolled_back_flags(flags_state, overlay, res["flags"])
 
         # Post-graduation regression guard: an overlay-graduated flag whose
         # live metrics regressed vs its graduation baseline is reverted (its
@@ -409,10 +436,7 @@ def run_flag_graduation_pass(
         res["reverted"] = sorted(
             n for n, v in res["flags"].items() if v.get("verdict") == "reverted"
         )
-        if res["status"] == "noop" and res["measured"]:
-            res["status"] = "measured"
-        if res["graduated"] or res["reverted"]:
-            res["status"] = "applied"
+        _finalize_pass_status(res)
 
         if not dry_run:
             save_state(cfg.state_dir, state)

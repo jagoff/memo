@@ -7,8 +7,14 @@ TTL-based eviction via memo maintain.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+# Cache keys are sha256 hexdigest prefixes (≥8 hex chars). The marker hash
+# arrives from outside (MCP tool / CLI argument), so anything else — path
+# separators, `..`, drive letters — must never reach the filesystem join.
+_HASH_RE = re.compile(r"[0-9a-f]{8,64}")
 
 
 class CrushCache:
@@ -26,6 +32,10 @@ class CrushCache:
             hash_val: SHA256 hash (used as filename)
             content: Original JSON string
         """
+        if _HASH_RE.fullmatch(hash_val) is None:
+            from ..errors import ValidationError
+
+            raise ValidationError(f"invalid crush-cache hash: {hash_val!r}")
         path = self.cache_dir / f"{hash_val}.json"
         metadata = {
             "ts": datetime.now(UTC).isoformat(),
@@ -38,6 +48,8 @@ class CrushCache:
 
         Returns None if not found or expired.
         """
+        if _HASH_RE.fullmatch(hash_val) is None:
+            return None  # not a hex digest — never touch the filesystem
         path = self.cache_dir / f"{hash_val}.json"
         if not path.is_file():
             return None

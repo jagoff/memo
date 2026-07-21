@@ -16,6 +16,7 @@ from click.testing import CliRunner
 from memo.resume._types import ResumeCandidate
 
 _DIMS = 4
+_TEST_MODEL_REVISION = "1" * 40
 
 
 def _unit(i: int) -> list[float]:
@@ -365,6 +366,7 @@ def test_cli_episodes_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         data_dir=tmp_path / "data",
         embedder_backend="mlx",
         embedder_model="vendor/test-embedder",
+        embedder_revision=_TEST_MODEL_REVISION,
         embedder_dims=_DIMS,
     )
     with closing(
@@ -393,6 +395,7 @@ def test_cli_episodes_search(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         "MEMO_DATA_DIR": str(tmp_path / "data"),
         "MEMO_EMBEDDER_BACKEND": "mlx",
         "MEMO_EMBEDDER_MODEL": "vendor/test-embedder",
+        "MEMO_EMBEDDER_REVISION": _TEST_MODEL_REVISION,
         "MEMO_EMBEDDER_DIMS": str(_DIMS),
         "MEMO_NONINTERACTIVE": "1",
     }

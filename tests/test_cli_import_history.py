@@ -108,3 +108,80 @@ def test_import_mem0_end_to_end(tmp_path: Path, monkeypatch):
 
     assert res.exit_code == 0, res.output
     assert "Imported: 1" in res.output
+
+
+# -- `memo import json|csv|markdown-bundle` failure surfacing --------------------
+
+
+def test_import_json_all_records_failed_exits_nonzero_with_error_sample(tmp_path: Path):
+    """errors>0 must exit non-zero and print a sample of the collected
+    per-record error messages. Regression: `memo import json bad.json && rm
+    bad.json` reported 'Errors: 500', exited 0, and never showed why."""
+    from unittest.mock import MagicMock, patch
+
+    from memo.import_export import ImportResult
+
+    export = tmp_path / "export.json"
+    export.write_text("[]", encoding="utf-8")
+    fake_result = ImportResult(
+        imported_count=0,
+        skipped_count=0,
+        errors=[f"Record {i}: missing required field 'content'" for i in range(7)],
+    )
+    mock_mem = MagicMock()
+    mock_mem.import_export.import_from.return_value = fake_result
+
+    with patch("memo.cli_import._get_memory", return_value=mock_mem):
+        res = CliRunner().invoke(cli, ["import", "json", str(export)], env=_env(tmp_path))
+
+    assert res.exit_code == 1, res.output
+    assert "Errors: 7" in res.output
+    assert "Record 0: missing required field 'content'" in res.output
+    assert "and 2 more" in res.output
+
+
+def test_import_csv_partial_errors_exit_nonzero(tmp_path: Path):
+    from unittest.mock import MagicMock, patch
+
+    from memo.import_export import ImportResult
+
+    export = tmp_path / "export.csv"
+    export.write_text("title,content\n", encoding="utf-8")
+    mock_mem = MagicMock()
+    mock_mem.import_export.import_from.return_value = ImportResult(
+        imported_count=3, skipped_count=0, errors=["Record 2: bad row"]
+    )
+
+    with patch("memo.cli_import._get_memory", return_value=mock_mem):
+        res = CliRunner().invoke(cli, ["import", "csv", str(export)], env=_env(tmp_path))
+
+    assert res.exit_code == 1, res.output
+    assert "Imported: 3" in res.output
+    assert "Record 2: bad row" in res.output
+
+
+def test_import_json_clean_run_exits_zero(tmp_path: Path):
+    from unittest.mock import MagicMock, patch
+
+    from memo.import_export import ImportResult
+
+    export = tmp_path / "export.json"
+    export.write_text("[]", encoding="utf-8")
+    mock_mem = MagicMock()
+    mock_mem.import_export.import_from.return_value = ImportResult(
+        imported_count=2, skipped_count=1, errors=[]
+    )
+
+    with patch("memo.cli_import._get_memory", return_value=mock_mem):
+        res = CliRunner().invoke(cli, ["import", "json", str(export)], env=_env(tmp_path))
+
+    assert res.exit_code == 0, res.output
+
+
+def test_import_json_missing_path_is_usage_error(tmp_path: Path):
+    """click.Path(exists=True) rejects a nonexistent input before any work."""
+    res = CliRunner().invoke(
+        cli, ["import", "json", str(tmp_path / "nope.json")], env=_env(tmp_path)
+    )
+    assert res.exit_code == 2, res.output
+    assert "does not exist" in res.output

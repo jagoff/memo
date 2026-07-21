@@ -15,7 +15,16 @@ import click
 
 from memo.config import Config
 from memo.flags import flag_bool, flag_float, flag_int, flag_str
-from memo.recall_logic import RankKnobs, session_budget_scale  # re-export for tests + local use
+
+# re-export for tests + local use (adaptive_token_budget /
+# maybe_inject_verbosity_steering moved to recall_logic so the daemon path
+# shares them; eval_tokens + tests still import them from here)
+from memo.recall_logic import (
+    RankKnobs,
+    adaptive_token_budget,
+    maybe_inject_verbosity_steering,
+    session_budget_scale,
+)
 
 _log = logging.getLogger("memo.cli_recall_hook")
 
@@ -44,39 +53,6 @@ _TRIVIAL_WORDS: frozenset[str] = frozenset(
 )
 
 
-def maybe_inject_verbosity_steering(system_prompt: str, level: int) -> str:
-    """Append idempotent verbosity steering block to system prompt.
-
-    Levels (cumulative, byte-stable):
-    0: No steering (return unchanged)
-    1: "Skip preamble and postamble. Start with substance."
-    2: "Skip preamble/postamble. Never restate code/diffs; reference by path+line. After tool success, continue without narrating."
-    3: "Minimum tokens. Fragments OK. No preamble, no rationale unless asked."
-    """
-    VERBOSITY_TEXTS = {
-        0: "",
-        1: "Skip preamble and postamble. Start with substance.",
-        2: "Skip preamble/postamble. Never restate code/diffs; reference by path+line. After tool success, continue without narrating.",
-        3: "Minimum tokens. Fragments OK. No preamble, no rationale unless asked.",
-    }
-
-    level = max(0, min(3, level))  # Clamp
-    if level == 0:
-        return system_prompt
-
-    SENTINEL_START = "<headroom_recall_verbosity>"
-    SENTINEL_END = "</headroom_recall_verbosity>"
-
-    # Check if already injected (idempotency)
-    if SENTINEL_START in system_prompt and SENTINEL_END in system_prompt:
-        return system_prompt
-
-    steering_text = VERBOSITY_TEXTS[level]
-    steering_block = f"\n{SENTINEL_START}{level}\n{steering_text}\n{SENTINEL_END}"
-
-    return system_prompt + steering_block
-
-
 def apply_session_mode(knobs: RankKnobs, session_mode: str) -> RankKnobs:
     """Apply bounded per-session ranking adjustments."""
     if session_mode == "focus":
@@ -86,17 +62,6 @@ def apply_session_mode(knobs: RankKnobs, session_mode: str) -> RankKnobs:
     if session_mode == "maintenance":
         return replace(knobs, top_k=1, min_sim=max(knobs.min_sim, 0.70))
     return knobs
-
-
-def adaptive_token_budget(token_budget: int, prompt_length: int) -> int:
-    """Scale a positive per-turn budget for very short or long prompts."""
-    if token_budget <= 0:
-        return token_budget
-    if prompt_length < 50:
-        return int(min(token_budget * 1.5, 800))
-    if prompt_length > 300:
-        return int(max(token_budget * 0.6, 200))
-    return token_budget
 
 
 @click.command(name="recall-hook")
@@ -267,6 +232,20 @@ def recall_hook() -> None:
             client=_client,
         )
         if _daemon_result is not None:
+            # Daemon warming/lock-bail marker ({"busy": true}) — not a recall
+            # result: fall through to the subprocess path (which cold-start
+            # downgrades to bm25) instead of injecting nothing for the whole
+            # warmup window. A legit empty recall stays "{}" and is printed.
+            with contextlib.suppress(Exception):
+                _parsed = json.loads(_daemon_result)
+                if isinstance(_parsed, dict) and _parsed.get("busy"):
+                    if flag_bool("MEMO_RECALL_DEBUG"):
+                        print(
+                            "# memo recall-hook: daemon busy — subprocess fallback",
+                            file=sys.stderr,
+                        )
+                    _daemon_result = None
+        if _daemon_result is not None:
             _latency_ms = int((time.time() - _t0) * 1000)
             if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: daemon hit ({_latency_ms} ms)", file=sys.stderr)
@@ -304,6 +283,7 @@ def recall_hook() -> None:
         knobs_from_flags,
         make_vec_cosine,
         rank_hits,
+        uncertain_exclusion,
     )
 
     # Single-source knob resolution — the SAME builder the daemon path
@@ -354,15 +334,18 @@ def recall_hook() -> None:
     if knobs.mode in ("vec", "hybrid") and not flag_bool("MEMO_RECALL_FORCE_MODE"):
         # Cold-start downgrade — the subprocess equivalent of the daemon's
         # embedder-warm check (a cold MLX load would blow the 5s hook budget).
+        # An unreadable/corrupt warm signal counts as NOT warm: failing open
+        # here would pay the cold MLX load inside the hook budget.
+        _warm = False
         try:
             _signal = cfg.state_dir / ".prewarm_ts"
             _warm = _signal.exists() and (time.time() - float(_signal.read_text().strip())) < 3600
-            if not _warm:
-                if flag_bool("MEMO_RECALL_DEBUG"):
-                    print("# memo recall-hook: cold start — downgrading to bm25", file=sys.stderr)
-                knobs = replace(knobs, mode="bm25")
         except Exception as exc:
-            _log.debug("warm-signal read failed, staying in %s mode: %s", knobs.mode, exc)
+            _log.debug("warm-signal read failed, treating as cold: %s", exc)
+        if not _warm:
+            if flag_bool("MEMO_RECALL_DEBUG"):
+                print("# memo recall-hook: cold start — downgrading to bm25", file=sys.stderr)
+            knobs = replace(knobs, mode="bm25")
 
     top_k = knobs.top_k
     mode = knobs.mode
@@ -370,6 +353,8 @@ def recall_hook() -> None:
     from memo.tiers import REFERENCE_TYPES
 
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
+    # '_uncertain' quarantine (default on) — daemon parity (recall_logic).
+    exclude_tags = uncertain_exclusion()
     try:
         from memo.memory import Memory
 
@@ -409,7 +394,12 @@ def recall_hook() -> None:
         nonlocal _search_ok
         try:
             hits = mem.search(
-                query_text, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
+                query_text,
+                limit=search_k,
+                mode=mode,
+                recency=True,
+                exclude_types=exclude_types,
+                exclude_tags=exclude_tags,
             )
         except Exception as exc:
             if flag_bool("MEMO_RECALL_DEBUG"):
@@ -581,23 +571,15 @@ def recall_hook() -> None:
 
     from memo.recall_logic import (
         CITE_INSTRUCTION,
-        render_recall_balanced,
-        render_recall_compact,
-        render_recall_context,
+        render_by_format,
+        resolve_recall_format,
     )
 
     def _est_tokens(s: str) -> int:
         return max(1, len(s) // 4)
 
-    _recall_format = flag_str("MEMO_RECALL_FORMAT")
-    # Auto mode: choose format based on budget and hit count
-    if _recall_format == "auto":
-        if (token_budget > 0 and token_budget <= 300) or len(relevant) >= 5:
-            _recall_format = "compact"
-        elif token_budget > 800:
-            _recall_format = "full"
-        else:
-            _recall_format = "balanced"
+    # Format steering — shared with the daemon path (recall_logic).
+    _recall_format = resolve_recall_format(token_budget, len(relevant))
     # Compute associative nudge once for all formats — degrades to [] on any error.
     from memo.recall_assoc import build_nudge, render_associative_line
 
@@ -620,25 +602,16 @@ def recall_hook() -> None:
         except Exception:
             _disputed_by = {}
 
-    if _recall_format == "compact":
-        context = render_recall_compact(
-            relevant,
-            token_budget=token_budget,
-            disputed_by=_disputed_by,
-            state_dir=mem.cfg.state_dir,
-        )
-    elif _recall_format == "balanced":
-        context = render_recall_balanced(relevant, token_budget=token_budget, turn=_turn)
-    else:
-        context = render_recall_context(
-            relevant,
-            nudge,  # rank-overflow nudge — mirrors the daemon path's top_k split
-            turn=_turn,
-            body_chars=body_chars,
-            token_budget=token_budget,
-            disputed_by=_disputed_by,
-            state_dir=mem.cfg.state_dir,
-        )
+    context = render_by_format(
+        _recall_format,
+        relevant,
+        nudge,  # rank-overflow nudge — mirrors the daemon path's top_k split
+        turn=_turn,
+        body_chars=body_chars,
+        token_budget=token_budget,
+        disputed_by=_disputed_by,
+        state_dir=cfg.state_dir,
+    )
     context = render_associative_line(context, _nudge, token_budget=token_budget)
     if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
         context = f"{context}\n{CITE_INSTRUCTION}"

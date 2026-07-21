@@ -10,14 +10,31 @@ from memo.server_common import log_consult, now_ms, run_synth
 
 
 def _read_notification(memory: Memory) -> str:
-    """Read and consume the pending idle-capture notification (deletes after read)."""
+    """Peek at the pending idle-capture notification without consuming it."""
     notif_path = memory.cfg.state_dir / "pending_idle_notification.txt"
     try:
-        text = notif_path.read_text(encoding="utf-8").strip()
-        notif_path.unlink(missing_ok=True)
-        return text
+        return notif_path.read_text(encoding="utf-8").strip()
     except Exception:
         return ""
+
+
+def _file_search_notes(
+    *,
+    file: str,
+    date_from: str | None,
+    date_to: str | None,
+    explain: bool,
+) -> list[str]:
+    """Describe options that file-scoped search cannot apply."""
+    notes: list[str] = []
+    if file and (date_from or date_to):
+        notes.append(
+            "date filters (when/date_from/date_to) are not applied when 'file' is set; "
+            "results are not filtered by date"
+        )
+    if file and explain:
+        notes.append("explain is not available when 'file' is set; 'explain' fields are empty")
+    return notes
 
 
 def register(server: Any, memory: Memory) -> None:
@@ -125,6 +142,15 @@ def register(server: Any, memory: Memory) -> None:
         out: list[dict[str, Any]] = []
         trace: list[dict[str, Any]] = []
         explanations: dict[str, dict[str, Any]] = {}
+        # File-scoped search (search_by_file) takes no date filters and computes
+        # no explain trace. Say so explicitly instead of silently dropping the
+        # parameters — the caller must not present unfiltered hits as filtered.
+        notes = _file_search_notes(
+            file=file,
+            date_from=date_from,
+            date_to=date_to,
+            explain=explain,
+        )
         if explain and file:
             records = memory.search_by_file(
                 query,
@@ -187,6 +213,7 @@ def register(server: Any, memory: Memory) -> None:
         return {
             "hits": out,
             "notification": notification,
+            **({"note": " ".join(notes)} if notes else {}),
             **({"trace": trace} if explain else {}),
         }
 

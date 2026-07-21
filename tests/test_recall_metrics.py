@@ -292,6 +292,7 @@ def test_hook_subprocess_hits_are_post_session_dedup(
             mode: str = "bm25",
             recency: bool = False,
             exclude_types: object = None,
+            exclude_tags: object = None,
         ) -> list[MemoryRecord]:
             hits = per_turn[min(calls["n"], len(per_turn) - 1)]
             calls["n"] += 1

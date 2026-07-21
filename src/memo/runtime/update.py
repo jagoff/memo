@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.metadata
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -162,19 +164,31 @@ def _detect_install_method() -> str | None:
 
 
 def _clear_update_notify() -> None:
-    """Remove update notification and spawned-stamp after a successful update."""
-    try:
+    """Remove the update notification after a successful update."""
+    with contextlib.suppress(Exception):
         from memo.config import Config
-        from memo.runtime.autoupdate import _SPAWNED_STAMP, _clear_notify
+        from memo.runtime.autoupdate import _clear_notify
 
         cfg = Config.from_env()
         _clear_notify(cfg)
-        # Clear the per-tag spawned guard so the next startup can pick up
-        # a newer release without being blocked by a stale stamp.
-        with __import__("contextlib").suppress(OSError):
-            (cfg.state_dir / _SPAWNED_STAMP).unlink(missing_ok=True)
-    except Exception:  # noqa: S110
-        pass
+
+
+def _clear_failed_update_latch(tag: str) -> None:
+    """Allow a later startup to retry an auto-update that did not succeed."""
+    with contextlib.suppress(Exception):
+        from memo.config import Config
+        from memo.runtime.autoupdate import _clear_spawned_stamp
+
+        _clear_spawned_stamp(Config.from_env(), tag=tag, pid=os.getpid())
+
+
+def _mark_successful_update_latch(tag: str) -> None:
+    """Persist successful child completion for the spawning runtime."""
+    with contextlib.suppress(Exception):
+        from memo.config import Config
+        from memo.runtime.autoupdate import _mark_spawned_success
+
+        _mark_spawned_success(Config.from_env(), tag, pid=os.getpid())
 
 
 def _notify_codex_plugin_updated() -> bool:
@@ -313,44 +327,42 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     # Git-tag path: reinstall the isolated runtime straight from the tagged ref.
     # PyPI is skipped (these installs come from git+https://…/memo.git).
     if to_tag:
-        from memo.flags import flag_str
-        from memo.runtime.autoupdate import DEFAULT_REPO, tag_is_on_remote_master
+        try:
+            from memo.flags import flag_str
+            from memo.runtime.autoupdate import DEFAULT_REPO, tag_is_on_remote_master
 
-        repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
-        if not tag_is_on_remote_master(repo, to_tag):
-            raise click.ClickException(
-                f"refusing untrusted tag {to_tag}: it is not reachable from remote master"
-            )
-        spec = f"git+{repo}@{to_tag}"
-        method = _detect_install_method()
-        if method == "uv":
-            uv = _find_uv() or "uv"
-            console.print(f"[dim]Installing {to_tag} via uv tool…[/dim]")
-            try:
+            repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
+            if not tag_is_on_remote_master(repo, to_tag):
+                raise click.ClickException(
+                    f"refusing untrusted tag {to_tag}: it is not reachable from remote master"
+                )
+            spec = f"git+{repo}@{to_tag}"
+            method = _detect_install_method()
+            if method == "uv":
+                uv = _find_uv() or "uv"
+                console.print(f"[dim]Installing {to_tag} via uv tool…[/dim]")
                 proc = subprocess.run(
                     [uv, "tool", "install", spec, "--force", "--reinstall"],
                     check=False,
                     timeout=600,
                 )
-            except subprocess.TimeoutExpired as exc:
-                raise click.ClickException(
-                    f"git-tag install of {to_tag} timed out (600s)."
-                ) from exc
-        elif method == "pipx":
-            pipx = _find_pipx() or "pipx"
-            console.print(f"[dim]Installing {to_tag} via pipx…[/dim]")
-            try:
+            elif method == "pipx":
+                pipx = _find_pipx() or "pipx"
+                console.print(f"[dim]Installing {to_tag} via pipx…[/dim]")
                 proc = subprocess.run([pipx, "install", "--force", spec], check=False, timeout=600)
-            except subprocess.TimeoutExpired as exc:
+            else:
                 raise click.ClickException(
-                    f"git-tag install of {to_tag} timed out (600s)."
-                ) from exc
-        else:
-            raise click.ClickException(
-                "Could not detect install method (pipx/uv) for git-tag update."
-            )
-        if proc.returncode != 0:
-            raise click.ClickException(f"git-tag install of {to_tag} failed.")
+                    "Could not detect install method (pipx/uv) for git-tag update."
+                )
+            if proc.returncode != 0:
+                raise click.ClickException(f"git-tag install of {to_tag} failed.")
+        except subprocess.TimeoutExpired as exc:
+            _clear_failed_update_latch(to_tag)
+            raise click.ClickException(f"git-tag install of {to_tag} timed out (600s).") from exc
+        except Exception:
+            _clear_failed_update_latch(to_tag)
+            raise
+        _mark_successful_update_latch(to_tag)
         _finish_successful_update()
         console.print(f"[green]✓[/green] updated to {to_tag}. Pre-warming MLX models…")
         _prewarm_after_update()
@@ -415,7 +427,9 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     console.print("[dim]Could not reach git; checking PyPI…[/dim]")
     try:
         url = "https://pypi.org/pypi/mlx-memo/json"
-        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
+        with urllib.request.urlopen(  # noqa: S310  # nosec B310 - constant HTTPS URL
+            url, timeout=10
+        ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         latest_version = data["info"]["version"]
     except (urllib.error.URLError, KeyError, json.JSONDecodeError, OSError) as exc:
@@ -451,11 +465,12 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     else:
         console.print(
             "[yellow]Could not detect install method (pipx/uv).[/yellow]\n"
-            "Re-run the installer:\n"
-            "  curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash\n"
+            "Install the verified published version:\n"
+            "  curl -fsSL https://raw.githubusercontent.com/jagoff/memo/"
+            f"v{latest_version}/install.sh | bash\n"
             "or:\n"
-            "  pipx install --force git+https://github.com/jagoff/memo.git\n"
-            "  uv tool install --force git+https://github.com/jagoff/memo.git"
+            f"  pipx install --force mlx-memo=={latest_version}\n"
+            f"  uv tool install --force mlx-memo=={latest_version}"
         )
         return
 

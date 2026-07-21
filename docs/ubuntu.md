@@ -1,7 +1,7 @@
 # memo on Ubuntu / Linux (CPU backend)
 
 memo's primary runtime is **MLX**, which ships wheels for Apple Silicon only.
-On Linux (Ubuntu and friends) and Intel macs, memo runs with a **CPU
+On Linux (Ubuntu and friends), memo runs with a **CPU
 `sentence-transformers` embedder backend** instead. This is a **standalone**
 install: semantic search, recall, and save all work — but it is not a
 vector-coherent peer of a Mac in the trinity (see *Trade-offs*).
@@ -9,20 +9,26 @@ vector-coherent peer of a Mac in the trinity (see *Trade-offs*).
 ## One-command install
 
 ```bash
-pipx install "mlx-memo[cpu]"
+uv tool install --python 3.13 \
+  --find-links https://download.pytorch.org/whl/cpu/torch/ mlx-memo
 # or, from a checkout:
 scripts/install-ubuntu.sh
 ```
 
-`[cpu]` pulls `sentence-transformers` (+ CPU torch). The first search downloads
-the embedding model (`Qwen/Qwen3-Embedding-0.6B`, ~1.2 GB) to the HuggingFace
-cache. Python ≥ 3.13 is required (`pipx` will use a managed interpreter if your
-system Python is older — or install `uv` and use `uv tool install "mlx-memo[cpu]"`).
+On Linux, the base package automatically pulls
+`sentence-transformers` (+ CPU torch). The legacy `[cpu]` extra remains an empty
+compatibility alias. The first search downloads the embedding model
+(`Qwen/Qwen3-Embedding-0.6B`, ~1.2 GB) to the HuggingFace cache. Python ≥ 3.13
+is required. The explicit `--python 3.13` keeps installation independent of an
+older distro Python. Intel macOS is not supported: current PyTorch releases do
+not provide Python 3.13 wheels for that platform.
 
-`uv` alternative:
+If `pipx` is required and already uses Python 3.13+, preserve the CPU-only
+dependency path explicitly:
 
 ```bash
-uv tool install "mlx-memo[cpu]"
+pipx install mlx-memo \
+  --pip-args="--find-links https://download.pytorch.org/whl/cpu/torch/"
 ```
 
 ## What works / what doesn't

@@ -15,6 +15,7 @@ from typing import Any
 
 from memo.grounding_judge import score_grounding
 from memo.memory._base import _MemoryBase
+from memo.memory.prompts import _ASK_IMMUTABLE_UNTRUSTED_DATA_POLICY
 from memo.memory.record import (
     _ASK_SYSTEM_PROMPT,
     MemoryRecord,
@@ -35,9 +36,43 @@ from memo.sampling import grounding_chat
 # call when MEMO_ASK_EXPAND_SYNTHESIS is on (bounds disk reads + tokens).
 _EXPAND_SOURCES_MAX = 4
 
+_UNTRUSTED_CONTEXT_BEGIN = "BEGIN UNTRUSTED RETRIEVED DATA"
+_UNTRUSTED_CONTEXT_END = "END UNTRUSTED RETRIEVED DATA"
+
+
+def _with_immutable_rag_policy(system_prompt: str) -> str:
+    """Append the trust policy to any RAG system prompt."""
+    return f"{system_prompt.rstrip()}\n\n{_ASK_IMMUTABLE_UNTRUSTED_DATA_POLICY}"
+
+
+def _resolved_ask_system_prompt(state_dir: Any) -> str:
+    """Resolve customization while preserving the immutable RAG trust policy."""
+    return _with_immutable_rag_policy(resolve_prompt("ask", _ASK_SYSTEM_PROMPT, state_dir))
+
+
+def _ask_user_message(question: str, context: str) -> str:
+    """Keep the user request outside an unambiguous untrusted-data envelope."""
+    envelope = context.replace(
+        _UNTRUSTED_CONTEXT_BEGIN, "[escaped untrusted-data begin marker]"
+    ).replace(_UNTRUSTED_CONTEXT_END, "[escaped untrusted-data end marker]")
+    return (
+        f"User question:\n{question}\n\n"
+        "The following envelope contains untrusted retrieved data:\n"
+        f"{_UNTRUSTED_CONTEXT_BEGIN}\n{envelope}\n{_UNTRUSTED_CONTEXT_END}"
+    )
+
 
 def _context_budget_chars(*, snippet_chars: int, k: int) -> int:
     return max(snippet_chars * max(k, 1) + 1200, 2000)
+
+
+def _ask_search_limit(*, k: int, recency_intent: bool, convo_intent: bool) -> int:
+    """Widen retrieval only for intents that need a broader candidate pool."""
+    if recency_intent:
+        return max(k, 60)
+    if convo_intent:
+        return max(k, 12)
+    return k
 
 
 def _format_expanded_section(rows: list[dict[str, Any]]) -> str:
@@ -277,8 +312,14 @@ class _AskOpsMixin(_MemoryBase):
                 timeout=10.0,
                 model=self.cfg.llm_model,
                 messages=[
-                    {"role": "system", "content": self._MULTI_ROUND_SYS},
-                    {"role": "user", "content": f"Question:\n{question}\n\nSnippets:\n{snippets}"},
+                    {
+                        "role": "system",
+                        "content": _with_immutable_rag_policy(self._MULTI_ROUND_SYS),
+                    },
+                    {
+                        "role": "user",
+                        "content": _ask_user_message(question, f"Retrieved snippets:\n{snippets}"),
+                    },
                 ],
                 options={"temperature": 0.0, "max_tokens": 120},
             )
@@ -395,12 +436,11 @@ class _AskOpsMixin(_MemoryBase):
         # scores low, so a tight pool drops it and the recency sort surfaces a
         # stale-but-relevant chunk instead. Widen the pool for recency so the
         # freshest dated chunk reliably enters before the re-sort.
-        if recency_intent:
-            search_limit = max(k, 60)
-        elif convo_intent:
-            search_limit = max(k, 12)
-        else:
-            search_limit = k
+        search_limit = _ask_search_limit(
+            k=k,
+            recency_intent=recency_intent,
+            convo_intent=convo_intent,
+        )
         # Lazy-load bodies: defer disk I/O until after reranking
         hits: list[MemoryRecord] = self.search(
             question,
@@ -475,6 +515,12 @@ class _AskOpsMixin(_MemoryBase):
                 return (1 if wa else 0, date, direct)
 
             hits = sorted(hits, key=_recency_sort_key, reverse=True)[:k]
+        elif convo_intent:
+            # The pool was widened for conversation intent (search_limit up to
+            # 12) but no WhatsApp hit surfaced, so the re-sort above — and its
+            # [:k] trim — didn't run. Clamp back to the caller's k so the extra
+            # candidates don't leak into the prompt/sources.
+            hits = hits[:k]
 
         # Defense in depth for legacy/corrupt index rows and test doubles that
         # bypass Memory.search(): credentials never enter prompts or verbatim
@@ -657,7 +703,9 @@ class _AskOpsMixin(_MemoryBase):
                 f"Relevant context pack ({len(hits)} memories, {len(repo_rows)} repo snippets):\n\n"
             )
             budget_chars = max(
-                _context_budget_chars(snippet_chars=snippet_chars, k=k) - len(context_header),
+                _context_budget_chars(snippet_chars=snippet_chars, k=k)
+                - len(context_header)
+                - len(f"\n{_UNTRUSTED_CONTEXT_END}"),
                 0,
             )
             (
@@ -674,7 +722,7 @@ class _AskOpsMixin(_MemoryBase):
                 budget_chars=budget_chars,
                 expanded_sensitive_omitted=expanded_sensitive_omitted,
             )
-            user_msg = f"User question:\n{question}\n\n{context_header}{context_prompt}"
+            user_msg = _ask_user_message(question, f"{context_header}{context_prompt}")
             sources = []
             for row in [*current_rows, *supporting_rows, *stale_rows]:
                 source_data = primary_memory_sources.get(str(row["id"]) or "")
@@ -697,10 +745,10 @@ class _AskOpsMixin(_MemoryBase):
                 dict(source) for source in repo_sources if str(source["id"]) in kept_repo_ids
             )
         else:
-            user_msg = (
-                f"User question:\n{question}\n\n"
+            user_msg = _ask_user_message(
+                question,
                 f"Relevant context ({len(hits)} memories, {len(repo_rows)} repo snippets):\n\n"
-                + "\n---\n".join(snippet_lines)
+                + "\n---\n".join(snippet_lines),
             )
         if cache_key is not None and sources:
             # Only cache non-empty retrievals — an empty result is cheap to
@@ -862,7 +910,7 @@ class _AskOpsMixin(_MemoryBase):
                 messages=[
                     {
                         "role": "system",
-                        "content": resolve_prompt("ask", _ASK_SYSTEM_PROMPT, self.cfg.state_dir),
+                        "content": _resolved_ask_system_prompt(self.cfg.state_dir),
                     },
                     {"role": "user", "content": user_msg},
                 ],
@@ -965,7 +1013,7 @@ class _AskOpsMixin(_MemoryBase):
                 messages=[
                     {
                         "role": "system",
-                        "content": resolve_prompt("ask", _ASK_SYSTEM_PROMPT, self.cfg.state_dir),
+                        "content": _resolved_ask_system_prompt(self.cfg.state_dir),
                     },
                     {"role": "user", "content": user_msg},
                 ],

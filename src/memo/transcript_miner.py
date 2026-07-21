@@ -239,65 +239,68 @@ def mine_transcripts(
         return {"status": "no_files", "root": str(root), "files": 0}
 
     mem = Memory(cfg)
-    chat = mem._ensure_chat()
+    try:
+        chat = mem._ensure_chat()
 
-    total_candidates = 0
-    total_saved: list[str] = []
-    total_dup = 0
-    files_processed = 0
-    files_skipped = 0
-    turn_hashes: set[str] = set()  # in-run dedup of identical assistant turns
+        total_candidates = 0
+        total_saved: list[str] = []
+        total_dup = 0
+        files_processed = 0
+        files_skipped = 0
+        turn_hashes: set[str] = set()  # in-run dedup of identical assistant turns
 
-    import contextlib
+        import contextlib
 
-    for idx, f in enumerate(files):
-        if progress_cb is not None:
-            with contextlib.suppress(Exception):
-                progress_cb(idx, len(files), f)
+        for idx, f in enumerate(files):
+            if progress_cb is not None:
+                with contextlib.suppress(Exception):
+                    progress_cb(idx, len(files), f)
 
-        key = str(f)
-        prev_count = state.get(key, {}).get("lines_processed", 0)
-        try:
-            text = f.read_text(encoding="utf-8")
-            line_count = text.count("\n") + 1 if text else 0
-        except (OSError, UnicodeDecodeError):
-            text = ""
-            line_count = 0
-        if line_count <= prev_count:
-            files_skipped += 1
-            continue
+            key = str(f)
+            prev_count = state.get(key, {}).get("lines_processed", 0)
+            try:
+                text = f.read_text(encoding="utf-8")
+                line_count = text.count("\n") + 1 if text else 0
+            except (OSError, UnicodeDecodeError):
+                text = ""
+                line_count = 0
+            if line_count <= prev_count:
+                files_skipped += 1
+                continue
 
-        result = mine_exchange_stream(
-            mem,
-            chat,
-            cfg,
-            iter_exchanges(f, text=text),
-            turn_hashes=turn_hashes,
-            dry_run=dry_run,
-            debug=debug,
-            source_name=f.name,
-            extra_fn=_transcript_extra_fn(f),
-        )
-        total_candidates += result["candidates"]
-        total_saved.extend(result["saved"])
-        total_dup += result["skipped_dup"]
+            result = mine_exchange_stream(
+                mem,
+                chat,
+                cfg,
+                iter_exchanges(f, text=text),
+                turn_hashes=turn_hashes,
+                dry_run=dry_run,
+                debug=debug,
+                source_name=f.name,
+                extra_fn=_transcript_extra_fn(f),
+            )
+            total_candidates += result["candidates"]
+            total_saved.extend(result["saved"])
+            total_dup += result["skipped_dup"]
 
-        if not dry_run:
-            state[key] = {
-                "lines_processed": line_count,
-                "mtime": f.stat().st_mtime,
-            }
-            _save_state(cfg.state_dir, state)
-        files_processed += 1
+            if not dry_run:
+                state[key] = {
+                    "lines_processed": line_count,
+                    "mtime": f.stat().st_mtime,
+                }
+                _save_state(cfg.state_dir, state)
+            files_processed += 1
 
-    return {
-        "status": "ok",
-        "root": str(root),
-        "files_total": len(files),
-        "files_processed": files_processed,
-        "files_skipped": files_skipped,
-        "candidates": total_candidates,
-        "saved": total_saved,
-        "skipped_dup": total_dup,
-        "dry_run": dry_run,
-    }
+        return {
+            "status": "ok",
+            "root": str(root),
+            "files_total": len(files),
+            "files_processed": files_processed,
+            "files_skipped": files_skipped,
+            "candidates": total_candidates,
+            "saved": total_saved,
+            "skipped_dup": total_dup,
+            "dry_run": dry_run,
+        }
+    finally:
+        mem.close()

@@ -42,7 +42,16 @@ def _hints(server, name):
 
 def test_core_read_tools_marked_read_only(mem):
     server = build_server(memory=mem)
-    for name in ("memo_get", "memo_list", "memo_search", "memo_ask", "memo_lint"):
+    for name in (
+        "memo_get",
+        "memo_list",
+        "memo_unified_briefing",
+        "memo_search",
+        "memo_context",
+        "memo_ask",
+        "memo_chat_ask",
+        "memo_lint",
+    ):
         h = _hints(server, name)
         assert h.readOnlyHint is True, name
         assert h.destructiveHint is False, name

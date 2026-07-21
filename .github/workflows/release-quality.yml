@@ -1,0 +1,51 @@
+name: release-quality
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Full QA on release SHA
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MEMO_NONINTERACTIVE: "1"
+      MEMO_DATA_DIR: /tmp/memo-data
+      MEMO_STATE_DIR: /tmp/memo-state
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Prove checkout is the event SHA
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.13"
+      - name: Install pinned uv and locked development environment
+        run: |
+          python -m pip install uv==0.11.21
+          uv sync --frozen --extra dev --extra http --python 3.13
+      - name: Format check
+        run: .venv/bin/ruff format --check .
+      - name: Lint
+        run: .venv/bin/ruff check src/ tests/ scripts/
+      - name: Type check
+        run: .venv/bin/mypy src/memo
+      - name: Progressive quality budget
+        run: .venv/bin/python scripts/quality_gate.py
+      - name: Non-slow test suite with coverage gate
+        run: >-
+          .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120
+          --cov=memo --cov-report=term-missing
+
+  linux-cpu-smoke:
+    name: Real Linux CPU smoke
+    uses: ./.github/workflows/linux-cpu-smoke.yml
+
+  macos-mlx-smoke:
+    name: Real Apple Silicon MLX smoke
+    uses: ./.github/workflows/macos-smoke.yml

@@ -137,6 +137,50 @@ def session_budget_scale(cumulative: int, session_budget: int, base_budget: int)
     return max(_SESSION_BUDGET_FLOOR, base_budget // 2)
 
 
+def adaptive_token_budget(token_budget: int, prompt_length: int) -> int:
+    """Scale a positive per-turn budget for very short or long prompts."""
+    if token_budget <= 0:
+        return token_budget
+    if prompt_length < 50:
+        return int(min(token_budget * 1.5, 800))
+    if prompt_length > 300:
+        return int(max(token_budget * 0.6, 200))
+    return token_budget
+
+
+def maybe_inject_verbosity_steering(system_prompt: str, level: int) -> str:
+    """Append idempotent verbosity steering block to system prompt.
+
+    Levels (cumulative, byte-stable):
+    0: No steering (return unchanged)
+    1: "Skip preamble and postamble. Start with substance."
+    2: "Skip preamble/postamble. Never restate code/diffs; reference by path+line. After tool success, continue without narrating."
+    3: "Minimum tokens. Fragments OK. No preamble, no rationale unless asked."
+    """
+    VERBOSITY_TEXTS = {
+        0: "",
+        1: "Skip preamble and postamble. Start with substance.",
+        2: "Skip preamble/postamble. Never restate code/diffs; reference by path+line. After tool success, continue without narrating.",
+        3: "Minimum tokens. Fragments OK. No preamble, no rationale unless asked.",
+    }
+
+    level = max(0, min(3, level))  # Clamp
+    if level == 0:
+        return system_prompt
+
+    SENTINEL_START = "<headroom_recall_verbosity>"
+    SENTINEL_END = "</headroom_recall_verbosity>"
+
+    # Check if already injected (idempotency)
+    if SENTINEL_START in system_prompt and SENTINEL_END in system_prompt:
+        return system_prompt
+
+    steering_text = VERBOSITY_TEXTS[level]
+    steering_block = f"\n{SENTINEL_START}{level}\n{steering_text}\n{SENTINEL_END}"
+
+    return system_prompt + steering_block
+
+
 def _dedup_tokens(text: str) -> set[str]:
     import re
 
@@ -320,7 +364,7 @@ def render_recall_compact(
     use_labels = flag_bool("MEMO_RECALL_EPISTEMIC_LABELS")
     use_dossier = flag_bool("MEMO_HIT_DOSSIER")
 
-    for hit in relevant:
+    for i, hit in enumerate(relevant):
         body = (hit.body or "").strip().replace("\n", " ")
         short_body = body[:60].rstrip() if body else ""
         label = f" ⟨{epistemic_label(hit)}⟩" if use_labels else ""
@@ -337,7 +381,10 @@ def render_recall_compact(
         candidate = "<memo-recall readonly>\n" + "\n".join(candidate_lines) + "\n</memo-recall>"
 
         if max_chars is not None and len(candidate) > max_chars:
-            n_dropped = len(relevant) - len(hit_lines)
+            # Count HITS not rendered (i rendered so far) — `hit_lines` can
+            # carry >1 line per hit (MEMO_HIT_DOSSIER), so its length is not
+            # the rendered-hit count.
+            n_dropped = len(relevant) - i
             if n_dropped > 0 and flag_bool("MEMO_RECALL_OMISSIONS_TAIL"):
                 tail = f"+{n_dropped} more: /memo get {hit.id[:8]}"
                 with_tail = (
@@ -393,6 +440,60 @@ def render_recall_balanced(
         body = body[: max(0, max_chars - len(footer) - 3)].rstrip() + "..."
 
     return body + footer
+
+
+def resolve_recall_format(token_budget: int, n_hits: int) -> str:
+    """Resolve MEMO_RECALL_FORMAT (default ``auto``) to a concrete format.
+
+    ``auto`` picks: compact for tight budgets/many hits, full for large
+    budgets, balanced otherwise. Shared by the daemon path (``_recall_logic``)
+    and the subprocess fallback so the two cannot diverge on format steering.
+    """
+    fmt = flag_str("MEMO_RECALL_FORMAT")
+    if fmt != "auto":
+        return fmt or "full"
+    if (token_budget > 0 and token_budget <= 300) or n_hits >= 5:
+        return "compact"
+    if token_budget > 800:
+        return "full"
+    return "balanced"
+
+
+def render_by_format(
+    fmt: str,
+    relevant: list[Any],
+    nudge: list[Any],
+    *,
+    turn: int | None,
+    body_chars: int,
+    token_budget: int,
+    omitted: list[Any] | None = None,
+    disputed_by: dict[str, list[str]] | None = None,
+    state_dir: Any | None = None,
+) -> str:
+    """The compact/balanced/full render switch, shared by both recall paths.
+
+    Any unknown ``fmt`` falls through to the full renderer (historical
+    behavior of the subprocess path's ``else`` branch)."""
+    if fmt == "compact":
+        return render_recall_compact(
+            relevant,
+            token_budget=token_budget,
+            disputed_by=disputed_by,
+            state_dir=state_dir,
+        )
+    if fmt == "balanced":
+        return render_recall_balanced(relevant, token_budget=token_budget, turn=turn)
+    return render_recall_context(
+        relevant,
+        nudge,
+        turn=turn,
+        body_chars=body_chars,
+        token_budget=token_budget,
+        omitted=omitted,
+        disputed_by=disputed_by,
+        state_dir=state_dir,
+    )
 
 
 def build_system_message(relevant: list[Any], *, max_chars: int = 140) -> str:
@@ -1045,6 +1146,59 @@ def unmatched_term_gate(prompt: str, hits: list[Any]) -> bool:
     return not any(t in hay for t in terms)
 
 
+def _session_scaled_token_budget(
+    token_budget: int,
+    *,
+    session_id: str | None,
+    state_dir: Any,
+) -> int:
+    """Apply cumulative session decay without making recall failure-prone."""
+    session_budget = flag_int("MEMO_RECALL_SESSION_TOKEN_BUDGET") or 0
+    if session_budget <= 0 or token_budget <= 0 or not session_id:
+        return token_budget
+    try:
+        from memo.dashboard import read_context_cost_log
+
+        cumulative = sum(
+            (int(entry.get("chars") or 0) + 3) // 4
+            for entry in read_context_cost_log(state_dir)
+            if entry.get("kind") == "recall" and entry.get("session_id") == session_id
+        )
+        return session_budget_scale(cumulative, session_budget, token_budget)
+    except Exception as exc:
+        _logger.debug("session budget scale failed: %s", exc)
+        return token_budget
+
+
+def _resolve_daemon_fallback(
+    mem: Any,
+    micro_embedder: Any | None,
+    mode: str,
+    knobs: RankKnobs,
+    *,
+    debug: bool,
+) -> tuple[bool, str, RankKnobs]:
+    """Choose the warm micro embedder or a safe BM25 cold-start fallback."""
+    embedder = getattr(mem, "embedder", None)
+    if bool(getattr(embedder, "is_warm", True)):
+        return False, mode, knobs
+
+    micro_ready = False
+    if micro_embedder:
+        with contextlib.suppress(Exception):
+            micro_embedder._ensure_loaded()
+        micro_ready = bool(getattr(micro_embedder, "is_warm", True))
+    if micro_ready:
+        if debug:
+            _logger.warning("recall-daemon: main embedder cold, using micro-embedder")
+        return True, mode, knobs
+    if flag_bool("MEMO_RECALL_FORCE_MODE"):
+        return False, mode, knobs
+    if debug:
+        _logger.warning("recall-daemon: main embedder cold, falling back to BM25")
+    return False, "bm25", replace(knobs, mode="bm25")
+
+
 def _recall_logic(
     prompt: str,
     cwd: str | None,
@@ -1072,22 +1226,19 @@ def _recall_logic(
     body_chars = 400 if _body_chars is None else max(0, _body_chars)
     token_budget = _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
 
+    # Adaptive budget — parity with the subprocess path (cli_recall_hook):
+    # scale the per-turn budget by prompt length, BEFORE session decay.
+    if flag_bool("MEMO_RECALL_ADAPTIVE_BUDGET") and token_budget > 0 and prompt:
+        token_budget = adaptive_token_budget(token_budget, len(prompt))
+
     # Session cumulative budget decay: once the session has consumed more than
     # MEMO_RECALL_SESSION_TOKEN_BUDGET tokens of recall context, halve the
     # per-turn budget (floored at _SESSION_BUDGET_FLOOR). Default OFF (0).
-    _sess_budget = _flag_int("MEMO_RECALL_SESSION_TOKEN_BUDGET") or 0
-    if _sess_budget > 0 and token_budget > 0 and session_id:
-        try:
-            from memo.dashboard import read_context_cost_log
-
-            _cum = sum(
-                (int(e.get("chars") or 0) + 3) // 4
-                for e in read_context_cost_log(cfg.state_dir)
-                if e.get("kind") == "recall" and e.get("session_id") == session_id
-            )
-            token_budget = session_budget_scale(_cum, _sess_budget, token_budget)
-        except Exception as _exc:
-            _logger.debug("session budget scale failed: %s", _exc)
+    token_budget = _session_scaled_token_budget(
+        token_budget,
+        session_id=session_id,
+        state_dir=cfg.state_dir,
+    )
 
     search_k = top_k * 3 if (project_tag or contextual) else top_k
 
@@ -1096,19 +1247,15 @@ def _recall_logic(
     exclude_types = _recall_excluded_types()
     exclude_tags = uncertain_exclusion()
 
-    use_fallback = False
-    _embedder = getattr(mem, "embedder", None)
-    embedder_warm = bool(getattr(_embedder, "is_warm", True))
-    if not embedder_warm:
-        if micro_embedder:
-            use_fallback = True
-            if debug:
-                _logger.warning("recall-daemon: main embedder cold, using micro-embedder")
-        elif not flag_bool("MEMO_RECALL_FORCE_MODE"):
-            mode = "bm25"
-            knobs = replace(knobs, mode=mode)
-            if debug:
-                _logger.warning("recall-daemon: main embedder cold, falling back to BM25")
+    # Force a micro model's lazy load now: a failed load otherwise returns
+    # all-zero vectors and silently scores every candidate at zero.
+    use_fallback, mode, knobs = _resolve_daemon_fallback(
+        mem,
+        micro_embedder,
+        mode,
+        knobs,
+        debug=debug,
+    )
 
     # Hybrid-mode min_sim gate (#6): in hybrid mode `h.score` is RRF-fused, on a
     # scale incomparable to `min_sim` (cosine-calibrated 0.5). rank_hits gates on
@@ -1391,7 +1538,10 @@ def _recall_logic(
         except Exception:
             disputed_by = {}
 
-    context = render_recall_context(
+    # Format steering — parity with the subprocess path: MEMO_RECALL_FORMAT
+    # (default "auto") picks compact/balanced/full from budget + hit count.
+    context = render_by_format(
+        resolve_recall_format(token_budget, len(relevant)),
         relevant,
         nudge,
         turn=turn,
@@ -1416,6 +1566,13 @@ def _recall_logic(
     # Mirror the subprocess path (cli_recall_hook): gated, never counts against budget.
     if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
         context = f"{context}\n{CITE_INSTRUCTION}"
+
+    # Verbosity steering (L4 token savings) — parity with the subprocess path.
+    from memo.flags_recall import flag_recall_verbosity_level
+
+    _verbosity_level = flag_recall_verbosity_level()
+    if _verbosity_level > 0:
+        context = maybe_inject_verbosity_steering(context, _verbosity_level)
 
     hits_snapshot = [
         {"id": h.id, "score": h.score, "title": h.title, "snippet": (h.body or "")[:240]}

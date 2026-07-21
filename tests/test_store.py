@@ -834,3 +834,169 @@ def test_tantivy_write_lock_spans_sqlite_commit(tmp_path: Path):
     # tantivy write order matches sqlite commit order.
     assert calls == ["v1", "v2"]
     s.close()
+
+
+# ── QA remediation regressions (store lows) ───────────────────────────────
+
+
+def test_tantivy_meta_lookup_tolerates_missing_deleted_at(store: VecStore):
+    """Regression: the tantivy BM25/fuzzy meta-resolution SQL hard-coded
+    `deleted_at`, so an old DB whose deleted_at ALTER was skipped (suppressed
+    lock error) crashed every search with `no such column: deleted_at`. It now
+    uses the same PRAGMA-guarded filter as every other meta reader."""
+
+    class _StubTantivy:
+        def delete_document(self, id_: str) -> None:
+            pass
+
+        def add_document(self, id_: str, title: str, tags: str, body: str) -> None:
+            pass
+
+        def commit(self) -> None:
+            pass
+
+        def search_bm25(self, query: str, k: int):
+            return [{"id": "keep", "score": 2.0}, {"id": "gone", "score": 1.0}]
+
+        def search_fuzzy(self, query: str, k: int):
+            return [{"id": "keep", "score": 2.0}, {"id": "gone", "score": 1.0}]
+
+    store._get_tantivy = lambda: _StubTantivy()  # type: ignore[method-assign]
+    for id_ in ("keep", "gone"):
+        store.upsert(
+            id_=id_,
+            path=f"memory/{id_}.md",
+            title=f"T {id_}",
+            type_="note",
+            tags=[],
+            created="t",
+            updated="t",
+            body_hash="h",
+            embedding=_emb(1, 0, 0, 0),
+        )
+    assert store.delete("gone") is True
+
+    # Current schema: the soft-deleted tombstone stays filtered out.
+    assert [r["id"] for r in store.search_bm25("q")] == ["keep"]
+    assert [r["id"] for r in store.search_fuzzy("q")] == ["keep"]
+
+    # Pre-migration schema (deleted_at ALTER was skipped): searches must not
+    # raise. The tombstone marker vanishes with the column, so `gone`
+    # legitimately reappears.
+    store._conn.execute("ALTER TABLE meta DROP COLUMN deleted_at")
+    assert [r["id"] for r in store.search_bm25("q")] == ["keep", "gone"]
+    assert [r["id"] for r in store.search_fuzzy("q")] == ["keep", "gone"]
+
+
+def test_crush_cache_rejects_non_hex_hash(tmp_path: Path):
+    """Regression: `CrushCache.retrieve` joined an unvalidated, externally
+    supplied hash into a filesystem path — a `../`-style marker could read any
+    {ts, content}-shaped JSON outside the cache dir. Non-hex keys are now
+    refused before touching the filesystem."""
+    import json
+    from datetime import UTC, datetime
+
+    from memo.errors import ValidationError
+    from memo.store.crush_cache import CrushCache
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    cache = CrushCache(state_dir)
+
+    # Decoy with the exact {ts, content} shape, one level above cache_dir.
+    (state_dir / "decoy.json").write_text(
+        json.dumps({"ts": datetime.now(UTC).isoformat(), "content": "secret"}),
+        encoding="utf-8",
+    )
+    assert cache.retrieve("../decoy") is None
+    assert cache.retrieve("ABCDEF123456") is None  # uppercase — not our digest
+    assert cache.retrieve("abc123") is None  # < 8 chars
+    with pytest.raises(ValidationError):
+        cache.cache("../decoy", "boom")
+    # The decoy was never overwritten or read through the traversal path.
+    assert "secret" in (state_dir / "decoy.json").read_text(encoding="utf-8")
+
+    # The real key shape (sha256 hexdigest prefix) still round-trips.
+    cache.cache("a1b2c3d4e5f60718", "original")
+    assert cache.retrieve("a1b2c3d4e5f60718") == "original"
+
+
+def test_vec_dims_mismatch_raises_domain_storage_error(tmp_path: Path):
+    """Regression: the dims-mismatch guard raised a bare RuntimeError, so
+    CLI/MCP entry points catching MemoError missed it. It now raises
+    StorageError (still a RuntimeError subclass, so old handlers keep
+    working)."""
+    from memo.errors import MemoError
+
+    db_path = tmp_path / "vec.db"
+    VecStore(db_path, dims=4).close()
+    with pytest.raises(MemoError, match="dimension mismatch"):
+        VecStore(db_path, dims=8)
+
+
+def test_vec_migration_snapshot_inside_tx(tmp_path: Path):
+    """Regression: `_validate_vec_schema` snapshotted the old vec table on the
+    autocommit connection BEFORE opening the migration transaction, so a row
+    committed by another process in that window (e.g. a still-running recall
+    daemon on the old binary) was silently dropped by the DROP + re-insert.
+    The snapshot now happens inside the same BEGIN IMMEDIATE tx as the DROP."""
+    import contextlib
+
+    import sqlite_vec
+    from sqlite_vec import serialize_float32
+
+    db = tmp_path / "vec.db"
+    store = VecStore(db, dims=4)
+    # Re-arm the migration: swap the migrated vec table for the OLD layout
+    # (no `type` metadata column) holding one row.
+    store._conn.execute("DROP TABLE vec")
+    store._conn.execute(
+        "CREATE VIRTUAL TABLE vec USING vec0(id TEXT PRIMARY KEY, "
+        "embedding FLOAT[4] distance_metric=cosine)"
+    )
+    store._conn.execute(
+        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash) "
+        "VALUES ('m1', '/p1', 'T1', 'note', '[]', 't', 't', 'h')"
+    )
+    store._conn.execute(
+        "INSERT INTO vec (id, embedding) VALUES (?, ?)",
+        ("m1", serialize_float32([1.0, 0, 0, 0])),
+    )
+    store._conn.commit()
+
+    real_tx = store._tx
+    fired: list[bool] = []
+
+    @contextlib.contextmanager
+    def tx_with_concurrent_write():
+        # Another process commits into the OLD table right as the migration
+        # opens its transaction — i.e. after any outside-tx snapshot.
+        if not fired:
+            fired.append(True)
+            other = sqlite3.connect(str(db))
+            other.enable_load_extension(True)
+            sqlite_vec.load(other)
+            other.enable_load_extension(False)
+            other.execute(
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash) "
+                "VALUES ('m2', '/p2', 'T2', 'note', '[]', 't', 't', 'h')"
+            )
+            other.execute(
+                "INSERT INTO vec (id, embedding) VALUES (?, ?)",
+                ("m2", serialize_float32([0, 1.0, 0, 0])),
+            )
+            other.commit()
+            other.close()
+        with real_tx() as cx:
+            yield cx
+
+    store._tx = tx_with_concurrent_write  # type: ignore[method-assign]
+    try:
+        store._validate_vec_schema()
+    finally:
+        store._tx = real_tx  # type: ignore[method-assign]
+
+    assert fired, "migration transaction never opened"
+    ids = {r["id"] for r in store._conn.execute("SELECT id FROM vec").fetchall()}
+    assert ids == {"m1", "m2"}, "concurrent commit lost during vec migration"
+    store.close()

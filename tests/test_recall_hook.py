@@ -158,3 +158,102 @@ def test_recall_hook_concurrent_invocations(recall_env: Config) -> None:
         results.append((proc.returncode, stdout, stderr))
 
     assert all(code == 0 for code, _stdout, _stderr in results), results
+
+
+def test_daemon_busy_marker_falls_through_to_subprocess(
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A daemon {"busy": true} reply (warming / lock-bail) is NOT a recall
+    result: the hook must run the subprocess fallback instead of printing it
+    (a bare '{}' used to keep recall dark for the whole warmup window)."""
+    from memo.memory import MemoryRecord
+
+    hit = MemoryRecord(
+        id="beefcafe11223344",
+        path="notes/busy.md",
+        title="Busy Fallback Memory",
+        type="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="a body long enough to pass the min-body gate " * 3,
+        extra={},
+        score=0.9,
+    )
+
+    class _OneHitMemory:
+        def __init__(self, cfg: object) -> None:
+            pass
+
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
+            return [hit]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: '{"busy": true}')
+    monkeypatch.setattr("memo.memory.Memory", _OneHitMemory)
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+
+    runner = CliRunner()
+    payload = json.dumps({"prompt": "some meaningful query here to test recall"})
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    assert '"busy"' not in result.output  # marker never leaks to the hook output
+    parsed = json.loads(result.output.strip())
+    assert "Busy Fallback Memory" in parsed["hookSpecificOutput"]["additionalContext"]
+
+
+def test_daemon_legit_empty_reply_still_prints(
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legit daemon '{}' (empty recall) keeps the historical contract: it is
+    printed verbatim and the subprocess fallback does NOT run."""
+
+    class _NeverMemory:
+        def __init__(self, cfg: object) -> None:
+            raise AssertionError("subprocess fallback must not run on a legit '{}' reply")
+
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: "{}")
+    monkeypatch.setattr("memo.memory.Memory", _NeverMemory)
+
+    runner = CliRunner()
+    payload = json.dumps({"prompt": "some meaningful query here to test recall"})
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "{}"
+
+
+def test_corrupt_prewarm_signal_downgrades_to_bm25(
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable/corrupt .prewarm_ts must count as NOT warm (downgrade to
+    bm25) — failing open kept vec mode and paid a cold MLX load in the hook."""
+    seen: dict[str, str] = {}
+
+    class _ModeRecorder:
+        def __init__(self, cfg: object) -> None:
+            pass
+
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
+            seen["mode"] = mode
+            return []
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", _ModeRecorder)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "vec")
+    monkeypatch.delenv("MEMO_RECALL_FORCE_MODE", raising=False)
+    (recall_env.state_dir / ".prewarm_ts").write_text("not-a-timestamp")
+
+    runner = CliRunner()
+    payload = json.dumps({"prompt": "some meaningful query here to test recall"})
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    assert seen["mode"] == "bm25"

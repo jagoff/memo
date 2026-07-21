@@ -5,7 +5,7 @@ LLM chat) on non-Apple-Silicon hosts. Kept dependency-free and fully typed
 so `config.py` (phase-1 strict mypy) can import it without coupling.
 
 The MLX runtime ships wheels for Apple Silicon only. On Linux (incl. Ubuntu)
-and Intel macs memo falls back to the CPU `sentence-transformers` backend
+memo falls back to the CPU `sentence-transformers` backend on Linux
 (see `embedder_select.make_embedder`).
 """
 

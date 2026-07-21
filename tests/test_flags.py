@@ -218,6 +218,52 @@ def test_markdown_flag_value_is_used_when_env_unset(tmp_path: Path) -> None:
     assert flags.flag_bool("MEMO_RECALL_DEBUG", env=env) is True
 
 
+def test_empty_env_var_falls_through_to_markdown_config(tmp_path: Path) -> None:
+    """`MEMO_X= memo ...` (empty export) must count as UNSET for the whole
+    chain: markdown config > overlay > default. Regression: the empty-string
+    guard short-circuited straight to the built-in default, silently masking
+    values persisted via `memo config set`."""
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text("```toml\n[recall]\ntop_k = 8\n```\n", encoding="utf-8")
+    env = {"MEMO_CONFIG_DIR": str(home), "MEMO_RECALL_TOP_K": ""}
+
+    assert flags.flag_int("MEMO_RECALL_TOP_K", env=env) == 8
+
+
+def test_empty_env_var_falls_through_to_overlay(tmp_path: Path) -> None:
+    from memo import tuned_overlay as ov
+
+    ov.write_overlay(tmp_path, {"MEMO_RECALL_MIN_SIM": 0.6}, {})
+    env = {
+        "MEMO_CONFIG_DIR": str(tmp_path / "no-md-config"),
+        "MEMO_STATE_DIR": str(tmp_path),
+        "MEMO_RECALL_MIN_SIM": "",
+    }
+
+    assert flags.flag_float("MEMO_RECALL_MIN_SIM", env=env) == 0.6
+
+
+def test_empty_env_var_without_config_returns_default(tmp_path: Path) -> None:
+    env = {"MEMO_CONFIG_DIR": str(tmp_path / "no-md-config"), "MEMO_RECALL_TOP_K": ""}
+    assert flags.flag("MEMO_RECALL_TOP_K", env=env) == 3
+
+
+def test_empty_env_var_stays_explicit_for_empty_default_str_flags(tmp_path: Path) -> None:
+    """A str flag whose default is "" keeps treating an empty env var as an
+    explicit empty value (it does NOT fall through to markdown config)."""
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "advanced-config.md").write_text(
+        '```toml\n[misc]\nproject_tag = "pinned"\n```\n', encoding="utf-8"
+    )
+    env = {"MEMO_CONFIG_DIR": str(home), "MEMO_PROJECT_TAG": ""}
+
+    assert flags.flag_str("MEMO_PROJECT_TAG", env=env) == ""
+
+
 def test_env_flag_overrides_markdown_flag(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"

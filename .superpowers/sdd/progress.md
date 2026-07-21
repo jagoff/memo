@@ -145,3 +145,26 @@
 - [x] Review final whole-branch (fable, 17 commits db196ee..8b8fc05): 1 Important pre-push (isPinInstalled matcheaba `==` pero uv tool list imprime `v` → reinstall por arranque + rotura offline) → fix 576a892. PRE-FLIP confirmados sin empeorar: type-filter en candidatos fold + Memory.close _hype_store.
 - ANÁLISIS ESTRUCTURAL (pre-flip, no re-litigar sin leerlo): el fold compara escalas incomparables — preguntas embebidas CON prefijo (query↔query) vs docs sin prefijo → question-scores sistemáticamente más altos; a cobertura parcial desplaza hits correctos no cubiertos (harvested −0.046 @ 10.6%), a cobertura total converge a ranking pregunta-only. Opciones pre-flip: (a) embeber preguntas RAW, (b) fold en rank-space (RRF). Re-medir tras elegir.
 - FASE B DONE: db196ee..576a892 (18 commits). HyPE dark (MEMO_HYPE_ENABLED OFF, NO FLIP por gate b); MCPB Node listo para smoke manual de Fer.
+
+---
+
+# memo organic traction launch — July 2026
+
+**Plan:** docs/superpowers/plans/2026-07-18-memo-organic-traction-launch.md
+**Start:** 2026-07-18
+**Branches:** launch/2026-07-memo in memo and memo-web
+**Base:** memo 7ff4ae68; memo-web origin/main 18beb655
+
+## Tasks
+
+- [x] Task 1: Establish the launch control plane and account inventory — COMPLETE (7ff4ae68..4704bdce, review clean; live account access remains correctly `blocked_user` except GitHub; launch date 2026-07-28)
+- [x] Task 2: Prove product and landing readiness — COMPLETE (4704bdce..5e181518, review approved; product gate remains `failed` only because no local Docker-compatible runtime is installed; five other rows ready)
+- [x] Task 3: Capture current, citable claims — COMPLETE (5e181518..b4eb6861, 1 fix round: Claims gate remains `not_checked` until exact 2026-07-27 recapture; re-review clean)
+- [x] Task 4: Produce and verify the visual evidence pack — COMPLETE (memo-web 18beb655..9f479f9; memo b4eb6861..0e979b37; user batch approval; review clean)
+- [ ] Task 5: Write and approve channel-native launch copy — IN PROGRESS
+- [ ] Task 6: Prepare platform drafts without publishing
+- [ ] Task 7: Pass the final readiness gate and capture the baseline
+- [ ] Task 8: Execute the coordinated launch day
+- [ ] Task 9: Operate the first 24 hours and approved contingencies
+- [ ] Task 10: Run the Spanish wave and day-three review
+- [ ] Task 11: Close D5/D7 measurement and publish the postmortem

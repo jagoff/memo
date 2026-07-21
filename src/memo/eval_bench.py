@@ -17,6 +17,7 @@ import json
 import os
 import re
 import time
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -216,11 +217,35 @@ DATASET_URLS: dict[str, str] = {
 Fetcher = Callable[[str], bytes]
 
 
-def _http_fetch(url: str) -> bytes:
-    import urllib.request
+def _validate_dataset_url(url: str) -> None:
+    """Dataset downloads are remote HTTPS only; local data uses ``--file``."""
+    from urllib.parse import urlsplit
 
-    req = urllib.request.Request(url, headers={"User-Agent": "memo-eval-bench"})  # noqa: S310 — https URL from fixed table or explicit --url
-    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 — https URL from fixed table or explicit --url
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise MemoError("benchmark dataset URL must be a valid HTTPS URL; use --file locally")
+
+
+class _HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Allow dataset CDN redirects only while transport remains HTTPS."""
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str):
+        _validate_dataset_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _http_fetch(url: str) -> bytes:
+    _validate_dataset_url(url)
+    req = urllib.request.Request(  # noqa: S310  # nosec B310 - validated HTTPS URL
+        url, headers={"User-Agent": "memo-eval-bench"}
+    )
+    opener = urllib.request.build_opener(_HTTPSRedirectHandler())
+    with opener.open(req, timeout=120) as resp:
         return resp.read()
 
 
@@ -242,6 +267,7 @@ def fetch_dataset(
             f"unknown bench dataset {name!r}; known: {', '.join(sorted(DATASET_URLS))} "
             "(or pass --url / --file)"
         )
+    _validate_dataset_url(resolved)
     dest = dest_dir / f"{name}.json"
     if dest.exists() and dest.stat().st_size > 0:
         return dest
@@ -530,6 +556,13 @@ class MLXJudge:
         return _parse_verdict(out.get("message", {}).get("content", ""))
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects so Authorization never crosses an origin boundary."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
 class APIJudge:
     """OpenAI-compatible chat-completions judge (env-gated via MEMO_BENCH_JUDGE=api)."""
 
@@ -541,8 +574,6 @@ class APIJudge:
         self._api_key = api_key
 
     def grade(self, *, question: str, gold: str, answer: str, abstention: bool) -> bool:
-        import urllib.request
-
         payload = {
             "model": self._model,
             "temperature": 0,
@@ -563,9 +594,33 @@ class APIJudge:
                 "Authorization": f"Bearer {self._api_key}",
             },
         )
-        with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310 — user-configured https endpoint
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(req, timeout=120) as resp:
             data = json.load(resp)
         return _parse_verdict(data["choices"][0]["message"]["content"])
+
+
+def _validate_judge_url(url: str) -> None:
+    """Require transport security, except for an explicitly local judge."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(url)
+    host = parsed.hostname
+    if not host or parsed.username is not None or parsed.password is not None:
+        raise MemoError("benchmark judge URL must be a valid HTTPS URL or HTTP loopback URL")
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme != "http":
+        raise MemoError("benchmark judge URL must use HTTPS or HTTP on loopback")
+    if host.rstrip(".").lower() == "localhost":
+        return
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = False
+    if not is_loopback:
+        raise MemoError("benchmark judge URL must use HTTPS or HTTP on loopback")
 
 
 def judge_from_flags(live: Any) -> Judge:
@@ -584,6 +639,7 @@ def judge_from_flags(live: Any) -> Judge:
             raise MemoError(
                 "MEMO_BENCH_JUDGE=api requires MEMO_BENCH_JUDGE_URL and MEMO_BENCH_JUDGE_MODEL"
             )
+        _validate_judge_url(url)
         key_env = (flag_str("MEMO_BENCH_JUDGE_API_KEY_ENV") or "OPENAI_API_KEY").strip()
         api_key = os.environ.get(key_env, "")
         if not api_key:

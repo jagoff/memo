@@ -61,6 +61,7 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
     monkeypatch.setenv("MEMO_PROJECT_TAG", "memo")
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_FORMAT", "full")  # scores render in full only
 
     result, _log = _recall_logic(
         "project-specific query",
@@ -107,6 +108,7 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_FORMAT", "full")  # directive renders in full only
 
     result, _log = _recall_logic(
         "anything",
@@ -130,6 +132,7 @@ def test_recall_logic_emits_directive_only_on_first_turn(monkeypatch, tmp_path) 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
     monkeypatch.setenv("MEMO_RECALL_DIRECTIVE_ONCE", "1")
+    monkeypatch.setenv("MEMO_RECALL_FORMAT", "full")  # directive renders in full only
 
     first, _ = _recall_logic(
         "anything",
@@ -293,6 +296,7 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
     monkeypatch.setenv("MEMO_RECALL_CONTEXTUAL", "0")  # isolate from prefs
     monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "0")
+    monkeypatch.setenv("MEMO_RECALL_FORMAT", "full")  # nudge line renders in full only
     # These 5 synthetic "hit N" records tokenize near-identically; disable the
     # pre-top-K paraphrase collapse (default ON since v3.0.0) so the nudge-cut
     # under test sees all 5 rather than one collapsed survivor.
@@ -570,3 +574,132 @@ def test_trivial_bail_disabled(tmp_path: Path) -> None:
     env = {**_trivial_env(tmp_path), "MEMO_RECALL_TRIVIAL_BAIL": "0"}
     result = _invoke_hook("ok", env)
     assert "trivial prompt" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Daemon-path parity: format steering / adaptive budget / verbosity steering
+# (these knobs only existed on the subprocess fallback before)
+# ---------------------------------------------------------------------------
+
+
+class _OneHitStubMemory:
+    def __init__(self, hit: MemoryRecord) -> None:
+        self._hit = hit
+
+    def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        return [self._hit]
+
+
+def test_recall_logic_honors_compact_format(monkeypatch, tmp_path) -> None:
+    """MEMO_RECALL_FORMAT=compact must reach the daemon path, not only the
+    subprocess fallback."""
+    hit = _rec("fmt00001", "Compact daemon fact", 0.9)
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_FORMAT", "compact")
+
+    result, _log = _recall_logic(
+        "anything",
+        cwd=None,
+        mem=_OneHitStubMemory(hit),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
+    lines = context.splitlines()
+    assert lines[0] == "<memo-recall readonly>"
+    assert lines[1].startswith("[fmt00001]")  # one-line-per-hit compact shape
+    assert "## Memory" not in context  # no full/balanced header
+
+
+def test_recall_logic_applies_verbosity_steering(monkeypatch, tmp_path) -> None:
+    """MEMO_RECALL_VERBOSITY_LEVEL must steer the daemon path's output too."""
+    hit = _rec("verb0001", "Verbosity fact", 0.9)
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "2")
+
+    result, _log = _recall_logic(
+        "anything",
+        cwd=None,
+        mem=_OneHitStubMemory(hit),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
+    assert "<headroom_recall_verbosity>2" in context
+
+
+def test_recall_logic_adaptive_budget_scales_by_prompt_length(monkeypatch, tmp_path) -> None:
+    """MEMO_RECALL_ADAPTIVE_BUDGET (default on) must scale the daemon path's
+    budget: a >300-char prompt shrinks budget 400 -> 240, which flips the
+    'auto' format from balanced to compact — observable without byte-counting."""
+    hit = _rec("adap0001", "Adaptive budget fact", 0.9)
+    long_prompt = "palabra repetida para alargar el prompt " * 10  # ~400 chars
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "400")
+    monkeypatch.delenv("MEMO_RECALL_FORMAT", raising=False)  # 'auto' (default)
+
+    result, _log = _recall_logic(
+        long_prompt,
+        cwd=None,
+        mem=_OneHitStubMemory(hit),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
+    assert "## Memory" not in context  # 240-token budget -> auto picks compact
+
+    monkeypatch.setenv("MEMO_RECALL_ADAPTIVE_BUDGET", "0")
+    result_off, _log = _recall_logic(
+        long_prompt,
+        cwd=None,
+        mem=_OneHitStubMemory(hit),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+    )
+    context_off = json.loads(result_off)["hookSpecificOutput"]["additionalContext"]
+    assert "## Memory" in context_off  # un-scaled 400 -> auto picks balanced
+
+
+def test_cold_embedder_with_broken_micro_falls_back_to_bm25(monkeypatch, tmp_path) -> None:
+    """A micro embedder whose load FAILED must not hijack the cold-start path:
+    recall falls through to the BM25 downgrade instead of scoring via a dead
+    micro model (which previously emptied recall via the outer except)."""
+    hit = _rec("micro001", "Micro fallback fact", 0.9)
+
+    class StubMemory:
+        embedder = SimpleNamespace(is_warm=False)  # main embedder cold
+
+        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+            return [hit]
+
+    class _BrokenMicro:
+        """Load fails: _ensure_loaded runs but the model never becomes warm."""
+
+        is_warm = False
+
+        def _ensure_loaded(self) -> None:
+            pass
+
+        def embed_query(self, text):
+            raise RuntimeError("micro model failed to load")
+
+        def embed(self, texts):
+            raise RuntimeError("micro model failed to load")
+
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_EXPAND_CONTEXT", "0")
+
+    result, _log = _recall_logic(
+        "que sabemos de esto",
+        cwd=None,
+        mem=StubMemory(),
+        cfg=SimpleNamespace(state_dir=tmp_path),
+        debug=False,
+        micro_embedder=_BrokenMicro(),
+    )
+    context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
+    assert "Micro fallback fact" in context  # bm25 path served the hit
