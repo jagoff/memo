@@ -504,6 +504,80 @@ class Memory(
                 continue
         return out
 
+    def low_confidence_ids(self, *, threshold: float = 0.4, limit: int = 50) -> list[str]:
+        """Memory ids whose `memory_health.confidence` is below `threshold`.
+
+        Thin read over the `memory_health` signal table (`store/schema.py`),
+        lowest confidence first. Feeds the proactive health detector's
+        "worth reviewing" nudge.
+        """
+        rows = self.store._conn.execute(
+            "SELECT id FROM memory_health WHERE confidence < ? ORDER BY confidence ASC LIMIT ?",
+            (threshold, limit),
+        ).fetchall()
+        return [str(r["id"]) for r in rows]
+
+    def dead_memory_ids(self, *, limit: int = 50) -> list[str]:
+        """Durable memory ids with zero recorded access (`access` table).
+
+        Never surfaced since creation — candidates the proactive ROI
+        detector flags for pruning. Reference/secret types are excluded
+        (only `tiers.DURABLE_TYPES` counts as a "dead" memory).
+        """
+        from memo.tiers import DURABLE_TYPES
+
+        placeholders = ",".join("?" for _ in DURABLE_TYPES)
+        rows = self.store._conn.execute(
+            f"""
+            SELECT m.id
+              FROM meta m
+              LEFT JOIN access a ON a.id = m.id
+             WHERE COALESCE(a.access_count, 0) = 0
+               AND m.type IN ({placeholders})
+               AND (m.deleted_at IS NULL OR m.deleted_at = '')
+             ORDER BY m.created ASC
+             LIMIT ?
+            """,  # noqa: S608 — placeholders are '?' marks, not interpolated values
+            (*DURABLE_TYPES, limit),
+        ).fetchall()
+        return [str(r["id"]) for r in rows]
+
+    def recurring_pattern_pairs(
+        self, *, limit: int = 5, min_count: int = 2
+    ) -> list[tuple[str, str]]:
+        """Recurring recall-log prompts that already have a matching memory.
+
+        Returns `(memo_id, pattern_text)` pairs for the proactive déjà-vu
+        detector. Mines your most-repeated PAST prompts from the recall log
+        (`dashboard_logs.read_recall_log`) — true déjà-vu would compare
+        against the CURRENT recall's live hits, but that context isn't
+        available outside a recall call, so this re-runs `search()` (the
+        same retrieval machinery any query uses) to find a real citable
+        hit. A pattern with no matching memory is dropped; this never
+        fabricates a citation.
+        """
+        from collections import Counter
+
+        from memo.dashboard_logs import read_recall_log
+
+        entries = read_recall_log(self.cfg.state_dir, limit=200)
+        counts: Counter[str] = Counter()
+        for e in entries:
+            q = (e.get("prompt") or "").strip()
+            if q:
+                counts[q] += 1
+
+        out: list[tuple[str, str]] = []
+        for query, count in counts.most_common():
+            if len(out) >= limit:
+                break
+            if count < min_count:
+                break
+            hits = self.search(query, limit=1, disable_reranker=True)
+            if hits:
+                out.append((hits[0].id, query))
+        return out
+
     def capability(self, name: str) -> Any:
         """Build and memoize an optional subsystem by registry name."""
         if name not in OPTIONAL_CAPABILITIES:
