@@ -26,6 +26,28 @@ if TYPE_CHECKING:
     from memo.proactive.store import ProactiveStore
 
 
+def record_acted_if_matches(
+    store: ProactiveStore, *, command_line: str, now: str, window_min: int = 30
+) -> None:
+    """Frictionless acted-feedback: record `acted` when a run command matches a nudge.
+
+    If an active candidate's `action` equals `command_line` verbatim and it was
+    surfaced within `window_min` minutes of `now`, record an `acted` outcome for
+    it. No explicit user marking required — running the suggested action IS the
+    signal.
+    """
+
+    def _parse(ts: str) -> datetime:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+    now_dt = _parse(now)
+    for n in store.active_candidates(now):
+        if n.action == command_line and now_dt - _parse(n.created_at) <= timedelta(
+            minutes=window_min
+        ):
+            store.record_feedback(n.id, n.kind, "acted", now)
+
+
 def _record_dismiss_feedback(
     store: ProactiveStore, dismiss_id: str, active: list[Nudge], now: str
 ) -> None:
