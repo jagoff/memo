@@ -35,6 +35,7 @@ def maint_daemon_start() -> None:
     """Start the maintenance daemon in the background."""
     import subprocess as _subprocess
 
+    from memo import maint_client
     from memo.maint_server import _is_pid_alive, _read_pid, _socket_path
 
     cfg = Config.from_env()
@@ -42,6 +43,11 @@ def maint_daemon_start() -> None:
     if pid is not None and _is_pid_alive(pid):
         console.print(f"[dim]maint daemon already running (pid={pid})[/dim]")
         return
+
+    # A stale socket file left by a crashed daemon would fool the readiness
+    # probe below into reporting success for a child that failed to boot.
+    sock_path = _socket_path(cfg.state_dir)
+    sock_path.unlink(missing_ok=True)
 
     log_dir = Path.home() / "Library" / "Logs" / "memo"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -60,13 +66,18 @@ def maint_daemon_start() -> None:
             env=env,
         )
 
-    sock_path = _socket_path(cfg.state_dir)
+    # Readiness = the child answers a ping on the freshly bound socket
+    # (a bare exists() check would pass on a stale file).
+    ready = False
     for _ in range(20):
         time.sleep(0.1)
-        if sock_path.exists():
+        if proc.poll() is not None:
+            break  # child already exited — it can never become ready
+        if maint_client.ping(state_dir=cfg.state_dir) is not None:
+            ready = True
             break
 
-    if not sock_path.exists():
+    if not ready:
         click.echo("maint daemon failed to start — check logs", err=True)
         sys.exit(1)
 
