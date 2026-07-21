@@ -342,7 +342,11 @@ def _chunk_lines(
         seq += 1
         if end >= len(lines):
             break
-        start = max(start + 1, end - overlap_lines)
+        # Clamp the overlap to half the chunk's own line span: on long-line
+        # files (paragraph-per-line prose, semi-minified) a chunk spans fewer
+        # than overlap_lines lines, and a fixed retreat would degrade into a
+        # 1-line sliding window of near-duplicate chunks.
+        start = max(start + 1, end - min(overlap_lines, (end - start) // 2))
     return chunks
 
 
