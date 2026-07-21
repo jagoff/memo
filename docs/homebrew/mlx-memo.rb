@@ -17,6 +17,8 @@
 # `depends_on arch: :arm64` so brew refuses early.
 
 class MlxMemo < Formula
+  include Language::Python::Virtualenv
+
   desc "Local MCP memory for AI agents — MLX-native, sqlite-vec, markdown vault"
   homepage "https://github.com/jagoff/memo"
   url "https://files.pythonhosted.org/packages/e1/d1/162faaba41ec4de5cc2a439c2592a7db5fae5e1962f358047f1ed7852861/mlx_memo-3.8.2.tar.gz"
@@ -27,19 +29,24 @@ class MlxMemo < Formula
   depends_on :macos
   depends_on "python@3.13"
 
+  preserve_rpath
+
   # We let pip resolve the dep tree at install time rather than
   # vendoring every `resource` block (mlx, mlx-lm, fastmcp, sqlite-vec,
   # frontmatter, watchdog, etc. — ~30 deps). This is fine for a
   # personal tap; homebrew-core would require explicit resources.
   def install
-    venv = virtualenv_create(libexec, "python3.13")
-    venv.pip_install_and_link buildpath
+    virtualenv_create(libexec, "python3.13", system_site_packages: false)
+    system "python3.13", "-m", "pip", "--python=#{libexec}/bin/python",
+           "install", "--no-compile", buildpath
+    bin.install_symlink libexec/"bin/memo"
+    bin.install_symlink libexec/"bin/memo-mcp"
   end
 
   test do
     assert_match "memo, version", shell_output("#{bin}/memo --version")
     assert_match "Usage:", shell_output("#{bin}/memo --help")
-    # MCP server entry point must be importable too.
-    system bin/"memo-mcp", "--help"
+    # Import the MCP entry point without starting its blocking stdio loop.
+    system libexec/"bin/python", "-c", "import memo.server"
   end
 end
