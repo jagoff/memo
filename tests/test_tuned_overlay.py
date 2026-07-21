@@ -21,8 +21,58 @@ def test_overlay_values_resolves_from_state_dir(tmp_path: Path):
     assert vals["MEMO_RECALL_MIN_SIM"] == "0.7"
 
 
-def test_overlay_values_missing_state_dir_is_empty():
+def test_overlay_values_fall_back_to_default_state_dir(tmp_path: Path, monkeypatch):
+    """Without MEMO_STATE_DIR exported, the overlay must still resolve through
+    Config's fallback chain — daemons/CLI runs used to silently ignore every
+    tuner result unless the env var happened to be set. The chain only engages
+    for the REAL os.environ; custom env mappings stay hermetic."""
+    import os
+
+    import memo.config as config_mod
+
+    ov._state_dir_cache.clear()
+    monkeypatch.chdir(tmp_path)  # not a repo checkout
+    default_sd = tmp_path / "default-state"
+    monkeypatch.setattr(config_mod, "_DEFAULT_STATE_DIR", default_sd)
+    monkeypatch.delenv("MEMO_STATE_DIR", raising=False)
+    monkeypatch.delenv("MEMO_VAULT_PATH", raising=False)
+    monkeypatch.delenv("MEMO_MEMORY_SUBDIR", raising=False)
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "empty-config"))
+    ov.write_overlay(default_sd, {"MEMO_RECALL_MIN_SIM": 0.65}, {"set_by": "dream"})
+    try:
+        assert ov.overlay_values(os.environ)["MEMO_RECALL_MIN_SIM"] == "0.65"
+    finally:
+        ov._state_dir_cache.clear()
+
+
+def test_overlay_values_fall_back_to_repo_state_dir(tmp_path: Path, monkeypatch):
+    """A repo-checkout cwd (dev clone) resolves to ./.memo-state, mirroring
+    Config.from_env."""
+    import os
+
+    ov._state_dir_cache.clear()
+    (tmp_path / "src" / "memo").mkdir(parents=True)
+    (tmp_path / "src" / "memo" / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MEMO_STATE_DIR", raising=False)
+    monkeypatch.delenv("MEMO_VAULT_PATH", raising=False)
+    monkeypatch.delenv("MEMO_MEMORY_SUBDIR", raising=False)
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "empty-config"))
+    ov.write_overlay(tmp_path / ".memo-state", {"MEMO_RECALL_MIN_SIM": 0.61}, {})
+    try:
+        assert ov.overlay_values(os.environ)["MEMO_RECALL_MIN_SIM"] == "0.61"
+    finally:
+        ov._state_dir_cache.clear()
+
+
+def test_overlay_values_custom_env_without_state_dir_is_empty():
+    """Custom env mappings (hermetic test contract) do NOT engage the
+    machine-level fallback chain."""
     assert ov.overlay_values({}) == {}
+
+
+def test_overlay_values_missing_overlay_file_is_empty(tmp_path: Path):
+    assert ov.overlay_values({"MEMO_STATE_DIR": str(tmp_path / "nowhere")}) == {}
 
 
 def test_corrupt_overlay_is_ignored(tmp_path: Path):

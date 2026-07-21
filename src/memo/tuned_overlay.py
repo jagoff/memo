@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -77,10 +78,70 @@ def _to_flag_str(v: Any) -> str:
     return str(v)
 
 
+# (explicit MEMO_STATE_DIR, cwd) -> resolved state dir. Process-lifetime cache:
+# the fallback chain below touches the markdown config + disk, and `flag()` is
+# on the recall hot path.
+_state_dir_cache: dict[tuple[str, str], str] = {}
+
+
+def _resolve_state_dir(src: Mapping[str, str]) -> str:
+    """State dir the overlay lives in. Mirrors ``Config.from_env``'s fallback
+    chain (env > markdown storage config > repo-cwd dev default > XDG default)
+    WITHOUT building a Config: ``flag()`` sits underneath ``Config.from_env``,
+    so calling it here would recurse. Without this chain the overlay was only
+    ever applied when ``MEMO_STATE_DIR`` was explicitly exported — daemons and
+    plain CLI runs silently ignored every tuner/graduation result."""
+    explicit = src.get("MEMO_STATE_DIR")
+    if explicit:
+        return explicit
+    if src is not os.environ:
+        # A custom env mapping (tests, callers pinning a hermetic env) opts
+        # out of the machine-level fallback chain: without an explicit
+        # MEMO_STATE_DIR the overlay is treated as absent.
+        return ""
+    key = ("", str(Path.cwd()))
+    cached = _state_dir_cache.get(key)
+    if cached is not None:
+        return cached
+    resolved = _resolve_state_dir_uncached(src, None)
+    _state_dir_cache[key] = resolved
+    return resolved
+
+
+def _resolve_state_dir_uncached(src: Mapping[str, str], explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    storage_md: dict[str, Any] = {}
+    try:
+        from memo.config_md import load_values
+
+        storage_md = {k: v.value for k, v in load_values(src).items() if k.startswith("storage.")}
+    except Exception:  # markdown config unreadable — fall through to defaults
+        storage_md = {}
+    md_sd = storage_md.get("storage.state_dir")
+    if md_sd:
+        return str(md_sd)
+    has_legacy = bool(src.get("MEMO_VAULT_PATH")) or bool(src.get("MEMO_MEMORY_SUBDIR"))
+    if (
+        not has_legacy
+        and not storage_md
+        and (Path.cwd() / "src" / "memo" / "__init__.py").is_file()
+    ):
+        return str(Path.cwd() / ".memo-state")
+    try:
+        from memo.config import _DEFAULT_STATE_DIR
+    except ImportError:
+        # flag() invoked while memo.config is still importing (circular) —
+        # fall back to the same XDG default the constant holds.
+        return str(Path.home() / ".local" / "share" / "memo")
+    return str(_DEFAULT_STATE_DIR)
+
+
 def overlay_values(src: Mapping[str, str]) -> dict[str, str]:
     """param-name -> string value, for `flag()` resolution. Resolved from
-    ``src["MEMO_STATE_DIR"]``, mtime-cached. {} when unset/missing/corrupt."""
-    sd = src.get("MEMO_STATE_DIR")
+    ``src["MEMO_STATE_DIR"]`` with the ``Config.from_env`` fallback chain,
+    mtime-cached. {} when the overlay file is missing/corrupt."""
+    sd = _resolve_state_dir(src)
     if not sd:
         return {}
     p = overlay_path(Path(sd))
