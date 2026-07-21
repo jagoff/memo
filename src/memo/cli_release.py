@@ -521,9 +521,7 @@ def _check_formula(
             f"{formula.relative_to(repo)} dependency order should put arch before macos"
         )
 
-    _check_formula_runtime_contracts(
-        repo=repo, formula=formula, text=text, destination=destination
-    )
+    _check_formula_runtime_contracts(repo=repo, formula=formula, text=text, destination=destination)
 
 
 def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseCheckReport:
