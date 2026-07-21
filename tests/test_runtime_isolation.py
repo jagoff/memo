@@ -284,7 +284,8 @@ def test_mcp_command_forwards_st_revision(monkeypatch):
     _clear_memo_env(monkeypatch)
     monkeypatch.setenv("MEMO_EMBEDDER_BACKEND", "st")
     monkeypatch.setenv("MEMO_ST_EMBEDDER_MODEL", "Qwen/Qwen3-Embedding-0.6B")
-    monkeypatch.setenv("MEMO_ST_EMBEDDER_REVISION", "deadbeef")
+    revision = "d" * 40
+    monkeypatch.setenv("MEMO_ST_EMBEDDER_REVISION", revision)
     monkeypatch.setattr(mcp_mod, "_actual_embedder_config", lambda: {})
     monkeypatch.setattr(
         install_mod,
@@ -297,7 +298,7 @@ def test_mcp_command_forwards_st_revision(monkeypatch):
     assert result.exit_code == 0
     assert "--env MEMO_EMBEDDER_BACKEND=st" in result.output
     assert "--env MEMO_ST_EMBEDDER_MODEL=Qwen/Qwen3-Embedding-0.6B" in result.output
-    assert "--env MEMO_ST_EMBEDDER_REVISION=deadbeef" in result.output
+    assert f"--env MEMO_ST_EMBEDDER_REVISION={revision}" in result.output
 
 
 def test_install_slash_dry_run(monkeypatch):
@@ -499,6 +500,73 @@ def test_install_slash_devin_desktop_writes_mcp_config(monkeypatch, tmp_path):
     assert memo["env"]["MEMO_SOURCE"] == "devin-desktop"
     assert memo["type"] == "stdio"
     assert "Startup-banner shims" not in result.output
+
+
+def test_install_slash_default_installs_same_shims_as_explicit_all(monkeypatch):
+    """No --client defaults to all clients, so it must install the same shim
+    set as an explicit `--client all` (gemini/blackbox were silently skipped)."""
+    _clear_memo_env(monkeypatch)
+    monkeypatch.setenv("CODEX_HOME", "/tmp/codex-home")
+    monkeypatch.setattr(
+        install_mod,
+        "_resolved_memo_mcp",
+        lambda: Path("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp"),
+    )
+    shim_calls: list[tuple[str, ...]] = []
+
+    def _spy_install_shims(agents, bin_dir, *, dry_run=False):
+        shim_calls.append(tuple(agents))
+        return [f"wrote:{bin_dir}/{a}" for a in agents]
+
+    monkeypatch.setattr(shims_mod, "install_shims", _spy_install_shims)
+
+    repo = str(Path.cwd())
+    r_default = CliRunner().invoke(cli, ["install-slash", "--dry-run", "--repo", repo])
+    r_all = CliRunner().invoke(
+        cli, ["install-slash", "--client", "all", "--dry-run", "--repo", repo]
+    )
+
+    assert r_default.exit_code == 0, r_default.output
+    assert r_all.exit_code == 0, r_all.output
+    assert shim_calls == [
+        ("codex", "devin", "opencode", "gemini", "blackbox"),
+        ("codex", "devin", "opencode", "gemini", "blackbox"),
+    ]
+
+
+def test_install_watcher_rejects_autodetected_project_venv(monkeypatch, tmp_path):
+    """An auto-detected `memo` inside a project .venv must be refused: a
+    KeepAlive=true plist baked with it crash-loops launchd once the venv is
+    removed. Explicit --bin stays untouched."""
+    import shutil as _shutil
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    venv_memo = tmp_path / "proj" / ".venv" / "bin" / "memo"
+    venv_memo.parent.mkdir(parents=True)
+    venv_memo.touch()
+    monkeypatch.setattr(_shutil, "which", lambda name: str(venv_memo))
+
+    result = CliRunner().invoke(cli, ["install-watcher"])
+
+    assert result.exit_code != 0
+    assert "project venv" in result.output
+    assert "--bin" in result.output
+
+
+def test_install_watcher_explicit_bin_is_untouched(monkeypatch, tmp_path, _sandbox_home):
+    """Explicit --bin is the user's call — even a venv path is baked as-is
+    (--no-load keeps launchctl out of the test)."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    venv_memo = tmp_path / "proj" / ".venv" / "bin" / "memo"
+    venv_memo.parent.mkdir(parents=True)
+    venv_memo.touch()
+
+    result = CliRunner().invoke(cli, ["install-watcher", "--bin", str(venv_memo), "--no-load"])
+
+    assert result.exit_code == 0, result.output
+    plist = _sandbox_home / "Library" / "LaunchAgents" / "com.memo.watch.plist"
+    assert plist.is_file()
+    assert str(venv_memo) in plist.read_text(encoding="utf-8")
 
 
 def test_codex_plugin_manifest_does_not_duplicate_user_skill() -> None:

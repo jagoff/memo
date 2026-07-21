@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import sqlite3
 import sys
@@ -22,33 +23,62 @@ def _q(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _legacy_episode_vec_dims(conn: sqlite3.Connection) -> int | None:
+    """FLOAT[N] width of the attached legacy `episode_vec` table, or None."""
+    row = conn.execute(
+        "SELECT sql FROM legacy.sqlite_master WHERE type='table' AND name='episode_vec'"
+    ).fetchone()
+    if row is None or not row[0]:
+        return None
+    match = re.search(r"FLOAT\[(\d+)\]", str(row[0]), re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
 def _consolidate_sidecar_dbs() -> None:
     from memo.contradict import ContradictionStore
     from memo.crossref import CrossReferenceIndex
+    from memo.embedder_select import active_embedder_identity
     from memo.graph import GraphStore
     from memo.history import HistoryStore
+    from memo.sqlite_compat import import_sqlite_vec
+    from memo.store.episode_store import EpisodeStore
+    from memo.store.fact_edge_store import FactEdgeStore
+    from memo.store.turn_store import TurnStore
 
     cfg = Config.from_env()
     if cfg.single_db:
         console.print("[yellow]![/yellow] already in single_db mode — nothing to merge")
     main_db = cfg.db_path
 
+    # Every sidecar whose cfg.*_db property collapses onto db_path under
+    # single_db=1 must be merged here, or its data is silently orphaned.
     legacy_tables: dict[Path, list[str]] = {
         cfg.state_dir / "history.db": ["events", "sync_state"],
         cfg.state_dir / "graph.db": ["entities", "entity_memory"],
         cfg.state_dir / "contradictions.db": ["pairs"],
         cfg.state_dir / "crossref.db": ["backlinks"],
+        cfg.state_dir / "episodes.db": ["episode_meta", "episode_schema_meta", "episode_vec"],
+        cfg.state_dir / "fact_edges.db": ["fact_edges"],
+        cfg.state_dir / "verbatim.db": ["turns", "turns_fts"],
     }
 
     HistoryStore(main_db, device_id=cfg.device_id).close()
     GraphStore(main_db).close()
     ContradictionStore(main_db).close()
     CrossReferenceIndex(main_db).close()
+    EpisodeStore(main_db, cfg.embedder_dims, embedder_model=active_embedder_identity(cfg)).close()
+    FactEdgeStore(main_db).close()
+    TurnStore(main_db).close()
 
     merged_any = False
     conn = sqlite3.connect(str(main_db), timeout=10.0)
     try:
         conn.execute("PRAGMA busy_timeout = 10000")
+        # episode_vec is a vec0 virtual table — the extension must be loaded on
+        # this connection for both the legacy SELECT and the main INSERT.
+        conn.enable_load_extension(True)
+        import_sqlite_vec().load(conn)
+        conn.enable_load_extension(False)
         for legacy, tables in legacy_tables.items():
             if not legacy.is_file():
                 continue
@@ -60,8 +90,28 @@ def _consolidate_sidecar_dbs() -> None:
                         "SELECT name FROM legacy.sqlite_master WHERE type='table'"
                     ).fetchall()
                 }
+                if "episode_vec" in tables:
+                    legacy_dims = _legacy_episode_vec_dims(conn)
+                    if legacy_dims is not None and legacy_dims != cfg.embedder_dims:
+                        # Stale-width vectors; EpisodeStore itself would clear
+                        # them on open. Episodes are rebuildable, so skip the
+                        # whole file instead of merging poisoned rows.
+                        tables = []
+                        console.print(
+                            f"[yellow]![/yellow] {legacy.name} has {legacy_dims}-dim "
+                            f"vectors (current: {cfg.embedder_dims}) — skipped; "
+                            "rebuild with `memo episodes index --rebuild`"
+                        )
                 for tbl in tables:
                     if tbl not in present:
+                        continue
+                    if tbl == "episode_vec":
+                        # vec0 does not honor OR IGNORE — filter dups manually.
+                        conn.execute(
+                            "INSERT INTO main.episode_vec "
+                            "SELECT * FROM legacy.episode_vec "
+                            "WHERE id NOT IN (SELECT id FROM main.episode_vec)"
+                        )
                         continue
                     conn.execute(
                         f"INSERT OR IGNORE INTO main.{_q(tbl)} SELECT * FROM legacy.{_q(tbl)}"  # noqa: S608
@@ -148,7 +198,7 @@ def _bucket_by_project(cfg: Config) -> int:
 @click.option(
     "--consolidate-db",
     is_flag=True,
-    help="Merge the sidecar DBs (history/graph/contradictions/crossref) into the main memvec.db, set MEMO_SINGLE_DB=1 in config, and rename the legacy files to *.db.bak (reversible). Idempotent. Does not move any .md files.",
+    help="Merge the sidecar DBs (history/graph/contradictions/crossref/episodes/fact_edges/verbatim) into the main memvec.db, set MEMO_SINGLE_DB=1 in config, and rename the legacy files to *.db.bak (reversible). Idempotent. Does not move any .md files.",
 )
 @click.option(
     "--bucket-by-project",
@@ -275,9 +325,7 @@ def migrate_vault(
             single_db=cfg.single_db,
         )
     else:
-        cfg_path = write_config_file(
-            data_dir=dst, vault_path=chosen_vault, single_db=cfg.single_db
-        )
+        cfg_path = write_config_file(data_dir=dst, vault_path=chosen_vault, single_db=cfg.single_db)
     console.print(f"[green]✓[/green] config: {cfg_path}")
 
     new_cfg = Config.from_env()

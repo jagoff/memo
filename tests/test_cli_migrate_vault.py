@@ -263,6 +263,69 @@ def test_consolidate_db_merges_sidecars_and_is_idempotent(
     assert merged2 == n_events
 
 
+def test_consolidate_db_merges_episode_fact_edge_and_verbatim_sidecars(
+    tmp_path: Path, seeded_old_layout, monkeypatch
+):
+    """episodes.db / fact_edges.db / verbatim.db must be merged too — they
+    collapse onto db_path under single_db=1 and were silently orphaned."""
+    from memo.store.episode_store import EpisodeStore
+    from memo.store.fact_edge_store import FactEdgeStore
+    from memo.store.turn_store import TurnStore
+
+    cfg, _ = seeded_old_layout
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+
+    ep = EpisodeStore(cfg.state_dir / "episodes.db", 4, embedder_model="stub")
+    ep.upsert(
+        agent="claude",
+        session_id="s1",
+        content_hash="h1",
+        embedding=[1.0, 0.0, 0.0, 0.0],
+        cwd="/tmp",
+        updated_at="2026-01-01T00:00:00+00:00",
+        summary="arreglamos el bug",
+        resume_command=["claude", "--resume", "s1"],
+        turn_count=3,
+    )
+    ep.close()
+    fe = FactEdgeStore(cfg.state_dir / "fact_edges.db")
+    fe.upsert_fact(subject="memo", predicate="usa", object="sqlite-vec")
+    fe.close()
+    ts = TurnStore(cfg.state_dir / "verbatim.db")
+    ts.replace_session(
+        "s1", "claude", [{"idx": 0, "role": "user", "ts": "2026-01-01", "text": "hola decisión"}]
+    )
+    ts.close()
+
+    cfg_file = tmp_path / "memo-config.toml"
+    env = _base_env(tmp_path, cfg, cfg_file)
+    result = CliRunner().invoke(cli, ["migrate", "--consolidate-db"], env=env)
+    assert result.exit_code == 0, result.output
+
+    for name in ("episodes.db", "fact_edges.db", "verbatim.db"):
+        assert (cfg.state_dir / f"{name}.bak").is_file(), result.output
+        assert not (cfg.state_dir / name).is_file()
+
+    with closing(sqlite3.connect(cfg.state_dir / "memvec.db")) as conn:
+        assert conn.execute("SELECT count(*) FROM episode_meta").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM fact_edges").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM turns").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM turns_fts").fetchone()[0] == 1
+
+    # The episode VECTOR made it across too (vec0 needs the extension loaded,
+    # so verify through the store instead of a raw connection).
+    merged_ep = EpisodeStore(cfg.state_dir / "memvec.db", 4, embedder_model="stub")
+    try:
+        assert merged_ep.count() == 1
+        hits = merged_ep.search([1.0, 0.0, 0.0, 0.0], k=1)
+        assert hits and hits[0]["session_id"] == "s1"
+    finally:
+        merged_ep.close()
+
+
 def test_links_reindex_safe_under_single_db(tmp_path: Path, monkeypatch):
     """`memo links reindex` must truncate the crossref table, not unlink the DB
     file — under single_db that file IS memvec.db."""

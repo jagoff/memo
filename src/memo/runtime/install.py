@@ -341,7 +341,9 @@ def install_slash(
 
     # Startup-banner shims — wrap agent binaries to show [MEMO ver] at launch.
     # Agents covered by memflow shims show a combined banner; others get memo's own box.
-    all_requested = "all" in clients
+    # No --client at all defaults to "all" (see `selected` above), so it must
+    # install the same shim set as an explicit `--client all`.
+    all_requested = not clients or "all" in clients
     _shim_agents = tuple(
         a
         for a in ("codex", "devin", "opencode", "gemini", "blackbox")

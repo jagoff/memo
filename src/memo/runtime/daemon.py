@@ -11,6 +11,34 @@ from memo.cli_common import console
 from memo.config import Config
 
 
+def _resolve_watcher_binary(memo_bin: str | None) -> str:
+    """Resolve an auto-detected watcher binary and reject ephemeral venvs."""
+    if memo_bin is not None:
+        return memo_bin
+
+    import shutil
+    from pathlib import Path
+
+    from memo.runtime.install import _is_project_venv_path
+
+    resolved = shutil.which("memo") or ""
+    if not resolved:
+        raise click.ClickException(
+            "Could not locate `memo` on PATH. Pass --bin /abs/path/to/memo.",
+        )
+    # A KeepAlive=true plist baked with a project .venv binary crash-loops
+    # launchd the moment that venv is removed.
+    if _is_project_venv_path(Path(resolved)):
+        raise click.ClickException(
+            f"auto-detected `memo` resolves inside a project venv: {resolved}\n"
+            "A launchd plist must point at a stable isolated runtime. Install "
+            "memo as an isolated tool first (`pipx install mlx-memo` or "
+            "`uv tool install mlx-memo`), or pass --bin /abs/path/to/memo "
+            "explicitly.",
+        )
+    return resolved
+
+
 @click.command(name="watch")
 @click.option(
     "--delay",
@@ -57,17 +85,11 @@ def install_watcher(memo_bin: str | None, no_load: bool) -> None:
             "launchd is macOS-only. On Linux run the foreground watcher "
             "(`memo watch`) under systemd/supervisor instead."
         )
-    import shutil as _shutil
     import subprocess
 
     from memo.watcher import _PLIST_LABEL, install_plist
 
-    if memo_bin is None:
-        memo_bin = _shutil.which("memo") or ""
-        if not memo_bin:
-            raise click.ClickException(
-                "Could not locate `memo` on PATH. Pass --bin /abs/path/to/memo.",
-            )
+    memo_bin = _resolve_watcher_binary(memo_bin)
 
     plist_path = install_plist(memo_bin)
     console.print(f"[dim]wrote:[/dim] {plist_path}")
@@ -252,11 +274,14 @@ def prewarm(download_all: bool) -> None:
             # stall. snapshot_download is a no-op when the model is already
             # cached, so re-running this is safe.
             try:
-                from huggingface_hub import snapshot_download
+                from memo.model_pins import resolve_model_snapshot
 
-                for repo in (cfg.llm_model, cfg.helper_model):
+                for repo, revision in (
+                    (cfg.llm_model, cfg.llm_revision),
+                    (cfg.helper_model, cfg.helper_revision),
+                ):
                     click.echo(f"[memo] downloading {repo}…")
-                    snapshot_download(repo_id=repo)
+                    resolve_model_snapshot(repo, revision)
                     click.echo(f"[memo] ready: {repo}")
             except Exception as dl_exc:
                 click.echo(f"[memo] chat model download failed: {dl_exc}", err=True)

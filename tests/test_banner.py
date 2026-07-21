@@ -75,6 +75,41 @@ def test_install_shims_contains_memo_shim_marker(tmp_cfg, tmp_path):
     assert "exec" in content
 
 
+def test_shim_skips_itself_via_symlinked_path_entry(tmp_path):
+    """Regression: a PATH entry that is a symlink to the shim dir defeats the
+    string compare against `pwd -P`, so the shim exec'd ITSELF forever. The
+    inode identity guard (-ef) must skip it and fall through to the real
+    binary."""
+    shim_dir = tmp_path / "shim"
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    (real_dir / "codex").write_text("#!/usr/bin/env bash\necho real-codex-ran\n", encoding="utf-8")
+    (real_dir / "codex").chmod(0o755)
+    install_shims(("codex",), shim_dir)
+    link_dir = tmp_path / "link"
+    link_dir.symlink_to(shim_dir)
+
+    env = {
+        **os.environ,
+        # The symlinked entry comes first: its string differs from the shim's
+        # resolved `pwd -P` dir, but it IS the same shim on disk.
+        "PATH": os.pathsep.join([str(link_dir), str(real_dir), os.environ.get("PATH", "")]),
+        "MEMO_STARTUP_BANNER": "0",
+        "MEMO_CODEX_BADGE": "0",
+    }
+    proc = subprocess.run(
+        [str(link_dir / "codex")],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=5,  # infinite exec recursion shows up as a timeout here
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "real-codex-ran" in proc.stdout
+
+
 def test_codex_shim_prints_startup_banner_once_for_nested_codex_call(tmp_path):
     shim_dir = tmp_path / "shim"
     tools_dir = tmp_path / "tools"
