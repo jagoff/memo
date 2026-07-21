@@ -96,6 +96,7 @@ from memo.cli_memory import (
 from memo.cli_onboard import onboard
 from memo.cli_outcome import gaps as gaps_cmd
 from memo.cli_outcome import outcome as outcome_cmd
+from memo.cli_proactive import digest
 from memo.cli_profile import profile_group
 from memo.cli_query import query_group
 from memo.cli_recall_daemon import recall_daemon_group
@@ -382,6 +383,7 @@ cli.add_command(verbatim_group)
 cli.add_command(roi_cmd)
 cli.add_command(gaps_cmd)
 cli.add_command(outcome_cmd)
+cli.add_command(digest)
 cli.add_command(mandate_cmd)
 cli.add_command(map_cmd)
 cli.add_command(tui)

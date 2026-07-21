@@ -53,6 +53,41 @@ def _write_capture_notification(state_dir: Path, saved: list[dict], *, idle: boo
         pass
 
 
+def _maybe_push_proactive_urgent(debug: bool) -> None:
+    """Proactive engine (opt-in): surface at most one high-urgency reliability
+    nudge per Stop, then mark it pushed so the cooldown/daily-cap in
+    `compute_routed`'s `push_gate` starts counting from now.
+
+    `compute_routed` already applies `push_gate` — `.urgent` is `None` when the
+    cooldown/daily cap disallows a push, so this is a plain "print if present"
+    with no extra gating here. Best-effort: never breaks the Stop hook.
+    """
+    try:
+        from memo.flags import flag_bool
+
+        if not flag_bool("MEMO_PROACTIVE_ENABLED"):
+            return
+
+        from datetime import UTC as _UTC
+        from datetime import datetime as _datetime
+
+        from memo.proactive.engine import compute_routed
+        from memo.proactive.store import ProactiveStore
+        from memo.proactive.surfaces import render_urgent_line
+
+        cfg = Config.from_env()
+        store = ProactiveStore(cfg.state_dir / "proactive.db")
+        now_dt = _datetime.now(tz=_UTC)
+        now = now_dt.isoformat()
+        routed = compute_routed(store, now=now, day=now_dt.date().isoformat())
+        if routed.urgent is not None:
+            console.print(render_urgent_line(routed.urgent))
+            store.mark_pushed(now)
+    except Exception as exc:
+        if debug:
+            print(f"# memo proactive urgent push failed: {exc}", file=sys.stderr)
+
+
 @click.command(name="capture-stop")
 def capture_stop() -> None:
     """Stop hook — passive auto-extract of insights from the last turn.
@@ -224,6 +259,8 @@ def capture_stop() -> None:
     except Exception as exc:
         if debug:
             print(f"# memo episode index failed: {exc}", file=_sys.stderr)
+
+    _maybe_push_proactive_urgent(debug)
 
     print("{}")
     _sys.exit(0)

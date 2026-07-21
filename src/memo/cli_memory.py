@@ -353,13 +353,39 @@ def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
     console.print(tbl)
 
 
+def _record_proactive_acted(cfg: Config, id_: str) -> None:
+    """Close the proactive engine's acted-feedback loop: `memo get <id>` IS the
+    action the reliability nudge suggested, so a matching fetch counts as
+    "acted" (`ProactiveStore.kind_multipliers`) — otherwise the feedback loop
+    only ever decays (I1 review fix). Dark-flag guarded + defensive: must
+    NEVER break `memo get`.
+    """
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_PROACTIVE_ENABLED"):
+        return
+    with contextlib.suppress(Exception):
+        from datetime import UTC, datetime
+
+        from memo.cli_proactive import record_acted_if_matches
+        from memo.proactive.store import ProactiveStore
+
+        with ProactiveStore(cfg.state_dir / "proactive.db") as store:
+            record_acted_if_matches(
+                store, command_line=f"memo get {id_}", now=datetime.now(UTC).isoformat()
+            )
+
+
 @click.command()
 @click.argument("id_")
 @click.option("--json", "as_json", is_flag=True)
 def get(id_: str, as_json: bool) -> None:
     """Fetch one memory by id."""
 
-    mem = _get_memory(Config.from_env())
+    cfg = Config.from_env()
+    _record_proactive_acted(cfg, id_)
+
+    mem = _get_memory(cfg)
     rec = _resolved(lambda: mem.get(id_))
     if rec is None:
         console.print(f"[red]not found:[/red] {id_}")
