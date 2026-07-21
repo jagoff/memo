@@ -55,5 +55,5 @@ Out of scope:
 
 ## Supported versions
 
-Only the latest minor release (currently the `3.8.x` line) receives security
+Only the latest minor release (currently the `3.9.x` line) receives security
 fixes. Older releases will not be backported.
