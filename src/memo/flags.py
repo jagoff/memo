@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from typing import Any
+
+from memo.errors import ValidationError as MemoValidationError
 
 # Re-export base types so existing `from memo.flags import FlagSpec` imports still work.
 from memo.flags_base import _FALSE, _TRUE, FlagKind, FlagSpec, _spec  # noqa: F401
@@ -43,77 +46,109 @@ _SPECS: tuple[FlagSpec, ...] = (
 )
 
 REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}
+_MISSING = object()
+
+
+def _coerce_bool(raw: str) -> bool:
+    low = raw.strip().lower()
+    if low in _TRUE:
+        return True
+    if low in _FALSE:
+        return False
+    raise ValueError(f"expected a boolean (1/0/true/false), got {raw!r}")
+
+
+def _validate_range(spec: FlagSpec, value: int | float) -> int | float:
+    if spec.min_val is not None and value < spec.min_val:
+        raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {value}")
+    if spec.max_val is not None and value > spec.max_val:
+        raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {value}")
+    return value
+
+
+def _coerce_choice(spec: FlagSpec, raw: str) -> str:
+    value = raw.strip().lower()
+    if value not in spec.choices:
+        allowed = ", ".join(spec.choices)
+        raise ValueError(f"expected one of: {allowed}, got {raw!r}")
+    return value
 
 
 def _coerce(spec: FlagSpec, raw: str) -> Any:
     """Parse `raw` per the spec's kind. Raises ValueError on bad input."""
     if spec.kind == "bool":
-        low = raw.strip().lower()
-        if low in _TRUE:
-            return True
-        if low in _FALSE:
-            return False
-        raise ValueError(f"expected a boolean (1/0/true/false), got {raw!r}")
+        return _coerce_bool(raw)
     if spec.kind == "int":
-        vi = int(raw.strip())
-        if spec.min_val is not None and vi < spec.min_val:
-            raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {vi}")
-        if spec.max_val is not None and vi > spec.max_val:
-            raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {vi}")
-        return vi
+        return _validate_range(spec, int(raw.strip()))
     if spec.kind == "float":
-        vf = float(raw.strip())
-        if spec.min_val is not None and vf < spec.min_val:
-            raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {vf}")
-        if spec.max_val is not None and vf > spec.max_val:
-            raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {vf}")
-        return vf
+        return _validate_range(spec, float(raw.strip()))
+    if spec.choices:
+        return _coerce_choice(spec, raw)
     return raw  # str
 
 
-def flag(name: str, *, env: dict[str, str] | None = None) -> Any:
-    """Return the typed, parsed value for `name`, or its default if unset.
-
-    Unknown flags raise KeyError — every flag must be registered above.
-    """
-    spec = REGISTRY[name]
-    src = os.environ if env is None else env
-    raw = src.get(name)
-    if raw is None or raw == "":
-        # empty string counts as unset except for str flags whose default is also ""
-        if raw == "" and spec.kind == "str" and spec.default == "":
-            return ""
-        # env unset → consult persistent Markdown config, then the tuned overlay.
-        if raw is None:
-            from memo.config_md import flag_values as _markdown_flag_values
-            from memo.tuned_overlay import overlay_values
-
-            md = _markdown_flag_values(src)
-            if name in md:
-                try:
-                    return _coerce(spec, md[name])
-                except ValueError:
-                    _log.warning(
-                        "invalid markdown config value for %s: %r - checking overlay/default",
-                        name,
-                        md[name],
-                    )
-
-            ov = overlay_values(src)
-            if name in ov:
-                try:
-                    return _coerce(spec, ov[name])
-                except ValueError:
-                    _log.warning(
-                        "invalid overlay value for %s: %r — using default %r",
-                        name,
-                        ov[name],
-                        spec.default,
-                    )
-        return spec.default
+def _coerce_configured_value(
+    spec: FlagSpec,
+    raw: str,
+    *,
+    strict: bool,
+    strict_message: str,
+    warning_message: str,
+    warning_args: tuple[Any, ...],
+) -> Any:
     try:
         return _coerce(spec, raw)
     except ValueError as exc:
+        if strict:
+            raise MemoValidationError(strict_message.format(raw=raw, exc=exc)) from exc
+        _log.warning(warning_message, *warning_args)
+        return _MISSING
+
+
+def _flag_without_env(
+    spec: FlagSpec,
+    name: str,
+    src: Mapping[str, str],
+    *,
+    strict: bool,
+) -> Any:
+    from memo.config_md import flag_values as _markdown_flag_values
+    from memo.tuned_overlay import overlay_values
+
+    md = _markdown_flag_values(src)
+    if name in md:
+        value = _coerce_configured_value(
+            spec,
+            md[name],
+            strict=strict,
+            strict_message=f"invalid value for {name} in Markdown config: {{raw!r}} ({{exc}})",
+            warning_message="invalid markdown config value for %s: %r - checking overlay/default",
+            warning_args=(name, md[name]),
+        )
+        if value is not _MISSING:
+            return value
+
+    ov = overlay_values(src)
+    if name in ov:
+        value = _coerce_configured_value(
+            spec,
+            ov[name],
+            strict=strict,
+            strict_message=f"invalid value for {name} in tuned overlay: {{raw!r}} ({{exc}})",
+            warning_message="invalid overlay value for %s: %r — using default %r",
+            warning_args=(name, ov[name], spec.default),
+        )
+        if value is not _MISSING:
+            return value
+    return spec.default
+
+
+def _coerce_env_value(spec: FlagSpec, name: str, raw: str, *, strict: bool) -> Any:
+    try:
+        return _coerce(spec, raw)
+    except ValueError as exc:
+        if strict:
+            raise MemoValidationError(f"invalid value for {name}: {raw!r} ({exc})") from exc
         _log.warning(
             "invalid value for %s: %r — using default %r (%s)",
             name,
@@ -124,22 +159,60 @@ def flag(name: str, *, env: dict[str, str] | None = None) -> Any:
         return spec.default
 
 
-def flag_bool(name: str, *, env: dict[str, str] | None = None) -> bool:
-    return bool(flag(name, env=env))
+def flag(name: str, *, env: dict[str, str] | None = None, strict: bool = False) -> Any:
+    """Return the typed, parsed value for `name`, or its default if unset.
+
+    Unknown flags raise KeyError — every flag must be registered above.
+    """
+    spec = REGISTRY[name]
+    src = os.environ if env is None else env
+    raw = src.get(name)
+    if raw is None:
+        return _flag_without_env(spec, name, src, strict=strict)
+    if raw == "":
+        # Empty string counts as unset except for str flags whose default is also "".
+        if spec.kind == "str" and spec.default == "":
+            return ""
+        return spec.default
+    return _coerce_env_value(spec, name, raw, strict=strict)
 
 
-def flag_int(name: str, *, env: dict[str, str] | None = None) -> int | None:
-    v = flag(name, env=env)
+def flag_bool(
+    name: str,
+    *,
+    env: dict[str, str] | None = None,
+    strict: bool = False,
+) -> bool:
+    return bool(flag(name, env=env, strict=strict))
+
+
+def flag_int(
+    name: str,
+    *,
+    env: dict[str, str] | None = None,
+    strict: bool = False,
+) -> int | None:
+    v = flag(name, env=env, strict=strict)
     return None if v is None else int(v)
 
 
-def flag_float(name: str, *, env: dict[str, str] | None = None) -> float | None:
-    v = flag(name, env=env)
+def flag_float(
+    name: str,
+    *,
+    env: dict[str, str] | None = None,
+    strict: bool = False,
+) -> float | None:
+    v = flag(name, env=env, strict=strict)
     return None if v is None else float(v)
 
 
-def flag_str(name: str, *, env: dict[str, str] | None = None) -> str:
-    v = flag(name, env=env)
+def flag_str(
+    name: str,
+    *,
+    env: dict[str, str] | None = None,
+    strict: bool = False,
+) -> str:
+    v = flag(name, env=env, strict=strict)
     return "" if v is None else str(v)
 
 
@@ -172,11 +245,15 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_VAULT_PATH",
         "MEMO_MEMORY_SUBDIR",
         "MEMO_EMBEDDER_MODEL",
+        "MEMO_EMBEDDER_REVISION",
         "MEMO_EMBEDDER_DIMS",
         "MEMO_EMBEDDER_BACKEND",
         "MEMO_ST_EMBEDDER_MODEL",
+        "MEMO_ST_EMBEDDER_REVISION",
         "MEMO_LLM_MODEL",
+        "MEMO_LLM_REVISION",
         "MEMO_HELPER_MODEL",
+        "MEMO_HELPER_REVISION",
         "MEMO_RERANKER_MODEL",
         "MEMO_RERANKER_ENABLED",
         "MEMO_RERANKER_REVISION",
@@ -198,6 +275,32 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
     return sorted(k for k in src if k.startswith("MEMO_") and k not in REGISTRY and k not in owned)
 
 
+# Typed vars owned by config.py (in the `owned` set above, NOT in REGISTRY)
+# whose raw env strings Config.from_env() feeds straight into pydantic. These
+# validation-only specs mirror the Config field types/bounds so `memo config
+# validate` rejects a garbage value (e.g. MEMO_EMBEDDER_DIMS=10z4) instead of
+# reporting green and then hard-crashing every command in Config.from_env().
+# Defaults/groups here are unused — config.py owns the real defaults.
+_CONFIG_OWNED_TYPED_SPECS: tuple[FlagSpec, ...] = (
+    _spec("MEMO_EMBEDDER_DIMS", "int", 1024, "config", "config.py-owned", min_val=2),
+    _spec("MEMO_MAX_CONTENT_CHARS", "int", 64_000, "config", "config.py-owned", min_val=1),
+    _spec(
+        "MEMO_SEARCH_DEFAULT_LIMIT", "int", 10, "config", "config.py-owned", min_val=1, max_val=100
+    ),
+    _spec("MEMO_RERANK_INPUT_K", "int", 30, "config", "config.py-owned", min_val=1, max_val=200),
+    _spec(
+        "MEMO_RERANK_FUSION_ALPHA",
+        "float",
+        0.7,
+        "config",
+        "config.py-owned",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec("MEMO_RERANKER_ENABLED", "bool", True, "config", "config.py-owned"),
+)
+
+
 def validate(env: dict[str, str] | None = None) -> list[dict[str, str]]:
     """Parse every set flag; return a list of problems (empty = all good).
 
@@ -213,6 +316,17 @@ def validate(env: dict[str, str] | None = None) -> list[dict[str, str]]:
             _coerce(spec, raw)
         except ValueError as exc:
             problems.append({"flag": name, "value": raw, "error": str(exc)})
+    # config.py-owned typed vars are excluded from REGISTRY, but a garbage
+    # value still hard-crashes Config.from_env() — parse them here too so
+    # `memo config validate` doesn't give a false green.
+    for spec in _CONFIG_OWNED_TYPED_SPECS:
+        raw = src.get(spec.name)
+        if raw is None or raw == "":
+            continue
+        try:
+            _coerce(spec, raw)
+        except ValueError as exc:
+            problems.append({"flag": spec.name, "value": raw, "error": str(exc)})
     # MEMO_MODEL_PROFILE is a plain str spec, so _coerce can't reject an invalid
     # profile — but Config.from_env() raises on one. Check the choices here so
     # `memo config validate` doesn't give a false green that later hard-crashes.

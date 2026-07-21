@@ -110,16 +110,9 @@ SPECS: tuple[FlagSpec, ...] = (
         "0 (default) = off (graph only used if MEMO_GRAPH_RETRIEVAL_ENABLED=1).",
         min_val=0,
     ),
-    _spec(
-        "MEMO_GRAPH_SEMANTIC_RELATIONS",
-        "bool",
-        False,
-        "entity",
-        "Track semantic relation types ('causes', 'contradicts', 'extends', 'depends_on') "
-        "in the knowledge graph in addition to co-mention edges. "
-        "Improves semantic retrieval and dependency tracking. "
-        "Currently a stub — implementation deferred to v2.13+.",
-    ),
+    # NB: MEMO_GRAPH_SEMANTIC_RELATIONS lives in flags_search.py (the live
+    # spec — search_ops reads it). A stale duplicate here used to shadow it
+    # in REGISTRY because behavior specs are merged after search specs.
     # session checkpoints / resume
     _spec(
         "MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."
