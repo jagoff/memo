@@ -453,6 +453,37 @@ def _check_changelog(repo: Path, version: str, issues: list[str]) -> None:
         issues.append(f"CHANGELOG.md section for {version} still contains TODO text")
 
 
+def _check_formula_runtime_contracts(
+    *, repo: Path, formula: Path, text: str, destination: list[str]
+) -> None:
+    if "virtualenv_create(" in text and not re.search(
+        r"^\s*include\s+Language::Python::Virtualenv\s*$", text, flags=re.MULTILINE
+    ):
+        destination.append(
+            f"{formula.relative_to(repo)} must include Language::Python::Virtualenv "
+            "before calling virtualenv_create"
+        )
+
+    if re.search(r"\.\s*pip_install(?:_and_link)?\s+buildpath\b", text):
+        destination.append(
+            f"{formula.relative_to(repo)} must not install buildpath with Homebrew's "
+            "virtualenv pip helpers because they pass --no-deps"
+        )
+
+    if "--python=#{libexec}/bin/python" in text and not re.search(
+        r"^\s*preserve_rpath\s*$", text, flags=re.MULTILINE
+    ):
+        destination.append(
+            f"{formula.relative_to(repo)} must preserve_rpath for binary Python wheels"
+        )
+
+    if re.search(r'system\s+bin/"memo-mcp",\s*"--help"', text):
+        destination.append(
+            f"{formula.relative_to(repo)} must not start memo-mcp --help in its test "
+            "because the stdio server blocks waiting for input"
+        )
+
+
 def _check_formula(
     repo: Path, version: str, *, strict_docs: bool, issues: list[str], warnings: list[str]
 ) -> None:
@@ -489,6 +520,8 @@ def _check_formula(
         destination.append(
             f"{formula.relative_to(repo)} dependency order should put arch before macos"
         )
+
+    _check_formula_runtime_contracts(repo=repo, formula=formula, text=text, destination=destination)
 
 
 def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseCheckReport:

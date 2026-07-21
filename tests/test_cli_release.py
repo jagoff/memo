@@ -514,3 +514,128 @@ def test_release_check_reports_homebrew_formula_audit_drift(tmp_path: Path) -> N
     assert strict.ok is False
     assert any("PyPI source distribution" in issue for issue in strict.issues)
     assert any("dependency order" in issue for issue in strict.issues)
+
+
+def test_release_check_reports_homebrew_formula_missing_virtualenv_mixin(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
+    formula.parent.mkdir(parents=True)
+    formula.write_text(
+        "\n".join(
+            [
+                "class MlxMemo < Formula",
+                '  url "https://files.pythonhosted.org/packages/aa/bb/mlx_memo-1.2.3.tar.gz"',
+                "  depends_on arch: :arm64",
+                "  depends_on :macos",
+                "  def install",
+                '    virtualenv_create(libexec, "python3.13")',
+                "  end",
+                "end",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+    strict = release_check_report(repo, strict_docs=True)
+
+    assert report.ok is True
+    assert any("Language::Python::Virtualenv" in warning for warning in report.warnings)
+    assert strict.ok is False
+    assert any("Language::Python::Virtualenv" in issue for issue in strict.issues)
+
+
+def test_release_check_reports_homebrew_formula_no_deps_helper(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
+    formula.parent.mkdir(parents=True)
+    formula.write_text(
+        "\n".join(
+            [
+                "class MlxMemo < Formula",
+                "  include Language::Python::Virtualenv",
+                '  url "https://files.pythonhosted.org/packages/aa/bb/mlx_memo-1.2.3.tar.gz"',
+                "  depends_on arch: :arm64",
+                "  depends_on :macos",
+                "  def install",
+                '    venv = virtualenv_create(libexec, "python3.13")',
+                "    venv.pip_install_and_link buildpath",
+                "  end",
+                "end",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+    strict = release_check_report(repo, strict_docs=True)
+
+    assert report.ok is True
+    assert any("--no-deps" in warning for warning in report.warnings)
+    assert strict.ok is False
+    assert any("--no-deps" in issue for issue in strict.issues)
+
+
+def test_release_check_reports_homebrew_formula_missing_preserve_rpath(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
+    formula.parent.mkdir(parents=True)
+    formula.write_text(
+        "\n".join(
+            [
+                "class MlxMemo < Formula",
+                "  include Language::Python::Virtualenv",
+                '  url "https://files.pythonhosted.org/packages/aa/bb/mlx_memo-1.2.3.tar.gz"',
+                "  depends_on arch: :arm64",
+                "  depends_on :macos",
+                "  def install",
+                '    virtualenv_create(libexec, "python3.13")',
+                '    system "python3.13", "-m", "pip", "--python=#{libexec}/bin/python",',
+                '           "install", buildpath',
+                "  end",
+                "end",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+    strict = release_check_report(repo, strict_docs=True)
+
+    assert report.ok is True
+    assert any("preserve_rpath" in warning for warning in report.warnings)
+    assert strict.ok is False
+    assert any("preserve_rpath" in issue for issue in strict.issues)
+
+
+def test_release_check_reports_blocking_homebrew_mcp_test(tmp_path: Path) -> None:
+    repo = _fake_repo(tmp_path, "1.2.3")
+    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
+    formula.parent.mkdir(parents=True)
+    formula.write_text(
+        "\n".join(
+            [
+                "class MlxMemo < Formula",
+                '  url "https://files.pythonhosted.org/packages/aa/bb/mlx_memo-1.2.3.tar.gz"',
+                "  depends_on arch: :arm64",
+                "  depends_on :macos",
+                "  test do",
+                '    system bin/"memo-mcp", "--help"',
+                "  end",
+                "end",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = release_check_report(repo)
+    strict = release_check_report(repo, strict_docs=True)
+
+    assert report.ok is True
+    assert any("blocks waiting for input" in warning for warning in report.warnings)
+    assert strict.ok is False
+    assert any("blocks waiting for input" in issue for issue in strict.issues)
