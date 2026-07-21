@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import re as _re
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -136,15 +137,41 @@ def _parse_transcript(transcript_path: Path) -> list[tuple[str, str]]:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(obj, dict):
+            # A valid-JSON non-object line (`null`, a bare string) must not
+            # crash capture for the whole session.
+            continue
         role = obj.get("type") or obj.get("role")
         if role not in ("user", "assistant"):
             continue
         msg = obj.get("message", obj)
         content = msg.get("content") if isinstance(msg, dict) else None
+        if role == "user" and not _has_prompt_text(content):
+            # tool_result carrier message (no text blocks): projecting its
+            # TOOL ACTIVITY into a synthetic user turn corrupts exchange
+            # pairing — the real prompt would be dropped in favour of
+            # "TOOL ACTIVITY: → ok" lines.
+            continue
         text = _extract_text(content)
         if text:
             parsed.append((role, text))
     return parsed
+
+
+def _has_prompt_text(content: Any) -> bool:
+    """True when a user message carries real prompt text, not only tool_result
+    carrier blocks."""
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(
+            isinstance(b, dict)
+            and b.get("type") == "text"
+            and isinstance(b.get("text"), str)
+            and b["text"].strip()
+            for b in content
+        )
+    return False
 
 
 def _read_recent_exchanges(
@@ -307,6 +334,8 @@ def collect_tool_files(transcript_path: Path, max_files: int = 10) -> dict[str, 
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
             continue
         msg = obj.get("message", obj)
         content = msg.get("content") if isinstance(msg, dict) else None
@@ -850,6 +879,59 @@ def is_near_duplicate(
     return find_near_duplicate(memory, candidate, threshold) is not None
 
 
+def _filter_meta_candidates(
+    insights: list[dict[str, Any]], *, debug: bool
+) -> tuple[list[dict[str, Any]], int]:
+    """Strip process narration and return the retained candidates plus drop count."""
+
+    if not _capture_flag_bool("MEMO_CAPTURE_META_FILTER"):
+        return insights, 0
+    hygienic: list[dict[str, Any]] = []
+    skipped = 0
+    for candidate in insights:
+        cleaned = strip_meta_commentary(candidate["body"])
+        if not cleaned or is_meta_commentary(candidate["title"]):
+            skipped += 1
+            _log.debug("capture: drop meta-commentary %r", candidate["title"])
+            if debug:
+                print(
+                    f"# memo capture: drop meta-commentary '{candidate['title']}'",
+                    file=sys.stderr,
+                )
+            continue
+        hygienic.append(
+            {**candidate, "body": cleaned} if cleaned != candidate["body"] else candidate
+        )
+    return hygienic, skipped
+
+
+def _apply_claim_support(
+    candidate: dict[str, Any],
+    tags: list[str],
+    *,
+    enabled: bool,
+    debug: bool,
+) -> tuple[Any | None, int]:
+    """Quarantine unsupported outcome claims and return uncertainty delta."""
+
+    if not enabled:
+        return None, 0
+    verdict = check_claim_support(f"{candidate['title']}\n{candidate['body']}")
+    if not verdict.unsupported:
+        return verdict, 0
+    uncertainty_delta = 0
+    if "_uncertain" not in tags:
+        tags.append("_uncertain")
+        uncertainty_delta = 1
+    if debug:
+        print(
+            f"# memo capture: unsupported {verdict.claim_kind} claim "
+            f"'{candidate['title']}' — tagged _uncertain ({verdict.reason})",
+            file=sys.stderr,
+        )
+    return verdict, uncertainty_delta
+
+
 def _extract_and_save(
     mem: Any,
     cfg: Any,
@@ -874,8 +956,6 @@ def _extract_and_save(
     default None keeps all callers unchanged. Returns counts; every
     per-candidate failure is absorbed (logged only in debug).
     """
-    import sys
-
     from memo.prompt_overrides import prompt_version
 
     _extract_prompt_version = prompt_version(
@@ -911,24 +991,7 @@ def _extract_and_save(
     # Segment-level — a mixed candidate keeps its substantive sentences; a
     # candidate that is ALL narration (or whose title is narration-shaped)
     # is dropped whole. Dropped candidates are logged (debug trail), never saved.
-    skipped_meta = 0
-    if _capture_flag_bool("MEMO_CAPTURE_META_FILTER"):
-        hygienic: list[dict[str, Any]] = []
-        for cand in insights:
-            cleaned = strip_meta_commentary(cand["body"])
-            if not cleaned or is_meta_commentary(cand["title"]):
-                skipped_meta += 1
-                _log.debug("capture: drop meta-commentary %r", cand["title"])
-                if debug:
-                    print(
-                        f"# memo capture: drop meta-commentary '{cand['title']}'",
-                        file=sys.stderr,
-                    )
-                continue
-            if cleaned != cand["body"]:
-                cand = {**cand, "body": cleaned}
-            hygienic.append(cand)
-        insights = hygienic
+    insights, skipped_meta = _filter_meta_candidates(insights, debug=debug)
 
     # Dedup → reconcile band. The corpus's highest-value memories are evolving
     # decisions on hot topics — exactly the candidates MOST similar (0.85–0.97)
@@ -969,6 +1032,7 @@ def _extract_and_save(
     saved: list[str] = []
     saved_titles: list[str] = []
     saved_records: list[dict[str, str]] = []
+    save_failures = 0
     facts = 0
     fact_edges_declared = 0
     fact_edges_prepared = 0
@@ -1065,6 +1129,10 @@ def _extract_and_save(
                         f"({grounding_score:.2f} < {_ground_min:.2f}) — tagged _uncertain",
                         file=sys.stderr,
                     )
+        claim_verdict, claim_uncertain = _apply_claim_support(
+            cand, tags, enabled=_claim_on, debug=debug
+        )
+        uncertain += claim_uncertain
         raw_fact_edges = cand.get(FACT_EDGES_KEY)
         if isinstance(raw_fact_edges, dict):
             fact_edges_declared += 1
@@ -1104,8 +1172,12 @@ def _extract_and_save(
         }
         if grounding_score is not None:
             extra_for_save["grounding_score"] = round(grounding_score, 3)
+        if claim_verdict is not None and claim_verdict.unsupported:
+            extra_for_save["claim_support_kind"] = claim_verdict.claim_kind
+            extra_for_save["claim_support_reason"] = claim_verdict.reason
         if fact_edges:
             extra_for_save[FACT_EDGES_KEY] = fact_edges
+        save_succeeded = False
         try:
             rec = mem.save(
                 content=cand["body"],
@@ -1115,25 +1187,22 @@ def _extract_and_save(
                 auto_project=auto_project,
                 extra=extra_for_save,
             )
+            save_succeeded = True
             saved.append(rec.id)
             saved_titles.append(rec.title)
             saved_records.append({"id": rec.id, "title": rec.title, "type": rec.type})
-            if _claim_on:
-                verdict = check_claim_support(f"{cand['title']}\n{cand['body']}")
-                if verdict.unsupported:
-                    try:
-                        mem.store.set_confidence_batch([(rec.id, _claim_conf)])
-                        if debug:
-                            print(
-                                f"# memo capture: claim downgrade '{cand['title']}' "
-                                f"→ conf {_claim_conf:.2f} ({verdict.reason})",
-                                file=sys.stderr,
-                            )
-                    except Exception as _exc:  # never let a downgrade break capture
-                        if debug:
-                            print(
-                                f"# memo capture: claim downgrade skipped: {_exc}", file=sys.stderr
-                            )
+            if claim_verdict is not None and claim_verdict.unsupported:
+                try:
+                    mem.store.set_confidence_batch([(rec.id, _claim_conf)])
+                    if debug:
+                        print(
+                            f"# memo capture: claim downgrade '{cand['title']}' "
+                            f"→ conf {_claim_conf:.2f} ({claim_verdict.reason})",
+                            file=sys.stderr,
+                        )
+                except Exception as _exc:  # never let a downgrade break capture
+                    if debug:
+                        print(f"# memo capture: claim downgrade skipped: {_exc}", file=sys.stderr)
             facts += len(
                 mem.fact_edges.query(
                     source_record_id=rec.id,
@@ -1144,6 +1213,11 @@ def _extract_and_save(
             if debug:
                 print(f"# memo capture: saved [{rec.id[:8]}] {rec.title}", file=sys.stderr)
         except Exception as exc:
+            if not save_succeeded:
+                save_failures += 1
+                # Always log: a systematic failure (dims mismatch, locked DB)
+                # would otherwise lose every mined insight with zero signal.
+                _log.warning("capture: save failed for '%s': %s", cand.get("title"), exc)
             if debug:
                 print(f"# memo capture: save failed: {exc}", file=sys.stderr)
 
@@ -1152,6 +1226,7 @@ def _extract_and_save(
         "saved": saved,
         "saved_titles": saved_titles,
         "saved_records": saved_records,
+        "save_failures": save_failures,
         "facts": facts,
         "extract_stats": {
             "fact_edges_declared": fact_edges_declared,

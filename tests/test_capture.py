@@ -92,6 +92,70 @@ def test_read_last_exchange_picks_latest_pair(tmp_path: Path):
     assert "tool_use" not in asst  # tool blocks stripped
 
 
+def test_read_last_exchange_skips_tool_result_carrier_user_turns(tmp_path: Path):
+    """A user-role message carrying only tool_result blocks is a protocol
+    carrier, not a prompt — it must not displace the real user prompt in the
+    exchange pairing (its TOOL ACTIVITY projection used to become a synthetic
+    user turn)."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        [
+            {
+                "type": "user",
+                "message": {"content": [{"type": "text", "text": "arreglá el test flaky"}]},
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Miro el test."},
+                        {"type": "tool_use", "name": "Read", "input": {}},
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {"content": [{"type": "tool_result", "content": "ok"}]},
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Era una race: lo arreglé con un lock."}]
+                },
+            },
+        ],
+    )
+    pair = _read_last_exchange(transcript)
+    assert pair is not None
+    user, asst = pair
+    assert "arreglá el test flaky" in user
+    assert "TOOL ACTIVITY" not in user
+    assert "race" in asst
+    assert "Miro el test." in asst  # both assistant chunks joined into one turn
+
+
+def test_parse_transcript_survives_non_object_json_lines(tmp_path: Path):
+    """A `null`/bare-string line (crashed writer flush, foreign appender) must
+    not silence capture for the whole session."""
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                "null",
+                '"stray string"',
+                json.dumps({"type": "user", "message": {"content": "pregunta real"}}),
+                json.dumps({"type": "assistant", "message": {"content": "respuesta real"}}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    pair = _read_last_exchange(transcript)
+    assert pair is not None
+    assert pair[0] == "pregunta real"
+    assert pair[1] == "respuesta real"
+
+
 def test_read_last_exchange_returns_none_on_user_only(tmp_path: Path):
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
@@ -291,6 +355,31 @@ def test_extract_and_save_admits_same_topic_evolution(mem_with_stub, monkeypatch
     assert out["reconciled"] == 1
     assert out["skipped_dup"] == 0
     assert len(out["saved"]) == 1
+
+
+def test_extract_and_save_counts_memory_save_failures(mem_with_stub, monkeypatch):
+    """Every Memory.save exception is surfaced to the Stop retry policy."""
+    import memo.capture as capture_mod
+
+    candidate = {
+        "title": "Durable retry behavior",
+        "body": "A failed capture save must remain eligible for the next Stop invocation.",
+        "type": "decision",
+        "tags": [],
+    }
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *args, **kwargs: [candidate])
+    monkeypatch.setattr(capture_mod, "_passes_quality", lambda *args, **kwargs: True)
+    monkeypatch.setattr(capture_mod, "find_near_duplicate", lambda *args, **kwargs: None)
+
+    def fail_save(*args, **kwargs):
+        raise RuntimeError("transient write failure")
+
+    monkeypatch.setattr(mem_with_stub, "save", fail_save)
+
+    result = capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "user", "assistant")
+
+    assert result["saved"] == []
+    assert result["save_failures"] == 1
 
 
 def test_hash_assistant_idempotent():
