@@ -35,6 +35,30 @@ def test_last_activity_treats_naive_store_timestamp_as_utc(tmp_path, monkeypatch
         time.tzset()
 
 
+def test_ingest_memflow_sessions_runs_without_cwd_memflow_dir(tmp_path, monkeypatch) -> None:
+    """Regression: the reflection pass only reads memo sessions from
+    cfg.state_dir — it must not be gated on a cwd-relative .memflow dir it
+    never uses (permanently absent under a daemon whose cwd is /)."""
+    monkeypatch.chdir(tmp_path)  # no .memflow here
+    reflected: list[str] = []
+
+    monkeypatch.setattr(
+        "memo.session.list_sessions",
+        lambda state_dir, limit=5: [{"session_id": "abc12345", "reflected_at": None}],
+    )
+
+    def _fake_reflect(sid, mem, cfg, debug=False):
+        reflected.append(sid)
+        return {"status": "ok", "saved": []}
+
+    monkeypatch.setattr("memo.cli_transcripts._reflect_session", _fake_reflect)
+
+    cfg = SimpleNamespace(state_dir=tmp_path)
+    sleep_cycle._ingest_memflow_sessions(SimpleNamespace(), cfg, debug=False)
+
+    assert reflected == ["abc12345"]
+
+
 def test_run_sleep_cycle_preserves_zero_interval_and_threshold(tmp_path, monkeypatch) -> None:
     calls: list[str] = []
     wait_calls: list[float | None] = []

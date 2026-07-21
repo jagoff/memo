@@ -25,7 +25,7 @@ _SHIM_MARKER = "# memo-shim"
 
 _SHIM_TEMPLATE = """\
 #!/usr/bin/env bash
-# memo-shim v2 — written by `memo install-shims`. Do not edit manually.
+# memo-shim v3 — written by `memo install-shims`. Do not edit manually.
 set -euo pipefail
 _MEMO_BIN_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 _AGENT="$(basename "$0")"
@@ -39,6 +39,10 @@ _NEXT=""
 IFS=':' read -ra _DIRS <<< "$PATH"
 for _D in "${_DIRS[@]:-}"; do
     [ "$_D" = "$_MEMO_BIN_DIR" ] && continue
+    # -ef compares device+inode: skips this same shim reached via a symlinked
+    # or relative PATH entry, which the string compare above misses (infinite
+    # exec recursion otherwise).
+    [ "$_D/$_AGENT" -ef "$_MEMO_BIN_DIR/$_AGENT" ] && continue
     [ -x "$_D/$_AGENT" ] && { _NEXT="$_D/$_AGENT"; break; }
 done
 if [ -z "$_NEXT" ]; then

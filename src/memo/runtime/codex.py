@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import selectors
 import shutil
 import subprocess
@@ -46,6 +47,30 @@ def _codex_send_app_server_request(
     proc.stdin.flush()
 
 
+def _codex_match_app_server_response(
+    raw: bytes,
+    request_id: int,
+    seen: list[str],
+) -> dict[str, Any] | None:
+    """Return a matching app-server result, ignoring unrelated output."""
+    line = raw.decode("utf-8", errors="replace").strip()
+    if not line:
+        return None
+    seen.append(line)
+    try:
+        msg = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(msg, dict) or msg.get("id") != request_id:
+        return None
+    if "error" in msg:
+        err = msg["error"]
+        message = err.get("message", err) if isinstance(err, dict) else err
+        raise click.ClickException(f"Codex app-server {request_id} failed: {message}")
+    result = msg.get("result")
+    return result if isinstance(result, dict) else {}
+
+
 def _codex_read_app_server_response(
     proc: subprocess.Popen[str],
     request_id: int,
@@ -55,35 +80,34 @@ def _codex_read_app_server_response(
     if proc.stdout is None:
         raise click.ClickException("Codex app-server stdout is unavailable.")
 
+    # select() on the raw fd + os.read, never the buffered text stream: a
+    # readline() there can buffer additional complete lines, after which
+    # select() sees an empty pipe and falsely times out on data we already hold.
+    fd = proc.stdout.fileno()
     selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ)
+    selector.register(fd, selectors.EVENT_READ)
     deadline = time.monotonic() + timeout_s
     seen: list[str] = []
+    buf = bytearray()
 
     try:
         while time.monotonic() < deadline:
             remaining = max(0.0, deadline - time.monotonic())
             if not selector.select(remaining):
                 break
-            line = proc.stdout.readline()
-            if not line:
+            chunk = os.read(fd, 65536)
+            if not chunk:
                 break
-            line = line.strip()
-            if not line:
-                continue
-            seen.append(line)
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if msg.get("id") != request_id:
-                continue
-            if "error" in msg:
-                err = msg["error"]
-                message = err.get("message", err) if isinstance(err, dict) else err
-                raise click.ClickException(f"Codex app-server {request_id} failed: {message}")
-            result = msg.get("result")
-            return result if isinstance(result, dict) else {}
+            buf += chunk
+            # Drain every complete line before re-selecting.
+            while True:
+                newline_at = buf.find(b"\n")
+                if newline_at < 0:
+                    break
+                raw, buf = buf[:newline_at], buf[newline_at + 1 :]
+                found = _codex_match_app_server_response(bytes(raw), request_id, seen)
+                if found is not None:
+                    return found
     finally:
         selector.close()
 

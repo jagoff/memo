@@ -12,7 +12,6 @@ import sys
 import threading
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 
 from memo.config import Config
 from memo.flags import flag_bool, flag_int
@@ -94,15 +93,8 @@ def run_sleep_cycle(debug: bool = False) -> None:
 
 
 def _ingest_memflow_sessions(mem: Memory, cfg: Config, debug: bool = False) -> None:
-    """Walk .memflow/sessions and run reflection on eligible transcripts."""
-    from memo.flags import flag_str
+    """Run reflection on recent unreflected memo sessions."""
     from memo.session import list_sessions
-
-    memflow_dir = Path(flag_str("MEMO_MEMFLOW_DIR") or ".memflow").expanduser()
-    if not memflow_dir.is_dir():
-        if debug:
-            print(f"# Sleep cycle: memflow dir not found: {memflow_dir}", file=sys.stderr)
-        return
 
     # Use memo's session listing to find sessions that need reflection
     # We look for sessions that haven't been reflected yet.

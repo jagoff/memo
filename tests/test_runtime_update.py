@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import subprocess
 
 from click.testing import CliRunner
 
@@ -216,6 +218,32 @@ def test_finish_successful_update_refreshes_codex_plugin_before_notify(monkeypat
     assert calls == ["clear", "refresh", "notify"]
 
 
+def test_codex_read_app_server_response_drains_buffered_lines():
+    """Regression: a notification + the response arriving in ONE pipe write
+    must not stall. The old reader select()ed on the buffered text stream, so
+    readline() pulled both lines into the Python buffer, the pipe went empty,
+    and the response we already held timed out."""
+    import time
+    from types import SimpleNamespace
+
+    from memo.runtime.codex import _codex_read_app_server_response
+
+    rfd, wfd = os.pipe()
+    stdout = os.fdopen(rfd, "r")
+    try:
+        os.write(wfd, b'{"method":"sessionConfigured"}\n{"id":7,"result":{"ok":true}}\n')
+        proc = SimpleNamespace(stdout=stdout)
+        start = time.monotonic()
+        result = _codex_read_app_server_response(proc, 7, timeout_s=5.0)  # type: ignore[arg-type]
+        elapsed = time.monotonic() - start
+    finally:
+        os.close(wfd)
+        stdout.close()
+
+    assert result == {"ok": True}
+    assert elapsed < 2.0  # found in the first drain, not after a timeout
+
+
 def test_self_update_to_tag_notifies_codex_after_success(monkeypatch):
     monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
     monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
@@ -237,3 +265,105 @@ def test_self_update_to_tag_notifies_codex_after_success(monkeypatch):
     assert result.exit_code == 0, result.output
     assert any("tool" in c and "install" in c for c in calls), calls
     assert notified == [True]
+
+
+def test_self_update_to_tag_marks_spawn_lease_succeeded(tmp_path, monkeypatch):
+    stamp = tmp_path / "state" / "auto_update_spawned"
+    stamp.parent.mkdir(parents=True)
+    stamp.write_text(
+        json.dumps(
+            {
+                "tag": "v9.9.9",
+                "pid": os.getpid(),
+                "state": "running",
+                "started_at": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
+    monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
+    monkeypatch.setattr(upd, "_find_uv", lambda: "uv")
+    monkeypatch.setattr(upd, "_finish_successful_update", lambda: None)
+    monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
+    monkeypatch.setattr("memo.runtime.autoupdate.tag_is_on_remote_master", lambda *a, **k: True)
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: _Rc(0))
+
+    result = CliRunner().invoke(
+        cli,
+        ["update", "--to-tag", "v9.9.9"],
+        env={"MEMO_STATE_DIR": str(stamp.parent)},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(stamp.read_text(encoding="utf-8"))["state"] == "succeeded"
+
+
+def test_self_update_to_tag_nonzero_clears_spawned_stamp(tmp_path, monkeypatch):
+    stamp = tmp_path / "state" / "auto_update_spawned"
+    stamp.parent.mkdir(parents=True)
+    stamp.write_text("v9.9.9", encoding="utf-8")
+    monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
+    monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
+    monkeypatch.setattr(upd, "_find_uv", lambda: "uv")
+    monkeypatch.setattr("memo.runtime.autoupdate.tag_is_on_remote_master", lambda *a, **k: True)
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: _Rc(1))
+
+    result = CliRunner().invoke(
+        cli,
+        ["update", "--to-tag", "v9.9.9"],
+        env={"MEMO_STATE_DIR": str(stamp.parent)},
+    )
+
+    assert result.exit_code == 1
+    assert not stamp.exists()
+
+
+def test_self_update_to_tag_timeout_clears_spawned_stamp(tmp_path, monkeypatch):
+    stamp = tmp_path / "state" / "auto_update_spawned"
+    stamp.parent.mkdir(parents=True)
+    stamp.write_text("v9.9.9", encoding="utf-8")
+    monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
+    monkeypatch.setattr(upd, "_detect_install_method", lambda: "uv")
+    monkeypatch.setattr(upd, "_find_uv", lambda: "uv")
+    monkeypatch.setattr("memo.runtime.autoupdate.tag_is_on_remote_master", lambda *a, **k: True)
+    monkeypatch.setattr(
+        upd.subprocess,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired("uv", 600)),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["update", "--to-tag", "v9.9.9"],
+        env={"MEMO_STATE_DIR": str(stamp.parent)},
+    )
+
+    assert result.exit_code == 1
+    assert not stamp.exists()
+
+
+def test_pypi_fallback_recommends_only_immutable_release_specs(monkeypatch):
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"info": {"version": "9.9.9"}}'
+
+    monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
+    monkeypatch.setattr(upd.importlib.metadata, "version", lambda _name: "1.0.0")
+    monkeypatch.setattr("memo.runtime.autoupdate.latest_remote_tag", lambda _repo: None)
+    monkeypatch.setattr(upd.urllib.request, "urlopen", lambda *_a, **_k: _Response())
+    monkeypatch.setattr(upd, "_detect_install_method", lambda: None)
+
+    result = CliRunner().invoke(cli, ["update"])
+
+    assert result.exit_code == 0, result.output
+    assert "/v9.9.9/install.sh" in result.output
+    assert "mlx-memo==9.9.9" in result.output
+    assert "/master/install.sh" not in result.output
+    assert "git+https://github.com/jagoff/memo.git" not in result.output

@@ -17,10 +17,19 @@ Design choices (updated 2026-07-12):
 from __future__ import annotations
 
 import contextlib
+import fcntl
+import json
 import logging
+import os
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Protocol
 
 from memo.config import Config
 from memo.flags import flag_bool, flag_int, flag_str
@@ -30,7 +39,43 @@ _log = logging.getLogger(__name__)
 DEFAULT_REPO = "https://github.com/jagoff/memo.git"
 _CHECK_STAMP = "auto_update_check"
 _NOTIFY_FILE = "update_available"
-_SPAWNED_STAMP = "auto_update_spawned"  # tag last spawned; prevents re-spawn same tag
+_SPAWNED_STAMP = "auto_update_spawned"
+_SPAWN_LOCK_FILE = ".auto_update_spawned.lock"
+_STARTING_LEASE_TTL_SECONDS = 60
+
+
+class _UpdateProcess(Protocol):
+    pid: int
+
+    def poll(self) -> int | None: ...
+
+
+@dataclass(frozen=True)
+class _SpawnLease:
+    tag: str
+    pid: int
+    state: str
+    started_at: float
+    process_identity: str | None
+
+
+_ACTIVE_UPDATES: dict[tuple[str, str], _UpdateProcess] = {}
+_SPAWN_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def _spawn_file_lock(cfg: Config) -> Iterator[None]:
+    """Serialize every persisted lease transition across memo processes."""
+
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(cfg.state_dir / _SPAWN_LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def _parse_semver(tag: str) -> tuple[int, int, int] | None:
@@ -143,22 +188,6 @@ def tag_is_on_remote_master(repo_url: str, tag: str, *, timeout: int = 60) -> bo
         return False
 
 
-def latest_pypi_version(*, timeout: int = 10) -> str | None:
-    """Latest version from PyPI, or None on any failure."""
-    import json
-    import urllib.error
-    import urllib.request
-
-    try:
-        with urllib.request.urlopen("https://pypi.org/pypi/mlx-memo/json", timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        version = data["info"]["version"]
-        return version if isinstance(version, str) else None
-    except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError) as exc:
-        _log.debug("auto-update: PyPI fetch failed: %s", exc)
-        return None
-
-
 def _should_check(cfg: Config, interval_s: int, now: float, force: bool = False) -> bool:
     """Throttle: True if no check stamp or it's older than ``interval_s``.
 
@@ -196,6 +225,342 @@ def _clear_notify(cfg: Config) -> None:
     path = cfg.state_dir / _NOTIFY_FILE
     with contextlib.suppress(OSError):
         path.unlink(missing_ok=True)
+
+
+def _spawn_key(cfg: Config, tag: str) -> tuple[str, str]:
+    return (str(cfg.state_dir.resolve()), tag)
+
+
+def _read_spawned_lease(cfg: Config) -> _SpawnLease | None:
+    try:
+        payload = json.loads((cfg.state_dir / _SPAWNED_STAMP).read_text())
+        tag = payload["tag"]
+        pid = payload["pid"]
+        state = payload["state"]
+        started_at = payload["started_at"]
+        process_identity = payload.get("process_identity")
+        if (
+            not isinstance(tag, str)
+            or not isinstance(pid, int)
+            or pid <= 0
+            or state not in {"starting", "running", "succeeded"}
+            or not isinstance(started_at, (int, float))
+            or (process_identity is not None and not isinstance(process_identity, str))
+        ):
+            return None
+        return _SpawnLease(tag, pid, state, float(started_at), process_identity)
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _write_spawned_lease(
+    cfg: Config,
+    tag: str,
+    pid: int,
+    state: str,
+    *,
+    started_at: float | None = None,
+    process_identity: str | None = None,
+) -> bool:
+    path = cfg.state_dir / _SPAWNED_STAMP
+    temporary_name: str | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w",
+            dir=path.parent,
+            prefix=f".{_SPAWNED_STAMP}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_name = temporary.name
+            json.dump(
+                {
+                    "tag": tag,
+                    "pid": pid,
+                    "state": state,
+                    "started_at": time.time() if started_at is None else started_at,
+                    "process_identity": process_identity,
+                },
+                temporary,
+                sort_keys=True,
+            )
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, path)
+        return True
+    except OSError as exc:
+        _log.debug("auto-update: could not write spawned lease: %s", exc)
+        return False
+    finally:
+        if temporary_name is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary_name)
+
+
+def _acquire_spawned_lease_unlocked(cfg: Config, tag: str, *, started_at: float) -> bool:
+    """Atomically acquire the cross-process starting lease."""
+    path = cfg.state_dir / _SPAWNED_STAMP
+    temporary_name: str | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w",
+            dir=path.parent,
+            prefix=f".{_SPAWNED_STAMP}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_name = temporary.name
+            json.dump(
+                {
+                    "tag": tag,
+                    "pid": os.getpid(),
+                    "state": "starting",
+                    "started_at": started_at,
+                    "process_identity": _process_identity(os.getpid()),
+                },
+                temporary,
+                sort_keys=True,
+            )
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        # Hard-linking a fully written temporary file is an atomic create: only
+        # one memo-mcp process can acquire a missing lease path.
+        os.link(temporary_name, path)
+        return True
+    except FileExistsError:
+        return False
+    except OSError as exc:
+        _log.debug("auto-update: could not acquire spawned lease: %s", exc)
+        return False
+    finally:
+        if temporary_name is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary_name)
+
+
+def _acquire_spawned_lease(cfg: Config, tag: str, *, started_at: float) -> bool:
+    """Acquire a starting lease while serialized with every lease mutation."""
+
+    with _spawn_file_lock(cfg):
+        return _acquire_spawned_lease_unlocked(cfg, tag, started_at=started_at)
+
+
+def _clear_spawned_stamp_unlocked(
+    cfg: Config,
+    *,
+    tag: str | None = None,
+    pid: int | None = None,
+) -> None:
+    """Release a matching spawn lease without clobbering a newer updater."""
+    path = cfg.state_dir / _SPAWNED_STAMP
+    if tag is not None or pid is not None:
+        lease = _read_spawned_lease(cfg)
+        if lease is None:
+            # Legacy stamps contained only the tag. Let the matching old child
+            # release that format, but never an unrelated tag.
+            try:
+                raw = path.read_text().strip()
+            except OSError:
+                return
+            if tag is not None and raw != tag:
+                return
+        elif (tag is not None and lease.tag != tag) or (pid is not None and lease.pid != pid):
+            return
+    with contextlib.suppress(OSError):
+        path.unlink(missing_ok=True)
+
+
+def _clear_spawned_stamp(
+    cfg: Config,
+    *,
+    tag: str | None = None,
+    pid: int | None = None,
+) -> None:
+    """Release a matching lease as one serialized compare-and-delete."""
+
+    with _spawn_file_lock(cfg):
+        _clear_spawned_stamp_unlocked(cfg, tag=tag, pid=pid)
+
+
+def _mark_spawned_success_unlocked(cfg: Config, tag: str, *, pid: int | None = None) -> None:
+    """Persist successful completion so the same tag is not spawned again."""
+    lease = _read_spawned_lease(cfg)
+    if lease is None or lease.tag != tag or (pid is not None and lease.pid != pid):
+        return
+    _write_spawned_lease(
+        cfg,
+        lease.tag,
+        lease.pid,
+        "succeeded",
+        started_at=lease.started_at,
+        process_identity=lease.process_identity,
+    )
+
+
+def _mark_spawned_success(cfg: Config, tag: str, *, pid: int | None = None) -> None:
+    """Persist success as one serialized compare-and-transition."""
+
+    with _spawn_file_lock(cfg):
+        _mark_spawned_success_unlocked(cfg, tag, pid=pid)
+
+
+def _claim_spawned_lease(
+    cfg: Config,
+    tag: str,
+    *,
+    parent_pid: int,
+    child_pid: int,
+    started_at: float,
+) -> bool:
+    """Let the spawned worker durably claim a lease if its parent disappears."""
+
+    with _spawn_file_lock(cfg):
+        lease = _read_spawned_lease(cfg)
+        if lease is None or lease.tag != tag:
+            return False
+        identity = _process_identity(child_pid)
+        if identity is None:
+            return False
+        if lease.state == "running":
+            return lease.pid == child_pid and lease.process_identity == identity
+        if lease.state != "starting" or lease.pid != parent_pid or lease.started_at != started_at:
+            return False
+        return _write_spawned_lease(
+            cfg,
+            tag,
+            child_pid,
+            "running",
+            started_at=started_at,
+            process_identity=identity,
+        )
+
+
+def _process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _process_identity(pid: int) -> str | None:
+    """Return a stable OS start identity so PID reuse cannot preserve a lease."""
+
+    try:
+        with open(f"/proc/{pid}/stat") as process_stat:
+            stat_fields = process_stat.read().split()
+        if len(stat_fields) > 21:
+            return f"proc:{stat_fields[21]}"
+    except OSError:
+        pass
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    started = result.stdout.strip()
+    return f"ps:{started}" if result.returncode == 0 and started else None
+
+
+def _lease_process_is_active(lease: _SpawnLease) -> bool:
+    """Require both a live PID and the same process instance."""
+
+    if not _process_is_alive(lease.pid) or lease.process_identity is None:
+        return False
+    return _process_identity(lease.pid) == lease.process_identity
+
+
+def _terminate_untracked_process(proc: _UpdateProcess) -> None:
+    """Best-effort stop/reap the detached process group and its descendants."""
+
+    terminate = getattr(proc, "terminate", None)
+    wait = getattr(proc, "wait", None)
+    kill = getattr(proc, "kill", None)
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(proc.pid, signal.SIGTERM)
+    with contextlib.suppress(Exception):
+        if callable(terminate):
+            terminate()
+    if callable(wait):
+        with contextlib.suppress(Exception):
+            wait(timeout=1)
+    # The session leader may exit on TERM while a descendant ignores it. Probe
+    # the original process group with KILL even after the leader was reaped.
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(Exception):
+        if callable(kill):
+            kill()
+    with contextlib.suppress(Exception):
+        if callable(wait):
+            wait(timeout=1)
+
+
+def _active_process_blocks_update(cfg: Config, tag: str) -> bool | None:
+    """Supervise this process's child; None means no in-memory child exists."""
+
+    key = _spawn_key(cfg, tag)
+    proc = _ACTIVE_UPDATES.get(key)
+    if proc is None:
+        return None
+    returncode = proc.poll()
+    if returncode is None:
+        return True
+    _ACTIVE_UPDATES.pop(key, None)
+    if returncode == 0:
+        _mark_spawned_success_unlocked(cfg, tag, pid=proc.pid)
+        return True
+    _clear_spawned_stamp_unlocked(cfg, tag=tag, pid=proc.pid)
+    return False
+
+
+def _spawn_lease_blocks_update_unlocked(cfg: Config, tag: str, *, now: float) -> bool:
+    """Supervise the active child or recover a stale persisted lease."""
+    active_result = _active_process_blocks_update(cfg, tag)
+    if active_result is not None:
+        return active_result
+
+    lease = _read_spawned_lease(cfg)
+    if lease is None:
+        # Corrupt and legacy tag-only stamps cannot prove an update is active.
+        _clear_spawned_stamp_unlocked(cfg)
+        return False
+    if lease.state == "starting":
+        # The child-side worker will claim this lease after Popen. A fresh
+        # starting lease therefore blocks even when the parent died in the
+        # tiny Popen→running crash window. Only an unclaimed stale lease clears.
+        if now - lease.started_at <= _STARTING_LEASE_TTL_SECONDS:
+            return True
+        _clear_spawned_stamp_unlocked(cfg, tag=lease.tag, pid=lease.pid)
+        return False
+    if lease.tag != tag:
+        if lease.state != "succeeded" and _lease_process_is_active(lease):
+            return True
+        _clear_spawned_stamp_unlocked(cfg, tag=lease.tag, pid=lease.pid)
+        return False
+    if lease.state == "succeeded":
+        return True
+    if _lease_process_is_active(lease):
+        return True
+    _clear_spawned_stamp_unlocked(cfg, tag=tag, pid=lease.pid)
+    return False
+
+
+def _spawn_lease_blocks_update(cfg: Config, tag: str, *, now: float) -> bool:
+    """Inspect/recover a lease while serialized with other processes."""
+
+    with _spawn_file_lock(cfg):
+        return _spawn_lease_blocks_update_unlocked(cfg, tag, now=now)
 
 
 def pending_update_tag(cfg: Config | None = None) -> str | None:
@@ -277,31 +642,54 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
             _clear_notify(cfg)
             return False
 
-        # Don't re-spawn an install we already triggered for this exact tag.
-        spawned_stamp = cfg.state_dir / _SPAWNED_STAMP
-        try:
-            if spawned_stamp.read_text().strip() == tag:
+        with _SPAWN_LOCK, _spawn_file_lock(cfg):
+            # Inspection, stale cleanup, acquisition, spawn and transition
+            # are one cross-process critical section. A concurrent cleanup
+            # can never delete a newer lease between compare and unlink.
+            if _spawn_lease_blocks_update_unlocked(cfg, tag, now=time.time()):
                 _write_notify(cfg, tag)  # keep banner visible
                 return False
-        except OSError:
-            pass
 
-        _write_notify(cfg, tag)
-        _log.info("auto-update: %s → %s (spawning background update)", __version__, tag)
-        try:
-            spawned_stamp.parent.mkdir(parents=True, exist_ok=True)
-            spawned_stamp.write_text(tag)
-        except OSError as exc:
-            _log.debug("auto-update: could not write spawned stamp: %s", exc)
-        log_file = cfg.state_dir / "auto_update.log"
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_file, "a") as fh:
-            subprocess.Popen(
-                [sys.executable, "-m", "memo.cli", "update", "--to-tag", tag],
-                stdout=fh,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
+            _write_notify(cfg, tag)
+            _log.info("auto-update: %s → %s (spawning background update)", __version__, tag)
+            started_at = time.time()
+            if not _acquire_spawned_lease_unlocked(cfg, tag, started_at=started_at):
+                return False
+            log_file = cfg.state_dir / "auto_update.log"
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(log_file, "a") as fh:
+                    proc = subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-m",
+                            "memo.runtime.autoupdate_worker",
+                            str(cfg.state_dir),
+                            tag,
+                            str(os.getpid()),
+                            repr(started_at),
+                        ],
+                        stdout=fh,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+            except (OSError, ValueError, subprocess.SubprocessError):
+                _clear_spawned_stamp_unlocked(cfg, tag=tag, pid=os.getpid())
+                raise
+            _ACTIVE_UPDATES[_spawn_key(cfg, tag)] = proc
+            process_identity = _process_identity(proc.pid)
+            if process_identity is None or not _write_spawned_lease(
+                cfg,
+                tag,
+                proc.pid,
+                "running",
+                started_at=started_at,
+                process_identity=process_identity,
+            ):
+                _ACTIVE_UPDATES.pop(_spawn_key(cfg, tag), None)
+                _terminate_untracked_process(proc)
+                _clear_spawned_stamp_unlocked(cfg, tag=tag, pid=os.getpid())
+                raise OSError("could not persist auto-update child lease")
         return True
     except Exception as exc:  # never break startup
         _log.debug("auto-update: skipped (%s)", exc)
