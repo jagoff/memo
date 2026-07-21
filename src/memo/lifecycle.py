@@ -323,9 +323,12 @@ class LifecycleManager:
 
         # Step 2: Drop the searchable index rows only (meta/vec/fts) via the
         # store, NOT the .md — which now lives in inactive/. After this get()
-        # returns None (matches test expectations); the file is recoverable via
-        # reindex. Going through Memory.delete() here would unlink the moved
-        # file's original path (harmlessly) but is also heavier than needed.
+        # returns None (matches test expectations); the file is recoverable by
+        # moving it back out of inactive/ and reindexing (reindex deliberately
+        # skips inactive/ so archived memories don't auto-resurrect on the
+        # post-sync-pull reindex). Going through Memory.delete() here would
+        # unlink the moved file's original path (harmlessly) but is also
+        # heavier than needed.
         self.memory.store.delete(memory_id)
 
         # C6: validity-window stamp — best-effort, never un-archives on failure.

@@ -160,6 +160,7 @@ def test_reindex_rebuild_migrates_vector_dimensions_and_model_identity(
         state_dir=state_dir,
         embedder_backend="mlx",
         embedder_model="vendor/new-model",
+        embedder_revision="a" * 40,
         embedder_dims=5,
         reranker_enabled=False,
     )
@@ -174,10 +175,11 @@ def test_reindex_rebuild_migrates_vector_dimensions_and_model_identity(
         memory.close()
     monkeypatch.delenv("MEMO_SKIP_MODEL_VERSION_CHECK")
 
+    new_identity = f"vendor/new-model@{'a' * 40}"
     reopened = VecStore(
         state_dir / "memvec.db",
         dims=5,
-        embedder_model="vendor/new-model",
+        embedder_model=new_identity,
     )
     try:
         assert reopened.get_fts_body(record_id) == "new body"
@@ -195,7 +197,7 @@ def test_reindex_rebuild_migrates_vector_dimensions_and_model_identity(
             str(row["key"]): str(row["value"])
             for row in reopened.connection.execute("SELECT key, value FROM schema_meta").fetchall()
         }
-        assert schema["embedder_model"] == "vendor/new-model"
+        assert schema["embedder_model"] == new_identity
         assert schema["embedder_dims"] == "5"
         assert reopened.list_source_feedback(source_id=record_id)[0]["id"] == feedback_id
         assert reopened.find_feedback_for_source(
@@ -209,13 +211,13 @@ def test_reindex_rebuild_migrates_vector_dimensions_and_model_identity(
             reopened.connection.execute(
                 "SELECT value FROM hype_schema_meta WHERE key = 'embedder_model'"
             ).fetchone()[0]
-            == "vendor/new-model"
+            == new_identity
         )
         assert (
             reopened.connection.execute(
                 "SELECT value FROM episode_schema_meta WHERE key = 'embedder_model'"
             ).fetchone()[0]
-            == "vendor/new-model"
+            == new_identity
         )
     finally:
         reopened.close()
@@ -311,7 +313,7 @@ def test_reindex_rebuild_upgrades_legacy_st_index_identity(
         state_dir=state_dir,
         embedder_backend="st",
         st_embedder_model="Qwen/Qwen3-Embedding-0.6B",
-        st_embedder_revision="pinned-revision",
+        st_embedder_revision="b" * 40,
         embedder_dims=4,
         reranker_enabled=False,
     )
@@ -329,7 +331,7 @@ def test_reindex_rebuild_upgrades_legacy_st_index_identity(
 
     reopened = Memory(cfg)
     try:
-        assert reopened.store.embedder_model == ("Qwen/Qwen3-Embedding-0.6B@pinned-revision")
+        assert reopened.store.embedder_model == f"Qwen/Qwen3-Embedding-0.6B@{'b' * 40}"
     finally:
         reopened.close()
 
@@ -731,6 +733,57 @@ def test_gc_reports_and_fixes_orphans(mem_with_stub: Memory):
     assert mem_with_stub.store.get(b.id) is not None
     mem_with_stub.gc(fix=True)
     assert mem_with_stub.store.get(b.id) is None
+
+
+def _unit(dims: int) -> list[float]:
+    v = 1.0 / dims**0.5
+    return [v] * dims
+
+
+def test_gc_never_deletes_labeled_ingest_reference_rows(mem_with_stub: Memory, tmp_path):
+    """Labeled ingest rows store `label/rel` paths that never resolve under
+    memory_dir/vault — gc must check their recorded abs_path (or skip when
+    unverifiable), not mass-delete every labeled reference row."""
+    src = tmp_path / "notes" / "doc.md"
+    src.parent.mkdir(parents=True)
+    src.write_text("contenido de referencia", encoding="utf-8")
+    live = "ref-live-0001"
+    mem_with_stub.store.upsert(
+        id_=live,
+        path="mylabel/notes/doc.md",
+        title="ref doc",
+        type_="reference",
+        tags=["vault:mylabel"],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body_hash="x" * 16,
+        embedding=_unit(mem_with_stub.cfg.embedder_dims),
+        extra={"source": "vault", "vault": "mylabel", "abs_path": str(src)},
+    )
+    legacy = "ref-legacy-01"
+    mem_with_stub.store.upsert(
+        id_=legacy,
+        path="oldlabel/notes/gone.md",
+        title="legacy ref",
+        type_="reference",
+        tags=["vault:oldlabel"],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body_hash="y" * 16,
+        embedding=_unit(mem_with_stub.cfg.embedder_dims),
+        extra={"source": "vault", "vault": "oldlabel"},
+    )
+    report = mem_with_stub.gc(fix=True)
+    # Source file exists -> not an orphan. No provenance -> unverifiable, skipped.
+    assert live not in report["orphan_store"]
+    assert legacy not in report["orphan_store"]
+    assert mem_with_stub.store.get(live) is not None
+    assert mem_with_stub.store.get(legacy) is not None
+    # A labeled row whose recorded source file is GONE is a real orphan.
+    src.unlink()
+    report = mem_with_stub.gc(fix=True)
+    assert live in report["orphan_store"]
+    assert mem_with_stub.store.get(live) is None
 
 
 def test_reindex_updates_store_path_after_markdown_move_without_embedding(

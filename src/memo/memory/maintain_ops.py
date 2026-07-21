@@ -274,6 +274,14 @@ class _MaintainOpsMixin(_MemoryBase):
         for md_path in sorted(memory_root.rglob("*.md")):
             checked += 1
             relative_parts = md_path.relative_to(memory_root).parts
+            if relative_parts[:1] == ("inactive",):
+                # Archived memories (lifecycle.archive_memory) keep their id:
+                # frontmatter so a human can recover one by moving it back out,
+                # but they must NOT be re-absorbed automatically — reindex runs
+                # after every sync pull, which would resurrect every archived/
+                # superseded memory.
+                skipped += 1
+                continue
             current = memory_root
             has_symlink_component = False
             for part in relative_parts:
@@ -1049,14 +1057,24 @@ class _MaintainOpsMixin(_MemoryBase):
         for r in self.store.list_recent(limit=100_000):
             extra = r.get("extra") or {}
             parent_id = extra.get("parent_id") if isinstance(extra, dict) else None
+            ingest_abs = extra.get("abs_path") if isinstance(extra, dict) else None
             try:
                 if parent_id:
                     parent = self.store.get(str(parent_id))
                     path_exists = (
                         parent is not None and self._resolve_existing(parent["path"]).is_file()
                     )
+                elif ingest_abs:
+                    # Ingested reference rows store label-prefixed paths that
+                    # never resolve under memory_dir/vault — check the recorded
+                    # source file instead of mass-deleting every labeled row.
+                    path_exists = Path(str(ingest_abs)).is_file()
                 else:
                     path_exists = self._resolve_existing(r["path"]).is_file()
+                    if not path_exists and r.get("type") == "reference":
+                        # Legacy ingest rows without abs_path provenance:
+                        # existence can't be verified here — never mass-delete.
+                        continue
             except StorageError:
                 path_exists = False
             if not path_exists:
@@ -1070,6 +1088,10 @@ class _MaintainOpsMixin(_MemoryBase):
         # Disk-side: walk memory dir, check ids in store.
         if self.cfg.memory_dir.is_dir():
             for md_path in self.cfg.memory_dir.rglob("*.md"):
+                if md_path.relative_to(self.cfg.memory_dir).parts[:1] == ("inactive",):
+                    # Archived memories are intentionally out of the index —
+                    # not orphans, and "reindex to absorb" would resurrect them.
+                    continue
                 try:
                     post = frontmatter.loads(md_path.read_text(encoding="utf-8"))
                 except Exception as exc:

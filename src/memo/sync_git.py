@@ -98,12 +98,17 @@ def _abort_stale_rebase(root: Path) -> bool:
     ``--quit`` (drops the state without touching the tree) is the fallback when
     abort itself fails. Returns True if stale state was found and cleared.
     """
-    gd = _git_dir(root)
-    if not (gd / "rebase-merge").exists() and not (gd / "rebase-apply").exists():
+    if not _rebase_in_progress(root):
         return False
     if _git(root, "rebase", "--abort", check=False).returncode != 0:
         _git(root, "rebase", "--quit", check=False)
     return True
+
+
+def _rebase_in_progress(root: Path) -> bool:
+    """Return whether Git records an interrupted rebase for this worktree."""
+    gd = _git_dir(root)
+    return (gd / "rebase-merge").exists() or (gd / "rebase-apply").exists()
 
 
 def _corpus_subdir(root: Path) -> Path:
@@ -272,6 +277,15 @@ def sync_once(
             _commit_local(cfg, store)
         except SyncGitError as exc:
             result["commit_error"] = str(exc)
+            # A failed commit can leave uncommitted .md work in the tree — the
+            # exact state the comment above exists to prevent: `rebase
+            # --autostash` in sync_pull would stash/merge it and can lose it on
+            # conflict. Skip the pull unless this is a stale rebase: sync_pull's
+            # first action safely aborts that old operation back to its committed
+            # pre-rebase state, then retries and reports any genuine conflict.
+            # Pushing already-committed work remains safe in either case.
+            if not _rebase_in_progress(git_root_for(cfg)):
+                do_pull = False
         if do_pull:
             try:
                 pull_out = sync_pull(cfg, store, mem, remote=remote)
