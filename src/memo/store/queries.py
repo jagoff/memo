@@ -287,6 +287,48 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     )
                     self._mark_tantivy_unhealthy()
 
+    def _reset_sidecar_vec_tables(
+        self,
+        cx: sqlite3.Connection,
+        *,
+        dimensions_changed: bool,
+        present_sidecars: list[tuple[str, str, str, str]],
+        stamp_identity: bool,
+        current_model: str,
+    ) -> None:
+        """Invalidate HyPE / episode sidecar vectors + metadata on a rebuild that
+        changed the vector space. They share this DB file but keep independent
+        watermarks, so equal body/content hashes would otherwise make their
+        rebuilders skip incompatible old vectors."""
+        for vec_table, meta_table, schema_table, id_column in present_sidecars:
+            if dimensions_changed:
+                cx.execute(f"DROP TABLE {vec_table}")
+                cx.execute(
+                    f"CREATE VIRTUAL TABLE {vec_table} USING vec0("
+                    f"{id_column} TEXT PRIMARY KEY, "
+                    f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
+                )
+            else:
+                cx.execute(f"DELETE FROM {vec_table}")
+            cx.execute(f"DELETE FROM {meta_table}")
+            if stamp_identity:
+                cx.execute(
+                    f"CREATE TABLE IF NOT EXISTS {schema_table} ("
+                    "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
+                cx.execute(
+                    f"INSERT INTO {schema_table} (key, value) "
+                    "VALUES ('embedder_model', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (current_model,),
+                )
+                cx.execute(
+                    f"INSERT INTO {schema_table} (key, value) "
+                    "VALUES ('embedder_dims', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (str(self.dims),),
+                )
+
     def replace_memory_index(self, rows: list[dict[str, Any]]) -> int:
         """Atomically replace markdown-derived meta/vector/FTS rows.
 
@@ -380,38 +422,13 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     cx.execute("DELETE FROM repo_vec")
                     cx.execute("DELETE FROM source_feedback_vec")
             if dimensions_changed or model_changed:
-                # HyPE and (under MEMO_SINGLE_DB) episode vectors share this
-                # file but have independent watermarks.  Invalidate the vector
-                # and metadata together, otherwise equal body/content hashes
-                # would make their rebuilders skip incompatible old vectors.
-                for vec_table, meta_table, schema_table, id_column in present_sidecars:
-                    if dimensions_changed:
-                        cx.execute(f"DROP TABLE {vec_table}")
-                        cx.execute(
-                            f"CREATE VIRTUAL TABLE {vec_table} USING vec0("
-                            f"{id_column} TEXT PRIMARY KEY, "
-                            f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
-                        )
-                    else:
-                        cx.execute(f"DELETE FROM {vec_table}")
-                    cx.execute(f"DELETE FROM {meta_table}")
-                    if stamp_identity:
-                        cx.execute(
-                            f"CREATE TABLE IF NOT EXISTS {schema_table} ("
-                            "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
-                        )
-                        cx.execute(
-                            f"INSERT INTO {schema_table} (key, value) "
-                            "VALUES ('embedder_model', ?) "
-                            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                            (current_model,),
-                        )
-                        cx.execute(
-                            f"INSERT INTO {schema_table} (key, value) "
-                            "VALUES ('embedder_dims', ?) "
-                            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                            (str(self.dims),),
-                        )
+                self._reset_sidecar_vec_tables(
+                    cx,
+                    dimensions_changed=dimensions_changed,
+                    present_sidecars=present_sidecars,
+                    stamp_identity=stamp_identity,
+                    current_model=current_model,
+                )
             for source_row in rows:
                 row = dict(source_row)
                 verification_state = str(row.pop("verification_state", "unverified"))

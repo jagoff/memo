@@ -97,6 +97,34 @@ def _contextual_evidence(cfg: Config) -> bool:
     return False
 
 
+def _decode_shard_row(
+    encoded: object, dims: int, shard_quant: str, shard_bpd: int
+) -> list[float] | None:
+    """Decode one base64 shard vector to a validated ~unit-norm float list.
+
+    Returns None to skip the row (non-string, corrupt base64, wrong width, or a
+    poisoned NaN/Inf/zero-norm vector that would fail the vec-table write and
+    de-index the memory on reindex). int8 shards are dequantized (÷127) back to
+    the ~unit float range; float32 bytes round-trip exactly (LE serialize_float32).
+    """
+    if not isinstance(encoded, str):
+        return None
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError):
+        return None
+    if len(raw) != dims * shard_bpd:
+        return None
+    if shard_quant == "int8":
+        vec = [x / 127.0 for x in struct.unpack(f"{dims}b", raw)]
+    else:
+        vec = list(struct.unpack(f"{dims}f", raw))
+    norm = math.fsum(x * x for x in vec) ** 0.5
+    if not math.isfinite(norm) or not (0.5 < norm < 1.5):
+        return None
+    return vec
+
+
 def _shard_model_id(store: VecStore) -> str:
     """Shard identity used for cross-machine matching. Appends `+int8` under
     quantization so a lossy int8 shard is never merged into a float32 index
@@ -194,29 +222,9 @@ def import_embed_cache(store: VecStore, cache_dir: Path) -> dict:
         for input_hash in hashes:
             if input_hash in present:
                 continue
-            encoded = rows[input_hash]
-            if not isinstance(encoded, str):
-                continue
-            try:
-                raw = base64.b64decode(encoded, validate=True)
-            except (ValueError, TypeError):
-                continue
-            if len(raw) != store.dims * shard_bpd:
-                continue
-            if shard_quant == "int8":
-                # int8 shard: dequantize (÷127) back to the ~unit float range.
-                vec = [x / 127.0 for x in struct.unpack(f"{store.dims}b", raw)]
-            else:
-                # Native f32 order mirrors sqlite-vec's serialize_float32 (LE on
-                # every supported platform), so the bytes round-trip exactly.
-                vec = list(struct.unpack(f"{store.dims}f", raw))
-            # A poisoned/corrupt row (NaN/Inf/zero-norm) must be skipped here:
-            # a cached hit is served into the vec table on reindex, and a bad
-            # vector would fail that write and de-index the memory.
-            norm = math.fsum(x * x for x in vec) ** 0.5
-            if not math.isfinite(norm) or not (0.5 < norm < 1.5):
-                continue
-            to_add.append((input_hash, vec))
+            vec = _decode_shard_row(rows[input_hash], store.dims, shard_quant, shard_bpd)
+            if vec is not None:
+                to_add.append((input_hash, vec))
         if to_add:
             store.upsert_repo_embedding_cache(
                 model=store.embedder_model,
