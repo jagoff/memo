@@ -4,7 +4,6 @@ import contextlib
 import json
 import logging
 import re
-import struct
 import sys
 import time
 from collections.abc import Callable
@@ -854,7 +853,7 @@ def make_vec_cosine(mem: Any, prompt: str) -> Callable[[Any], float | None]:
             try:
                 blob = mem.store.get_embedding_blob(h.id)
                 if blob:
-                    doc = struct.unpack(f"<{len(blob) // 4}f", blob)
+                    doc = mem.store.unpack_embedding(blob)
                     if len(doc) == len(q):
                         cos = sum(x * y for x, y in zip(q, doc, strict=True))
             except Exception as exc:

@@ -90,10 +90,21 @@ class VecStore(
     instantiate their own `VecStore` (cheap — ~1ms cold open).
     """
 
-    def __init__(self, db_path: Path, dims: int = 1024, embedder_model: str = "") -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        dims: int = 1024,
+        embedder_model: str = "",
+        vec_quant: str = "off",
+    ) -> None:
         self.db_path = db_path
         self.dims = dims
         self.embedder_model = embedder_model
+        # vec0 storage precision for the main `vec` table. "off" = float32,
+        # "int8" = int8 (1 B/dim) via vec_quantize_int8(...,'unit'). Baked into
+        # the vec0 column TYPE at DDL time, so it only takes effect on a rebuild.
+        self.vec_quant = vec_quant
+        self._quant_int8 = vec_quant == "int8"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         # One sqlite connection PER THREAD. A single shared connection is
         # unsafe under the FastMCP HTTP transport, which dispatches sync

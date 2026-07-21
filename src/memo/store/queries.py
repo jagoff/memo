@@ -130,7 +130,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             )
         cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
         cx.execute(
-            "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+            f"INSERT INTO vec (id, embedding, type) VALUES (?, {self._vec_bind_new()}, ?)",
             (id_, serialize_float32(embedding), type_),
         )
         cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
@@ -349,6 +349,10 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 *(sidecar_dims[sidecar[0]] for sidecar in present_sidecars),
             )
         ) or (stored_dims is not None and stored_dims != self.dims)
+        # A quant flip (float32 <-> int8) is baked into the `vec` vec0 column
+        # TYPE, so — like a dims change — the table must be recreated. But it
+        # touches ONLY `vec`; repo_vec/source_feedback_vec stay float32.
+        quant_changed = self._vec_table_dtype("vec") != self.vec_quant
 
         with self._tx() as cx:
             previous_count = int(cx.execute("SELECT COUNT(*) FROM meta").fetchone()[0])
@@ -363,7 +367,14 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 cx.execute("DROP TABLE source_feedback_vec")
                 self._create_vec_tables(cx)
             else:
-                cx.execute("DELETE FROM vec")
+                if quant_changed:
+                    # Recreate ONLY `vec` at the new precision; _create_vec_tables
+                    # is IF NOT EXISTS, so repo_vec/source_feedback_vec are left
+                    # intact (the 62 MB reference/repo tier is not wiped).
+                    cx.execute("DROP TABLE vec")
+                    self._create_vec_tables(cx)
+                else:
+                    cx.execute("DELETE FROM vec")
                 if model_changed:
                     # Same width does not imply the same vector space.
                     cx.execute("DELETE FROM repo_vec")
@@ -555,9 +566,27 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return row is not None
 
     def get_embedding_blob(self, id_: str) -> bytes | None:
-        """Return the raw embedding blob for ``id_``, or None if missing."""
+        """Return the raw embedding blob for ``id_``, or None if missing.
+
+        The blob is 4 B/dim float32 by default, 1 B/dim int8 under
+        MEMO_VEC_QUANTIZE=int8 — decode it with :meth:`unpack_embedding`, not a
+        hardcoded float32 unpack.
+        """
         row = self._conn.execute("SELECT embedding FROM vec WHERE id = ?", (id_,)).fetchone()
         return row["embedding"] if row else None
+
+    def unpack_embedding(self, blob: bytes) -> list[float]:
+        """Decode a raw `vec` blob to ``list[float]``, dtype-aware.
+
+        Under int8 the stored blob is 1 B/dim signed int8; dequantize (÷127)
+        back to the ~unit-norm float range so callers that historically decoded
+        float32 (recall vec-cosine boost, delete rollback) keep working.
+        """
+        import struct
+
+        if self._quant_int8:
+            return [x / 127.0 for x in struct.unpack(f"{len(blob)}b", blob)]
+        return list(struct.unpack(f"<{len(blob) // 4}f", blob))
 
     def export_embed_rows(self, *, limit: int = 0) -> list[dict[str, Any]]:
         """Rows whose embeddings are safe to export to the cross-machine sync
@@ -720,7 +749,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 if existing_emb is not None:
                     cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
                     cx.execute(
-                        "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+                        f"INSERT INTO vec (id, embedding, type) VALUES (?, {self._vec_bind_stored()}, ?)",
                         (id_, existing_emb["embedding"], type_),
                     )
                 was_updated = cur.rowcount > 0
@@ -1089,7 +1118,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             "       meta.created, meta.updated, meta.body_hash, meta.extra_json, "
             "       meta.verification_state, meta.verified_at "
             f"FROM vec JOIN meta ON vec.id = meta.id AND {deleted_filter} "
-            "WHERE vec.embedding MATCH ? AND vec.k = ? "
+            f"WHERE vec.embedding MATCH {self._vec_bind_new()} AND vec.k = ? "
         )
         params: list[Any] = [serialize_float32(embedding), k_fetch]
         for clause in push_clauses:
@@ -1286,7 +1315,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             if to_update:
                 cx.executemany("DELETE FROM vec WHERE id = ?", to_update)
                 cx.executemany(
-                    "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+                    f"INSERT INTO vec (id, embedding, type) VALUES (?, {self._vec_bind_stored()}, ?)",
                     [(id_, vec_rows[id_], new_type) for (id_,) in to_update],
                 )
         return len(ids)

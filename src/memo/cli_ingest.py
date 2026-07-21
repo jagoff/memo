@@ -344,6 +344,7 @@ def ingest(
         cfg.db_path,
         dims=cfg.embedder_dims,
         embedder_model=active_embedder_identity(cfg),
+        vec_quant=_flag_str("MEMO_VEC_QUANTIZE"),
     )
 
     skipped_id = skipped_empty = skipped_unchanged = added = updated = errors = 0

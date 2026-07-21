@@ -18,6 +18,8 @@ class _StoreBase:
     db_path: Path
     dims: int
     embedder_model: str
+    vec_quant: str
+    _quant_int8: bool
     _has_pattern_cols: bool
     _local: threading.local
     tantivy_index_dir: Path
@@ -34,6 +36,10 @@ class _StoreBase:
     def _rebuild_tantivy_from_sqlite(self) -> None: ...
     def _mark_tantivy_unhealthy(self) -> None: ...
     def _vec_table_dims(self, table: str) -> int | None: ...
+    def _vec_table_dtype(self, table: str) -> str: ...  # type: ignore[empty-body]
+    def _vec_dtype_ddl(self) -> str: ...  # type: ignore[empty-body]
+    def _vec_bind_new(self) -> str: ...  # type: ignore[empty-body]
+    def _vec_bind_stored(self) -> str: ...  # type: ignore[empty-body]
     def _create_vec_tables(self, conn: sqlite3.Connection) -> None: ...
     def _run_migrations(self) -> None: ...
     def set_user_version(self, version: int) -> None: ...
