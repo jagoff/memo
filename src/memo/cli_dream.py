@@ -382,6 +382,9 @@ def dream_run(
                     else _mus,
                     dry_run=dry_run,
                 )
+                if receipt["tuner"].get("status") == "error":
+                    # failures land in receipt["errors"], never silently swallowed
+                    receipt["errors"].append(f"tuner: {receipt['tuner'].get('error')}")
                 progress.update(
                     step,
                     description=(
@@ -411,6 +414,9 @@ def dream_run(
                     else _mus,
                     dry_run=dry_run,
                 )
+                if receipt["graph_tuner"].get("status") == "error":
+                    # failures land in receipt["errors"], never silently swallowed
+                    receipt["errors"].append(f"graph_tuner: {receipt['graph_tuner'].get('error')}")
                 progress.update(
                     step,
                     description=(
@@ -441,6 +447,11 @@ def dream_run(
                     latency_budget_ms=flag_float("MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS")
                     or 2500.0,
                 )
+                if receipt["retrieval_tuner"].get("status") == "error":
+                    # failures land in receipt["errors"], never silently swallowed
+                    receipt["errors"].append(
+                        f"retrieval_tuner: {receipt['retrieval_tuner'].get('error')}"
+                    )
                 progress.update(
                     step,
                     description=(
@@ -545,6 +556,9 @@ def dream_run(
                     else _step,
                     dry_run=dry_run,
                 )
+                if receipt["boost_tuner"].get("status") == "error":
+                    # failures land in receipt["errors"], never silently swallowed
+                    receipt["errors"].append(f"boost_tuner: {receipt['boost_tuner'].get('error')}")
             except Exception as exc:
                 receipt["errors"].append(f"boost_tuner: {type(exc).__name__}: {exc}")
 
@@ -561,6 +575,9 @@ def dream_run(
                     if (_tg := flag_int("MEMO_DREAM_ANTICIPATE_TOP_GAPS")) is None
                     else _tg,
                 )
+                if receipt["anticipated"].get("error"):
+                    # failures land in receipt["errors"], never silently swallowed
+                    receipt["errors"].append(f"anticipate: {receipt['anticipated'].get('error')}")
                 progress.update(
                     step,
                     description=(
@@ -587,6 +604,9 @@ def dream_run(
                     dry_run=dry_run,
                 )
                 _ce = receipt["consolidated_episodes"]
+                if _ce.get("status") == "error":
+                    # failures land in receipt["errors"], never silently swallowed
+                    receipt["errors"].append(f"consolidate_episodes: {_ce.get('error')}")
                 progress.update(
                     step,
                     description=(
