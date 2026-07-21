@@ -27,7 +27,8 @@ from memo.mlx_gpu import (
 )
 
 
-def test_gpu_guard_is_reentrant_on_same_thread() -> None:
+def test_gpu_guard_is_reentrant_on_same_thread(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_GPU_LOCK_PATH", str(tmp_path / "gpu.lock"))
     # embed_query()->embed() and rerank()->score() re-enter on one thread.
     # The nesting is the assertion (a second acquire must not block), so keep
     # the two `with` blocks separate rather than collapsing them.
@@ -37,7 +38,8 @@ def test_gpu_guard_is_reentrant_on_same_thread() -> None:
     assert entered
 
 
-def test_gpu_guard_serializes_across_threads() -> None:
+def test_gpu_guard_serializes_across_threads(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_GPU_LOCK_PATH", str(tmp_path / "gpu.lock"))
     # Two threads doing "GPU work" must never overlap inside the guard.
     concurrency = 0
     max_concurrency = 0

@@ -159,6 +159,87 @@ def test_repo_index_with_progress_stays_in_process_even_with_flag(mock_memory, m
     assert len(fake.calls) == 1
 
 
+# -- `ingest-daemon start` readiness probe ---------------------------------
+
+
+def _start_env(tmp_path: Path) -> dict[str, str]:
+    return {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path),
+    }
+
+
+def test_start_fails_on_stale_socket_when_child_dies(tmp_path: Path, monkeypatch) -> None:
+    """Regression: a stale socket file left by a crashed daemon must not make
+    `ingest-daemon start` report success for a child that failed to boot."""
+    import subprocess
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    stale = _socket_path(tmp_path)
+    stale.touch()  # leftover from a crash — nothing is listening
+
+    class _DeadChild:
+        pid = 4242
+
+        def poll(self) -> int:
+            return 1  # child exited immediately (failed to boot)
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: _DeadChild())
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)  # keep logs out of ~/Library
+
+    result = CliRunner().invoke(cli, ["ingest-daemon", "start"], env=_start_env(tmp_path))
+
+    assert result.exit_code == 1
+    assert "failed to start" in result.stderr
+    assert not stale.exists()  # the stale socket was removed before the probe
+
+
+def test_start_succeeds_when_child_binds_fresh_socket(tmp_path: Path, monkeypatch) -> None:
+    """The connect-based probe reports success only once the (fake) child
+    actually answers a ping on a freshly bound socket — a stale leftover
+    socket file must not break a genuine boot either."""
+    import subprocess
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    _socket_path(tmp_path).touch()  # stale leftover from a crash
+
+    class _LiveChild:
+        pid = 4242
+
+        def poll(self) -> None:
+            return None  # still running
+
+    started: list[tuple[_IngestServer, _JobBook]] = []
+
+    def fake_popen(*a: object, **k: object) -> _LiveChild:
+        # Simulate the child binding a fresh socket after the stale unlink.
+        book = _JobBook(lambda kind, payload: {"ok": True})
+        server = _IngestServer(str(_socket_path(tmp_path)), book)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        started.append((server, book))
+        return _LiveChild()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    try:
+        result = CliRunner().invoke(cli, ["ingest-daemon", "start"], env=_start_env(tmp_path))
+        assert result.exit_code == 0, result.output
+        assert "started" in result.stderr
+    finally:
+        for server, book in started:
+            server.shutdown()
+            server.server_close()
+            book.shutdown()
+
+
 def test_serialized_writer_runs_jobs_one_at_a_time(tmp_path: Path) -> None:
     """The single worker drains the queue serially — concurrent enqueues never
     overlap (the 'own serialized writer' guarantee)."""
