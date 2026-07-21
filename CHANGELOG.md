@@ -9,6 +9,41 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.8.2] - 2026-07-21
+
+Second-round QA hardening pass (bug fixes only, no behavior/API changes).
+
+### Fixed
+
+- Project bucket names can no longer collide with the lifecycle-archive dirs:
+  a memory tagged `project:inactive`/`project:archived` (or saved in a repo of
+  that name) with `MEMO_STORE_BY_PROJECT` on used to be written where reindex/gc
+  skip, making it invisible to search and unrecoverable — those slugs now remap
+  to `_inactive`/`_archived`.
+- `defer_embed` saves without a `topic_key` now route an index failure through
+  the `_memo_embed_pending` recovery path (the `.md` is never silently missing
+  from the index until a manual reindex).
+- Hard-delete rollback (`MEMO_SOFT_DELETE=0`) preserves the user-signal tables
+  (access / health / source_feedback) instead of losing them.
+- `memo_search_as_of` applies its type filter before the limit, so a
+  type-scoped as-of search returns up to `limit` matching rows.
+- Incremental capture no longer advances its watermark past turns whose helper
+  LLM extraction failed transiently (those insights are retried, not lost).
+- The belief supersede support gate fails closed: a support-lookup error holds
+  the memory open instead of archiving a possibly-supported one.
+- `recall-daemon`/`ingest-daemon`/`maint-daemon` start now confirm readiness by
+  connecting to the socket (with fail-fast on child death) rather than trusting
+  a stale socket file, and no longer unlink a live daemon's socket.
+- The dashboard JSONL trim holds an exclusive lock over the append+truncate so a
+  concurrent write under a shared `data_dir` can't be lost or corrupt the file;
+  the dashboard health probe is backend-aware (no false "MLX not importable" on
+  a healthy Linux/CPU install); and the cheap live poll no longer rescans the
+  whole corpus for body-hash drift.
+- `.capture_stop`/`.capture_watermark` sidecar files are pruned on a 30-day TTL
+  instead of accumulating forever.
+- Tuned-overlay state-dir resolution mirrors `Config.from_env` exactly (legacy
+  `[storage]` TOML, key-presence `MEMO_VAULT_PATH`).
+
 ## [3.8.1] - 2026-07-20
 
 ### Security
