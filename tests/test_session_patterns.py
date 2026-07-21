@@ -179,6 +179,43 @@ class TestMCPSessionTools:
             "dir_basename",
         }
 
+    def test_session_id_fallback_without_env(self, session_mem, monkeypatch):
+        """Clients with no session env var must still get joined session rows,
+        never NULL ids."""
+        for var in ("MEMO_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"):
+            monkeypatch.delenv(var, raising=False)
+        mock = _MockServer()
+        register(mock, session_mem)
+        started = mock._tools["mem_session_start"]()
+        assert started["session_id"]
+        mock._tools["mem_session_end"](summary="did things")
+        row = session_mem.store._conn.execute(
+            "SELECT summary, status FROM sessions WHERE id = ?", (started["session_id"],)
+        ).fetchone()
+        assert row["status"] == "completed"
+        assert row["summary"] == "did things"
+
+    def test_session_restart_preserves_summary(self, session_mem, monkeypatch):
+        """A second mem_session_start with the same id (process restart) must
+        not wipe the completed session's summary (INSERT OR REPLACE did)."""
+        monkeypatch.setenv("MEMO_SESSION_ID", "stable-abc")
+        mock = _MockServer()
+        register(mock, session_mem)
+        mock._tools["mem_session_start"]()
+        mock._tools["mem_session_end"](summary="the summary")
+        mock._tools["mem_session_start"]()
+        row = session_mem.store._conn.execute(
+            "SELECT summary FROM sessions WHERE id = 'stable-abc'"
+        ).fetchone()
+        assert row["summary"] == "the summary"
+
+    def test_mem_judge_reports_missing_relation(self, session_mem):
+        mock = _MockServer()
+        register(mock, session_mem)
+        res = mock._tools["mem_judge"](relation_id=99999, relation="not_conflict")
+        assert res["updated"] is False
+        assert res["status"] == "not_found"
+
 
 # ── 5. Helper functions ──────────────────────────────────────────
 

@@ -25,7 +25,14 @@ FOUNDATION_MODULES = ["util", "store", "embedder", "graph"]
 # tiers = the durable/reference/eviction-protected type registry (re + typing
 # only, imports nothing from memo); store/signal_queries reads
 # EVICTION_PROTECTED_TYPES from it, so store depends on this leaf.
-PURE_LEAF_MODULES = {"util", "mlx_gpu", "graph_canonical", "embed_base", "tiers"}
+PURE_LEAF_MODULES = {
+    "util",
+    "mlx_gpu",
+    "graph_canonical",
+    "embed_base",
+    "model_pins",
+    "tiers",
+}
 
 
 def _memo_imports(module_file: Path) -> set[str]:
@@ -86,11 +93,16 @@ def test_brain_like_mcp_tools_are_not_registered() -> None:
         text = path.read_text(encoding="utf-8")
         for prefix in forbidden:
             esc = re.escape(prefix)
-            assert re.search(rf"\bdef memo_{esc}", text) is None, (
-                f"brain-like MCP tool memo_{prefix}* defined in {path.name}"
-            )
-            assert re.search(rf'name="memo_{esc}', text) is None, (
-                f"brain-like MCP tool memo_{prefix}* registered in {path.name}"
+            # Cover BOTH tool prefixes (memo_* and the session-pattern mem_*)
+            # so a mem_cognitive_* tool cannot evade the guard by prefix.
+            # mem_suggest_topic_key is exempt: a pure string-formatting helper
+            # (type->family + kebab-case), no LLM/retrieval/orchestration.
+            for match in re.finditer(rf"\bdef (?:memo|mem)_({esc}\w*)", text):
+                assert f"mem_{match.group(1)}" == "mem_suggest_topic_key", (
+                    f"brain-like MCP tool {match.group(0)[4:]}* defined in {path.name}"
+                )
+            assert re.search(rf'name="(?:memo|mem)_{esc}', text) is None, (
+                f"brain-like MCP tool (memo|mem)_{prefix}* registered in {path.name}"
             )
 
 
@@ -241,8 +253,11 @@ def test_behavior_flags_are_not_read_directly_from_environ() -> None:
         "MEMO_DATA_DIR",
         "MEMO_EMBEDDER_DIMS",
         "MEMO_EMBEDDER_MODEL",
+        "MEMO_EMBEDDER_REVISION",
         "MEMO_HELPER_MODEL",
+        "MEMO_HELPER_REVISION",
         "MEMO_LLM_MODEL",
+        "MEMO_LLM_REVISION",
         "MEMO_MAX_CONTENT_CHARS",
         "MEMO_MEMORY_SUBDIR",
         "MEMO_MODEL_PROFILE",
