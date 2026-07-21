@@ -468,6 +468,37 @@ class Memory(
         )
         return [(r.get("id") or "", r.get("title") or "—") for r in rows]
 
+    def superseded_pairs(self, *, limit: int = 50) -> list[tuple[str, str, str]]:
+        """Archived memories with a live successor, as `(stale_id, superseding_id, title)`.
+
+        Scans `cfg.memory_dir / "inactive" / *.md` for files stamped by
+        `lifecycle.py`'s `archive_memory(superseded_by=...)` — the WINNING
+        memory id lives in frontmatter `extra.superseded_by`. Dream-only (a
+        disk scan is fine there; never called from the recall path). Guarded
+        per-file: a malformed archive entry is skipped, not fatal.
+        """
+        inactive_dir = self.cfg.memory_dir / "inactive"
+        if not inactive_dir.is_dir():
+            return []
+        import frontmatter
+
+        out: list[tuple[str, str, str]] = []
+        for path in sorted(inactive_dir.glob("*.md")):
+            if len(out) >= limit:
+                break
+            try:
+                post = frontmatter.loads(path.read_text(encoding="utf-8"))
+                extra = post.get("extra")
+                superseded_by = extra.get("superseded_by") if isinstance(extra, dict) else None
+                if not superseded_by:
+                    continue
+                stale_id = str(post.get("id") or "")
+                title = str(post.get("title") or "—")
+                out.append((stale_id, str(superseded_by), title))
+            except (OSError, ValueError):
+                continue
+        return out
+
     def capability(self, name: str) -> Any:
         """Build and memoize an optional subsystem by registry name."""
         if name not in OPTIONAL_CAPABILITIES:

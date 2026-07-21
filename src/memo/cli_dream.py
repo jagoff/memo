@@ -41,6 +41,7 @@ from memo.cli_dream_passes import (
     _run_harvest_labels,
     _run_presynthesis,
     _run_prewarm_queries,
+    _run_proactive_refresh,
     _run_prune_floor,
     _run_roi_decay,
     _run_roi_reconcile,
@@ -51,6 +52,7 @@ from memo.cli_dream_passes import (
 from memo.config import Config
 from memo.dream_utils import (
     _corpus_fingerprint,
+    _iso_now,
     _make_progress,
     _state_path,
     acquire_dream_lock,
@@ -758,6 +760,19 @@ def dream_run(
             except Exception as exc:
                 receipt["errors"].append(f"hype: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[hype] [yellow]warn[/yellow]")
+
+        # Proactive — nightly candidate refresh (Task 11): reliability +
+        # continuity detectors repopulate proactive.db. Kind multipliers are
+        # derived on read (no write needed here). `_run_proactive_refresh` is
+        # internally guarded — failures land in receipt["errors"], never raise.
+        if flag_bool("MEMO_PROACTIVE_ENABLED"):
+            progress.update(step, description="[proactive] refreshing candidates...")
+            _run_proactive_refresh(mem, cfg.state_dir / "proactive.db", receipt, now=_iso_now())
+            _proactive_n = receipt.get("proactive", {}).get("candidates", 0)
+            progress.update(
+                step,
+                description=f"[proactive] [green]✓[/green]  {_proactive_n} candidates",
+            )
 
         _run_verbatim_pass(
             cfg,

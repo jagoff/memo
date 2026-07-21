@@ -904,6 +904,29 @@ def _run_roi_decay(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     return result
 
 
+def _run_proactive_refresh(
+    mem: Memory, db_path: Path, receipt: dict[str, Any], *, now: str
+) -> None:
+    """Nightly proactive-candidate refresh (Task 11).
+
+    Runs the reliability + continuity detectors via
+    `memo.proactive.engine.refresh_candidates` and repopulates the
+    `proactive_candidates` table in the store at `db_path`. Kind multipliers
+    are derived on read (no write needed here). Guarded: on failure, appends
+    to `receipt["errors"]` — never sinks the dream receipt. Caller gates this
+    behind `MEMO_PROACTIVE_ENABLED`.
+    """
+    try:
+        from memo.proactive.engine import refresh_candidates
+        from memo.proactive.store import ProactiveStore
+
+        n = refresh_candidates(mem, ProactiveStore(db_path), now=now)
+        receipt["proactive"] = {"candidates": n}
+    except Exception as exc:
+        receipt["errors"].append(f"proactive: {type(exc).__name__}: {exc}")
+        _log.warning("proactive refresh pass failed: %s", exc)
+
+
 def _render_run_summary(receipt: dict[str, Any], dry_run: bool) -> None:
     """Human-readable summary of a dream run (the non-JSON output path)."""
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
