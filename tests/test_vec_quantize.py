@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from memo.errors import StorageError
 from memo.sqlite_compat import import_sqlite_vec
 from memo.store import VecStore
 
@@ -118,24 +117,34 @@ def test_int8_dequant_roundtrip_is_unit_norm(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# DDL-derived guard: a precision mismatch at open raises (both directions)    #
+# DDL-derived guard: a precision mismatch at open ADOPTS the on-disk dtype    #
+# instead of raising, so a changed configured default never breaks an        #
+# existing index (both directions).                                          #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     ("built", "reopened"),
     [("off", "int8"), ("int8", "off")],
 )
-def test_quant_mismatch_open_raises(
+def test_existing_index_adopts_on_disk_precision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built: str, reopened: str
 ) -> None:
-    # A real (non-stub) model + no SKIP env so the guard is not bypassed.
+    # A real (non-stub) model + no SKIP env so the adoption path is not bypassed.
     monkeypatch.delenv("MEMO_SKIP_MODEL_VERSION_CHECK", raising=False)
     db = tmp_path / "vec.db"
     s = VecStore(db, dims=DIMS, embedder_model="realmodel", vec_quant=built)
     _row(s, "a", _unit(1, 0))
     s.close()
 
-    with pytest.raises(StorageError, match="storage precision mismatch"):
-        VecStore(db, dims=DIMS, embedder_model="realmodel", vec_quant=reopened)
+    # Reopen under a DIFFERENT configured quant than what's on disk — must not
+    # raise; the store adopts the on-disk dtype instead.
+    reopened_store = VecStore(db, dims=DIMS, embedder_model="realmodel", vec_quant=reopened)
+    try:
+        assert reopened_store.vec_quant == built
+        assert reopened_store._vec_table_dtype("vec") == built
+        hits = reopened_store.search(_unit(1, 0), limit=3)
+        assert any(h["id"] == "a" for h in hits)
+    finally:
+        reopened_store.close()
 
 
 def test_rebuild_flip_bypasses_guard_via_skip_env(
@@ -144,10 +153,24 @@ def test_rebuild_flip_bypasses_guard_via_skip_env(
     db = tmp_path / "vec.db"
     s = VecStore(db, dims=DIMS, embedder_model="realmodel", vec_quant="off")
     s.close()
-    # `memo reindex --rebuild` sets this so it can open a mismatched store.
+    # `memo reindex --rebuild` sets this so it can open a mismatched store —
+    # under SKIP, the configured quant is honoured (NOT adopted from disk) so
+    # the rebuild can flip precision.
     monkeypatch.setenv("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
     s2 = VecStore(db, dims=DIMS, embedder_model="realmodel", vec_quant="int8")
-    s2.close()  # no raise
+    try:
+        assert s2.vec_quant == "int8"  # config honoured, not adopted
+    finally:
+        s2.close()  # no raise
+
+
+def test_fresh_index_defaults_to_int8(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MEMO_VEC_QUANTIZE", raising=False)
+    s = VecStore(tmp_path / "fresh.db", dims=DIMS)
+    try:
+        assert s._vec_table_dtype("vec") == "int8"
+    finally:
+        s.close()
 
 
 # --------------------------------------------------------------------------- #

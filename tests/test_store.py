@@ -946,9 +946,10 @@ def test_vec_migration_snapshot_inside_tx(tmp_path: Path):
     from sqlite_vec import serialize_float32
 
     db = tmp_path / "vec.db"
-    store = VecStore(db, dims=4)
+    store = VecStore(db, dims=4, vec_quant="off")
     # Re-arm the migration: swap the migrated vec table for the OLD layout
-    # (no `type` metadata column) holding one row.
+    # (no `type` metadata column) holding one row. Raw float32 blobs below
+    # (serialize_float32) must match the store's own quant mode.
     store._conn.execute("DROP TABLE vec")
     store._conn.execute(
         "CREATE VIRTUAL TABLE vec USING vec0(id TEXT PRIMARY KEY, "
