@@ -7,7 +7,9 @@ Extracted from `_WriteOpsMixin` to keep each file under 800 lines.
 from __future__ import annotations
 
 import contextlib
+from typing import Any
 
+from memo.flags import flag_bool
 from memo.lifecycle import (
     FORGET_AFTER_KEY,
     FORGET_REASON_KEY,
@@ -117,6 +119,25 @@ class _DeleteOpsMixin(_MemoryBase):
         # them, else a later same-topic save would duplicate instead of update.
         stored_topic_key, stored_normalized_hash = self.store.get_dedup_keys(id_)
 
+        # On the HARD-delete path, store.delete() also wipes the user-signal
+        # tables (access counts, memory_health, source_feedback) — PRIMARY data
+        # absent from the .md that the upsert rollback below does NOT restore.
+        # Snapshot this id's signal rows first so a failed unlink can put them
+        # back. Soft-delete keeps the row (and its signal), so it needs none.
+        signal_backup: dict[str, list[dict[str, Any]]] | None = None
+        if not flag_bool("MEMO_SOFT_DELETE"):
+            with contextlib.suppress(Exception):
+                dumped = self.store.dump_signal()
+                signal_backup = {
+                    "access": [r for r in dumped.get("access", []) if r.get("id") == id_],
+                    "memory_health": [
+                        r for r in dumped.get("memory_health", []) if r.get("id") == id_
+                    ],
+                    "source_feedback": [
+                        r for r in dumped.get("source_feedback", []) if r.get("source_id") == id_
+                    ],
+                }
+
         # Step 1: drop the derived index row + edges first (reversible via reindex)
         existed = self.store.delete(id_)
         if not existed:
@@ -152,6 +173,14 @@ class _DeleteOpsMixin(_MemoryBase):
                     "topic_key": stored_topic_key,
                     "normalized_hash": stored_normalized_hash,
                 }
+                # Restore the wiped signal rows BEFORE re-seeding via upsert:
+                # upsert's `INSERT OR IGNORE` would otherwise plant default
+                # access/health rows that block the real values (merge_signal
+                # is newer-wins on health). Best-effort — the meta-row restore
+                # below is the load-bearing anti-data-loss step.
+                if signal_backup and any(signal_backup.values()):
+                    with contextlib.suppress(Exception):
+                        self.store.merge_signal(signal_backup)
                 if had_vector:
                     self.store.upsert(embedding=stored_embedding, **restore_kwargs)
                 else:

@@ -121,10 +121,34 @@ def _resolve_state_dir_uncached(src: Mapping[str, str], explicit: str | None) ->
     md_sd = storage_md.get("storage.state_dir")
     if md_sd:
         return str(md_sd)
-    has_legacy = bool(src.get("MEMO_VAULT_PATH")) or bool(src.get("MEMO_MEMORY_SUBDIR"))
+    # Legacy TOML `[storage]` section. Config.from_env folds it into the same
+    # has_storage_config gate (via `_file_config_values`) and honors its
+    # state_dir. Mirror both — otherwise a repo checkout carrying a legacy
+    # config.toml would wrongly fall to ./.memo-state and read the overlay from
+    # a dir Config never uses.
+    toml_storage: dict[str, Any] = {}
+    try:
+        from memo.setup.config_io import load_config_file
+
+        file_data = load_config_file()
+        if isinstance(file_data, dict):
+            raw = file_data.get("storage")
+            toml_storage = raw if isinstance(raw, dict) else {}
+    except (ImportError, OSError):  # unavailable/unreadable config — use defaults
+        toml_storage = {}
+    toml_sd = toml_storage.get("state_dir")
+    if toml_sd:
+        return str(toml_sd)
+    # Config.from_env: `has_legacy = "MEMO_VAULT_PATH" in os.environ or
+    # os.environ.get("MEMO_MEMORY_SUBDIR")` — an EXPORTED-but-empty
+    # MEMO_VAULT_PATH still counts (key presence, not truthiness). `src` is
+    # `os.environ` here (the hermeticity gate in `_resolve_state_dir` already
+    # rejected custom mappings), so mirror it exactly.
+    has_legacy = "MEMO_VAULT_PATH" in src or bool(src.get("MEMO_MEMORY_SUBDIR"))
+    has_storage_config = bool(storage_md) or bool(toml_storage)
     if (
         not has_legacy
-        and not storage_md
+        and not has_storage_config
         and (Path.cwd() / "src" / "memo" / "__init__.py").is_file()
     ):
         return str(Path.cwd() / ".memo-state")

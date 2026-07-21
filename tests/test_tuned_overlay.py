@@ -65,6 +65,61 @@ def test_overlay_values_fall_back_to_repo_state_dir(tmp_path: Path, monkeypatch)
         ov._state_dir_cache.clear()
 
 
+def test_overlay_repo_cwd_skipped_when_vault_path_exported_empty(tmp_path: Path, monkeypatch):
+    """An EXPORTED-but-empty MEMO_VAULT_PATH is key-present, which Config.from_env
+    treats as legacy config (opting OUT of repo-cwd mode). The overlay resolver
+    must mirror that (key presence, not truthiness) and use the default state
+    dir — not ./.memo-state — even inside a repo checkout."""
+    import os
+
+    import memo.config as config_mod
+
+    ov._state_dir_cache.clear()
+    (tmp_path / "src" / "memo").mkdir(parents=True)
+    (tmp_path / "src" / "memo" / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    default_sd = tmp_path / "default-state"
+    monkeypatch.setattr(config_mod, "_DEFAULT_STATE_DIR", default_sd)
+    monkeypatch.delenv("MEMO_STATE_DIR", raising=False)
+    monkeypatch.delenv("MEMO_MEMORY_SUBDIR", raising=False)
+    monkeypatch.setenv("MEMO_VAULT_PATH", "")  # exported empty → still legacy
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "empty-config"))
+    # A repo-cwd overlay must be IGNORED; the default-dir one is authoritative.
+    ov.write_overlay(tmp_path / ".memo-state", {"MEMO_RECALL_MIN_SIM": 0.42}, {})
+    ov.write_overlay(default_sd, {"MEMO_RECALL_MIN_SIM": 0.66}, {"set_by": "dream"})
+    try:
+        assert ov.overlay_values(os.environ)["MEMO_RECALL_MIN_SIM"] == "0.66"
+    finally:
+        ov._state_dir_cache.clear()
+
+
+def test_overlay_repo_cwd_skipped_by_legacy_toml_storage(tmp_path: Path, monkeypatch):
+    """A legacy config.toml `[storage]` section is Config.from_env's
+    has_storage_config — it opts out of repo-cwd mode AND provides the
+    state_dir. The overlay resolver must load the TOML and honor it, not fall
+    to ./.memo-state."""
+    import os
+
+    ov._state_dir_cache.clear()
+    (tmp_path / "src" / "memo").mkdir(parents=True)
+    (tmp_path / "src" / "memo" / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    toml_state = tmp_path / "toml-state"
+    config_toml = tmp_path / "config.toml"
+    config_toml.write_text(f'[storage]\nstate_dir = "{toml_state}"\n', encoding="utf-8")
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(config_toml))
+    monkeypatch.delenv("MEMO_STATE_DIR", raising=False)
+    monkeypatch.delenv("MEMO_VAULT_PATH", raising=False)
+    monkeypatch.delenv("MEMO_MEMORY_SUBDIR", raising=False)
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "empty-config"))
+    ov.write_overlay(tmp_path / ".memo-state", {"MEMO_RECALL_MIN_SIM": 0.42}, {})
+    ov.write_overlay(toml_state, {"MEMO_RECALL_MIN_SIM": 0.71}, {"set_by": "dream"})
+    try:
+        assert ov.overlay_values(os.environ)["MEMO_RECALL_MIN_SIM"] == "0.71"
+    finally:
+        ov._state_dir_cache.clear()
+
+
 def test_overlay_values_custom_env_without_state_dir_is_empty():
     """Custom env mappings (hermetic test contract) do NOT engage the
     machine-level fallback chain."""

@@ -45,9 +45,15 @@ def register(server: FastMCP, memory: Memory) -> None:
         from memo.time_machine import reconstruct
 
         snap = reconstruct(memory, as_of=as_of)
-        hits = snap.search(query, limit=limit, mode=mode)
         if type:
-            hits = [h for h in hits if h.type == type]
+            # Filter by type BEFORE applying `limit`: over-fetch a wider pool,
+            # keep the matching rows, then trim. Filtering after the limit
+            # would return fewer than `limit` hits whenever the top slots were
+            # spent on other-typed rows that then got discarded.
+            pool = snap.search(query, limit=limit * 4, mode=mode)
+            hits = [h for h in pool if h.type == type][:limit]
+        else:
+            hits = snap.search(query, limit=limit, mode=mode)
         return {
             "as_of": snap.as_of.isoformat(),
             "snapshot_size": len(snap),

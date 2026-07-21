@@ -702,20 +702,47 @@ class _WriteOpsMixin(_MemoryBase):
 
         if defer_embed:
             if not topic_key:
-                self.store.upsert_text_only(
-                    id_=record_id,
-                    path=rel_path,
-                    title=title,
-                    type_=type_,
-                    tags=norm_tags,
-                    created=created_iso,
-                    updated=now_iso,
-                    body_hash=body_hash,
-                    extra=extra_for_store,
-                    body_text=content,
-                    topic_key=topic_key,
-                    normalized_hash=normalized_hash,
-                )
+                try:
+                    self.store.upsert_text_only(
+                        id_=record_id,
+                        path=rel_path,
+                        title=title,
+                        type_=type_,
+                        tags=norm_tags,
+                        created=created_iso,
+                        updated=now_iso,
+                        body_hash=body_hash,
+                        extra=extra_for_store,
+                        body_text=content,
+                        topic_key=topic_key,
+                        normalized_hash=normalized_hash,
+                    )
+                except Exception as exc:
+                    # The .md is already on disk (embed-pending). A failed
+                    # text-only reservation must route through the SAME
+                    # recovery the topic_key path uses — stamp
+                    # `_memo_embed_pending`, best-effort text-only index, log
+                    # history + receipt — so the save is never silently lost.
+                    self._presence_bump_save()
+                    return self._save_index_pending(
+                        exc=exc,
+                        record_id=record_id,
+                        rel_path=rel_path,
+                        abs_path=abs_path,
+                        post=post,
+                        title=title,
+                        type_=type_,
+                        norm_tags=norm_tags,
+                        created_iso=created_iso,
+                        now_iso=now_iso,
+                        body_hash=body_hash,
+                        content=content,
+                        extra_for_store=extra_for_store,
+                        skip_memflow_receipt=skip_memflow_receipt,
+                        topic_key=topic_key,
+                        normalized_hash=normalized_hash,
+                        expected_disk_text=written_disk_text,
+                    )
             self._record_graph_entities_from_extra(
                 record_id=record_id,
                 created_iso=created_iso,
