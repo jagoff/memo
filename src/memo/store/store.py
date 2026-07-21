@@ -95,14 +95,16 @@ class VecStore(
         db_path: Path,
         dims: int = 1024,
         embedder_model: str = "",
-        vec_quant: str = "off",
+        vec_quant: str = "int8",
     ) -> None:
         self.db_path = db_path
         self.dims = dims
         self.embedder_model = embedder_model
         # vec0 storage precision for the main `vec` table. "off" = float32,
         # "int8" = int8 (1 B/dim) via vec_quantize_int8(...,'unit'). Baked into
-        # the vec0 column TYPE at DDL time, so it only takes effect on a rebuild.
+        # the vec0 column TYPE at DDL time, so it only takes effect on a rebuild
+        # (existing on-disk precision is adopted — see schema._validate_vec_quant —
+        # so this default only governs a brand-new `vec` table).
         self.vec_quant = vec_quant
         self._quant_int8 = vec_quant == "int8"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-07-21
+
+### Changed
+
+- **`MEMO_VEC_QUANTIZE` now defaults to `int8`** (was `off`). Fresh indexes are
+  created as `int8[dims]` (1 B/dim, ~4× smaller on disk and in the sync shard).
+  **Existing installs are never broken:** the store is now self-describing — it
+  adopts the on-disk `vec` precision, so a float32 index keeps working as
+  float32 under the new default (an INFO log notes the adoption). To move an
+  existing index to int8, run `memo reindex --rebuild` (which honors the
+  configured precision). Backward-compatible graduation of the dark flag shipped
+  in 3.9.0.
+
 ## [3.9.0] - 2026-07-21
 
 ### Added

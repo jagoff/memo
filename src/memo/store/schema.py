@@ -723,13 +723,19 @@ class _SchemaMixin(_StoreBase):
                 )
 
     def _validate_vec_quant(self) -> None:
-        """Guard the on-disk `vec` element dtype against the configured quant mode.
+        """Adopt the on-disk `vec` element dtype when it differs from config.
 
         DDL-derived (never a self-written stamp): the physical `vec` column type
-        is the source of truth. A float32 index opened under MEMO_VEC_QUANTIZE=int8
-        (or vice-versa) would bind the wrong SQL expression and corrupt vectors,
-        so raise before any read/write. Honours MEMO_SKIP_MODEL_VERSION_CHECK so
-        `memo reindex --rebuild` can open a mismatched store to rebuild it.
+        is the source of truth. MEMO_VEC_QUANTIZE's default governs FRESH
+        indexes only (a brand-new `vec` table is created at the configured
+        dtype by `_create_vec_tables` before this guard runs, so a fresh DB
+        never mismatches here). An EXISTING index built at a different
+        precision than the current config — e.g. a float32 install opened
+        after the default graduated to int8 — is never broken: this adopts
+        the on-disk precision instead of raising, so the configured default
+        only ever changes what a *new* index is built as. Honours
+        MEMO_SKIP_MODEL_VERSION_CHECK so `memo reindex --rebuild` can
+        intentionally flip an existing store's precision.
         """
         import os
 
@@ -740,17 +746,19 @@ class _SchemaMixin(_StoreBase):
             "yes",
             "on",
         }:
+            # Rebuild path: honour the configured self.vec_quant so
+            # replace_memory_index's quant_changed branch can flip it.
             return
         stored = self._vec_table_dtype("vec")
         if stored != self.vec_quant:
-            from ..errors import StorageError
-
-            raise StorageError(
-                f"vec storage precision mismatch: index `vec` table is "
-                f"{stored!r} but config expects MEMO_VEC_QUANTIZE={self.vec_quant!r}. "
-                f"Switching int8 <-> float32 changes the vec0 column type.\n"
-                f"Fix: Run 'memo reindex --rebuild' to rebuild `vec` at the new precision."
+            _log.info(
+                "adopting on-disk vec precision %r (configured %r); "
+                "run 'memo reindex --rebuild' to change it",
+                stored,
+                self.vec_quant,
             )
+            self.vec_quant = stored
+            self._quant_int8 = stored == "int8"
 
     def _ensure_schema_meta_table(self) -> None:
         """Create schema_meta if it does not exist (existing DBs predate it).
