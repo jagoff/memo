@@ -166,25 +166,28 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         normalized_hash: str | None = None,
     ) -> None:
         self._validate_embedding(id_, embedding)
-        with self._tx() as cx:
-            self._upsert_memory_row(
-                cx,
-                id_=id_,
-                path=path,
-                title=title,
-                type_=type_,
-                tags=tags,
-                created=created,
-                updated=updated,
-                body_hash=body_hash,
-                embedding=embedding,
-                extra=extra,
-                body_text=body_text,
-                topic_key=topic_key,
-                normalized_hash=normalized_hash,
-            )
-        # Dual-write to tantivy (outside the sqlite tx — separate index).
+        # Dual-write: the tantivy write lock spans the sqlite commit AND the
+        # tantivy write so concurrent same-id writers can't commit to sqlite
+        # in one order and index tantivy in the other (which would leave
+        # tantivy permanently serving the older version).
         with self._tantivy_write_lock:
+            with self._tx() as cx:
+                self._upsert_memory_row(
+                    cx,
+                    id_=id_,
+                    path=path,
+                    title=title,
+                    type_=type_,
+                    tags=tags,
+                    created=created,
+                    updated=updated,
+                    body_hash=body_hash,
+                    embedding=embedding,
+                    extra=extra,
+                    body_text=body_text,
+                    topic_key=topic_key,
+                    normalized_hash=normalized_hash,
+                )
             tantivy = self._get_tantivy()
             if tantivy is not None:
                 try:
@@ -225,47 +228,50 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         """
         self._validate_embedding(id_, embedding)
         replaced_id: str | None = None
-        with self._tx() as cx:
-            owner = cx.execute(
-                "SELECT id FROM meta WHERE path = ?",
-                (path,),
-            ).fetchone()
-            if owner is not None and str(owner["id"]) != id_:
-                replaced_id = str(owner["id"])
-                if replaced_id != stale_id:
-                    raise RuntimeError(
-                        f"path owner changed during reindex: {path!r} "
-                        f"({stale_id[:8]} -> {replaced_id[:8]})"
-                    )
-                cx.execute("DELETE FROM meta WHERE id = ?", (replaced_id,))
-                cx.execute("DELETE FROM vec WHERE id = ?", (replaced_id,))
-                cx.execute("DELETE FROM fts WHERE id = ?", (replaced_id,))
-                cx.execute("DELETE FROM access WHERE id = ?", (replaced_id,))
-                cx.execute("DELETE FROM memory_health WHERE id = ?", (replaced_id,))
-                cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (replaced_id,))
-                cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (replaced_id,))
-            self._upsert_memory_row(
-                cx,
-                id_=id_,
-                path=path,
-                title=title,
-                type_=type_,
-                tags=tags,
-                created=created,
-                updated=updated,
-                body_hash=body_hash,
-                embedding=embedding,
-                extra=extra,
-                body_text=body_text,
-                topic_key=topic_key,
-                normalized_hash=normalized_hash,
-            )
-            cx.execute(
-                "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
-                (verification_state, verified_at, id_),
-            )
-
+        # Lock spans sqlite commit + tantivy write — see upsert().
         with self._tantivy_write_lock:
+            with self._tx() as cx:
+                owner = cx.execute(
+                    "SELECT id FROM meta WHERE path = ?",
+                    (path,),
+                ).fetchone()
+                if owner is not None and str(owner["id"]) != id_:
+                    replaced_id = str(owner["id"])
+                    if replaced_id != stale_id:
+                        raise RuntimeError(
+                            f"path owner changed during reindex: {path!r} "
+                            f"({stale_id[:8]} -> {replaced_id[:8]})"
+                        )
+                    cx.execute("DELETE FROM meta WHERE id = ?", (replaced_id,))
+                    cx.execute("DELETE FROM vec WHERE id = ?", (replaced_id,))
+                    cx.execute("DELETE FROM fts WHERE id = ?", (replaced_id,))
+                    cx.execute("DELETE FROM access WHERE id = ?", (replaced_id,))
+                    cx.execute("DELETE FROM memory_health WHERE id = ?", (replaced_id,))
+                    cx.execute(
+                        "DELETE FROM source_feedback_vec WHERE source_id = ?", (replaced_id,)
+                    )
+                    cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (replaced_id,))
+                self._upsert_memory_row(
+                    cx,
+                    id_=id_,
+                    path=path,
+                    title=title,
+                    type_=type_,
+                    tags=tags,
+                    created=created,
+                    updated=updated,
+                    body_hash=body_hash,
+                    embedding=embedding,
+                    extra=extra,
+                    body_text=body_text,
+                    topic_key=topic_key,
+                    normalized_hash=normalized_hash,
+                )
+                cx.execute(
+                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
+                    (verification_state, verified_at, id_),
+                )
+
             tantivy = self._get_tantivy()
             if tantivy is not None:
                 try:
@@ -416,11 +422,15 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     (str(self.dims),),
                 )
 
-        try:
-            self._rebuild_tantivy_from_sqlite()
-        except Exception as exc:
-            _log.warning("tantivy rebuild failed after atomic sqlite replace: %s", exc)
-            self._mark_tantivy_unhealthy()
+        # Hold the write lock so per-row dual-writers can't interleave between
+        # the rebuild's fts SELECT and the tantivy rebuild (their doc would be
+        # wiped from tantivy while still present in sqlite/FTS5).
+        with self._tantivy_write_lock:
+            try:
+                self._rebuild_tantivy_from_sqlite()
+            except Exception as exc:
+                _log.warning("tantivy rebuild failed after atomic sqlite replace: %s", exc)
+                self._mark_tantivy_unhealthy()
         return previous_count
 
     def update_verification(
@@ -465,71 +475,71 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         This keeps CRUD and BM25 search usable on fresh installs or while
         models are downloading. A later `memo reindex` fills the missing vector.
         """
-        with self._tx() as cx:
-            if self._has_pattern_cols:
-                cx.execute(
-                    "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(id) DO UPDATE SET "
-                    "path=excluded.path, title=excluded.title, type=excluded.type, "
-                    "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                    "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash",
-                    (
-                        id_,
-                        path,
-                        title,
-                        type_,
-                        json.dumps(tags),
-                        created,
-                        updated,
-                        body_hash,
-                        json.dumps(extra, default=str) if extra is not None else None,
-                        topic_key,
-                        normalized_hash,
-                    ),
-                )
-            else:
-                cx.execute(
-                    "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(id) DO UPDATE SET "
-                    "path=excluded.path, title=excluded.title, type=excluded.type, "
-                    "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                    "deleted_at=NULL, extra_json=excluded.extra_json",
-                    (
-                        id_,
-                        path,
-                        title,
-                        type_,
-                        json.dumps(tags),
-                        created,
-                        updated,
-                        body_hash,
-                        json.dumps(extra, default=str) if extra is not None else None,
-                    ),
-                )
-            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
-            cx.execute(
-                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
-                (id_, title, " ".join(tags), body_text),
-            )
-            # Drop any stale vector — this method writes text-only, so a
-            # pre-existing vec row for the same id would make semantic search
-            # see the old body. Callers that later embed will re-insert via
-            # upsert() with the correct vector.
-            cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
-            # Seed signal rows so prune/eviction queries don't need COALESCE.
-            cx.execute(
-                "INSERT OR IGNORE INTO access (id, access_count, last_accessed) VALUES (?, 0, ?)",
-                (id_, updated),
-            )
-            cx.execute(
-                "INSERT OR IGNORE INTO memory_health (id, confidence, roi_score, updated_at) "
-                "VALUES (?, 1.0, 1.0, datetime('now'))",
-                (id_,),
-            )
-        # Dual-write to tantivy.
+        # Lock spans sqlite commit + tantivy write — see upsert().
         with self._tantivy_write_lock:
+            with self._tx() as cx:
+                if self._has_pattern_cols:
+                    cx.execute(
+                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(id) DO UPDATE SET "
+                        "path=excluded.path, title=excluded.title, type=excluded.type, "
+                        "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                        "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash",
+                        (
+                            id_,
+                            path,
+                            title,
+                            type_,
+                            json.dumps(tags),
+                            created,
+                            updated,
+                            body_hash,
+                            json.dumps(extra, default=str) if extra is not None else None,
+                            topic_key,
+                            normalized_hash,
+                        ),
+                    )
+                else:
+                    cx.execute(
+                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(id) DO UPDATE SET "
+                        "path=excluded.path, title=excluded.title, type=excluded.type, "
+                        "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                        "deleted_at=NULL, extra_json=excluded.extra_json",
+                        (
+                            id_,
+                            path,
+                            title,
+                            type_,
+                            json.dumps(tags),
+                            created,
+                            updated,
+                            body_hash,
+                            json.dumps(extra, default=str) if extra is not None else None,
+                        ),
+                    )
+                cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+                cx.execute(
+                    "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                    (id_, title, " ".join(tags), body_text),
+                )
+                # Drop any stale vector — this method writes text-only, so a
+                # pre-existing vec row for the same id would make semantic search
+                # see the old body. Callers that later embed will re-insert via
+                # upsert() with the correct vector.
+                cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                # Seed signal rows so prune/eviction queries don't need COALESCE.
+                cx.execute(
+                    "INSERT OR IGNORE INTO access (id, access_count, last_accessed) VALUES (?, 0, ?)",
+                    (id_, updated),
+                )
+                cx.execute(
+                    "INSERT OR IGNORE INTO memory_health (id, confidence, roi_score, updated_at) "
+                    "VALUES (?, 1.0, 1.0, datetime('now'))",
+                    (id_,),
+                )
             tantivy = self._get_tantivy()
             if tantivy is not None:
                 try:
@@ -673,46 +683,49 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         `Memory.update()` when only title/type/tags/extra changed and
         `body_hash` is unchanged — saves an embedder forward pass.
         Returns True if a row was updated."""
-        with self._tx() as cx:
-            cur = cx.execute(
-                "UPDATE meta SET title = ?, type = ?, tags = ?, updated = ?, extra_json = ? "
-                "WHERE id = ?",
-                (
-                    title,
-                    type_,
-                    json.dumps(tags),
-                    updated,
-                    json.dumps(extra, default=str) if extra is not None else None,
-                    id_,
-                ),
-            )
-            # Sync FTS title + tags only when the meta row was actually updated.
-            # Unconditional delete+insert would create a ghost FTS row for a
-            # non-existent id_ (rowcount 0 means no meta row matched).
-            body_text = ""
-            if cur.rowcount > 0:
-                existing = cx.execute(
-                    "SELECT body FROM fts WHERE id = ?",
-                    (id_,),
+        # Lock spans sqlite commit + tantivy write — see upsert().
+        with self._tantivy_write_lock:
+            with self._tx() as cx:
+                cur = cx.execute(
+                    "UPDATE meta SET title = ?, type = ?, tags = ?, updated = ?, extra_json = ? "
+                    "WHERE id = ?",
+                    (
+                        title,
+                        type_,
+                        json.dumps(tags),
+                        updated,
+                        json.dumps(extra, default=str) if extra is not None else None,
+                        id_,
+                    ),
+                )
+                # Sync FTS title + tags only when the meta row was actually updated.
+                # Unconditional delete+insert would create a ghost FTS row for a
+                # non-existent id_ (rowcount 0 means no meta row matched).
+                body_text = ""
+                if cur.rowcount > 0:
+                    existing = cx.execute(
+                        "SELECT body FROM fts WHERE id = ?",
+                        (id_,),
+                    ).fetchone()
+                    body_text = existing["body"] if existing else ""
+                    cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+                    cx.execute(
+                        "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                        (id_, title, " ".join(tags), body_text),
+                    )
+                # Sync vec.type — vec0 has no UPDATE, so delete + reinsert
+                existing_emb = cx.execute(
+                    "SELECT embedding FROM vec WHERE id = ?", (id_,)
                 ).fetchone()
-                body_text = existing["body"] if existing else ""
-                cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
-                cx.execute(
-                    "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
-                    (id_, title, " ".join(tags), body_text),
-                )
-            # Sync vec.type — vec0 has no UPDATE, so delete + reinsert
-            existing_emb = cx.execute("SELECT embedding FROM vec WHERE id = ?", (id_,)).fetchone()
-            if existing_emb is not None:
-                cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
-                cx.execute(
-                    "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
-                    (id_, existing_emb["embedding"], type_),
-                )
-            was_updated = cur.rowcount > 0
-        # Dual-write to tantivy (preserve existing body, just update title/tags).
-        if was_updated:
-            with self._tantivy_write_lock:
+                if existing_emb is not None:
+                    cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                    cx.execute(
+                        "INSERT INTO vec (id, embedding, type) VALUES (?, ?, ?)",
+                        (id_, existing_emb["embedding"], type_),
+                    )
+                was_updated = cur.rowcount > 0
+            # Dual-write to tantivy (preserve existing body, just update title/tags).
+            if was_updated:
                 tantivy = self._get_tantivy()
                 if tantivy is not None:
                     try:
@@ -875,6 +888,13 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         ).fetchall()
         return [{"id": r["id"], "path": r["path"]} for r in rows]
 
+    def _deleted_filter_sql(self) -> str:
+        """`" AND (deleted_at IS NULL OR deleted_at = '')"` when meta has the
+        soft-delete column, else "" (pre-migration DBs). Read surfaces append
+        this so soft-deleted tombstones never resurface as results."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
+        return " AND (deleted_at IS NULL OR deleted_at = '')" if "deleted_at" in cols else ""
+
     def chunks_by_parent(self, parent_path: str, limit: int = 3) -> list[dict[str, Any]]:
         """Newest chunks of one ingested note, by title (descending).
 
@@ -888,6 +908,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             f"SELECT {META_SELECT_COLUMNS} "
             "FROM meta "
             "WHERE json_extract(extra_json, '$.parent_path') = ? "
+            f"{self._deleted_filter_sql()} "
             "ORDER BY title DESC LIMIT ?",
             (parent_path, limit),
         ).fetchall()
@@ -895,7 +916,11 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
 
     def chunks_by_parent_id(self, parent_id: str) -> list[dict[str, Any]]:
         """All chunks whose extra_json contains the given parent_id.
-        Used by reindex to prune stale chunks without scanning every row."""
+        Used by reindex to prune stale chunks without scanning every row.
+
+        Deliberately INCLUDES soft-deleted rows: the live callers
+        (delete_ops / maintain_ops) cascade hard-deletes over stale chunks,
+        and a tombstoned chunk must still be reachable for that cleanup."""
         rows = self._conn.execute(
             f"SELECT {META_SELECT_COLUMNS} "
             "FROM meta "
@@ -916,6 +941,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             "WHERE json_extract(extra_json, '$.parent_path') = ? "
             "AND CAST(coalesce(json_extract(extra_json, '$.chunk_seq'), "
             "json_extract(extra_json, '$.chunk_index')) AS INTEGER) BETWEEN ? AND ? "
+            f"{self._deleted_filter_sql()} "
             "ORDER BY CAST(coalesce(json_extract(extra_json, '$.chunk_seq'), "
             "json_extract(extra_json, '$.chunk_index')) AS INTEGER) ASC",
             (parent_path, seq - before, seq + after),
@@ -940,16 +966,17 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             ex_sql = f" AND type NOT IN ({_ph})"
             ex_params = sorted(exclude_types)
         cols = META_SELECT_COLUMNS
+        del_sql = self._deleted_filter_sql()
         older = self._conn.execute(
             f"SELECT {cols} FROM meta "
             f"WHERE coalesce(julianday(created), -1e300) < julianday(?)"
-            f"{ex_sql} ORDER BY julianday(created) DESC LIMIT ?",
+            f"{ex_sql}{del_sql} ORDER BY julianday(created) DESC LIMIT ?",
             (created, *ex_params, before),
         ).fetchall()
         newer = self._conn.execute(
             f"SELECT {cols} FROM meta "
             f"WHERE coalesce(julianday(created), -1e300) > julianday(?)"
-            f"{ex_sql} ORDER BY julianday(created) ASC LIMIT ?",
+            f"{ex_sql}{del_sql} ORDER BY julianday(created) ASC LIMIT ?",
             (created, *ex_params, after),
         ).fetchall()
         return [_row_to_dict(r) for r in [*reversed(older), *newer]]
@@ -959,7 +986,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         json.dumps(list), so the quoted token is an exact-tag match)."""
         rows = self._conn.execute(
             f"SELECT {META_SELECT_COLUMNS} "
-            "FROM meta WHERE tags LIKE ? ORDER BY julianday(updated) DESC LIMIT ?",
+            f"FROM meta WHERE tags LIKE ?{self._deleted_filter_sql()} "
+            "ORDER BY julianday(updated) DESC LIMIT ?",
             (f'%"{tag}"%', limit),
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
@@ -1104,12 +1132,15 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         Returns the number of `meta` rows cleared. Use only for a full
         `reindex(rebuild=True)` — never per-row (that path is `delete()`).
         """
-        with self._tx() as cx:
-            n = cx.execute("SELECT COUNT(*) FROM meta").fetchone()[0]
-            cx.execute("DELETE FROM meta")
-            cx.execute("DELETE FROM vec")
-            cx.execute("DELETE FROM fts")
+        # Lock spans sqlite commit + tantivy clear — see upsert(). Otherwise a
+        # concurrent writer could commit sqlite between the two and have its
+        # tantivy doc wiped by the clear (present in sqlite, missing in tantivy).
         with self._tantivy_write_lock:
+            with self._tx() as cx:
+                n = cx.execute("SELECT COUNT(*) FROM meta").fetchone()[0]
+                cx.execute("DELETE FROM meta")
+                cx.execute("DELETE FROM vec")
+                cx.execute("DELETE FROM fts")
             tantivy = self._get_tantivy()
             if tantivy is not None:
                 try:
@@ -1150,16 +1181,17 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             import datetime
 
             now = datetime.datetime.now(datetime.UTC).isoformat()
-            with self._tx() as cx:
-                cur = cx.execute(
-                    "UPDATE meta SET deleted_at = ? WHERE id = ?",
-                    (now, id_),
-                )
-                existed = cur.rowcount > 0
-                cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
-                cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
-            if existed:
-                with self._tantivy_write_lock:
+            # Lock spans sqlite commit + tantivy write — see upsert().
+            with self._tantivy_write_lock:
+                with self._tx() as cx:
+                    cur = cx.execute(
+                        "UPDATE meta SET deleted_at = ? WHERE id = ?",
+                        (now, id_),
+                    )
+                    existed = cur.rowcount > 0
+                    cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                    cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+                if existed:
                     tantivy = self._get_tantivy()
                     if tantivy is not None:
                         try:
@@ -1171,17 +1203,18 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             return existed
 
         # Hard delete fallback (for old DBs without deleted_at)
-        with self._tx() as cx:
-            cur = cx.execute("DELETE FROM meta WHERE id = ?", (id_,))
-            existed = cur.rowcount > 0
-            cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
-            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
-            cx.execute("DELETE FROM access WHERE id = ?", (id_,))
-            cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
-            cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
-            cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
-        if existed:
-            with self._tantivy_write_lock:
+        # Lock spans sqlite commit + tantivy write — see upsert().
+        with self._tantivy_write_lock:
+            with self._tx() as cx:
+                cur = cx.execute("DELETE FROM meta WHERE id = ?", (id_,))
+                existed = cur.rowcount > 0
+                cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+                cx.execute("DELETE FROM access WHERE id = ?", (id_,))
+                cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
+                cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
+                cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
+            if existed:
                 tantivy = self._get_tantivy()
                 if tantivy is not None:
                     try:
@@ -1194,17 +1227,18 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
 
     def hard_delete(self, id_: str) -> bool:
         """Permanently delete a memory bypassing soft-delete (vacuum path)."""
-        with self._tx() as cx:
-            cur = cx.execute("DELETE FROM meta WHERE id = ?", (id_,))
-            existed = cur.rowcount > 0
-            cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
-            cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
-            cx.execute("DELETE FROM access WHERE id = ?", (id_,))
-            cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
-            cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
-            cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
-        if existed:
-            with self._tantivy_write_lock:
+        # Lock spans sqlite commit + tantivy write — see upsert().
+        with self._tantivy_write_lock:
+            with self._tx() as cx:
+                cur = cx.execute("DELETE FROM meta WHERE id = ?", (id_,))
+                existed = cur.rowcount > 0
+                cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+                cx.execute("DELETE FROM access WHERE id = ?", (id_,))
+                cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
+                cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
+                cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
+            if existed:
                 tantivy = self._get_tantivy()
                 if tantivy is not None:
                     try:
