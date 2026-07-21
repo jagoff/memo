@@ -10,7 +10,11 @@ Tests for:
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # ── L2: Streaming Compression ─────────────────────────────────────────────
 
@@ -124,8 +128,9 @@ def test_l2_l3_compatible() -> None:
     tokens = opt_sys.split()
     compressed = list(compress_token_stream(iter(tokens), config))
 
-    # Should not regress: both work together
-    assert len(compressed) >= 0
+    # Composition is lossless: L2 (default OFF) passes L3's output through unchanged
+    assert compressed == tokens
+    assert " ".join(compressed) == system_prompt
 
 
 # ── Measurement & Gating ──────────────────────────────────────────────────
@@ -133,15 +138,15 @@ def test_l2_l3_compatible() -> None:
 
 def test_baseline_script_syntactically_valid() -> None:
     """Measurement: scripts/wave2_token_baseline.py compiles."""
-    import pathlib
     import subprocess
+    import sys
 
-    script_path = pathlib.Path("/Users/fer/repos/memo/scripts/wave2_token_baseline.py")
-    if not script_path.exists():
-        pytest.skip("Baseline script not yet created")
+    script_path = REPO_ROOT / "scripts" / "wave2_token_baseline.py"
+    # Committed file: missing means the repo is broken — fail, don't skip.
+    assert script_path.exists(), f"Baseline script missing: {script_path}"
 
     result = subprocess.run(
-        ["python3", "-m", "py_compile", str(script_path)],
+        [sys.executable, "-m", "py_compile", str(script_path)],
         capture_output=True,
         text=True,
     )
@@ -150,13 +155,11 @@ def test_baseline_script_syntactically_valid() -> None:
 
 def test_gating_checklist_exists() -> None:
     """Measurement: Gating checklist doc mentions key gates."""
-    import pathlib
-
-    checklist_path = pathlib.Path(
-        "/Users/fer/repos/memo/docs/superpowers/plans/wave2_gating_checklist.md"
-    )
+    checklist_path = REPO_ROOT / "docs" / "superpowers" / "plans" / "wave2_gating_checklist.md"
+    # docs/superpowers/ is gitignored — the doc only exists on machines that
+    # carry it, so an honest skip (not a hardcoded-path silent skip) is correct.
     if not checklist_path.exists():
-        pytest.skip("Gating checklist not yet created")
+        pytest.skip("Gating checklist not present on this machine (docs/superpowers/ gitignored)")
 
     content = checklist_path.read_text()
     # Should mention key gate requirements

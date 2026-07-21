@@ -355,9 +355,17 @@ def _reflect_session(
     try:
         parsed = json.loads(raw_json)
     except json.JSONDecodeError:
+        parsed = None
+    if not isinstance(parsed, dict):
+        # Parse failure: do NOT stamp reflected_at — a stamped session is never
+        # reprocessed, so leave it eligible for retry on the next run.
         if debug:
             print(f"# memo reflect: JSON parse failed: {raw_json[:200]}", file=sys.stderr)
-        parsed = {}
+        return {
+            "status": "parse_error",
+            "session_id": session_id,
+            "error": f"LLM output is not a JSON object: {raw_json[:200]}",
+        }
 
     session_title = (parsed.get("session_title") or "").strip()
     arc_summary = (parsed.get("summary") or "").strip()
@@ -573,6 +581,9 @@ def reflect(
             return
         if status == "llm_error":
             console.print(f"[red]LLM error:[/red] {result.get('error')}")
+            sys.exit(1)
+        if status == "parse_error":
+            console.print(f"[red]parse error (will retry next run):[/red] {result.get('error')}")
             sys.exit(1)
         if status == "already_reflected":
             console.print(f"[dim]already reflected: {target_id[:8]}[/dim]")
