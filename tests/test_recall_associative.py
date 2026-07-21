@@ -160,10 +160,23 @@ def test_build_nudge_exception_returns_empty(monkeypatch):
     assert nudge == []
 
 
-def test_cli_related_json(tmp_path):
+def test_cli_related_json(tmp_path, monkeypatch):
+    import sqlite3
+
+    import pytest
     from click.testing import CliRunner
 
     from memo.cli import cli
+    from memo.cli_common import get_memory
+
+    connections = []
+
+    def tracked_get_memory(cfg):
+        memory = get_memory(cfg)
+        connections.append(memory.store.connection)
+        return memory
+
+    monkeypatch.setattr("memo.cli_related._get_memory", tracked_get_memory)
 
     env = {
         "MEMO_DATA_DIR": str(tmp_path / "d"),
@@ -177,6 +190,9 @@ def test_cli_related_json(tmp_path):
     res = CliRunner().invoke(cli, ["related", "nonexistent-x", "--json"], env=env)
     assert res.exit_code == 0
     assert res.output.strip().startswith("[")  # JSON list (empty on no data)
+    assert len(connections) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
 
 
 def test_build_nudge_skips_forgotten(monkeypatch):
