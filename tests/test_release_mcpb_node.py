@@ -129,6 +129,23 @@ def test_pin_chain_in_sync() -> None:
         )
 
 
+def test_bare_mcpb_pin_closes_linux_cpu_embedder_dependency() -> None:
+    """Both Linux-advertising MCPBs install the bare project pin."""
+    project = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf8"))["project"]
+    manifests = [
+        json.loads(path.read_text(encoding="utf8")) for path in (_PYTHON_MANIFEST, _NODE_MANIFEST)
+    ]
+    sentence_transformers = [
+        dependency
+        for dependency in project["dependencies"]
+        if dependency.startswith("sentence-transformers>=3.0")
+    ]
+
+    assert sentence_transformers == ["sentence-transformers>=3.0; sys_platform == 'linux'"]
+    assert project["optional-dependencies"]["cpu"] == []
+    assert all("linux" in manifest["compatibility"]["platforms"] for manifest in manifests)
+
+
 def _scaffold_repo(root: Path) -> Path:
     (root / "packaging" / "mcpb" / "server").mkdir(parents=True)
     (root / "packaging" / "mcpb" / "manifest.json").write_text('{"version": "1.2.3"}\n')

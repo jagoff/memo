@@ -47,6 +47,14 @@ def _feedback_recency_weight(
     return 0.5 ** (age_days / halflife_days)
 
 
+def _feedback_knob(value: float | None, name: str, default: float) -> float:
+    """Resolve a feedback knob without treating an explicit zero as missing."""
+    if value is not None:
+        return value
+    configured = flag_float(name)
+    return default if configured is None else configured
+
+
 def _state_decay_factor(memory_record: MemoryRecord) -> float:
     """Compute decay factor based on verification state + age.
 
@@ -290,22 +298,14 @@ class _RerankOpsMixin(_MemoryBase):
         """
         import json
 
-        from memo.flags import flag_float
-
         # Knobs live in the flags registry (typed + validated by `memo config
         # validate`); the registry defaults mirror the documented
         # 0.85 / 0.15 / 0.6. `flag_float` returns env-or-registry-default —
         # never raw os.environ (CLAUDE.md rule). Kwargs default to None so
         # resolution is: caller override > env flag > registry default.
-        if sim_threshold is None:
-            _flag = flag_float("MEMO_FEEDBACK_SIM_THRESHOLD")
-            sim_threshold = 0.85 if _flag is None else _flag
-        if boost_per_vote is None:
-            _flag = flag_float("MEMO_FEEDBACK_BOOST_PER_VOTE")
-            boost_per_vote = 0.15 if _flag is None else _flag
-        if boost_cap is None:
-            _flag = flag_float("MEMO_FEEDBACK_BOOST_CAP")
-            boost_cap = 0.6 if _flag is None else _flag
+        sim_threshold = _feedback_knob(sim_threshold, "MEMO_FEEDBACK_SIM_THRESHOLD", 0.85)
+        boost_per_vote = _feedback_knob(boost_per_vote, "MEMO_FEEDBACK_BOOST_PER_VOTE", 0.15)
+        boost_cap = _feedback_knob(boost_cap, "MEMO_FEEDBACK_BOOST_CAP", 0.6)
         # Temporal decay: a positive vote's boost fades with its age (half-life
         # MEMO_FEEDBACK_HALFLIFE_DAYS, default 180; 0 disables). Keeps recent
         # feedback authoritative without letting a year-old 👍 pin a stale

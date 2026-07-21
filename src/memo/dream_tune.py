@@ -226,6 +226,27 @@ def _regressed(live: dict[str, float], baseline: dict[str, float]) -> bool:
     )
 
 
+def _is_improved_change(
+    before: dict[str, float],
+    after: dict[str, float],
+    *,
+    value_before: float,
+    value_after: float,
+) -> bool:
+    """Whether a changed scalar improves precision/noise lexicographically."""
+    return value_after != value_before and (
+        after["precision_at_k"],
+        -after["noise_at_k"],
+    ) > (before["precision_at_k"], -before["noise_at_k"])
+
+
+def _save_knob_baseline(state_dir: Path, knob: str, metrics: dict[str, float]) -> None:
+    """Persist the matching offline baseline when the knob has one."""
+    saver = _KNOB_BASELINE_SAVERS.get(knob)
+    if saver is not None:
+        saver(state_dir, metrics)
+
+
 def run_tuning_pass(
     cfg: Any,
     mem: Any,
@@ -347,10 +368,12 @@ def run_tuning_pass(
         knob_results: dict[str, dict[str, Any]] = {}
         candidates: list[tuple[str, float, float, dict[str, float], dict[str, float]]] = []
 
-        min_sim_improved = best_floor != current and (
-            after["precision_at_k"],
-            -after["noise_at_k"],
-        ) > (before["precision_at_k"], -before["noise_at_k"])
+        min_sim_improved = _is_improved_change(
+            before,
+            after,
+            value_before=current,
+            value_after=best_floor,
+        )
         knob_results[_MIN_SIM] = {
             "value_before": current,
             "value_best": best_floor,
@@ -458,9 +481,7 @@ def run_tuning_pass(
                 "baseline_noise": w_after["noise_at_k"],
             },
         )
-        saver = _KNOB_BASELINE_SAVERS.get(knob)
-        if saver is not None:
-            saver(cfg.state_dir, w_after)
+        _save_knob_baseline(cfg.state_dir, knob, w_after)
         dream_tune_online.record_pending(
             cfg.state_dir,
             knob=knob,
@@ -824,6 +845,27 @@ def _overlay_params(state_dir: Path) -> dict[str, float]:
     }
 
 
+def _graph_weight_curated_gate(
+    cfg: Any,
+    mem: Any,
+    labels: LabelSet,
+    res: dict[str, Any],
+    *,
+    k: int,
+    current: float,
+    best_weight: float,
+    floor: float,
+) -> bool:
+    """Record the curated graph-weight comparison and return its verdict."""
+    curated = _curated_label_set(cfg.state_dir)
+    if curated is None:
+        return True
+    cur_before = measure_graph_weight(mem, curated, k=k, weight=current, floor=floor)
+    cur_after = measure_graph_weight(mem, curated, k=k, weight=best_weight, floor=floor)
+    res["curated"] = {"before": cur_before, "after": cur_after}
+    return not _regressed(cur_after, cur_before)
+
+
 def run_graph_weight_pass(
     cfg: Any,
     mem: Any,
@@ -889,22 +931,27 @@ def run_graph_weight_pass(
             }
         )
 
-        improved = (after["precision_at_k"], -after["noise_at_k"]) > (
-            before["precision_at_k"],
-            -before["noise_at_k"],
-        )
-        if not improved or best_weight == current:
+        if not _is_improved_change(
+            before,
+            after,
+            value_before=current,
+            value_after=best_weight,
+        ):
             res["status"] = "noop"
             return res
         # Curated no-regression gate — same bar as the rank knobs.
-        curated = _curated_label_set(cfg.state_dir)
-        if curated is not None:
-            cur_before = measure_graph_weight(mem, curated, k=k, weight=current, floor=floor)
-            cur_after = measure_graph_weight(mem, curated, k=k, weight=best_weight, floor=floor)
-            res["curated"] = {"before": cur_before, "after": cur_after}
-            if _regressed(cur_after, cur_before):
-                res["status"] = "curated_rejected"
-                return res
+        if not _graph_weight_curated_gate(
+            cfg,
+            mem,
+            labels,
+            res,
+            k=k,
+            current=current,
+            best_weight=best_weight,
+            floor=floor,
+        ):
+            res["status"] = "curated_rejected"
+            return res
         if dry_run:
             res["status"] = "would_apply"
             return res
@@ -1074,6 +1121,79 @@ def _live_retrieval_config(state_dir: Path) -> dict[str, Any]:
     return RETRIEVAL_CONFIGS[0]
 
 
+def _measure_retrieval_candidates(
+    mem: Any,
+    labels: LabelSet,
+    *,
+    k: int,
+    latency_budget_ms: float,
+) -> tuple[
+    list[tuple[dict[str, Any], dict[str, float]]],
+    list[str],
+    tuple[dict[str, Any], dict[str, float]],
+]:
+    """Measure all configs and select the best latency-eligible candidate."""
+    measured = []
+    for config in RETRIEVAL_CONFIGS:
+        metrics = measure_retrieval_config(
+            mem,
+            labels,
+            k=k,
+            mode=config["mode"],
+            flags=config["flags"],
+        )
+        measured.append((config, metrics))
+    eligible = [
+        (config, metrics)
+        for config, metrics in measured
+        if config["name"] == "vec" or metrics["latency_ms_p50"] <= latency_budget_ms
+    ]
+    latency_rejected = [
+        config["name"]
+        for config, metrics in measured
+        if config["name"] != "vec" and metrics["latency_ms_p50"] > latency_budget_ms
+    ]
+    best = max(
+        eligible,
+        key=lambda candidate: (
+            candidate[1]["precision_at_k"],
+            -candidate[1]["noise_at_k"],
+        ),
+    )
+    return measured, latency_rejected, best
+
+
+def _retrieval_curated_gate(
+    cfg: Any,
+    mem: Any,
+    best_cfg: dict[str, Any],
+    res: dict[str, Any],
+    *,
+    k: int,
+) -> bool:
+    """Record the curated retrieval comparison and return its verdict."""
+    curated = _curated_label_set(cfg.state_dir)
+    if curated is None:
+        return True
+    vec_cfg = RETRIEVAL_CONFIGS[0]
+    cur_before = measure_retrieval_config(
+        mem,
+        curated,
+        k=k,
+        mode=vec_cfg["mode"],
+        flags=vec_cfg["flags"],
+    )
+    cur_after = measure_retrieval_config(
+        mem,
+        curated,
+        k=k,
+        mode=best_cfg["mode"],
+        flags=best_cfg["flags"],
+    )
+    res["curated"] = {"before": cur_before, "after": cur_after}
+    return not _regressed(cur_after, cur_before)
+
+
 def run_graph_retrieval_pass(
     cfg: Any,
     mem: Any,
@@ -1119,30 +1239,19 @@ def run_graph_retrieval_pass(
                     res["restored"] = rolled
                     return res
 
-        measured = []
-        for c in RETRIEVAL_CONFIGS:
-            m = measure_retrieval_config(mem, labels, k=k, mode=c["mode"], flags=c["flags"])
-            measured.append((c, m))
+        measured, latency_rejected, (best_cfg, best) = _measure_retrieval_candidates(
+            mem,
+            labels,
+            k=k,
+            latency_budget_ms=latency_budget_ms,
+        )
         base = measured[0][1]
         res["baseline"] = base
         res["configs"] = [{"name": c["name"], **m} for c, m in measured]
 
         # Eligible = respects the latency budget. The baseline (plain vec) is
         # always eligible so we never get stuck with nothing to compare against.
-        eligible = [
-            (c, m)
-            for c, m in measured
-            if c["name"] == "vec" or m["latency_ms_p50"] <= latency_budget_ms
-        ]
-        res["latency_rejected"] = [
-            c["name"]
-            for c, m in measured
-            if c["name"] != "vec" and m["latency_ms_p50"] > latency_budget_ms
-        ]
-        best_cfg, best = max(
-            eligible,
-            key=lambda cm: (cm[1]["precision_at_k"], -cm[1]["noise_at_k"]),
-        )
+        res["latency_rejected"] = latency_rejected
         res["best"] = {"name": best_cfg["name"], **best}
 
         improved = (best["precision_at_k"], -best["noise_at_k"]) > (
@@ -1153,19 +1262,9 @@ def run_graph_retrieval_pass(
             res["status"] = "noop"
             return res
         # Curated no-regression gate — same bar as the rank knobs.
-        curated = _curated_label_set(cfg.state_dir)
-        if curated is not None:
-            vec_cfg = RETRIEVAL_CONFIGS[0]
-            cur_before = measure_retrieval_config(
-                mem, curated, k=k, mode=vec_cfg["mode"], flags=vec_cfg["flags"]
-            )
-            cur_after = measure_retrieval_config(
-                mem, curated, k=k, mode=best_cfg["mode"], flags=best_cfg["flags"]
-            )
-            res["curated"] = {"before": cur_before, "after": cur_after}
-            if _regressed(cur_after, cur_before):
-                res["status"] = "curated_rejected"
-                return res
+        if not _retrieval_curated_gate(cfg, mem, best_cfg, res, k=k):
+            res["status"] = "curated_rejected"
+            return res
         if dry_run:
             res["status"] = "would_apply"
             res["would_apply"] = best_cfg["name"]

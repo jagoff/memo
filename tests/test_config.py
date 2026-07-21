@@ -34,6 +34,7 @@ def test_from_env_picks_up_overrides(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "s"))
     monkeypatch.setenv("MEMO_LLM_MODEL", "mlx-community/My-Model-X")
+    monkeypatch.setenv("MEMO_LLM_REVISION", "a" * 40)
     monkeypatch.setenv("MEMO_SEARCH_DEFAULT_LIMIT", "5")
     cfg = Config.from_env()
     assert cfg.data_dir == (tmp_path / "d").resolve()
@@ -44,9 +45,9 @@ def test_from_env_picks_up_overrides(monkeypatch, tmp_path: Path):
 
 def test_from_env_picks_up_reranker_revision(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent-config.toml"))
-    monkeypatch.setenv("MEMO_RERANKER_REVISION", "9655b27")
+    monkeypatch.setenv("MEMO_RERANKER_REVISION", "9" * 40)
     cfg = Config.from_env()
-    assert cfg.reranker_revision == "9655b27"
+    assert cfg.reranker_revision == "9" * 40
 
 
 def test_model_profile_quality_sets_model_bundle(monkeypatch, tmp_path: Path):
@@ -65,6 +66,7 @@ def test_model_profile_allows_specific_env_override(monkeypatch, tmp_path: Path)
     monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "non-existent-config.toml"))
     monkeypatch.setenv("MEMO_MODEL_PROFILE", "quality")
     monkeypatch.setenv("MEMO_EMBEDDER_MODEL", "mlx-community/Custom-Embedding")
+    monkeypatch.setenv("MEMO_EMBEDDER_REVISION", "b" * 40)
     monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "1024")
     cfg = Config.from_env()
 
@@ -161,7 +163,9 @@ def test_markdown_model_specific_values_override_profile(monkeypatch, tmp_path: 
         "[models]\n"
         'model_profile = "quality"\n'
         'llm_model = "mlx-community/Custom-Chat"\n'
+        f'llm_revision = "{"c" * 40}"\n'
         'embedder_model = "mlx-community/Custom-Embedding"\n'
+        f'embedder_revision = "{"d" * 40}"\n'
         "embedder_dims = 1024\n"
         "```\n",
         encoding="utf-8",

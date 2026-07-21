@@ -218,8 +218,6 @@ def register(server: FastMCP, memory: Memory) -> None:
             first_line = text.strip().split("\n")[0][:80]
             title = first_line
 
-        memory._ensure_chat()
-
         try:
             rec = memory.save(content=text, title=title, type_="note")
         except WriteRefused as exc:

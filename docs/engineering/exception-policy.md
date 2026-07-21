@@ -33,3 +33,7 @@ Raw `os.environ.get("MEMO_*")` is allowed only for:
 Each allowed raw read is classified in `memo.dev_audit.RAW_MEMO_ENV_ALLOWED`.
 New raw reads must either use `memo.flags`, move into `Config`, or add a clear
 classification with a source comment.
+
+Broad exception sites are inventoried by file, lexical scope, and ordinal
+within that scope. This keeps the policy stable across formatting-only line
+changes while still rejecting additional broad handlers.

@@ -30,6 +30,9 @@
 **/.env.*
 **/.envrc
 **/__pycache__/
+# Generated/ignored mirror of the canonical force-included release assets.
+# Excluding it prevents duplicate wheel members in Docker build contexts.
+src/memo/agent_assets/
 **/*.db
 **/*.py[cdo]
 **/*.sqlite*

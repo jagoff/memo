@@ -135,6 +135,105 @@ def _run_calibration_pass(
     return receipt
 
 
+def _run_orientation_phase(mem: Any, receipt: dict[str, Any], progress: Any, step: Any) -> None:
+    """Render the pre-mutation inventory and surface best-effort failures."""
+    progress.update(step, description="[dim]orientation — inventorying corpus...[/dim]")
+    try:
+        orientation = _build_orientation(mem)
+        receipt["orientation"] = orientation
+        from rich.panel import Panel
+        from rich.table import Table
+
+        tbl = Table(show_header=False, box=None, padding=(0, 1))
+        tbl.add_column("", style="dim")
+        tbl.add_column("", justify="right")
+        tbl.add_row("total memories", str(orientation["total"]))
+        for memory_type, count in sorted(orientation["by_type"].items()):
+            tbl.add_row(f"  {memory_type}", str(count))
+        tbl.add_row("roi < 0.3", str(orientation["low_roi"]))
+        tbl.add_row("stale candidates (>365d)", str(orientation["stale_candidates"]))
+        tbl.add_row("open contradictions", str(orientation["open_contradictions"]))
+        tbl.add_row("unindexed entities", str(orientation["unindexed_entities"]))
+        console.print(Panel(tbl, title="[bold cyan]Pre-dream inventory[/bold cyan]", expand=False))
+    except Exception as exc:
+        receipt["errors"].append(f"orientation: {type(exc).__name__}: {exc}")
+
+
+def _run_signal_gather_phase(
+    cfg: Config,
+    *,
+    enabled: bool,
+    receipt: dict[str, Any],
+    progress: Any,
+    overall: Any,
+    step: Any,
+) -> None:
+    """Mine transcripts since the prior run and update progress/receipt."""
+    if not enabled:
+        progress.update(step, description="[0] signal gather [dim]skip[/dim]")
+        return
+
+    progress.update(step, description="[0] signal gather — mining transcripts...")
+    try:
+        ts_file = _state_path(cfg) / ".last_run_ts"
+        try:
+            last_ts = float(ts_file.read_text().strip())
+            # Exact fractional-day lookback from the last run, plus a ~30-min
+            # overlap so a transcript written around its finish is not missed.
+            since_days = max(0.001, (time.time() - last_ts) / 86400 + 0.02)
+        except Exception:
+            since_days = 7
+        gathered = _run_signal_gather(since_days=since_days, file_limit=20)
+        receipt["signal_gathered"] = gathered
+        if gathered.get("error"):
+            receipt["errors"].append(f"signal_gather: {gathered['error']}")
+        progress.update(
+            step,
+            description=(
+                f"[0] signal gather [green]✓[/green]  "
+                f"{gathered['files_processed']} files, {gathered['memories_saved']} saved"
+            ),
+        )
+    except Exception as exc:
+        receipt["errors"].append(f"signal_gather: {type(exc).__name__}: {exc}")
+        progress.update(step, description="[0] signal gather [yellow]warn[/yellow]")
+    progress.advance(overall)
+
+
+def _apply_convergence_guard(
+    mem: Any,
+    *,
+    force: bool,
+    dry_run: bool,
+    previous_fingerprint: str | None,
+    skip_maintain: bool,
+    skip_presynthesis: bool,
+    presynthesis_n: int,
+    receipt: dict[str, Any],
+    progress: Any,
+    overall: Any,
+    active_steps: int,
+) -> tuple[bool, int]:
+    """Apply the unchanged-corpus guard and reconcile the progress total."""
+    current_fingerprint = _corpus_fingerprint(mem)
+    saved = int(receipt["signal_gathered"].get("memories_saved", 0) or 0)
+    converged = check_convergence(force, dry_run, previous_fingerprint, current_fingerprint, saved)
+    if not converged:
+        return False, active_steps
+
+    receipt["converged"] = True
+    console.print(
+        "[dim]converged — corpus unchanged since last run; "
+        "skipping contradict / synthesize / consolidate.[/dim]"
+    )
+    convergence_skip = (4 if not skip_maintain else 0) + (
+        1 if not skip_presynthesis and presynthesis_n > 0 else 0
+    )
+    active_steps -= convergence_skip
+    progress.update(overall, total=active_steps)
+    return True, active_steps
+
+
 @click.group(name="dream")
 def dream_cmd() -> None:
     """Autonomous nightly maintenance — synthesise, heal, decay."""
@@ -266,81 +365,35 @@ def dream_run(
 
         # Orientation — read-only inventory before mutations -----------------
         if not skip_orientation:
-            progress.update(step, description="[dim]orientation — inventorying corpus...[/dim]")
-            try:
-                orientation = _build_orientation(mem)
-                receipt["orientation"] = orientation
-                from rich.panel import Panel
-                from rich.table import Table
-
-                tbl = Table(show_header=False, box=None, padding=(0, 1))
-                tbl.add_column("", style="dim")
-                tbl.add_column("", justify="right")
-                tbl.add_row("total memories", str(orientation["total"]))
-                for t, n in sorted(orientation["by_type"].items()):
-                    tbl.add_row(f"  {t}", str(n))
-                tbl.add_row("roi < 0.3", str(orientation["low_roi"]))
-                tbl.add_row("stale candidates (>365d)", str(orientation["stale_candidates"]))
-                tbl.add_row("open contradictions", str(orientation["open_contradictions"]))
-                tbl.add_row("unindexed entities", str(orientation["unindexed_entities"]))
-                console.print(
-                    Panel(tbl, title="[bold cyan]Pre-dream inventory[/bold cyan]", expand=False)
-                )
-            except Exception as exc:
-                receipt["errors"].append(f"orientation: {type(exc).__name__}: {exc}")
+            _run_orientation_phase(mem, receipt, progress, step)
 
         # Phase 0 — Signal gather: mine new transcripts since last dream run --
-        if not skip_signal_gather and not dry_run:
-            progress.update(step, description="[0] signal gather — mining transcripts...")
-            try:
-                ts_file = _state_path(cfg) / ".last_run_ts"
-                try:
-                    last_ts = float(ts_file.read_text().strip())
-                    # Exact fractional-day lookback from the last run (the miner
-                    # multiplies by 86400), plus a ~30-min overlap so a transcript
-                    # written around the last run's finish isn't missed. No more
-                    # day-rounding / +1 inflation that re-mined ~1-2 days each run.
-                    since_days = max(0.001, (time.time() - last_ts) / 86400 + 0.02)
-                except Exception:
-                    since_days = 7
-                sg = _run_signal_gather(since_days=since_days, file_limit=20)
-                receipt["signal_gathered"] = sg
-                if sg.get("error"):
-                    receipt["errors"].append(f"signal_gather: {sg['error']}")
-                progress.update(
-                    step,
-                    description=(
-                        f"[0] signal gather [green]✓[/green]  "
-                        f"{sg['files_processed']} files, {sg['memories_saved']} saved"
-                    ),
-                )
-            except Exception as exc:
-                receipt["errors"].append(f"signal_gather: {type(exc).__name__}: {exc}")
-                progress.update(step, description="[0] signal gather [yellow]warn[/yellow]")
-            progress.advance(overall)
-        else:
-            progress.update(step, description="[0] signal gather [dim]skip[/dim]")
+        _run_signal_gather_phase(
+            cfg,
+            enabled=not skip_signal_gather and not dry_run,
+            receipt=receipt,
+            progress=progress,
+            overall=overall,
+            step=step,
+        )
 
         # Convergence guard — if signal-gather added nothing and the corpus
         # fingerprint matches the last run, the heavy LLM passes (contradict /
         # synthesize / consolidate) would redo identical work. Skip them; a
         # re-run is then near-instant. `--force` overrides.
-        _cur_fp = _corpus_fingerprint(mem)
-        _sg_saved = int(receipt["signal_gathered"].get("memories_saved", 0) or 0)
-        _converged = check_convergence(force, dry_run, _prev_fp, _cur_fp, _sg_saved)
-        if _converged:
-            receipt["converged"] = True
-            console.print(
-                "[dim]converged — corpus unchanged since last run; "
-                "skipping contradict / synthesize / consolidate.[/dim]"
-            )
-            # Adjust the progress bar total so it doesn't stall: the maintain
-            # passes (4 advances) and presynthesis won't fire, so subtract them.
-            _convergence_skip = (4 if not skip_maintain else 0) + (
-                1 if not skip_presynthesis and _presynthesis_n > 0 else 0
-            )
-            active_steps -= _convergence_skip
-            progress.update(overall, total=active_steps)
+        _converged, active_steps = _apply_convergence_guard(
+            mem,
+            force=force,
+            dry_run=dry_run,
+            previous_fingerprint=_prev_fp,
+            skip_maintain=skip_maintain,
+            skip_presynthesis=skip_presynthesis,
+            presynthesis_n=_presynthesis_n,
+            receipt=receipt,
+            progress=progress,
+            overall=overall,
+            active_steps=active_steps,
+        )
 
         # Phase 0.5 — noise-quantile min_sim floor calibration, gated + reversible.
         # Runs BEFORE the min_sim tuner so a co-enabled tuner line-searches

@@ -18,6 +18,40 @@ from memo.server_common import run_synth
 _log = logging.getLogger(__name__)
 
 
+def _delete_synthesis(memory: Memory, id: str) -> dict[str, Any]:
+    """Delete a resolved synthesis memory without exposing generic deletion."""
+    from memo.errors import AmbiguousIdError, MemoError
+
+    try:
+        resolved = memory.resolve_id(id)
+    except AmbiguousIdError as exc:
+        return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+    if resolved is None:
+        return {"deleted": False, "reason": f"No memory found with id {id!r}"}
+
+    rec = memory.get(resolved)
+    if rec is None:
+        return {"deleted": False, "reason": f"No memory found with id {id!r}"}
+
+    if rec.type != "synthesis":
+        return {
+            "deleted": False,
+            "reason": (
+                f"Memory {resolved!r} has type={rec.type!r}, not 'synthesis'. "
+                "Use memo_delete to delete non-synthesis memories."
+            ),
+        }
+
+    try:
+        ok = memory.delete(resolved)
+    except MemoError as exc:
+        return {"deleted": False, "reason": str(exc)}
+
+    if ok:
+        return {"deleted": True, "id": resolved}
+    return {"deleted": False, "reason": f"Delete returned False for {resolved!r}"}
+
+
 def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **WRITE)
     async def memo_synthesize_run(
@@ -133,33 +167,9 @@ def register(server: FastMCP, memory: Memory) -> None:
             id: The ID (or unambiguous prefix) of the synthesis memory to delete.
 
         Returns:
-            {"deleted": True, "id": "<full-id>"} on success, or
-            {"deleted": False, "reason": "<reason>"} on failure.
+            {"deleted": True, "id": "<full-id>"} on success,
+            {"deleted": False, "reason": "<reason>"} on failure, or
+            {"error": "ambiguous", "prefix", "matches"} when the prefix
+            matches multiple records.
         """
-        from memo.errors import MemoError
-
-        resolved = memory.resolve_id(id)
-        if resolved is None:
-            return {"deleted": False, "reason": f"No memory found with id {id!r}"}
-
-        rec = memory.get(resolved)
-        if rec is None:
-            return {"deleted": False, "reason": f"No memory found with id {id!r}"}
-
-        if rec.type != "synthesis":
-            return {
-                "deleted": False,
-                "reason": (
-                    f"Memory {resolved!r} has type={rec.type!r}, not 'synthesis'. "
-                    "Use memo_delete to delete non-synthesis memories."
-                ),
-            }
-
-        try:
-            ok = memory.delete(resolved)
-        except MemoError as exc:
-            return {"deleted": False, "reason": str(exc)}
-
-        if ok:
-            return {"deleted": True, "id": resolved}
-        return {"deleted": False, "reason": f"Delete returned False for {resolved!r}"}
+        return _delete_synthesis(memory, id)

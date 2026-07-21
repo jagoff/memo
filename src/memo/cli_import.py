@@ -11,8 +11,32 @@ import click
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.import_export import ImportResult
 
 # -- import/export commands ------------------------------------------------------
+
+_ERROR_SAMPLE_MAX = 5
+
+
+def _report_import_result(result: ImportResult) -> None:
+    """Print the import summary; exit non-zero when any record errored.
+
+    Shows a short sample of the collected per-record error messages so a
+    failed migration is diagnosable (previously only `Errors: <count>` was
+    printed and the command still exited 0, silently green for scripts).
+    """
+    console.print("[green]Import complete[/green]")
+    console.print(f"Imported: {result.imported_count}")
+    console.print(f"Skipped: {result.skipped_count}")
+
+    if result.errors:
+        console.print(f"[yellow]Errors: {len(result.errors)}[/yellow]")
+        for err in result.errors[:_ERROR_SAMPLE_MAX]:
+            console.print(f"[yellow]  - {err}[/yellow]")
+        remaining = len(result.errors) - _ERROR_SAMPLE_MAX
+        if remaining > 0:
+            console.print(f"[yellow]  … and {remaining} more[/yellow]")
+        raise SystemExit(1)
 
 
 @click.group(name="import")
@@ -22,7 +46,7 @@ def import_group() -> None:
 
 
 @import_group.command(name="json")
-@click.argument("input_path", type=click.Path())
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--format", help="Format (json, csv, markdown_bundle)")
 def import_json(input_path: str, format: str | None) -> None:
     """Import from JSON file.
@@ -35,17 +59,11 @@ def import_json(input_path: str, format: str | None) -> None:
     from pathlib import Path
 
     result = mem.import_export.import_from(Path(input_path), format or "json")
-
-    console.print("[green]Import complete[/green]")
-    console.print(f"Imported: {result.imported_count}")
-    console.print(f"Skipped: {result.skipped_count}")
-
-    if result.errors:
-        console.print(f"[yellow]Errors: {len(result.errors)}[/yellow]")
+    _report_import_result(result)
 
 
 @import_group.command(name="csv")
-@click.argument("input_path", type=click.Path())
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False))
 def import_csv(input_path: str) -> None:
     """Import from CSV file.
 
@@ -57,13 +75,7 @@ def import_csv(input_path: str) -> None:
     from pathlib import Path
 
     result = mem.import_export.import_from(Path(input_path), "csv")
-
-    console.print("[green]Import complete[/green]")
-    console.print(f"Imported: {result.imported_count}")
-    console.print(f"Skipped: {result.skipped_count}")
-
-    if result.errors:
-        console.print(f"[yellow]Errors: {len(result.errors)}[/yellow]")
+    _report_import_result(result)
 
 
 @import_group.command(name="whatsapp")
@@ -223,7 +235,7 @@ def import_whatsapp(
 
 
 @import_group.command(name="markdown-bundle")
-@click.argument("input_path", type=click.Path())
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False))
 def import_markdown_bundle(input_path: str) -> None:
     """Import from Markdown bundle (zip).
 
@@ -235,13 +247,7 @@ def import_markdown_bundle(input_path: str) -> None:
     from pathlib import Path
 
     result = mem.import_export.import_from(Path(input_path), "markdown_bundle")
-
-    console.print("[green]Import complete[/green]")
-    console.print(f"Imported: {result.imported_count}")
-    console.print(f"Skipped: {result.skipped_count}")
-
-    if result.errors:
-        console.print(f"[yellow]Errors: {len(result.errors)}[/yellow]")
+    _report_import_result(result)
 
 
 # -- cold-start history importers (Codex / opencode / ChatGPT / Claude.ai) -------

@@ -9,11 +9,14 @@ Tests the hook infrastructure (Group 6):
 from __future__ import annotations
 
 import json
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import pytest
 
+from memo.capture import _hash_assistant
 from memo.capture_hooks import (
     _load_state,
     _load_watermark,
@@ -329,6 +332,213 @@ def test_run_capture_no_trigger_keywords(tmp_path: Path, monkeypatch):
     assert result["status"] == "no_trigger"
 
 
+def test_run_capture_same_session_concurrent_calls_extract_once(tmp_path: Path, monkeypatch):
+    """The Stop load/check/extract/stamp cycle is exclusive per session."""
+    _setup_env(tmp_path, monkeypatch)
+    transcript = tmp_path / "same-session.jsonl"
+    transcript.write_text("ignored\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "memo.capture_hooks._read_recent_exchanges",
+        lambda path, n: ("user", "decided to keep a durable concurrency invariant"),
+    )
+    monkeypatch.setattr("memo.capture_hooks._passes_prefilter", lambda text: True)
+
+    class FakeMemory:
+        def __init__(self, cfg):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", FakeMemory)
+
+    start = threading.Barrier(3)
+    entered = threading.Event()
+    release = threading.Event()
+    count_lock = threading.Lock()
+    extract_calls = 0
+
+    def fake_extract(*args, **kwargs):
+        nonlocal extract_calls
+        with count_lock:
+            extract_calls += 1
+            call_number = extract_calls
+        if call_number == 1:
+            entered.set()
+            assert release.wait(timeout=3)
+        return {"saved": [f"memory-{call_number}"], "save_failures": 0}
+
+    monkeypatch.setattr("memo.capture_hooks._extract_and_save", fake_extract)
+
+    def worker():
+        start.wait(timeout=3)
+        return run_capture(transcript)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(worker) for _ in range(2)]
+        start.wait(timeout=3)
+        assert entered.wait(timeout=3)
+        done, _ = wait(futures, timeout=3, return_when=FIRST_COMPLETED)
+        assert done
+        release.set()
+        results = [future.result(timeout=3) for future in futures]
+
+    assert extract_calls == 1
+    assert sorted(result["status"] for result in results) == ["locked", "ok"]
+
+
+def test_run_capture_cooldown_is_per_session(tmp_path: Path, monkeypatch):
+    """A recent save in session A must not throttle session B."""
+    _setup_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MEMO_CAPTURE_COOLDOWN_MIN", "30")
+    transcripts = [tmp_path / "session-a.jsonl", tmp_path / "session-b.jsonl"]
+    for transcript in transcripts:
+        transcript.write_text("ignored\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "memo.capture_hooks._read_recent_exchanges",
+        lambda path, n: ("user", f"decided durable behavior for {path.stem}"),
+    )
+    monkeypatch.setattr("memo.capture_hooks._passes_prefilter", lambda text: True)
+
+    class FakeMemory:
+        def __init__(self, cfg):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", FakeMemory)
+    monkeypatch.setattr(
+        "memo.capture_hooks._extract_and_save",
+        lambda *args, **kwargs: {"saved": ["memory-id"], "save_failures": 0},
+    )
+
+    assert run_capture(transcripts[0])["status"] == "ok"
+    assert run_capture(transcripts[1])["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    ("legacy_session_id", "expected_status"),
+    [(None, "ok"), ("other-session", "ok"), ("different-session", "cooldown")],
+)
+def test_run_capture_migrates_legacy_state_only_for_same_session(
+    tmp_path: Path,
+    monkeypatch,
+    legacy_session_id: str | None,
+    expected_status: str,
+):
+    """A matching legacy turn hash alone must never attribute session identity."""
+    state_dir = _setup_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MEMO_CAPTURE_COOLDOWN_MIN", "30")
+    transcript = tmp_path / "different-session.jsonl"
+    transcript.write_text("ignored\n", encoding="utf-8")
+    assistant = "decided to keep legacy capture state isolated by session identity"
+    legacy = {"last_hash": _hash_assistant(assistant), "last_save_ts": time.time()}
+    if legacy_session_id is not None:
+        legacy["session_id"] = legacy_session_id
+    _save_state(state_dir, legacy)
+    monkeypatch.setattr(
+        "memo.capture_hooks._read_recent_exchanges",
+        lambda path, n: ("user", assistant),
+    )
+    monkeypatch.setattr("memo.capture_hooks._passes_prefilter", lambda text: True)
+
+    class FakeMemory:
+        def __init__(self, cfg):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", FakeMemory)
+    extract_calls = 0
+
+    def extract_without_save(*args, **kwargs):
+        nonlocal extract_calls
+        extract_calls += 1
+        return {"saved": [], "save_failures": 0}
+
+    monkeypatch.setattr("memo.capture_hooks._extract_and_save", extract_without_save)
+
+    result = run_capture(transcript)
+    migrated = _load_state(state_dir, "different-session")
+
+    assert result["status"] == expected_status
+    if expected_status == "ok":
+        assert extract_calls == 1
+        assert "last_save_ts" not in migrated
+    else:
+        assert extract_calls == 0
+        assert migrated["last_save_ts"] == legacy["last_save_ts"]
+
+
+def test_run_capture_retries_after_save_failure(tmp_path: Path, monkeypatch):
+    """A failed save does not stamp hash/cooldown; the next Stop retries."""
+    _setup_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("MEMO_CAPTURE_COOLDOWN_MIN", "30")
+    transcript = tmp_path / "retry-session.jsonl"
+    transcript.write_text("ignored\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "memo.capture_hooks._read_recent_exchanges",
+        lambda path, n: ("user", "decided to retry transient capture write failures"),
+    )
+    monkeypatch.setattr("memo.capture_hooks._passes_prefilter", lambda text: True)
+
+    class FakeMemory:
+        def __init__(self, cfg):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", FakeMemory)
+    attempts = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return {"saved": [], "save_failures": 1}
+        return {"saved": ["memory-id"], "save_failures": 0}
+
+    monkeypatch.setattr("memo.capture_hooks._extract_and_save", fail_once)
+
+    first = run_capture(transcript)
+    second = run_capture(transcript)
+
+    assert first["status"] == "error"
+    assert second["status"] == "ok"
+    assert attempts == 2
+
+
+def test_run_capture_reports_partial_without_stamping(tmp_path: Path, monkeypatch):
+    """A mixed save result is explicit and remains retryable for dedup."""
+    _setup_env(tmp_path, monkeypatch)
+    transcript = tmp_path / "partial-session.jsonl"
+    transcript.write_text("ignored\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "memo.capture_hooks._read_recent_exchanges",
+        lambda path, n: ("user", "decided to retry every partially saved capture batch"),
+    )
+    monkeypatch.setattr("memo.capture_hooks._passes_prefilter", lambda text: True)
+
+    class FakeMemory:
+        def __init__(self, cfg):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", FakeMemory)
+    monkeypatch.setattr(
+        "memo.capture_hooks._extract_and_save",
+        lambda *args, **kwargs: {"saved": ["saved-before-failure"], "save_failures": 1},
+    )
+
+    assert run_capture(transcript)["status"] == "partial"
+    assert run_capture(transcript)["status"] == "partial"
+
+
 # ── Integration: run_capture_incremental ───────────────────────────────────
 
 
@@ -389,3 +599,73 @@ def test_run_capture_incremental_no_new_turns(tmp_path: Path, monkeypatch):
     result2 = run_capture_incremental(transcript, session_id, debug=False)
     assert result2["status"] == "no_new"
     assert result2["exchange_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("failed_saved", "expected_status"),
+    [([], "error"), (["saved-before-failure"], "partial")],
+)
+def test_run_capture_incremental_save_failure_does_not_advance_watermark_and_retries(
+    tmp_path: Path,
+    monkeypatch,
+    failed_saved: list[str],
+    expected_status: str,
+):
+    """Failed incremental batches remain retryable from the prior watermark."""
+    state_dir = _setup_env(tmp_path, monkeypatch)
+    transcript = tmp_path / "retryable.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "q1"}})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": "decided to keep failed incremental capture batches "
+                    "retryable because advancing their watermark would lose memories"
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("memo.capture_core._passes_prefilter", lambda text: True)
+
+    class FakeMemory:
+        def __init__(self, cfg):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.memory.Memory", FakeMemory)
+    attempts = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return {"saved": failed_saved, "save_failures": 1}
+        return {"saved": ["memory-id"], "save_failures": 0}
+
+    monkeypatch.setattr("memo.capture_hooks._extract_and_save", fail_once)
+    session_id = "sess-retryable"
+    clock = [1_000.0]
+    monkeypatch.setattr("memo.capture_hooks.time.time", lambda: clock[0])
+
+    first = run_capture_incremental(transcript, session_id)
+
+    assert first["status"] == expected_status
+    assert first["processed_turns"] == 1
+    assert _load_watermark(state_dir, session_id) == {}
+
+    throttled = run_capture_incremental(transcript, session_id)
+    assert throttled["status"] == "backoff"
+    assert attempts == 1
+
+    clock[0] += 61.0
+    second = run_capture_incremental(transcript, session_id)
+
+    assert second["status"] == "ok"
+    assert second["processed_turns"] == 1
+    assert attempts == 2
+    assert _load_watermark(state_dir, session_id)["exchange_count"] == 1

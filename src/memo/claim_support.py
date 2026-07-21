@@ -3,8 +3,9 @@
 An outcome claim ("works / fixed / shipped / faster / secure / tested") should
 carry a verifiable evidence ref (commit:/pr:/bench:/ci:/tests green). A claim
 with NO ref, or a `commit:<sha>` that does not exist locally, is 'unsupported'
-— the caller DOWNGRADES confidence (never drops the memory). Hedged or
-first-person-intent statements are exempt. No LLM, no MLX.
+— the caller quarantines it as `_uncertain` and DOWNGRADES confidence (never
+drops the memory). Hedged or first-person-intent statements are exempt. No LLM,
+no MLX.
 """
 
 from __future__ import annotations
@@ -29,6 +30,11 @@ _HEDGE_RE = re.compile(
     r"i guess|i'?m going to|i will|let'?s|we could|planning to|todo)\b",
     re.I,
 )
+_STRONG_CLAUSE_SPLIT_RE = re.compile(
+    r"(?:[.!?;]+|\n+|\s+[-\u2013\u2014]\s+|(?<!commit)(?<!bench)(?<!pr)(?<!ci):)",
+    re.I,
+)
+_COORDINATED_CLAUSE_SPLIT_RE = re.compile(r",+")
 
 # evidence refs
 _COMMIT_RE = re.compile(r"\bcommit:([0-9a-f]{7,40})\b", re.I)
@@ -59,18 +65,37 @@ def _commit_exists(sha: str, repo_root: Path | None) -> bool:
     return proc.returncode == 0
 
 
+def _find_claim_kind(text: str) -> tuple[str, bool]:
+    """Return the first unhedged outcome kind and whether any claim was hedged."""
+
+    saw_hedged = False
+    for strong_clause in _STRONG_CLAUSE_SPLIT_RE.split(text):
+        hedge_carries = False
+        for clause in _COORDINATED_CLAUSE_SPLIT_RE.split(strong_clause):
+            clause_kind = next(
+                (label for pattern, label in _CLAIM_PATTERNS if pattern.search(clause)),
+                "",
+            )
+            if not clause_kind:
+                hedge_carries = False
+                continue
+            if _HEDGE_RE.search(clause):
+                hedge_carries = True
+            if hedge_carries:
+                saw_hedged = True
+                continue
+            return clause_kind, saw_hedged
+    return "", saw_hedged
+
+
 def check_claim_support(text: str, *, repo_root: Path | None = None) -> ClaimSupportResult:
     """Classify an outcome claim's evidence. `unsupported=True` ⇒ caller downgrades."""
     if not text or not text.strip():
         return ClaimSupportResult(False, "", "empty")
-    if _HEDGE_RE.search(text):
-        return ClaimSupportResult(False, "", "hedged/first-person")
 
-    kind = ""
-    for pat, label in _CLAIM_PATTERNS:
-        if pat.search(text):
-            kind = label
-            break
+    kind, saw_hedged_claim = _find_claim_kind(text)
+    if not kind and saw_hedged_claim:
+        return ClaimSupportResult(False, "", "hedged/first-person")
     if not kind:
         return ClaimSupportResult(False, "", "no outcome claim")
 

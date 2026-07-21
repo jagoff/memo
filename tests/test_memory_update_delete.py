@@ -72,6 +72,21 @@ def test_delete_proceeds_when_md_already_missing(mem_with_stub: Memory):
     assert mem_with_stub.store.count() == 0
 
 
+def test_delete_succeeds_when_graph_cleanup_fails(mem_with_stub: Memory, monkeypatch):
+    """graph.drop_for_memoria runs after the point of no return (index dropped,
+    .md unlinked): a graph-sidecar failure (e.g. locked graph.db) must not make
+    the already-completed delete report failure. Edges are rebuildable via reindex."""
+    rec = mem_with_stub.save(content="borrar con grafo roto", title="X")
+
+    def _boom(*a, **k):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(mem_with_stub.graph, "drop_for_memoria", _boom)
+    assert mem_with_stub.delete(rec.id) is True
+    assert mem_with_stub.store.count() == 0
+    assert not (mem_with_stub.cfg.memory_dir / rec.path).is_file()
+
+
 def test_update_skips_reembed_for_pure_retag(mem_with_stub: Memory, monkeypatch):
     rec = mem_with_stub.save(content="cuerpo", title="orig", type_="note", tags=["x"])
     calls: list[int] = []
@@ -266,3 +281,28 @@ def test_memo_update_replace_params(mock_memory):
     assert bad["error"] == "edit_failed"
     half = tools["memo_update"](id=rec.id, replace_old="x")
     assert half["error"] == "replace_incomplete"
+
+
+def test_update_migrates_legacy_vault_copy(mem_with_stub: Memory):
+    """update() on a legacy vault-layout row must leave exactly ONE canonical
+    .md: the rewritten `memory_dir` copy. Regression: the stale `vault_path`
+    duplicate used to be left in place, resurrecting the pre-update body on a
+    later reindex."""
+    rec = mem_with_stub.save(content="legacy body", title="Legacy migrate")
+    canonical_path = mem_with_stub.cfg.memory_dir / rec.path
+    assert mem_with_stub.cfg.vault_path is not None
+    legacy_path = mem_with_stub.cfg.vault_path / rec.path
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical_path.replace(legacy_path)
+    assert not canonical_path.exists()
+
+    updated = mem_with_stub.update(rec.id, append="nuevo parrafo")
+    assert updated is not None
+    assert "nuevo parrafo" in updated.body
+    # New-layout file carries the new content; stale vault copy is gone.
+    assert canonical_path.is_file()
+    assert "nuevo parrafo" in canonical_path.read_text(encoding="utf-8")
+    assert not legacy_path.exists()
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert "nuevo parrafo" in fetched.body

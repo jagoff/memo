@@ -105,7 +105,7 @@ class _BM25QueriesMixin(_StoreBase):
         placeholders = ",".join("?" for _ in id_score)
         sql = (
             f"SELECT {_META_SELECT_COLUMNS} "  # noqa: S608
-            f"FROM meta WHERE id IN ({placeholders}) AND (deleted_at IS NULL OR deleted_at = '')"
+            f"FROM meta WHERE id IN ({placeholders}){self._deleted_filter_sql()}"
         )
         params: list[Any] = list(id_score.keys())
         if type_:
@@ -256,7 +256,7 @@ class _BM25QueriesMixin(_StoreBase):
         placeholders = ",".join("?" for _ in id_score)
         sql = (
             f"SELECT {_META_SELECT_COLUMNS} "  # noqa: S608
-            f"FROM meta WHERE id IN ({placeholders}) AND (deleted_at IS NULL OR deleted_at = '')"
+            f"FROM meta WHERE id IN ({placeholders}){self._deleted_filter_sql()}"
         )
         params: list[Any] = list(id_score.keys())
         if type_:
@@ -273,6 +273,15 @@ class _BM25QueriesMixin(_StoreBase):
             out.append(d)
         out.sort(key=lambda x: x["score"], reverse=True)
         return out[:limit]
+
+    def _deleted_filter_sql(self) -> str:
+        """`" AND (deleted_at IS NULL OR deleted_at = '')"` when meta has the
+        soft-delete column, else "" (pre-migration DBs where the deleted_at
+        ALTER was skipped, e.g. suppressed lock error). Same guard as
+        `count()` below; `_QueriesMixin` carries an identical definition for
+        its own read surfaces."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
+        return " AND (deleted_at IS NULL OR deleted_at = '')" if "deleted_at" in cols else ""
 
     def count(self) -> int:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}

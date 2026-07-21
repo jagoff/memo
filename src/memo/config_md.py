@@ -148,30 +148,42 @@ def _to_flag_string(env_name: str, raw: Any) -> str:
     return str(raw)
 
 
+def _coerce_flag_bool(text: str) -> bool:
+    low = text.strip().lower()
+    if low in _TRUE:
+        return True
+    if low in _FALSE:
+        return False
+    raise ValueError(f"expected a boolean (1/0/true/false), got {text!r}")
+
+
+def _validate_flag_range(spec: FlagSpec, value: int | float) -> int | float:
+    if spec.min_val is not None and value < spec.min_val:
+        raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {value}")
+    if spec.max_val is not None and value > spec.max_val:
+        raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {value}")
+    return value
+
+
+def _coerce_flag_choice(spec: FlagSpec, text: str) -> str:
+    value = text.strip().lower()
+    if value not in spec.choices:
+        allowed = ", ".join(spec.choices)
+        raise ValueError(f"expected one of: {allowed}, got {text!r}")
+    return value
+
+
 def _coerce_flag_value(spec: FlagSpec, raw: Any) -> Any:
     """Match ``memo.flags._coerce`` for a TOML value without importing flags."""
     text = str(raw)
     if spec.kind == "bool":
-        low = text.strip().lower()
-        if low in _TRUE:
-            return True
-        if low in _FALSE:
-            return False
-        raise ValueError(f"expected a boolean (1/0/true/false), got {text!r}")
+        return _coerce_flag_bool(text)
     if spec.kind == "int":
-        int_value = int(text.strip())
-        if spec.min_val is not None and int_value < spec.min_val:
-            raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {int_value}")
-        if spec.max_val is not None and int_value > spec.max_val:
-            raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {int_value}")
-        return int_value
+        return _validate_flag_range(spec, int(text.strip()))
     if spec.kind == "float":
-        float_value = float(text.strip())
-        if spec.min_val is not None and float_value < spec.min_val:
-            raise ValueError(f"{spec.name} must be >= {spec.min_val}, got {float_value}")
-        if spec.max_val is not None and float_value > spec.max_val:
-            raise ValueError(f"{spec.name} must be <= {spec.max_val}, got {float_value}")
-        return float_value
+        return _validate_flag_range(spec, float(text.strip()))
+    if spec.choices:
+        return _coerce_flag_choice(spec, text)
     return text
 
 

@@ -9,6 +9,74 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.8.1] - 2026-07-20
+
+### Security
+
+- Treat recalled memories, repository excerpts, and prompt overrides as untrusted
+  data in every ask path; immutable trust instructions are appended after
+  overrides and delimiter-like content is escaped.
+- Quarantine unsupported assistant outcome claims by default, recording claim
+  kind/reason and lowering confidence instead of silently promoting them to
+  durable fact.
+- Bound and pre-buffer every HTTP request body, reject incomplete/disconnected
+  requests before side effects, validate Unicode and chat payload depth/size,
+  and install the loopback Host/Origin guard in direct/reload no-auth workers.
+- Gate PyPI, GitHub Release, Docker, and MCP registry publication on the exact
+  tagged SHA passing static QA plus real Linux CPU and Apple Silicon MLX smoke
+  suites; PyPI also waits for successful GitHub Release creation.
+- Require HTTPS for remote benchmark judges (HTTP remains available only on
+  loopback) and reject redirects so bearer credentials cannot cross origins or
+  downgrade to plaintext.
+- Require HTTPS for benchmark dataset overrides as well, and reject redirect
+  downgrades; local datasets remain available through the explicit file option.
+- Resolve every shipped Hugging Face model through an audited 40-character
+  commit SHA before loading; unknown remote overrides now require an exact
+  inline or role-specific revision, while local model paths remain supported.
+
+### Fixed
+
+- Preserve Markdown/SQLite consistency when updates fail, including legacy
+  vault-only sources; serialize history reads and repair sync ordering so
+  backlogs larger than 1,000 events cannot skip the oldest entries.
+- Abort stale Git rebases without ever resuming them via `--skip`, preserve the
+  local commit, and skip pull/autostash after unrelated commit failures so
+  uncommitted Markdown cannot be lost.
+- Export complete corpora beyond 10,000 records and replace JSON, CSV, and ZIP
+  exports atomically.
+- Serialize backup creation, listing, and restore; publish compressed archives
+  atomically so readers never observe scratch directories or partial tarballs.
+- Make capture state and cooldowns per-session, serialize snapshot refreshes
+  across processes, keep failed captures retryable, and prevent duplicate Stop
+  hooks from extracting/saving twice. Incremental capture also retains its
+  watermark after partial or total save failure so the exchange can be retried,
+  with a separate retry backoff preventing repeated LLM work every few seconds.
+- Keep MCP read-only notification tools non-consuming, avoid loading MLX for
+  text-only saves, cancel timed-out sampling work, and preserve exact-boundary
+  offloaded payloads losslessly.
+- Make auto-update leases cross-process atomic and crash-safe with child-side
+  handoff, OS process identity, stale-start recovery, retryable persistence
+  failures, and process-group termination.
+- Close owned Memory, sqlite, socket, server, runner, and lock resources on
+  finite commands, normal daemon shutdown, constructor failures, registration
+  failures, bind failures, and early setup exceptions.
+- Reject invalid persisted MCP transports, profiles, ports, and flag choices;
+  remove silent profile fallback.
+- Install the CPU sentence-transformers backend for bare Linux distributions
+  and MCP bundles, while keeping MLX imports deferred. Restrict the dependency
+  marker and support claims to Linux because PyTorch has no Python 3.13 wheels
+  for Intel macOS.
+- Route recommended Linux uv/pipx installs and the release smoke through the
+  official PyTorch CPU wheel page, avoiding CUDA, Triton, and NVIDIA packages.
+- Pin the one-line installer to this release, preserve existing uv/pipx tools
+  when replacement installation fails, and remove destructive pre-uninstalls.
+
+### Changed
+
+- Refactored capture, configuration, release validation, server routing, and
+  update paths to keep the progressive complexity/exception quality budget
+  green without widening its baseline.
+
 ## [3.8.0] - 2026-07-20
 
 ### Added

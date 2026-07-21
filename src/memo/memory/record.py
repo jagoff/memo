@@ -10,8 +10,10 @@ imports only foundation modules, never the mixins or facade.
 
 from __future__ import annotations
 
+import base64
 import concurrent.futures as _futures
 import contextlib
+import hashlib
 import logging
 import re
 import threading
@@ -106,6 +108,49 @@ def is_reference_noise(body: str) -> bool:
     if "#" in stripped and re.search(r"^#{1,6}\s+\S", stripped, re.MULTILINE):
         return False  # markdown heading — keep
     return not _REFERENCE_LINK_RE.search(stripped)  # link/URL → keep; else noise
+
+
+def is_verified_offload_content(
+    body: str,
+    *,
+    type_: str,
+    tags: list[str],
+    extra: dict[str, Any],
+) -> bool:
+    """Whether body is a content-addressed offload payload with a valid SHA."""
+    expected_sha = extra.get("offload_sha256")
+    return (
+        type_ in REFERENCE_TYPES
+        and "offload" in {str(tag).strip().lower() for tag in tags}
+        and isinstance(expected_sha, str)
+        and hashlib.sha256(body.encode("utf-8")).hexdigest() == expected_sha
+    )
+
+
+def markdown_body(post: Any) -> str:
+    """Decode a lossless offload payload, or return the normal markdown body."""
+    parsed_body = str(post.content or "")
+    metadata = post.metadata or {}
+    raw_tags = metadata.get("tags") or []
+    tags = [raw_tags] if isinstance(raw_tags, str) else list(raw_tags)
+    extra = metadata.get("extra") or {}
+    if not isinstance(extra, dict) or extra.get("offload_payload_encoding") != "base64:utf-8:v1":
+        return parsed_body
+    encoded = extra.get("offload_payload_b64")
+    if not isinstance(encoded, str):
+        return parsed_body
+    try:
+        raw_body = base64.b64decode(encoded, validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return parsed_body
+    if is_verified_offload_content(
+        raw_body,
+        type_=str(metadata.get("type") or ""),
+        tags=tags,
+        extra=extra,
+    ):
+        return raw_body
+    return parsed_body
 
 
 SYNAPSE_BACKEND_NATIVE_SCHEMA = "synapse.backend_native.v1"
@@ -431,6 +476,11 @@ class MemoryRecord:
 
 def record_from_row(row: dict[str, Any], *, body: str = "") -> MemoryRecord:
     """Build a MemoryRecord from a store row dict (the `_row_to_dict` shape)."""
+    extra = dict(row.get("extra") or {})
+    if extra.get("offload_payload_encoding") == "base64:utf-8:v1":
+        extra.pop("offload_payload_encoding", None)
+        extra.pop("offload_payload_b64", None)
+
     # Extract verification state, defaulting to UNVERIFIED if not present (backward compatible)
     ver_state_str = row.get("verification_state", "unverified")
     try:
@@ -455,7 +505,7 @@ def record_from_row(row: dict[str, Any], *, body: str = "") -> MemoryRecord:
         created=row["created"],
         updated=row["updated"],
         body=body,
-        extra=row.get("extra") or {},
+        extra=extra,
         score=row.get("score"),
         verification_state=verification_state,
         verified_at=verified_at,

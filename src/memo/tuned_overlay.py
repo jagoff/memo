@@ -116,7 +116,7 @@ def _resolve_state_dir_uncached(src: Mapping[str, str], explicit: str | None) ->
         from memo.config_md import load_values
 
         storage_md = {k: v.value for k, v in load_values(src).items() if k.startswith("storage.")}
-    except Exception:  # markdown config unreadable — fall through to defaults
+    except (ImportError, OSError):  # unavailable/unreadable config — use defaults
         storage_md = {}
     md_sd = storage_md.get("storage.state_dir")
     if md_sd:

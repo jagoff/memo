@@ -2,7 +2,9 @@ from __future__ import annotations
 
 # These tests intentionally exercise rejection/acknowledgement of wildcard binds.
 # ruff: noqa: S104
+import asyncio
 import gc
+import json
 import stat
 import warnings
 
@@ -14,6 +16,14 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 _TOKEN = "test-token-" + ("x" * 32)
+_MAX_HTTP_REQUEST_BYTES = 1_048_576
+
+
+def _oversized_stream():
+    """Yield an oversized body without a Content-Length header."""
+
+    yield b"{"
+    yield b"x" * _MAX_HTTP_REQUEST_BYTES
 
 
 def test_http_auth_creates_private_token_and_rejects_missing_auth(
@@ -162,6 +172,124 @@ def test_shared_http_middleware_rate_limits_and_hardens_responses() -> None:
     assert first.headers["x-frame-options"] == "DENY"
 
 
+def test_mcp_protocol_rejects_oversized_declared_body() -> None:
+    from memo.http_auth import build_http_middleware
+
+    server = FastMCP("body-limit-test")
+    app = server.http_app(
+        middleware=build_http_middleware(),
+        json_response=True,
+        stateless_http=True,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+            content=b"x" * (_MAX_HTTP_REQUEST_BYTES + 1),
+        )
+
+    assert response.status_code == 413
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_mcp_protocol_rejects_oversized_chunked_body() -> None:
+    from memo.http_auth import build_http_middleware
+
+    server = FastMCP("body-limit-test")
+    app = server.http_app(
+        middleware=build_http_middleware(),
+        json_response=True,
+        stateless_http=True,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+            content=_oversized_stream(),
+        )
+
+    assert response.status_code == 413
+
+
+def test_request_limit_handles_pathological_numeric_content_length() -> None:
+    from memo.http_auth import RequestSizeLimitMiddleware
+
+    async def unreachable(_scope, _receive, _send) -> None:
+        pytest.fail("oversized request reached application")
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/",
+        "headers": [(b"content-length", b"9" * 5000)],
+    }
+    asyncio.run(RequestSizeLimitMiddleware(unreachable)(scope, receive, send))
+
+    assert sent[0]["status"] == 413
+
+
+def test_request_limit_does_not_invoke_app_after_partial_disconnect() -> None:
+    from memo.http_auth import RequestSizeLimitMiddleware
+
+    called = False
+
+    async def unreachable(_scope, _receive, _send) -> None:
+        nonlocal called
+        called = True
+
+    messages = iter(
+        [
+            {"type": "http.request", "body": b"partial", "more_body": True},
+            {"type": "http.disconnect"},
+        ]
+    )
+
+    async def receive() -> dict:
+        return next(messages)
+
+    async def send(_message: dict) -> None:
+        pytest.fail("a disconnected request must not produce a response")
+
+    scope = {"type": "http", "method": "POST", "path": "/", "headers": []}
+    asyncio.run(RequestSizeLimitMiddleware(unreachable)(scope, receive, send))
+
+    assert called is False
+
+
+def test_oversized_declared_requests_still_consume_rate_limit_quota() -> None:
+    from memo.http_auth import build_http_middleware
+
+    async def unreachable(_request) -> PlainTextResponse:
+        pytest.fail("oversized request reached application")
+
+    app = Starlette(
+        routes=[Route("/", unreachable, methods=["POST"])],
+        middleware=build_http_middleware(max_requests=1),
+    )
+    with TestClient(app) as client:
+        first = client.post("/", content=b"x" * (_MAX_HTTP_REQUEST_BYTES + 1))
+        second = client.post("/", content=b"x" * (_MAX_HTTP_REQUEST_BYTES + 1))
+
+    assert first.status_code == 413
+    assert second.status_code == 429
+
+
 @pytest.mark.parametrize(
     ("headers", "status_code"),
     [
@@ -267,11 +395,16 @@ def test_mcp_custom_chat_stream_requires_auth_but_health_stays_public(
         lambda *_args, **_kwargs: iter([{"event": "done", "answer": "private"}]),
     )
 
-    from memo.http_auth import build_mcp_auth, load_http_auth_config
+    from memo.http_auth import (
+        build_http_middleware,
+        build_mcp_auth,
+        load_http_auth_config,
+    )
     from memo.server import build_server
 
     auth = build_mcp_auth(load_http_auth_config(host="127.0.0.1"))
     app = build_server(memory=mock_memory, auth=auth).http_app(
+        middleware=build_http_middleware(),
         json_response=True,
         stateless_http=True,
     )
@@ -343,6 +476,180 @@ def test_mcp_custom_chat_stream_rejects_invalid_payloads(
     assert error in response.json()["error"]
 
 
+@pytest.mark.parametrize(
+    ("payload", "error"),
+    [
+        ({"question": "x" * 32_769}, "question is too large"),
+        (
+            {"question": "ok", "history": [{} for _ in range(129)]},
+            "history has too many items",
+        ),
+        (
+            {"question": "ok", "history": [{"content": "x" * 524_289}]},
+            "history is too large",
+        ),
+        (
+            {"question": "ok", "context": {"content": "x" * 262_145}},
+            "context is too large",
+        ),
+    ],
+)
+def test_mcp_custom_chat_stream_rejects_semantically_oversized_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+    payload,
+    error: str,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    calls: list[object] = []
+
+    def record_call(*args, **_kwargs):
+        calls.append(args)
+        return iter([{"event": "done", "answer": "should not run"}])
+
+    monkeypatch.setattr(mock_memory, "chat_ask_stream", record_call)
+
+    from memo.server import build_server
+
+    app = build_server(memory=mock_memory).http_app(json_response=True, stateless_http=True)
+    with TestClient(app) as client:
+        response = client.post("/chat/stream", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"] == error
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"question": "\ud800"},
+        {"question": "ok", "type": "\ud800"},
+        {"question": "ok", "history": [{"text": "\ud800"}]},
+        {"question": "ok", "context": {"text": "\ud800"}},
+    ],
+)
+def test_mcp_custom_chat_stream_rejects_invalid_unicode_before_memory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+    payload,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    calls: list[object] = []
+    monkeypatch.setattr(
+        mock_memory,
+        "chat_ask_stream",
+        lambda *args, **_kwargs: calls.append(args) or iter(()),
+    )
+
+    from memo.server import build_server
+
+    app = build_server(memory=mock_memory).http_app(json_response=True, stateless_http=True)
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat/stream",
+            headers={"Content-Type": "application/json"},
+            content=json.dumps(payload).encode("utf-8"),
+        )
+
+    assert response.status_code == 400
+    assert "invalid Unicode" in response.json()["error"]
+    assert not calls
+
+
+@pytest.mark.parametrize("field", ["history", "context"])
+def test_mcp_custom_chat_stream_rejects_deeply_nested_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+    field: str,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    calls: list[object] = []
+
+    def record_call(*args, **_kwargs):
+        calls.append(args)
+        return iter([{"event": "done", "answer": "should not run"}])
+
+    monkeypatch.setattr(mock_memory, "chat_ask_stream", record_call)
+    nested: dict[str, object] = {}
+    for _ in range(12):
+        nested = {"nested": nested}
+    payload = {"question": "ok", field: [nested] if field == "history" else nested}
+
+    from memo.server import build_server
+
+    app = build_server(memory=mock_memory).http_app(json_response=True, stateless_http=True)
+    with TestClient(app) as client:
+        response = client.post("/chat/stream", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"] == f"{field} is nested too deeply"
+    assert not calls
+
+
+def test_mcp_custom_chat_stream_rejects_oversized_declared_body(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        mock_memory,
+        "chat_ask_stream",
+        lambda *_args, **_kwargs: pytest.fail("oversized request reached memory"),
+    )
+
+    from memo.http_auth import build_http_middleware
+    from memo.server import build_server
+
+    app = build_server(memory=mock_memory).http_app(
+        middleware=build_http_middleware(),
+        json_response=True,
+        stateless_http=True,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat/stream",
+            headers={"Content-Type": "application/json"},
+            content=b"x" * (_MAX_HTTP_REQUEST_BYTES + 1),
+        )
+
+    assert response.status_code == 413
+
+
+def test_mcp_custom_chat_stream_rejects_oversized_chunked_body(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    mock_memory,
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        mock_memory,
+        "chat_ask_stream",
+        lambda *_args, **_kwargs: pytest.fail("oversized request reached memory"),
+    )
+
+    from memo.http_auth import build_http_middleware
+    from memo.server import build_server
+
+    app = build_server(memory=mock_memory).http_app(
+        middleware=build_http_middleware(),
+        json_response=True,
+        stateless_http=True,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat/stream",
+            headers={"Content-Type": "application/json"},
+            content=_oversized_stream(),
+        )
+
+    assert response.status_code == 413
+
+
 def test_mcp_custom_chat_stream_does_not_expose_exception_details(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -412,10 +719,13 @@ def test_mcp_main_rejects_unacknowledged_network_bind(
     monkeypatch.setattr(
         memo.flags,
         "flag_str",
-        lambda name: {"MEMO_MCP_TRANSPORT": "http", "MEMO_MCP_HOST": "0.0.0.0"}.get(name),
+        lambda name, **_kwargs: {
+            "MEMO_MCP_TRANSPORT": "http",
+            "MEMO_MCP_HOST": "0.0.0.0",
+        }.get(name),
     )
     monkeypatch.setattr(memo.flags, "flag_bool", lambda _name: False)
-    monkeypatch.setattr(memo.flags, "flag_int", lambda _name: 18768)
+    monkeypatch.setattr(memo.flags, "flag_int", lambda _name, **_kwargs: 18768)
     monkeypatch.setattr(server_module, "_start_background_tasks", lambda: ())
     monkeypatch.setattr(
         server_module,
@@ -441,13 +751,13 @@ def test_mcp_main_runs_http_with_shared_auth(
     monkeypatch.setattr(
         memo.flags,
         "flag_str",
-        lambda name: {
+        lambda name, **_kwargs: {
             "MEMO_MCP_TRANSPORT": "http",
             "MEMO_MCP_HOST": "127.0.0.1",
         }.get(name),
     )
     monkeypatch.setattr(memo.flags, "flag_bool", lambda _name: False)
-    monkeypatch.setattr(memo.flags, "flag_int", lambda _name: 18768)
+    monkeypatch.setattr(memo.flags, "flag_int", lambda _name, **_kwargs: 18768)
     monkeypatch.setattr(server_module, "_start_background_tasks", lambda: ())
     monkeypatch.setattr(server_module, "_ensure_idle_daemon", lambda: None)
     captured = {}
@@ -473,7 +783,10 @@ def test_mcp_main_runs_http_with_shared_auth(
         "port": 18768,
         "json_response": True,
     }
-    assert len(middleware) == 2
+    from memo.http_auth import RequestSizeLimitMiddleware
+
+    assert len(middleware) == 3
+    assert any(item.cls is RequestSizeLimitMiddleware for item in middleware)
 
 
 def test_mcp_main_installs_local_request_guard_when_auth_is_disabled(
@@ -487,7 +800,7 @@ def test_mcp_main_installs_local_request_guard_when_auth_is_disabled(
     monkeypatch.setattr(
         memo.flags,
         "flag_str",
-        lambda name: {
+        lambda name, **_kwargs: {
             "MEMO_MCP_TRANSPORT": "http",
             "MEMO_MCP_HOST": "127.0.0.1",
         }.get(name),
@@ -497,7 +810,7 @@ def test_mcp_main_installs_local_request_guard_when_auth_is_disabled(
         "flag_bool",
         lambda name: name == "MEMO_MCP_ALLOW_NO_AUTH",
     )
-    monkeypatch.setattr(memo.flags, "flag_int", lambda _name: 18768)
+    monkeypatch.setattr(memo.flags, "flag_int", lambda _name, **_kwargs: 18768)
     monkeypatch.setattr(server_module, "_start_background_tasks", lambda: ())
     monkeypatch.setattr(server_module, "_ensure_idle_daemon", lambda: None)
     captured = {}

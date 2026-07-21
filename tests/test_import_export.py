@@ -1,6 +1,7 @@
 """Tests for import/export module."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -140,6 +141,76 @@ def test_exporter_export_markdown_bundle(tmp_path, exporter, mock_memory):
     with zipfile.ZipFile(output_path, "r") as zf:
         assert len(zf.namelist()) >= 1
         assert any(f.endswith(".md") for f in zf.namelist())
+
+
+def test_exporter_fetches_complete_corpus_beyond_first_page(tmp_path):
+    record = SimpleNamespace(
+        id="record-id",
+        title="Title",
+        body="Body",
+        tags=[],
+        type="note",
+        created="2026-01-01T00:00:00Z",
+        updated="2026-01-01T00:00:00Z",
+    )
+
+    class PagedMemory:
+        def __init__(self):
+            self.records = [record] * 10001
+            self.requested_limits = []
+
+        def list(self, *, limit):
+            self.requested_limits.append(limit)
+            return self.records[:limit]
+
+    memory = PagedMemory()
+    output_path = tmp_path / "all.json"
+
+    result = Exporter(memory).export_json(output_path)
+
+    assert result.exported_count == 10001
+    assert len(json.loads(output_path.read_text(encoding="utf-8"))) == 10001
+    assert memory.requested_limits == [10000, 20000]
+
+
+def test_export_failure_preserves_previous_destination(tmp_path):
+    good = SimpleNamespace(
+        id="good",
+        title="Good",
+        body="complete",
+        tags=[],
+        type="note",
+        created="2026-01-01T00:00:00Z",
+        updated="2026-01-01T00:00:00Z",
+    )
+
+    class BrokenRecord:
+        id = "broken"
+        title = "Broken"
+        type = "note"
+        created = "2026-01-01T00:00:00Z"
+        updated = "2026-01-01T00:00:00Z"
+
+        def __init__(self):
+            self.tags = []
+
+        @property
+        def body(self):
+            raise OSError("forced export write failure")
+
+    class MemoryWithBrokenRecord:
+        def list(self, *, limit):
+            return [good, BrokenRecord()]
+
+    output_path = tmp_path / "export.csv"
+    previous = b"previous complete export\n"
+    output_path.write_bytes(previous)
+
+    with pytest.raises(OSError, match="forced export write failure"):
+        Exporter(MemoryWithBrokenRecord()).export_csv(output_path)
+
+    assert output_path.read_bytes() == previous
+    assert not list(tmp_path.glob(f".{output_path.name}.*.tmp"))
 
 
 def test_import_export_manager_init(import_export_manager):

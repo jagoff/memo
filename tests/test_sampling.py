@@ -207,6 +207,116 @@ def test_make_bridge_caps_max_tokens():
     assert captured["max_tokens"] == 100
 
 
+def test_make_bridge_cancels_timed_out_sample_before_fallback_completes(monkeypatch):
+    import asyncio
+    import threading
+
+    from memo.sampling import make_bridge
+
+    completions: list[str] = []
+    started = threading.Event()
+
+    original_schedule = asyncio.run_coroutine_threadsafe
+
+    class _TimedOutFuture:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def result(self, timeout):
+            assert started.wait(timeout=1.0)
+            raise TimeoutError
+
+        def done(self):
+            return self.inner.done()
+
+        def cancel(self):
+            return self.inner.cancel()
+
+    def _schedule(coroutine, loop):
+        return _TimedOutFuture(original_schedule(coroutine, loop))
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", _schedule)
+
+    class _FakeCtx:
+        def __init__(self) -> None:
+            self.release = asyncio.Event()
+            self.cancelled = threading.Event()
+
+        async def sample(self, *args, **kwargs):
+            started.set()
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled.set()
+                raise
+            completions.append("client")
+            return type("Result", (), {"text": "TOO LATE"})()
+
+    class _Fallback:
+        def chat(self, model, messages, options=None):
+            completions.append("fallback")
+            return {"message": {"content": "FALLBACK"}}
+
+    async def _run() -> None:
+        ctx = _FakeCtx()
+        bridge = make_bridge(ctx, loop=asyncio.get_running_loop(), timeout_s=1.0, max_tokens=10)
+        router = SamplingChat(lambda: _Fallback())
+        state = SamplingState(sampler=bridge, calls_left=1)
+
+        with sampling_scope(state):
+            result = await asyncio.to_thread(
+                router.chat,
+                "model",
+                [{"role": "user", "content": "question"}],
+            )
+
+        assert result == {"message": {"content": "FALLBACK"}}
+        assert await asyncio.to_thread(ctx.cancelled.wait, 1.0)
+        ctx.release.set()
+        await asyncio.sleep(0)
+        assert completions == ["fallback"]
+
+    asyncio.run(_run())
+
+
+def test_make_bridge_does_not_cancel_successful_future(monkeypatch):
+    import asyncio
+
+    from memo.sampling import make_bridge
+
+    class _Result:
+        text = "DONE"
+
+    class _CompletedFuture:
+        cancel_calls = 0
+
+        def result(self, timeout):
+            return _Result()
+
+        def done(self):
+            return True
+
+        def cancel(self):
+            self.cancel_calls += 1
+
+    future = _CompletedFuture()
+
+    def _schedule(coroutine, loop):
+        coroutine.close()
+        return future
+
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", _schedule)
+
+    class _FakeCtx:
+        async def sample(self, *args, **kwargs):  # pragma: no cover - closed by scheduler stub
+            return _Result()
+
+    sampler = make_bridge(_FakeCtx(), loop=object(), timeout_s=1.0, max_tokens=10)
+
+    assert sampler([{"role": "user", "content": "question"}], {}) == "DONE"
+    assert future.cancel_calls == 0
+
+
 def test_state_from_ctx_none_when_flag_off(monkeypatch):
     from memo.sampling import state_from_ctx
 
@@ -280,7 +390,7 @@ def test_ensure_chat_returns_router_when_flag_on(tmp_cfg, monkeypatch):
 def test_ensure_chat_mlx_path_when_flag_off(tmp_cfg, monkeypatch):
     monkeypatch.delenv("MEMO_SAMPLING_SYNTH_ENABLED", raising=False)
     monkeypatch.setattr("memo.platform_detect.mlx_available", lambda: True)
-    monkeypatch.setattr("memo.llm.MLXChat.__init__", lambda self: None)
+    monkeypatch.setattr("memo.llm.MLXChat.__init__", lambda self, *args, **kwargs: None)
     mem = _mem(tmp_cfg, monkeypatch)
     try:
         chat = mem._ensure_chat()

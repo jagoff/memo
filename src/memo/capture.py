@@ -23,10 +23,11 @@ Stop event
 
 ## State file
 
-`~/.local/share/memo/last-capture.json` tracks the hash of the last
-processed assistant message so re-firing on the same turn (e.g. the
-user runs `/clear` mid-stream, or two Stop hooks race) doesn't
-double-extract.
+`~/.local/share/memo/.capture_stop/<session_id>.json` tracks the hash and
+cooldown of the last processed assistant message per session. A matching
+per-session non-blocking lock covers the complete Stop cycle so re-firing on
+the same turn (e.g. `/clear` or concurrent hooks) cannot double-extract. The
+legacy global `last-capture.json` is migrated only when it names the same session.
 
 ## Why dedup with the embedder, not the title
 
@@ -38,9 +39,10 @@ genuinely-distinct memories score below 0.75 even on the same topic.
 
 ## Failure modes
 
-All swallowed silently. Capture is opportunistic — a hook that fails
-to extract is no worse than the pre-Phase-B world. Exception: if the
-user explicitly sets `MEMO_CAPTURE_DEBUG=1`, errors print to stderr.
+Capture is opportunistic. Candidate save failures are counted and returned as
+an explicit `error`/`partial` result without stamping the turn, allowing the
+next Stop to retry; already-saved candidates are handled by normal dedup.
+Debug details print only when `MEMO_CAPTURE_DEBUG=1`.
 """
 
 # Core capture logic

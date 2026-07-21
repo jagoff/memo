@@ -517,12 +517,17 @@ def maintain_cmd(
                             target, superseded_by=decision.dominant_id
                         )
                     )
-                    if ok:
-                        mem.contradict_store.resolve(
-                            pair.pair_id,
-                            "kept_newer",
-                            note=f"auto: {action}d {target} — {decision.reason}",
-                        )
+                    if not ok:
+                        # Mutation failed (e.g. target vanished concurrently):
+                        # pair stays open — don't record it as superseded, or
+                        # `memo maintain undo` chases ids that were never moved.
+                        receipt["errors"].append(f"supersede: {action} failed for {target}")
+                        continue
+                    mem.contradict_store.resolve(
+                        pair.pair_id,
+                        "kept_newer",
+                        note=f"auto: {action}d {target} — {decision.reason}",
+                    )
                 receipt["superseded"].append(
                     {
                         "pair_id": pair.pair_id,
@@ -564,8 +569,11 @@ def maintain_cmd(
                 mid = item.get("id")
                 if not mid:
                     continue
-                if not dry_run:
-                    mem.lifecycle.archive_memory(mid)
+                if not dry_run and not mem.lifecycle.archive_memory(mid):
+                    # Archive failed (memory already gone?) — keep it out of the
+                    # receipt so counts/undo reflect what actually moved.
+                    receipt["errors"].append(f"stale: archive failed for {mid}")
+                    continue
                 receipt["archived_stale"].append({"id": mid, "days": item.get("days_since_update")})
         except Exception as exc:
             receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")

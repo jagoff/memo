@@ -4,7 +4,7 @@ Use this checklist for a fresh Apple Silicon Mac or a second machine that should
 run the same local memo memory.
 
 > Installing on **Linux / Ubuntu** instead? memo runs there standalone via a CPU
-> `sentence-transformers` backend (`pipx install "mlx-memo[cpu]"`). See
+> `sentence-transformers` backend (using the official PyTorch CPU index). See
 > [ubuntu.md](ubuntu.md) for that path and its trade-offs.
 
 ## 1. Prepare the Mac
@@ -27,7 +27,7 @@ brew install python@3.13
 Recommended path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | bash
 ```
 
 The installer uses `pipx`, downloads the default MLX models, runs
@@ -57,16 +57,16 @@ This is a terminal-native TUI and does not start a browser or web service. A new
 machine gets a four-step wizard; existing Markdown values are loaded with their
 effective source and can be reviewed before any file is written.
 
-To install the latest PyPI release instead of GitHub `master`:
+To explicitly track the latest PyPI release instead of the installer's pinned release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
 ```
 
 To skip client configuration entirely:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/master/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.8.1/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
 ```
 
 ## 3. Move Your Data

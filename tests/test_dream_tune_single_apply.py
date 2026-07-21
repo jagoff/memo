@@ -59,6 +59,10 @@ def test_graph_retrieval_defers_while_pending_in_flight(tmp_path, monkeypatch):
 
 def test_graph_weight_applies_when_no_pending(tmp_path, monkeypatch):
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
+    # This test isolates the apply path. The curated no-regression gate is
+    # covered separately and otherwise loads the repository's real labels,
+    # which require a searchable Memory rather than this test's object() stub.
+    monkeypatch.setattr(dream_tune, "_curated_label_set", lambda _state_dir: None)
     monkeypatch.setattr(dream_tune, "load_graph_baseline", lambda sd: None)
     before = {"precision_at_k": 0.2, "noise_at_k": 0.0}
     after = {"precision_at_k": 0.3, "noise_at_k": 0.0}

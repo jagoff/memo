@@ -620,12 +620,17 @@ class _SchemaMixin(_StoreBase):
                 table,
                 new_col,
             )
-            rows = self._conn.execute(
-                f"SELECT v.{pk_col} AS pk, v.{vec_col} AS emb, s.{src_col} AS newval "  # noqa: S608
-                f"FROM {table} v LEFT JOIN {src_table} s ON s.{src_key} = v.{pk_col}"
-            ).fetchall()
-            payload = [(r["pk"], r["newval"], r["emb"]) for r in rows if r["emb"] is not None]
+            # Snapshot + DROP + re-insert share one BEGIN IMMEDIATE tx: a row
+            # committed by another process (e.g. a still-running recall daemon
+            # on the old binary) between an outside-tx snapshot and the DROP
+            # would be silently lost. The immediate lock means the read below
+            # sees the final pre-migration state.
             with self._tx() as cx:
+                rows = cx.execute(
+                    f"SELECT v.{pk_col} AS pk, v.{vec_col} AS emb, s.{src_col} AS newval "  # noqa: S608
+                    f"FROM {table} v LEFT JOIN {src_table} s ON s.{src_key} = v.{pk_col}"
+                ).fetchall()
+                payload = [(r["pk"], r["newval"], r["emb"]) for r in rows if r["emb"] is not None]
                 cx.execute(f"DROP TABLE {table}")
                 self._create_vec_tables(cx)
                 if payload:
@@ -658,7 +663,9 @@ class _SchemaMixin(_StoreBase):
         ):
             actual_dims = self._vec_table_dims(table)
             if actual_dims is not None and actual_dims != self.dims:
-                raise RuntimeError(
+                from ..errors import StorageError
+
+                raise StorageError(
                     f"{label} dimension mismatch: store has {actual_dims}D vectors "
                     f"but config expects {self.dims}D. "
                     f"This usually happens after switching between model profiles "

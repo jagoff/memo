@@ -119,6 +119,7 @@ class _StubMemory:
         mode: str = "bm25",
         recency: bool = False,
         exclude_types: object = None,
+        exclude_tags: object = None,
     ) -> list[MemoryRecord]:
         return _make_pool()
 
@@ -246,7 +247,9 @@ def test_subprocess_applies_gap_trim_to_top1(
     weak = _rec("0e0e0e0e0e0e0e0e", "Weak tail hit", "note", 0.55, "a much weaker body")
 
     class _GapStub(_StubMemory):
-        def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
             return [strong, weak]
 
     _base_env(tmp_cfg, monkeypatch)
@@ -271,7 +274,9 @@ def test_subprocess_backfills_below_old_topk_slice(
     backfill = _rec("3c3c3c3c3c3c3c3c", "Backfill hit", "note", 0.65, "low body seven eight")
 
     class _BackfillStub(_StubMemory):
-        def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
             return [high, gated, backfill]
 
     _base_env(tmp_cfg, monkeypatch)
@@ -297,7 +302,9 @@ def test_no_hits_bail_reports_knobs_min_sim(
     """Empty rank result still bails with the resolved min_sim in the reason."""
 
     class _EmptyStub(_StubMemory):
-        def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
             return []
 
     _base_env(tmp_cfg, monkeypatch)
@@ -335,3 +342,50 @@ def test_session_dedup_survives_pipeline_swap(
     second = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
     assert second.exit_code == 0
     assert json.loads(second.output.strip()) == {}
+
+
+# ---------------------------------------------------------------------------
+# '_uncertain' quarantine parity (daemon excludes it via uncertain_exclusion)
+# ---------------------------------------------------------------------------
+
+
+def test_subprocess_excludes_uncertain_quarantine_by_default(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The subprocess fallback must pass the default-on '_uncertain' exclusion
+    to search, exactly like the daemon path (recall_logic uncertain_exclusion)."""
+    seen: dict[str, object] = {}
+
+    class _RecordingStub(_StubMemory):
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
+            seen["exclude_tags"] = exclude_tags
+            return _make_pool()
+
+    _base_env(tmp_cfg, monkeypatch)
+    monkeypatch.delenv("MEMO_RECALL_EXCLUDE_UNCERTAIN", raising=False)  # default on
+    monkeypatch.setattr("memo.memory.Memory", _RecordingStub)
+
+    _run_hook("how did we decide the parity ranking approach", str(tmp_path))
+    assert seen["exclude_tags"] == {"_uncertain"}
+
+
+def test_subprocess_uncertain_exclusion_flag_off(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+
+    class _RecordingStub(_StubMemory):
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
+            seen["exclude_tags"] = exclude_tags
+            return _make_pool()
+
+    _base_env(tmp_cfg, monkeypatch)
+    monkeypatch.setenv("MEMO_RECALL_EXCLUDE_UNCERTAIN", "0")
+    monkeypatch.setattr("memo.memory.Memory", _RecordingStub)
+
+    _run_hook("how did we decide the parity ranking approach", str(tmp_path))
+    assert seen["exclude_tags"] is None

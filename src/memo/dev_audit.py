@@ -18,6 +18,8 @@ class BroadExceptionSite:
     path: Path
     relpath: str
     line: int
+    scope: str
+    ordinal: int
 
 
 # Allowed raw env reads are grouped by exact file and env var. Reasons live in
@@ -32,6 +34,7 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
     ("config.py", "MEMO_VAULT_PATH"),
     ("config.py", "MEMO_MEMORY_SUBDIR"),
     ("config.py", "MEMO_EMBEDDER_MODEL"),
+    ("config.py", "MEMO_EMBEDDER_REVISION"),
     ("config.py", "MEMO_EMBEDDER_DIMS"),
     ("store/schema.py", "MEMO_SKIP_MODEL_VERSION_CHECK"),
     ("memory/facade.py", "MEMO_EMBEDDER_VIA_DAEMON"),
@@ -46,78 +49,81 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
 }
 
 
-# First sprint only classifies high-risk target files. These lines are a
-# baseline inventory, not blanket approval for future sites.
-BROAD_EXCEPTION_ALLOWED: set[tuple[str, int]] = {
-    ("cli_recall_hook.py", 107),
-    ("cli_recall_hook.py", 132),
-    ("cli_recall_hook.py", 162),
-    ("cli_recall_hook.py", 176),
-    ("cli_recall_hook.py", 212),
-    ("cli_recall_hook.py", 236),
-    ("cli_recall_hook.py", 276),
-    ("cli_recall_hook.py", 279),
-    ("cli_recall_hook.py", 290),
-    ("cli_recall_hook.py", 335),
-    ("cli_recall_hook.py", 357),
-    ("cli_recall_hook.py", 370),
-    ("cli_recall_hook.py", 407),
-    ("cli_recall_hook.py", 471),
-    ("cli_recall_hook.py", 492),
-    ("cli_recall_hook.py", 526),
-    ("cli_recall_hook.py", 565),
-    ("cli_recall_hook.py", 599),
-    ("cli_recall_hook.py", 613),
-    ("cli_recall_hook.py", 661),
-    ("cli_recall_hook.py", 685),
-    ("cli_recall_hook.py", 703),
-    ("cli_recall_hook.py", 722),
-    ("cli_recall_hook.py", 729),
+# First sprint only classifies high-risk target files. These stable lexical
+# identifiers are a baseline inventory, not blanket approval for future sites.
+BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
+    ("cli_recall_hook.py", "recall_hook", 1),
+    ("cli_recall_hook.py", "recall_hook._bail", 1),
+    ("cli_recall_hook.py", "recall_hook", 2),
+    ("cli_recall_hook.py", "recall_hook", 3),
+    ("cli_recall_hook.py", "recall_hook", 4),
+    ("cli_recall_hook.py", "recall_hook", 5),
+    ("cli_recall_hook.py", "recall_hook", 6),
+    ("cli_recall_hook.py", "recall_hook", 7),
+    ("cli_recall_hook.py", "recall_hook", 8),
+    ("cli_recall_hook.py", "recall_hook", 9),
+    ("cli_recall_hook.py", "recall_hook", 10),
+    ("cli_recall_hook.py", "recall_hook", 11),
+    ("cli_recall_hook.py", "recall_hook._rank", 1),
+    ("cli_recall_hook.py", "recall_hook._stamp_metrics", 1),
+    ("cli_recall_hook.py", "recall_hook", 12),
+    ("cli_recall_hook.py", "recall_hook", 13),
+    ("cli_recall_hook.py", "recall_hook", 14),
+    ("cli_recall_hook.py", "recall_hook", 15),
+    ("cli_recall_hook.py", "recall_hook", 16),
+    ("cli_recall_hook.py", "recall_hook", 17),
+    ("cli_recall_hook.py", "recall_hook", 18),
+    ("cli_recall_hook.py", "recall_hook", 19),
+    ("cli_recall_hook.py", "recall_hook", 20),
+    ("cli_recall_hook.py", "recall_hook", 21),
     # MEMO_HIT_DOSSIER batched contradict-pairs lookup: fail-open, degrades to
     # an empty disputed_by map on any store/read error (never blocks recall).
-    ("memory/write_ops.py", 121),
-    ("memory/write_ops.py", 208),
-    ("memory/write_ops.py", 228),
-    ("memory/write_ops.py", 260),
-    ("memory/write_ops.py", 442),
-    ("memory/write_ops.py", 520),
-    ("memory/write_ops.py", 542),
-    ("memory/write_ops.py", 560),
-    ("memory/write_ops.py", 596),
-    ("memory/write_ops.py", 677),
-    ("memory/write_ops.py", 858),
-    ("memory/write_ops.py", 915),
-    ("memory/write_ops.py", 926),
-    ("memory/write_ops.py", 1151),
-    ("memory/write_ops.py", 1207),
-    ("memory/write_ops.py", 1313),
-    ("recall_logic.py", 603),
-    ("recall_logic.py", 713),
-    ("recall_logic.py", 747),
-    ("recall_logic.py", 759),
-    ("recall_logic.py", 931),
-    ("recall_logic.py", 1089),
-    ("recall_logic.py", 1237),
-    ("recall_logic.py", 1268),
-    ("recall_logic.py", 1327),
-    ("recall_logic.py", 1392),
-    ("recall_logic.py", 1450),
-    ("recall_logic.py", 1475),
-    ("recall_logic.py", 1488),
-    ("recall_logic.py", 1503),
+    ("memory/write_ops.py", "_upsert_declared_fact_edges_best_effort", 1),
+    ("memory/write_ops.py", "_WriteOpsMixin._presence_bump_save", 1),
+    ("memory/write_ops.py", "_WriteOpsMixin._record_graph_entities_from_extra", 1),
+    ("memory/write_ops.py", "_WriteOpsMixin._derive_metadata", 1),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 1),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 2),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 3),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 4),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 5),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 6),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 7),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 8),
+    ("memory/write_ops.py", "_WriteOpsMixin.save", 9),
+    ("memory/write_ops.py", "_WriteOpsMixin._apply_write_policy", 1),
+    ("memory/write_ops.py", "_WriteOpsMixin._absorb_into_existing", 1),
+    ("memory/write_ops.py", "_WriteOpsMixin._read_body", 1),
+    ("recall_logic.py", "_session_context", 1),
+    ("recall_logic.py", "knobs_from_flags", 1),
+    ("recall_logic.py", "make_vec_cosine._cos", 1),
+    ("recall_logic.py", "make_vec_cosine._cos", 2),
+    ("recall_logic.py", "fetch_recency_band", 1),
+    # Hook hot path: a corrupt/unreadable telemetry log must not block recall;
+    # failure keeps the configured per-turn token budget unchanged.
+    ("recall_logic.py", "_session_scaled_token_budget", 1),
+    ("recall_logic.py", "_recall_logic", 1),
+    ("recall_logic.py", "_recall_logic", 2),
+    ("recall_logic.py", "_recall_logic", 3),
+    ("recall_logic.py", "_recall_logic", 4),
+    ("recall_logic.py", "_recall_logic", 5),
+    ("recall_logic.py", "_recall_logic._log", 1),
+    ("recall_logic.py", "_recall_logic", 6),
+    ("recall_logic.py", "_recall_logic", 7),
+    ("recall_logic.py", "_recall_logic", 8),
     # MEMO_HIT_DOSSIER batched contradict-pairs lookup: fail-open, degrades to
     # an empty disputed_by map on any store/read error (never blocks recall).
-    ("store/queries.py", 194),
-    ("store/queries.py", 277),
-    ("store/queries.py", 421),
-    ("store/queries.py", 539),
-    ("store/queries.py", 722),
-    ("store/queries.py", 1119),
-    ("store/queries.py", 1130),
-    ("store/queries.py", 1145),
-    ("store/queries.py", 1168),
-    ("store/queries.py", 1190),
-    ("store/queries.py", 1213),
+    ("store/queries.py", "_QueriesMixin.upsert", 1),
+    ("store/queries.py", "_QueriesMixin.upsert_replacing_path_owner", 1),
+    ("store/queries.py", "_QueriesMixin.replace_memory_index", 1),
+    ("store/queries.py", "_QueriesMixin.upsert_text_only", 1),
+    ("store/queries.py", "_QueriesMixin.update_meta", 1),
+    ("store/queries.py", "_QueriesMixin.clear_memory_index", 1),
+    ("store/queries.py", "_QueriesMixin.clear_memory_index", 2),
+    ("store/queries.py", "_QueriesMixin.delete", 1),
+    ("store/queries.py", "_QueriesMixin.delete", 2),
+    ("store/queries.py", "_QueriesMixin.delete", 3),
+    ("store/queries.py", "_QueriesMixin.hard_delete", 1),
 }
 
 
@@ -162,9 +168,45 @@ def find_broad_exception_sites(root: Path) -> list[BroadExceptionSite]:
     for path in sorted(root.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         relpath = _rel(path, root)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ExceptHandler) or node.type is None:
-                continue
-            if isinstance(node.type, ast.Name) and node.type.id == "Exception":
-                out.append(BroadExceptionSite(path=path, relpath=relpath, line=node.lineno))
+
+        class _BroadExceptionVisitor(ast.NodeVisitor):
+            def __init__(self, site_path: Path, site_relpath: str) -> None:
+                self._path = site_path
+                self._relpath = site_relpath
+                self._scope: list[str] = []
+                self._ordinals: dict[str, int] = {}
+
+            def _visit_scope(
+                self, node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+            ) -> None:
+                self._scope.append(node.name)
+                self.generic_visit(node)
+                self._scope.pop()
+
+            def visit_ClassDef(self, node: ast.ClassDef) -> None:
+                self._visit_scope(node)
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                self._visit_scope(node)
+
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+                self._visit_scope(node)
+
+            def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+                if isinstance(node.type, ast.Name) and node.type.id == "Exception":
+                    scope = ".".join(self._scope) or "<module>"
+                    ordinal = self._ordinals.get(scope, 0) + 1
+                    self._ordinals[scope] = ordinal
+                    out.append(
+                        BroadExceptionSite(
+                            path=self._path,
+                            relpath=self._relpath,
+                            line=node.lineno,
+                            scope=scope,
+                            ordinal=ordinal,
+                        )
+                    )
+                self.generic_visit(node)
+
+        _BroadExceptionVisitor(path, relpath).visit(tree)
     return out

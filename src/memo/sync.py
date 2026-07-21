@@ -68,8 +68,9 @@ class BackupManager:
         self._lock_file = backup_dir / ".backup.lock"
         self._lock_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def _acquire_lock(self, fh):
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+    def _acquire_lock(self, fh, *, exclusive: bool = True):
+        mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(fh.fileno(), mode)
 
     def _release_lock(self, fh):
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
@@ -98,6 +99,20 @@ class BackupManager:
         except Exception:
             os.close(descriptor)
             raise
+
+    @contextlib.contextmanager
+    def _backup_lock(self, *, exclusive: bool):
+        fh = self._open_lock_file()
+        try:
+            self._acquire_lock(fh, exclusive=exclusive)
+        except OSError as exc:
+            fh.close()
+            raise RuntimeError(f"Could not acquire backup lock: {exc}") from exc
+        try:
+            yield
+        finally:
+            self._release_lock(fh)
+            fh.close()
 
     @staticmethod
     def _validate_backup_name(name: str) -> str:
@@ -240,20 +255,10 @@ class BackupManager:
         compress: bool = True,
         name: str | None = None,
     ) -> BackupMetadata:
-        fh = self._open_lock_file()
-        try:
-            self._acquire_lock(fh)
-        except OSError as exc:
-            fh.close()
-            raise RuntimeError(f"Could not acquire backup lock: {exc}") from exc
-        try:
-            # Share the Markdown authority lock with CRUD/reindex so files and
-            # logical SQLite snapshots represent one coherent checkpoint.
-            with authority_write_lock(self.memory_dir):
-                return self._create_backup_inner(compress, name)
-        finally:
-            self._release_lock(fh)
-            fh.close()
+        # Share the Markdown authority lock with CRUD/reindex so files and
+        # logical SQLite snapshots represent one coherent checkpoint.
+        with self._backup_lock(exclusive=True), authority_write_lock(self.memory_dir):
+            return self._create_backup_inner(compress, name)
 
     def _create_backup_inner(
         self,
@@ -279,22 +284,32 @@ class BackupManager:
             if compress:
                 import tarfile
 
-                descriptor = os.open(
-                    archive_path,
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o600,
+                descriptor, temporary_name = tempfile.mkstemp(
+                    dir=self.backup_dir,
+                    prefix=f".{backup_name}.",
+                    suffix=".tar.gz.tmp",
                 )
+                temporary_archive = Path(temporary_name)
                 try:
                     with os.fdopen(descriptor, "wb") as archive_file:
                         descriptor = -1
                         with tarfile.open(fileobj=archive_file, mode="w:gz") as tar:
                             tar.add(scratch, arcname=backup_name)
-                except Exception:
-                    archive_path.unlink(missing_ok=True)
-                    raise
+                        archive_file.flush()
+                        os.fsync(archive_file.fileno())
+                    if archive_path.exists() or archive_path.is_symlink():
+                        raise FileExistsError(f"Backup already exists: {archive_path.name}")
+                    try:
+                        os.link(temporary_archive, archive_path)
+                    except FileExistsError as exc:
+                        raise FileExistsError(
+                            f"Backup already exists: {archive_path.name}"
+                        ) from exc
+                    temporary_archive.unlink()
                 finally:
                     if descriptor >= 0:
                         os.close(descriptor)
+                    temporary_archive.unlink(missing_ok=True)
                 metadata.compressed_size = archive_path.stat().st_size
             else:
                 scratch.rename(backup_path)
@@ -439,11 +454,15 @@ class BackupManager:
         return members
 
     def list_backups(self) -> list[BackupMetadata]:
+        with self._backup_lock(exclusive=False):
+            return self._list_backups_inner()
+
+    def _list_backups_inner(self) -> list[BackupMetadata]:
         backups = []
         for archive in self.backup_dir.glob("*.tar.gz"):
             backups.append(self._read_archive_metadata(archive))
         for p in self.backup_dir.iterdir():
-            if p.is_dir() and (p / "metadata.json").is_file():
+            if not p.name.startswith(".backup-") and p.is_dir() and (p / "metadata.json").is_file():
                 backups.append(self._read_directory_metadata(p))
         return sorted(backups, key=lambda b: b.timestamp, reverse=True)
 
@@ -485,6 +504,20 @@ class BackupManager:
         restore_dbs: bool = True,
     ) -> bool:
         """Restore memory files and/or databases from a backup."""
+        with self._backup_lock(exclusive=False):
+            return self._restore_backup_inner(
+                backup_name,
+                restore_memories=restore_memories,
+                restore_dbs=restore_dbs,
+            )
+
+    def _restore_backup_inner(
+        self,
+        backup_name: str,
+        *,
+        restore_memories: bool,
+        restore_dbs: bool,
+    ) -> bool:
         base_name = self._logical_backup_name(backup_name)
         archive_name = f"{base_name}.tar.gz"
         archive_path = self._backup_path(archive_name)
@@ -690,9 +723,11 @@ class SyncManager:
 
             last_lsn = self.mem.history.get_sync_state(remote_device_id)
             new_events = remote_store.list_recent(
-                after_lsn=last_lsn, device_id=remote_device_id, limit=1000
+                after_lsn=last_lsn,
+                device_id=remote_device_id,
+                limit=1000,
+                oldest_first=True,
             )
-            new_events.reverse()
 
             applied = 0
             conflicts = 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
@@ -143,3 +144,27 @@ def test_memo_pop_notification_reads_and_deletes(tmp_cfg) -> None:
     # Second call should return empty
     result2 = tools["memo_pop_notification"]()
     assert result2 == ""
+
+
+def test_memo_save_text_saves_exact_text_without_initializing_chat(tmp_cfg) -> None:
+    from memo.memory import Memory
+    from memo.server_idle_capture import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem._ensure_chat.side_effect = AssertionError("memo_save_text must not initialize MLX")
+    mem.save.return_value = SimpleNamespace(id="saved-id")
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    text = "  preserve leading whitespace\nAnd the exact trailing newline.\n"
+    result = tools["memo_save_text"](text=text, title="Exact")
+
+    mem._ensure_chat.assert_not_called()
+    mem.save.assert_called_once_with(content=text, title="Exact", type_="note")
+    assert result == {
+        "status": "saved",
+        "saved": 1,
+        "title": "Exact",
+        "ids": ["saved-id"],
+    }

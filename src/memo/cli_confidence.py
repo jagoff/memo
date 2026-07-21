@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+
 import click
 
 from memo.confidence_calibration import build_calibration, load_calibration
@@ -39,4 +41,5 @@ def explain_cmd() -> None:
     from memo.memory import Memory
 
     cfg = Config.from_env()
-    _print_doc(build_calibration(cfg.state_dir, Memory(cfg)))
+    with closing(Memory(cfg)) as memory:
+        _print_doc(build_calibration(cfg.state_dir, memory))

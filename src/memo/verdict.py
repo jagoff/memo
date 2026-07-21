@@ -194,11 +194,13 @@ def record_verdicts(
     if len(query) < 8:
         return rec  # verdict logged; too little query text for feedback kNN
     rating = _VERDICT_RATING[rec["verdict"]]
+    owned_memory = None
     try:
         if memory is None:
             from memo.memory import Memory
 
-            memory = Memory(cfg)
+            owned_memory = Memory(cfg)
+            memory = owned_memory
         for rid in rec["recall_ids"]:
             try:
                 memory.feedback_record(
@@ -212,6 +214,9 @@ def record_verdicts(
                 continue  # ambiguous/deleted prefix — skip this id only
     except Exception:  # noqa: S110
         pass
+    finally:
+        if owned_memory is not None:
+            owned_memory.close()
     return rec
 
 

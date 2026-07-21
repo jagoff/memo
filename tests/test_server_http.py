@@ -4,6 +4,7 @@ import importlib
 import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -143,6 +144,136 @@ def test_rest_request_and_parameter_limits_are_enforced(monkeypatch, tmp_path) -
             ).status_code
             == 413
         )
+
+
+def test_rest_rejects_oversized_chunked_body(monkeypatch, tmp_path) -> None:
+    server_http = _load_server(monkeypatch, tmp_path)
+    auth = {"Authorization": f"Bearer {_TOKEN}"}
+
+    def body_chunks():
+        yield b"{"
+        yield b"x" * server_http.MAX_REQUEST_BYTES
+
+    with TestClient(server_http.app) as client:
+        response = client.post(
+            "/api/memory",
+            headers={**auth, "Content-Type": "application/json"},
+            content=body_chunks(),
+        )
+
+    assert response.status_code == 413
+
+
+def test_rest_rejects_oversized_chunked_body_even_when_route_ignores_body(
+    monkeypatch, tmp_path
+) -> None:
+    server_http = _load_server(monkeypatch, tmp_path)
+    memory = MagicMock()
+    monkeypatch.setattr(server_http, "_memory", memory)
+    auth = {"Authorization": f"Bearer {_TOKEN}"}
+
+    def body_chunks():
+        yield b"x" * (server_http.MAX_REQUEST_BYTES // 2)
+        yield b"x" * (server_http.MAX_REQUEST_BYTES // 2 + 1)
+
+    with TestClient(server_http.app) as client:
+        response = client.post("/api/backup", headers=auth, content=body_chunks())
+
+    assert response.status_code == 413
+    memory.backup.create_backup.assert_not_called()
+
+
+def test_rest_no_auth_mode_installs_local_request_guard(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("MEMO_HTTP_API_TOKEN", raising=False)
+    sys.modules.pop("memo.server_http", None)
+    server_http = importlib.import_module("memo.server_http")
+    server_http.configure_auth(host="127.0.0.1", allow_no_auth=True)
+    memory = MagicMock()
+    monkeypatch.setattr(server_http, "_memory", memory)
+
+    with TestClient(server_http.app, base_url="http://127.0.0.1:18769") as client:
+        response = client.post(
+            "/api/backup",
+            headers={
+                "Host": "attacker.example",
+                "Origin": "https://attacker.example",
+                "Content-Type": "text/plain",
+            },
+            content=b"{}",
+        )
+
+    assert response.status_code == 403
+    memory.backup.create_backup.assert_not_called()
+
+
+def test_rest_direct_import_no_auth_mode_installs_local_request_guard(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("MEMO_HTTP_ALLOW_NO_AUTH", "1")
+    monkeypatch.setenv("MEMO_HTTP_HOST", "127.0.0.1")
+    monkeypatch.delenv("MEMO_HTTP_API_TOKEN", raising=False)
+    sys.modules.pop("memo.server_http", None)
+    server_http = importlib.import_module("memo.server_http")
+    memory = MagicMock()
+    monkeypatch.setattr(server_http, "_memory", memory)
+
+    with TestClient(server_http.app, base_url="http://127.0.0.1:18769") as client:
+        response = client.post(
+            "/api/backup",
+            headers={
+                "Host": "attacker.example",
+                "Origin": "https://attacker.example",
+                "Content-Type": "text/plain",
+            },
+            content=b"{}",
+        )
+
+    assert response.status_code == 403
+    memory.backup.create_backup.assert_not_called()
+
+
+def test_rest_delete_reports_404_missing_and_409_ambiguous(monkeypatch, tmp_path) -> None:
+    from memo.errors import AmbiguousIdError
+
+    server_http = _load_server(monkeypatch, tmp_path)
+    memory = MagicMock()
+    monkeypatch.setattr(server_http, "_memory", memory)
+    auth = {"Authorization": f"Bearer {_TOKEN}"}
+
+    with TestClient(server_http.app) as client:
+        memory.delete.return_value = True
+        deleted = client.delete("/api/memory/feedbeef", headers=auth)
+        memory.delete.return_value = False
+        missing = client.delete("/api/memory/deadbeef", headers=auth)
+        memory.delete.side_effect = AmbiguousIdError("a1", ["a1b2c3d4", "a1ffeedd"])
+        ambiguous = client.delete("/api/memory/a1", headers=auth)
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"id": "feedbeef", "status": "deleted"}
+    assert missing.status_code == 404
+    assert ambiguous.status_code == 409
+    assert ambiguous.json()["detail"] == {
+        "error": "ambiguous",
+        "prefix": "a1",
+        "matches": ["a1b2c3d4", "a1ffeedd"],
+    }
+
+
+def test_rest_get_reports_409_for_ambiguous_prefix(monkeypatch, tmp_path) -> None:
+    from memo.errors import AmbiguousIdError
+
+    server_http = _load_server(monkeypatch, tmp_path)
+    memory = MagicMock()
+    memory.get.side_effect = AmbiguousIdError("a1", ["a1b2c3d4", "a1ffeedd"])
+    monkeypatch.setattr(server_http, "_memory", memory)
+
+    with TestClient(server_http.app) as client:
+        response = client.get("/api/memory/a1", headers={"Authorization": f"Bearer {_TOKEN}"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["matches"] == ["a1b2c3d4", "a1ffeedd"]
 
 
 def test_rest_backup_uses_real_metadata_fields(monkeypatch, tmp_path) -> None:

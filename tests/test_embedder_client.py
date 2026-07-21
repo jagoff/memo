@@ -178,6 +178,54 @@ def test_client_embed_batch_via_socket(daemon: Path):
     assert vecs == _StubEmbedder().embed(texts)
 
 
+def test_client_rejects_daemon_with_wrong_model_identity(daemon: Path, monkeypatch):
+    """Never stamp vectors from a stale daemon as belonging to a new model pin."""
+    sentinel = _StubEmbedder()
+    sentinel.embed_query = lambda _text: [99.0] * sentinel.dims
+    monkeypatch.setattr(embedder_client, "_inproc", lambda: sentinel)
+
+    vec = embedder_client.embed_query(
+        "identity-sensitive",
+        state_dir=daemon,
+        expected_model="stub-embedder/test-0.0@exact-revision",
+        expected_dims=_StubEmbedder.dims,
+    )
+
+    assert vec == [99.0] * sentinel.dims
+
+
+def test_client_rejects_daemon_with_wrong_dimensions(daemon: Path, monkeypatch):
+    sentinel = _StubEmbedder()
+    sentinel.embed = lambda texts: [[77.0] * 16 for _ in texts]
+    monkeypatch.setattr(embedder_client, "_inproc", lambda: sentinel)
+
+    vecs = embedder_client.embed(
+        ["dimension-sensitive"],
+        state_dir=daemon,
+        expected_model="stub-embedder/test-0.0",
+        expected_dims=16,
+    )
+
+    assert vecs == [[77.0] * 16]
+
+
+def test_daemon_compatibility_requires_exact_model_and_dimensions():
+    info = {"model": "model@example-revision", "dims": 2560}
+
+    assert embedder_client.daemon_is_compatible(
+        info, expected_model="model@example-revision", expected_dims=2560
+    )
+    assert not embedder_client.daemon_is_compatible(
+        info, expected_model="model", expected_dims=2560
+    )
+    assert not embedder_client.daemon_is_compatible(
+        info, expected_model="model@example-revision", expected_dims=1024
+    )
+    assert not embedder_client.daemon_is_compatible(
+        None, expected_model="model@example-revision", expected_dims=2560
+    )
+
+
 def test_client_embed_rejects_bare_str(daemon: Path):
     with pytest.raises(TypeError, match="Sequence"):
         embedder_client.embed("oops", state_dir=daemon)  # type: ignore[arg-type]

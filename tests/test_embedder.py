@@ -12,6 +12,7 @@ from __future__ import annotations
 import sys
 import types
 from contextlib import contextmanager
+from types import ModuleType
 
 import pytest
 
@@ -21,6 +22,36 @@ from memo.embedder import (
     _SimpleLRU,
     assert_valid_embedding,
 )
+
+
+def test_load_resolves_exact_snapshot_before_mlx_lm(monkeypatch):
+    calls: dict[str, str] = {}
+    sha = "e" * 40
+    hf = ModuleType("huggingface_hub")
+    mlx_lm = ModuleType("mlx_lm")
+
+    def snapshot_download(*, repo_id: str, revision: str) -> str:
+        calls.update(repo_id=repo_id, revision=revision)
+        return "/cache/embedder-snapshot"
+
+    def load(path: str):
+        calls["load_path"] = path
+        return object(), object()
+
+    hf.snapshot_download = snapshot_download  # type: ignore[attr-defined]
+    mlx_lm.load = load  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hf)
+    monkeypatch.setitem(sys.modules, "mlx_lm", mlx_lm)
+
+    emb = MLXEmbedder(model_path="someone/embedder", revision=sha, expected_dims=4)
+    emb._ensure_loaded()
+
+    assert calls == {
+        "repo_id": "someone/embedder",
+        "revision": sha,
+        "load_path": "/cache/embedder-snapshot",
+    }
+
 
 # -- _SimpleLRU ------------------------------------------------------------
 
@@ -181,3 +212,24 @@ def test_unload_cold_embedder_does_not_wait_for_gpu(monkeypatch):
     monkeypatch.setattr("memo.embedder.gpu_guard", unexpected_gpu_guard)
 
     MLXEmbedder(expected_dims=4).unload()
+
+
+# -- MicroEmbedder load-failure contract -------------------------------------
+
+
+def test_micro_embedder_load_failure_raises_instead_of_zero_vectors(monkeypatch):
+    """A MicroEmbedder whose model failed to load must surface the failure —
+    silently returning all-zero vectors made recall score every candidate
+    equally (and return empty) instead of the caller falling back to BM25."""
+    from memo.embedder import MicroEmbedder
+
+    micro = MicroEmbedder("stub/micro-that-never-loads", expected_dims=4)
+    # Simulate a failed load: _ensure_loaded ran but _model stayed None.
+    monkeypatch.setattr(MicroEmbedder, "_ensure_loaded", lambda self: None)
+
+    assert micro.is_warm is False
+    assert micro.embed([]) == []  # empty input stays a cheap no-op
+    with pytest.raises(RuntimeError, match="failed to load"):
+        micro.embed(["hola"])
+    with pytest.raises(RuntimeError, match="failed to load"):
+        micro.embed_query("hola")

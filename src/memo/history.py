@@ -73,6 +73,7 @@ class HistoryStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         # Unique ID for this device to distinguish its events during sync.
         self.device_id = device_id or "unknown"
+        self._tx_lock = threading.RLock()
 
         self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -82,7 +83,6 @@ class HistoryStore:
         # transaction" and silently drop the audit row.
         with suppress(sqlite3.Error):
             self._conn.execute("PRAGMA journal_mode=WAL")
-        self._tx_lock = threading.Lock()
         with self._conn:
             # Additive migration: an `events` table created before `device_id`
             # existed must gain the column before _SCHEMA_DDL's
@@ -211,6 +211,7 @@ class HistoryStore:
         record_id: str | None = None,
         after_lsn: int | None = None,
         device_id: str | None = None,
+        oldest_first: bool = False,
     ) -> list[dict[str, Any]]:
         sql = "SELECT id, ts, op, record_id, title, type, delta_json, device_id FROM events"
         clauses: list[str] = []
@@ -230,9 +231,11 @@ class HistoryStore:
 
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        sql += " ORDER BY id DESC LIMIT ?"
+        order = "ASC" if oldest_first else "DESC"
+        sql += f" ORDER BY id {order} LIMIT ?"
         params.append(limit)
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._tx_lock:
+            rows = self._conn.execute(sql, params).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -249,9 +252,10 @@ class HistoryStore:
 
     def get_sync_state(self, device_id: str) -> int:
         """Get the last processed LSN for a remote device."""
-        row = self._conn.execute(
-            "SELECT last_lsn FROM sync_state WHERE device_id = ?", (device_id,)
-        ).fetchone()
+        with self._tx_lock:
+            row = self._conn.execute(
+                "SELECT last_lsn FROM sync_state WHERE device_id = ?", (device_id,)
+            ).fetchone()
         return row[0] if row else 0
 
     def update_sync_state(self, device_id: str, lsn: int) -> None:
@@ -267,10 +271,11 @@ class HistoryStore:
             _log.warning("history update_sync_state failed (device=%s): %s", device_id, exc)
 
     def count(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        with self._tx_lock:
+            return self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
     def close(self) -> None:
-        with suppress(BaseException):
+        with self._tx_lock, suppress(BaseException):
             self._conn.close()
 
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -159,27 +161,329 @@ def test_bundled_plugin_does_not_force_auto_update() -> None:
     assert '"MEMO_AUTO_UPDATE": "1"' not in plugin_mcp
 
 
-def test_maybe_auto_update_spawns_when_newer_tag(tmp_cfg, monkeypatch):
+class _FakeUpdateProc:
+    def __init__(self, pid: int, returncode: int | None = None) -> None:
+        self.pid = pid
+        self.returncode = returncode
+        self.terminated = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
+
+    def wait(self, timeout: int | None = None) -> int | None:
+        del timeout
+        return self.returncode
+
+
+def _enable_newer_update(monkeypatch) -> None:
     monkeypatch.setenv("MEMO_AUTO_UPDATE", "1")
     monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v999.0.0")
     monkeypatch.setattr(au, "tag_is_on_remote_master", lambda *a, **k: True)
-    calls = {"n": 0}
+    monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
+
+
+def test_maybe_auto_update_deduplicates_while_child_is_active(tmp_cfg, monkeypatch):
+    _enable_newer_update(monkeypatch)
+    proc = _FakeUpdateProc(4242)
+    attempts = 0
 
     def fake_popen(*a, **k):
-        calls["n"] += 1
-
-        class _P:
-            pid = 4242
-
-        return _P()
+        nonlocal attempts
+        attempts += 1
+        return proc
 
     monkeypatch.setattr(au.subprocess, "Popen", fake_popen)
-    spawned = au.maybe_auto_update(tmp_cfg)
-    assert spawned is True
-    assert calls["n"] == 1
-    # throttle recorded → a second call in the same window does not respawn
+
+    assert au.maybe_auto_update(tmp_cfg) is True
+    monkeypatch.setattr(au, "_ACTIVE_UPDATES", {})
+    monkeypatch.setattr(au, "_process_is_alive", lambda _pid: True)
     assert au.maybe_auto_update(tmp_cfg) is False
-    assert calls["n"] == 1
+    assert attempts == 1
+    lease = json.loads((tmp_cfg.state_dir / au._SPAWNED_STAMP).read_text())
+    assert lease["tag"] == "v999.0.0"
+    assert lease["pid"] == 4242
+    assert lease["state"] == "running"
+
+
+def test_maybe_auto_update_retries_after_child_nonzero_exit(tmp_cfg, monkeypatch):
+    _enable_newer_update(monkeypatch)
+    procs = [_FakeUpdateProc(4242), _FakeUpdateProc(4243)]
+    attempts = 0
+
+    def fake_popen(*a, **k):
+        nonlocal attempts
+        proc = procs[attempts]
+        attempts += 1
+        return proc
+
+    monkeypatch.setattr(au.subprocess, "Popen", fake_popen)
+
+    assert au.maybe_auto_update(tmp_cfg) is True
+    procs[0].returncode = 1
+    assert au.maybe_auto_update(tmp_cfg) is True
+    assert attempts == 2
+
+
+def test_maybe_auto_update_retries_after_child_is_aborted(tmp_cfg, monkeypatch):
+    _enable_newer_update(monkeypatch)
+    procs = [_FakeUpdateProc(4242), _FakeUpdateProc(4243)]
+    attempts = 0
+
+    def fake_popen(*a, **k):
+        nonlocal attempts
+        proc = procs[attempts]
+        attempts += 1
+        return proc
+
+    monkeypatch.setattr(au.subprocess, "Popen", fake_popen)
+
+    assert au.maybe_auto_update(tmp_cfg) is True
+    # Simulate a new memo-mcp process after the detached child was killed:
+    # there is no in-memory Popen left and the persisted PID is no longer live.
+    monkeypatch.setattr(au, "_ACTIVE_UPDATES", {}, raising=False)
+    monkeypatch.setattr(au, "_process_is_alive", lambda _pid: False, raising=False)
+    assert au.maybe_auto_update(tmp_cfg) is True
+    assert attempts == 2
+
+
+def test_live_persisted_child_never_expires_by_wall_clock(tmp_cfg, monkeypatch):
+    monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
+    au._write_spawned_lease(
+        tmp_cfg,
+        "v999.0.0",
+        4242,
+        "running",
+        started_at=1.0,
+        process_identity="test:4242",
+    )
+    monkeypatch.setattr(au, "_ACTIVE_UPDATES", {})
+    monkeypatch.setattr(au, "_process_is_alive", lambda pid: pid == 4242)
+
+    assert au._spawn_lease_blocks_update(tmp_cfg, "v999.0.0", now=10_000_000.0) is True
+    assert (tmp_cfg.state_dir / au._SPAWNED_STAMP).exists()
+
+
+def test_running_lease_with_reused_pid_is_recovered(tmp_cfg, monkeypatch):
+    au._write_spawned_lease(
+        tmp_cfg,
+        "v999.0.0",
+        4242,
+        "running",
+        started_at=1.0,
+        process_identity="old-process",
+    )
+    monkeypatch.setattr(au, "_ACTIVE_UPDATES", {})
+    monkeypatch.setattr(au, "_process_is_alive", lambda _pid: True)
+    monkeypatch.setattr(au, "_process_identity", lambda _pid: "reused-process")
+
+    assert au._spawn_lease_blocks_update(tmp_cfg, "v999.0.0", now=2.0) is False
+    assert not (tmp_cfg.state_dir / au._SPAWNED_STAMP).exists()
+
+
+def test_stale_starting_lease_is_recovered_even_if_owner_pid_is_live(tmp_cfg, monkeypatch):
+    au._write_spawned_lease(
+        tmp_cfg,
+        "v999.0.0",
+        4242,
+        "starting",
+        started_at=1.0,
+        process_identity="test:4242",
+    )
+    monkeypatch.setattr(au, "_process_is_alive", lambda _pid: True)
+    monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
+
+    assert au._spawn_lease_blocks_update(tmp_cfg, "v999.0.0", now=62.0) is False
+    assert not (tmp_cfg.state_dir / au._SPAWNED_STAMP).exists()
+
+
+def test_fresh_starting_lease_blocks_when_parent_died(tmp_cfg, monkeypatch):
+    au._write_spawned_lease(
+        tmp_cfg,
+        "v999.0.0",
+        4242,
+        "starting",
+        started_at=10.0,
+        process_identity="dead-parent",
+    )
+    monkeypatch.setattr(au, "_process_is_alive", lambda _pid: False)
+
+    assert au._spawn_lease_blocks_update(tmp_cfg, "v999.0.0", now=11.0) is True
+
+
+def test_stale_starting_lease_for_other_tag_does_not_block(tmp_cfg, monkeypatch):
+    au._write_spawned_lease(
+        tmp_cfg,
+        "v998.0.0",
+        4242,
+        "starting",
+        started_at=1.0,
+        process_identity="test:4242",
+    )
+    monkeypatch.setattr(au, "_process_is_alive", lambda _pid: True)
+    monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
+
+    assert au._spawn_lease_blocks_update(tmp_cfg, "v999.0.0", now=62.0) is False
+    assert not (tmp_cfg.state_dir / au._SPAWNED_STAMP).exists()
+
+
+def test_spawned_worker_claims_starting_lease_after_parent_crash(tmp_cfg, monkeypatch):
+    started_at = 10.0
+    parent_pid = 4242
+    child_pid = 4343
+    monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
+    assert au._acquire_spawned_lease(tmp_cfg, "v999.0.0", started_at=started_at)
+    lease_path = tmp_cfg.state_dir / au._SPAWNED_STAMP
+    payload = json.loads(lease_path.read_text())
+    payload["pid"] = parent_pid
+    payload["process_identity"] = "test:4242"
+    lease_path.write_text(json.dumps(payload))
+
+    assert au._claim_spawned_lease(
+        tmp_cfg,
+        "v999.0.0",
+        parent_pid=parent_pid,
+        child_pid=child_pid,
+        started_at=started_at,
+    )
+    lease = au._read_spawned_lease(tmp_cfg)
+    assert lease is not None
+    assert (lease.state, lease.pid, lease.process_identity) == (
+        "running",
+        child_pid,
+        "test:4343",
+    )
+
+
+def test_stale_cleanup_cannot_delete_a_concurrently_acquired_lease(tmp_cfg, monkeypatch):
+    au._write_spawned_lease(tmp_cfg, "v1.0.0", 111, "running", started_at=1.0)
+    monkeypatch.setattr(au, "_ACTIVE_UPDATES", {})
+    monkeypatch.setattr(au, "_process_is_alive", lambda _pid: False)
+    cleanup_entered = threading.Event()
+    allow_cleanup = threading.Event()
+    acquire_finished = threading.Event()
+    original_clear = au._clear_spawned_stamp_unlocked
+
+    def delayed_clear(*args, **kwargs):
+        cleanup_entered.set()
+        assert allow_cleanup.wait(timeout=2.0)
+        return original_clear(*args, **kwargs)
+
+    monkeypatch.setattr(au, "_clear_spawned_stamp_unlocked", delayed_clear)
+    cleaner = threading.Thread(
+        target=lambda: au._spawn_lease_blocks_update(tmp_cfg, "v2.0.0", now=2.0)
+    )
+    acquired: list[bool] = []
+
+    def acquire() -> None:
+        acquired.append(au._acquire_spawned_lease(tmp_cfg, "v2.0.0", started_at=2.0))
+        acquire_finished.set()
+
+    cleaner.start()
+    assert cleanup_entered.wait(timeout=2.0)
+    acquirer = threading.Thread(target=acquire)
+    acquirer.start()
+    assert not acquire_finished.wait(timeout=0.1), "acquire bypassed the cleanup file lock"
+    allow_cleanup.set()
+    cleaner.join(timeout=2.0)
+    acquirer.join(timeout=2.0)
+
+    assert acquired == [True]
+    lease = au._read_spawned_lease(tmp_cfg)
+    assert lease is not None and lease.tag == "v2.0.0"
+
+
+def test_generated_mcp_environment_rejects_invalid_persisted_profile(tmp_path, monkeypatch) -> None:
+    from memo.config_md import invalidate_cache
+    from memo.errors import ValidationError
+    from memo.runtime import mcp
+
+    home = tmp_path / "memo-home"
+    config_dir = home / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "hooks-config.md").write_text(
+        '```toml\n[mcp]\nprofile = "typo"\n```\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
+    monkeypatch.delenv("MEMO_MCP_PROFILE", raising=False)
+    invalidate_cache()
+
+    with pytest.raises(ValidationError, match="MEMO_MCP_PROFILE"):
+        mcp._mcp_server_env()
+
+
+def test_maybe_auto_update_keeps_successful_child_deduplicated(tmp_cfg, monkeypatch):
+    _enable_newer_update(monkeypatch)
+    proc = _FakeUpdateProc(4242)
+    attempts = 0
+
+    def fake_popen(*a, **k):
+        nonlocal attempts
+        attempts += 1
+        return proc
+
+    monkeypatch.setattr(au.subprocess, "Popen", fake_popen)
+
+    assert au.maybe_auto_update(tmp_cfg) is True
+    au._mark_spawned_success(tmp_cfg, "v999.0.0", pid=proc.pid)
+    monkeypatch.setattr(au, "_ACTIVE_UPDATES", {})
+    assert au.maybe_auto_update(tmp_cfg) is False
+    assert attempts == 1
+    lease = json.loads((tmp_cfg.state_dir / au._SPAWNED_STAMP).read_text())
+    assert lease["tag"] == "v999.0.0"
+    assert lease["pid"] == 4242
+    assert lease["state"] == "succeeded"
+
+
+def test_maybe_auto_update_retries_after_popen_failure_without_latching(tmp_cfg, monkeypatch):
+    _enable_newer_update(monkeypatch)
+    attempts = 0
+
+    def failed_popen(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise OSError("cannot spawn")
+
+    monkeypatch.setattr(au.subprocess, "Popen", failed_popen)
+
+    assert au.maybe_auto_update(tmp_cfg) is False
+    assert au.maybe_auto_update(tmp_cfg) is False
+    assert attempts == 2
+    assert not (tmp_cfg.state_dir / au._SPAWNED_STAMP).exists()
+
+
+def test_maybe_auto_update_retries_when_running_lease_write_fails(tmp_cfg, monkeypatch):
+    _enable_newer_update(monkeypatch)
+    procs = [_FakeUpdateProc(4242), _FakeUpdateProc(4243)]
+    attempts = 0
+    original_write = au._write_spawned_lease
+    fail_transition = True
+
+    def fake_popen(*args, **kwargs):
+        nonlocal attempts
+        del args, kwargs
+        proc = procs[attempts]
+        attempts += 1
+        return proc
+
+    def flaky_write(*args, **kwargs):
+        nonlocal fail_transition
+        if args[3] == "running" and fail_transition:
+            fail_transition = False
+            return False
+        return original_write(*args, **kwargs)
+
+    monkeypatch.setattr(au.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(au, "_write_spawned_lease", flaky_write)
+
+    assert au.maybe_auto_update(tmp_cfg) is False
+    assert procs[0].terminated is True
+    assert not (tmp_cfg.state_dir / au._SPAWNED_STAMP).exists()
+    assert au.maybe_auto_update(tmp_cfg) is True
+    assert attempts == 2
 
 
 def test_maybe_auto_update_no_spawn_when_not_newer(tmp_cfg, monkeypatch):

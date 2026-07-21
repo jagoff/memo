@@ -28,6 +28,7 @@ _MAX_TOKEN_CHARS = 4096
 _DEFAULT_RATE_LIMIT = 300
 _DEFAULT_RATE_WINDOW_SECONDS = 60
 _MAX_RATE_BUCKETS = 4096
+MAX_HTTP_REQUEST_BYTES = 1_048_576
 
 _SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -57,6 +58,92 @@ class HttpAuthConfig:
     token: str | None
     allow_no_auth: bool
     host: str
+
+
+class RequestSizeLimitMiddleware:
+    """Bound and buffer every HTTP body, then replay it to the application."""
+
+    def __init__(self, app: Any, *, max_bytes: int = MAX_HTTP_REQUEST_BYTES) -> None:
+        if max_bytes < 1:
+            raise ValueError("HTTP request body limit must be positive")
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        length_error = self._content_length_error(scope)
+        if length_error is not None:
+            await length_error(scope, receive, send)
+            return
+
+        received = 0
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message.get("type") == "http.request":
+                chunk = message.get("body", b"")
+                received += len(chunk)
+                if received > self.max_bytes:
+                    await self._reject(scope, receive, send)
+                    return
+                body.extend(chunk)
+                if not message.get("more_body", False):
+                    break
+            elif message.get("type") == "http.disconnect":
+                # An incomplete request must never reach an endpoint: doing so
+                # could commit a side effect from a body the client abandoned.
+                return
+            else:
+                await JSONResponse({"detail": "Invalid HTTP request body"}, status_code=400)(
+                    scope, receive, send
+                )
+                return
+
+        replayed = False
+
+        async def replay_receive() -> dict[str, Any]:
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {
+                    "type": "http.request",
+                    "body": bytes(body),
+                    "more_body": False,
+                }
+            # StreamingResponse listens for a real disconnect after the route
+            # consumes the request. Delegating avoids a tight loop of synthetic
+            # terminal request messages on ASGI versions before 2.4.
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
+    @staticmethod
+    async def _reject(
+        scope: dict[str, Any],
+        receive: Any,
+        send: Any,
+    ) -> None:
+        await JSONResponse({"detail": "Request body too large"}, status_code=413)(
+            scope, receive, send
+        )
+
+    def _content_length_error(self, scope: dict[str, Any]) -> JSONResponse | None:
+        lengths = Headers(scope=scope).getlist("content-length")
+        if not lengths:
+            return None
+        raw_length = lengths[0]
+        if len(lengths) != 1 or not raw_length.isascii() or not raw_length.isdecimal():
+            return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
+        normalized = raw_length.lstrip("0") or "0"
+        max_text = str(self.max_bytes)
+        if len(normalized) > len(max_text) or (
+            len(normalized) == len(max_text) and normalized > max_text
+        ):
+            return JSONResponse({"detail": "Request body too large"}, status_code=413)
+        return None
 
 
 class SecurityHeadersMiddleware:
@@ -269,6 +356,7 @@ def build_http_middleware(
     ]
     if allow_no_auth:
         middleware.append(Middleware(LocalRequestGuardMiddleware))
+    middleware.append(Middleware(RequestSizeLimitMiddleware))
     return middleware
 
 
@@ -436,11 +524,13 @@ def build_mcp_auth(cfg: HttpAuthConfig) -> Any | None:
 
 
 __all__ = [
+    "MAX_HTTP_REQUEST_BYTES",
     "HttpApiAuthError",
     "HttpAuthConfig",
     "HttpAuthRejected",
     "LocalRequestGuardMiddleware",
     "RateLimitMiddleware",
+    "RequestSizeLimitMiddleware",
     "SecurityHeadersMiddleware",
     "build_http_middleware",
     "build_mcp_auth",

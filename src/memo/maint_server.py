@@ -131,18 +131,19 @@ class _MaintServer(socketserver.ThreadingUnixStreamServer):
         super().__init__(sock_path, _MaintHandler)
 
 
-def _default_runner(cfg: Any) -> MaintRunner:
-    """Production runner: a persistent Memory in THIS process whose MLXChat
-    warms once and stays resident here (not in memo-mcp)."""
-    from memo.memory import Memory
+class _MemoryRunner:
+    """Owned persistent Memory behind the production maintenance runner."""
 
-    mem = Memory(cfg)
+    def __init__(self, cfg: Any) -> None:
+        from memo.memory import Memory
 
-    def run(op: str, params: dict[str, Any]) -> dict[str, Any]:
+        self.memory = Memory(cfg)
+
+    def __call__(self, op: str, params: dict[str, Any]) -> dict[str, Any]:
         if op == "consolidate":
             # Call the in-process path directly so the daemon never re-routes
             # to itself even if MEMO_MAINT_VIA_DAEMON is set in its environment.
-            proposals = mem._consolidate_in_process(
+            proposals = self.memory._consolidate_in_process(
                 threshold=float(params.get("threshold", 0.85)),
                 max_clusters=int(params.get("max_clusters", 50)),
                 type_=params.get("type_"),
@@ -150,7 +151,14 @@ def _default_runner(cfg: Any) -> MaintRunner:
             return {"proposals": proposals}
         raise ValueError(f"unsupported maint op: {op!r}")
 
-    return run
+    def close(self) -> None:
+        self.memory.close()
+
+
+def _default_runner(cfg: Any) -> _MemoryRunner:
+    """Build the process-owned maintenance runner and its resident Memory."""
+
+    return _MemoryRunner(cfg)
 
 
 def run_server(state_dir: Path | None = None, *, runner: MaintRunner | None = None) -> None:
@@ -179,35 +187,51 @@ def run_server(state_dir: Path | None = None, *, runner: MaintRunner | None = No
         print("maint-daemon: another instance is starting", file=sys.stderr)
         sys.exit(0)
 
-    existing = _read_pid(state_dir)
-    if existing is not None and is_pid_alive(existing):
-        print("maint-daemon: already running", file=sys.stderr)
-        sys.exit(0)
-
-    sock_path.unlink(missing_ok=True)
-    pid_file.unlink(missing_ok=True)
-
+    owned_runner: _MemoryRunner | None = None
+    server: _MaintServer | None = None
     try:
-        server = _MaintServer(str(sock_path), runner or _default_runner(cfg))
-    except OSError as exc:
-        print(f"maint-daemon: bind failed ({exc}), exiting", file=sys.stderr)
-        sys.exit(0)
+        existing = _read_pid(state_dir)
+        if existing is not None and is_pid_alive(existing):
+            print("maint-daemon: already running", file=sys.stderr)
+            sys.exit(0)
 
-    tmp_pid = pid_file.with_suffix(pid_file.suffix + ".tmp")
-    tmp_pid.write_text(str(os.getpid()))
-    os.replace(tmp_pid, pid_file)
+        sock_path.unlink(missing_ok=True)
+        pid_file.unlink(missing_ok=True)
 
-    shutdown_event = threading.Event()
+        owned_runner = _default_runner(cfg) if runner is None else None
+        selected_runner = runner if runner is not None else owned_runner
+        assert selected_runner is not None
+        try:
+            server = _MaintServer(str(sock_path), selected_runner)
+        except OSError as exc:
+            print(f"maint-daemon: bind failed ({exc}), exiting", file=sys.stderr)
+            sys.exit(0)
 
-    def _sigterm(signum: int, frame: Any) -> None:
-        shutdown_event.set()
+        tmp_pid = pid_file.with_suffix(pid_file.suffix + ".tmp")
+        tmp_pid.write_text(str(os.getpid()))
+        os.replace(tmp_pid, pid_file)
 
-    signal.signal(signal.SIGTERM, _sigterm)
-    signal.signal(signal.SIGINT, _sigterm)
+        shutdown_event = threading.Event()
 
-    serve_until_shutdown(
-        server,
-        shutdown_event,
-        name="maint-daemon-serve",
-        on_shutdown=lambda: _cleanup(state_dir),
-    )
+        def _sigterm(signum: int, frame: Any) -> None:
+            shutdown_event.set()
+
+        signal.signal(signal.SIGTERM, _sigterm)
+        signal.signal(signal.SIGINT, _sigterm)
+
+        serve_until_shutdown(
+            server,
+            shutdown_event,
+            name="maint-daemon-serve",
+            on_shutdown=lambda: _cleanup(state_dir),
+        )
+    finally:
+        if server is not None:
+            with contextlib.suppress(Exception):
+                server.server_close()
+        if owned_runner is not None:
+            with contextlib.suppress(Exception):
+                owned_runner.close()
+        with contextlib.suppress(Exception):
+            _cleanup(state_dir)
+        os.close(lock_fd)

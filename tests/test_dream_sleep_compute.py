@@ -362,7 +362,55 @@ class TestPresynthesisQueries:
         mem.synthesize_cross_cluster.return_value = [{"title": "synth", "saved": True}]
 
         result = _run_presynthesis(cfg, mem, top_n=1, dry_run=True)
-        # top_n=1 → only "popular query" (count=5) processed
+        # top_n=1 → only "popular query" (count=5) motivates the global run
         assert len(result) == 1
-        assert result[0]["query"] == "popular query"
+        assert result[0]["scope"] == "global"
+        assert result[0]["queries"] == [{"query": "popular query", "hits": 5}]
         assert result[0]["synthesized"] == 1
+
+    def test_presynthesis_runs_global_synthesis_once_for_many_queries(self, tmp_path):
+        """synthesize_cross_cluster has no per-query scoping seam — it always
+        runs GLOBALLY. The pass must run it ONCE per night, not once per hot
+        query, and must not attribute the same global result to each query."""
+        from memo.cli_dream import _run_presynthesis
+
+        log_path = tmp_path / "recall.log"
+        entries = []
+        for prompt, n in (("query a", 4), ("query b", 3), ("query c", 2)):
+            entries.extend(
+                {"ts": "2026-06-18T10:00:00+00:00", "prompt": prompt, "hits": []} for _ in range(n)
+            )
+        log_path.write_text("\n".join(json.dumps(e) for e in entries))
+
+        cfg = MagicMock()
+        cfg.state_dir = tmp_path
+
+        mem = MagicMock()
+        mem.search.return_value = [MagicMock(id=f"mem{i}") for i in range(5)]
+        mem.synthesize_cross_cluster.return_value = [{"title": "synth", "saved": True}]
+
+        result = _run_presynthesis(cfg, mem, top_n=3, dry_run=True)
+        mem.synthesize_cross_cluster.assert_called_once_with(
+            dry_run=True, min_cluster_size=3, max_clusters=1
+        )
+        # One honest global entry (3 motivating queries), not 3 per-query claims.
+        assert len(result) == 1
+        assert [q["query"] for q in result[0]["queries"]] == ["query a", "query b", "query c"]
+        assert result[0]["synthesized"] == 1
+
+    def test_presynthesis_skips_synthesis_when_no_query_has_enough_hits(self, tmp_path):
+        from memo.cli_dream import _run_presynthesis
+
+        log_path = tmp_path / "recall.log"
+        log_path.write_text(
+            json.dumps({"ts": "2026-06-18T10:00:00+00:00", "prompt": "thin query", "hits": []})
+        )
+
+        cfg = MagicMock()
+        cfg.state_dir = tmp_path
+
+        mem = MagicMock()
+        mem.search.return_value = [MagicMock(id="mem0")]  # < 3 hits
+
+        assert _run_presynthesis(cfg, mem, top_n=3, dry_run=True) == []
+        mem.synthesize_cross_cluster.assert_not_called()

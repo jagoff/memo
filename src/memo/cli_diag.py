@@ -12,11 +12,20 @@ import re
 import shlex
 import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from memo.config import MODEL_PROFILES, Config
+
+
+def _gc_report(cfg: Config, *, fix: bool) -> dict[str, list[str]]:
+    """Run the orphan scan and deterministically release Memory resources."""
+    from memo.memory import Memory
+
+    with closing(Memory(cfg)) as mem:
+        return mem.gc(fix=fix)
 
 
 def _managed_sqlite_dbs(cfg: Config) -> list[tuple[str, Path]]:
@@ -166,8 +175,11 @@ def _db_health_report(cfg: Config) -> list[dict[str, Any]]:
 
 _PROFILE_FIELDS = (
     "llm_model",
+    "llm_revision",
     "helper_model",
+    "helper_revision",
     "embedder_model",
+    "embedder_revision",
     "embedder_dims",
     "reranker_enabled",
     "reranker_model",
@@ -177,8 +189,11 @@ _PROFILE_FIELDS = (
 _PROFILE_ENV_KEYS = (
     "MEMO_MODEL_PROFILE",
     "MEMO_LLM_MODEL",
+    "MEMO_LLM_REVISION",
     "MEMO_HELPER_MODEL",
+    "MEMO_HELPER_REVISION",
     "MEMO_EMBEDDER_MODEL",
+    "MEMO_EMBEDDER_REVISION",
     "MEMO_EMBEDDER_DIMS",
     "MEMO_RERANKER_ENABLED",
     "MEMO_RERANKER_MODEL",
@@ -216,24 +231,25 @@ def _profile_overrides(cfg: Config) -> list[dict[str, Any]]:
 
 def _model_cache_report(cfg: Config) -> list[dict[str, Any]]:
     from memo.embedder_select import resolve_backend
+    from memo.model_pins import hf_hub_cache_dir
 
-    hf_cache = Path.home() / ".cache" / "huggingface" / "hub"
+    hf_cache = hf_hub_cache_dir()
     if resolve_backend(cfg) == "mlx":
         roles = [
-            ("embedder", cfg.embedder_model),
-            ("llm", cfg.llm_model),
-            ("helper", cfg.helper_model),
+            ("embedder", cfg.embedder_model, cfg.embedder_revision),
+            ("llm", cfg.llm_model, cfg.llm_revision),
+            ("helper", cfg.helper_model, cfg.helper_revision),
         ]
         if cfg.reranker_enabled:
-            roles.append(("reranker", cfg.reranker_model))
+            roles.append(("reranker", cfg.reranker_model, cfg.reranker_revision))
     else:
         # CPU backend: only the sentence-transformers embedder model is loaded;
         # the MLX llm/helper/reranker never run here.
-        roles = [("embedder", cfg.st_embedder_model)]
-    seen: set[tuple[str, str]] = set()
+        roles = [("embedder", cfg.st_embedder_model, cfg.st_embedder_revision)]
+    seen: set[tuple[str, str, str | None]] = set()
     out: list[dict[str, Any]] = []
-    for role, model in roles:
-        key = (role, model)
+    for role, model, revision in roles:
+        key = (role, model, revision)
         if key in seen:
             continue
         seen.add(key)
@@ -242,6 +258,7 @@ def _model_cache_report(cfg: Config) -> list[dict[str, Any]]:
             {
                 "role": role,
                 "model": model,
+                "revision": revision,
                 "cached": cache_dir.is_dir(),
                 "cache_path": str(cache_dir),
             }
@@ -531,9 +548,7 @@ def _doctor_report(
     db_report = _db_health_report(cfg) if check_db else []
     gc_report: dict[str, Any] | None = None
     if do_gc:
-        from memo.memory import Memory
-
-        gc_report = Memory(cfg).gc(fix=fix)
+        gc_report = _gc_report(cfg, fix=fix)
     ok = (
         data_dir["ok"]
         and vault_path["ok"]

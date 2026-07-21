@@ -171,9 +171,12 @@ def flag(name: str, *, env: dict[str, str] | None = None, strict: bool = False) 
         return _flag_without_env(spec, name, src, strict=strict)
     if raw == "":
         # Empty string counts as unset except for str flags whose default is also "".
+        # "Unset" means the full fallback chain (markdown config > overlay >
+        # default), not a shortcut straight to the built-in default — an
+        # `MEMO_X=` export must not silently mask `memo config set` values.
         if spec.kind == "str" and spec.default == "":
             return ""
-        return spec.default
+        return _flag_without_env(spec, name, src, strict=strict)
     return _coerce_env_value(spec, name, raw, strict=strict)
 
 

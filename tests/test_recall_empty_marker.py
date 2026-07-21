@@ -71,7 +71,9 @@ class _EmptySearchMemory:
     def __init__(self, cfg: Any) -> None:
         pass
 
-    def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
+    def search(
+        self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+    ):
         return []
 
     def close(self) -> None:
@@ -81,7 +83,9 @@ class _EmptySearchMemory:
 class _RaisingSearchMemory(_EmptySearchMemory):
     """Memory stub whose search always FAILS (e.g. locked DB)."""
 
-    def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
+    def search(
+        self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+    ):
         raise RuntimeError("database is locked")
 
 
@@ -187,7 +191,9 @@ def test_subprocess_session_dedup_still_bails_empty(tmp_cfg: Config, monkeypatch
     )
 
     class _OneHitMemory(_EmptySearchMemory):
-        def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
             return [hit]
 
     monkeypatch.setattr("memo.memory.Memory", _OneHitMemory)

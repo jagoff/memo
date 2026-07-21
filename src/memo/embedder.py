@@ -38,6 +38,7 @@ from typing import Any, cast
 
 from memo.embed_base import EmbedderBase
 from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
+from memo.model_pins import ModelPinError, model_identity, resolve_model_snapshot
 
 try:
     from consciousness_contracts.cache import (
@@ -135,8 +136,15 @@ class MicroEmbedder:
 
     def embed(self, inputs: Sequence[str]) -> list[list[float]]:
         self._ensure_loaded()
-        if self._model is None or not inputs:
-            return [[0.0] * self.expected_dims for _ in inputs]
+        if not inputs:
+            return []
+        if self._model is None:
+            # Load failed: surface it — returning all-zero vectors here made
+            # recall silently score every candidate 0. Callers gate on
+            # `is_warm` (or catch) and fall back to BM25 instead.
+            raise RuntimeError(
+                f"MicroEmbedder: model {self.model_path!r} failed to load; cannot embed"
+            )
 
         import mlx.core as mx
 
@@ -192,11 +200,13 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
     def __init__(
         self,
         model_path: str = "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
+        revision: str | None = None,
         expected_dims: int = 1024,
         max_seq_len: int = 512,
         cache_size: int | None = None,
     ) -> None:
         self.model_path = model_path
+        self.revision = revision
         self.expected_dims = expected_dims
         self.max_seq_len = max_seq_len
         self._model: Any = None
@@ -223,6 +233,14 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
 
     # -- internal -----------------------------------------------------------
 
+    def _model_identity(self) -> str:
+        try:
+            return model_identity(self.model_path, self.revision)
+        except ModelPinError:
+            if "stub" in self.model_path.lower():
+                return self.model_path
+            raise
+
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
@@ -235,7 +253,8 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
             suppress_swig_deprecation_warnings()
             from mlx_lm import load as _mlx_load
 
-            loaded = _mlx_load(self.model_path)
+            load_path = resolve_model_snapshot(self.model_path, self.revision)
+            loaded = _mlx_load(load_path)
             self._model = loaded[0]
             self._tokenizer = loaded[1]
         finally:
@@ -363,7 +382,7 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
         q = (query or "").strip()
         if not q:
             return [0.0] * self.expected_dims
-        cache_key = f"{self.model_path}:{self.expected_dims}:{q}"
+        cache_key = f"{self._model_identity()}:{self.expected_dims}:{q}"
 
         if self._query_cache is not None:
             cached = self._query_cache.get(cache_key)
@@ -403,6 +422,11 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
     def dims(self) -> int:
         """EmbedderBase contract: returns expected_dims."""
         return self.expected_dims
+
+    @property
+    def model_name(self) -> str:
+        """Exact repository+revision identity used to produce vectors."""
+        return self._model_identity()
 
     @property
     def is_warm(self) -> bool:

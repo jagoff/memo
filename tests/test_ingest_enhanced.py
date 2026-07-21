@@ -1016,3 +1016,199 @@ def test_orphan_images_excluded_by_glob_star_star_pattern(tmp_path: Path, runner
     assert not excluded_rows, (
         f"REGRESSION: excluded image ingested as orphan (rows={[r['path'] for r in rows]})"
     )
+
+
+# ── QA remediation regressions: strict mode, exit code, unchanged-skip,
+#    exclusion boundaries, stale rows de notas que se vuelven skippables ──────
+
+_BASE_ARGS = [
+    "--no-chunk",
+    "--no-include-pdf",
+    "--no-include-orphan-images",
+    "--no-ocr",
+]
+
+
+def test_ingest_strict_mode_aborta_con_exit_no_cero(tmp_path: Path, runner_env, monkeypatch):
+    """MEMO_INGEST_STRICT=1: el primer error de embedding aborta el ingest con
+    exit != 0 — antes el re-raise era tragado por los handlers per-file y el
+    comando recorría todo el vault y salía 0."""
+    # Arrange
+    vault = _build_vault(
+        tmp_path / "vault",
+        {"a.md": "# A\n\nNote about cats.", "b.md": "# B\n\nNote about dogs."},
+    )
+
+    def _boom(self, inputs):
+        raise RuntimeError("EMBEDDER_DAEMON_DOWN")
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _boom)
+    env = {**runner_env, "MEMO_INGEST_STRICT": "1"}
+
+    # Act
+    result = CliRunner().invoke(cli, ["ingest", str(vault), "--name", "v", *_BASE_ARGS], env=env)
+
+    # Assert — fail-fast: exit no-cero y sin resumen "done" (abortó al primer error)
+    assert result.exit_code != 0, result.output
+    assert "done " not in result.output, result.output
+
+
+def test_ingest_exit_no_cero_y_causa_raiz_visible_sin_debug(
+    tmp_path: Path, runner_env, monkeypatch
+):
+    """Sin strict ni MEMO_INGEST_DEBUG: recorre todo, cuenta errors=N, imprime
+    la causa raíz y sale con exit != 0 (antes: exit 0 y causa solo con debug)."""
+    # Arrange
+    vault = _build_vault(
+        tmp_path / "vault",
+        {"a.md": "# A\n\nNote about cats.", "b.md": "# B\n\nNote about dogs."},
+    )
+
+    def _boom(self, inputs):
+        raise RuntimeError("EMBED_DISK_FULL_XYZ")
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _boom)
+
+    # Act
+    result = CliRunner().invoke(
+        cli, ["ingest", str(vault), "--name", "v", *_BASE_ARGS], env=runner_env
+    )
+
+    # Assert
+    assert result.exit_code != 0, result.output
+    assert "errors=2" in result.output, result.output
+    assert "EMBED_DISK_FULL_XYZ" in result.output, result.output
+
+
+def test_ingest_pdf_sin_cambios_no_reembebe_ni_toca_updated(
+    tmp_path: Path, runner_env, monkeypatch
+):
+    """Re-run sobre un PDF single-chunk sin cambios: no se re-embebe (espejo
+    del skip multi-chunk) y `updated` conserva su timestamp original."""
+    # Arrange — vault con un PDF corto (single-chunk) y texto mockeado
+    vault = _build_vault(tmp_path / "vault", {"filler.md": "# Filler\n\na tiny markdown note."})
+    (vault / "doc.pdf").write_bytes(b"%PDF-1.4\nfake")
+    calls = {"n": 0}
+
+    def _counting_embed(self, inputs):
+        calls["n"] += len(inputs)
+        return _stub_embed(self, inputs)
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _counting_embed)
+    args = [
+        "ingest",
+        str(vault),
+        "--name",
+        "v",
+        "--no-chunk",
+        "--include-pdf",
+        "--no-include-orphan-images",
+        "--no-ocr",
+    ]
+
+    with (
+        patch(
+            "memo.ingest_helpers.extract_pdf_text",
+            return_value="short pdf body about invoices",
+        ),
+        patch("memo.ingest_helpers.pdftotext_available", return_value=True),
+    ):
+        # Act — run 1 indexa; run 2 debe saltear sin tocar el embedder
+        first = CliRunner().invoke(cli, args, env=runner_env)
+        assert first.exit_code == 0, first.output
+        embeds_after_first = calls["n"]
+        updated_first = _open_store(runner_env).get_by_path_ci("v/doc.pdf")["updated"]
+
+        second = CliRunner().invoke(cli, args, env=runner_env)
+
+    # Assert
+    assert second.exit_code == 0, second.output
+    assert calls["n"] == embeds_after_first, "unchanged PDF must not be re-embedded"
+    assert "skipped_unchanged=2" in second.output, second.output  # filler.md + doc.pdf
+    assert _open_store(runner_env).get_by_path_ci("v/doc.pdf")["updated"] == updated_first
+
+
+def test_excluded_respeta_limite_de_componente_de_path(tmp_path: Path, runner_env):
+    """Los patrones de exclusión matchean por componente de path: `Archive`
+    excluye `Archive/` pero NO `Archived Projects/`; `Obsidian/AI` excluye su
+    subtree pero NO `Obsidian/AIDA/`; ídem la forma `dir/**`."""
+    # Arrange
+    vault = _build_vault(
+        tmp_path / "vault",
+        {
+            "Archived Projects/active.md": "# Active\n\nnota viva sobre proyectos.",
+            "Obsidian/AIDA/research.md": "# AIDA\n\nresearch about the AIDA framework.",
+            "Obsidian/WhatsappBackup/notes.md": "# WB\n\nnotas del backup, no excluidas.",
+            "Archive/old.md": "# Old\n\narchived note, must be skipped.",
+            "Obsidian/AI/mem.md": "# Mem\n\ncurated subtree, must be skipped.",
+        },
+    )
+
+    # Act
+    result = CliRunner().invoke(
+        cli,
+        [
+            "ingest",
+            str(vault),
+            "--name",
+            "v",
+            "--exclude",
+            "Obsidian/Whatsapp/**",
+            *_BASE_ARGS,
+        ],
+        env=runner_env,
+    )
+
+    # Assert
+    assert result.exit_code == 0, result.output
+    paths = {r["path"] for r in _all_rows(_open_store(runner_env))}
+    assert "v/Archived Projects/active.md" in paths, paths
+    assert "v/Obsidian/AIDA/research.md" in paths, paths
+    assert "v/Obsidian/WhatsappBackup/notes.md" in paths, paths
+    assert "v/Archive/old.md" not in paths, paths
+    assert "v/Obsidian/AI/mem.md" not in paths, paths
+
+
+def test_prune_borra_fila_de_nota_recortada_bajo_min_chars(tmp_path: Path, runner_env):
+    """Una nota indexada que luego queda como stub bajo min-chars no debe
+    seguir sirviendo el contenido viejo: --prune borra su fila stale (sin
+    --prune el ingest sigue siendo aditivo y la conserva)."""
+    # Arrange — run 1 indexa la nota completa
+    vault = _build_vault(tmp_path / "vault", {"n.md": "# N\n\nSensitive body about creds."})
+    base = ["ingest", str(vault), "--name", "v", *_BASE_ARGS]
+    assert CliRunner().invoke(cli, base, env=runner_env).exit_code == 0
+    assert "v/n.md" in {r["path"] for r in _all_rows(_open_store(runner_env))}
+
+    # Act — la nota queda reducida a un stub bajo min-chars (10)
+    (vault / "n.md").write_text("stub.", encoding="utf-8")
+    sin_prune = CliRunner().invoke(cli, base, env=runner_env)
+    assert sin_prune.exit_code == 0, sin_prune.output
+    assert _open_store(runner_env).get_by_path_ci("v/n.md") is not None  # aditivo
+    con_prune = CliRunner().invoke(cli, [*base, "--prune"], env=runner_env)
+
+    # Assert — con --prune la fila stale desaparece del índice vivo
+    assert con_prune.exit_code == 0, con_prune.output
+    assert "pruned=1" in con_prune.output, con_prune.output
+    assert _open_store(runner_env).get_by_path_ci("v/n.md") is None
+
+
+def test_prune_borra_fila_cuando_nota_gana_id_frontmatter(tmp_path: Path, runner_env):
+    """Una nota reference-tier que gana `id:` frontmatter (pasa a curada) deja
+    de pertenecer al índice de ingest: --prune borra la fila vieja."""
+    # Arrange — run 1 indexa la nota sin frontmatter
+    vault = _build_vault(tmp_path / "vault", {"n.md": "# N\n\nBody promoted to curated later."})
+    base = ["ingest", str(vault), "--name", "v", *_BASE_ARGS]
+    assert CliRunner().invoke(cli, base, env=runner_env).exit_code == 0
+    assert "v/n.md" in {r["path"] for r in _all_rows(_open_store(runner_env))}
+
+    # Act — la nota gana id: frontmatter (curada, la maneja memo reindex)
+    (vault / "n.md").write_text(
+        "---\nid: deadbeef0001\n---\n\nBody promoted to curated later.", encoding="utf-8"
+    )
+    result = CliRunner().invoke(cli, [*base, "--prune"], env=runner_env)
+
+    # Assert — la fila reference stale desaparece del índice vivo
+    assert result.exit_code == 0, result.output
+    assert "skipped_id=1" in result.output, result.output
+    assert "pruned=1" in result.output, result.output
+    assert _open_store(runner_env).get_by_path_ci("v/n.md") is None

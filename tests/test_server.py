@@ -185,3 +185,50 @@ def test_rename_without_saves_returns_error(mem: Memory):
     out = rename(title="X")
 
     assert out["error"] == "no_recent_save"
+
+
+def test_ensure_idle_daemon_spawns_and_tracks_pid(tmp_path, monkeypatch) -> None:
+    """The happy path spawns one child and records its pid in the pid file."""
+    from types import SimpleNamespace
+
+    from memo import server as server_module
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    calls: list = []
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda *a, **k: calls.append(a) or SimpleNamespace(pid=43210),
+    )
+
+    server_module._ensure_idle_daemon()
+
+    assert len(calls) == 1
+    assert (state / "idle-daemon.pid").read_text() == "43210"
+
+
+def test_ensure_idle_daemon_concurrent_start_does_not_double_spawn(tmp_path, monkeypatch) -> None:
+    """A held spawn lock (a concurrent memo-mcp mid-start) means: no second
+    child, and the concurrent starter's pid file is never overwritten."""
+    import fcntl
+    import os
+
+    from memo import server as server_module
+
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    lock_fd = os.open(str(state / "idle-daemon.spawn.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    calls: list = []
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: calls.append(a))
+
+    try:
+        server_module._ensure_idle_daemon()
+    finally:
+        os.close(lock_fd)
+
+    assert calls == []
+    assert not (state / "idle-daemon.pid").exists()

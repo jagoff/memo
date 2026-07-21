@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import logging
@@ -28,6 +29,13 @@ _MAX_LINE_BYTES = MAX_LINE_BYTES
 # structured stderr line (`recall_lock_wait` / `recall_lock_bail`) so the
 # next latency tail is diagnosable from the daemon log alone.
 _LOCK_WAIT_LOG_MS = 500.0
+
+# Daemon-busy marker: returned instead of "{}" on the warming and lock-bail
+# paths so the hook client can tell "daemon can't serve right now" (fall back
+# to the subprocess path) from a legit empty recall. Backward-compatible on
+# the wire: an old client prints it verbatim, and a dict without
+# hookSpecificOutput injects nothing — same net effect as the old "{}".
+BUSY_RESPONSE = '{"busy": true}'
 
 
 def _embedder_model_identity(mem: Any, cfg: Any) -> str:
@@ -255,14 +263,16 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             log_fn: Callable[[], None] | None = None
             try:
                 if op == "recall":
-                    # Warming up: bail "{}" fast — the hook client falls back
-                    # to the subprocess path instead of queueing behind the
-                    # cold MLX load. getattr: embedded/test servers without
-                    # the event are treated as warm.
+                    # Warming up: bail fast with the busy marker — the hook
+                    # client falls through to the subprocess path instead of
+                    # queueing behind the cold MLX load (a bare "{}" here was
+                    # indistinguishable from a legit empty recall, so the
+                    # fallback never ran during warmup). getattr: embedded/
+                    # test servers without the event are treated as warm.
                     _we = getattr(self.server, "_warm_event", None)
                     if _we is not None and not _we.is_set():
                         _log_lock_contention("recall_warming", 0.0, "warmup")
-                        self._write_response("{}", debug=debug)
+                        self._write_response(BUSY_RESPONSE, debug=debug)
                         return
                     prompt = (req.get("prompt") or "").strip()
                     cwd = req.get("cwd") or None
@@ -293,10 +303,10 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                         )
                         if debug:
                             print(
-                                f"# recall-daemon: lock busy >{timeout_s:.1f}s, bailing empty",
+                                f"# recall-daemon: lock busy >{timeout_s:.1f}s, bailing busy",
                                 file=sys.stderr,
                             )
-                        self._write_response("{}", debug=debug)
+                        self._write_response(BUSY_RESPONSE, debug=debug)
                         return
                     if wait_ms > _LOCK_WAIT_LOG_MS:
                         _log_lock_contention("recall_lock_wait", wait_ms, held_by)
@@ -541,7 +551,6 @@ def _warmup_embedder(mem: Any) -> float | None:
 
 def run_server(state_dir: Path | None = None) -> None:
     from memo.config import Config
-    from memo.memory import Memory
 
     cfg = Config.from_env()
     if state_dir is None:
@@ -565,75 +574,104 @@ def run_server(state_dir: Path | None = None) -> None:
         print("recall-daemon: another instance is starting", file=sys.stderr)
         sys.exit(0)
 
-    existing_pid = _read_pid(state_dir)
-    if existing_pid is not None and is_pid_alive(existing_pid):
-        print("recall-daemon: already running", file=sys.stderr)
-        sys.exit(0)
-
-    sock_path.unlink(missing_ok=True)
-    pid_file.unlink(missing_ok=True)
-
-    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
-    # The resident daemon is the machine's latency-critical GPU user: its
-    # warmup + query embeds take the fast lane on the cross-process GPU
-    # flock so batch jobs (capture-stop, refresh-summary, idle-daemon,
-    # test suites) yield at their next chunk boundary instead of starving
-    # it for minutes (observed 2026-07-05: recall_lock_bail storms while
-    # the embed thread waited behind the batch queue).
-    set_process_gpu_priority(True)
-    mem = Memory(cfg)
-
-    # Bind FIRST (so `memo recall-daemon start`'s socket probe succeeds on a
-    # cold start), then warm the model in a background thread. Until the warm
-    # event is set, recall ops bail "{}" fast (client falls back to the
-    # subprocess path — same behavior as socket-absent, without paying the
-    # cold load inside the priority lock) and embed/search ops wait on it.
-    try:
-        server = _RecallServer(str(sock_path), cfg, mem)
-    except OSError as exc:
-        print(f"recall-daemon: bind failed ({exc}), exiting", file=sys.stderr)
-        sys.exit(0)
-
-    warm_event = threading.Event()
-    server._warm_event = warm_event
-
-    def _warm_bg() -> None:
-        try:
-            warm_ms = _warmup_embedder(mem)
-            if warm_ms is not None:
-                print(f"# recall-daemon: embedder warm in {warm_ms:.0f}ms", file=sys.stderr)
-        finally:
-            # Set even on failure — handlers fall back to the lazy load.
-            warm_event.set()
-
-    threading.Thread(target=_warm_bg, name="embedder-warmup", daemon=True).start()
-
-    pid_file.write_text(str(os.getpid()))
     shutdown_event = threading.Event()
 
     def _sigterm(signum: int, frame: Any) -> None:
         shutdown_event.set()
 
-    signal.signal(signal.SIGTERM, _sigterm)
-    signal.signal(signal.SIGINT, _sigterm)
+    try:
+        signal.signal(signal.SIGTERM, _sigterm)
+        signal.signal(signal.SIGINT, _sigterm)
+        _run_server_locked(cfg, state_dir, sock_path, pid_file, shutdown_event)
+    finally:
+        os.close(lock_fd)
 
-    from memo.flags import flag_bool, flag_float
 
-    debug = flag_bool("MEMO_RECALL_DEBUG")
-    if debug:
-        print(f"# recall-daemon: listening on {sock_path}", file=sys.stderr)
+def _bind_recall_server(sock_path: Path, cfg: Any, mem: Any) -> Any:
+    try:
+        return _RecallServer(str(sock_path), cfg, mem)
+    except OSError as exc:
+        print(f"recall-daemon: bind failed ({exc}), exiting", file=sys.stderr)
+        sys.exit(0)
 
-    interval = flag_float("MEMO_EMBEDDER_STATS_INTERVAL_S") or _STATS_DEFAULT_PERSIST_INTERVAL_S
-    if interval > 0:
-        persister = threading.Thread(
-            target=_stats_persister,
-            args=(state_dir, server._stats, interval, shutdown_event),
-            daemon=True,
-            name="recall-daemon-stats-persister",
+
+def _run_server_locked(
+    cfg: Any,
+    state_dir: Path,
+    sock_path: Path,
+    pid_file: Path,
+    shutdown_event: threading.Event,
+) -> None:
+    """Run all post-flock setup under one resource-ownership boundary."""
+
+    from memo.memory import Memory
+
+    mem: Any | None = None
+    server: Any | None = None
+    try:
+        existing_pid = _read_pid(state_dir)
+        if existing_pid is not None and is_pid_alive(existing_pid):
+            print("recall-daemon: already running", file=sys.stderr)
+            sys.exit(0)
+
+        sock_path.unlink(missing_ok=True)
+        pid_file.unlink(missing_ok=True)
+
+        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+        os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+        # The resident daemon is the machine's latency-critical GPU user: its
+        # warmup + query embeds take the fast lane on the cross-process GPU
+        # flock so batch jobs yield instead of starving latency-critical recall.
+        set_process_gpu_priority(True)
+        mem = Memory(cfg)
+
+        # Bind before warmup so cold-start socket probes succeed immediately.
+        server = _bind_recall_server(sock_path, cfg, mem)
+
+        warm_event = threading.Event()
+        server._warm_event = warm_event
+        pid_file.write_text(str(os.getpid()))
+        from memo.flags import flag_bool, flag_float
+
+        if flag_bool("MEMO_RECALL_DEBUG"):
+            print(f"# recall-daemon: listening on {sock_path}", file=sys.stderr)
+
+        interval = flag_float("MEMO_EMBEDDER_STATS_INTERVAL_S") or _STATS_DEFAULT_PERSIST_INTERVAL_S
+        if interval > 0:
+            threading.Thread(
+                target=_stats_persister,
+                args=(state_dir, server._stats, interval, shutdown_event),
+                daemon=True,
+                name="recall-daemon-stats-persister",
+            ).start()
+
+        def _warm_bg() -> None:
+            try:
+                warm_ms = _warmup_embedder(mem)
+                if warm_ms is not None:
+                    print(
+                        f"# recall-daemon: embedder warm in {warm_ms:.0f}ms",
+                        file=sys.stderr,
+                    )
+            finally:
+                # Set even on failure — handlers fall back to the lazy load.
+                warm_event.set()
+
+        threading.Thread(target=_warm_bg, name="embedder-warmup", daemon=True).start()
+
+        _serve_until_shutdown(
+            server,
+            shutdown_event,
+            name="recall-daemon-serve",
+            on_shutdown=lambda: _cleanup(state_dir),
         )
-        persister.start()
-
-    _serve_until_shutdown(
-        server, shutdown_event, name="recall-daemon-serve", on_shutdown=lambda: _cleanup(state_dir)
-    )
+    finally:
+        shutdown_event.set()
+        if server is not None:
+            with contextlib.suppress(Exception):
+                server.server_close()
+        if mem is not None:
+            with contextlib.suppress(Exception):
+                mem.close()
+        with contextlib.suppress(Exception):
+            _cleanup(state_dir)

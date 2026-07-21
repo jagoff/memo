@@ -1,16 +1,20 @@
 """Tests for sync & backup module."""
 
+import fcntl
 import hashlib
+import json
 import shutil
 import sqlite3
 import stat
 import tarfile
+import threading
 from contextlib import closing
 from pathlib import Path
 
 import pytest
 
 from memo.config import Config
+from memo.history import HistoryStore
 from memo.memory import Memory
 from memo.sync import (
     BackupManager,
@@ -89,6 +93,33 @@ def test_sync_cursor_not_wedged_by_missing_then_present_file(sync_manager, mock_
         assert mock_memory.get(rec.id) is not None
     finally:
         remote.close()
+
+
+def test_sync_processes_large_backlog_from_oldest_event_forward(
+    sync_manager, mock_memory, tmp_path
+):
+    remote_path = tmp_path / "remote-history.db"
+    remote = HistoryStore(remote_path, device_id="remote-device")
+    try:
+        for index in range(1001):
+            remote.log_delete(
+                ts=f"2026-01-01T00:00:{index:04d}Z",
+                record_id=f"{index:032x}",
+                title=f"Remote {index}",
+                type_="note",
+            )
+    finally:
+        remote.close()
+
+    first = sync_manager.sync_from_remote(remote_path)
+
+    assert first.applied == 1000
+    assert mock_memory.history.get_sync_state("remote-device") == 1000
+
+    second = sync_manager.sync_from_remote(remote_path)
+
+    assert second.applied == 1
+    assert mock_memory.history.get_sync_state("remote-device") == 1001
 
 
 @pytest.fixture
@@ -172,6 +203,221 @@ def test_backup_manager_compressed_archive_is_private(backup_manager, mock_memor
 
     archive = backup_manager.backup_dir / "private.tar.gz"
     assert stat.S_IMODE(archive.stat().st_mode) == 0o600
+
+
+def test_backup_manager_compressed_archive_is_published_atomically(backup_manager, monkeypatch):
+    source = backup_manager.memory_dir / "atomic.md"
+    source.write_text("atomic backup body", encoding="utf-8")
+    archive = backup_manager.backup_dir / "atomic.tar.gz"
+    adding = threading.Event()
+    resume = threading.Event()
+    errors: list[BaseException] = []
+    original_add = tarfile.TarFile.add
+
+    def paused_add(self, *args, **kwargs):
+        adding.set()
+        assert resume.wait(5)
+        return original_add(self, *args, **kwargs)
+
+    monkeypatch.setattr(tarfile.TarFile, "add", paused_add)
+
+    def create() -> None:
+        try:
+            backup_manager.create_backup(compress=True, name="atomic")
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=create)
+    worker.start()
+    try:
+        assert adding.wait(5)
+        assert not archive.exists()
+    finally:
+        resume.set()
+        worker.join(5)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert archive.is_file()
+
+
+def test_backup_manager_compressed_archive_never_clobbers_racing_destination(
+    backup_manager,
+    monkeypatch,
+):
+    """A non-cooperating writer cannot be overwritten at publication time."""
+    source = backup_manager.memory_dir / "no-clobber.md"
+    source.write_text("backup body", encoding="utf-8")
+    archive = backup_manager.backup_dir / "no-clobber.tar.gz"
+    sentinel = b"pre-existing backup"
+    original_exists = Path.exists
+    archive_checks = 0
+
+    def create_destination_after_check(path: Path) -> bool:
+        nonlocal archive_checks
+        existed = original_exists(path)
+        if path == archive:
+            archive_checks += 1
+            if archive_checks == 2 and not existed:
+                archive.write_bytes(sentinel)
+        return existed
+
+    monkeypatch.setattr(Path, "exists", create_destination_after_check)
+
+    with pytest.raises(FileExistsError):
+        backup_manager.create_backup(compress=True, name="no-clobber")
+
+    assert archive.read_bytes() == sentinel
+
+
+def test_backup_manager_list_waits_for_backup_creation(backup_manager, monkeypatch):
+    source = backup_manager.memory_dir / "listed.md"
+    source.write_text("listed backup body", encoding="utf-8")
+    populated = threading.Event()
+    resume = threading.Event()
+    listed = threading.Event()
+    results: list[BackupMetadata] = []
+    errors: list[BaseException] = []
+    original_populate = backup_manager._populate_backup
+    original_acquire = backup_manager._acquire_lock
+    shared_lock_attempted = threading.Event()
+
+    def paused_populate(*args, **kwargs):
+        result = original_populate(*args, **kwargs)
+        populated.set()
+        assert resume.wait(5)
+        return result
+
+    def observed_acquire(fh, *, exclusive=True):
+        if not exclusive:
+            shared_lock_attempted.set()
+        return original_acquire(fh, exclusive=exclusive)
+
+    monkeypatch.setattr(backup_manager, "_populate_backup", paused_populate)
+    monkeypatch.setattr(backup_manager, "_acquire_lock", observed_acquire)
+
+    def create() -> None:
+        try:
+            backup_manager.create_backup(compress=True, name="listed")
+        except BaseException as exc:
+            errors.append(exc)
+
+    def list_created() -> None:
+        try:
+            results.extend(backup_manager.list_backups())
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            listed.set()
+
+    creator = threading.Thread(target=create)
+    reader = threading.Thread(target=list_created)
+    creator.start()
+    try:
+        assert populated.wait(5)
+        reader.start()
+        assert shared_lock_attempted.wait(5)
+        assert not listed.wait(0.1)
+    finally:
+        resume.set()
+        creator.join(5)
+        reader.join(5)
+
+    assert not creator.is_alive()
+    assert not reader.is_alive()
+    assert errors == []
+    assert [backup.name for backup in results] == ["listed"]
+
+
+def test_backup_manager_restore_waits_for_backup_creation(backup_manager, monkeypatch):
+    source = backup_manager.memory_dir / "restored.md"
+    source.write_text("restored backup body", encoding="utf-8")
+    adding = threading.Event()
+    resume = threading.Event()
+    restored = threading.Event()
+    results: list[bool] = []
+    errors: list[BaseException] = []
+    original_add = tarfile.TarFile.add
+    original_acquire = backup_manager._acquire_lock
+    shared_lock_attempted = threading.Event()
+
+    def paused_add(self, *args, **kwargs):
+        adding.set()
+        assert resume.wait(5)
+        return original_add(self, *args, **kwargs)
+
+    def observed_acquire(fh, *, exclusive=True):
+        if not exclusive:
+            shared_lock_attempted.set()
+        return original_acquire(fh, exclusive=exclusive)
+
+    monkeypatch.setattr(tarfile.TarFile, "add", paused_add)
+    monkeypatch.setattr(backup_manager, "_acquire_lock", observed_acquire)
+
+    def create() -> None:
+        try:
+            backup_manager.create_backup(compress=True, name="restored")
+        except BaseException as exc:
+            errors.append(exc)
+
+    def restore() -> None:
+        try:
+            results.append(backup_manager.restore_backup("restored", restore_dbs=False))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            restored.set()
+
+    creator = threading.Thread(target=create)
+    reader = threading.Thread(target=restore)
+    creator.start()
+    try:
+        assert adding.wait(5)
+        source.unlink()
+        reader.start()
+        assert shared_lock_attempted.wait(5)
+        assert not restored.wait(0.1)
+    finally:
+        resume.set()
+        creator.join(5)
+        reader.join(5)
+
+    assert not creator.is_alive()
+    assert not reader.is_alive()
+    assert errors == []
+    assert results == [True]
+    assert source.read_text(encoding="utf-8") == "restored backup body"
+
+
+def test_backup_manager_read_operations_use_shared_lock(backup_manager, monkeypatch):
+    operations: list[int] = []
+    monkeypatch.setattr(fcntl, "flock", lambda _descriptor, operation: operations.append(operation))
+
+    assert backup_manager.list_backups() == []
+    assert operations == [fcntl.LOCK_SH, fcntl.LOCK_UN]
+
+    operations.clear()
+    assert not backup_manager.restore_backup("missing")
+    assert operations == [fcntl.LOCK_SH, fcntl.LOCK_UN]
+
+
+def test_backup_manager_list_ignores_hidden_scratch_directories(backup_manager):
+    scratch = backup_manager.backup_dir / ".backup-stale"
+    scratch.mkdir()
+    metadata = BackupMetadata(
+        timestamp="2026-07-20T00:00:00+00:00",
+        memory_count=1,
+        checksum="checksum",
+        compressed_size=1,
+        original_size=1,
+        name="should-not-surface",
+    )
+    (scratch / "metadata.json").write_text(
+        json.dumps(metadata.__dict__),
+        encoding="utf-8",
+    )
+
+    assert backup_manager.list_backups() == []
 
 
 def test_backup_manager_restores_valid_compressed_archive(backup_manager):

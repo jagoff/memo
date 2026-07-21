@@ -161,7 +161,12 @@ def make_bridge(
             ),
             loop,
         )
-        result = fut.result(timeout=timeout_s)
+        try:
+            result = fut.result(timeout=timeout_s)
+        except BaseException:
+            if not fut.done():
+                fut.cancel()
+            raise
         text = getattr(result, "text", None)
         if not isinstance(text, str) or not text:
             text = str(getattr(result, "content", "") or result)

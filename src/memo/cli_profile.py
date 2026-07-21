@@ -34,9 +34,12 @@ def profile_status(as_json: bool, no_db: bool) -> None:
     marker = "[green]✓[/green]" if report["ok"] else "[red]✗[/red]"
     console.print(f"{marker} profile: {report['profile']} ({report['status']})")
     active = report["active"]
-    console.print(f"  embedder: {active['embedder_model']} [{active['embedder_dims']}]")
-    console.print(f"  llm:      {active['llm_model']}")
-    console.print(f"  helper:   {active['helper_model']}")
+    console.print(
+        f"  embedder: {active['embedder_model']}@{active['embedder_revision']} "
+        f"[{active['embedder_dims']}]"
+    )
+    console.print(f"  llm:      {active['llm_model']}@{active['llm_revision']}")
+    console.print(f"  helper:   {active['helper_model']}@{active['helper_revision']}")
     revision = active.get("reranker_revision") or "unpinned"
     console.print(
         f"  reranker: {active['reranker_model']} "

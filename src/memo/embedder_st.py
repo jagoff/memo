@@ -1,7 +1,7 @@
 """CPU embedder backend (`sentence-transformers`) for non-Apple-Silicon hosts.
 
 memo's primary embedder is MLX (`embedder.MLXEmbedder`), which only runs on
-Apple Silicon. On Linux/Ubuntu and Intel macs this `STEmbedder` provides the
+Apple Silicon. On Linux/Ubuntu this `STEmbedder` provides the
 same `EmbedderBase` surface backed by a CPU `sentence-transformers` model, so
 search / recall / save work without MLX. Selected by `embedder_select`.
 
@@ -22,11 +22,13 @@ return one cheaply and the selection path stays light.
 from __future__ import annotations
 
 import contextlib
+import sys
 import threading
 from collections.abc import Sequence
 from typing import Any
 
 from memo.embed_base import EmbedderBase
+from memo.model_pins import model_identity, model_spec
 
 _DEFAULT_ST_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 
@@ -75,23 +77,34 @@ class STEmbedder(EmbedderBase):
         try:
             if self._model is not None:
                 return
+            spec = model_spec(self.model_path, self.revision)
             try:
                 from sentence_transformers import SentenceTransformer
             except ImportError as exc:  # pragma: no cover - install-time guard
-                raise RuntimeError(
-                    "STEmbedder needs the optional `sentence-transformers` "
-                    "dependency. Install with: pipx install 'mlx-memo[cpu]' "
-                    "(or pip install 'mlx-memo[cpu]'). See docs/ubuntu.md."
-                ) from exc
+                if sys.platform.startswith("linux"):
+                    message = (
+                        "STEmbedder needs the `sentence-transformers` dependency. "
+                        "Install memo's Linux runtime as documented in docs/ubuntu.md."
+                    )
+                else:
+                    message = (
+                        "The explicit ST backend needs the `sentence-transformers` "
+                        "dependency; automatic ST fallback is supported only on Linux."
+                    )
+                raise RuntimeError(message) from exc
             model = SentenceTransformer(
-                self.model_path,
+                spec.source,
                 device=self.device,
-                revision=self.revision,
+                revision=spec.revision,
             )
             # Not all backbones expose a settable max_seq_length; non-fatal.
             with contextlib.suppress(AttributeError, TypeError):
                 model.max_seq_length = self.max_seq_len
-            dim = model.get_sentence_embedding_dimension()
+            get_dimension = getattr(model, "get_embedding_dimension", None)
+            if get_dimension is None:
+                # sentence-transformers <5.6 compatibility.
+                get_dimension = model.get_sentence_embedding_dimension
+            dim = get_dimension()
             if dim is not None and int(dim) != self.expected_dims:
                 raise RuntimeError(
                     f"STEmbedder model {self.model_path!r} produced dim={dim} but "
@@ -152,7 +165,7 @@ class STEmbedder(EmbedderBase):
 
     @property
     def model_name(self) -> str:
-        return f"{self.model_path}@{self.revision}" if self.revision else self.model_path
+        return model_identity(self.model_path, self.revision)
 
     @property
     def is_warm(self) -> bool:

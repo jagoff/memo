@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -381,16 +382,17 @@ def _seed_install_memory() -> None:
         from memo.memory import Memory
 
         cfg.state_dir.mkdir(parents=True, exist_ok=True)
-        rec = Memory(cfg).save(
-            content=(
-                f"Installed memo {ver} on {_date.today().isoformat()} on "
-                f"{socket.gethostname()}. memo now recalls relevant memories "
-                "on every prompt and briefs at session start."
-            ),
-            title=f"memo {ver} installed",
-            type_="note",
-            tags=["memo-install-seed"],
-        )
+        with closing(Memory(cfg)) as memory:
+            rec = memory.save(
+                content=(
+                    f"Installed memo {ver} on {_date.today().isoformat()} on "
+                    f"{socket.gethostname()}. memo now recalls relevant memories "
+                    "on every prompt and briefs at session start."
+                ),
+                title=f"memo {ver} installed",
+                type_="note",
+                tags=["memo-install-seed"],
+            )
         stamp.write_text(
             _json.dumps({"id": rec.id, "ts": _date.today().isoformat(), "shown": False}),
             encoding="utf-8",

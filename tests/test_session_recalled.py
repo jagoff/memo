@@ -132,7 +132,15 @@ def test_subprocess_path_dedup_short_ref_on_second_turn(tmp_cfg, monkeypatch) ->
         def __init__(self, cfg):
             pass
 
-        def search(self, query, limit=5, mode="bm25", recency=False, exclude_types=None):
+        def search(
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [hit]
 
         def close(self):

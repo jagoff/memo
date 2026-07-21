@@ -5,7 +5,7 @@ This guide is for AI agents (Cline, Claude, etc.) installing **memo** as an MCP 
 ## Requirements
 
 - Python **3.13+**
-- macOS on Apple Silicon (uses MLX) **or** Linux/Intel macOS (uses the `cpu` extra)
+- macOS on Apple Silicon (uses MLX) **or** Linux (uses CPU embeddings)
 - `uv` (recommended) or `pipx`
 
 ## Install
@@ -16,10 +16,11 @@ Install memo as an **isolated tool** (do not add it to a project venv):
 # macOS Apple Silicon (recommended)
 uv tool install mlx-memo
 
-# Linux / Intel macOS (CPU embeddings)
-uv tool install "mlx-memo[cpu]"
+# Linux (CPU embeddings; explicit Python avoids an older distro interpreter)
+uv tool install --python 3.13 \
+  --find-links https://download.pytorch.org/whl/cpu/torch/ mlx-memo
 
-# Alternatives
+# Alternatives (Apple Silicon; Linux pipx needs the CPU-wheel args in docs/ubuntu.md)
 pipx install mlx-memo
 brew tap jagoff/memo && brew install mlx-memo
 ```
@@ -41,7 +42,9 @@ Add to the client's MCP settings (e.g. Cline's `cline_mcp_settings.json`):
 }
 ```
 
-No API keys required. On first run memo downloads the embedding model (Qwen3-Embedding 0.6B, ~350 MB) from Hugging Face; the first tool call may take a minute.
+No API keys required. On first run memo downloads the Qwen3-Embedding model
+(about 0.4 GB for the MLX quant or 1.2 GB for Linux CPU); the first tool call
+may take a minute.
 
 If `memo-mcp` is not on PATH, use the zero-install form instead:
 
@@ -56,7 +59,8 @@ If `memo-mcp` is not on PATH, use the zero-install form instead:
 }
 ```
 
-(On Linux use `"--from", "mlx-memo[cpu]"`.)
+(On Linux, prefer the isolated `uv tool install` path
+above so the Python version and CPU dependency are resolved explicitly.)
 
 ## Optional environment variables
 

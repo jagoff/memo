@@ -37,7 +37,9 @@ def test_save_populates_embedding_cache(mock_memory):
     mock_memory.save(content="cache me please", title="Title")
     text = mock_memory._compose_for_embed("Title", "cache me please")
     cached = mock_memory.store.get_repo_embedding_cache(
-        model=mock_memory.cfg.embedder_model,
+        # Cache ownership includes the immutable revision, exactly as the
+        # write path does. The unqualified config model is only the repo name.
+        model=mock_memory.store.embedder_model,
         dims=mock_memory.cfg.embedder_dims,
         input_hashes=[_sha256_full(text)],
     )

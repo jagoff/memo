@@ -3,14 +3,15 @@ name: publish
 on:
   push:
     tags: ["v*"]
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  quality-gate:
+    uses: ./.github/workflows/release-quality.yml
+
   verify-release:
     name: Verify release provenance
     runs-on: ubuntu-latest
@@ -52,7 +53,7 @@ jobs:
     # (Release -> PyPI -> MCP registry) can never silently freeze again.
     # No-op when the release already exists (release-event and re-run paths).
     name: GitHub Release
-    needs: verify-release
+    needs: [verify-release, quality-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -81,7 +82,7 @@ jobs:
 
   build:
     name: Build distributions
-    needs: verify-release
+    needs: [verify-release, quality-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -108,7 +109,7 @@ jobs:
 
   pypi:
     name: PyPI
-    needs: build
+    needs: [build, github-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read

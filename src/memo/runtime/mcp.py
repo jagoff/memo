@@ -23,7 +23,9 @@ _MCP_ENV_FORWARD_KEYS = (
     "MEMO_MCP_PROFILE",
     "MEMO_MODEL_PROFILE",
     "MEMO_LLM_MODEL",
+    "MEMO_LLM_REVISION",
     "MEMO_HELPER_MODEL",
+    "MEMO_HELPER_REVISION",
     "MEMO_EMBEDDER_BACKEND",
     "MEMO_ST_EMBEDDER_MODEL",
     "MEMO_ST_EMBEDDER_REVISION",
@@ -100,7 +102,7 @@ def _mcp_server_env() -> dict[str, str]:
 
     env = {
         "MEMO_NONINTERACTIVE": "1",
-        "MEMO_MCP_PROFILE": flag_str("MEMO_MCP_PROFILE") or "agent",
+        "MEMO_MCP_PROFILE": flag_str("MEMO_MCP_PROFILE", strict=True) or "agent",
         # MCP clients may inherit a dev shell's PYTHONPATH (for example `src`
         # inside this checkout). Clear it so the isolated memo-mcp shim imports
         # its installed runtime, not whichever repo happens to be the cwd.

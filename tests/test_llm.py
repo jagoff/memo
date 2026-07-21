@@ -8,6 +8,9 @@ The actual generation path needs MLX and is exercised under
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
 from memo.llm import MLXChat, _apply_chat_template, _prompt_cache_enabled
 
 # -- _prompt_cache_enabled -------------------------------------------------
@@ -87,3 +90,32 @@ def test_unload_all_clears_everything():
     chat._loaded.update({"a": object(), "b": object()})
     assert chat.unload() is True
     assert not chat._loaded
+
+
+def test_load_resolves_exact_snapshot_before_mlx_lm(monkeypatch):
+    calls: dict[str, str] = {}
+    sha = "d" * 40
+    hf = ModuleType("huggingface_hub")
+    mlx_lm = ModuleType("mlx_lm")
+
+    def snapshot_download(*, repo_id: str, revision: str) -> str:
+        calls.update(repo_id=repo_id, revision=revision)
+        return "/cache/chat-snapshot"
+
+    def load(path: str):
+        calls["load_path"] = path
+        return object(), object()
+
+    hf.snapshot_download = snapshot_download  # type: ignore[attr-defined]
+    mlx_lm.load = load  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hf)
+    monkeypatch.setitem(sys.modules, "mlx_lm", mlx_lm)
+
+    chat = MLXChat(model_revisions={"someone/chat": sha})
+    chat._ensure_model("someone/chat")
+
+    assert calls == {
+        "repo_id": "someone/chat",
+        "revision": sha,
+        "load_path": "/cache/chat-snapshot",
+    }

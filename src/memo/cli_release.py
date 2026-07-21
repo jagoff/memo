@@ -32,6 +32,13 @@ from memo.release_mcpb import (
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _CLAUDE_PLUGIN = Path(".claude-plugin/plugin.json")
 _CODEX_PLUGIN = Path("plugins/memo/.codex-plugin/plugin.json")
+_PINNED_INSTALL_PATHS = {
+    Path("install.sh"),
+    Path("README.md"),
+    Path("docs/install-new-mac.md"),
+    Path("docs/reference.md"),
+    Path("docs/docker.md"),
+}
 
 
 @dataclass(frozen=True)
@@ -93,6 +100,37 @@ _VERSION_TARGETS = (
         # tests/test_release_mcpb_node.py::test_pin_chain_in_sync.
         Path("packaging/mcpb-node/manifest.json"),
         r'("version"\s*:\s*")([^"]+)(")',
+        1,
+        optional=True,
+    ),
+    VersionTarget(
+        Path("install.sh"),
+        r'(^DEFAULT_VERSION=")([^"]+)(")',
+        1,
+        flags=re.MULTILINE,
+        optional=True,
+    ),
+    VersionTarget(
+        Path("README.md"),
+        r"(raw\.githubusercontent\.com/jagoff/memo/v)([^/]+)(/install\.sh)",
+        3,
+        optional=True,
+    ),
+    VersionTarget(
+        Path("docs/install-new-mac.md"),
+        r"(raw\.githubusercontent\.com/jagoff/memo/v)([^/]+)(/install\.sh)",
+        3,
+        optional=True,
+    ),
+    VersionTarget(
+        Path("docs/reference.md"),
+        r"(raw\.githubusercontent\.com/jagoff/memo/v)([^/]+)(/install\.sh)",
+        7,
+        optional=True,
+    ),
+    VersionTarget(
+        Path("docs/docker.md"),
+        r"(raw\.githubusercontent\.com/jagoff/memo/v)([^/]+)(/install\.sh)",
         1,
         optional=True,
     ),
@@ -358,6 +396,82 @@ def _check_mcpb_archive(
             issues.append(f"{key} member {member} differs from {source_key}")
 
 
+def _check_install_pins(
+    repo: Path, version: str, versions: dict[str, str], issues: list[str]
+) -> None:
+    for target in _VERSION_TARGETS:
+        if target.rel_path not in _PINNED_INSTALL_PATHS:
+            continue
+        path = repo / target.rel_path
+        if target.optional and not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            issues.append(f"could not read {target.rel_path.as_posix()}: {exc}")
+            continue
+        pins = [match.group(2) for match in re.finditer(target.pattern, text, target.flags)]
+        versions[f"{target.rel_path.as_posix()} install pins"] = ",".join(pins)
+        if len(pins) != target.replacements or any(pin != version for pin in pins):
+            issues.append(
+                f"{target.rel_path.as_posix()} install pin(s) {pins!r} != pyproject {version!r}"
+            )
+
+
+def _check_additional_server_packages(
+    repo: Path, version: str, versions: dict[str, str], issues: list[str]
+) -> None:
+    try:
+        server_raw = _json_file(repo / "server.json")
+    except ValueError:
+        return  # the authoritative target loop already reported the error
+    packages = server_raw.get("packages")
+    if not isinstance(packages, list):
+        return
+    for index, package in enumerate(packages[1:], start=1):
+        key = f"server.json packages[{index}]"
+        found = str(package.get("version") or "") if isinstance(package, dict) else ""
+        versions[key] = found
+        if found != version:
+            issues.append(f"{key} version {found!r} != pyproject {version!r}")
+
+
+def _check_changelog(repo: Path, version: str, issues: list[str]) -> None:
+    try:
+        text = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
+    except OSError as exc:
+        issues.append(f"could not read CHANGELOG.md: {exc}")
+        return
+    section = re.search(
+        rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}\n(?P<body>.*?)(?=^## \[|\Z)",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if section is None:
+        issues.append(f"CHANGELOG.md is missing a dated section for {version}")
+    elif re.search(r"\bTODO\b|describe changes", section.group("body"), flags=re.IGNORECASE):
+        issues.append(f"CHANGELOG.md section for {version} still contains TODO text")
+
+
+def _check_formula(
+    repo: Path, version: str, *, strict_docs: bool, issues: list[str], warnings: list[str]
+) -> None:
+    destination = issues if strict_docs else warnings
+    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
+    if not formula.exists():
+        return
+    try:
+        text = formula.read_text(encoding="utf-8")
+    except OSError as exc:
+        destination.append(f"could not read {formula.relative_to(repo)}: {exc}")
+        return
+    match = re.search(r"/archive/refs/tags/v([^/]+)\.tar\.gz", text) or re.search(
+        r"mlx_memo-([0-9][^/\"']*)\.tar\.gz", text
+    )
+    if match and match.group(1) != version:
+        _add_doc_drift(destination, path=formula, expected=version, found=match.group(1))
+
+
 def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseCheckReport:
     """Validate that the checkout is release-ready.
 
@@ -383,21 +497,11 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
             repo, target, expected=version, versions=versions, issues=issues
         )
 
+    _check_install_pins(repo, version, versions, issues)
+
     # server.json may grow more packages; _VERSION_TARGETS pins only index 0,
     # so validate the rest dynamically.
-    try:
-        server_raw = _json_file(repo / "server.json")
-    except ValueError:
-        pass  # already reported by the targets loop
-    else:
-        packages = server_raw.get("packages")
-        if isinstance(packages, list):
-            for i, pkg in enumerate(packages[1:], start=1):
-                key = f"server.json packages[{i}]"
-                found = str(pkg.get("version") or "") if isinstance(pkg, dict) else ""
-                versions[key] = found
-                if found != version:
-                    issues.append(f"{key} version {found!r} != pyproject {version!r}")
+    _check_additional_server_packages(repo, version, versions, issues)
 
     _check_mcpb_manifest(repo, expected=version, versions=versions, issues=issues)
     _check_mcpb_node_manifest(repo, expected=version, versions=versions, issues=issues)
@@ -414,42 +518,14 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
             fallback_source_dir_name="mcpb",
         )
 
-    changelog = repo / "CHANGELOG.md"
-    try:
-        cl_text = changelog.read_text(encoding="utf-8")
-    except OSError as exc:
-        issues.append(f"could not read CHANGELOG.md: {exc}")
-    else:
-        section = re.search(
-            rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}\n(?P<body>.*?)(?=^## \[|\Z)",
-            cl_text,
-            flags=re.MULTILINE | re.DOTALL,
-        )
-        if section is None:
-            issues.append(f"CHANGELOG.md is missing a dated section for {version}")
-        else:
-            body = section.group("body")
-            if re.search(r"\bTODO\b|describe changes", body, flags=re.IGNORECASE):
-                issues.append(f"CHANGELOG.md section for {version} still contains TODO text")
-
-    doc_drifts = issues if strict_docs else warnings
-    formula = repo / "docs" / "homebrew" / "mlx-memo.rb"
-    if formula.exists():
-        try:
-            text = formula.read_text(encoding="utf-8")
-        except OSError as exc:
-            doc_drifts.append(f"could not read {formula.relative_to(repo)}: {exc}")
-        else:
-            m = re.search(r"/archive/refs/tags/v([^/]+)\.tar\.gz", text) or re.search(
-                r"mlx_memo-([0-9][^/\"']*)\.tar\.gz", text
-            )
-            if m and m.group(1) != version:
-                _add_doc_drift(
-                    doc_drifts,
-                    path=formula,
-                    expected=version,
-                    found=m.group(1),
-                )
+    _check_changelog(repo, version, issues)
+    _check_formula(
+        repo,
+        version,
+        strict_docs=strict_docs,
+        issues=issues,
+        warnings=warnings,
+    )
 
     return ReleaseCheckReport(version, versions, issues, warnings)
 
