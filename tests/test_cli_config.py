@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
@@ -62,6 +63,31 @@ def test_config_set_show_and_unset(tmp_path: Path) -> None:
     assert unset_result.exit_code == 0, unset_result.output
 
 
+def test_config_set_rolls_back_when_validation_fails(tmp_path: Path) -> None:
+    """An invalid value must not stay live on disk (daemons/MCP read the
+    markdown config the moment it is written)."""
+    from memo.config_md import ConfigProblem
+
+    runner = CliRunner()
+    env = _env(tmp_path)
+    assert runner.invoke(cli, ["config", "init"], env=env).exit_code == 0
+    assert runner.invoke(cli, ["config", "set", "recall.top_k", "9"], env=env).exit_code == 0
+
+    with patch(
+        "memo.config_md.validate_markdown_config",
+        return_value=[ConfigProblem(file="x.md", key="recall.top_k", value="3", error="boom")],
+    ):
+        result = runner.invoke(cli, ["config", "set", "recall.top_k", "3"], env=env)
+    assert result.exit_code != 0
+    assert "boom" in result.output
+
+    # The prior value is restored, not the rejected one.
+    show = runner.invoke(cli, ["config", "show", "--effective"], env=env)
+    assert show.exit_code == 0, show.output
+    assert "9" in show.output
+    assert "3" not in show.output.split("MEMO_RECALL_TOP_K")[-1].splitlines()[0]
+
+
 def test_config_set_and_unset_reject_runtime_only_keys(tmp_path: Path) -> None:
     runner = CliRunner()
     env = _env(tmp_path)
@@ -91,6 +117,30 @@ def test_config_show_effective_uses_environment_over_markdown(tmp_path: Path) ->
         "source": "env",
         "env": "MEMO_RECALL_TOP_K",
     }
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("MEMO_MCP_TRANSPORT", "htpp"),
+        ("MEMO_MCP_PROFILE", "typo"),
+        ("MEMO_MCP_PORT", "0"),
+        ("MEMO_MCP_PORT", "70000"),
+    ],
+)
+def test_config_validate_rejects_invalid_mcp_values(
+    tmp_path: Path,
+    name: str,
+    value: str,
+) -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["config", "validate"],
+        env={**_env(tmp_path), name: value},
+    )
+
+    assert result.exit_code == 1
+    assert name in result.output
 
 
 def test_config_migrate_reads_legacy_toml(tmp_path: Path) -> None:

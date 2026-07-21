@@ -149,19 +149,43 @@ def config_path() -> None:
     click.echo(f"legacy_toml: {_resolve_config_path()}")
 
 
+def _raw_config_value(typed: object) -> str:
+    """Stringify a previously-loaded config value so set_value round-trips it."""
+    if isinstance(typed, bool):
+        return "on" if typed else "off"
+    return str(typed)
+
+
+def _restore_config_value(key: str, prev: object | None) -> None:
+    """Best-effort rollback of a markdown config key to its prior state."""
+    from contextlib import suppress
+
+    from memo.config_md import set_value, unset_value
+
+    with suppress(Exception):
+        if prev is None:
+            unset_value(key)
+        else:
+            set_value(key, _raw_config_value(prev))
+
+
 @config_group.command(name="set")
 @click.argument("key")
 @click.argument("value")
 def config_set(key: str, value: str) -> None:
     """Set a Markdown config value, for example recall.top_k 5."""
-    from memo.config_md import set_value, validate_markdown_config
+    from memo.config_md import load_values, set_value, validate_markdown_config
 
+    prev = load_values().get(key)
     try:
         path = set_value(key, value)
     except (KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     problems = validate_markdown_config()
     if problems:
+        # Roll back before raising: the markdown config is live for daemons/
+        # MCP/hooks the moment it is on disk — an invalid value must not stay.
+        _restore_config_value(key, prev.value if prev is not None else None)
         raise click.ClickException("; ".join(f"{p.key}: {p.error}" for p in problems))
     console.print(f"[green]set[/green] {key} in {path}")
 
@@ -170,14 +194,16 @@ def config_set(key: str, value: str) -> None:
 @click.argument("key")
 def config_unset(key: str) -> None:
     """Remove a Markdown config override."""
-    from memo.config_md import unset_value, validate_markdown_config
+    from memo.config_md import load_values, unset_value, validate_markdown_config
 
+    prev = load_values().get(key)
     try:
         path = unset_value(key)
     except (KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     problems = validate_markdown_config()
     if problems:
+        _restore_config_value(key, prev.value if prev is not None else None)
         raise click.ClickException("; ".join(f"{p.key}: {p.error}" for p in problems))
     console.print(f"[green]unset[/green] {key} in {path}")
 
