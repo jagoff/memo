@@ -66,11 +66,7 @@ def test_rerank_prioritizes_verified(tmp_cfg):
     with patch("memo.memory.rerank_ops.flag_bool") as mock_flag_bool:
 
         def flag_bool_side_effect(flag_name):
-            if flag_name == "MEMO_VERIFICATION_STATE_TRACKING":
-                return True
-            if flag_name == "MEMO_GRAPH_DISTANCE_DECAY":
-                return False
-            return False
+            return flag_name == "MEMO_VERIFICATION_STATE_TRACKING"
 
         mock_flag_bool.side_effect = flag_bool_side_effect
         result = memory._rerank_logic(
@@ -131,11 +127,7 @@ def test_rerank_stale_decays(tmp_cfg):
     with patch("memo.memory.rerank_ops.flag_bool") as mock_flag_bool:
 
         def flag_bool_side_effect(flag_name):
-            if flag_name == "MEMO_VERIFICATION_STATE_TRACKING":
-                return True
-            if flag_name == "MEMO_GRAPH_DISTANCE_DECAY":
-                return False
-            return False
+            return flag_name == "MEMO_VERIFICATION_STATE_TRACKING"
 
         mock_flag_bool.side_effect = flag_bool_side_effect
         result = memory._rerank_logic(
@@ -197,8 +189,6 @@ def test_rerank_no_state_decay_when_disabled(tmp_cfg):
         def flag_bool_side_effect(flag_name):
             # State tracking disabled
             if flag_name == "MEMO_VERIFICATION_STATE_TRACKING":
-                return False
-            if flag_name == "MEMO_GRAPH_DISTANCE_DECAY":
                 return False
             return False
 

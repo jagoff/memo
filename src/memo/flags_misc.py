@@ -905,21 +905,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "its share of the strongest co-recall edge in the result set. Only applied when "
         "MEMO_GRAPH_CO_RECALL is on.",
     ),
-    _spec(
-        "MEMO_GRAPH_DISTANCE_DECAY",
-        "bool",
-        False,
-        "graph",
-        "Enable inverse-distance decay weighting in rerank. Penalizes memories far from base facts.",
-    ),
-    _spec(
-        "MEMO_GRAPH_DISTANCE_DECAY_RATE",
-        "float",
-        0.15,
-        "graph",
-        "Decay coefficient: score *= 1 / (1 + rate * distance). Higher = steeper penalty.",
-        min_val=0.0,
-    ),
     # schema / embedding version check
     _spec(
         "MEMO_SKIP_MODEL_VERSION_CHECK",

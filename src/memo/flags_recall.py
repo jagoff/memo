@@ -581,26 +581,6 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0,
         max_val=3,
     ),
-    # Wave 2: Token Economy (L2 + L3)
-    _spec(
-        "MEMO_STREAM_COMPRESS",
-        "bool",
-        False,
-        "recall",
-        "L2 streaming compression: detect low-signal token spans (preamble, filler) "
-        "and emit reversible markers instead. Achieves 5-15% response token reduction. "
-        "Default OFF (opt-in).",
-    ),
-    _spec(
-        "MEMO_PREFIX_CACHE_ALIGN",
-        "bool",
-        False,
-        "recall",
-        "L3 prefix optimization: deterministically order recall memories (by SHA256 hash) "
-        "to maximize KV cache prefix hits on repeated recalls (Anthropic, Bedrock, etc.). "
-        "Default OFF (opt-in). When ON, optimize_recall_prefix reorders system/memories "
-        "for stable prefix structure across sessions.",
-    ),
     _spec(
         "MEMO_GUARD_ENABLED",
         "bool",
@@ -677,17 +657,3 @@ def flag_recall_verbosity_level() -> int:
     if val is None:
         return 0
     return max(0, min(3, val))  # Clamp to [0, 3]
-
-
-def flag_stream_compress_enabled() -> bool:
-    """L2 streaming compression flag (default: OFF)."""
-    from memo.flags import flag_bool
-
-    return flag_bool("MEMO_STREAM_COMPRESS")
-
-
-def flag_prefix_cache_align_enabled() -> bool:
-    """L3 prefix cache alignment flag (default: OFF)."""
-    from memo.flags import flag_bool
-
-    return flag_bool("MEMO_PREFIX_CACHE_ALIGN")
