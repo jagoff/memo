@@ -380,7 +380,10 @@ class GraphProjectionStore:
             node["doc_freq"] = len(memberships)
             ratio = len(memberships) / live_total if live_total else 0.0
             node["is_hub"] = ratio > config.hub_max_doc_freq_ratio
-            node["idf"] = math.log((1 + live_total) / (1 + len(memberships))) + 1.0
+            node["idf"] = max(
+                0.0,
+                math.log((1 + live_total) / (1 + len(memberships))),
+            )
             for memory_id, confidence in sorted(memberships.items()):
                 membership_rows.append(
                     {
