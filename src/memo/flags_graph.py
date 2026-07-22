@@ -92,6 +92,20 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=0.5,
     ),
     _spec(
+        "MEMO_GRAPH_CODE_TRACE_ENABLED",
+        "bool",
+        False,
+        "graph",
+        "Project captured memory-to-codegraph evidence with stable code URIs.",
+    ),
+    _spec(
+        "MEMO_GRAPH_DISCOVERY_ENABLED",
+        "bool",
+        False,
+        "graph",
+        "Expose bounded community and bridge discovery over the curated projection.",
+    ),
+    _spec(
         "MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED",
         "bool",
         False,

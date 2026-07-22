@@ -111,6 +111,16 @@ GATES: dict[str, GateSpec] = dict(
             "manual",
             "materialized read-model lifecycle; activate through graph-config.md",
         ),
+        _g(
+            "MEMO_GRAPH_CODE_TRACE_ENABLED",
+            "manual",
+            "read-only traceability projection; activate through graph-config.md",
+        ),
+        _g(
+            "MEMO_GRAPH_DISCOVERY_ENABLED",
+            "manual",
+            "read-only discovery packet; activate through graph-config.md",
+        ),
         _g("MEMO_GUARD_ENABLED", "manual", "UX banner; gate = user judgement on interjections"),
         _g("MEMO_INTERJECT_ENABLED", "manual", "UX banner; gate = user judgement"),
         _g("MEMO_GRAPH_REASON_ENABLED", "manual", "attribution metadata only, no ranking effect"),

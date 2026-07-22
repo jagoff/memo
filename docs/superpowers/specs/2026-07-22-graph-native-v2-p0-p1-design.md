@@ -137,7 +137,7 @@ graph_projection_nodes(
 )
 
 graph_projection_memberships(
-  version, memory_id, uri, extractor, extractor_version, confidence
+  version, memory_id, uri, confidence, evidence_id
 )
 
 graph_projection_edges(

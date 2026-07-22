@@ -82,7 +82,9 @@ Graphviz DOT / JSON export for visualisation. Complements `mapa` but
 operates on the entity graph rather than the embedding space. These broad/raw
 navigation surfaces remain advanced; the versioned curated projection used by
 core search, `memo graph rebuild`, and `memo graph stats` is part of the stable
-retrieval/health path and is not classified as experimental here.
+retrieval/health path and is not classified as experimental here. The bounded
+`memo graph trace` and `memo graph discover` read surfaces also use that stable
+projection; raw Graphviz export and unrestricted navigation remain advanced.
 
 ## proactive.py
 

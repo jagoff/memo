@@ -12,14 +12,9 @@ the clustering source: graph communities instead of recurring sessions.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 from collections.abc import Callable
 from typing import Any
-
-# A community whose representative is one of the top-N weighted-degree entities
-# is hub-dominated (an incoherent grab-bag), not a theme — excluded from synthesis.
-_HUB_TOP_N = 3
 
 _SYS = (
     "You abstract a cluster of a user's memories into one durable insight. "
@@ -46,48 +41,25 @@ def _community_key(cluster: dict[str, Any]) -> list[str]:
 def community_clusters(
     mem: Any, *, min_size: int, max_communities: int, max_size: int = 40
 ) -> list[dict[str, Any]]:
-    """Entity-only graph communities -> [{entities, representative, memory_ids}].
-
-    Forces the entity-only graph (codegraph off) for the detection so the
-    clusters reflect knowledge, then maps each community's entities back to the
-    memories that mention them. Communities larger than ``max_size`` are skipped:
-    a hub entity (e.g. "memo") fuses most of the graph into one giant blob that
-    is "everything", not a coherent theme to synthesize.
-    """
-    # Force the entity-only graph per-call (no process-global env mutation):
-    # community synthesis is about knowledge, not code structure.
-    comms = mem.navigator.detect_communities(min_size=min_size, use_codegraph=False)
-
-    # Hub-led communities are incoherent grab-bags — a mega-hub (e.g. "memo")
-    # pulls scattered nodes into one cluster under the size cap. Drop a community
-    # whose representative is one of the graph's top weighted-degree hubs.
-    from collections import defaultdict as _dd
-
-    degree: dict[str, float] = _dd(float)
-    with contextlib.suppress(Exception):
-        for a, b, w in mem.graph.all_weighted_edges():
-            degree[a] += w
-            degree[b] += w
-    hubs = {n for n, _ in sorted(degree.items(), key=lambda kv: (-kv[1], kv[0]))[:_HUB_TOP_N]}
-
-    out: list[dict[str, Any]] = []
-    eligible = [c for c in comms if c.size <= max_size and c.representative_entity not in hubs]
-    for c in sorted(eligible, key=lambda c: -c.size)[:max_communities]:
-        seen: set[str] = set()
-        mem_ids: list[str] = []
-        for ent in c.entities:
-            for mid in mem.graph.entity_memories(ent):
-                if mid not in seen:
-                    seen.add(mid)
-                    mem_ids.append(mid)
-        out.append(
-            {
-                "entities": list(c.entities),
-                "representative": c.representative_entity,
-                "memory_ids": mem_ids,
-            }
-        )
-    return out
+    """Curated projection communities in the synthesis pass's legacy shape."""
+    packet = mem.graph_discover(
+        min_community_size=min_size,
+        max_communities=max_communities,
+        max_region_size=max_size,
+        include_code=False,
+    )
+    if not packet.get("available"):
+        return []
+    return [
+        {
+            "entities": [str(node["label"]) for node in community["nodes"]],
+            "representative": str(community["representative"]["label"]),
+            "memory_ids": list(community.get("memory_ids") or []),
+            "edge_evidence": list(community.get("edge_evidence") or []),
+            "projection_version": packet.get("projection_version"),
+        }
+        for community in packet.get("communities") or []
+    ]
 
 
 def decide_syntheses(
@@ -127,6 +99,8 @@ def decide_syntheses(
                 "body": synth["body"],
                 "provenance": cl["entities"],
                 "memory_ids": cl["memory_ids"][:20],
+                "edge_evidence": cl.get("edge_evidence", []),
+                "projection_version": cl.get("projection_version"),
             }
         )
     return decisions
@@ -187,11 +161,9 @@ def run_synthesize_communities(
         res["status"] = "disabled"
         return res
     try:
-        # Refresh the substrate so synthesis runs on a de-fragmented, weighted
-        # graph (cheap + idempotent; best-effort).
+        # Refresh the same curated substrate served by retrieval/discovery.
         try:
-            mem.graph.canonicalize_existing()
-            mem.graph.rebuild_edges()
+            mem.rebuild_graph_if_due()
         except Exception as exc:  # pragma: no cover - defensive
             res["rebuild_error"] = f"{type(exc).__name__}: {exc}"
         clusters = community_clusters(mem, min_size=min_size, max_communities=max_communities)
@@ -227,6 +199,8 @@ def run_synthesize_communities(
                             "synthesis_kind": "community",
                             "synthesis_sources": d["provenance"],
                             "synthesis_source_memories": d.get("memory_ids", []),
+                            "graph_projection_version": d.get("projection_version"),
+                            "graph_edge_evidence": d.get("edge_evidence", []),
                         },
                     )
                     d["status"] = "saved"

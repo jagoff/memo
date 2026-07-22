@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from memo.dream_communities import community_clusters, decide_syntheses, provenance_hash
-from memo.navigation import Community
 
 
 def test_provenance_hash_is_order_independent():
@@ -11,84 +10,63 @@ def test_provenance_hash_is_order_independent():
     assert provenance_hash(["a"]) != provenance_hash(["b"])
 
 
-def test_community_clusters_maps_entities_and_forces_entity_only_graph():
+def test_community_clusters_maps_curated_packet_and_forces_entity_only_graph():
     captured: dict = {}
 
-    class _Nav:
-        def detect_communities(self, *, min_size, use_codegraph=None):
-            captured["use_codegraph"] = use_codegraph
-            return [Community(id=1, entities=["x", "y"], size=2, representative_entity="x")]
-
-    class _Graph:
-        def entity_memories(self, name, type_=None):
-            return {"x": ["m1", "m2"], "y": ["m2", "m3"]}.get(name, [])
-
     class _Mem:
-        navigator = _Nav()
-        graph = _Graph()
+        def graph_discover(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "available": True,
+                "projection_version": "v1",
+                "communities": [
+                    {
+                        "nodes": [{"label": "x"}, {"label": "y"}],
+                        "representative": {"label": "x"},
+                        "memory_ids": ["m1", "m2", "m3"],
+                        "edge_evidence": [{"evidence_ids": ["memory://m1"]}],
+                    }
+                ],
+            }
 
     cl = community_clusters(_Mem(), min_size=2, max_communities=5)
-    assert captured["use_codegraph"] is False  # entity-only forced, no env mutation
+    assert captured["include_code"] is False
     assert len(cl) == 1
     assert cl[0]["entities"] == ["x", "y"]
     assert set(cl[0]["memory_ids"]) == {"m1", "m2", "m3"}
     assert cl[0]["representative"] == "x"
+    assert cl[0]["projection_version"] == "v1"
+    assert cl[0]["edge_evidence"]
 
 
 def test_community_clusters_skips_hub_blob():
-    class _Nav:
-        def detect_communities(self, *, min_size, use_codegraph=None):
-            from memo.navigation import Community
-
-            return [
-                Community(
-                    id=1,
-                    entities=[f"e{i}" for i in range(200)],
-                    size=200,
-                    representative_entity="e0",
-                ),
-                Community(id=2, entities=["a", "b", "c", "d"], size=4, representative_entity="a"),
-            ]
-
-    class _Graph:
-        def entity_memories(self, name, type_=None):
-            return ["m1"]
-
     class _Mem:
-        navigator = _Nav()
-        graph = _Graph()
+        def graph_discover(self, **kwargs):
+            assert kwargs["max_region_size"] == 40
+            return {
+                "available": True,
+                "projection_version": "v1",
+                "communities": [
+                    {
+                        "nodes": [{"label": name} for name in ("a", "b", "c", "d")],
+                        "representative": {"label": "a"},
+                        "memory_ids": ["m1"],
+                        "edge_evidence": [],
+                    }
+                ],
+            }
 
     cl = community_clusters(_Mem(), min_size=4, max_communities=5, max_size=40)
     assert [c["representative"] for c in cl] == ["a"]  # 200-entity blob dropped
 
 
-def test_community_clusters_excludes_hub_led_community():
-    from memo.navigation import Community
-
-    class _Nav:
-        def detect_communities(self, *, min_size, use_codegraph=None):
-            return [
-                Community(
-                    id=1, entities=["hub", "n1", "n2", "n3"], size=4, representative_entity="hub"
-                ),
-                Community(id=2, entities=["a", "b", "c", "d"], size=4, representative_entity="a"),
-            ]
-
-    class _Graph:
-        def all_weighted_edges(self):
-            # 'hub' has a huge weighted degree -> a mega-hub; the rest are small.
-            return [("hub", f"x{i}", 5.0) for i in range(20)] + [("a", "b", 1.0), ("c", "d", 1.0)]
-
-        def entity_memories(self, name, type_=None):
-            return ["m1"]
-
+def test_community_clusters_does_not_fallback_when_projection_unavailable():
     class _Mem:
-        navigator = _Nav()
-        graph = _Graph()
+        def graph_discover(self, **kwargs):
+            return {"available": False, "reason": "projection_stale", "communities": []}
 
     cl = community_clusters(_Mem(), min_size=4, max_communities=5, max_size=40)
-    # the 'hub'-led grab-bag is dropped; only the coherent 'a' community survives
-    assert [c["representative"] for c in cl] == ["a"]
+    assert cl == []
 
 
 def test_decide_syntheses_dedup_dryrun_save_and_fail():
@@ -138,21 +116,19 @@ def test_community_key_stable_against_tail_growth():
     assert provenance_hash(_community_key(base)) != provenance_hash(_community_key(changed))
 
 
-def test_synthesize_refreshes_graph_first(monkeypatch, tmp_cfg):
-    """run_synthesize_communities must canonicalize + rebuild edges before
-    clustering, so synthesis sees a fresh, de-fragmented graph."""
+def test_synthesize_refreshes_curated_projection_first(monkeypatch, tmp_cfg):
     from memo import dream_communities
-    from memo.graph import GraphStore
 
-    g = GraphStore(tmp_cfg.graph_db)
     calls = []
-    monkeypatch.setattr(g, "canonicalize_existing", lambda: calls.append("canon") or 0)
-    monkeypatch.setattr(g, "rebuild_edges", lambda: calls.append("edges") or 0)
 
     class _Mem:
-        graph = g
-        navigator = type("N", (), {"detect_communities": staticmethod(lambda **k: [])})()
+        def rebuild_graph_if_due(self):
+            calls.append("projection")
+
+        def graph_discover(self, **kwargs):
+            return {"available": True, "communities": []}
 
     monkeypatch.setenv("MEMO_DREAM_COMMUNITIES_ENABLED", "1")
+    monkeypatch.setenv("MEMO_GRAPH_DISCOVERY_ENABLED", "1")
     dream_communities.run_synthesize_communities(tmp_cfg, _Mem())
-    assert calls == ["canon", "edges"]
+    assert calls == ["projection"]

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from memo.code_traceability import CodeReference, codegraph_uri
 from memo.graph import GraphStore
 from memo.graph_projection import (
     ProjectionBuildConfig,
@@ -133,6 +134,40 @@ def test_projection_rebuild_activates_complete_version(tmp_path: Path) -> None:
     assert model.memory_nodes("m1")
     edge = next(iter(model.neighbors(entity_uri("technology", "mlx"))))
     assert edge.evidence_ids == ("memory://m1", "memory://m2")
+
+
+def test_projection_materializes_bidirectional_memory_code_links(tmp_path: Path) -> None:
+    graph = _connected_graph(tmp_path)
+    uri = codegraph_uri("memo-repo", "file:src/memo/graph.py")
+    ref = CodeReference(
+        uri=uri,
+        repo_id="memo-repo",
+        stable_symbol_id="file:src/memo/graph.py",
+        kind="file",
+        label="graph.py",
+        qualified_name="src/memo/graph.py",
+        file_path="src/memo/graph.py",
+        start_line=1,
+        end_line=900,
+        relation="modified",
+        confidence=0.95,
+    )
+    states = _states("m1", "m2")
+    states["m1"] = replace(states["m1"], code_refs=(ref,))
+
+    result = graph.projection.rebuild(states, ProjectionBuildConfig())
+    model = graph.projection.read_model(max_age_hours=36)
+
+    assert result.code_node_count == 1
+    assert result.code_link_count == 1
+    assert model.code_links_for_memory("m1")[0].uri == uri
+    assert model.code_links_for_uri(uri)[0].memory_id == "m1"
+    assert model.resolve_code("src/memo/graph.py")[0].uri == uri
+    edge = next(edge for edge in model.neighbors(uri) if edge.relation == "contextualizes_code")
+    assert edge.evidence_ids == ("memory://m1",)
+    health = graph.projection.health()
+    assert health["code_node_count"] == 1
+    assert health["code_link_count"] == 1
 
 
 def test_failed_projection_validation_preserves_previous_active_version(

@@ -465,6 +465,10 @@ and written to the right Markdown file.
 | `graph.hub_suppression` (`MEMO_GRAPH_HUB_SUPPRESSION`) | `1` | Suppress broad entity hubs from graph ranking signal. |
 | `graph.signal_budget_ms` (`MEMO_GRAPH_SIGNAL_BUDGET_MS`) | `150` | Millisecond budget for graph signal work in hot paths. |
 | `graph.signal_alpha` (`MEMO_GRAPH_SIGNAL_ALPHA`) | `0.15` | Bounded graph leg weight in weighted reciprocal-rank fusion. |
+| `graph.code_trace_enabled` (`MEMO_GRAPH_CODE_TRACE_ENABLED`) | `0` | Resolve captured file/code evidence into stable `codegraph://` references. |
+| `graph.discovery_enabled` (`MEMO_GRAPH_DISCOVERY_ENABLED`) | `0` | Expose curated community/bridge insight packets. |
+| `graph.dream_communities_enabled` (`MEMO_DREAM_COMMUNITIES_ENABLED`) | `0` | Save evidence-bearing community syntheses during dream. |
+| `graph.dream_bridges_enabled` (`MEMO_DREAM_BRIDGES_ENABLED`) | `0` | Save evidence-bearing articulation-bridge syntheses during dream. |
 | `graph.hub_max_doc_freq_ratio` (`MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO`) | `0.25` | Treat entities above this corpus document-frequency ratio as hubs. |
 | `graph.min_entity_idf` (`MEMO_GRAPH_MIN_ENTITY_IDF`) | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
 | `graph.outcome_signal_enabled` (`MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`) | `0` | Modulate graph-touched boosts by outcome `roi_score`. |
@@ -479,6 +483,10 @@ memo config set graph.reason_enabled true
 memo config set graph.semantic_relations true
 memo config set graph.hub_suppression true
 memo config set graph.signal_alpha 0.15
+memo config set graph.code_trace_enabled true
+memo config set graph.discovery_enabled true
+memo config set graph.dream_communities_enabled true
+memo config set graph.dream_bridges_enabled true
 memo config validate
 memo graph rebuild --json
 memo graph stats --json
@@ -498,7 +506,21 @@ compactly. The graph can also be inspected directly:
 memo graph why "mlx" "daemon"
 memo graph hubs --limit 30
 memo graph relations rebuild --limit 500
+memo graph trace --memory 4d53bc7e --json
+memo graph trace --code src/memo/graph_projection.py --json
+memo graph discover --include-code --json
 ```
+
+Memory↔code traceability uses stable
+`codegraph://<repo-id>/<stable-symbol-id>` URIs. Projection rebuild resolves
+explicit `extra.code_refs` plus capture-stamped `files_read` and
+`files_modified`; unresolved paths stay unresolved. Reverse lookup returns the
+memories and exact relation/evidence that touched a code node.
+
+Discovery removes projected hubs, detects bounded regions and articulation
+bridges, and returns the exact projected edges and memory IDs behind each
+candidate. The dream community/bridge passes consume this packet and store its
+projection version and edge evidence with every synthesis.
 
 `MEMO_GRAPH_RETRIEVAL_ENABLED`, `MEMO_GRAPH_EXPANSION_ENABLED`, and the old
 recall graph-proximity weight remain accepted only for configuration

@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
+from memo.code_traceability import CodeReference
 from memo.errors import MemoError
 from memo.graph_canonical import fold_key
 
@@ -90,6 +91,24 @@ CREATE TABLE IF NOT EXISTS graph_projection_edges (
     PRIMARY KEY (version, a_uri, b_uri, relation)
 );
 
+CREATE TABLE IF NOT EXISTS graph_projection_code_links (
+    version           TEXT NOT NULL,
+    memory_id         TEXT NOT NULL,
+    uri               TEXT NOT NULL,
+    relation          TEXT NOT NULL,
+    repo_id           TEXT NOT NULL,
+    stable_symbol_id  TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    label             TEXT NOT NULL,
+    qualified_name    TEXT NOT NULL,
+    file_path         TEXT NOT NULL,
+    start_line        INTEGER,
+    end_line          INTEGER,
+    confidence        REAL NOT NULL,
+    evidence_id       TEXT NOT NULL,
+    PRIMARY KEY (version, memory_id, uri, relation)
+);
+
 CREATE TABLE IF NOT EXISTS graph_projection_rejections (
     version        TEXT NOT NULL,
     entity_id      INTEGER NOT NULL,
@@ -104,6 +123,8 @@ CREATE INDEX IF NOT EXISTS idx_gpm_memory ON graph_projection_memberships(versio
 CREATE INDEX IF NOT EXISTS idx_gpm_uri ON graph_projection_memberships(version, uri);
 CREATE INDEX IF NOT EXISTS idx_gpe_a ON graph_projection_edges(version, a_uri);
 CREATE INDEX IF NOT EXISTS idx_gpe_b ON graph_projection_edges(version, b_uri);
+CREATE INDEX IF NOT EXISTS idx_gpcl_memory ON graph_projection_code_links(version, memory_id);
+CREATE INDEX IF NOT EXISTS idx_gpcl_uri ON graph_projection_code_links(version, uri);
 CREATE INDEX IF NOT EXISTS idx_gpr_version ON graph_projection_rejections(version);
 """
 
@@ -117,6 +138,7 @@ class ProjectionMemoryState:
     id: str
     type: str
     forgotten: bool = False
+    code_refs: tuple[CodeReference, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -173,6 +195,23 @@ class ProjectedEdge:
 
 
 @dataclass(frozen=True)
+class ProjectedCodeLink:
+    memory_id: str
+    uri: str
+    relation: str
+    repo_id: str
+    stable_symbol_id: str
+    kind: str
+    label: str
+    qualified_name: str
+    file_path: str
+    start_line: int | None
+    end_line: int | None
+    confidence: float
+    evidence_id: str
+
+
+@dataclass(frozen=True)
 class ProjectionBuildResult:
     version: str
     activated: bool
@@ -180,6 +219,8 @@ class ProjectionBuildResult:
     edge_count: int
     rejected_count: int
     built_at: str
+    code_node_count: int = 0
+    code_link_count: int = 0
 
 
 class GraphReadModel:
@@ -196,6 +237,7 @@ class GraphReadModel:
         nodes: Mapping[str, ProjectedNode] | None = None,
         memberships: Mapping[str, tuple[str, ...]] | None = None,
         edges: Mapping[str, tuple[ProjectedEdge, ...]] | None = None,
+        code_links: tuple[ProjectedCodeLink, ...] = (),
     ) -> None:
         self.available = available
         self.skip_reason = skip_reason
@@ -205,6 +247,19 @@ class GraphReadModel:
         self._nodes = dict(nodes or {})
         self._memberships = dict(memberships or {})
         self._edges = dict(edges or {})
+        code_by_memory: dict[str, list[ProjectedCodeLink]] = defaultdict(list)
+        code_by_uri: dict[str, list[ProjectedCodeLink]] = defaultdict(list)
+        for link in code_links:
+            code_by_memory[link.memory_id].append(link)
+            code_by_uri[link.uri].append(link)
+        self._code_by_memory = {
+            key: tuple(sorted(value, key=lambda link: (link.uri, link.relation)))
+            for key, value in code_by_memory.items()
+        }
+        self._code_by_uri = {
+            key: tuple(sorted(value, key=lambda link: (link.memory_id, link.relation)))
+            for key, value in code_by_uri.items()
+        }
 
     @classmethod
     def unavailable(cls, reason: str) -> GraphReadModel:
@@ -227,13 +282,50 @@ class GraphReadModel:
 
     def memory_nodes(self, memory_id: str) -> tuple[ProjectedNode, ...]:
         return tuple(
-            self._nodes[uri]
-            for uri in self._memberships.get(memory_id, ())
-            if uri in self._nodes
+            self._nodes[uri] for uri in self._memberships.get(memory_id, ()) if uri in self._nodes
         )
 
     def neighbors(self, uri: str) -> tuple[ProjectedEdge, ...]:
         return self._edges.get(uri, ())
+
+    def all_nodes(self) -> tuple[ProjectedNode, ...]:
+        return tuple(self._nodes[uri] for uri in sorted(self._nodes))
+
+    def all_edges(self) -> tuple[ProjectedEdge, ...]:
+        unique: dict[tuple[str, str, str], ProjectedEdge] = {}
+        for edges in self._edges.values():
+            for edge in edges:
+                key = (edge.source_uri, edge.target_uri, edge.relation)
+                unique[key] = edge
+        return tuple(unique[key] for key in sorted(unique))
+
+    def code_links_for_memory(self, memory_id: str) -> tuple[ProjectedCodeLink, ...]:
+        return self._code_by_memory.get(memory_id, ())
+
+    def code_links_for_uri(self, uri: str) -> tuple[ProjectedCodeLink, ...]:
+        return self._code_by_uri.get(uri, ())
+
+    def resolve_code(self, query: str) -> tuple[ProjectedNode, ...]:
+        needle = query.strip().casefold()
+        if not needle:
+            return ()
+        uris = {
+            uri
+            for uri, links in self._code_by_uri.items()
+            if uri.casefold() == needle
+            or any(
+                needle in value.casefold()
+                for link in links
+                for value in (
+                    link.label,
+                    link.qualified_name,
+                    link.file_path,
+                    link.stable_symbol_id,
+                )
+                if value
+            )
+        }
+        return tuple(self._nodes[uri] for uri in sorted(uris) if uri in self._nodes)
 
 
 class GraphProjectionStore:
@@ -308,11 +400,17 @@ class GraphProjectionStore:
     @staticmethod
     def _source_fingerprint(
         raw: list[RawEntityEvidence],
+        memories: Mapping[str, ProjectionMemoryState],
         config: ProjectionBuildConfig,
     ) -> str:
         payload = {
             "config": asdict(config),
             "evidence": [asdict(item) for item in raw],
+            "code_refs": {
+                memory_id: [asdict(ref) for ref in state.code_refs]
+                for memory_id, state in sorted(memories.items())
+                if state.code_refs and not state.forgotten
+            },
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
@@ -323,6 +421,7 @@ class GraphProjectionStore:
         memories: Mapping[str, ProjectionMemoryState],
         config: ProjectionBuildConfig,
     ) -> tuple[
+        list[dict[str, Any]],
         list[dict[str, Any]],
         list[dict[str, Any]],
         list[dict[str, Any]],
@@ -372,6 +471,40 @@ class GraphProjectionStore:
                     max(0.0, min(1.0, confidence)),
                 )
 
+        code_link_rows: list[dict[str, Any]] = []
+        for memory_id, memory in sorted(memories.items()):
+            if memory.forgotten:
+                continue
+            for ref in memory.code_refs:
+                canonical = fold_key(ref.qualified_name or ref.file_path or ref.label)
+                candidate = accepted.setdefault(
+                    ref.uri,
+                    {
+                        "entity_id": -(
+                            int(hashlib.sha256(ref.uri.encode()).hexdigest()[:8], 16) + 1
+                        ),
+                        "uri": ref.uri,
+                        "entity_type": f"code:{ref.kind}",
+                        "canonical_key": canonical,
+                        "label": ref.label,
+                        "quality": 1.0,
+                        "first_seen": None,
+                        "last_seen": None,
+                        "memberships": {},
+                    },
+                )
+                candidate["memberships"][memory_id] = max(
+                    candidate["memberships"].get(memory_id, 0.0),
+                    max(0.0, min(1.0, ref.confidence)),
+                )
+                code_link_rows.append(
+                    {
+                        **asdict(ref),
+                        "memory_id": memory_id,
+                        "evidence_id": memory_uri(memory_id),
+                    }
+                )
+
         live_total = sum(not memory.forgotten for memory in memories.values())
         membership_rows: list[dict[str, Any]] = []
         memory_nodes: dict[str, dict[str, float]] = defaultdict(dict)
@@ -404,9 +537,7 @@ class GraphProjectionStore:
                         (a_uri, b_uri),
                         {"confidences": [], "evidence_ids": []},
                     )
-                    edge["confidences"].append(
-                        min(uri_confidences[a_uri], uri_confidences[b_uri])
-                    )
+                    edge["confidences"].append(min(uri_confidences[a_uri], uri_confidences[b_uri]))
                     edge["evidence_ids"].append(memory_uri(memory_id))
 
         edge_rows: list[dict[str, Any]] = []
@@ -420,7 +551,13 @@ class GraphProjectionStore:
                 {
                     "a_uri": a_uri,
                     "b_uri": b_uri,
-                    "relation": "co_occurs",
+                    "relation": (
+                        "code_co_touched"
+                        if a_uri.startswith("codegraph://") and b_uri.startswith("codegraph://")
+                        else "contextualizes_code"
+                        if a_uri.startswith("codegraph://") or b_uri.startswith("codegraph://")
+                        else "co_occurs"
+                    ),
                     "weight": float(len(evidence_ids)),
                     "confidence": sum(confidences) / len(confidences),
                     "evidence_count": len(evidence_ids),
@@ -434,7 +571,7 @@ class GraphProjectionStore:
             node["degree"] = degrees[node["uri"]]
             node.pop("memberships", None)
             node_rows.append(node)
-        return node_rows, membership_rows, edge_rows, rejections
+        return node_rows, membership_rows, edge_rows, rejections, code_link_rows
 
     @staticmethod
     def _validate_version(cx: sqlite3.Connection, version: str) -> None:
@@ -475,6 +612,15 @@ class GraphProjectionStore:
         ).fetchone()[0]
         if dangling:
             raise ProjectionBuildError(f"projection has {dangling} dangling edges")
+        dangling_code = cx.execute(
+            "SELECT COUNT(*) FROM graph_projection_code_links link "
+            "LEFT JOIN graph_projection_nodes node "
+            "ON node.version = link.version AND node.uri = link.uri "
+            "WHERE link.version = ? AND node.uri IS NULL",
+            (version,),
+        ).fetchone()[0]
+        if dangling_code:
+            raise ProjectionBuildError(f"projection has {dangling_code} dangling code links")
 
     @staticmethod
     def _retain_active_and_previous(
@@ -488,6 +634,7 @@ class GraphProjectionStore:
         placeholders = ",".join("?" for _ in keep)
         for table in (
             "graph_projection_memberships",
+            "graph_projection_code_links",
             "graph_projection_edges",
             "graph_projection_nodes",
             "graph_projection_rejections",
@@ -509,7 +656,7 @@ class GraphProjectionStore:
         try:
             with self._tx_factory() as cx:
                 raw = self._load_raw_evidence(cx, memories)
-                node_rows, memberships, edge_rows, rejections = self._build_rows(
+                node_rows, memberships, edge_rows, rejections, code_links = self._build_rows(
                     raw,
                     memories,
                     config,
@@ -521,7 +668,7 @@ class GraphProjectionStore:
                     (
                         version,
                         built_at,
-                        self._source_fingerprint(raw, config),
+                        self._source_fingerprint(raw, memories, config),
                         sum(not memory.forgotten for memory in memories.values()),
                         len(node_rows),
                         len(edge_rows),
@@ -580,6 +727,29 @@ class GraphProjectionStore:
                             json.dumps(edge["evidence_ids"]),
                         ),
                     )
+                for link in code_links:
+                    cx.execute(
+                        "INSERT INTO graph_projection_code_links "
+                        "(version, memory_id, uri, relation, repo_id, stable_symbol_id, kind, "
+                        "label, qualified_name, file_path, start_line, end_line, confidence, "
+                        "evidence_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            version,
+                            link["memory_id"],
+                            link["uri"],
+                            link["relation"],
+                            link["repo_id"],
+                            link["stable_symbol_id"],
+                            link["kind"],
+                            link["label"],
+                            link["qualified_name"],
+                            link["file_path"],
+                            link["start_line"],
+                            link["end_line"],
+                            link["confidence"],
+                            link["evidence_id"],
+                        ),
+                    )
                 for rejection in rejections:
                     cx.execute(
                         "INSERT INTO graph_projection_rejections "
@@ -613,6 +783,8 @@ class GraphProjectionStore:
             edge_count=len(edge_rows),
             rejected_count=len(rejections),
             built_at=built_at,
+            code_node_count=sum(node["uri"].startswith("codegraph://") for node in node_rows),
+            code_link_count=len(code_links),
         )
 
     def read_model(
@@ -662,6 +834,28 @@ class GraphProjectionStore:
                 (active,),
             ):
                 memberships[str(row["memory_id"])].append(str(row["uri"]))
+            code_links = tuple(
+                ProjectedCodeLink(
+                    memory_id=str(row["memory_id"]),
+                    uri=str(row["uri"]),
+                    relation=str(row["relation"]),
+                    repo_id=str(row["repo_id"]),
+                    stable_symbol_id=str(row["stable_symbol_id"]),
+                    kind=str(row["kind"]),
+                    label=str(row["label"]),
+                    qualified_name=str(row["qualified_name"]),
+                    file_path=str(row["file_path"]),
+                    start_line=(int(row["start_line"]) if row["start_line"] is not None else None),
+                    end_line=(int(row["end_line"]) if row["end_line"] is not None else None),
+                    confidence=float(row["confidence"]),
+                    evidence_id=str(row["evidence_id"]),
+                )
+                for row in self._conn.execute(
+                    "SELECT * FROM graph_projection_code_links WHERE version = ? "
+                    "ORDER BY memory_id, uri, relation",
+                    (active,),
+                )
+            )
             edges: dict[str, list[ProjectedEdge]] = defaultdict(list)
             for row in self._conn.execute(
                 "SELECT * FROM graph_projection_edges WHERE version = ? "
@@ -693,6 +887,7 @@ class GraphProjectionStore:
                 nodes=nodes,
                 memberships={key: tuple(value) for key, value in memberships.items()},
                 edges={key: tuple(value) for key, value in edges.items()},
+                code_links=code_links,
             )
         except (KeyError, TypeError, ValueError, sqlite3.Error, json.JSONDecodeError):
             return GraphReadModel.unavailable("projection_malformed")
@@ -711,6 +906,8 @@ class GraphProjectionStore:
                 "edge_count": 0,
                 "rejected_count": 0,
                 "rejection_reasons": {},
+                "code_node_count": 0,
+                "code_link_count": 0,
                 "last_error": last_error,
             }
         row = self._conn.execute(
@@ -728,6 +925,8 @@ class GraphProjectionStore:
                 "edge_count": 0,
                 "rejected_count": 0,
                 "rejection_reasons": {},
+                "code_node_count": 0,
+                "code_link_count": 0,
                 "last_error": last_error,
             }
         built = datetime.fromisoformat(str(row["built_at"]))
@@ -742,6 +941,15 @@ class GraphProjectionStore:
                 (active,),
             )
         }
+        code_node_count = self._conn.execute(
+            "SELECT COUNT(*) FROM graph_projection_nodes "
+            "WHERE version = ? AND uri LIKE 'codegraph://%'",
+            (active,),
+        ).fetchone()[0]
+        code_link_count = self._conn.execute(
+            "SELECT COUNT(*) FROM graph_projection_code_links WHERE version = ?",
+            (active,),
+        ).fetchone()[0]
         return {
             "active_version": active,
             "dirty": dirty,
@@ -751,6 +959,8 @@ class GraphProjectionStore:
             "edge_count": int(row["edge_count"]),
             "rejected_count": int(row["rejected_count"]),
             "rejection_reasons": reasons,
+            "code_node_count": int(code_node_count),
+            "code_link_count": int(code_link_count),
             "last_error": last_error,
         }
 
@@ -798,10 +1008,9 @@ def evaluate_entity(
 
     confidences = tuple(max(0.0, min(1.0, value)) for value in evidence.confidences)
     average_confidence = sum(confidences) / max(1, len(confidences))
-    durable_ratio = (
-        sum(memory.type.strip().lower() not in _REFERENCE_TYPES for memory in live)
-        / len(live)
-    )
+    durable_ratio = sum(
+        memory.type.strip().lower() not in _REFERENCE_TYPES for memory in live
+    ) / len(live)
     provenance = max(
         (_EXTRACTOR_WEIGHT.get(value, 0.0) for value in evidence.extractors),
         default=0.0,
@@ -822,6 +1031,7 @@ def evaluate_entity(
 __all__ = [
     "GraphProjectionStore",
     "GraphReadModel",
+    "ProjectedCodeLink",
     "ProjectedEdge",
     "ProjectedNode",
     "ProjectionBuildConfig",

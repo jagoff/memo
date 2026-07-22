@@ -1148,7 +1148,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "MEMO_DREAM_COMMUNITIES_ENABLED",
         "bool",
         False,
-        "misc",
+        "graph",
         "Enable the `memo dream communities` pass: detect entity-graph communities "
         "and abstract each into one durable synthesis memory (synthesis_kind=community, "
         "provenance = the community's entities). OFF by default; deduped by provenance.",
@@ -1157,7 +1157,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "MEMO_DREAM_COMMUNITIES_MIN_SIZE",
         "int",
         4,
-        "misc",
+        "graph",
         "Minimum entities in a graph community before it is synthesized.",
         min_val=2,
     ),
@@ -1281,7 +1281,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "MEMO_DREAM_BRIDGES_ENABLED",
         "bool",
         False,
-        "misc",
+        "graph",
         "Enable the `memo dream bridges` pass: detect articulation entities that "
         "solely connect two graph regions and abstract each into one durable "
         "synthesis memory (synthesis_kind=bridge, provenance = bridge + side reps). "

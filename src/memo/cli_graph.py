@@ -251,7 +251,9 @@ def graph_stats(as_json: bool) -> None:
         console.print(
             f"projection [cyan]{str(active)[:8]}[/cyan]: "
             f"{projection['node_count']} nodes / {projection['edge_count']} edges / "
-            f"{projection['rejected_count']} rejected"
+            f"{projection['rejected_count']} rejected / "
+            f"{projection.get('code_node_count', 0)} code nodes / "
+            f"{projection.get('code_link_count', 0)} memory↔code links"
         )
     else:
         console.print("projection: [yellow]missing[/yellow]")
@@ -278,6 +280,84 @@ def graph_rebuild(as_json: bool) -> None:
         f"{result.projection.node_count} projected nodes / "
         f"{result.projection.edge_count} projected edges"
     )
+
+
+@graph_group.command(name="trace")
+@click.option("--memory", "memory_id", help="Memory id or unique prefix.")
+@click.option("--code", help="Codegraph URI, symbol id, qualified name, or file path.")
+@click.option("--limit", type=int, default=50, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def graph_trace(memory_id: str | None, code: str | None, limit: int, as_json: bool) -> None:
+    """Trace durable evidence from memory to code or code to memories."""
+    if bool(memory_id) == bool(code):
+        raise click.UsageError("provide exactly one of --memory or --code")
+    mem = _get_memory(Config.from_env())
+    result = mem.graph_trace(memory_id=memory_id, code=code, limit=limit)
+    if as_json:
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    if not result["available"]:
+        console.print(f"[yellow]trace unavailable[/yellow]: {result.get('reason')}")
+        return
+    console.print(f"[bold]projection[/bold] {str(result.get('projection_version') or '')[:8]}")
+    for ref in result.get("code_refs") or []:
+        console.print(
+            f"  [cyan]{ref.get('qualified_name') or ref.get('label')}[/cyan] "
+            f"[dim]{ref.get('uri')} ({ref.get('relation')})[/dim]"
+        )
+    for record in result.get("memories") or []:
+        console.print(
+            f"  [dim]{str(record.get('id') or '')[:8]}[/dim] "
+            f"{record.get('title') or ''} ({record.get('relation')})"
+        )
+
+
+@graph_group.command(name="discover")
+@click.option("--min-community-size", type=int, default=4, show_default=True)
+@click.option("--min-bridge-side", type=int, default=2, show_default=True)
+@click.option("--max-communities", type=int, default=5, show_default=True)
+@click.option("--max-bridges", type=int, default=5, show_default=True)
+@click.option("--include-code/--no-code", default=True, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def graph_discover(
+    min_community_size: int,
+    min_bridge_side: int,
+    max_communities: int,
+    max_bridges: int,
+    include_code: bool,
+    as_json: bool,
+) -> None:
+    """Discover curated communities and bridges with stored evidence."""
+    mem = _get_memory(Config.from_env())
+    result = mem.graph_discover(
+        min_community_size=min_community_size,
+        min_bridge_side=min_bridge_side,
+        max_communities=max_communities,
+        max_bridges=max_bridges,
+        include_code=include_code,
+    )
+    if as_json:
+        click.echo(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    if not result["available"]:
+        console.print(f"[yellow]discovery unavailable[/yellow]: {result.get('reason')}")
+        return
+    console.print(
+        f"[bold]{len(result.get('communities') or [])} communities[/bold] / "
+        f"[bold]{len(result.get('bridges') or [])} bridges[/bold] "
+        f"[dim]projection {str(result.get('projection_version') or '')[:8]}[/dim]"
+    )
+    for community in result.get("communities") or []:
+        representative = community.get("representative") or {}
+        console.print(
+            f"  [cyan]{representative.get('label') or representative.get('uri')}[/cyan] "
+            f"({community.get('size')} nodes, {len(community.get('memory_ids') or [])} memories)"
+        )
+    for bridge in result.get("bridges") or []:
+        console.print(
+            f"  {bridge['left_rep']['label']} ↔ {bridge['right_rep']['label']} "
+            f"via [cyan]{bridge['bridge']['label']}[/cyan]"
+        )
 
 
 @graph_group.command(name="hubs")

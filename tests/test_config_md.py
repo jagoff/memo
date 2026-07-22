@@ -392,3 +392,28 @@ def test_set_graph_signal_writes_graph_domain_file(tmp_path: Path) -> None:
 
     assert changed == home / "config" / "graph-config.md"
     assert "signal_enabled = \"on\"" in changed.read_text(encoding="utf-8")
+
+
+def test_trace_discovery_and_synthesis_switches_route_to_graph_config(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    config_md.write_default_config(
+        data_dir=tmp_path / "data",
+        env={"MEMO_CONFIG_DIR": str(home)},
+    )
+
+    keys = (
+        "graph.code_trace_enabled",
+        "graph.discovery_enabled",
+        "graph.dream_communities_enabled",
+        "graph.dream_bridges_enabled",
+    )
+    paths = {
+        config_md.set_value(key, "on", env={"MEMO_CONFIG_DIR": str(home)}) for key in keys
+    }
+
+    assert paths == {home / "config" / "graph-config.md"}
+    values = config_md.flag_values({"MEMO_CONFIG_DIR": str(home)})
+    assert values["MEMO_GRAPH_CODE_TRACE_ENABLED"] == "on"
+    assert values["MEMO_GRAPH_DISCOVERY_ENABLED"] == "on"
+    assert values["MEMO_DREAM_COMMUNITIES_ENABLED"] == "on"
+    assert values["MEMO_DREAM_BRIDGES_ENABLED"] == "on"

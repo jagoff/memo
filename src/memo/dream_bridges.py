@@ -15,12 +15,10 @@ single articulation entity instead of a whole community.
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
 from memo.dream_communities import provenance_hash
-from memo.graph_bridges import find_bridges
 
 _DATE_RE = re.compile(r"^\d{4}([-/]\d{1,2}){0,2}$")
 # Generic co-mention tokens that are not meaningful link anchors.
@@ -61,61 +59,41 @@ def _is_junk_anchor(name: str) -> bool:
     return n in _GENERIC_ANCHORS
 
 
-def _representative(side: list[str], adjacency: dict[str, dict[str, float]]) -> str:
-    """Highest weighted-degree entity in a side; tie -> smallest name."""
-    return min(
-        side,
-        key=lambda e: (-sum((adjacency.get(e) or {}).values()), e),
-    )
-
-
 def bridge_insights(mem: Any, *, min_side: int = 2, max_bridges: int = 5) -> list[dict[str, Any]]:
-    """Articulation bridges -> [{bridge, left, right, left_rep, right_rep, memory_ids}].
-
-    Builds the weighted adjacency from the materialized entity edges, finds
-    bridges, picks a representative per side, and maps the bridge + reps back to
-    the memories that mention them. Deterministic.
-    """
-    adjacency: dict[str, dict[str, float]] = defaultdict(dict)
-    for a, b, w in mem.graph.all_weighted_edges():
-        adjacency[a][b] = w
-        adjacency[b][a] = w
-
-    bridges = find_bridges(dict(adjacency), min_side=min_side)
-    # Largest combined span first; deterministic tie-break on the bridge name.
-    bridges.sort(key=lambda br: (-(len(br["left"]) + len(br["right"])), br["bridge"]))
-
+    """Curated projection bridges in the synthesis pass's legacy shape."""
+    packet = mem.graph_discover(
+        min_bridge_side=min_side,
+        max_bridges=max_bridges,
+        include_code=True,
+    )
+    if not packet.get("available"):
+        return []
     out: list[dict[str, Any]] = []
-    for br in bridges:
-        if len(out) >= max_bridges:
-            break
-        left, right = list(br["left"]), list(br["right"])
-        left_rep = _representative(left, adjacency)
-        right_rep = _representative(right, adjacency)
+    for br in packet.get("bridges") or []:
+        bridge = str(br["bridge"]["label"])
+        left = [str(node["label"]) for node in br["left"]]
+        right = [str(node["label"]) for node in br["right"]]
+        left_rep = str(br["left_rep"]["label"])
+        right_rep = str(br["right_rep"]["label"])
         # Drop junk-anchor links (dates, numbers, generic tokens) and tautologies
         # where both sides share a representative — they read as near-noise.
         if (
-            _is_junk_anchor(br["bridge"])
+            _is_junk_anchor(bridge)
             or _is_junk_anchor(left_rep)
             or _is_junk_anchor(right_rep)
             or left_rep == right_rep
         ):
             continue
-        seen: set[str] = set()
-        mem_ids: list[str] = []
-        for ent in (br["bridge"], left_rep, right_rep):
-            for mid in mem.graph.entity_memories(ent):
-                if mid not in seen:
-                    seen.add(mid)
-                    mem_ids.append(mid)
         out.append(
             {
-                "bridge": br["bridge"],
+                "bridge": bridge,
                 "left": left,
                 "right": right,
                 "left_rep": left_rep,
                 "right_rep": right_rep,
-                "memory_ids": mem_ids,
+                "memory_ids": list(br.get("memory_ids") or []),
+                "edge_evidence": list(br.get("edge_evidence") or []),
+                "projection_version": packet.get("projection_version"),
             }
         )
     return out
@@ -168,6 +146,8 @@ def decide_bridges(
                 "body": synth["body"],
                 "provenance": provenance,
                 "memory_ids": br.get("memory_ids", [])[:20],
+                "edge_evidence": br.get("edge_evidence", []),
+                "projection_version": br.get("projection_version"),
             }
         )
     return decisions
@@ -221,6 +201,8 @@ def run_synthesize_bridges(
                             "synthesis_kind": "bridge",
                             "synthesis_sources": d["provenance"],
                             "synthesis_source_memories": d.get("memory_ids", []),
+                            "graph_projection_version": d.get("projection_version"),
+                            "graph_edge_evidence": d.get("edge_evidence", []),
                         },
                     )
                     d["status"] = "saved"
