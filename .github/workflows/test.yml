@@ -50,6 +50,34 @@ jobs:
         # tests. --cov + fail_under (pyproject) gates coverage regressions.
         run: .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120 --cov=memo --cov-report=term-missing
 
+  test-int8:
+    # MEMO_VEC_QUANTIZE now defaults to int8 for fresh installs (v3.10.0), but
+    # the `test` job above forces it `off` (tests/conftest.py) because many
+    # pre-quantization asserts pin exact float32 cosine values
+    # (`pytest.approx(..., abs=1e-6)`) that int8's ~1/127 precision breaks —
+    # so the shipped default was otherwise only exercised by
+    # tests/test_vec_quantize.py. This lane re-runs the same non-slow suite
+    # with int8 forced on, deselecting only the tests marked
+    # `float32_precision` (legitimately float32-only asserts) — everything
+    # else must behave identically under quantization.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: pip install uv==0.11.21
+      - name: Install package + dev deps
+        run: uv sync --frozen --extra dev --extra cpu --extra http --python 3.13
+      - name: Tests under MEMO_VEC_QUANTIZE=int8 (excluding slow + float32-only precision asserts)
+        env:
+          MEMO_VEC_QUANTIZE: int8
+        run: .venv/bin/python -m pytest -m "not slow and not float32_precision" -n auto --timeout=120
+
   contract-stub-compatibility:
     # Public, always-on interface gate. The stub only models the contract API
     # memo consumes and forces every optional integration import down its live

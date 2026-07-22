@@ -212,6 +212,7 @@ def test_flag_off_results_identical_with_populated_hype_store(
     assert [r.score for r in after] == [r.score for r in before]
 
 
+@pytest.mark.float32_precision  # asserts score == 0.8 within abs=1e-3; int8 cosine is ~1/127-quantized
 def test_flag_on_question_space_candidate_surfaces(
     hype_mem, monkeypatch: pytest.MonkeyPatch
 ) -> None:
