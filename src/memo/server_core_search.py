@@ -23,17 +23,30 @@ def _read_notification(memory: Memory) -> str:
         idle = notif_path.read_text(encoding="utf-8").strip()
     except Exception:
         idle = ""
-    presence_line = ""
-    try:
-        from memo.flags import flag_bool
+    return "\n".join(p for p in (_presence_line(memory), idle) if p)
 
-        if flag_bool("MEMO_PRESENCE_NOTIFY"):
-            from memo import presence
 
-            presence_line = presence.summary_line(presence.read_today(memory.cfg.state_dir))
-    except Exception:
-        presence_line = ""
-    return "\n".join(p for p in (presence_line, idle) if p)
+def _presence_line(memory: Memory) -> str:
+    """Today's cross-agent activity summary; '' when off or nothing happened.
+
+    Every call is internally guarded — ``read_today`` swallows IO errors and
+    ``summary_line`` is pure — so no broad except is needed here.
+    """
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_PRESENCE_NOTIFY"):
+        return ""
+    from memo import presence
+
+    return presence.summary_line(presence.read_today(memory.cfg.state_dir))
+
+
+def _bump_recall_presence(memory: Memory, hits: list[Any]) -> None:
+    """Reflect an MCP recall in today's presence counters (decoration only)."""
+    if hits:
+        from memo import presence
+
+        presence.bump(memory.cfg.state_dir, recalls=len(hits))
 
 
 def _file_search_notes(
@@ -227,10 +240,7 @@ def register(server: Any, memory: Memory) -> None:
 
         # Cross-agent presence: reflect this recall so MCP-only agents (which
         # never run the Claude recall-hook) read honest counts. Decoration only.
-        if out:
-            from memo import presence
-
-            presence.bump(memory.cfg.state_dir, recalls=len(out))
+        _bump_recall_presence(memory, out)
 
         # Read pending idle notification (best-effort, races with writer)
         notification = _read_notification(memory)
