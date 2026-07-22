@@ -1141,6 +1141,18 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         rows = self._conn.execute(sql, (*params, limit)).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def _index_has_invalid(self) -> bool:
+        """Whether the corpus holds any row with a closed validity interval.
+
+        Backed by the ``idx_meta_invalid_at`` partial index (only invalid rows
+        are in it), so this is O(1)-ish even on a large all-valid corpus —
+        cheap enough to gate the validity over-fetch on the hot recall path.
+        """
+        row = self._conn.execute(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE invalid_at IS NOT NULL)"
+        ).fetchone()
+        return bool(row[0])
+
     def search(
         self,
         embedding: list[float],
@@ -1198,7 +1210,17 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             # be pushed into vec0 so this filters on the joined meta row).
             tag_clauses.append("meta.tags NOT LIKE ?")
             tag_params.append(f'%"{tag}"%')
-        k_fetch = limit * 4 if (has_date_filter or tag_clauses) else limit
+        # The validity gate (default now-gate or `as_of`) drops rows AFTER the
+        # kNN, so — like the date/tag post-filters above — a plain vec.k = limit
+        # can under-fill when the nearest neighbours are the ones filtered out
+        # (finding-7). Widen the pool, but only when the gate can actually
+        # remove rows: an `as_of` query (may drop future-dated rows) or a corpus
+        # that holds any invalid row. The partial-index EXISTS keeps the common
+        # all-valid recall path free.
+        validity_can_drop = (not include_invalid) and (
+            as_of is not None or self._index_has_invalid()
+        )
+        k_fetch = limit * 4 if (has_date_filter or tag_clauses or validity_can_drop) else limit
 
         # Check for deleted_at column and build filter
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(meta)").fetchall()}
