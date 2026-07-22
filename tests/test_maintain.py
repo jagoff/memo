@@ -348,8 +348,8 @@ def test_undo_targets_and_restore_from_inactive(mock_memory):
         "dead_archived": [f.id],
         "forgotten": [],
     }
-    archived, forgotten = _undo_targets(receipt)
-    assert archived == [a.id, qc.id] and forgotten == [f.id]
+    archived, forgotten, invalidated = _undo_targets(receipt)
+    assert archived == [a.id, qc.id] and forgotten == [f.id] and invalidated == []
 
     restored, missing = _restore_archived(mock_memory, archived, dry_run=False)
     assert set(restored) == {a.id, qc.id} and missing == []
@@ -357,6 +357,70 @@ def test_undo_targets_and_restore_from_inactive(mock_memory):
     assert mock_memory.get(a.id) is not None
     assert mock_memory.get(qc.id) is not None
     assert mock_memory.unforget(f.id) is not None
+
+
+def test_maintain_undo_reopens_invalidated_loser(mem_with_stub):
+    """`memo maintain undo` must reverse a contradiction-supersede (Bug B).
+
+    Supersede now closes the loser's interval in place with action='invalidate'
+    (not archive), so undo has to REOPEN it — clear invalid_at + drop
+    superseded_by in both the index and the markdown — restoring it to default
+    recall, mirroring how archive-undo restores a moved file.
+    """
+    from memo.cli_maintain import _reopen_invalidated, _undo_targets
+
+    loser = mem_with_stub.save(
+        content="prod db is postgres",
+        title="A",
+        type_="fact",
+        valid_at="2020-06-01T00:00:00",
+    )
+    winner = mem_with_stub.save(
+        content="prod db is mysql",
+        title="B",
+        type_="fact",
+        valid_at="2020-07-01T00:00:00",
+    )
+
+    ok = mem_with_stub.lifecycle.invalidate_in_place(
+        loser_id=loser.id, winner_id=winner.id, invalid_at=winner.valid_at
+    )
+    assert ok is True
+
+    # Precondition: the closed interval hides the loser from default recall and
+    # stamps supersede provenance in the index + markdown.
+    closed = mem_with_stub.get(loser.id)
+    assert closed.invalid_at == "2020-07-01T00:00:00"
+    assert closed.extra.get("superseded_by") == winner.id
+    before = {r.id for r in mem_with_stub.search("prod db", mode="bm25", limit=10)}
+    assert loser.id not in before
+
+    receipt = {
+        "superseded": [
+            {"pair_id": 1, "older": loser.id, "action": "invalidate", "confidence": 0.95}
+        ],
+        "merged": [],
+        "archived_stale": [],
+        "dead_archived": [],
+        "forgotten": [],
+    }
+    archived, forgotten, invalidated = _undo_targets(receipt)
+    assert archived == [] and forgotten == [] and invalidated == [loser.id]
+
+    reopened, missing = _reopen_invalidated(mem_with_stub, invalidated, dry_run=False)
+    assert reopened == [loser.id] and missing == []
+
+    # Index reopened: interval cleared, provenance gone → back in default recall.
+    rec = mem_with_stub.get(loser.id)
+    assert rec.invalid_at is None
+    assert "superseded_by" not in (rec.extra or {})
+    after = {r.id for r in mem_with_stub.search("prod db", mode="bm25", limit=10)}
+    assert loser.id in after
+
+    # Markdown mirrored so a reindex --rebuild keeps the interval open.
+    md_text = (mem_with_stub.cfg.memory_dir / rec.path).read_text(encoding="utf-8")
+    assert "invalid_at:" not in md_text
+    assert "superseded_by" not in md_text
 
 
 def test_quality_compact_rollback_ids_include_attempted_ids():

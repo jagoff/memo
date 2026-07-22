@@ -224,6 +224,44 @@ def test_invalidate_in_place_closes_interval(lifecycle_manager, mock_memory):
     assert "invalid_at:" in md_text
 
 
+def test_invalidate_in_place_clamps_inverted_interval(lifecycle_manager, mock_memory):
+    """An OLDER winner must not invert the loser's interval (Bug A).
+
+    With MEMO_BELIEF_COMPETING the winner is chosen by trust, not recency, so
+    the winner's valid_at can PRECEDE the loser's. Closing the loser at that
+    earlier instant would make `invalid_at < valid_at` — an interval no as-of
+    query can satisfy (`valid_at <= T < invalid_at` is empty), orphaning the
+    loser entirely. The clamp floors invalid_at at the loser's own start, so the
+    older-winner case collapses to a zero-length interval, never an inverted one.
+    """
+    loser = mock_memory.save(
+        content="prod db is mysql",
+        title="DB (loser, newer)",
+        type_="fact",
+        valid_at="2026-07-01T00:00:00",
+    )
+    winner = mock_memory.save(
+        content="prod db is postgres",
+        title="DB (winner, OLDER)",
+        type_="fact",
+        valid_at="2026-06-01T00:00:00",
+    )
+
+    ok = lifecycle_manager.invalidate_in_place(
+        loser_id=loser.id,
+        winner_id=winner.id,
+        invalid_at=winner.valid_at,  # 2026-06-01 — EARLIER than the loser's 2026-07-01
+    )
+    assert ok is True
+
+    ga = mock_memory.get(loser.id)
+    assert ga is not None
+    # No inversion: floored at the loser's own start → zero-length interval.
+    assert ga.invalid_at is not None
+    assert ga.invalid_at >= ga.valid_at
+    assert ga.invalid_at == loser.valid_at
+
+
 def test_apply_lifecycle_rules_dry_run(lifecycle_manager, mock_memory):
     """Test applying lifecycle rules in dry-run mode."""
     # Create test memorias

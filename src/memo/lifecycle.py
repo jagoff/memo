@@ -385,6 +385,27 @@ class LifecycleManager:
         if not rec:
             return False
 
+        # Clamp so the closed interval can never be inverted/empty. With
+        # MEMO_BELIEF_COMPETING the winner is chosen by trust, not recency
+        # (belief.py), so it can be OLDER than the loser — making the passed-in
+        # invalid_at (the winner's valid_at) PRECEDE the loser's own start. An
+        # invalid_at < valid_at yields an interval no as-of query can satisfy
+        # (`valid_at <= T < invalid_at` is empty), silently orphaning the loser.
+        # Floor invalid_at at the loser's own start (== max(loser start,
+        # invalid_at)): an older-winner supersede then collapses to a zero-length
+        # interval — superseded from its own start, never independently valid, so
+        # correctly hidden from every as-of — instead of an inverted one. Compare
+        # as tz-aware INSTANTS (stored ts are local-offset; a naive string
+        # compare could misorder equal instants written at different offsets),
+        # then emit the loser's original stored string.
+        from memo.memory.search_ops import _parse_search_ts
+
+        loser_start = rec.valid_at or rec.created
+        start_dt = _parse_search_ts(loser_start)
+        invalid_dt = _parse_search_ts(invalid_at)
+        if start_dt is not None and invalid_dt is not None and invalid_dt < start_dt:
+            invalid_at = loser_start
+
         # 1. Close the interval in the index — keep the loser's own valid_at.
         self.memory.store.update_validity(
             id_=loser_id, valid_at=rec.valid_at, invalid_at=invalid_at
