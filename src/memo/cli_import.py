@@ -62,6 +62,26 @@ def import_json(input_path: str, format: str | None) -> None:
     _report_import_result(result)
 
 
+@import_group.command(name="passport")
+@click.argument("input_path", type=click.Path(exists=True, dir_okay=False))
+def import_passport(input_path: str) -> None:
+    """Import a memo.passport.v1 file (validated, high-fidelity).
+
+    Preserves content/title/type/tags/created and the provenance /
+    verification `extra` bag; ids and derived indexes are rebuilt by this
+    store. Rejects a malformed / wrong-schema passport before writing.
+
+    Example: memo import passport /path/to/brain.passport
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+
+    result = mem.import_export.import_from(Path(input_path), "passport")
+    _report_import_result(result)
+
+
 @import_group.command(name="csv")
 @click.argument("input_path", type=click.Path(exists=True, dir_okay=False))
 def import_csv(input_path: str) -> None:

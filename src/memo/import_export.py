@@ -18,10 +18,21 @@ import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
 _EXPORT_PAGE_SIZE = 10_000
+
+
+def _generator_string() -> str:
+    """``memo/<version>`` for the passport header, or ``memo`` if unknown."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return f"memo/{version('mlx-memo')}"
+    except PackageNotFoundError:
+        return "memo"
 
 
 @contextmanager
@@ -87,6 +98,7 @@ class Importer:
                     tags=item.get("tags", []),
                     type_=item.get("type", "note"),
                     created=item.get("created"),
+                    extra=item.get("extra") or None,
                 )
                 imported += 1
             except Exception as e:
@@ -148,6 +160,21 @@ class Importer:
             skipped_count=skipped,
             errors=errors,
         )
+
+    def import_passport(self, input_path: Path) -> ImportResult:
+        """Import a versioned ``memo.passport.v1`` file (validated).
+
+        High-fidelity: content/title/type/tags/created and the provenance +
+        verification ``extra`` bag round-trip. Ids/embeddings/relations are
+        rebuilt by this store (derived data). Raises ValidationError on a
+        malformed / wrong-schema passport before touching the store.
+        """
+        from memo.passport import normalize_for_import, validate_passport
+
+        obj = json.loads(input_path.read_text(encoding="utf-8"))
+        validate_passport(obj)
+        records = [normalize_for_import(e) for e in obj["memories"]]
+        return self.import_records(records)
 
     def import_markdown_bundle(self, input_path: Path) -> ImportResult:
         """Import memories from a Markdown bundle (zip).
@@ -265,6 +292,35 @@ class Exporter:
             format="json",
         )
 
+    def export_passport(self, output_path: Path) -> ExportResult:
+        """Export a versioned, vendor-neutral ``memo.passport.v1`` file.
+
+        Higher fidelity than ``export_json``: a stable schema header (so a
+        receiver can validate) plus the ``extra`` bag (provenance +
+        verification state). Embeddings/relations are omitted — derived data,
+        rebuilt on import. See ``passport.py`` for the fidelity contract.
+        """
+        from datetime import datetime
+
+        from memo.passport import build_passport, entry_from_record
+
+        memories = self._list_all()
+        entries = [entry_from_record(m) for m in memories]
+        obj = build_passport(
+            entries,
+            generator=_generator_string(),
+            exported_at=datetime.now(UTC).isoformat(),
+        )
+
+        with _atomic_output_path(output_path) as tmp_path:
+            tmp_path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+
+        return ExportResult(
+            exported_count=len(memories),
+            output_path=str(output_path),
+            format="passport",
+        )
+
     def export_csv(self, output_path: Path) -> ExportResult:
         """Export memories to CSV.
 
@@ -362,7 +418,9 @@ class ImportExportManager:
         Returns:
             ImportResult with statistics.
         """
-        if format == "json" or input_path.suffix == ".json":
+        if format == "passport" or input_path.suffix == ".passport":
+            return self.importer.import_passport(input_path)
+        elif format == "json" or input_path.suffix == ".json":
             return self.importer.import_json(input_path)
         elif format == "csv" or input_path.suffix == ".csv":
             return self.importer.import_csv(input_path)
@@ -381,7 +439,9 @@ class ImportExportManager:
         Returns:
             ExportResult with statistics.
         """
-        if format == "json":
+        if format == "passport":
+            return self.exporter.export_passport(output_path)
+        elif format == "json":
             return self.exporter.export_json(output_path)
         elif format == "csv":
             return self.exporter.export_csv(output_path)
