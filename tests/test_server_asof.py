@@ -408,9 +408,7 @@ def test_memo_search_valid_as_of_predecessor_and_successor(mem_with_stub) -> Non
     mem_with_stub.store.update_validity(
         id_=a.id, valid_at="2026-06-01T00:00:00", invalid_at="2026-07-01T00:00:00"
     )
-    mem_with_stub.store.update_validity(
-        id_=b.id, valid_at="2026-07-01T00:00:00", invalid_at=None
-    )
+    mem_with_stub.store.update_validity(id_=b.id, valid_at="2026-07-01T00:00:00", invalid_at=None)
 
     june = tools["memo_search_valid_as_of"](query="prod db", as_of="2026-06-15T00:00:00")
     june_ids = {h["id"] for h in june["results"]}

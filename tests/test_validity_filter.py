@@ -88,11 +88,16 @@ def test_as_of_bare_date_includes_same_day_later_fact(mem_with_stub: Memory) -> 
         id_=a.id, valid_at="2026-06-15T14:00:00-03:00", invalid_at=None
     )
 
-    inc_bm = {r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10, as_of="2026-06-15")}
+    inc_bm = {
+        r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10, as_of="2026-06-15")
+    }
     inc_vec = {
-        r["id"] for r in mem_with_stub.store.search([1.0, 0.0, 0.0, 0.0], limit=10, as_of="2026-06-15")
+        r["id"]
+        for r in mem_with_stub.store.search([1.0, 0.0, 0.0, 0.0], limit=10, as_of="2026-06-15")
     }
     assert a.id in inc_bm and a.id in inc_vec  # same-day-later fact included
 
-    exc = {r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10, as_of="2026-06-14")}
+    exc = {
+        r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10, as_of="2026-06-14")
+    }
     assert a.id not in exc  # day before → excluded

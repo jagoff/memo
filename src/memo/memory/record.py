@@ -98,6 +98,8 @@ _VALID_TYPES = DURABLE_TYPES | REFERENCE_TYPES | {"temp"}
 # (which pulls in the MLX runtime at module load). Applies to the REFERENCE tier
 # only — short durable facts/preferences ("User prefers dark mode") are kept.
 MIN_REFERENCE_CHARS = 60
+
+
 def _contains_reference_link(s: str) -> bool:
     """Whether `s` holds a wikilink, a markdown link, or a URL.
 

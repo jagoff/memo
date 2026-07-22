@@ -293,9 +293,7 @@ def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[
     return restored, sorted(wanted - set(restored))
 
 
-def _reopen_invalidated(
-    mem: Any, ids: list[str], *, dry_run: bool
-) -> tuple[list[str], list[str]]:
+def _reopen_invalidated(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[str], list[str]]:
     """Reverse `invalidate_in_place`: reopen a contradiction loser's interval.
 
     The loser was NOT moved to inactive/ (its .md stayed in place with a closed
@@ -339,9 +337,7 @@ def _reopen_invalidated(
                         post.metadata["extra"] = raw
                     source_path.write_text(frontmatter.dumps(post), encoding="utf-8")
                 except Exception as exc:
-                    _log.warning(
-                        "maintain undo: frontmatter reopen failed for %s: %s", id_, exc
-                    )
+                    _log.warning("maintain undo: frontmatter reopen failed for %s: %s", id_, exc)
         reopened.append(id_)
     return reopened, sorted(wanted - set(reopened))
 
