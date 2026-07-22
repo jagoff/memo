@@ -74,3 +74,82 @@ def test_flag_off_never_calls_judge(mock_memory, monkeypatch):
     assert "_uncertain" not in (rec.tags or [])
     assert "grounding_score" not in (rec.extra or {})
     assert called["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Structured relative-date grounding (Task 5): ground_relative_dates emits a
+# structured valid_at anchored to the Observation Date (capture/save time),
+# never to today's clock.
+# ---------------------------------------------------------------------------
+
+
+def test_grounding_emits_structured_valid_at():
+    from memo.memory.consolidate_ops import ground_relative_dates
+
+    # observed on 2026-07-22; "yesterday" -> 2026-07-21
+    text, valid_at = ground_relative_dates(
+        "decided yesterday to use X", observed_at="2026-07-22T12:00:00"
+    )
+    assert valid_at is not None and valid_at.startswith("2026-07-21")
+    # inline annotation behaviour preserved
+    assert "2026-07-21" in text
+
+
+def test_grounding_no_date_returns_none():
+    from memo.memory.consolidate_ops import ground_relative_dates
+
+    text, valid_at = ground_relative_dates(
+        "a plain durable fact with no dates", observed_at="2026-07-22T12:00:00"
+    )
+    assert valid_at is None
+    assert text == "a plain durable fact with no dates"
+
+
+def test_grounding_ambiguous_two_days_returns_none():
+    from memo.memory.consolidate_ops import ground_relative_dates
+
+    # "yesterday" -> 07-21 and "3 days ago" -> 07-19 : two distinct anchors
+    _text, valid_at = ground_relative_dates(
+        "yesterday we started, but 3 days ago we planned",
+        observed_at="2026-07-22T12:00:00",
+    )
+    assert valid_at is None
+
+
+def test_save_grounding_sets_valid_at_from_observation(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_SAVE_NORMALIZE_DATES", "1")
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+    rec = mock_memory.save(
+        content="decided yesterday to use X",
+        type_="decision",
+        title="X decision",
+        created="2026-07-22T12:00:00",
+    )
+    assert rec.valid_at is not None
+    assert rec.valid_at.startswith("2026-07-21")
+    assert rec.valid_at != rec.created
+
+
+def test_save_grounding_no_date_defaults_valid_at_to_created(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_SAVE_NORMALIZE_DATES", "1")
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+    rec = mock_memory.save(
+        content="a plain durable fact",
+        type_="fact",
+        title="plain",
+        created="2026-07-22T12:00:00",
+    )
+    assert rec.valid_at == rec.created
+
+
+def test_save_explicit_valid_at_overrides_grounding(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_SAVE_NORMALIZE_DATES", "1")
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")
+    rec = mock_memory.save(
+        content="decided yesterday to use X",
+        type_="decision",
+        title="X decision",
+        created="2026-07-22T12:00:00",
+        valid_at="2020-01-01T00:00:00",
+    )
+    assert rec.valid_at == "2020-01-01T00:00:00"
