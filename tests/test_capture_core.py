@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from memo.capture_core import (
+    _EXTRACT_SYSTEM_PROMPT,
     _extract_text,
     _hash_assistant,
     _jaccard,
@@ -23,6 +24,29 @@ from memo.capture_core import (
     score_type_confidence,
     strip_meta_commentary,
 )
+
+
+class TestExtractPromptRubric:
+    """Regression guards on the shared insight-extraction prompt rubric.
+
+    Prompt behavior is LLM-driven and non-deterministic; these assert the
+    prompt *content* so the rubric rules cannot be silently reverted. The
+    real quality gate is `memo eval recall` (machine-local, MLX).
+    """
+
+    def test_requires_verbatim_specifics(self):
+        p = _EXTRACT_SYSTEM_PROMPT.lower()
+        assert "exactly as written" in p
+        assert "never paraphrase or round" in p
+
+    def test_captures_transitions_as_one_memory(self):
+        p = _EXTRACT_SYSTEM_PROMPT.lower()
+        assert "switched from x to y" in p
+        assert "one memory" in p or "one insight" in p
+
+    def test_has_explicit_one_off_noise_gate(self):
+        p = _EXTRACT_SYSTEM_PROMPT.lower()
+        assert "one-off" in p or "volatile" in p
 
 
 class TestTranscriptParsing:
