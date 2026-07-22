@@ -8,6 +8,7 @@ from memo.cli_dream_passes import (
     _run_consolidate_dups,
     _run_contradict,
     _run_entities,
+    _run_graph_projection,
     _run_roi_decay,
     _run_roi_reconcile,
     _run_stale,
@@ -282,6 +283,31 @@ class TestRunEntities:
             result = _run_entities(mock_memory, dry_run=True)
             assert "error" in result
             assert "extraction failed" in result["error"]
+
+
+class TestRunGraphProjection:
+    def test_rebuilds_dirty_projection(self, mock_memory: Memory, monkeypatch) -> None:
+        monkeypatch.setenv("MEMO_GRAPH_PROJECTION_ENABLED", "1")
+        mock_memory.graph.mark_projection_dirty()
+
+        result = _run_graph_projection(mock_memory)
+
+        assert result["status"] == "rebuilt"
+        assert mock_memory.graph.projection_dirty() is False
+
+    def test_dry_run_never_mutates(self, mock_memory: Memory, monkeypatch) -> None:
+        monkeypatch.setenv("MEMO_GRAPH_PROJECTION_ENABLED", "1")
+        mock_memory.graph.mark_projection_dirty()
+
+        result = _run_graph_projection(mock_memory, dry_run=True)
+
+        assert result["status"] == "would_rebuild"
+        assert mock_memory.graph.projection_dirty() is True
+
+    def test_disabled_projection_is_a_noop(self, mock_memory: Memory, monkeypatch) -> None:
+        monkeypatch.setenv("MEMO_GRAPH_PROJECTION_ENABLED", "0")
+
+        assert _run_graph_projection(mock_memory)["status"] == "disabled"
 
 
 class TestRunRoiReconcile:

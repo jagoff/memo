@@ -50,3 +50,19 @@ def test_status_renders_capture_weights_fragment(tmp_path, monkeypatch):
     plain = re.sub(r"\x1b\[[0-9;]*m", "", res.output)  # rich number-highlighting
     assert "capture weights: 2 type(s)" in plain
     assert "top decision:1.4" in plain
+
+
+def test_status_renders_graph_projection_fragment(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    (state / "dream").mkdir(parents=True)
+    (state / "dream" / "last.json").write_text(
+        json.dumps({"ts": 1751000000, "graph_projection": {"status": "rebuilt"}})
+    )
+
+    res = CliRunner().invoke(dream_cmd, ["status"])
+
+    assert res.exit_code == 0, res.output
+    assert "graph:      rebuilt" in res.output
