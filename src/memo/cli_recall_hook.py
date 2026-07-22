@@ -394,24 +394,14 @@ def recall_hook() -> None:
         return
 
     # Ranking pipeline — identical to the daemon path (_recall_logic):
-    # rank_hits with the hybrid cosine gate, preference boost and the graph
-    # seam, then the shared skip-below/gap injection filters.
+    # rank_hits with the hybrid cosine gate and preference boost, then the
+    # shared skip-below/gap injection filters. Graph ordering already ran in search.
     _vec_cosine = make_vec_cosine(mem, prompt)
 
     _prefs: Any | None = None
     if knobs.contextual:
         with contextlib.suppress(Exception):
             _prefs = mem.contextual.context.get_preferences()
-
-    _graph_boost: Callable[[list[Any]], list[Any]] | None = None
-    _gpw = flag_float("MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT") or 0.0
-    if flag_bool("MEMO_RECALL_GRAPH_PROXIMITY") and _gpw > 0:
-        with contextlib.suppress(Exception):
-            from memo.graph_proximity import extract_query_entities, graph_boost_factory
-
-            _graph_boost = graph_boost_factory(
-                mem.graph, extract_query_entities(prompt, mem.graph), weight=_gpw
-            )
 
     # Epistemic gate for the empty marker: "memo has no record" may only be
     # asserted after a search that RAN successfully and qualified nothing. A
@@ -469,7 +459,7 @@ def recall_hook() -> None:
                     mem, days=_band_days, exclude_types=exclude_types, floor=_knobs.min_sim
                 ),
             )
-        return rank_hits(hits, _knobs, vec_cosine=_vc, preferences=_prefs, graph_boost=_graph_boost)
+        return rank_hits(hits, _knobs, vec_cosine=_vc, preferences=_prefs)
 
     qualifying = _rank(prompt)
 

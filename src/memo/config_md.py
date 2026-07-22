@@ -45,6 +45,8 @@ LEGACY_PATH_ALIASES: dict[str, str] = {
     "entity.graph_retrieval_enabled": "graph.retrieval_enabled",
     "entity.graph_density_boost": "graph.density_boost",
     "entity.graph_fallback_min_hits": "graph.fallback_min_hits",
+    "recall.graph_proximity": "graph.signal_enabled",
+    "recall.graph_proximity_weight": "graph.signal_alpha",
 }
 
 

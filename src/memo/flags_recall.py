@@ -163,28 +163,6 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
-        "MEMO_RECALL_GRAPH_PROXIMITY",
-        "bool",
-        False,
-        "recall",
-        "Boost recall candidates whose entities sit one hop from the query's "
-        "entities in the materialized entity graph (Phase 2 graph-proximity "
-        "rerank). Default OFF: when off the ranking is identical to today. "
-        "Requires MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT > 0 to have any effect.",
-    ),
-    _spec(
-        "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT",
-        "float",
-        0.0,
-        "recall",
-        "Per-edge weight for the graph-proximity boost: a hit's score gains "
-        "weight * (sum of entity-edge weights connecting it to a query entity). "
-        "Default 0.0 (no-op even when MEMO_RECALL_GRAPH_PROXIMITY is on); the "
-        "nightly tuner line-searches this knob.",
-        min_val=0.0,
-        max_val=1.0,
-    ),
-    _spec(
         "MEMO_RECALL_MMR_LAMBDA",
         "float",
         0.0,

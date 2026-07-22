@@ -693,8 +693,8 @@ def _run_config_inner(
                 ),
             )
         # Rank exactly as the daemon does (shared rank_hits): dedup + the hybrid
-        # true-cosine gate + the Phase-2 graph_boost seam — so the eval measures
-        # the real ranking, not a hand-rolled floor filter. cfg.floor -> min_sim.
+        # true-cosine gate. Curated graph order is already part of Memory.search,
+        # so the eval measures the real ranking without a second graph pass.
         vc = make_vec_cosine(mem, query) if cfg.mode == "hybrid" else None
         # Per-label project fidelity: a label harvested with a project context
         # ranks with project_tag set — the same 3-tier boosts the hook applies

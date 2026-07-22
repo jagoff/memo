@@ -357,6 +357,26 @@ def test_legacy_search_graph_key_loads_as_canonical_graph_key(tmp_path: Path) ->
     }
 
 
+def test_legacy_recall_graph_keys_load_as_curated_signal_keys(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    config_dir = home / "config"
+    config_dir.mkdir(parents=True)
+    path = config_dir / "recall-config.md"
+    path.write_text(
+        "```toml\n[recall]\ngraph_proximity = true\ngraph_proximity_weight = 0.25\n```\n",
+        encoding="utf-8",
+    )
+
+    values = config_md.load_values({"MEMO_CONFIG_DIR": str(home)})
+
+    assert values["graph.signal_enabled"].value is True
+    assert values["graph.signal_alpha"].value == 0.25
+    assert config_md.flag_values({"MEMO_CONFIG_DIR": str(home)}) == {
+        "MEMO_GRAPH_SIGNAL_ALPHA": "0.25",
+        "MEMO_GRAPH_SIGNAL_ENABLED": "on",
+    }
+
+
 def test_set_graph_signal_writes_graph_domain_file(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     config_md.write_default_config(

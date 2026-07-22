@@ -14,9 +14,8 @@ set and the (precision@K, -noise@K) objective:
     ``MEMO_RECALL_SYNTHESIS_BOOST``) through the recall-faithful
     ``eval_recall.Cfg.knob_overrides`` seam, applying at most ONE knob change
     per night (curated no-regression + latency gated).
-  - ``run_graph_weight_pass``    — grid-searches the graph-proximity boost
-    weight (``MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT``) via the recall-faithful
-    ``rank_hits()`` seam.
+  - ``run_graph_weight_pass``    — legacy graph tuner retained until the curated
+    signal tuner migration; retrieval itself no longer has a recall-only seam.
   - ``run_graph_retrieval_pass`` — selects among candidate recall CONFIGS
     (whether to inject entity-graph candidates as a retrieval source and/or
     expand 1-hop, incl. the ``MEMO_RECALL_MODE`` flip retrieval needs),
@@ -748,27 +747,19 @@ def measure_graph_weight(
     """precision@K / noise@K for the live index with the graph-proximity boost
     applied at ``weight`` (gated at ``floor`` = current ``min_sim``).
 
-    Mirrors ``eval_recall.run_config``'s vec ranking but threads the Phase-2
-    ``graph_boost`` seam through ``rank_hits`` so the measurement reflects the
-    real recall path. ``eval_recall`` itself is not graph-boost aware, so this
-    measure lives here rather than extending the shared harness.
+    Temporary compatibility measure while the nightly tuner migrates to the
+    curated signal alpha. Retrieval itself is measured through ``Memory.search``.
     """
     from memo.eval_recall import _is_noise, _is_relevant
-    from memo.graph_proximity import extract_query_entities, graph_boost_factory
     from memo.recall_logic import RankKnobs, rank_hits
 
-    graph = getattr(mem, "graph", None)
+    _ = weight
     knobs = RankKnobs(top_k=k, min_sim=floor, min_body_chars=0, mode="vec")
     prec_hits = prec_total = noise_hits = 0
     n_prompts = len(labels.prompts) or 1
     for prompt in labels.prompts:
         hits = mem.search(prompt.text, limit=k * 4, mode="vec")
-        graph_boost = None
-        if weight > 0 and graph is not None:
-            graph_boost = graph_boost_factory(
-                graph, extract_query_entities(prompt.text, graph), weight=weight
-            )
-        ranked = rank_hits(hits, knobs, graph_boost=graph_boost)
+        ranked = rank_hits(hits, knobs)
         ranked = [h for h in ranked if not _is_noise(h, labels)]
         top = ranked[:k]
         noise_hits += sum(1 for h in top if _is_noise(h, labels))
