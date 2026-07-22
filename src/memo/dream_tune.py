@@ -260,6 +260,24 @@ def _save_knob_baseline(state_dir: Path, knob: str, metrics: dict[str, float]) -
         saver(state_dir, metrics)
 
 
+def _restore_online_revert(state_dir: Path, resolution: dict[str, Any]) -> None:
+    """Restore every key managed by one reverted online experiment."""
+    params = _scalar_overlay(state_dir)
+    managed_before = resolution.get("managed_before")
+    if isinstance(managed_before, dict):
+        for key in resolution.get("managed_keys", managed_before):
+            params.pop(str(key), None)
+        params.update(managed_before)
+    else:
+        params[resolution["knob"]] = resolution["floor_before"]
+    write_overlay(state_dir, params, {"set_by": "dream-online-revert"})
+    saver = _KNOB_BASELINE_SAVERS.get(resolution["knob"])
+    if saver is not None:
+        saver(state_dir, resolution["offline_before"])
+    dream_tune_online.set_revert_cooldown(state_dir)
+    pin_prev_to_current(state_dir)
+
+
 def run_tuning_pass(
     cfg: Any,
     mem: Any,
@@ -307,26 +325,7 @@ def run_tuning_pass(
             )
             res["online"] = resolution
             if resolution["status"] == "reverted":
-                # Self-contained, knob-generic revert: restore the reverted knob to
-                # its pre-apply value by merging into the CURRENT overlay (not the
-                # shared one-step _meta.prev), and restore that knob's own offline
-                # baseline file.
-                params = _scalar_overlay(cfg.state_dir)
-                managed_before = resolution.get("managed_before")
-                if isinstance(managed_before, dict):
-                    for key in resolution.get("managed_keys", managed_before):
-                        params.pop(str(key), None)
-                    params.update(managed_before)
-                else:
-                    params[resolution["knob"]] = resolution["floor_before"]
-                write_overlay(cfg.state_dir, params, {"set_by": "dream-online-revert"})
-                _saver = _KNOB_BASELINE_SAVERS.get(resolution["knob"])
-                if _saver is not None:
-                    _saver(cfg.state_dir, resolution["offline_before"])
-                dream_tune_online.set_revert_cooldown(cfg.state_dir)
-                # Self-heal _meta.prev so a later offline rollback-guard can't
-                # resurrect the config the online loop just reverted away.
-                pin_prev_to_current(cfg.state_dir)
+                _restore_online_revert(cfg.state_dir, resolution)
                 res["status"] = "online_reverted"
                 return res
             if resolution["status"] == "waiting":
@@ -909,6 +908,33 @@ def _graph_signal_curated_gate(
     return not _regressed(cur_after, cur_before)
 
 
+def _rollback_regressed_graph(
+    state_dir: Path,
+    mem: Any,
+    labels: LabelSet,
+    *,
+    k: int,
+    current: dict[str, bool | float],
+    floor: float,
+    dry_run: bool,
+) -> dict[str, Any] | None:
+    """Rollback a live graph config only when its saved baseline regressed."""
+    baseline = load_graph_baseline(state_dir)
+    if baseline is None or dry_run:
+        return None
+    live = measure_graph_signal(
+        mem,
+        labels,
+        k=k,
+        enabled=bool(current[_GRAPH_ENABLED]),
+        alpha=float(current[_GRAPH_ALPHA]),
+        floor=floor,
+    )
+    if not _regressed(live, baseline):
+        return None
+    return rollback_overlay(state_dir)
+
+
 def run_graph_weight_pass(
     cfg: Any,
     mem: Any,
@@ -947,23 +973,19 @@ def run_graph_weight_pass(
             _GRAPH_ALPHA: (0.15 if alpha is None else alpha) if enabled else 0.0,
         }
 
-        # rollback guard: if the LIVE weight already regressed vs baseline, revert.
-        baseline = load_graph_baseline(cfg.state_dir)
-        if baseline is not None:
-            live = measure_graph_signal(
-                mem,
-                labels,
-                k=k,
-                enabled=bool(current[_GRAPH_ENABLED]),
-                alpha=float(current[_GRAPH_ALPHA]),
-                floor=floor,
-            )
-            if _regressed(live, baseline) and not dry_run:
-                rolled = rollback_overlay(cfg.state_dir)
-                if rolled is not None:
-                    res["status"] = "rolled_back"
-                    res["restored"] = rolled
-                    return res
+        rolled = _rollback_regressed_graph(
+            cfg.state_dir,
+            mem,
+            labels,
+            k=k,
+            current=current,
+            floor=floor,
+            dry_run=dry_run,
+        )
+        if rolled is not None:
+            res["status"] = "rolled_back"
+            res["restored"] = rolled
+            return res
 
         best_config, before, after = search_graph_signal(
             mem,

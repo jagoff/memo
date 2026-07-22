@@ -1340,6 +1340,12 @@ def dream_run(
     release_dream_lock(_lock_fh)
 
 
+def _render_graph_projection_status(data: dict[str, Any]) -> None:
+    projection = data.get("graph_projection")
+    if projection:
+        console.print(f"  graph:      {projection.get('status')}")
+
+
 @dream_cmd.command(name="status")
 def dream_status() -> None:
     """Show when dream last ran and what it changed."""
@@ -1363,8 +1369,7 @@ def dream_status() -> None:
     console.print(f"  stale:      {len(data.get('archived_stale', []))}")
     console.print(f"  syntheses:  {len(data.get('synthesized', []))}")
     console.print(f"  entities:   {data.get('entities_extracted', 0)}")
-    if data.get("graph_projection"):
-        console.print(f"  graph:      {data['graph_projection'].get('status')}")
+    _render_graph_projection_status(data)
     console.print(f"  roi decay:  {data.get('roi_decayed', 0)} rows")
     if data.get("tuner"):
         t = data["tuner"]

@@ -247,6 +247,20 @@ def _validate_mapped_values(values: Mapping[str, ConfigValue]) -> list[ConfigPro
     return problems
 
 
+def _canonical_entries(
+    parsed: dict[str, Any],
+    existing: Mapping[str, ConfigValue],
+) -> list[tuple[str, Any]]:
+    """Flatten one TOML block while preserving canonical-key precedence."""
+    entries: list[tuple[str, Any]] = []
+    for parsed_key, raw in _flatten("", parsed).items():
+        key = _canonical_path_key(parsed_key)
+        if key != parsed_key and key in existing:
+            continue
+        entries.append((key, raw))
+    return entries
+
+
 def _read_uncached(
     paths: list[Path], *, validate_values: bool
 ) -> tuple[dict[str, ConfigValue], list[ConfigProblem]]:
@@ -275,13 +289,7 @@ def _read_uncached(
                     ConfigProblem(str(path), f"block:{idx}", "", f"TOML parse error: {exc}")
                 )
                 continue
-            for parsed_key, raw in _flatten("", parsed).items():
-                key = _canonical_path_key(parsed_key)
-                is_legacy = key != parsed_key
-                if is_legacy and key in values:
-                    # A canonical graph-config value always wins over a legacy
-                    # search/entity value, regardless of domain-file sort order.
-                    continue
+            for key, raw in _canonical_entries(parsed, values):
                 env_name = flag_paths.get(key)
                 field_name = field_paths.get(key)
                 if env_name is None and field_name is None:

@@ -223,6 +223,186 @@ class ProjectionBuildResult:
     code_link_count: int = 0
 
 
+_ProjectionRow = dict[str, Any]
+
+
+def _curate_entity_rows(
+    raw: list[RawEntityEvidence],
+    config: ProjectionBuildConfig,
+) -> tuple[dict[str, _ProjectionRow], list[_ProjectionRow]]:
+    accepted: dict[str, _ProjectionRow] = {}
+    rejections: list[_ProjectionRow] = []
+    for item in raw:
+        decision = evaluate_entity(item, config)
+        if not decision.eligible:
+            rejections.append(
+                {
+                    "entity_id": item.entity_id,
+                    "uri": decision.uri,
+                    "quality": decision.quality,
+                    "reason": decision.reason or "unknown",
+                }
+            )
+            continue
+        candidate = accepted.setdefault(
+            decision.uri,
+            {
+                "entity_id": item.entity_id,
+                "uri": decision.uri,
+                "entity_type": item.entity_type,
+                "canonical_key": fold_key(item.name),
+                "label": item.name,
+                "quality": decision.quality,
+                "first_seen": item.first_seen,
+                "last_seen": item.last_seen,
+                "memberships": {},
+            },
+        )
+        if decision.quality > float(candidate["quality"]):
+            candidate.update(
+                entity_id=item.entity_id,
+                entity_type=item.entity_type,
+                label=item.name,
+                quality=decision.quality,
+            )
+        memberships: dict[str, float] = candidate["memberships"]
+        for memory, confidence in zip(item.memories, item.confidences, strict=True):
+            if memory.forgotten:
+                continue
+            memberships[memory.id] = max(
+                memberships.get(memory.id, 0.0),
+                max(0.0, min(1.0, confidence)),
+            )
+    return accepted, rejections
+
+
+def _merge_code_reference_rows(
+    accepted: dict[str, _ProjectionRow],
+    memories: Mapping[str, ProjectionMemoryState],
+) -> list[_ProjectionRow]:
+    code_links: list[_ProjectionRow] = []
+    for memory_id, memory in sorted(memories.items()):
+        if memory.forgotten:
+            continue
+        for ref in memory.code_refs:
+            canonical = fold_key(ref.qualified_name or ref.file_path or ref.label)
+            candidate = accepted.setdefault(
+                ref.uri,
+                {
+                    "entity_id": -(int(hashlib.sha256(ref.uri.encode()).hexdigest()[:8], 16) + 1),
+                    "uri": ref.uri,
+                    "entity_type": f"code:{ref.kind}",
+                    "canonical_key": canonical,
+                    "label": ref.label,
+                    "quality": 1.0,
+                    "first_seen": None,
+                    "last_seen": None,
+                    "memberships": {},
+                },
+            )
+            memberships: dict[str, float] = candidate["memberships"]
+            memberships[memory_id] = max(
+                memberships.get(memory_id, 0.0),
+                max(0.0, min(1.0, ref.confidence)),
+            )
+            code_links.append(
+                {
+                    **asdict(ref),
+                    "memory_id": memory_id,
+                    "evidence_id": memory_uri(memory_id),
+                }
+            )
+    return code_links
+
+
+def _materialize_memberships(
+    accepted: dict[str, _ProjectionRow],
+    memories: Mapping[str, ProjectionMemoryState],
+    config: ProjectionBuildConfig,
+) -> tuple[list[_ProjectionRow], dict[str, dict[str, float]]]:
+    live_total = sum(not memory.forgotten for memory in memories.values())
+    rows: list[_ProjectionRow] = []
+    memory_nodes: dict[str, dict[str, float]] = defaultdict(dict)
+    for node in accepted.values():
+        memberships: dict[str, float] = node["memberships"]
+        node["doc_freq"] = len(memberships)
+        ratio = len(memberships) / live_total if live_total else 0.0
+        node["is_hub"] = ratio > config.hub_max_doc_freq_ratio
+        node["idf"] = max(0.0, math.log((1 + live_total) / (1 + len(memberships))))
+        for memory_id, confidence in sorted(memberships.items()):
+            rows.append(
+                {
+                    "memory_id": memory_id,
+                    "uri": node["uri"],
+                    "confidence": confidence,
+                    "evidence_id": memory_uri(memory_id),
+                }
+            )
+            memory_nodes[memory_id][node["uri"]] = confidence
+    return rows, memory_nodes
+
+
+def _edge_relation(a_uri: str, b_uri: str) -> str:
+    a_is_code = a_uri.startswith("codegraph://")
+    b_is_code = b_uri.startswith("codegraph://")
+    if a_is_code and b_is_code:
+        return "code_co_touched"
+    if a_is_code or b_is_code:
+        return "contextualizes_code"
+    return "co_occurs"
+
+
+def _materialize_edges(
+    memory_nodes: Mapping[str, dict[str, float]],
+    evidence_limit: int,
+) -> tuple[list[_ProjectionRow], Counter[str]]:
+    accumulator: dict[tuple[str, str], _ProjectionRow] = {}
+    for memory_id, uri_confidences in sorted(memory_nodes.items()):
+        uris = sorted(uri_confidences)
+        for index, a_uri in enumerate(uris):
+            for b_uri in uris[index + 1 :]:
+                edge = accumulator.setdefault(
+                    (a_uri, b_uri),
+                    {"confidences": [], "evidence_ids": []},
+                )
+                edge["confidences"].append(min(uri_confidences[a_uri], uri_confidences[b_uri]))
+                edge["evidence_ids"].append(memory_uri(memory_id))
+
+    rows: list[_ProjectionRow] = []
+    degrees: Counter[str] = Counter()
+    for (a_uri, b_uri), values in sorted(accumulator.items()):
+        evidence_ids = tuple(sorted(values["evidence_ids"]))
+        confidences = values["confidences"]
+        degrees[a_uri] += 1
+        degrees[b_uri] += 1
+        rows.append(
+            {
+                "a_uri": a_uri,
+                "b_uri": b_uri,
+                "relation": _edge_relation(a_uri, b_uri),
+                "weight": float(len(evidence_ids)),
+                "confidence": sum(confidences) / len(confidences),
+                "evidence_count": len(evidence_ids),
+                "first_seen": None,
+                "last_seen": None,
+                "evidence_ids": evidence_ids[: max(0, evidence_limit)],
+            }
+        )
+    return rows, degrees
+
+
+def _finalize_node_rows(
+    accepted: dict[str, _ProjectionRow],
+    degrees: Counter[str],
+) -> list[_ProjectionRow]:
+    rows: list[_ProjectionRow] = []
+    for node in sorted(accepted.values(), key=lambda value: value["uri"]):
+        node["degree"] = degrees[node["uri"]]
+        node.pop("memberships", None)
+        rows.append(node)
+    return rows
+
+
 class GraphReadModel:
     """Immutable in-memory view of one complete projection version."""
 
@@ -427,150 +607,11 @@ class GraphProjectionStore:
         list[dict[str, Any]],
         list[dict[str, Any]],
     ]:
-        accepted: dict[str, dict[str, Any]] = {}
-        rejections: list[dict[str, Any]] = []
-        for item in raw:
-            decision = evaluate_entity(item, config)
-            if not decision.eligible:
-                rejections.append(
-                    {
-                        "entity_id": item.entity_id,
-                        "uri": decision.uri,
-                        "quality": decision.quality,
-                        "reason": decision.reason or "unknown",
-                    }
-                )
-                continue
-            candidate = accepted.setdefault(
-                decision.uri,
-                {
-                    "entity_id": item.entity_id,
-                    "uri": decision.uri,
-                    "entity_type": item.entity_type,
-                    "canonical_key": fold_key(item.name),
-                    "label": item.name,
-                    "quality": decision.quality,
-                    "first_seen": item.first_seen,
-                    "last_seen": item.last_seen,
-                    "memberships": {},
-                },
-            )
-            if decision.quality > float(candidate["quality"]):
-                candidate.update(
-                    entity_id=item.entity_id,
-                    entity_type=item.entity_type,
-                    label=item.name,
-                    quality=decision.quality,
-                )
-            memberships: dict[str, float] = candidate["memberships"]
-            for memory, confidence in zip(item.memories, item.confidences, strict=True):
-                if memory.forgotten:
-                    continue
-                memberships[memory.id] = max(
-                    memberships.get(memory.id, 0.0),
-                    max(0.0, min(1.0, confidence)),
-                )
-
-        code_link_rows: list[dict[str, Any]] = []
-        for memory_id, memory in sorted(memories.items()):
-            if memory.forgotten:
-                continue
-            for ref in memory.code_refs:
-                canonical = fold_key(ref.qualified_name or ref.file_path or ref.label)
-                candidate = accepted.setdefault(
-                    ref.uri,
-                    {
-                        "entity_id": -(
-                            int(hashlib.sha256(ref.uri.encode()).hexdigest()[:8], 16) + 1
-                        ),
-                        "uri": ref.uri,
-                        "entity_type": f"code:{ref.kind}",
-                        "canonical_key": canonical,
-                        "label": ref.label,
-                        "quality": 1.0,
-                        "first_seen": None,
-                        "last_seen": None,
-                        "memberships": {},
-                    },
-                )
-                candidate["memberships"][memory_id] = max(
-                    candidate["memberships"].get(memory_id, 0.0),
-                    max(0.0, min(1.0, ref.confidence)),
-                )
-                code_link_rows.append(
-                    {
-                        **asdict(ref),
-                        "memory_id": memory_id,
-                        "evidence_id": memory_uri(memory_id),
-                    }
-                )
-
-        live_total = sum(not memory.forgotten for memory in memories.values())
-        membership_rows: list[dict[str, Any]] = []
-        memory_nodes: dict[str, dict[str, float]] = defaultdict(dict)
-        for node in accepted.values():
-            memberships = node["memberships"]
-            node["doc_freq"] = len(memberships)
-            ratio = len(memberships) / live_total if live_total else 0.0
-            node["is_hub"] = ratio > config.hub_max_doc_freq_ratio
-            node["idf"] = max(
-                0.0,
-                math.log((1 + live_total) / (1 + len(memberships))),
-            )
-            for memory_id, confidence in sorted(memberships.items()):
-                membership_rows.append(
-                    {
-                        "memory_id": memory_id,
-                        "uri": node["uri"],
-                        "confidence": confidence,
-                        "evidence_id": memory_uri(memory_id),
-                    }
-                )
-                memory_nodes[memory_id][node["uri"]] = confidence
-
-        edge_accumulator: dict[tuple[str, str], dict[str, Any]] = {}
-        for memory_id, uri_confidences in sorted(memory_nodes.items()):
-            uris = sorted(uri_confidences)
-            for index, a_uri in enumerate(uris):
-                for b_uri in uris[index + 1 :]:
-                    edge = edge_accumulator.setdefault(
-                        (a_uri, b_uri),
-                        {"confidences": [], "evidence_ids": []},
-                    )
-                    edge["confidences"].append(min(uri_confidences[a_uri], uri_confidences[b_uri]))
-                    edge["evidence_ids"].append(memory_uri(memory_id))
-
-        edge_rows: list[dict[str, Any]] = []
-        degrees: Counter[str] = Counter()
-        for (a_uri, b_uri), values in sorted(edge_accumulator.items()):
-            evidence_ids = tuple(sorted(values["evidence_ids"]))
-            confidences = values["confidences"]
-            degrees[a_uri] += 1
-            degrees[b_uri] += 1
-            edge_rows.append(
-                {
-                    "a_uri": a_uri,
-                    "b_uri": b_uri,
-                    "relation": (
-                        "code_co_touched"
-                        if a_uri.startswith("codegraph://") and b_uri.startswith("codegraph://")
-                        else "contextualizes_code"
-                        if a_uri.startswith("codegraph://") or b_uri.startswith("codegraph://")
-                        else "co_occurs"
-                    ),
-                    "weight": float(len(evidence_ids)),
-                    "confidence": sum(confidences) / len(confidences),
-                    "evidence_count": len(evidence_ids),
-                    "first_seen": None,
-                    "last_seen": None,
-                    "evidence_ids": evidence_ids[: max(0, config.evidence_limit)],
-                }
-            )
-        node_rows = []
-        for node in sorted(accepted.values(), key=lambda value: value["uri"]):
-            node["degree"] = degrees[node["uri"]]
-            node.pop("memberships", None)
-            node_rows.append(node)
+        accepted, rejections = _curate_entity_rows(raw, config)
+        code_link_rows = _merge_code_reference_rows(accepted, memories)
+        membership_rows, memory_nodes = _materialize_memberships(accepted, memories, config)
+        edge_rows, degrees = _materialize_edges(memory_nodes, config.evidence_limit)
+        node_rows = _finalize_node_rows(accepted, degrees)
         return node_rows, membership_rows, edge_rows, rejections, code_link_rows
 
     @staticmethod
@@ -770,7 +811,14 @@ class GraphProjectionStore:
                 self._set_state(cx, "last_success_at", built_at)
                 self._set_state(cx, "last_error", "")
                 self._retain_active_and_previous(cx, version, previous)
-        except Exception as exc:
+        except (
+            ProjectionBuildError,
+            OSError,
+            ValueError,
+            TypeError,
+            KeyError,
+            sqlite3.Error,
+        ) as exc:
             failed_at = datetime.now(UTC).isoformat()
             with self._tx_factory() as cx:
                 self._set_state(cx, "last_error", f"{type(exc).__name__}: {exc}")

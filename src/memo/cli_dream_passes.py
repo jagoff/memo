@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging as _logging
+import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict
 from functools import partial
@@ -24,6 +25,7 @@ from memo.dream_utils import (
     _iso_now,
     _older_id,
 )
+from memo.errors import MemoError
 from memo.outcome import dead_weight, reconcile_roi, reconcile_source_feedback
 from memo.tiers import EVICTION_PROTECTED_TYPES
 from memo.transcript_miner import mine_transcripts
@@ -848,7 +850,7 @@ def _run_graph_projection(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                 "active_version": health["active_version"],
             }
         return {"status": "rebuilt", **asdict(mem.rebuild_graph())}
-    except Exception as exc:
+    except (MemoError, OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         _log.warning("graph projection pass failed: %s", exc)
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
 
