@@ -12,7 +12,11 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from memo import dashboard, token_ledger
+
+pytestmark = pytest.mark.concurrency
 
 
 def _g(ts: str, score: float = 0.9, client: str = "claude-code") -> dict:

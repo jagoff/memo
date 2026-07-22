@@ -17,6 +17,8 @@ from memo.history import HistoryStore
 from memo.store import VecStore
 from memo.versioning import VersionManager, VersionStore
 
+pytestmark = pytest.mark.resource_hygiene
+
 
 def _cleanup_without_warnings(factory) -> list[warnings.WarningMessage]:
     # Drain unreachable objects left by earlier tests before attributing any

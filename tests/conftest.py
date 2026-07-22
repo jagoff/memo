@@ -17,9 +17,11 @@ adds isolated storage on top.
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -32,7 +34,9 @@ os.environ["MEMO_CONFIG_FILE"] = str(
 # Unique per test process (mkdtemp), NOT a fixed shared path: a fixed fallback
 # accumulates a live sqlite index across runs, leaking one run's state (and a
 # possibly stale schema) into every later run on the machine.
-os.environ["MEMO_STATE_DIR"] = tempfile.mkdtemp(prefix="memo-test-state-")
+_TEST_PROCESS_STATE_DIR = Path(tempfile.mkdtemp(prefix="memo-test-state-"))
+os.environ["MEMO_STATE_DIR"] = str(_TEST_PROCESS_STATE_DIR)
+atexit.register(shutil.rmtree, _TEST_PROCESS_STATE_DIR, ignore_errors=True)
 for _model_flag in (
     "MEMO_MODEL_PROFILE",
     "MEMO_LLM_MODEL",
@@ -55,6 +59,8 @@ import pytest  # noqa: E402
 from freezegun import configure as configure_freezegun  # noqa: E402
 
 from memo.config import Config  # noqa: E402
+
+pytest_plugins = ["tests.resource_hygiene_plugin"]
 
 configure_freezegun(extend_ignore_list=["transformers"])
 
@@ -93,6 +99,7 @@ os.environ.setdefault("MEMO_MCP_PROFILE", "full")
 # socket. Tests that exercise daemon routing opt back in via `monkeypatch.setenv`
 # / `CliRunner(...).invoke(env=...)`.
 os.environ["MEMO_EMBEDDER_VIA_DAEMON"] = "0"
+os.environ["MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON"] = "0"
 
 # Neutralize production trinity flags that a developer's shell exports for live
 # behavior but that break tests asserting a flag's *default* (support-lift 0.0,

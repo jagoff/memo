@@ -76,9 +76,10 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("cli_recall_hook.py", "recall_hook", 19),
     ("cli_recall_hook.py", "recall_hook", 20),
     ("cli_recall_hook.py", "recall_hook", 21),
-    # Proactive urgent nudge folded into the recall systemMessage: fail-open,
-    # a nudge is a nice-to-have and must never block or delay recall.
-    ("cli_recall_hook.py", "recall_hook", 22),
+    # Proactive urgent rendering is optional hook-hot-path work. Store reads,
+    # timestamp parsing, or rendering failures must degrade to no urgent line
+    # and must never block the recall payload.
+    ("cli_recall_hook.py", "_proactive_urgent_line", 1),
     # MEMO_HIT_DOSSIER batched contradict-pairs lookup: fail-open, degrades to
     # an empty disputed_by map on any store/read error (never blocks recall).
     ("memory/write_ops.py", "_upsert_declared_fact_edges_best_effort", 1),
@@ -131,6 +132,25 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("store/queries.py", "_QueriesMixin.delete", 2),
     ("store/queries.py", "_QueriesMixin.delete", 3),
     ("store/queries.py", "_QueriesMixin.hard_delete", 1),
+}
+
+
+# Post-baseline broad catches may bypass the raw per-file ratchet only through
+# this exact lexical inventory. Each site is fail-open by product contract:
+#
+# - compact briefing: an optional proactive nudge must not break SessionStart;
+# - recall urgent line: optional sqlite/routing/rendering work must not block
+#   the latency-sensitive UserPromptSubmit hook;
+# - mandate sync: a nightly optional pass reports its error in the receipt and
+#   must not abort the rest of dream maintenance.
+#
+# tests/test_dev_audit.py asserts that this inventory is exact and every key
+# still resolves to a real ``except Exception`` site, preventing stale or broad
+# file-level exclusions.
+BROAD_EXCEPTION_RATCHET_EXEMPTIONS: set[tuple[str, str, int]] = {
+    ("briefing.py", "proactive_compact_line", 1),
+    ("cli_recall_hook.py", "_proactive_urgent_line", 1),
+    ("constitution.py", "run_mandate_sync_pass", 1),
 }
 
 

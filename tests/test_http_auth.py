@@ -18,6 +18,8 @@ from starlette.testclient import TestClient
 _TOKEN = "test-token-" + ("x" * 32)
 _MAX_HTTP_REQUEST_BYTES = 1_048_576
 
+pytestmark = pytest.mark.resource_hygiene
+
 
 def _oversized_stream():
     """Yield an oversized body without a Content-Length header."""

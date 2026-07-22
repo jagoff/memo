@@ -27,6 +27,15 @@ from memo.util import stable_hash as _stable_content_hash
 from memo.util import utc_now_iso as _utc_now_iso
 
 
+def _parse_replay_uri(uri: str) -> Any | None:
+    """Normalize dependency parser failures to the replay missing sentinel."""
+
+    try:
+        return parse_uri(uri)
+    except (TypeError, ValueError):
+        return None
+
+
 class _ReplayOpsMixin(_MemoryBase):
     def backend_native_replay_resolve(
         self,
@@ -69,7 +78,7 @@ class _ReplayOpsMixin(_MemoryBase):
                     "Memo backend-native only replays memo://memoria/<id>, "
                     "memo://repo/<id|name|url>, and memo://repo-index/<name>/<commit> evidence.",
                 )
-            parts = parse_uri(uri)
+            parts = _parse_replay_uri(uri)
             if parts is None:
                 return payload("missing", "Invalid URI format.")
 
@@ -107,7 +116,7 @@ class _ReplayOpsMixin(_MemoryBase):
                     if resource_id
                     else (subpath.split("/", 1)[1] if subpath and "/" in subpath else "")
                 )
-                if not repo_name:
+                if not repo_name or not commit_prefix:
                     return payload(
                         "missing", "memo://repo-index URI must include <repo-name>/<commit-prefix>."
                     )
@@ -251,7 +260,10 @@ class _ReplayOpsMixin(_MemoryBase):
                 "embedded_chunks": 0,
             }
         )
-        pending_chunks = counts["chunks"] - counts["embedded_chunks"]
+        # The two counts can be observed between index updates or while an old
+        # derived row is being reconciled. Replay payloads must never expose an
+        # impossible negative pending count to downstream contract consumers.
+        pending_chunks = max(0, counts["chunks"] - counts["embedded_chunks"])
         return {
             "kind": "repo",
             "id": repo_id,

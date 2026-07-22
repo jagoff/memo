@@ -13,6 +13,7 @@ from __future__ import annotations
 import builtins
 import sqlite3
 from dataclasses import replace
+from typing import Any
 
 from memo.flags import flag_bool, flag_float
 from memo.memory._base import _MemoryBase
@@ -341,6 +342,8 @@ class _SearchScoringMixin(_MemoryBase):
         backend = self._cache_backend()
         if backend is None:
             return existing
+        if len(existing) >= limit:
+            return existing[: max(limit, 0)]
         try:
             fetched = backend.fetch(query, limit=limit)
         except Exception as exc:
@@ -349,28 +352,80 @@ class _SearchScoringMixin(_MemoryBase):
         if not fetched:
             return existing
         have = {r.id for r in existing}
+        have_backend_ids = {
+            str(backend_id)
+            for r in existing
+            if (backend_id := (r.extra or {}).get("cache_backend_id"))
+        }
         added: builtins.list[MemoryRecord] = []
+        remaining_slots = limit - len(existing)
         for cand in fetched:
-            body = cand.get("body") or ""
-            if not body.strip() or cand.get("id") in have:
-                continue
-            try:
-                # `source=memo-cache-fill` makes save() skip the write policy
-                # (this entry already mirrors the backing store — see
-                # `_apply_write_policy`), so the fill stays clean.
-                saved = self.save(
-                    content=body,
-                    title=cand.get("title") or "",
-                    type_=cand.get("type") or "note",
-                    tags=cand.get("tags") or [],
-                    extra={"source": "memo-cache-fill"},
-                    auto_derive=False,
-                )
-            except Exception as exc:
-                _log.debug("cache read-through materialize failed: %s", exc)
-                continue
-            added.append(replace(saved, score=cand.get("score")))
-            have.add(saved.id)
+            if len(added) >= remaining_slots:
+                break
+            existing, materialized = self._materialize_cache_candidate(
+                cand,
+                existing=existing,
+                have=have,
+                have_backend_ids=have_backend_ids,
+            )
+            if materialized is not None:
+                added.append(materialized)
         return (existing + added)[:limit] if added else existing
+
+    def _materialize_cache_candidate(
+        self,
+        cand: dict[str, Any],
+        *,
+        existing: builtins.list[MemoryRecord],
+        have: set[str],
+        have_backend_ids: set[str],
+    ) -> tuple[builtins.list[MemoryRecord], MemoryRecord | None]:
+        """Materialize one backend hit and durably reconcile id collisions."""
+
+        body = cand.get("body") or ""
+        backend_id = str(cand.get("id") or "")
+        if (
+            not body.strip()
+            or backend_id in have
+            or (backend_id and backend_id in have_backend_ids)
+        ):
+            return existing, None
+        try:
+            # `source=memo-cache-fill` makes save() skip the write policy
+            # (this entry already mirrors the backing store — see
+            # `_apply_write_policy`), so the fill stays clean.
+            saved = self.save(
+                content=body,
+                title=cand.get("title") or "",
+                type_=cand.get("type") or "note",
+                tags=cand.get("tags") or [],
+                extra={
+                    "source": "memo-cache-fill",
+                    **({"cache_backend_id": backend_id} if backend_id else {}),
+                },
+                auto_derive=False,
+            )
+            if saved.id in have:
+                if backend_id:
+                    merged_extra = dict(saved.extra or {})
+                    merged_extra["cache_backend_id"] = backend_id
+                    persisted = self.update(saved.id, extra=merged_extra)
+                    if persisted is not None:
+                        existing = [
+                            replace(persisted, score=record.score)
+                            if record.id == saved.id
+                            else record
+                            for record in existing
+                        ]
+                    have_backend_ids.add(backend_id)
+                return existing, None
+        except Exception as exc:
+            _log.debug("cache read-through materialize failed: %s", exc)
+            return existing, None
+
+        have.add(saved.id)
+        if backend_id:
+            have_backend_ids.add(backend_id)
+        return existing, replace(saved, score=cand.get("score"))
 
     # -- list ---------------------------------------------------------------

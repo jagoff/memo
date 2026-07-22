@@ -432,7 +432,7 @@ memo runs four background daemons:
 
 **Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon` `idle-daemon`
 
-**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `sleep-cycle` `ocr-image` `provenance` `secret` `verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate` `fix` `undo`
+**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `drift` `sleep-cycle` `ocr-image` `provenance` `secret` `verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate` `fix` `undo`
 
 </details>
 

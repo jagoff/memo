@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
+from ..util import safe_operation
 from .bm25_queries import _BM25QueriesMixin
 from .rows import _row_to_dict
 from .signal_queries import _SignalQueriesMixin
@@ -1290,8 +1291,22 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                         self._mark_tantivy_unhealthy()
         return existed
 
+    @safe_operation(
+        fallback=False,
+        log_level=logging.WARNING,
+        error_message="tantivy delete failed",
+    )
+    def _delete_tantivy_document(self, id_: str) -> bool:
+        """Best-effort removal from the optional full-text sidecar."""
+
+        tantivy = self._get_tantivy()
+        if tantivy is not None:
+            tantivy.delete_document(id_)
+            tantivy.commit()
+        return True
+
     def hard_delete(self, id_: str) -> bool:
-        """Permanently delete a memory bypassing soft-delete (vacuum path)."""
+        """Permanently delete a memory bypassing soft-delete."""
         # Lock spans sqlite commit + tantivy write — see upsert().
         with self._tantivy_write_lock:
             with self._tx() as cx:
@@ -1303,15 +1318,37 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
                 cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
                 cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
-            if existed:
-                tantivy = self._get_tantivy()
-                if tantivy is not None:
-                    try:
-                        tantivy.delete_document(id_)
-                        tantivy.commit()
-                    except Exception as exc:
-                        _log.warning("tantivy hard_delete failed: %s", exc)
-                        self._mark_tantivy_unhealthy()
+            if existed and not self._delete_tantivy_document(id_):
+                self._mark_tantivy_unhealthy()
+        return existed
+
+    def hard_delete_if_soft_deleted_before(self, id_: str, *, before: str) -> bool:
+        """Atomically vacuum an id only while its tombstone remains eligible.
+
+        Selection and deletion are intentionally separate calls so maintenance
+        can report per-id failures. The conditional DELETE rechecks
+        ``deleted_at`` inside the same transaction and writer lock as all
+        attached index/signal deletion, preventing a stale candidate list from
+        deleting a record restored by reindex in the meantime.
+        """
+
+        with self._tantivy_write_lock:
+            with self._tx() as cx:
+                cur = cx.execute(
+                    "DELETE FROM meta WHERE id = ? AND deleted_at IS NOT NULL "
+                    "AND coalesce(julianday(deleted_at), -1e300) < julianday(?)",
+                    (id_, before),
+                )
+                existed = cur.rowcount > 0
+                if existed:
+                    cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
+                    cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
+                    cx.execute("DELETE FROM access WHERE id = ?", (id_,))
+                    cx.execute("DELETE FROM memory_health WHERE id = ?", (id_,))
+                    cx.execute("DELETE FROM source_feedback_vec WHERE source_id = ?", (id_,))
+                    cx.execute("DELETE FROM source_feedback WHERE source_id = ?", (id_,))
+            if existed and not self._delete_tantivy_document(id_):
+                self._mark_tantivy_unhealthy()
         return existed
 
     def list_soft_deleted(self, before: str | None = None) -> list[str]:

@@ -5,7 +5,11 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import pytest
+
 from memo.history import HistoryStore
+
+pytestmark = pytest.mark.concurrency
 
 
 def test_read_waits_for_rollback_and_does_not_observe_dirty_event(tmp_path: Path) -> None:

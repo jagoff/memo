@@ -28,6 +28,8 @@ from memo.capture_hooks import (
     run_capture_incremental,
 )
 
+pytestmark = pytest.mark.concurrency
+
 
 def _setup_env(tmp_path: Path, monkeypatch) -> Path:
     """Isolated data/state/vault + stub embedder."""

@@ -14,6 +14,15 @@ import click
 from memo.config import Config
 
 
+def _append_proactive_compact(mem: Any, compact_lines: list[str]) -> None:
+    """Append the optional proactive one-liner without growing the CLI entrypoint."""
+    from memo.briefing import proactive_compact_line
+
+    proactive_line = proactive_compact_line(mem)
+    if proactive_line:
+        compact_lines.append(proactive_line)
+
+
 @click.command(name="briefing")
 @click.option(
     "--compact",
@@ -120,15 +129,7 @@ def briefing(*, compact: bool) -> None:
         # rides the non-compact briefing; SessionStart runs `--compact`, so
         # surface a one-liner here or the digest never reaches the user at
         # startup. Gated + best-effort (empty when disabled / no candidates).
-        try:
-            from memo.briefing import proactive_compact_line
-
-            _pline = proactive_compact_line(mem)
-            if _pline:
-                compact_lines.append(_pline)
-        except Exception as exc:
-            if debug:
-                print(f"# memo briefing: proactive compact failed: {exc}", file=_sys.stderr)
+        _append_proactive_compact(mem, compact_lines)
         # Sync-onboarding nudge — honest (only when no remote is configured),
         # dismissable, and included in the compact output budget.
         from memo.sync_git import sync_nudge_dismissed, sync_tier

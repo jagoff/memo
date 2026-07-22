@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import re
 import shutil
@@ -12,6 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+from memo.dev_audit import (
+    BROAD_EXCEPTION_RATCHET_EXEMPTIONS,
+    find_broad_exception_sites,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASELINE = ROOT / "eval" / "quality_baseline.json"
@@ -81,21 +85,20 @@ def collect_complexity(root: Path) -> dict[str, int]:
     return parse_ruff_complexity(payload, root)
 
 
-def collect_broad_exceptions(root: Path) -> dict[str, int]:
-    """Count exact ``except Exception`` handlers per memo source file."""
+def collect_broad_exceptions(
+    root: Path,
+    *,
+    exemptions: set[tuple[str, str, int]] | None = None,
+) -> dict[str, int]:
+    """Count broad handlers, excluding only audited exact lexical sites."""
     metrics: dict[str, int] = {}
     source_root = root / "src" / "memo"
-    for path in sorted(source_root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        count = sum(
-            1
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ExceptHandler)
-            and isinstance(node.type, ast.Name)
-            and node.type.id == "Exception"
-        )
-        if count:
-            metrics[path.relative_to(root).as_posix()] = count
+    allowed = BROAD_EXCEPTION_RATCHET_EXEMPTIONS if exemptions is None else exemptions
+    for site in find_broad_exception_sites(source_root):
+        if (site.relpath, site.scope, site.ordinal) in allowed:
+            continue
+        relpath = f"src/memo/{site.relpath}"
+        metrics[relpath] = metrics.get(relpath, 0) + 1
     return metrics
 
 

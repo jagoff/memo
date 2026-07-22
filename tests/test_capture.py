@@ -9,6 +9,7 @@ idempotence — the parts most likely to break under refactor.
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -380,6 +381,190 @@ def test_extract_and_save_counts_memory_save_failures(mem_with_stub, monkeypatch
 
     assert result["saved"] == []
     assert result["save_failures"] == 1
+
+
+def test_extract_and_save_restores_capture_core_patchable_seams(mem_with_stub, monkeypatch):
+    import memo.capture as capture_mod
+    import memo.capture_core as capture_core
+    import memo.capture_hooks as capture_hooks
+
+    originals = (
+        capture_core.extract_insights,
+        capture_core._passes_quality,
+        capture_core.find_near_duplicate,
+        capture_hooks._extract_and_save,
+    )
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *args, **kwargs: [])
+    monkeypatch.setattr(capture_mod, "_passes_quality", lambda *args, **kwargs: True)
+    monkeypatch.setattr(capture_mod, "find_near_duplicate", lambda *args, **kwargs: None)
+
+    capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "user", "assistant")
+
+    assert (
+        capture_core.extract_insights,
+        capture_core._passes_quality,
+        capture_core.find_near_duplicate,
+        capture_hooks._extract_and_save,
+    ) == originals
+
+
+def test_extract_and_save_restores_capture_core_patchable_seams_after_error(
+    mem_with_stub, monkeypatch
+):
+    import memo.capture as capture_mod
+    import memo.capture_core as capture_core
+    import memo.capture_hooks as capture_hooks
+
+    candidate = {"title": "t", "body": "b" * 80, "type": "note", "tags": []}
+    originals = (
+        capture_core.extract_insights,
+        capture_core._passes_quality,
+        capture_core.find_near_duplicate,
+        capture_hooks._extract_and_save,
+    )
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *args, **kwargs: [candidate])
+
+    def fail_quality(*args, **kwargs):
+        raise RuntimeError("quality seam failed")
+
+    monkeypatch.setattr(capture_mod, "_passes_quality", fail_quality)
+    monkeypatch.setattr(capture_mod, "find_near_duplicate", lambda *args, **kwargs: None)
+
+    with pytest.raises(RuntimeError, match="quality seam failed"):
+        capture_mod._extract_and_save(mem_with_stub, mem_with_stub.cfg, "user", "assistant")
+
+    assert (
+        capture_core.extract_insights,
+        capture_core._passes_quality,
+        capture_core.find_near_duplicate,
+        capture_hooks._extract_and_save,
+    ) == originals
+
+
+def test_extract_and_save_text_restores_patchable_seams_across_threads(monkeypatch):
+    import memo.capture as capture_mod
+    import memo.capture_core as capture_core
+    import memo.capture_hooks as capture_hooks
+
+    originals = (
+        capture_core.extract_insights,
+        capture_core._passes_quality,
+        capture_core.find_near_duplicate,
+        capture_hooks._extract_and_save,
+    )
+    monkeypatch.setattr(capture_mod, "extract_insights", lambda *args, **kwargs: [])
+
+    entered = {name: threading.Event() for name in ("first", "second")}
+    release = {name: threading.Event() for name in ("first", "second")}
+    completed = {name: threading.Event() for name in ("first", "second")}
+    second_start = threading.Barrier(2)
+    results: dict[str, str] = {}
+    errors: list[BaseException] = []
+
+    def controlled_extract(name: str) -> str:
+        entered[name].set()
+        if not release[name].wait(timeout=5):
+            raise TimeoutError(f"timed out waiting to release {name}")
+        return name
+
+    monkeypatch.setattr(capture_core, "extract_and_save_text", controlled_extract)
+
+    def invoke(name: str, *, synchronize_start: bool = False) -> None:
+        try:
+            if synchronize_start:
+                second_start.wait(timeout=5)
+            results[name] = capture_mod.extract_and_save_text(name)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            completed[name].set()
+
+    first = threading.Thread(target=invoke, args=("first",), daemon=True)
+    first.start()
+    assert entered["first"].wait(timeout=5)
+
+    second = threading.Thread(
+        target=invoke,
+        args=("second",),
+        kwargs={"synchronize_start": True},
+        daemon=True,
+    )
+    second.start()
+    second_start.wait(timeout=5)
+
+    if entered["second"].wait(timeout=1):
+        # The unfixed bridge overlaps here. Force A to restore before B so the
+        # stale state captured by B is the final state.
+        release["first"].set()
+        assert completed["first"].wait(timeout=5)
+        release["second"].set()
+    else:
+        # A serialized bridge keeps B outside until A has fully restored.
+        release["first"].set()
+        assert completed["first"].wait(timeout=5)
+        assert entered["second"].wait(timeout=5)
+        release["second"].set()
+
+    assert completed["second"].wait(timeout=5)
+    first.join(timeout=1)
+    second.join(timeout=1)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert results == {"first": "first", "second": "second"}
+    assert (
+        capture_core.extract_insights,
+        capture_core._passes_quality,
+        capture_core.find_near_duplicate,
+        capture_hooks._extract_and_save,
+    ) == originals
+
+
+def test_run_capture_patch_bridge_is_reentrant(monkeypatch):
+    import memo.capture as capture_mod
+    import memo.capture_core as capture_core
+    import memo.capture_hooks as capture_hooks
+
+    originals = (
+        capture_core.extract_insights,
+        capture_core._passes_quality,
+        capture_core.find_near_duplicate,
+        capture_hooks._extract_and_save,
+    )
+    completed = threading.Event()
+    results: list[str] = []
+    errors: list[BaseException] = []
+
+    monkeypatch.setattr(capture_core, "_extract_and_save", lambda value: value)
+
+    def nested_run_capture() -> str:
+        return capture_hooks._extract_and_save("nested")
+
+    monkeypatch.setattr(capture_hooks, "run_capture", nested_run_capture)
+
+    def invoke() -> None:
+        try:
+            results.append(capture_mod.run_capture())
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            completed.set()
+
+    worker = threading.Thread(target=invoke, daemon=True)
+    worker.start()
+
+    assert completed.wait(timeout=1), "nested capture bridge deadlocked"
+    worker.join(timeout=1)
+    assert not worker.is_alive()
+    assert errors == []
+    assert results == ["nested"]
+    assert (
+        capture_core.extract_insights,
+        capture_core._passes_quality,
+        capture_core.find_near_duplicate,
+        capture_hooks._extract_and_save,
+    ) == originals
 
 
 def test_hash_assistant_idempotent():

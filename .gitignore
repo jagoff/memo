@@ -8,6 +8,10 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+.hypothesis/
+coverage.xml
+mutation-results.txt
+mutants/
 
 # Build artifacts
 build/

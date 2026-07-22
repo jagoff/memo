@@ -733,7 +733,7 @@ def session_recent(limit: int | None) -> None:
 
 
 @session_group.command(name="prune")
-@click.option("--cap", default=50, type=int, show_default=True)
+@click.option("--cap", default=50, type=click.IntRange(min=0), show_default=True)
 def session_prune(cap: int) -> None:
     """Delete oldest sessions beyond `cap`. Idempotent."""
     from memo.session import prune_lru

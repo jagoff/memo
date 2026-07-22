@@ -13,58 +13,62 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from memo.proactive.engine import compute_routed
 from memo.proactive.nudge import KIND_RELIABILITY, Nudge
 from memo.proactive.store import ProactiveStore
 from memo.proactive.surfaces import render_urgent_line
 
+pytestmark = pytest.mark.resource_hygiene
+
 
 def test_urgent_emitted_once_then_cooled_down(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MEMO_PROACTIVE_ENABLED", "1")
-    s = ProactiveStore(tmp_path / "p.db")
-    s.put_candidates(
-        [
-            Nudge.make(
-                KIND_RELIABILITY,
-                subject_id="old1",
-                urgency=0.95,
-                value=0.9,
-                title="stale",
-                evidence=("new1",),
-                action="memo review old1",
-                created_at="2026-07-21T09:00:00Z",
-            )
-        ]
-    )
-    routed = compute_routed(s, now="2026-07-21T10:00:00Z", day="2026-07-21")
-    assert routed.urgent is not None
-    line = render_urgent_line(routed.urgent)
-    s.mark_pushed("2026-07-21T10:00:00Z")
-    assert "memo review old1" in line
-    # within cooldown → no second push
-    routed2 = compute_routed(s, now="2026-07-21T10:30:00Z", day="2026-07-21")
-    assert routed2.urgent is None
+    with ProactiveStore(tmp_path / "p.db") as store:
+        store.put_candidates(
+            [
+                Nudge.make(
+                    KIND_RELIABILITY,
+                    subject_id="old1",
+                    urgency=0.95,
+                    value=0.9,
+                    title="stale",
+                    evidence=("new1",),
+                    action="memo review old1",
+                    created_at="2026-07-21T09:00:00Z",
+                )
+            ]
+        )
+        routed = compute_routed(store, now="2026-07-21T10:00:00Z", day="2026-07-21")
+        assert routed.urgent is not None
+        line = render_urgent_line(routed.urgent)
+        store.mark_pushed("2026-07-21T10:00:00Z")
+        assert "memo review old1" in line
+        # within cooldown → no second push
+        routed2 = compute_routed(store, now="2026-07-21T10:30:00Z", day="2026-07-21")
+        assert routed2.urgent is None
 
 
 # ── briefing wiring ─────────────────────────────────────────────────────────
 
 
 def _seed_candidate(mem, *, now: str) -> None:
-    store = ProactiveStore(mem.cfg.state_dir / "proactive.db")
-    store.put_candidates(
-        [
-            Nudge.make(
-                KIND_RELIABILITY,
-                subject_id="old1",
-                urgency=0.9,
-                value=0.8,
-                title="You may be relying on a superseded fact: use X not Y",
-                evidence=("new1", "old1"),
-                action="memo get old1",
-                created_at=now,
-            )
-        ]
-    )
+    with ProactiveStore(mem.cfg.state_dir / "proactive.db") as store:
+        store.put_candidates(
+            [
+                Nudge.make(
+                    KIND_RELIABILITY,
+                    subject_id="old1",
+                    urgency=0.9,
+                    value=0.8,
+                    title="You may be relying on a superseded fact: use X not Y",
+                    evidence=("new1", "old1"),
+                    action="memo get old1",
+                    created_at=now,
+                )
+            ]
+        )
 
 
 def test_briefing_shows_proactive_section_when_enabled(mock_memory, monkeypatch):
@@ -116,8 +120,8 @@ def test_compact_line_surfaces_digest_without_consuming_push(mock_memory, monkey
     assert "memo get old1" in line
     assert "memo digest" in line
 
-    store = ProactiveStore(mock_memory.cfg.state_dir / "proactive.db")
-    assert store.pushes_today(datetime.now(tz=UTC).date().isoformat()) == 0
+    with ProactiveStore(mock_memory.cfg.state_dir / "proactive.db") as store:
+        assert store.pushes_today(datetime.now(tz=UTC).date().isoformat()) == 0
 
 
 def test_compact_line_empty_when_disabled(mock_memory, monkeypatch):
@@ -139,32 +143,32 @@ def test_pull_urgent_marks_pushed_and_cools_down(tmp_path: Path, monkeypatch) ->
 
     from memo.proactive.engine import pull_urgent
 
-    s = ProactiveStore(tmp_path / "p.db")
-    s.put_candidates(
-        [
-            Nudge.make(
-                KIND_RELIABILITY,
-                subject_id="old1",
-                urgency=0.95,
-                value=0.9,
-                title="stale fact",
-                evidence=("new1", "old1"),
-                action="memo get old1",
-                created_at="2026-07-21T09:00:00Z",
-            )
-        ]
-    )
+    with ProactiveStore(tmp_path / "p.db") as store:
+        store.put_candidates(
+            [
+                Nudge.make(
+                    KIND_RELIABILITY,
+                    subject_id="old1",
+                    urgency=0.95,
+                    value=0.9,
+                    title="stale fact",
+                    evidence=("new1", "old1"),
+                    action="memo get old1",
+                    created_at="2026-07-21T09:00:00Z",
+                )
+            ]
+        )
 
-    urgent = pull_urgent(s, now="2026-07-21T10:00:00Z", day="2026-07-21")
-    assert urgent is not None
-    line = render_urgent_line(urgent)
-    assert line.startswith("⚠️ memo:")
-    assert "memo get old1" in line
-    assert s.pushes_today("2026-07-21") == 1
+        urgent = pull_urgent(store, now="2026-07-21T10:00:00Z", day="2026-07-21")
+        assert urgent is not None
+        line = render_urgent_line(urgent)
+        assert line.startswith("⚠️ memo:")
+        assert "memo get old1" in line
+        assert store.pushes_today("2026-07-21") == 1
 
-    # within cooldown → nothing due, no extra push slot consumed
-    assert pull_urgent(s, now="2026-07-21T10:30:00Z", day="2026-07-21") is None
-    assert s.pushes_today("2026-07-21") == 1
+        # within cooldown → nothing due, no extra push slot consumed
+        assert pull_urgent(store, now="2026-07-21T10:30:00Z", day="2026-07-21") is None
+        assert store.pushes_today("2026-07-21") == 1
 
 
 def test_pull_urgent_noop_when_no_candidates(tmp_path: Path, monkeypatch) -> None:
@@ -172,9 +176,9 @@ def test_pull_urgent_noop_when_no_candidates(tmp_path: Path, monkeypatch) -> Non
 
     from memo.proactive.engine import pull_urgent
 
-    s = ProactiveStore(tmp_path / "p.db")
-    assert pull_urgent(s, now="2026-07-21T10:00:00Z", day="2026-07-21") is None
-    assert s.pushes_today("2026-07-21") == 0
+    with ProactiveStore(tmp_path / "p.db") as store:
+        assert pull_urgent(store, now="2026-07-21T10:00:00Z", day="2026-07-21") is None
+        assert store.pushes_today("2026-07-21") == 0
 
 
 def test_capture_stop_stays_silent_with_proactive_enabled(tmp_path: Path, monkeypatch) -> None:
@@ -204,25 +208,26 @@ def test_capture_stop_stays_silent_with_proactive_enabled(tmp_path: Path, monkey
 
     cfg = Config.from_env()
     now = datetime.now(tz=UTC).isoformat()
-    store = ProactiveStore(cfg.state_dir / "proactive.db")
-    store.put_candidates(
-        [
-            Nudge.make(
-                KIND_RELIABILITY,
-                subject_id="old1",
-                urgency=0.95,
-                value=0.9,
-                title="stale fact",
-                evidence=("new1", "old1"),
-                action="memo get old1",
-                created_at=now,
-            )
-        ]
-    )
+    with ProactiveStore(cfg.state_dir / "proactive.db") as store:
+        store.put_candidates(
+            [
+                Nudge.make(
+                    KIND_RELIABILITY,
+                    subject_id="old1",
+                    urgency=0.95,
+                    value=0.9,
+                    title="stale fact",
+                    evidence=("new1", "old1"),
+                    action="memo get old1",
+                    created_at=now,
+                )
+            ]
+        )
 
     payload = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
     result = CliRunner().invoke(capture_stop, input=payload)
 
     assert result.exit_code == 0
     assert "memo get old1" not in result.output
-    assert store.pushes_today(datetime.now(tz=UTC).date().isoformat()) == 0
+    with ProactiveStore(cfg.state_dir / "proactive.db") as store:
+        assert store.pushes_today(datetime.now(tz=UTC).date().isoformat()) == 0

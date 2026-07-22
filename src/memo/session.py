@@ -434,6 +434,8 @@ def prune_lru(state_dir: Path, *, cap: int = _LRU_CAP_DEFAULT) -> int:
     """Delete oldest sessions by `updated` so the dir holds at most
     `cap` files. Returns the number deleted. Called from
     `checkpoint()` so the cleanup is automatic."""
+    if cap < 0:
+        raise ValueError("cap must be non-negative")
     d = sessions_dir(state_dir)
     files = list(d.glob("*.json"))
     if len(files) <= cap:

@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 from click.testing import CliRunner
@@ -42,6 +43,73 @@ def test_apply_session_mode_is_bounded(mode: str, expected_top_k: int, expected_
 
     assert adjusted.top_k == expected_top_k
     assert adjusted.min_sim == expected_min_sim
+
+
+def test_proactive_urgent_line_renders_due_nudge_and_closes_store(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo.cli_recall_hook import _proactive_urgent_line
+
+    monkeypatch.setenv("MEMO_PROACTIVE_ENABLED", "1")
+    urgent = object()
+    store = MagicMock(name="proactive_store")
+    store_context = MagicMock(name="proactive_store_context")
+    store_context.__enter__.return_value = store
+    store_factory = MagicMock(return_value=store_context)
+    pull_urgent = MagicMock(return_value=urgent)
+    render_urgent_line = MagicMock(return_value="memo: inspect stale fact")
+    monkeypatch.setattr("memo.proactive.store.ProactiveStore", store_factory)
+    monkeypatch.setattr("memo.proactive.engine.pull_urgent", pull_urgent)
+    monkeypatch.setattr("memo.proactive.surfaces.render_urgent_line", render_urgent_line)
+
+    line = _proactive_urgent_line(tmp_cfg)
+
+    assert line == "memo: inspect stale fact"
+    store_factory.assert_called_once_with(tmp_cfg.state_dir / "proactive.db")
+    store_context.__exit__.assert_called_once()
+    pull_urgent.assert_called_once()
+    assert pull_urgent.call_args.args == (store,)
+    assert pull_urgent.call_args.kwargs["now"].endswith("+00:00")
+    assert pull_urgent.call_args.kwargs["day"] in pull_urgent.call_args.kwargs["now"]
+    render_urgent_line.assert_called_once_with(urgent)
+
+
+def test_proactive_urgent_line_omits_empty_pull(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo.cli_recall_hook import _proactive_urgent_line
+
+    monkeypatch.setenv("MEMO_PROACTIVE_ENABLED", "1")
+    store_context = MagicMock()
+    store_context.__enter__.return_value = MagicMock()
+    render_urgent_line = MagicMock()
+    monkeypatch.setattr(
+        "memo.proactive.store.ProactiveStore", MagicMock(return_value=store_context)
+    )
+    monkeypatch.setattr("memo.proactive.engine.pull_urgent", MagicMock(return_value=None))
+    monkeypatch.setattr("memo.proactive.surfaces.render_urgent_line", render_urgent_line)
+
+    assert _proactive_urgent_line(tmp_cfg) == ""
+    store_context.__exit__.assert_called_once()
+    render_urgent_line.assert_not_called()
+
+
+def test_proactive_urgent_line_degrades_on_store_failure(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from memo.cli_recall_hook import _proactive_urgent_line
+
+    monkeypatch.setenv("MEMO_PROACTIVE_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.proactive.store.ProactiveStore",
+        MagicMock(side_effect=OSError("proactive database unavailable")),
+    )
+
+    with caplog.at_level("DEBUG", logger="memo.cli_recall_hook"):
+        line = _proactive_urgent_line(tmp_cfg)
+
+    assert line == ""
+    assert "proactive database unavailable" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -251,6 +319,7 @@ def test_vec_embed_failure_downgrades_to_bm25_in_subprocess(
     monkeypatch.setenv("MEMO_RECALL_FORCE_MODE", "1")  # skip the cold-start bm25 downgrade
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+    monkeypatch.setenv("MEMO_RECALL_DEBUG", "1")
 
     runner = CliRunner()
     payload = json.dumps({"prompt": "some meaningful query here to test recall"})
@@ -258,8 +327,126 @@ def test_vec_embed_failure_downgrades_to_bm25_in_subprocess(
     assert result.exit_code == 0, result.output
     assert modes[0] in ("vec", "hybrid")  # vec attempted first
     assert "bm25" in modes  # then downgraded
-    parsed = json.loads(result.output.strip())
+    assert "embed failed" in result.stderr
+    assert "bm25 fallback" in result.stderr
+    parsed = json.loads(result.stdout.strip())
     assert "Bm25 Downgrade Memory" in parsed["hookSpecificOutput"]["additionalContext"]
+
+
+def test_vec_subprocess_search_merges_recency_band(
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo.memory import MemoryRecord
+
+    hit = MemoryRecord(
+        id="beefcafe99887766",
+        path="notes/recency.md",
+        title="Recent Operational Decision",
+        type="decision",
+        tags=[],
+        created="2026-07-20T00:00:00+00:00",
+        updated="2026-07-20T00:00:00+00:00",
+        body="a recent decision with enough context to pass the recall body gate " * 3,
+        extra={},
+        score=0.9,
+    )
+
+    class _VecMemory:
+        def __init__(self, cfg: object) -> None:
+            pass
+
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
+            assert mode == "vec"
+            return [hit]
+
+        def close(self) -> None:
+            pass
+
+    fetch_recency_band = MagicMock(return_value=[hit])
+    apply_recency_band = MagicMock(return_value=[hit])
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: '{"busy": true}')
+    monkeypatch.setattr("memo.memory.Memory", _VecMemory)
+    monkeypatch.setattr("memo.recall_logic.fetch_recency_band", fetch_recency_band)
+    monkeypatch.setattr("memo.recall_logic.apply_recency_band", apply_recency_band)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "vec")
+    monkeypatch.setenv("MEMO_RECALL_FORCE_MODE", "1")
+    monkeypatch.setenv("MEMO_RECALL_RECENCY_BAND_DAYS", "7")
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+
+    result = CliRunner().invoke(
+        cli,
+        ["recall-hook"],
+        input=json.dumps({"prompt": "what was the recent operational decision?"}),
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "Recent Operational Decision"
+        in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    )
+    fetch_recency_band.assert_called_once()
+    assert fetch_recency_band.call_args.args[0].__class__ is _VecMemory
+    assert fetch_recency_band.call_args.kwargs["days"] == 7
+    assert isinstance(fetch_recency_band.call_args.kwargs["floor"], float)
+    apply_recency_band.assert_called_once_with([hit], [hit])
+
+
+def test_unmatched_term_gate_suppresses_entire_subprocess_injection(
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo.memory import MemoryRecord
+
+    hit = MemoryRecord(
+        id="beefcafe44332211",
+        path="notes/unmatched.md",
+        title="Unrelated Durable Fact",
+        type="fact",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="an unrelated body with enough context to pass the recall body gate " * 3,
+        extra={},
+        score=0.9,
+    )
+
+    class _OneHitMemory:
+        def __init__(self, cfg: object) -> None:
+            pass
+
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
+            return [hit]
+
+        def close(self) -> None:
+            pass
+
+    unmatched_term_gate = MagicMock(return_value=True)
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: '{"busy": true}')
+    monkeypatch.setattr("memo.memory.Memory", _OneHitMemory)
+    monkeypatch.setattr("memo.recall_logic.unmatched_term_gate", unmatched_term_gate)
+    monkeypatch.setenv("MEMO_RECALL_UNMATCHED_TERM_GATE", "1")
+    monkeypatch.setenv("MEMO_RECALL_EXPAND_CONTEXT", "0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+    prompt = "how do I rotate production certificates?"
+
+    result = CliRunner().invoke(
+        cli,
+        ["recall-hook"],
+        input=json.dumps({"prompt": prompt}),
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == "{}"
+    unmatched_term_gate.assert_called_once()
+    assert unmatched_term_gate.call_args.args[0] == prompt
+    assert [record.id for record in unmatched_term_gate.call_args.args[1]] == [hit.id]
 
 
 def test_daemon_legit_empty_reply_still_prints(

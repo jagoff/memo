@@ -1,7 +1,11 @@
 from pathlib import Path
 
+import pytest
+
 from memo.proactive.engine import push_gate, refresh_candidates
 from memo.proactive.store import ProactiveStore
+
+pytestmark = pytest.mark.resource_hygiene
 
 
 class _FullFakeMem:
@@ -24,15 +28,15 @@ class _FullFakeMem:
 
 
 def test_refresh_candidates_sums_all_five_detectors(tmp_path: Path):
-    s = ProactiveStore(tmp_path / "p.db")
-    n = refresh_candidates(_FullFakeMem(), s, now="2026-07-21T00:00:00Z")
-    # 1 reliability + 1 continuity + 1 health (aggregate) + 1 roi (aggregate)
-    # + 2 dejavu (one per pair) = 6
-    assert n == 6
-    candidates = s.active_candidates("2026-07-21T01:00:00Z")
-    assert len(candidates) == 6
-    for c in candidates:
-        assert c.evidence, f"{c.kind} nudge has empty evidence"
+    with ProactiveStore(tmp_path / "p.db") as store:
+        n = refresh_candidates(_FullFakeMem(), store, now="2026-07-21T00:00:00Z")
+        # 1 reliability + 1 continuity + 1 health (aggregate) + 1 roi (aggregate)
+        # + 2 dejavu (one per pair) = 6
+        assert n == 6
+        candidates = store.active_candidates("2026-07-21T01:00:00Z")
+        assert len(candidates) == 6
+        for candidate in candidates:
+            assert candidate.evidence, f"{candidate.kind} nudge has empty evidence"
 
 
 def test_refresh_candidates_empty_sources_emit_no_v2_nudges(tmp_path: Path):
@@ -52,30 +56,48 @@ def test_refresh_candidates_empty_sources_emit_no_v2_nudges(tmp_path: Path):
         def recurring_pattern_pairs(self, *, limit):
             return []
 
-    s = ProactiveStore(tmp_path / "p2.db")
-    n = refresh_candidates(_EmptyMem(), s, now="2026-07-21T00:00:00Z")
-    assert n == 0
+    with ProactiveStore(tmp_path / "p2.db") as store:
+        n = refresh_candidates(_EmptyMem(), store, now="2026-07-21T00:00:00Z")
+        assert n == 0
 
 
 def test_push_gate_respects_cooldown_and_cap(tmp_path: Path):
-    s = ProactiveStore(tmp_path / "p.db")
-    assert (
-        push_gate(s, now="2026-07-21T10:00:00Z", day="2026-07-21", cooldown_h=6, daily_cap=3)
-        is True
-    )
-    s.mark_pushed("2026-07-21T09:00:00Z")  # 1h ago < 6h cooldown
-    assert (
-        push_gate(s, now="2026-07-21T10:00:00Z", day="2026-07-21", cooldown_h=6, daily_cap=3)
-        is False
-    )
+    with ProactiveStore(tmp_path / "p.db") as store:
+        assert (
+            push_gate(
+                store,
+                now="2026-07-21T10:00:00Z",
+                day="2026-07-21",
+                cooldown_h=6,
+                daily_cap=3,
+            )
+            is True
+        )
+        store.mark_pushed("2026-07-21T09:00:00Z")  # 1h ago < 6h cooldown
+        assert (
+            push_gate(
+                store,
+                now="2026-07-21T10:00:00Z",
+                day="2026-07-21",
+                cooldown_h=6,
+                daily_cap=3,
+            )
+            is False
+        )
 
 
 def test_push_gate_daily_cap(tmp_path: Path):
-    s = ProactiveStore(tmp_path / "p.db")
-    for h in (1, 2, 3):
-        s.mark_pushed(f"2026-07-21T0{h}:00:00Z")
-    # 3 pushes today, all >6h before 'now' → cooldown ok but cap hit
-    assert (
-        push_gate(s, now="2026-07-21T23:00:00Z", day="2026-07-21", cooldown_h=6, daily_cap=3)
-        is False
-    )
+    with ProactiveStore(tmp_path / "p.db") as store:
+        for hour in (1, 2, 3):
+            store.mark_pushed(f"2026-07-21T0{hour}:00:00Z")
+        # 3 pushes today, all >6h before 'now' → cooldown ok but cap hit
+        assert (
+            push_gate(
+                store,
+                now="2026-07-21T23:00:00Z",
+                day="2026-07-21",
+                cooldown_h=6,
+                daily_cap=3,
+            )
+            is False
+        )

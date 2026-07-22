@@ -10,6 +10,11 @@ a Memory or a git repo.
 
 from __future__ import annotations
 
+import subprocess
+from unittest.mock import MagicMock
+
+import pytest
+
 from memo.drift_guard import (
     added_lines_from_diff,
     code_spans,
@@ -145,3 +150,81 @@ def test_cli_drift_clean_diff_is_silent_pass(monkeypatch) -> None:
     res = CliRunner().invoke(drift, [], env={"MEMO_NONINTERACTIVE": "1"})
     assert res.exit_code == 0
     assert "clean" in res.output
+
+
+def test_git_diff_forwards_staged_ref_and_returns_stdout(monkeypatch) -> None:
+    from memo.cli_drift import _git_diff
+
+    completed = subprocess.CompletedProcess([], 0, stdout="diff body", stderr="")
+    run = MagicMock(return_value=completed)
+    monkeypatch.setattr("memo.cli_drift.subprocess.run", run)
+
+    assert _git_diff(staged=True, ref="origin/master") == "diff body"
+    run.assert_called_once_with(
+        ["git", "diff", "--unified=0", "--no-color", "--cached", "origin/master"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [OSError("git unavailable"), subprocess.TimeoutExpired(["git", "diff"], timeout=30)],
+)
+def test_git_diff_degrades_to_empty_on_process_failure(monkeypatch, failure) -> None:
+    from memo.cli_drift import _git_diff
+
+    monkeypatch.setattr("memo.cli_drift.subprocess.run", MagicMock(side_effect=failure))
+
+    assert _git_diff(staged=False, ref=None) == ""
+
+
+def test_gather_rules_uses_environment_config_and_memory_facade(monkeypatch) -> None:
+    from memo.cli_drift import _gather_rules
+
+    cfg = object()
+    memory = object()
+    expected = [("rule-1", "Never use `unsafe_call`")]
+    from_env = MagicMock(return_value=cfg)
+    get_memory = MagicMock(return_value=memory)
+    gather_rules = MagicMock(return_value=expected)
+    monkeypatch.setattr("memo.config.Config.from_env", from_env)
+    monkeypatch.setattr("memo.cli_common.get_memory", get_memory)
+    monkeypatch.setattr("memo.constitution.gather_rules", gather_rules)
+
+    assert _gather_rules() == expected
+    from_env.assert_called_once_with()
+    get_memory.assert_called_once_with(cfg)
+    gather_rules.assert_called_once_with(memory, cfg)
+
+
+def test_cli_drift_reports_when_there_are_no_changes(monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from memo.cli_drift import drift
+
+    gather_rules = MagicMock()
+    monkeypatch.setattr("memo.cli_drift._git_diff", lambda *, staged, ref: "\n")
+    monkeypatch.setattr("memo.cli_drift._gather_rules", gather_rules)
+
+    result = CliRunner().invoke(drift)
+
+    assert result.exit_code == 0
+    assert result.output == "no changes to check\n"
+    gather_rules.assert_not_called()
+
+
+def test_cli_drift_explains_when_rules_have_no_enforceable_prohibition(monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from memo.cli_drift import drift
+
+    monkeypatch.setattr("memo.cli_drift._git_diff", lambda *, staged, ref: _DIFF)
+    monkeypatch.setattr("memo.cli_drift._gather_rules", lambda: [R_POSITIVE])
+
+    result = CliRunner().invoke(drift)
+
+    assert result.exit_code == 0
+    assert "no enforceable prohibitions" in result.output

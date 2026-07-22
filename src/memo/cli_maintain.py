@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -282,6 +283,34 @@ def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[
     return restored, sorted(wanted - set(restored))
 
 
+def _vacuum_soft_deleted(
+    mem: Any,
+    *,
+    vacuum_days: int,
+    dry_run: bool,
+) -> tuple[int, int, list[str]]:
+    """Purge eligible tombstones while isolating failures by record id."""
+
+    cutoff = (datetime.now(UTC) - timedelta(days=vacuum_days)).isoformat()
+    ids = mem.store.list_soft_deleted(before=cutoff)
+    if dry_run:
+        return len(ids), len(ids), []
+
+    vacuumed = 0
+    errors: list[str] = []
+    for vid in ids:
+        try:
+            deleted = mem.store.hard_delete_if_soft_deleted_before(vid, before=cutoff)
+        except Exception as exc:
+            errors.append(f"vacuum {vid}: {type(exc).__name__}: {exc}")
+            continue
+        if deleted:
+            vacuumed += 1
+        else:
+            errors.append(f"vacuum {vid}: record is no longer deleted before cutoff")
+    return vacuumed, len(ids), errors
+
+
 @click.group(name="maintain", invoke_without_command=True)
 @click.option("--dry-run", is_flag=True, help="Preview actions; change nothing.")
 @click.option(
@@ -329,7 +358,12 @@ def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[
     is_flag=True,
     help="Permanently delete soft-deleted records older than --vacuum-days.",
 )
-@click.option("--vacuum-days", default=90, type=int, help="Age threshold for vacuum cleanup.")
+@click.option(
+    "--vacuum-days",
+    default=90,
+    type=click.IntRange(min=0),
+    help="Age threshold for vacuum cleanup.",
+)
 @click.option(
     "--skip-synthesize",
     is_flag=True,
@@ -430,6 +464,7 @@ def maintain_cmd(
         "synthesis_count": 0,  # new clusters synthesized by proactive pass
         "outcome_reconciled": 0,  # memories whose roi_score was re-derived from outcomes
         "dead_archived": [],  # surfaced-never-grounded memories soft-forgotten
+        "vacuumed": 0,  # successful hard deletes (dry-run: eligible candidates)
         "errors": [],
         "cascade_warnings": [],
     }
@@ -589,15 +624,20 @@ def maintain_cmd(
     # 4. Vacuum: permanently delete soft-deleted records older than --vacuum-days ---
     if vacuum:
         try:
-            cutoff = (datetime.now(UTC) - timedelta(days=vacuum_days)).isoformat()
-            ids = mem.store.list_soft_deleted(before=cutoff)
-            if ids:
-                receipt["vacuumed"] = len(ids)
-                if not dry_run:
-                    for vid in ids:
-                        mem.store.hard_delete(vid)
-                _log.info("vacuum: %d soft-deleted records purged", len(ids))
-        except Exception as exc:
+            vacuumed, candidates, errors = _vacuum_soft_deleted(
+                mem,
+                vacuum_days=vacuum_days,
+                dry_run=dry_run,
+            )
+            receipt["vacuumed"] = vacuumed
+            receipt["errors"].extend(errors)
+            if candidates:
+                _log.info(
+                    "vacuum: %d of %d soft-deleted records purged",
+                    vacuumed,
+                    candidates,
+                )
+        except (OSError, OverflowError, sqlite3.Error, StorageError) as exc:
             receipt["errors"].append(f"vacuum: {type(exc).__name__}: {exc}")
 
     # 4b. Crush-cache TTL eviction: unlink expired reversible-compression

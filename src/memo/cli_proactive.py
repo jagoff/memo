@@ -94,17 +94,17 @@ def digest(dismiss_id: str | None, snooze_kind_: str | None, days: int) -> None:
     from memo.proactive.surfaces import render_digest
 
     cfg = Config.from_env()
-    store = ProactiveStore(cfg.state_dir / "proactive.db")
     now_dt = datetime.now(UTC)
     now = now_dt.isoformat()
     day = now_dt.date().isoformat()
 
-    if dismiss_id or snooze_kind_:
-        active = store.active_candidates(now)
-        if dismiss_id:
-            _record_dismiss_feedback(store, dismiss_id, active, now)
-        if snooze_kind_:
-            _record_snooze_feedback(store, snooze_kind_, days, active, now)
+    with ProactiveStore(cfg.state_dir / "proactive.db") as store:
+        if dismiss_id or snooze_kind_:
+            active = store.active_candidates(now)
+            if dismiss_id:
+                _record_dismiss_feedback(store, dismiss_id, active, now)
+            if snooze_kind_:
+                _record_snooze_feedback(store, snooze_kind_, days, active, now)
 
-    routed = compute_routed(store, now=now, day=day)
+        routed = compute_routed(store, now=now, day=day)
     console.print(render_digest(routed))

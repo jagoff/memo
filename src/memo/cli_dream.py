@@ -212,6 +212,34 @@ def _apply_convergence_guard(
     return True, active_steps
 
 
+def _run_mandate_sync_phase(
+    cfg: Config,
+    mem: Any,
+    receipt: dict[str, Any],
+    progress: Any,
+    step: Any,
+) -> None:
+    """Refresh opted-in mandate blocks outside the main pipeline entrypoint."""
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_DYNAMIC_MANDATE_SYNC_ENABLED"):
+        return
+
+    progress.update(step, description="[mandate-sync] refreshing rule blocks...")
+    from memo.constitution import run_mandate_sync_pass
+
+    mandate_sync = run_mandate_sync_pass(cfg, mem)
+    receipt["mandate_sync"] = mandate_sync
+    if mandate_sync.get("error"):
+        receipt["errors"].append(f"mandate_sync: {mandate_sync['error']}")
+    progress.update(
+        step,
+        description=(
+            f"[mandate-sync] [green]✓[/green]  {len(mandate_sync.get('synced', []))} repo(s)"
+        ),
+    )
+
+
 @click.group(name="dream")
 def dream_cmd() -> None:
     """Autonomous nightly maintenance — synthesise, heal, decay."""
@@ -463,7 +491,6 @@ def dream_run(
                 progress.update(
                     step, description="[tune] curated graph-signal tuner [yellow]warn[/yellow]"
                 )
-
         # Phase 1 — confidence calibration: refresh the predicted-vs-grounded map.
         if flag_bool("MEMO_RECALL_CONFIDENCE_GATE"):
             progress.update(step, description="[calibration] confidence map...")
@@ -580,21 +607,7 @@ def dream_run(
 
         # Refresh dynamic mandate rule blocks in opted-in repos (self-syncing
         # constitution): superseded rules retire, new ones appear, on their own.
-        if flag_bool("MEMO_DYNAMIC_MANDATE_SYNC_ENABLED"):
-            progress.update(step, description="[mandate-sync] refreshing rule blocks...")
-            from memo.constitution import run_mandate_sync_pass
-
-            receipt["mandate_sync"] = run_mandate_sync_pass(cfg, mem)
-            if receipt["mandate_sync"].get("error"):
-                receipt["errors"].append(f"mandate_sync: {receipt['mandate_sync']['error']}")
-            progress.update(
-                step,
-                description=(
-                    f"[mandate-sync] [green]✓[/green]  "
-                    f"{len(receipt['mandate_sync'].get('synced', []))} repo(s)"
-                ),
-            )
-
+        _run_mandate_sync_phase(cfg, mem, receipt, progress, step)
         # Phase 2 — episodic→semantic: cross-session consolidation -----------
         if flag_bool("MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED"):
             progress.update(step, description="[consolidate] cross-session...")

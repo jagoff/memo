@@ -948,7 +948,8 @@ def _run_proactive_refresh(
         from memo.proactive.engine import refresh_candidates
         from memo.proactive.store import ProactiveStore
 
-        n = refresh_candidates(mem, ProactiveStore(db_path), now=now)
+        with ProactiveStore(db_path) as store:
+            n = refresh_candidates(mem, store, now=now)
         receipt["proactive"] = {"candidates": n}
     except Exception as exc:
         receipt["errors"].append(f"proactive: {type(exc).__name__}: {exc}")

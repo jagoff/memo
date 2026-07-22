@@ -23,6 +23,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
@@ -45,10 +46,21 @@ jobs:
         run: .venv/bin/mypy src/memo
       - name: Progressive quality budget
         run: .venv/bin/python scripts/quality_gate.py
+      - name: Resource hygiene (serial ownership gate)
+        run: >-
+          .venv/bin/python -m pytest -m "resource_hygiene" -n 0
+          --timeout=120 --resource-hygiene
       - name: Tests (excluding slow real-MLX smoke)
         # -n auto: parallelize across cores. --timeout: kill hung MLX/socket
         # tests. --cov + fail_under (pyproject) gates coverage regressions.
-        run: .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120 --cov=memo --cov-report=term-missing
+        run: >-
+          .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120
+          --cov=memo --cov-report=term-missing --cov-report=xml
+      - name: Changed-lines coverage
+        if: github.event_name == 'pull_request'
+        run: >-
+          .venv/bin/diff-cover coverage.xml
+          --compare-branch=origin/master --fail-under=90 --show-uncovered
 
   test-int8:
     # MEMO_VEC_QUANTIZE now defaults to int8 for fresh installs (v3.10.0), but

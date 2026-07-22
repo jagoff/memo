@@ -17,6 +17,43 @@ from memo.cli_dream_passes import (
 from memo.memory import Memory
 
 
+class TestRunMandateSyncPhase:
+    def test_disabled_phase_leaves_receipt_and_progress_unchanged(
+        self, tmp_cfg, mock_memory: Memory, monkeypatch
+    ) -> None:
+        from memo.cli_dream import _run_mandate_sync_phase
+
+        monkeypatch.setenv("MEMO_DYNAMIC_MANDATE_SYNC_ENABLED", "0")
+        receipt = {"errors": []}
+        progress = MagicMock()
+
+        _run_mandate_sync_phase(tmp_cfg, mock_memory, receipt, progress, "step")
+
+        assert receipt == {"errors": []}
+        progress.update.assert_not_called()
+
+    def test_enabled_phase_records_result_error_and_progress(
+        self, tmp_cfg, mock_memory: Memory, monkeypatch
+    ) -> None:
+        from memo.cli_dream import _run_mandate_sync_phase
+
+        monkeypatch.setenv("MEMO_DYNAMIC_MANDATE_SYNC_ENABLED", "1")
+        result = {"synced": ["repo-a", "repo-b"], "error": "repo-c refused update"}
+        run_pass = MagicMock(return_value=result)
+        monkeypatch.setattr("memo.constitution.run_mandate_sync_pass", run_pass)
+        receipt = {"errors": []}
+        progress = MagicMock()
+
+        _run_mandate_sync_phase(tmp_cfg, mock_memory, receipt, progress, "step")
+
+        run_pass.assert_called_once_with(tmp_cfg, mock_memory)
+        assert receipt["mandate_sync"] is result
+        assert receipt["errors"] == ["mandate_sync: repo-c refused update"]
+        assert progress.update.call_count == 2
+        assert progress.update.call_args_list[0].kwargs["description"].startswith("[mandate-sync]")
+        assert "2 repo(s)" in progress.update.call_args_list[1].kwargs["description"]
+
+
 class TestRunContradict:
     """Tests for _run_contradict phase handler."""
 
@@ -308,6 +345,51 @@ class TestRunGraphProjection:
         monkeypatch.setenv("MEMO_GRAPH_PROJECTION_ENABLED", "0")
 
         assert _run_graph_projection(mock_memory)["status"] == "disabled"
+
+    def test_dream_run_records_projection_error_and_advances_phase(
+        self, tmp_cfg, mock_memory: Memory, monkeypatch
+    ) -> None:
+        import json
+
+        from click.testing import CliRunner
+
+        from memo.cli_dream import dream_cmd
+
+        monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_cfg.data_dir))
+        monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_cfg.state_dir))
+        monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+        monkeypatch.setenv("MEMO_GRAPH_PROJECTION_ENABLED", "1")
+        monkeypatch.setenv("MEMO_OUTCOME_RANKING_ENABLED", "0")
+        monkeypatch.setenv("MEMO_DREAM_EVAL_ENABLED", "0")
+        monkeypatch.setenv("MEMO_DYNAMIC_MANDATE_SYNC_ENABLED", "0")
+        monkeypatch.setattr("memo.cli_dream._get_memory", lambda _cfg: mock_memory)
+        run_projection = MagicMock(
+            return_value={"status": "error", "error": "projection validation failed"}
+        )
+        monkeypatch.setattr("memo.cli_dream._run_graph_projection", run_projection)
+        skips = [
+            "--skip-entities",
+            "--skip-decay",
+            "--skip-maintain",
+            "--skip-orientation",
+            "--skip-signal-gather",
+            "--skip-prune-floor",
+            "--skip-evict",
+            "--skip-compress",
+            "--skip-prewarm",
+            "--skip-presynthesis",
+        ]
+
+        result = CliRunner().invoke(dream_cmd, ["run", "--dry-run", "--json", *skips])
+
+        assert result.exit_code == 0, result.output
+        receipt = json.loads(result.output[result.output.index("{") :])
+        assert receipt["graph_projection"] == {
+            "status": "error",
+            "error": "projection validation failed",
+        }
+        assert "graph_projection: projection validation failed" in receipt["errors"]
+        run_projection.assert_called_once_with(mock_memory, dry_run=True)
 
 
 class TestRunRoiReconcile:

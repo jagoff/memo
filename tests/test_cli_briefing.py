@@ -34,3 +34,21 @@ def test_briefing_hides_sync_nudge_when_dismissed(tmp_path):
     r = _run_briefing(tmp_path)
     ctx = json.loads(r.output)["hookSpecificOutput"]["additionalContext"]
     assert "memo sync setup" not in ctx
+
+
+def test_append_proactive_compact_adds_nonempty_line(monkeypatch):
+    from memo.cli_briefing import _append_proactive_compact
+
+    memory = object()
+    lines = ["existing"]
+    compact_line = "⚠️ review a stale decision"
+
+    def render(mem):
+        assert mem is memory
+        return compact_line
+
+    monkeypatch.setattr("memo.briefing.proactive_compact_line", render)
+
+    _append_proactive_compact(memory, lines)
+
+    assert lines == ["existing", compact_line]
