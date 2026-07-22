@@ -17,7 +17,7 @@ def test_testing_dependencies_are_scoped_by_ci_cost() -> None:
         dependency.startswith("pytest-textual-snapshot") for dependency in optional["dev"]
     )
     assert "hypothesis>=6.158,<7" in optional["dev"]
-    assert "diff-cover>=9,<10" in optional["dev"]
+    assert "diff-cover>=9,<11" in optional["dev"]
     assert optional["test-stability"] == [
         "pytest-randomly>=4.1,<5",
         "pytest-repeat>=0.9.4,<1",
