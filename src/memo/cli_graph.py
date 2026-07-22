@@ -188,6 +188,61 @@ def graph_explore(entity: str, max_neighbors: int, max_memories: int, as_json: b
         console.print("[dim]Nothing around this entity.[/dim]")
 
 
+@graph_group.command(name="mindmap")
+@click.argument("entity", required=False)
+@click.option("--depth", type=int, default=2, show_default=True, help="Neighborhood hops.")
+@click.option("--node-cap", type=int, default=300, show_default=True, help="Max nodes rendered.")
+@click.option("-o", "--out", "out_path", type=click.Path(), default=None, help="Output HTML path.")
+@click.option("--open/--no-open", "open_browser", default=True, help="Open in a browser.")
+def graph_mindmap(
+    entity: str | None, depth: int, node_cap: int, out_path: str | None, open_browser: bool
+) -> None:
+    """Render a graph neighborhood as a self-contained interactive HTML mindmap.
+
+    Offline-clean (no CDN), pan/zoom/fold. Defaults to the highest-degree
+    entity when none is given.
+
+    Example: memo graph mindmap mlx --depth 2
+    """
+    import tempfile
+    import webbrowser
+
+    from memo.atomic_io import atomic_write_text
+    from memo.graph_mindmap import build_mindmap_tree, mindmap_filename, render_mindmap_html
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    export = mem.navigator.export_json()
+    nodes = export["nodes"]
+    edges = export["edges"]
+    if not nodes:
+        console.print("[yellow]Graph is empty — nothing to render.[/yellow]")
+        return
+
+    ids = {n["id"] for n in nodes}
+    if entity is None:
+        degree: dict[str, int] = {}
+        for edge in edges:
+            degree[edge["source"]] = degree.get(edge["source"], 0) + 1
+            degree[edge["target"]] = degree.get(edge["target"], 0) + 1
+        center = max(ids, key=lambda i: (degree.get(i, 0), i))
+    else:
+        center = entity
+        if center not in ids:
+            console.print(f"[yellow]Entity '{center}' is not in the graph.[/yellow]")
+            return
+
+    tree = build_mindmap_tree(nodes, edges, center=center, depth=depth, node_cap=node_cap)
+    document = render_mindmap_html(tree, title=f"memo graph — {center}")
+
+    dest = Path(out_path) if out_path else Path(tempfile.gettempdir()) / mindmap_filename(center)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(dest, document, mode=0o600)
+    console.print(f"[green]Wrote[/green] {dest}")
+    if open_browser:
+        webbrowser.open(dest.as_uri())
+
+
 @graph_group.command(name="communities")
 @click.option("--min-size", type=int, default=2, help="Minimum community size (default: 2)")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
