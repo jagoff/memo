@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.11.1] - 2026-07-22
+
+### Fixed
+
+- **Dream progress spinner is visible again in real terminals.** The shared
+  Rich `Console` was constructed with `force_terminal=False`, which Rich 15
+  short-circuits in `is_terminal` (returned before the `isatty()` check) — so
+  memo emitted no ANSI and `memo dream run`'s spinner/progress bar never
+  rendered, leaving the pipeline looking frozen after the pre-dream inventory
+  panel with zero feedback. The console now auto-detects the terminal
+  (`Console()`), and `_make_progress` gates on `console.is_terminal` (the stream
+  it renders to) instead of `sys.stderr.isatty()`. Non-TTY runs (pipes, tests,
+  launchd) and `MEMO_NONINTERACTIVE=1` stay plain as before.
+
 ## [3.11.0] - 2026-07-21
 
 ### Added
