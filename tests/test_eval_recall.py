@@ -1296,7 +1296,9 @@ def test_run_config_honors_label_as_of(mock_memory) -> None:
     as_of (recall as of now) only the successor — the currently-valid fact —
     surfaces. Self-contained: seeds its own two superseding records in the
     isolated tmp index rather than depending on the committed corpus."""
-    a = mock_memory.save(content="prod db is postgres", type_="fact", valid_at="2026-06-01T00:00:00")
+    a = mock_memory.save(
+        content="prod db is postgres", type_="fact", valid_at="2026-06-01T00:00:00"
+    )
     b = mock_memory.save(content="prod db is mysql", type_="fact", valid_at="2026-07-01T00:00:00")
     # Close A's interval at B's start (contradiction-supersede, in place).
     mock_memory.store.update_validity(

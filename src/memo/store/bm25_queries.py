@@ -176,18 +176,32 @@ class _BM25QueriesMixin(_StoreBase):
             return []
         if field_boost == "exact":
             return self._search_bm25_fts5(
-                query, limit, type_, exclude_types, field_boost="exact",
-                include_invalid=include_invalid, as_of=as_of,
+                query,
+                limit,
+                type_,
+                exclude_types,
+                field_boost="exact",
+                include_invalid=include_invalid,
+                as_of=as_of,
             )
         t = self._get_tantivy()
         if t is not None:
             return self._search_bm25_tantivy(
-                query, limit, type_, exclude_types, t,
-                include_invalid=include_invalid, as_of=as_of,
+                query,
+                limit,
+                type_,
+                exclude_types,
+                t,
+                include_invalid=include_invalid,
+                as_of=as_of,
             )
         return self._search_bm25_fts5(
-            query, limit, type_, exclude_types,
-            include_invalid=include_invalid, as_of=as_of,
+            query,
+            limit,
+            type_,
+            exclude_types,
+            include_invalid=include_invalid,
+            as_of=as_of,
         )
 
     def _search_bm25_tantivy(
@@ -366,8 +380,12 @@ class _BM25QueriesMixin(_StoreBase):
         t = self._get_tantivy()
         if t is None:
             return self._search_bm25_fts5(
-                query, limit, type_, exclude_types,
-                include_invalid=include_invalid, as_of=as_of,
+                query,
+                limit,
+                type_,
+                exclude_types,
+                include_invalid=include_invalid,
+                as_of=as_of,
             )
         candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
         hits = t.search_fuzzy(query, candidate_k)
