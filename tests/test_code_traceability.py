@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from memo import code_traceability, codegraph_loader
 from memo.code_traceability import (
     codegraph_repo_id,
     codegraph_uri,
@@ -82,3 +83,20 @@ def test_explicit_uri_survives_without_codegraph_database(tmp_path: Path) -> Non
     assert len(refs) == 1
     assert refs[0].uri == uri
     assert refs[0].relation == "explicit"
+
+
+def test_default_resolver_uses_shared_codegraph_from_git_worktree(
+    tmp_path: Path, monkeypatch
+) -> None:
+    main_repo = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    db = main_repo / ".codegraph" / "codegraph.db"
+    _seed_codegraph(db)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", worktree / ".codegraph/codegraph.db")
+    monkeypatch.setattr(code_traceability, "_git_common_repo_root", lambda _root: main_repo)
+
+    refs = resolve_code_references({"files_modified": ["src/memo/graph.py"]})
+
+    assert [(ref.stable_symbol_id, ref.relation) for ref in refs] == [
+        ("file:src/memo/graph.py", "modified")
+    ]

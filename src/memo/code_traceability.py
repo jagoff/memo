@@ -48,6 +48,34 @@ def _git_remote(repo_root: Path) -> str | None:
     return value or None
 
 
+def _git_common_repo_root(repo_root: Path) -> Path | None:
+    """Locate the main checkout that owns a linked worktree's shared Git dir."""
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = result.stdout.strip()
+    if result.returncode != 0 or not value:
+        return None
+    common_dir = Path(value)
+    if not common_dir.is_absolute():
+        common_dir = (repo_root / common_dir).resolve()
+    return common_dir.parent if common_dir.name == ".git" else None
+
+
 def codegraph_repo_id(repo_root: Path, *, remote: str | None = None) -> str:
     """Return a cross-worktree id from the Git remote, with a local fallback."""
     identity = _normalized_remote(remote or _git_remote(repo_root) or str(repo_root.resolve()))
@@ -195,11 +223,20 @@ class CodeReferenceResolver:
         repo_root: Path | None = None,
         repo_id: str | None = None,
     ) -> None:
+        default_db = db_path is None
         if db_path is None or repo_root is None:
             from memo import codegraph_loader
 
             db_path = db_path or codegraph_loader.CODEGRAPH_DB
             repo_root = repo_root or db_path.parent.parent
+        assert db_path is not None
+        assert repo_root is not None
+        if default_db and not db_path.is_file():
+            common_root = _git_common_repo_root(repo_root)
+            common_db = common_root / ".codegraph/codegraph.db" if common_root is not None else None
+            if common_root is not None and common_db is not None and common_db.is_file():
+                db_path = common_db
+                repo_root = common_root
         self.db_path = db_path
         self.repo_root = repo_root
         self.repo_id = repo_id or codegraph_repo_id(repo_root)
