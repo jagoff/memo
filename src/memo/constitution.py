@@ -22,6 +22,7 @@ disappear, superseding ones appear, on their own.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -171,3 +172,62 @@ def gather_rules(mem: Any, cfg: Any, *, k: int = 3, min_used: float = 0.5) -> li
     from memo.dream_profile import _gather_rules
 
     return _gather_rules(mem, cfg, k=k, min_used=min_used)
+
+
+# --- opted-in repo registry + nightly auto-sync ------------------------------
+#
+# The nightly dream daemon is repo-agnostic — it cannot discover the arbitrary
+# project repos where a user ran `memo mandate --dynamic`. So the write path
+# records each opted-in repo root here, and the (flag-gated) dream pass iterates
+# that registry to refresh every block, retiring superseded rules on its own.
+
+
+def _registry_path(state_dir: Any) -> Path:
+    return Path(state_dir) / "mandate_repos.json"
+
+
+def registered_repos(state_dir: Any) -> list[str]:
+    """Repo roots that opted into dynamic mandate rules (best-effort, never raises)."""
+    path = _registry_path(state_dir)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [str(x) for x in data] if isinstance(data, list) else []
+
+
+def register_repo(state_dir: Any, root: Any) -> None:
+    """Record ``root`` as an opted-in repo (idempotent) for nightly auto-sync."""
+    resolved = str(Path(root).resolve())
+    roots = registered_repos(state_dir)
+    if resolved in roots:
+        return
+    roots.append(resolved)
+    path = _registry_path(state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(roots, indent=2), encoding="utf-8")
+
+
+def run_mandate_sync_pass(cfg: Any, mem: Any) -> dict[str, Any]:
+    """Nightly pass: refresh the rules block in every opted-in repo that still
+    exists. Never raises — the ``cli_dream`` caller records a returned
+    ``status="error"`` in ``receipt["errors"]``. A removed repo is skipped; a
+    repo whose block a human deleted is left alone (resync only touches files
+    that still carry the marker)."""
+    res: dict[str, Any] = {"status": "noop", "synced": []}
+    try:
+        rules = gather_rules(mem, cfg)
+        for root in registered_repos(cfg.state_dir):
+            if not Path(root).is_dir():
+                continue
+            results = resync_rules_in_repo(rules, cwd=Path(root))
+            if results:
+                res["synced"].append({"repo": root, "files": results})
+        if res["synced"]:
+            res["status"] = "done"
+    except Exception as exc:  # surfaced via receipt["errors"], never silent
+        res["status"] = "error"
+        res["error"] = f"{type(exc).__name__}: {exc}"
+    return res

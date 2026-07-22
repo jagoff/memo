@@ -1106,6 +1106,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "misc",
         "Max labels mined from grounding.log per dream tuning pass.",
     ),
+    # dream — refresh dynamic mandate rule blocks in opted-in repos
+    _spec(
+        "MEMO_DYNAMIC_MANDATE_SYNC_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly pass that refreshes `memo mandate --dynamic` rule "
+        "blocks in every opted-in repo (recorded when you run --dynamic --write). "
+        "OFF by default; superseded rules retire and new ones appear on their own. "
+        "No-op in a repo whose block a human deleted.",
+    ),
     # dream v2 — anticipatory pass (Phase 3): surface unmet gaps + prewarm
     _spec(
         "MEMO_DREAM_ANTICIPATE_ENABLED",

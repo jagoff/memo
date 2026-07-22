@@ -201,12 +201,23 @@ def _gather_dynamic_rules() -> list[tuple[str, str]]:
 
 
 def _run_rules_write(targets: list[str], *, dry_run: bool) -> None:
+    from pathlib import Path
+
     from memo.constitution import write_rules_for_clients
 
     rules = _gather_dynamic_rules()
     click.echo("dynamic rules (durable decisions/preferences):")
-    for rel, status in write_rules_for_clients(targets, rules, dry_run=dry_run):
+    results = write_rules_for_clients(targets, rules, dry_run=dry_run)
+    for rel, status in results:
         click.echo(f"  {rel:<22} {status}")
+    if not dry_run and any(status == "written" for _rel, status in results):
+        from memo.config import Config
+        from memo.constitution import register_repo
+
+        register_repo(Config.from_env().state_dir, Path.cwd())
+        click.echo(
+            "  (repo registered for nightly auto-sync — gated by MEMO_DYNAMIC_MANDATE_SYNC_ENABLED)"
+        )
     click.echo(f"  ({len(rules)} standing rule(s))")
 
 

@@ -10,6 +10,7 @@ by monkeypatching that seam.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import memo.constitution as ct
 from memo.constitution import (
@@ -194,10 +195,13 @@ def test_cli_mandate_dynamic_installs_rules(monkeypatch, tmp_path: Path) -> None
 
     monkeypatch.setattr("memo.cli_mandate._gather_dynamic_rules", lambda: [R1])
     runner = CliRunner()
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_STATE_DIR": str(tmp_path / "state"),  # isolate register_repo
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+    }
     with runner.isolated_filesystem(temp_dir=tmp_path):
-        res = runner.invoke(
-            mandate, ["--client", "codex", "--dynamic"], env={"MEMO_NONINTERACTIVE": "1"}
-        )
+        res = runner.invoke(mandate, ["--client", "codex", "--dynamic"], env=env)
         assert res.exit_code == 0, res.output
         body = Path("AGENTS.md").read_text(encoding="utf-8")
         assert RULES_START in body  # dynamic rules installed
@@ -219,3 +223,50 @@ def test_cli_mandate_sync_regenerates_existing_block(monkeypatch, tmp_path: Path
         body = Path("AGENTS.md").read_text(encoding="utf-8")
         assert "`[abcd1234]`" in body
         assert "`[beef5678]`" not in body  # retired rule swept on sync
+
+
+# --- opted-in repo registry + nightly auto-sync pass -------------------------
+
+
+def test_registry_empty_then_register_and_dedup(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    assert ct.registered_repos(state) == []
+    repo = tmp_path / "repoA"
+    repo.mkdir()
+    ct.register_repo(state, repo)
+    ct.register_repo(state, repo)  # idempotent
+    assert ct.registered_repos(state) == [str(repo.resolve())]
+
+
+def test_registry_tolerates_corrupt_file(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "mandate_repos.json").write_text("{not json", encoding="utf-8")
+    assert ct.registered_repos(state) == []  # never raises
+
+
+def test_mandate_sync_pass_refreshes_registered_repos(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("memo.dream_profile._gather_rules", lambda mem, cfg, *, k, min_used: [R1])
+    state = tmp_path / "state"
+    repo = tmp_path / "repoA"
+    repo.mkdir()
+    # repo opted in: install a block with TWO rules, register it
+    write_rules_to_file(repo / "AGENTS.md", [R1, R2])
+    ct.register_repo(state, repo)
+    # a registered-but-deleted repo must be skipped, not crash
+    ct.register_repo(state, tmp_path / "gone")
+
+    cfg = SimpleNamespace(state_dir=state)
+    res = ct.run_mandate_sync_pass(cfg, object())
+
+    assert res["status"] == "done"
+    assert len(res["synced"]) == 1  # only the live repo
+    body = (repo / "AGENTS.md").read_text(encoding="utf-8")
+    assert "`[abcd1234]`" in body
+    assert "`[beef5678]`" not in body  # R2 retired by the nightly sync
+
+
+def test_mandate_sync_pass_noop_when_no_repos(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("memo.dream_profile._gather_rules", lambda mem, cfg, *, k, min_used: [R1])
+    res = ct.run_mandate_sync_pass(SimpleNamespace(state_dir=tmp_path / "state"), object())
+    assert res["status"] == "noop" and res["synced"] == []
