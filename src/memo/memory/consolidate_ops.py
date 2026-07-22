@@ -39,25 +39,57 @@ def _sort_updated_utc(value: Any) -> _dt.datetime:
     return dt.astimezone(_dt.UTC)
 
 
-def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
-    """Replace relative temporal expressions with ISO dates anchored to ref_date.
+def _coerce_ref_date(observed_at: str | _dt.date | _dt.datetime) -> _dt.date:
+    """Reduce an Observation Date (ISO string / date / datetime) to a calendar
+    day. `datetime` is a subclass of `date`, so it is checked first."""
+    if isinstance(observed_at, _dt.datetime):
+        return observed_at.date()
+    if isinstance(observed_at, _dt.date):
+        return observed_at
+    return _dt.date.fromisoformat(str(observed_at)[:10])
 
-    Never raises — returns original text on any error.
+
+def ground_relative_dates(
+    text: str, observed_at: str | _dt.date | _dt.datetime
+) -> tuple[str, str | None]:
+    """Annotate relative temporal expressions with absolute ISO dates AND, when
+    the text anchors a SINGLE unambiguous calendar day, return that day as a
+    structured ``valid_at`` (ISO date); otherwise return ``(text, None)``.
+
+    ``observed_at`` is the Observation Date — the capture/save timestamp.
+    Relative expressions resolve against THAT, never today's clock, so
+    re-processing the same text is stable.
+
+    Only day-precision anchors emit a structured date. Range/month expressions
+    (``la semana pasada``/``last week``, ``el mes pasado``/``last month``) are
+    still annotated inline but never emit a ``valid_at`` — a range is not a
+    single date, and we never guess. If the text anchors two or more distinct
+    days, the date is ambiguous → ``None``.
+
+    Never raises — returns ``(text, None)`` on any error.
     Patterns covered (ES + EN): ayer/yesterday, hoy/today, anteayer,
     la semana pasada/last week, el mes pasado/last month,
     hace N días/N days ago.
     """
     try:
+        ref_date = _coerce_ref_date(observed_at)
         result = text
+        # Distinct day-precision anchors resolved from the text. Exactly one →
+        # unambiguous valid_at; zero or many → None.
+        anchored: builtins.set[_dt.date] = set()
 
         def _iso(d: _dt.date) -> str:
             return d.isoformat()
+
+        def _day(d: _dt.date) -> str:
+            anchored.add(d)
+            return _iso(d)
 
         # hace N días / N days ago  (before simpler patterns to avoid partial match)
         result = _re.sub(
             r"hace\s+(\d+)\s+d[ií]as?",
             lambda m: (
-                f"hace {m.group(1)} días ({_iso(ref_date - _dt.timedelta(days=int(m.group(1))))})"
+                f"hace {m.group(1)} días ({_day(ref_date - _dt.timedelta(days=int(m.group(1))))})"
             ),
             result,
             flags=_re.IGNORECASE,
@@ -65,7 +97,7 @@ def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
         result = _re.sub(
             r"(\d+)\s+days?\s+ago",
             lambda m: (
-                f"{m.group(1)} days ago ({_iso(ref_date - _dt.timedelta(days=int(m.group(1))))})"
+                f"{m.group(1)} days ago ({_day(ref_date - _dt.timedelta(days=int(m.group(1))))})"
             ),
             result,
             flags=_re.IGNORECASE,
@@ -74,7 +106,7 @@ def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
         # anteayer (before ayer to avoid partial match)
         result = _re.sub(
             r"\banteayer\b",
-            f"anteayer ({_iso(ref_date - _dt.timedelta(days=2))})",
+            lambda m: f"anteayer ({_day(ref_date - _dt.timedelta(days=2))})",
             result,
             flags=_re.IGNORECASE,
         )
@@ -82,13 +114,13 @@ def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
         # ayer / yesterday
         result = _re.sub(
             r"\bayer\b",
-            f"ayer ({_iso(ref_date - _dt.timedelta(days=1))})",
+            lambda m: f"ayer ({_day(ref_date - _dt.timedelta(days=1))})",
             result,
             flags=_re.IGNORECASE,
         )
         result = _re.sub(
             r"\byesterday\b",
-            f"yesterday ({_iso(ref_date - _dt.timedelta(days=1))})",
+            lambda m: f"yesterday ({_day(ref_date - _dt.timedelta(days=1))})",
             result,
             flags=_re.IGNORECASE,
         )
@@ -96,18 +128,18 @@ def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
         # hoy / today
         result = _re.sub(
             r"\bhoy\b",
-            f"hoy ({_iso(ref_date)})",
+            lambda m: f"hoy ({_day(ref_date)})",
             result,
             flags=_re.IGNORECASE,
         )
         result = _re.sub(
             r"\btoday\b",
-            f"today ({_iso(ref_date)})",
+            lambda m: f"today ({_day(ref_date)})",
             result,
             flags=_re.IGNORECASE,
         )
 
-        # la semana pasada / last week
+        # la semana pasada / last week  (range → annotate only, no structured date)
         week_start = ref_date - _dt.timedelta(days=7)
         result = _re.sub(
             r"\bla\s+semana\s+pasada\b",
@@ -122,7 +154,7 @@ def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
             flags=_re.IGNORECASE,
         )
 
-        # el mes pasado / last month
+        # el mes pasado / last month  (month → annotate only, no structured date)
         month_ref = ref_date.replace(day=1) - _dt.timedelta(days=1)
         month_str = month_ref.strftime("%Y-%m")
         result = _re.sub(
@@ -138,9 +170,20 @@ def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
             flags=_re.IGNORECASE,
         )
 
-        return result
+        valid_at = _iso(next(iter(anchored))) if len(anchored) == 1 else None
+        return result, valid_at
     except Exception:
-        return text
+        return text, None
+
+
+def _normalize_relative_dates(text: str, ref_date: _dt.date) -> str:
+    """Back-compat wrapper: inline annotation only (drops the structured date).
+
+    Kept for callers that want just the annotated text (dream-synth body
+    rewrite). New callers that need the structured ``valid_at`` should call
+    :func:`ground_relative_dates` directly. Never raises.
+    """
+    return ground_relative_dates(text, ref_date)[0]
 
 
 class _ConsolidateOpsMixin(_MemoryBase):

@@ -364,6 +364,7 @@ class _AskOpsMixin(_MemoryBase):
         intent_text: str | None = None,
         session_id: str | None = None,
         use_context_pack: bool = False,
+        as_of: str | None = None,
     ) -> tuple[str, list[dict[str, Any]], str, list[MemoryRecord]]:
         """Retrieval half of ask()/ask_stream().
 
@@ -397,6 +398,7 @@ class _AskOpsMixin(_MemoryBase):
                     disable_reranker,
                     use_context_pack,
                     intent_text or "",
+                    as_of or "",
                     question.strip(),
                 )
             )
@@ -452,6 +454,7 @@ class _AskOpsMixin(_MemoryBase):
             read_through=True,
             recency=recency_intent,
             quality_rerank=True,
+            as_of=as_of,
         )
         repo_hits = []
         if include_repos and self.store.list_repo_sources(limit=1):
@@ -844,6 +847,7 @@ class _AskOpsMixin(_MemoryBase):
         intent_text: str | None = None,
         session_id: str | None = None,
         use_context_pack: bool | None = None,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         """Synthesised Q&A over the memory archive (RAG).
 
@@ -862,6 +866,10 @@ class _AskOpsMixin(_MemoryBase):
         Latency: ~3-8s on a cold 7B load + ~1-2s decode for short
         answers. For token-by-token output use `ask_stream`. Use
         `search` if you only need IDs to scan manually.
+
+        `as_of` (ISO date/datetime) restricts retrieval to records whose
+        valid-time interval contains that instant (see `search`), so the answer
+        reflects what was true then rather than now.
         """
         if not question or not question.strip():
             return {"question": question, "answer": "", "sources": []}
@@ -880,6 +888,7 @@ class _AskOpsMixin(_MemoryBase):
             intent_text=intent_text,
             session_id=session_id,
             use_context_pack=use_context_pack,
+            as_of=as_of,
         )
         if not sources:
             from memo.flags import flag_str

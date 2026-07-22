@@ -183,6 +183,59 @@ def _bucket_by_project(cfg: Config) -> int:
     return moved
 
 
+def run_backfill_valid_time(cfg: Config) -> int:
+    """One-time, idempotent backfill of the world-validity start time.
+
+    Sets ``valid_at = created`` for every record whose ``valid_at`` is still
+    NULL (rows written before the bi-temporal columns existed). ``invalid_at``
+    is left untouched. Non-destructive — a plain
+    ``UPDATE meta SET valid_at = created WHERE valid_at IS NULL`` on the index,
+    plus a frontmatter mirror onto each affected record's markdown so disk (the
+    source of truth) and index agree — otherwise a later `reindex --rebuild`
+    from disk would re-null them. Reference-tier chunks and legacy vault-only
+    rows (whose paths don't resolve under ``memory_dir``) are backfilled in the
+    index only. Returns the number of records changed.
+    """
+    import frontmatter
+
+    from memo.errors import StorageError
+    from memo.memory import Memory
+
+    mem = Memory(cfg)
+    try:
+        store = mem.store
+        # Snapshot the rows to backfill BEFORE the update, so we know which
+        # markdown files to mirror. `created` is NOT NULL in the schema, so the
+        # index UPDATE below can never re-set valid_at to NULL — the second run
+        # matches nothing (idempotent).
+        rows = store._conn.execute(
+            "SELECT path, created FROM meta WHERE valid_at IS NULL"
+        ).fetchall()
+        if not rows:
+            return 0
+        with store._tx() as cx:
+            cx.execute("UPDATE meta SET valid_at = created WHERE valid_at IS NULL")
+        # Mirror the value onto the canonical markdown. Only new-layout files
+        # that exist under memory_dir are touched; anything else is index-only.
+        for row in rows:
+            rel_path = str(row["path"])
+            created = row["created"]
+            try:
+                target = mem._safe_path_under(cfg.memory_dir, rel_path)
+            except StorageError:
+                continue  # path escapes memory_dir (reference/legacy) — index-only
+            if not target.is_file():
+                continue
+            post = frontmatter.loads(target.read_text(encoding="utf-8"))
+            if post.metadata.get("valid_at"):
+                continue  # disk already carries a value — don't clobber it
+            post["valid_at"] = created
+            mem._atomic_write_text(rel_path, frontmatter.dumps(post))
+        return len(rows)
+    finally:
+        mem.close()
+
+
 @click.command(name="migrate-vault")
 @click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
 @click.option(
@@ -214,6 +267,14 @@ def _bucket_by_project(cfg: Config) -> int:
     "(memory_dir/<project>/, _global/ when untagged) by their project: tag, "
     "then reindex. Non-destructive (moves only), idempotent.",
 )
+@click.option(
+    "--backfill-valid-time",
+    is_flag=True,
+    help="One-time backfill: set valid_at = created for every record whose "
+    "valid_at is still NULL (rows from before bi-temporal validity), mirroring "
+    "the value into markdown frontmatter. Non-destructive, idempotent. Does not "
+    "move any .md files or touch invalid_at.",
+)
 @click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def migrate_vault(
@@ -223,6 +284,7 @@ def migrate_vault(
     rollback: bool,
     consolidate_db: bool,
     bucket_by_project: bool,
+    backfill_valid_time: bool,
     force: bool,
     yes: bool,
 ) -> None:
@@ -245,6 +307,15 @@ def migrate_vault(
 
     if consolidate_db:
         _consolidate_sidecar_dbs()
+        return
+
+    if backfill_valid_time:
+        cfg = Config.from_env()
+        changed = run_backfill_valid_time(cfg)
+        console.print(
+            f"[green]✓[/green] backfilled valid_at = created on {changed} record(s) "
+            "(idempotent; invalid_at untouched)"
+        )
         return
 
     if bucket_by_project:

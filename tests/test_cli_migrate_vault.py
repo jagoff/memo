@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from memo.cli import cli
 from memo.config import Config
 from memo.memory import Memory
+from memo.runtime.migrate import run_backfill_valid_time
 from memo.store import VecStore
 
 
@@ -409,3 +410,103 @@ def test_links_reindex_safe_under_single_db(tmp_path: Path, monkeypatch):
         ).store.count()
         == 1
     )
+
+
+def test_backfill_valid_time_is_idempotent(mock_memory):
+    """run_backfill_valid_time sets valid_at=created for legacy NULL rows and is
+    a no-op on re-run."""
+    mem = mock_memory
+    rec = mem.save(content="cuerpo de prueba", type_="fact")
+    # Simulate a legacy row written before the bi-temporal columns existed.
+    with mem.store._conn as cx:
+        cx.execute("UPDATE meta SET valid_at=NULL WHERE id=?", (rec.id,))
+    assert mem.get(rec.id).valid_at is None
+
+    changed = run_backfill_valid_time(mem.cfg)
+    assert changed == 1
+    got = mem.get(rec.id)
+    assert got.valid_at == got.created
+
+    # Second run: idempotent — zero changed, no error, value unchanged.
+    assert run_backfill_valid_time(mem.cfg) == 0
+    assert mem.get(rec.id).valid_at == got.created
+
+
+def test_backfill_valid_time_mirrors_markdown(mock_memory):
+    """The backfilled valid_at is mirrored into the record's markdown
+    frontmatter so a later `reindex --rebuild` from disk doesn't re-null it."""
+    import frontmatter
+
+    mem = mock_memory
+    rec = mem.save(content="otro cuerpo", type_="fact")
+    # Null the column in the index AND strip it from disk to emulate a record
+    # created before valid_at existed.
+    with mem.store._conn as cx:
+        cx.execute("UPDATE meta SET valid_at=NULL WHERE id=?", (rec.id,))
+    md = mem._resolve_existing(rec.path)
+    post = frontmatter.loads(md.read_text(encoding="utf-8"))
+    post.metadata.pop("valid_at", None)
+    md.write_text(frontmatter.dumps(post), encoding="utf-8")
+    assert "valid_at" not in frontmatter.loads(md.read_text(encoding="utf-8")).metadata
+
+    run_backfill_valid_time(mem.cfg)
+
+    got = mem.get(rec.id)
+    disk = frontmatter.loads(md.read_text(encoding="utf-8")).metadata
+    assert disk.get("valid_at") == got.created
+
+
+def test_backfill_valid_time_skips_index_only_paths(mock_memory):
+    """Rows whose path escapes ``memory_dir`` (reference/legacy vault chunks) or
+    points at a missing file are backfilled in the INDEX only — no markdown
+    mirror, no crash."""
+    mem = mock_memory
+    ref = mem.save(content="reference-ish chunk", type_="fact")
+    missing = mem.save(content="its file will look gone", type_="fact")
+    with mem.store._conn as cx:
+        # Escapes memory_dir → StorageError → index-only.
+        cx.execute(
+            "UPDATE meta SET valid_at=NULL, path=? WHERE id=?",
+            ("../outside/ref.md", ref.id),
+        )
+        # Resolves under memory_dir but the file does not exist → index-only.
+        cx.execute(
+            "UPDATE meta SET valid_at=NULL, path=? WHERE id=?",
+            ("no-such-bucket/gone.md", missing.id),
+        )
+
+    changed = run_backfill_valid_time(mem.cfg)
+    assert changed == 2  # both rows updated in the index
+    rows = {
+        r["id"]: r
+        for r in mem.store._conn.execute("SELECT id, valid_at, created FROM meta").fetchall()
+    }
+    assert rows[ref.id]["valid_at"] == rows[ref.id]["created"]
+    assert rows[missing.id]["valid_at"] == rows[missing.id]["created"]
+
+
+def test_migrate_backfill_valid_time_flag(tmp_path: Path, seeded_old_layout, monkeypatch):
+    """`memo migrate --backfill-valid-time` backfills every legacy NULL row via
+    the CLI."""
+    cfg, _ = seeded_old_layout
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    # Null out valid_at on every seeded row (they were saved with valid_at set).
+    store = VecStore(cfg.state_dir / "memvec.db", dims=4)
+    with store._conn as cx:
+        cx.execute("UPDATE meta SET valid_at=NULL")
+    store.close()
+
+    cfg_file = tmp_path / "memo-config.toml"
+    env = _base_env(tmp_path, cfg, cfg_file)
+    result = CliRunner().invoke(cli, ["migrate", "--backfill-valid-time"], env=env)
+    assert result.exit_code == 0, result.output
+
+    store2 = VecStore(cfg.state_dir / "memvec.db", dims=4)
+    rows = store2._conn.execute("SELECT valid_at, created FROM meta").fetchall()
+    store2.close()
+    assert rows
+    for r in rows:
+        assert r["valid_at"] == r["created"]

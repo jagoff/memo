@@ -9,7 +9,7 @@ from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
 from ..util import safe_operation
-from .bm25_queries import _BM25QueriesMixin
+from .bm25_queries import _BM25QueriesMixin, _validity_filter
 from .rows import _row_to_dict
 from .signal_queries import _SignalQueriesMixin
 
@@ -19,7 +19,7 @@ _log = logging.getLogger(__name__)
 
 META_SELECT_COLUMNS = (
     "id, path, title, type, tags, created, updated, body_hash, extra_json, "
-    "verification_state, verified_at"
+    "verification_state, verified_at, valid_at, invalid_at"
 )
 
 
@@ -85,12 +85,21 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> None:
-        """Write one complete memory row using the caller's transaction."""
+        """Write one complete memory row using the caller's transaction.
+
+        `valid_at`/`invalid_at` (world-validity interval) are written on INSERT
+        but intentionally left OUT of the ON CONFLICT update set — like
+        `created`, they are set once and preserved across a re-save/edit;
+        dedicated statements (contradiction-supersede, reindex-fold) own their
+        later mutation.
+        """
         if self._has_pattern_cols:
             cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash, valid_at, invalid_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "path=excluded.path, title=excluded.title, type=excluded.type, "
                 "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
@@ -107,12 +116,14 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     json.dumps(extra, default=str) if extra is not None else None,
                     topic_key,
                     normalized_hash,
+                    valid_at,
+                    invalid_at,
                 ),
             )
         else:
             cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, valid_at, invalid_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "path=excluded.path, title=excluded.title, type=excluded.type, "
                 "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
@@ -127,6 +138,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     updated,
                     body_hash,
                     json.dumps(extra, default=str) if extra is not None else None,
+                    valid_at,
+                    invalid_at,
                 ),
             )
         cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
@@ -165,6 +178,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> None:
         self._validate_embedding(id_, embedding)
         # Dual-write: the tantivy write lock spans the sqlite commit AND the
@@ -188,6 +203,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     body_text=body_text,
                     topic_key=topic_key,
                     normalized_hash=normalized_hash,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
                 )
             tantivy = self._get_tantivy()
             if tantivy is not None:
@@ -218,6 +235,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         normalized_hash: str | None = None,
         verification_state: str = "unverified",
         verified_at: int | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> None:
         """Atomically transfer one canonical path from ``stale_id`` to ``id_``.
 
@@ -267,6 +286,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     body_text=body_text,
                     topic_key=topic_key,
                     normalized_hash=normalized_hash,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
                 )
                 cx.execute(
                     "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
@@ -477,6 +498,26 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             )
         return cur.rowcount > 0
 
+    def update_validity(
+        self,
+        *,
+        id_: str,
+        valid_at: str | None,
+        invalid_at: str | None,
+    ) -> bool:
+        """Set the world-validity interval on one memory.
+
+        `valid_at`/`invalid_at` are intentionally excluded from the `upsert()`
+        ON CONFLICT update set (see `_upsert_memory_row`), so a re-save/edit
+        never touches them. This dedicated statement is how the reindex-fold and
+        the contradiction-supersede own their mutation."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "UPDATE meta SET valid_at = ?, invalid_at = ? WHERE id = ?",
+                (valid_at, invalid_at, id_),
+            )
+        return cur.rowcount > 0
+
     def verification_candidates(self) -> list[dict[str, Any]]:
         """Rows `{id, verification_state, verified_at}` for memories in a
         decayable state (VERIFIED or STALE) with a `verified_at` set — the
@@ -517,19 +558,23 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> None:
         """Write metadata + FTS row without a vector embedding.
 
         This keeps CRUD and BM25 search usable on fresh installs or while
         models are downloading. A later `memo reindex` fills the missing vector.
+        `valid_at`/`invalid_at` mirror the `upsert()` semantics: written on
+        INSERT, preserved (not clobbered) on the ON CONFLICT re-save.
         """
         # Lock spans sqlite commit + tantivy write — see upsert().
         with self._tantivy_write_lock:
             with self._tx() as cx:
                 if self._has_pattern_cols:
                     cx.execute(
-                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash, valid_at, invalid_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                         "ON CONFLICT(id) DO UPDATE SET "
                         "path=excluded.path, title=excluded.title, type=excluded.type, "
                         "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
@@ -546,12 +591,14 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                             json.dumps(extra, default=str) if extra is not None else None,
                             topic_key,
                             normalized_hash,
+                            valid_at,
+                            invalid_at,
                         ),
                     )
                 else:
                     cx.execute(
-                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, valid_at, invalid_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                         "ON CONFLICT(id) DO UPDATE SET "
                         "path=excluded.path, title=excluded.title, type=excluded.type, "
                         "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
@@ -566,6 +613,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                             updated,
                             body_hash,
                             json.dumps(extra, default=str) if extra is not None else None,
+                            valid_at,
+                            invalid_at,
                         ),
                     )
                 cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
@@ -1101,6 +1150,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         date_from: str | None = None,
         date_to: str | None = None,
         exclude_tags: set[str] | None = None,
+        include_invalid: bool = False,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         """Top-k by cosine. Returns metadata dicts with a `score` field
         added (1 - distance, so higher = more similar).
@@ -1108,7 +1159,13 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         `exclude_types` drops rows whose `type` is in the set (pushed into
         SQL, not post-filtered, so the candidate pool isn't wasted on rows
         the caller will throw away — e.g. the recall hook excluding the
-        bulk `reference` tier)."""
+        bulk `reference` tier).
+
+        `include_invalid=False` (default) drops rows whose world-validity
+        interval is closed as of now (contradiction-superseded facts stay
+        in-index but out of normal recall). `as_of=T` overrides the now-gate
+        with a valid-time predicate (rows valid at T); `include_invalid=True`
+        bypasses the gate entirely."""
         if len(embedding) != self.dims:
             raise ValueError(
                 f"Query embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
@@ -1153,7 +1210,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             "SELECT vec.id AS id, vec.distance AS distance, "
             "       meta.path, meta.title, meta.type, meta.tags, "
             "       meta.created, meta.updated, meta.body_hash, meta.extra_json, "
-            "       meta.verification_state, meta.verified_at "
+            "       meta.verification_state, meta.verified_at, "
+            "       meta.valid_at, meta.invalid_at "
             f"FROM vec JOIN meta ON vec.id = meta.id AND {deleted_filter} "
             f"WHERE vec.embedding MATCH {self._vec_bind_new()} AND vec.k = ? "
         )
@@ -1164,6 +1222,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         for clause in tag_clauses:
             sql += f"AND {clause} "
         params.extend(tag_params)
+        valid_sql, valid_params = _validity_filter("meta.", include_invalid, as_of)
+        sql += valid_sql + " "
+        params.extend(valid_params)
         sql += "ORDER BY distance ASC LIMIT ?"
         params.append(k_fetch if has_date_filter else limit)
         rows = self._conn.execute(sql, params).fetchall()

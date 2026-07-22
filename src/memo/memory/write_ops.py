@@ -306,6 +306,8 @@ class _WriteOpsMixin(_MemoryBase):
         skip_memflow_receipt: bool = False,
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
@@ -337,6 +339,11 @@ class _WriteOpsMixin(_MemoryBase):
           `MEMO_RESPECT_SYNAPSE_FREEZE=1` (opt-in). Only fires when
           `extra` carries a `synapse_trace_id` — anonymous saves
           bypass the check.
+        - `valid_at`/`invalid_at`: optional ISO8601 world-validity interval
+          (distinct from `created`/`updated` learned-time). Pure pass-through
+          here — persisted to the row when supplied, else left None. Default
+          population (`valid_at = created`) and frontmatter mirroring are
+          separate paths.
         """
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
@@ -396,13 +403,21 @@ class _WriteOpsMixin(_MemoryBase):
         if flag_bool("MEMO_SAVE_NORMALIZE_DATES") and type_ not in REFERENCE_TYPES:
             import datetime as _dt
 
-            from memo.memory.consolidate_ops import _normalize_relative_dates
+            from memo.memory.consolidate_ops import ground_relative_dates
 
-            try:
-                _ref = _dt.date.fromisoformat(created[:10]) if created else _dt.date.today()
-            except ValueError:
-                _ref = _dt.date.today()
-            content = _normalize_relative_dates(content, _ref)
+            # Observation Date = the save's own timestamp (`created` when the
+            # caller back-dates an import, else now — equal to `created_iso`,
+            # computed below). Grounding is day-precision, so anchoring to that
+            # date keeps re-processing stable. Besides annotating the content
+            # inline, grounding returns the resolved absolute date when the text
+            # anchors a single unambiguous day.
+            _observed_at = created or _dt.datetime.now(_dt.UTC).isoformat()
+            content, _grounded_valid_at = ground_relative_dates(content, _observed_at)
+            # Grounded date fills `valid_at` only when the caller passed none:
+            # explicit > grounded > created-default (the None case falls through
+            # to the `valid_at = created_iso` default at the write step below).
+            if valid_at is None and _grounded_valid_at is not None:
+                valid_at = _grounded_valid_at
 
         if auto_derive:
             # Only fire the LLM if at least one field looks "default-y".
@@ -634,6 +649,15 @@ class _WriteOpsMixin(_MemoryBase):
 
             record_id = use_existing_id or uuid.uuid4().hex
 
+            # Default the world-validity start to learned-time (`created`) when
+            # the caller passed no explicit `valid_at`; an explicit value always
+            # wins. `invalid_at` stays open (None) until a supersede closes the
+            # interval. Both mirror to frontmatter below so markdown stays the
+            # source of truth and reindex folds them back. `created_iso` is final
+            # here (a topic_key upsert reuses the existing record's created).
+            if valid_at is None:
+                valid_at = created_iso
+
             post = frontmatter.Post(
                 content,
                 id=record_id,
@@ -642,11 +666,15 @@ class _WriteOpsMixin(_MemoryBase):
                 tags=norm_tags,
                 created=created_iso,
                 updated=now_iso,
+                valid_at=valid_at,
             )
             post["extra"] = extra_for_store or {}
             # Add verification state (always UNVERIFIED for new saves unless overridden)
             post["verification_state"] = "unverified"
             # verified_at is omitted for new saves (None)
+            # invalid_at is omitted while the interval is open (None)
+            if invalid_at is not None:
+                post["invalid_at"] = invalid_at
             if topic_key is not None:
                 post["topic_key"] = topic_key
             if normalized_hash is not None:
@@ -679,6 +707,8 @@ class _WriteOpsMixin(_MemoryBase):
                         body_text=content,
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
                 except Exception as exc:
                     reservation_error = exc
@@ -704,6 +734,8 @@ class _WriteOpsMixin(_MemoryBase):
                 normalized_hash=normalized_hash,
                 expected_disk_text=written_disk_text,
                 graph_extractor=graph_extractor,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
 
         if defer_embed:
@@ -722,6 +754,8 @@ class _WriteOpsMixin(_MemoryBase):
                         body_text=content,
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
                 except Exception as exc:
                     # The .md is already on disk (embed-pending). A failed
@@ -749,6 +783,8 @@ class _WriteOpsMixin(_MemoryBase):
                         normalized_hash=normalized_hash,
                         expected_disk_text=written_disk_text,
                         graph_extractor=graph_extractor,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
             self._record_graph_entities_from_extra(
                 record_id=record_id,
@@ -782,6 +818,8 @@ class _WriteOpsMixin(_MemoryBase):
                 updated=now_iso,
                 body=content,
                 extra=extra_for_store,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
             self._emit_save_receipt(
                 deferred_rec,
@@ -829,6 +867,8 @@ class _WriteOpsMixin(_MemoryBase):
                 body_text=content,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
             if topic_key:
                 # Embedding is intentionally outside the global file lock.
@@ -913,6 +953,8 @@ class _WriteOpsMixin(_MemoryBase):
                 normalized_hash=normalized_hash,
                 expected_disk_text=written_disk_text,
                 graph_extractor=graph_extractor,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
 
         if not topic_write_superseded:
@@ -934,6 +976,8 @@ class _WriteOpsMixin(_MemoryBase):
             updated=now_iso,
             body=content,
             extra=extra_for_store,
+            valid_at=valid_at,
+            invalid_at=invalid_at,
         )
         if topic_write_superseded:
             _log.info(
@@ -988,6 +1032,8 @@ class _WriteOpsMixin(_MemoryBase):
         normalized_hash: str | None = None,
         expected_disk_text: str | None = None,
         graph_extractor: str = "regex",
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> MemoryRecord:
         """Recovery path when indexing fails AFTER the canonical `.md` is on disk.
 
@@ -1037,6 +1083,8 @@ class _WriteOpsMixin(_MemoryBase):
                         body_text=content,
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
         if superseded:
             _log.info(
@@ -1060,6 +1108,8 @@ class _WriteOpsMixin(_MemoryBase):
                 updated=now_iso,
                 body=content,
                 extra=extra_for_store,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
             self._write_gen += 1
             return rec
@@ -1100,6 +1150,8 @@ class _WriteOpsMixin(_MemoryBase):
             updated=now_iso,
             body=content,
             extra=extra_for_store,
+            valid_at=valid_at,
+            invalid_at=invalid_at,
         )
         self._emit_save_receipt(rec, deferred=True, disabled=skip_memflow_receipt)
         self._write_gen += 1

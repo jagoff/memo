@@ -146,6 +146,229 @@ def test_bm25_handles_empty_and_garbage_queries(mem_with_stub: Memory):
     assert isinstance(out, list)
 
 
+def test_store_vec_search_excludes_invalidated(mem_with_stub: Memory):
+    """Vec seam (queries.py inline SQL): default recall drops rows whose
+    validity interval is closed as of now, and surfaced rows carry the real
+    valid_at/invalid_at (not None)."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+
+    emb = [1.0, 0.0, 0.0, 0.0]
+    before = {r["id"]: r for r in mem_with_stub.store.search(emb, limit=10)}
+    assert a.id in before and b.id in before
+    # columns now flow through the vec SELECT
+    assert before[a.id]["valid_at"] == a.valid_at
+    assert before[a.id]["invalid_at"] is None
+
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+    after = {r["id"] for r in mem_with_stub.store.search(emb, limit=10)}
+    assert a.id not in after
+    assert b.id in after
+
+
+def test_store_bm25_search_excludes_invalidated(mem_with_stub: Memory):
+    """BM25 seam (bm25_queries.py): default recall drops the closed interval;
+    valid_at flows through the bm25 SELECT."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+
+    before = {r["id"]: r for r in mem_with_stub.store.search_bm25("prod db", limit=10)}
+    assert a.id in before and b.id in before
+    assert before[a.id]["valid_at"] == a.valid_at
+
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+    after = {r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10)}
+    assert a.id not in after
+    assert b.id in after
+
+
+def test_default_recall_excludes_invalidated(mem_with_stub: Memory):
+    """End-to-end: default `mem.search(...)` (hybrid) and the bm25 mode both
+    hide a record whose interval is closed, keeping the valid successor."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+
+    hybrid_ids = {r.id for r in mem_with_stub.search("prod db", limit=10)}
+    assert a.id not in hybrid_ids
+    assert b.id in hybrid_ids
+
+    bm25_ids = {r.id for r in mem_with_stub.search("prod db", mode="bm25", limit=10)}
+    assert a.id not in bm25_ids
+    assert b.id in bm25_ids
+
+
+def test_as_of_search_valid_time_predecessor_and_successor(mem_with_stub: Memory):
+    """Valid-time as-of (Task 8): A valid [2026-06-01, 2026-07-01) is superseded
+    by B valid [2026-07-01, ∞). `as_of` in June returns A not B; `as_of` in
+    August returns B not A; default recall returns B not A."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at="2026-06-01T00:00:00", invalid_at="2026-07-01T00:00:00"
+    )
+    mem_with_stub.store.update_validity(id_=b.id, valid_at="2026-07-01T00:00:00", invalid_at=None)
+
+    at_june = {r.id for r in mem_with_stub.search("prod db", limit=10, as_of="2026-06-15T00:00:00")}
+    assert a.id in at_june and b.id not in at_june
+
+    at_aug = {r.id for r in mem_with_stub.search("prod db", limit=10, as_of="2026-08-01T00:00:00")}
+    assert b.id in at_aug and a.id not in at_aug
+
+    default_ids = {r.id for r in mem_with_stub.search("prod db", limit=10)}
+    assert b.id in default_ids and a.id not in default_ids
+
+
+def test_store_search_as_of_overrides_now_gate(mem_with_stub: Memory):
+    """The store seams (vec + bm25) honor `as_of`: a record already closed as of
+    now still surfaces when `as_of` falls inside its validity interval."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at="2026-06-01T00:00:00", invalid_at="2026-07-01T00:00:00"
+    )
+    emb = [1.0, 0.0, 0.0, 0.0]
+    # default now-gate: closed → absent from both seams
+    assert a.id not in {r["id"] for r in mem_with_stub.store.search(emb, limit=10)}
+    assert a.id not in {r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10)}
+    # as_of inside the interval: present in both seams
+    assert a.id in {
+        r["id"] for r in mem_with_stub.store.search(emb, limit=10, as_of="2026-06-15T00:00:00")
+    }
+    assert a.id in {
+        r["id"]
+        for r in mem_with_stub.store.search_bm25("prod db", limit=10, as_of="2026-06-15T00:00:00")
+    }
+
+
+def test_fact_leg_drops_invalidated_record(mem_with_stub: Memory, monkeypatch):
+    """Fact-retrieval seam (search_ops `_fetch_fact_candidates`): a record whose
+    interval is closed as of now must NOT leak back into default hybrid recall
+    through its still-matching fact edge. `store.get` filters only
+    `deleted_at IS NULL` (no validity gate), so the fused fact candidate would
+    otherwise bypass the SQL validity filter the vec/bm25 legs enforce."""
+    monkeypatch.setenv("MEMO_FACT_RETRIEVAL_ENABLED", "1")
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+    a = mem_with_stub.save(
+        content="short operational note",
+        title="Capture graph design",
+        type_="fact",
+        extra={
+            "fact_edges": [
+                {"subject": "memo capture", "predicate": "records", "object": "graph facts"}
+            ]
+        },
+    )
+    # Sanity: the fact edge surfaces A in default hybrid recall while valid.
+    assert a.id in {r.id for r in mem_with_stub.search("graph facts", mode="hybrid", limit=5)}
+
+    # Close A's world-validity interval (contradiction-supersede leaves the
+    # index row + fact_edges in place, only stamps invalid_at).
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+
+    after = {r.id for r in mem_with_stub.search("graph facts", mode="hybrid", limit=5)}
+    assert a.id not in after
+
+
+def test_fact_leg_respects_as_of(mem_with_stub: Memory, monkeypatch):
+    """Fact-retrieval seam honors `as_of`: an as-of query in the past must not
+    surface a record (nor its fact edge) that was not yet valid at T."""
+    monkeypatch.setenv("MEMO_FACT_RETRIEVAL_ENABLED", "1")
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+    a = mem_with_stub.save(
+        content="short operational note",
+        title="Capture graph design",
+        type_="fact",
+        extra={
+            "fact_edges": [
+                {"subject": "memo capture", "predicate": "records", "object": "graph facts"}
+            ]
+        },
+    )
+    # Default recall (as_of=None): the fact leg surfaces A (valid now).
+    assert a.id in {r.id for r in mem_with_stub.search("graph facts", mode="hybrid", limit=5)}
+
+    # as_of before A (and its edge) were valid: the fact leg must stay blind to it.
+    past = {
+        r.id
+        for r in mem_with_stub.search(
+            "graph facts", mode="hybrid", limit=5, as_of="2000-01-01T00:00:00"
+        )
+    }
+    assert a.id not in past
+
+
+def test_passes_validity_gate_helper():
+    """Unit-test the shared drop predicate directly (mirrors the SQL
+    `_validity_filter` semantics for records materialized outside SQL)."""
+    from memo.memory.search_ops import _passes_validity_gate
+
+    open_row = {
+        "created": "2026-01-01T00:00:00",
+        "valid_at": "2026-01-01T00:00:00",
+        "invalid_at": None,
+    }
+    closed_past = {**open_row, "invalid_at": "2000-01-01T00:00:00"}
+    closed_future = {**open_row, "invalid_at": "2999-01-01T00:00:00"}
+
+    # default now-gate
+    assert _passes_validity_gate(open_row, None)
+    assert not _passes_validity_gate(closed_past, None)
+    assert _passes_validity_gate(closed_future, None)
+
+    # as_of: half-open interval [valid_at, invalid_at)
+    interval = {
+        "created": "2026-06-01T00:00:00",
+        "valid_at": "2026-06-01T00:00:00",
+        "invalid_at": "2026-07-01T00:00:00",
+    }
+    assert _passes_validity_gate(interval, "2026-06-15T00:00:00")  # inside
+    assert not _passes_validity_gate(interval, "2026-08-01T00:00:00")  # after close
+    assert not _passes_validity_gate(interval, "2026-05-01T00:00:00")  # before valid
+    # bare date is normalized (end-of-day) like the SQL path — inside interval
+    assert _passes_validity_gate(interval, "2026-06-15")
+
+
+def test_cli_search_forwards_as_of(tmp_path):
+    """`memo search --as-of T` threads T into Memory.search(as_of=T)."""
+    from unittest.mock import MagicMock, patch
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    hit = MagicMock()
+    hit.to_dict.return_value = {"id": "abc123", "title": "A", "type": "fact", "score": 0.9}
+    mem = MagicMock()
+    mem.search.return_value = [hit]
+
+    env = {
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+    }
+    with patch("memo.cli_search._get_memory", return_value=mem):
+        result = CliRunner().invoke(
+            cli,
+            ["search", "prod db", "--as-of", "2026-06-15T00:00:00", "--json"],
+            env=env,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert mem.search.call_args.kwargs["as_of"] == "2026-06-15T00:00:00"
+
+
 def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
     seen_inputs: list[str] = []
 

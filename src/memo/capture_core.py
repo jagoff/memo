@@ -92,6 +92,7 @@ EXTRACT:
 - Discoveries / non-obvious facts ("X turns out to require Y")
 - Commands / config that worked ("to do X, run Y") — type "procedure"
 - Recurring mistakes with the wrong and the right way ("doing X breaks Y; do Z instead") — type "failure_pattern"
+- State changes as ONE insight: when the turn shows a switch ("switched from X to Y", "moved off X", "now using Y instead of X"), record it as one memory that names both the old and new state — never two separate facts.
 
 DO NOT extract:
 - Mid-process status updates ("checking…", "looking at…", "let me…")
@@ -99,11 +100,12 @@ DO NOT extract:
 - Code snippets shown but not adopted
 - Generic tutorials, documentation summaries
 - Pleasantries, conversational filler
+- One-off or volatile facts: transient task status, values that change every session, and generic language/framework knowledge the assistant already knows.
 
 For each insight, output a JSON object with:
 - "title": ≤80 chars, no period at end, descriptive of the insight
 - "type": one of "decision", "bug", "preference", "fact", "note", "procedure", "failure_pattern"
-- "body": 2-5 sentences. INCLUDE: what the insight is, why it matters, and how to apply it. Be specific (file paths, numbers, model names) when relevant.
+- "body": 2-5 sentences. INCLUDE: what the insight is, why it matters, and how to apply it. Preserve proper nouns, file paths, version/model names, and numbers EXACTLY as written — never paraphrase or round them.
   For "failure_pattern" ONLY, structure the body as four labelled lines:
   "Pattern: <the mistake>", "Context: <when it happens>", "Wrong: <what was done>", "Right: <what to do instead>".
 - "tags": 3-6 lowercase tags (project, technology, domain)

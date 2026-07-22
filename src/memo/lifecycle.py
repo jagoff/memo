@@ -360,6 +360,103 @@ class LifecycleManager:
 
         return True
 
+    def invalidate_in_place(self, *, loser_id: str, winner_id: str, invalid_at: str) -> bool:
+        """Close a superseded memory's validity interval WITHOUT archiving it.
+
+        Zep-faithful "invalidate, don't delete": unlike `archive_memory`, the
+        loser's `.md` stays in place and its index row stays live — only
+        `invalid_at` is closed (at the SUCCESSOR's `valid_at`, passed in as
+        `invalid_at`, NOT scan-time `now()`). Default recall filters it out
+        (`invalid_at IS NOT NULL`) while `--as-of T` can still resurface it.
+
+        Writes three coherent places so index and canonical markdown agree:
+        1. `store.update_validity` closes the interval in the index, preserving
+           the loser's own `valid_at` (the column is excluded from upsert's
+           ON CONFLICT set, so only this dedicated statement touches it).
+        2. `store.update_meta` stamps `extra.superseded_by` into the index so a
+           pre-reindex `get()` already carries the provenance.
+        3. The canonical frontmatter gains `invalid_at:` + `extra.superseded_by`
+           (same mechanism as `archive_memory`'s stamp, but no move/delete) so a
+           `reindex --rebuild` from disk preserves the closed interval.
+
+        Returns True on success, False if the loser is already gone.
+        """
+        rec = self.memory.get(loser_id)
+        if not rec:
+            return False
+
+        # Clamp so the closed interval can never be inverted/empty. With
+        # MEMO_BELIEF_COMPETING the winner is chosen by trust, not recency
+        # (belief.py), so it can be OLDER than the loser — making the passed-in
+        # invalid_at (the winner's valid_at) PRECEDE the loser's own start. An
+        # invalid_at < valid_at yields an interval no as-of query can satisfy
+        # (`valid_at <= T < invalid_at` is empty), silently orphaning the loser.
+        # Floor invalid_at at the loser's own start (== max(loser start,
+        # invalid_at)): an older-winner supersede then collapses to a zero-length
+        # interval — superseded from its own start, never independently valid, so
+        # correctly hidden from every as-of — instead of an inverted one. Compare
+        # as tz-aware INSTANTS (stored ts are local-offset; a naive string
+        # compare could misorder equal instants written at different offsets),
+        # then emit the loser's original stored string.
+        from memo.memory.search_ops import _parse_search_ts
+
+        loser_start = rec.valid_at or rec.created
+        start_dt = _parse_search_ts(loser_start)
+        invalid_dt = _parse_search_ts(invalid_at)
+        if start_dt is not None and invalid_dt is not None and invalid_dt < start_dt:
+            invalid_at = loser_start
+
+        # 1. Close the interval in the index — keep the loser's own valid_at.
+        self.memory.store.update_validity(
+            id_=loser_id, valid_at=rec.valid_at, invalid_at=invalid_at
+        )
+
+        # 2. Stamp supersede provenance into the index extra (metadata-only
+        #    patch — no re-embed; body/vector preserved).
+        extra = dict(rec.extra or {})
+        extra["superseded_by"] = winner_id
+        self.memory.store.update_meta(
+            id_=loser_id,
+            title=rec.title,
+            type_=rec.type,
+            tags=rec.tags,
+            updated=rec.updated,
+            extra=extra,
+        )
+
+        # 3. Mirror to the canonical markdown so the closed interval + provenance
+        #    survive a reindex --rebuild from disk. Best-effort: a failed write
+        #    leaves the index authoritative and never crashes maintain.
+        source_path = self.memory._resolve_existing(rec.path)
+        if source_path.is_file():
+            try:
+                import frontmatter
+
+                post = frontmatter.loads(source_path.read_text(encoding="utf-8"))
+                post["invalid_at"] = invalid_at
+                _raw = post.get("extra")
+                fm_extra: dict[str, object] = dict(_raw) if isinstance(_raw, dict) else {}
+                fm_extra["superseded_by"] = winner_id
+                post["extra"] = fm_extra
+                source_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+            except Exception as exc:
+                _log.warning(
+                    "invalidate_in_place: frontmatter mirror failed for %s: %s",
+                    loser_id,
+                    exc,
+                )
+
+        self._actions_log.append(
+            LifecycleAction(
+                memory_id=loser_id,
+                action="invalidate",
+                reason=f"superseded by {winner_id}",
+                timestamp=datetime.now(UTC).isoformat(),
+            )
+        )
+
+        return True
+
     def apply_lifecycle_rules(
         self,
         dry_run: bool = False,

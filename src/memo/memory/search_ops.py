@@ -31,6 +31,7 @@ from memo.memory.record import (
     record_from_row,
 )
 from memo.perf import timer
+from memo.store.bm25_queries import _normalize_as_of
 from memo.tiers import REFERENCE_TYPES, SENSITIVE_TYPES
 
 if TYPE_CHECKING:
@@ -57,6 +58,43 @@ def _parse_search_ts(value: str | None) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
+
+
+def _passes_validity_gate(row: dict[str, Any], as_of: str | None) -> bool:
+    """Python mirror of the SQL bi-temporal validity gate (`_validity_filter` in
+    `store/bm25_queries.py`) for candidate legs that materialize records OUTSIDE
+    the SQL predicate — fact-retrieval and hype-fold both fetch via `store.get`,
+    which filters only `deleted_at IS NULL` (no validity gate). Without this, a
+    superseded record (interval closed via `invalid_at`, index row + fact_edges
+    kept) leaks back into recall through those legs, defeating the feature.
+
+    Semantics match the SQL predicate exactly:
+      - default (`as_of` None): drop a row whose interval is CLOSED as of now
+        (`invalid_at` set and already `<= now`).
+      - `as_of=T`: keep iff `COALESCE(valid_at, created) <= T` AND the interval
+        is still open at T (`invalid_at IS NULL OR invalid_at > T`) — half-open.
+
+    Timezone consistency with the SQL legs (made local-offset-correct in
+    36dc5904): the `as_of` bound is normalized through the SAME `_normalize_as_of`
+    (bare-date → end-of-day, offset-preserving) the SQL path binds; both sides
+    are then parsed to timezone-AWARE UTC datetimes and compared as INSTANTS —
+    robust to offset/precision skew, never a lexicographic TEXT compare that
+    could disagree with a different-offset bound.
+    """
+    invalid_dt = _parse_search_ts(row.get("invalid_at"))
+    if as_of is None:
+        if invalid_dt is None:
+            return True
+        return invalid_dt > datetime.now(UTC)
+    bound = _parse_search_ts(_normalize_as_of(as_of))
+    if bound is None:
+        # Malformed as_of — mirror the SQL fallback's leniency: never drop on a
+        # boundary we can't parse (and never crash).
+        return True
+    valid_start = _parse_search_ts(row.get("valid_at")) or _parse_search_ts(row.get("created"))
+    if valid_start is not None and valid_start > bound:
+        return False
+    return invalid_dt is None or invalid_dt > bound
 
 
 def _compact_fact_edge(fact: dict[str, Any]) -> dict[str, Any]:
@@ -106,6 +144,7 @@ class _SearchOpsMixin(_MemoryBase):
         date_from: str | None = None,
         date_to: str | None = None,
         quality_rerank: bool | None = None,
+        as_of: str | None = None,
         _trace: list[dict[str, Any]] | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
@@ -142,6 +181,11 @@ class _SearchOpsMixin(_MemoryBase):
             quality_rerank: Explicit opt-in for quality-aware reranking on
                 consumer-facing search paths. Ambient recall leaves this off
                 even when the feature flag is enabled.
+            as_of: ISO date/datetime for valid-time recall. When set, the
+                candidate seams filter to records whose world-validity interval
+                CONTAINS `as_of` (`COALESCE(valid_at, created) <= as_of` and not
+                yet invalidated at `as_of`), overriding the default now-gate — so
+                a since-superseded fact resurfaces as it stood at that time.
         """
 
         def _add_trace(stage: str, **data: Any) -> None:
@@ -163,7 +207,7 @@ class _SearchOpsMixin(_MemoryBase):
 
         if mode == "bm25":
             rows = self.store.search_bm25(
-                query, limit=limit, type_=type_, exclude_types=exclude_types
+                query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
             _add_trace(
                 "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
@@ -178,13 +222,14 @@ class _SearchOpsMixin(_MemoryBase):
                 type_=type_,
                 exclude_types=exclude_types,
                 field_boost="exact",
+                as_of=as_of,
             )
             _add_trace(
                 "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
             )
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
-                query, limit=limit, type_=type_, exclude_types=exclude_types
+                query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
             _add_trace(
                 "candidate_generation", mode=mode, fuzzy_count=len(rows), output_count=len(rows)
@@ -203,6 +248,7 @@ class _SearchOpsMixin(_MemoryBase):
                 date_from=date_from,
                 date_to=date_to,
                 exclude_tags=exclude_tags,
+                as_of=as_of,
             )
             _add_trace(
                 "candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows)
@@ -215,7 +261,7 @@ class _SearchOpsMixin(_MemoryBase):
             if flag_bool("MEMO_HYPE_ENABLED"):
                 before_hype = len(rows)
                 rows = self._hype_fold_candidates(
-                    rows, emb, limit, type_=type_, exclude_types=exclude_types
+                    rows, emb, limit, type_=type_, exclude_types=exclude_types, as_of=as_of
                 )
                 variant_warning = self._hype_variant_mismatch_warning()
                 _add_trace(
@@ -255,6 +301,7 @@ class _SearchOpsMixin(_MemoryBase):
                     date_from=date_from,
                     date_to=date_to,
                     exclude_tags=exclude_tags,
+                    as_of=as_of,
                 )
             except Exception as exc:
                 _log.warning(
@@ -286,7 +333,7 @@ class _SearchOpsMixin(_MemoryBase):
                         input_k = max(limit + 5, 15)
                     # else: medium diversity → keep input_k unchanged
             bm_hits = self.store.search_bm25(
-                query, limit=k_each, type_=type_, exclude_types=exclude_types
+                query, limit=k_each, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
             exact_hits = self.store.search_bm25(
                 query,
@@ -294,6 +341,7 @@ class _SearchOpsMixin(_MemoryBase):
                 type_=type_,
                 exclude_types=exclude_types,
                 field_boost="exact",
+                as_of=as_of,
             )
 
             fact_hits = (
@@ -303,6 +351,7 @@ class _SearchOpsMixin(_MemoryBase):
                     type_=type_,
                     exclude_types=exclude_types,
                     exclude_tags=exclude_tags,
+                    as_of=as_of,
                 )
                 if flag_bool("MEMO_FACT_RETRIEVAL_ENABLED")
                 else []
@@ -724,6 +773,7 @@ class _SearchOpsMixin(_MemoryBase):
         *,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         """Max-fold HyPE question-space candidates into the vec doc hits.
 
@@ -756,6 +806,11 @@ class _SearchOpsMixin(_MemoryBase):
             def _fetch_meta_filtered(memory_id: str) -> dict[str, Any] | None:
                 row: dict[str, Any] | None = self.store.get(memory_id)
                 if row is None:
+                    return None
+                # Same validity gate the vec doc leg applies in SQL — a
+                # fold-appended candidate is materialized straight from
+                # `store.get` (deleted_at-only), so re-check it here.
+                if not _passes_validity_gate(row, as_of):
                     return None
                 if type_ and row.get("type") != type_:
                     return None
@@ -817,9 +872,12 @@ class _SearchOpsMixin(_MemoryBase):
         type_: str | None = None,
         exclude_types: set[str] | None = None,
         exclude_tags: set[str] | None = None,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
-            facts = self.fact_edges.search_text(query, limit=limit * 3)
+            # `as_of` time-travels the fact-edge selection (its own bi-temporal
+            # columns), mirroring how the vec/bm25 legs thread it into their SQL.
+            facts = self.fact_edges.search_text(query, as_of=as_of, limit=limit * 3)
         except Exception as exc:
             _log.debug("fact retrieval skipped: %s", exc)
             return []
@@ -831,6 +889,11 @@ class _SearchOpsMixin(_MemoryBase):
                 continue
             row = self.store.get(rid)
             if row is None:
+                continue
+            # `store.get` filters only `deleted_at IS NULL`; re-apply the SAME
+            # validity gate the SQL legs enforce so a superseded (or not-yet /
+            # no-longer valid at `as_of`) source record can't leak in here.
+            if not _passes_validity_gate(row, as_of):
                 continue
             if type_ and row.get("type") != type_:
                 continue

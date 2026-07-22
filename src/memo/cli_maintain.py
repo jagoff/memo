@@ -131,12 +131,22 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     return id_a, id_b
 
 
-def _undo_targets(receipt: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """(archived_ids, soft_forgotten_ids) recorded in a maintain receipt."""
+def _undo_targets(receipt: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+    """(archived_ids, soft_forgotten_ids, invalidated_ids) recorded in a receipt.
+
+    `invalidated_ids` are contradiction losers closed in place by
+    `invalidate_in_place` (action='invalidate') — the loser's .md was never
+    moved to inactive/, so undo REOPENS its interval instead of restoring a
+    file (see `_reopen_invalidated`)."""
     archived: list[str] = []
+    invalidated: list[str] = []
     for s in receipt.get("superseded", []):
-        if isinstance(s, dict) and s.get("action") == "archive" and s.get("older"):
+        if not (isinstance(s, dict) and s.get("older")):
+            continue
+        if s.get("action") == "archive":
             archived.append(s["older"])
+        elif s.get("action") == "invalidate":
+            invalidated.append(s["older"])
     for m in receipt.get("merged", []):
         if isinstance(m, dict):
             archived.extend(m.get("archived_ids") or [])
@@ -150,7 +160,7 @@ def _undo_targets(receipt: dict[str, Any]) -> tuple[list[str], list[str]]:
     for f in receipt.get("forgotten", []):
         if isinstance(f, dict) and f.get("id"):
             forgotten.append(f["id"])
-    return archived, forgotten
+    return archived, forgotten, invalidated
 
 
 def _quality_compact_rollback_ids(receipt: dict[str, Any]) -> list[str]:
@@ -281,6 +291,55 @@ def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[
                 shutil.move(str(p), str(dest))
             restored.append(fid)
     return restored, sorted(wanted - set(restored))
+
+
+def _reopen_invalidated(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[str], list[str]]:
+    """Reverse `invalidate_in_place`: reopen a contradiction loser's interval.
+
+    The loser was NOT moved to inactive/ (its .md stayed in place with a closed
+    `invalid_at` + `extra.superseded_by`), so `_restore_archived` can't see it.
+    Undo mirrors the three writes `invalidate_in_place` made — clear `invalid_at`
+    and drop `superseded_by` in BOTH the index (update_validity + update_meta)
+    AND the canonical markdown — so the loser returns to default recall and a
+    later `reindex --rebuild` from disk keeps the interval open. Returns
+    (reopened_ids, missing_ids)."""
+    import frontmatter
+
+    wanted = set(ids)
+    reopened: list[str] = []
+    for id_ in ids:
+        rec = mem.get(id_)
+        if rec is None:
+            continue
+        if not dry_run:
+            # 1. Reopen the interval in the index — keep the loser's own valid_at.
+            mem.store.update_validity(id_=id_, valid_at=rec.valid_at, invalid_at=None)
+            # 2. Drop the supersede provenance from the index extra.
+            extra = dict(rec.extra or {})
+            extra.pop("superseded_by", None)
+            mem.store.update_meta(
+                id_=id_,
+                title=rec.title,
+                type_=rec.type,
+                tags=rec.tags,
+                updated=rec.updated,
+                extra=extra,
+            )
+            # 3. Mirror to the canonical markdown so a reindex --rebuild agrees.
+            source_path = mem._resolve_existing(rec.path)
+            if source_path.is_file():
+                try:
+                    post = frontmatter.loads(source_path.read_text(encoding="utf-8"))
+                    post.metadata.pop("invalid_at", None)
+                    raw = post.metadata.get("extra")
+                    if isinstance(raw, dict):
+                        raw.pop("superseded_by", None)
+                        post.metadata["extra"] = raw
+                    source_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+                except Exception as exc:
+                    _log.warning("maintain undo: frontmatter reopen failed for %s: %s", id_, exc)
+        reopened.append(id_)
+    return reopened, sorted(wanted - set(reopened))
 
 
 def _vacuum_soft_deleted(
@@ -544,15 +603,23 @@ def maintain_cmd(
                     continue
                 assert decision.action == ARCHIVE
                 target = decision.dominated_id
-                action = "delete" if hard_delete else "archive"
+                action = "delete" if hard_delete else "invalidate"
                 if not dry_run:
-                    ok = (
-                        mem.delete(target)
-                        if hard_delete
-                        else mem.lifecycle.archive_memory(
-                            target, superseded_by=decision.dominant_id
+                    if hard_delete:
+                        ok = mem.delete(target)
+                    else:
+                        # Invalidate-don't-delete (Zep-faithful): close the
+                        # loser's interval at the SUCCESSOR's valid_at (not
+                        # scan-time now()) and keep its .md + index row live.
+                        # COALESCE to the winner's created for legacy rows saved
+                        # before valid_at existed.
+                        winner = mem.get(decision.dominant_id)
+                        winner_valid_at = (winner.valid_at or winner.created) if winner else None
+                        ok = winner_valid_at is not None and mem.lifecycle.invalidate_in_place(
+                            loser_id=target,
+                            winner_id=decision.dominant_id,
+                            invalid_at=winner_valid_at,
                         )
-                    )
                     if not ok:
                         # Mutation failed (e.g. target vanished concurrently):
                         # pair stays open — don't record it as superseded, or
@@ -810,8 +877,10 @@ def maintain_undo_cmd(run_stamp: str | None, dry_run: bool, as_json: bool) -> No
         console.print(f"[red]no readable receipt at {receipt_path}: {exc}[/red]")
         raise SystemExit(1) from exc
     mem = _get_memory(cfg)
-    archived_ids, forgotten_ids = _undo_targets(receipt)
+    archived_ids, forgotten_ids, invalidated_ids = _undo_targets(receipt)
     restored, missing = _restore_archived(mem, archived_ids, dry_run=dry_run)
+    reopened, reopen_missing = _reopen_invalidated(mem, invalidated_ids, dry_run=dry_run)
+    missing = sorted(set(missing) | set(reopen_missing))
     unforgotten: list[str] = []
     for fid in forgotten_ids:
         if dry_run or mem.unforget(fid) is not None:
@@ -822,6 +891,7 @@ def maintain_undo_cmd(run_stamp: str | None, dry_run: bool, as_json: bool) -> No
         "dry_run": dry_run,
         "source_receipt": str(receipt_path),
         "restored": restored,
+        "reopened": reopened,
         "unforgotten": unforgotten,
         "missing": missing,
     }
@@ -839,7 +909,7 @@ def maintain_undo_cmd(run_stamp: str | None, dry_run: bool, as_json: bool) -> No
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
     console.print(
         f"{tag}[bold]memo maintain undo[/bold] — restored {len(restored)}, "
-        f"unforgotten {len(unforgotten)}, missing {len(missing)}"
+        f"reopened {len(reopened)}, unforgotten {len(unforgotten)}, missing {len(missing)}"
     )
 
 

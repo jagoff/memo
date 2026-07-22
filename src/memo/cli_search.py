@@ -102,6 +102,14 @@ def _default_search_json_body_chars() -> int:
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--explain", is_flag=True, help="Include per-hit ranking explanation details.")
 @click.option(
+    "--as-of",
+    "as_of",
+    default=None,
+    help="Valid-time recall: an ISO date (YYYY-MM-DD) or full timestamp. Returns "
+    "records as their world-validity stood at that time — a since-superseded "
+    "fact resurfaces — overriding the default currently-valid gate.",
+)
+@click.option(
     "--source",
     default=None,
     help="Identify the calling layer (synapse / memflow / …) so the consult is "
@@ -116,6 +124,7 @@ def search(
     body_chars: int | None,
     as_json: bool,
     explain: bool,
+    as_of: str | None,
     source: str | None,
 ) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
@@ -150,6 +159,7 @@ def search(
             mode=mode,
             disable_reranker=disable_reranker,
             quality_rerank=True,
+            as_of=as_of,
         )
         hits = envelope["hits"]
         trace = envelope.get("trace") or []
@@ -162,6 +172,7 @@ def search(
             mode=mode,
             disable_reranker=disable_reranker,
             quality_rerank=True,
+            as_of=as_of,
         )
         explanations = {}
     hit_dicts = _compact_hit_dicts([h.to_dict() for h in hits], body_chars)

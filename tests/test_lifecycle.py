@@ -182,6 +182,120 @@ def test_archive_memory(lifecycle_manager, mock_memory):
     assert inactive_dir.is_dir()
 
 
+def test_invalidate_in_place_closes_interval(lifecycle_manager, mock_memory):
+    """Contradiction-supersede invalidates the loser in place (Zep-faithful).
+
+    The interval closes at the SUCCESSOR's valid_at (not scan-time now); the
+    loser's `.md` and index row stay live; provenance is stamped so recall can
+    filter it out today yet `--as-of T` can still resurface it.
+    """
+    loser = mock_memory.save(
+        content="prod db is postgres",
+        title="DB (old)",
+        type_="fact",
+        valid_at="2026-06-01T00:00:00",
+    )
+    winner = mock_memory.save(
+        content="prod db is mysql",
+        title="DB (new)",
+        type_="fact",
+        valid_at="2026-07-01T00:00:00",
+    )
+
+    ok = lifecycle_manager.invalidate_in_place(
+        loser_id=loser.id,
+        winner_id=winner.id,
+        invalid_at=winner.valid_at,
+    )
+    assert ok is True
+
+    ga = mock_memory.get(loser.id)
+    assert ga is not None  # still present — invalidate, don't delete
+    assert ga.invalid_at == "2026-07-01T00:00:00"  # closed at the successor's start
+    assert ga.valid_at == "2026-06-01T00:00:00"  # loser's own start preserved
+    assert ga.extra.get("superseded_by") == winner.id  # provenance lives in the index
+
+    # `.md` stays put — NOT moved to inactive/ — with a mirrored invalid_at so a
+    # `reindex --rebuild` from disk preserves the closed interval.
+    assert "inactive" not in ga.path
+    md_path = mock_memory.cfg.memory_dir / ga.path
+    assert md_path.is_file()
+    md_text = md_path.read_text(encoding="utf-8")
+    assert "invalid_at:" in md_text
+
+
+def test_invalidate_in_place_clamps_inverted_interval(lifecycle_manager, mock_memory):
+    """An OLDER winner must not invert the loser's interval (Bug A).
+
+    With MEMO_BELIEF_COMPETING the winner is chosen by trust, not recency, so
+    the winner's valid_at can PRECEDE the loser's. Closing the loser at that
+    earlier instant would make `invalid_at < valid_at` — an interval no as-of
+    query can satisfy (`valid_at <= T < invalid_at` is empty), orphaning the
+    loser entirely. The clamp floors invalid_at at the loser's own start, so the
+    older-winner case collapses to a zero-length interval, never an inverted one.
+    """
+    loser = mock_memory.save(
+        content="prod db is mysql",
+        title="DB (loser, newer)",
+        type_="fact",
+        valid_at="2026-07-01T00:00:00",
+    )
+    winner = mock_memory.save(
+        content="prod db is postgres",
+        title="DB (winner, OLDER)",
+        type_="fact",
+        valid_at="2026-06-01T00:00:00",
+    )
+
+    ok = lifecycle_manager.invalidate_in_place(
+        loser_id=loser.id,
+        winner_id=winner.id,
+        invalid_at=winner.valid_at,  # 2026-06-01 — EARLIER than the loser's 2026-07-01
+    )
+    assert ok is True
+
+    ga = mock_memory.get(loser.id)
+    assert ga is not None
+    # No inversion: floored at the loser's own start → zero-length interval.
+    assert ga.invalid_at is not None
+    assert ga.invalid_at >= ga.valid_at
+    assert ga.invalid_at == loser.valid_at
+
+
+def test_invalidate_in_place_returns_false_when_loser_gone(lifecycle_manager):
+    """A loser that no longer exists is a clean no-op (False), never a crash."""
+    ok = lifecycle_manager.invalidate_in_place(
+        loser_id="deadbeef" * 4,
+        winner_id="cafef00d" * 4,
+        invalid_at="2026-07-01T00:00:00",
+    )
+    assert ok is False
+
+
+def test_invalidate_in_place_frontmatter_mirror_failure_is_non_fatal(
+    lifecycle_manager, mock_memory, monkeypatch
+):
+    """A failed markdown mirror leaves the index authoritative and still returns
+    True — it must not crash the maintain pass."""
+    import frontmatter
+
+    loser = mock_memory.save(content="prod db is postgres", title="old", type_="fact")
+    winner = mock_memory.save(content="prod db is mysql", title="new", type_="fact")
+
+    def boom(*a, **k):
+        raise RuntimeError("yaml dump failed")
+
+    # dumps runs only inside the mirror try-block (index writes precede it).
+    monkeypatch.setattr(frontmatter, "dumps", boom)
+
+    ok = lifecycle_manager.invalidate_in_place(
+        loser_id=loser.id, winner_id=winner.id, invalid_at=winner.valid_at
+    )
+    assert ok is True
+    # Index still closed the interval even though the disk mirror failed.
+    assert mock_memory.get(loser.id).invalid_at == winner.valid_at
+
+
 def test_apply_lifecycle_rules_dry_run(lifecycle_manager, mock_memory):
     """Test applying lifecycle rules in dry-run mode."""
     # Create test memorias

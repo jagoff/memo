@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS meta (
     created     TEXT NOT NULL,
     updated     TEXT NOT NULL,
     body_hash   TEXT NOT NULL,
-    extra_json  TEXT
+    extra_json  TEXT,
+    valid_at    TEXT,
+    invalid_at  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_meta_type    ON meta(type);
@@ -422,6 +424,31 @@ class _SchemaMixin(_StoreBase):
                 self._conn.execute("ALTER TABLE meta ADD COLUMN verified_at INTEGER")
             except Exception as e:
                 _log.debug("schema migration meta.verified_at failed: %s", e)
+
+        # Inline migration (T1): record-level bi-temporal validity. valid_at =
+        # world-validity start (defaults to created on save); invalid_at =
+        # world-validity end (NULL = currently true, closed at successor's
+        # valid_at on contradiction-supersede). Distinct from created/updated
+        # (learned-time). CREATE IF NOT EXISTS skips the existing meta table so
+        # pre-existing DBs need these added here. Idempotent.
+        if "valid_at" not in mcols:
+            try:
+                self._conn.execute("ALTER TABLE meta ADD COLUMN valid_at TEXT")
+            except Exception as e:  # pragma: no cover - defensive: sqlite ALTER failure
+                _log.debug("schema migration meta.valid_at failed: %s", e)
+        if "invalid_at" not in mcols:
+            try:
+                self._conn.execute("ALTER TABLE meta ADD COLUMN invalid_at TEXT")
+            except Exception as e:  # pragma: no cover - defensive: sqlite ALTER failure
+                _log.debug("schema migration meta.invalid_at failed: %s", e)
+        # Partial index keeps the default-recall "currently valid" filter cheap.
+        try:
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_meta_invalid_at "
+                "ON meta(invalid_at) WHERE invalid_at IS NOT NULL"
+            )
+        except Exception as e:  # pragma: no cover - defensive: sqlite CREATE INDEX failure
+            _log.debug("schema migration idx_meta_invalid_at failed: %s", e)
 
         # Ensure sessions table exists (session pattern)
         self._conn.execute(

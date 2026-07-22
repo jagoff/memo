@@ -45,6 +45,17 @@ def _put_for_delete(store: VecStore, id_: str) -> None:
     )
 
 
+def test_meta_has_valid_time_columns(store: VecStore) -> None:
+    cols = {row["name"] for row in store._conn.execute("PRAGMA table_info(meta)").fetchall()}
+    assert "valid_at" in cols
+    assert "invalid_at" in cols
+
+
+def test_meta_has_invalid_at_partial_index(store: VecStore) -> None:
+    idx = {row["name"] for row in store._conn.execute("PRAGMA index_list(meta)").fetchall()}
+    assert "idx_meta_invalid_at" in idx
+
+
 def test_delete_tantivy_document_commits_sidecar_delete(store: VecStore, monkeypatch) -> None:
     tantivy = MagicMock()
     monkeypatch.setattr(store, "_get_tantivy", MagicMock(return_value=tantivy))
