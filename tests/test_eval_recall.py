@@ -349,6 +349,17 @@ def test_graph_ab_compare_reports_deltas() -> None:
     assert eval_recall.graph_ab_summary(comparison)["precision_delta_mean"] == 0.2
 
 
+def test_graph_ab_configs_pin_projection_for_a_causal_comparison() -> None:
+    off, on = eval_recall.graph_ab_configs(
+        [eval_recall.Cfg(name="A", mode="vec", floor=0.6, exclude_archived=False)]
+    )
+
+    assert off[0].flag_overrides["MEMO_GRAPH_PROJECTION_ENABLED"] == "0"
+    assert off[0].flag_overrides["MEMO_GRAPH_SIGNAL_ENABLED"] == "0"
+    assert on[0].flag_overrides["MEMO_GRAPH_PROJECTION_ENABLED"] == "1"
+    assert on[0].flag_overrides["MEMO_GRAPH_SIGNAL_ENABLED"] == "1"
+
+
 def test_check_gate_passes_when_metrics_hold():
     rows = _rows((0.6, 0.1))
     res = eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1})

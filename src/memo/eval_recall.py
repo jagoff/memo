@@ -849,6 +849,7 @@ def graph_ab_configs(configs: list[Cfg]) -> tuple[list[Cfg], list[Cfg]]:
                 name=f"{cfg.name} graph-off",
                 flag_overrides={
                     **base_flags,
+                    "MEMO_GRAPH_PROJECTION_ENABLED": "0",
                     "MEMO_GRAPH_SIGNAL_ENABLED": "0",
                     "MEMO_GRAPH_REASON_ENABLED": "0",
                 },
@@ -860,6 +861,7 @@ def graph_ab_configs(configs: list[Cfg]) -> tuple[list[Cfg], list[Cfg]]:
                 name=f"{cfg.name} graph-on",
                 flag_overrides={
                     **base_flags,
+                    "MEMO_GRAPH_PROJECTION_ENABLED": "1",
                     "MEMO_GRAPH_SIGNAL_ENABLED": "1",
                     "MEMO_GRAPH_REASON_ENABLED": "1",
                     "MEMO_GRAPH_HUB_SUPPRESSION": "1",
