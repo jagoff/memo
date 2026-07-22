@@ -158,18 +158,6 @@ def test_config_owned_typed_specs_stay_out_of_registry() -> None:
         assert flags.unknown_memo_vars(env={spec.name: "x"}) == []
 
 
-def test_inert_secret_knobs_are_marked_in_help() -> None:
-    """MEMO_CAPTURE_DETECT_SECRETS / MEMO_SECRET_DAEMON_CACHE_* have no
-    consumer; their help must say so until they are actually wired (a user
-    must not believe capture routes secrets to encrypted storage)."""
-    for name in (
-        "MEMO_CAPTURE_DETECT_SECRETS",
-        "MEMO_SECRET_DAEMON_CACHE_MAX",
-        "MEMO_SECRET_DAEMON_CACHE_TTL_SECONDS",
-    ):
-        assert "INERT" in flags.REGISTRY[name].help, f"{name} help must mark it inert"
-
-
 def test_owned_config_vars_not_flagged_unknown() -> None:
     env = {
         "MEMO_CONFIG_DIR": "/tmp/memo-config",

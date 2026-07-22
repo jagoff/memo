@@ -261,7 +261,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "memflow",
         "cache",
-        "Authoritative backing store the cache fronts: memflow (flow_* shared consciousness) | vault (remote vault path) | none. Only consulted when MEMO_CACHE_MODE != off.",
+        "Authoritative backing store the cache fronts: memflow (flow_* shared consciousness) | none. Only consulted when MEMO_CACHE_MODE != off.",
     ),
     # misc behavior
     _spec(
@@ -948,16 +948,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "regression set, reverted when a later night regresses.",
     ),
     _spec(
-        "MEMO_GRADUATION_CONTROLLER_ENABLED",
-        "bool",
-        False,
-        "misc",
-        "Enable the nightly graduation controller inside `memo dream run`. OFF by "
-        "default. Shadow-evaluates the registry of dark flags against the eval corpus, "
-        "and flips a candidate ON (via the tuned overlay) only after MEMO_* env vars "
-        "leave it unset AND it wins K consecutive nights; auto-reverts on regression.",
-    ),
-    _spec(
         "MEMO_DREAM_TUNE_MIN_COHORT",
         "int",
         20,
@@ -1495,40 +1485,6 @@ SPECS: tuple[FlagSpec, ...] = (
         False,
         "secret",
         "Explicitly opt in to encrypted local secret storage (passwords, tokens, SSH keys).",
-    ),
-    _spec(
-        "MEMO_CAPTURE_DETECT_SECRETS",
-        "bool",
-        False,
-        "secret",
-        "INERT/unimplemented — no consumer reads this flag; setting it does NOT "
-        "make ambient capture detect secrets or route them to encrypted storage. "
-        "Kept registered so set values still validate.",
-    ),
-    _spec(
-        "MEMO_DETECT_SECRETS_LLM",
-        "bool",
-        True,
-        "secret",
-        "Use LLM to confirm regex-based secret detection.",
-    ),
-    _spec(
-        "MEMO_SECRET_DAEMON_CACHE_MAX",
-        "int",
-        100,
-        "secret",
-        "INERT/unimplemented — no daemon secret cache reads this yet. "
-        "Kept registered so set values still validate.",
-        min_val=1,
-    ),
-    _spec(
-        "MEMO_SECRET_DAEMON_CACHE_TTL_SECONDS",
-        "int",
-        3600,
-        "secret",
-        "INERT/unimplemented — no daemon secret cache reads this yet. "
-        "Kept registered so set values still validate.",
-        min_val=60,
     ),
     # proactive engine (statusline badge, urgent push, `memo digest`)
     _spec(

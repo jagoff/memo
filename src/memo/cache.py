@@ -109,12 +109,6 @@ class CacheBackend(Protocol):
         """Read-through: fetch candidate memories from the backing store."""
         ...
 
-    def has_current(self, id_: str, body_hash: str) -> bool:
-        """Coherence check: does the backing store already hold this exact
-        (id, body_hash)? Used to decide if a clean local copy can be dropped
-        without a flush."""
-        ...
-
 
 def _days_since(ts_raw: str | None, *, fallback: str | None = None) -> int | None:
     """Whole days since an ISO timestamp (or `fallback` if the first is None).

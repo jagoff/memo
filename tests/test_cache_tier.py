@@ -32,9 +32,6 @@ class FakeBackend:
     def fetch(self, query, *, limit=10):
         return list(self._fetch)
 
-    def has_current(self, id_, body_hash):
-        return False
-
 
 def _install_cache(mem, policy, backend=None):
     """Force a specific cache policy + backend onto a Memory (bypasses env)."""

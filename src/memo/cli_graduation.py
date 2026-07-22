@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import closing
-
 import click
 
 from memo.config import Config
@@ -13,7 +11,7 @@ from memo.graduation.registry import all_candidates
 
 @click.group(name="graduation")
 def graduation_group() -> None:
-    """Shadow-prove and flip dark flags (see MEMO_GRADUATION_CONTROLLER_ENABLED)."""
+    """Shadow-prove and flip dark flags."""
 
 
 @graduation_group.command(name="status")
@@ -25,25 +23,6 @@ def status_cmd() -> None:
         live = str(live_val) if live_val is not None else "—"
         mode = "auto" if c.auto_flip else "report-only"
         click.echo(f"{c.flag:<34} streak {s}/{c.k}  overlay:{live}  [{mode}]")
-
-
-@graduation_group.command(name="explain")
-def explain_cmd() -> None:
-    from memo.graduation.controller import run_graduation_controller
-    from memo.memory import Memory
-
-    cfg = Config.from_env()
-    with closing(Memory(cfg)) as memory:
-        receipt = run_graduation_controller(cfg, memory, dry_run=True)
-    for r in receipt["candidates"]:
-        if r["status"] == "vetoed":
-            click.echo(f"{r['flag']:<34} vetoed (MEMO_* env var set)")
-            continue
-        extra = f"  → {r['best_value']}" if "best_value" in r else ""
-        click.echo(
-            f"{r['flag']:<34} would:{r['status']:<12} "
-            f"Δprec {r.get('delta_prec', 0.0):+.3f}  streak {r.get('streak', 0)}/{r.get('k', 0)}{extra}"
-        )
 
 
 @graduation_group.command(name="revert")

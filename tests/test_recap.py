@@ -17,7 +17,19 @@ from memo.cli_recap import (
     maybe_write_recap,
     recap_content,
 )
-from memo.session import checkpoint, get_session, stamp_recap_turn, update_summary
+from memo.session import checkpoint, get_session, stamp_recap_turn
+
+
+def _set_summary(state_dir: Path, session_id: str, summary: str) -> None:
+    """Local stand-in for the removed `session.update_summary`: patch the
+    session snapshot's `summary` field directly."""
+    from memo import session
+
+    data = session._load(state_dir, session_id)
+    assert data is not None
+    data["summary"] = summary[:200]
+    session._write(state_dir, session_id, data)
+
 
 # --- format_recap_line -------------------------------------------------
 
@@ -128,7 +140,7 @@ def test_maybe_write_recap_writes_notification_when_due(tmp_path: Path) -> None:
     sid = "recap-sess-0001"
     for _ in range(6):
         checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
-    update_summary(state_dir, sid, "working on the recap feature")
+    _set_summary(state_dir, sid, "working on the recap feature")
 
     result = maybe_write_recap(state_dir, sid, every_n=6)
 
@@ -145,7 +157,7 @@ def test_maybe_write_recap_stamps_last_recap_turn(tmp_path: Path) -> None:
     sid = "recap-sess-0002"
     for _ in range(6):
         checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
-    update_summary(state_dir, sid, "working on X")
+    _set_summary(state_dir, sid, "working on X")
 
     maybe_write_recap(state_dir, sid, every_n=6)
 
@@ -196,7 +208,7 @@ def test_maybe_write_recap_noop_when_not_due(tmp_path: Path) -> None:
     state_dir.mkdir()
     sid = "recap-sess-0003"
     checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
-    update_summary(state_dir, sid, "just started")
+    _set_summary(state_dir, sid, "just started")
 
     result = maybe_write_recap(state_dir, sid, every_n=6)
 
@@ -236,7 +248,7 @@ def test_maybe_write_recap_disabled_flag_is_noop(tmp_path: Path, monkeypatch) ->
     sid = "recap-sess-0005"
     for _ in range(6):
         checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
-    update_summary(state_dir, sid, "working on the recap feature")
+    _set_summary(state_dir, sid, "working on the recap feature")
 
     result = maybe_write_recap(state_dir, sid, every_n=6)
 

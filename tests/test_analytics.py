@@ -3,7 +3,6 @@
 import pytest
 
 from memo.analytics import (
-    AccessPattern,
     AnalyticsEngine,
     CorpusMetrics,
     Dashboard,
@@ -66,16 +65,6 @@ def test_analytics_engine_compute_growth_data(analytics_engine, mock_memory):
     assert len(growth.dates) == len(growth.counts)
 
 
-def test_analytics_engine_compute_access_patterns(analytics_engine):
-    """Test computing access patterns."""
-    patterns = analytics_engine.compute_access_patterns()
-
-    assert isinstance(patterns.day_of_week, dict)
-    assert isinstance(patterns.hour_of_day, dict)
-    assert len(patterns.day_of_week) == 7
-    assert len(patterns.hour_of_day) == 24
-
-
 def test_analytics_engine_export_metrics_json(tmp_path, analytics_engine):
     """Test exporting metrics to JSON."""
     output_path = tmp_path / "analytics.json"
@@ -89,7 +78,6 @@ def test_analytics_engine_export_metrics_json(tmp_path, analytics_engine):
     data = json.loads(output_path.read_text(encoding="utf-8"))
     assert "metrics" in data
     assert "growth" in data
-    assert "access" in data
 
 
 def test_analytics_engine_export_metrics_csv(tmp_path, analytics_engine):
@@ -108,15 +96,6 @@ def test_analytics_engine_export_metrics_csv(tmp_path, analytics_engine):
 def test_dashboard_init(dashboard):
     """Test Dashboard initialization."""
     assert dashboard.analytics is not None
-
-
-def test_dashboard_generate_summary(dashboard):
-    """Test generating summary."""
-    summary = dashboard.generate_summary()
-
-    assert "Memory Analytics Dashboard" in summary
-    assert "Total Memories" in summary
-    assert "Type Distribution" in summary
 
 
 def test_dashboard_generate_html_dashboard(tmp_path, dashboard):
@@ -155,13 +134,3 @@ def test_growth_data_dataclass():
     )
     assert len(growth.dates) == 2
     assert growth.counts[0] == 5
-
-
-def test_access_pattern_dataclass():
-    """Test AccessPattern dataclass structure."""
-    pattern = AccessPattern(
-        day_of_week={"Monday": 10, "Tuesday": 5},
-        hour_of_day={0: 0, 1: 0, 12: 5},
-    )
-    assert pattern.day_of_week["Monday"] == 10
-    assert pattern.hour_of_day[12] == 5

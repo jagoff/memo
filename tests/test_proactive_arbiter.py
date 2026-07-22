@@ -19,7 +19,7 @@ def test_urgent_only_reliability_over_threshold_and_can_push():
     mult = {KIND_RELIABILITY: 1.0, KIND_HEALTH: 1.0}
     r = route(cands, mult, digest_top=7, urgent_min=0.7, can_push=True)
     assert r.urgent is not None and r.urgent.kind == KIND_RELIABILITY
-    assert r.badge_count == 2
+    assert len(r.digest) == 2
 
 
 def test_no_push_when_cannot_push():

@@ -14,6 +14,7 @@ from rich.table import Table
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.crossref import source_titles_via
 
 # -- cross-reference commands -------------------------------------------------
 
@@ -43,7 +44,7 @@ def links_backlinks(memory_id: str, as_json: bool) -> None:
         raise SystemExit(1)
     memory_id = rec.id
 
-    backlinks = mem.crossref.get_backlinks(memory_id)
+    backlinks = mem.crossref.get_backlinks(memory_id, title_resolver=source_titles_via(mem.get))
 
     if as_json:
         click.echo(json.dumps([b.__dict__ for b in backlinks], indent=2))

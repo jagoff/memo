@@ -40,7 +40,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,6 +114,21 @@ def parse_links(content: str) -> list[Wikilink]:
         target, alias = _split_alias(m.group(1))
         links.append(Wikilink(target=target, alias=alias, position=m.start()))
     return links
+
+
+def source_titles_via(get: Callable[[str], Any]) -> Callable[[list[str]], dict[str, str]]:
+    """Build a batched ``title_resolver`` for :meth:`get_backlinks` from a
+    single-id ``get`` callable (e.g. ``Memory.get``). Dedups the ids so each is
+    fetched once; a missing/``None`` record maps to ``""``."""
+
+    def _resolve(ids: list[str]) -> dict[str, str]:
+        titles: dict[str, str] = {}
+        for sid in dict.fromkeys(ids):
+            rec = get(sid)
+            titles[sid] = (getattr(rec, "title", "") or "") if rec is not None else ""
+        return titles
+
+    return _resolve
 
 
 class CrossReferenceIndex:
@@ -275,11 +290,19 @@ class CrossReferenceIndex:
             for row in rows
         ]
 
-    def get_backlinks(self, memory_id: str) -> list[Backlink]:
+    def get_backlinks(
+        self,
+        memory_id: str,
+        *,
+        title_resolver: Callable[[list[str]], dict[str, str]] | None = None,
+    ) -> list[Backlink]:
         """Get all memories that reference this one.
 
         Args:
             memory_id: The memory ID to find backlinks for.
+            title_resolver: Optional batched (source_ids -> {id: title}) lookup
+                used to populate ``source_title`` (crossref stores only ids).
+                Build one from ``Memory.get`` via :func:`source_titles_via`.
 
         Returns:
             List of Backlink objects.
@@ -290,12 +313,15 @@ class CrossReferenceIndex:
             (memory_id,),
         ).fetchall()
 
+        source_ids = [row["source_id"] for row in rows]
+        titles = title_resolver(source_ids) if (title_resolver and source_ids) else {}
+
         backlinks = []
         for row in rows:
             backlinks.append(
                 Backlink(
                     source_id=row["source_id"],
-                    source_title="",  # Would need to fetch from memory store
+                    source_title=titles.get(row["source_id"], ""),
                     target_id=row["target_id"],
                     link_type=row["link_type"],
                     context=row["context"] or "",
@@ -406,10 +432,6 @@ class LinkSuggester:
                         reason=f"High semantic similarity ({hit.score:.2f})",
                     )
                 )
-
-        # Strategy 2: Shared entities
-        # Extract entities from content (would need LLM, placeholder for now)
-        # For now, skip entity-based suggestions
 
         # Deduplicate by memory_id
         seen = set()

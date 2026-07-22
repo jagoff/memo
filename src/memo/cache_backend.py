@@ -83,9 +83,6 @@ class NullBackend:
     def fetch(self, query: str, *, limit: int = 10) -> list[dict[str, Any]]:
         return []
 
-    def has_current(self, id_: str, body_hash: str) -> bool:
-        return False
-
 
 class MemflowBackend:
     """Memflow-backed authoritative store, reached via the `memflow` CLI."""
@@ -229,13 +226,6 @@ class MemflowBackend:
             "from_backend": True,
         }
 
-    def has_current(self, id_: str, body_hash: str) -> bool:
-        # Coherence revalidation against memflow is a follow-up; conservatively
-        # report "not verified present" so callers never assume a flush is
-        # unnecessary based on this. (Eviction already keys off the local
-        # dirty flag, not this method.)
-        return False
-
 
 def make_backend(backend: str) -> Any:
     """Factory: build the configured backend, or NullBackend when the
@@ -249,10 +239,5 @@ def make_backend(backend: str) -> Any:
             "cache backend 'memflow' selected but binary/project root "
             "not found; falling back to NullBackend (local-only)."
         )
-        return NullBackend()
-    if name == "vault":
-        # Remote-vault backend reuses sync.py's SyncManager; not yet wired as
-        # a CacheBackend. Until then, no-op rather than silently mis-routing.
-        _log.warning("cache backend 'vault' not yet implemented; using NullBackend.")
         return NullBackend()
     return NullBackend()

@@ -274,5 +274,13 @@ class _DeleteOpsMixin(_MemoryBase):
             except Exception as exc:
                 _log.debug("delete(%s): crossref cleanup skipped — %s", id_[:8], exc)
 
+        # Step 7: purge version history (derived; not in markdown, so it would
+        # otherwise grow unbounded in versions.db on every hard delete). Only on
+        # hard delete — soft delete keeps the row and its history. Guard on the
+        # db existing so a delete never eagerly creates an empty versions.db.
+        if not flag_bool("MEMO_SOFT_DELETE") and (self.cfg.state_dir / "versions.db").is_file():
+            with contextlib.suppress(Exception):
+                self.versioning.version_store.delete_versions(id_)
+
         self._write_gen += 1
         return True

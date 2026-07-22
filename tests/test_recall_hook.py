@@ -312,3 +312,39 @@ def test_corrupt_prewarm_signal_downgrades_to_bm25(
     result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
     assert result.exit_code == 0, result.output
     assert seen["mode"] == "bm25"
+
+
+# --- omitted-tail parity (MEMO_RECALL_OMISSIONS_TAIL) ------------------------
+# The subprocess path must compute `omitted` (rank-overflow tail beyond the
+# nudge + injection-filtered hits) the same way the daemon path does, so the
+# omissions tail count matches. Unit-tests the extracted helper directly.
+
+
+def _oh(i: int):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(id=f"id{i}")
+
+
+def test_rank_overflow_omitted_tail_beyond_nudge() -> None:
+    from memo.cli_recall_hook import _rank_overflow_omitted
+
+    q = [_oh(i) for i in range(6)]  # top_k=3 -> relevant 0-2, nudge 3-4, omitted 5
+    out = _rank_overflow_omitted(q, q, top_k=3)
+    assert [h.id for h in out] == ["id5"]
+
+
+def test_rank_overflow_omitted_includes_injection_filtered() -> None:
+    from memo.cli_recall_hook import _rank_overflow_omitted
+
+    pre = [_oh(i) for i in range(5)]  # 5 pre-filter
+    q = pre[:3]  # id3,id4 dropped by injection filter; top_k=3 -> no rank tail
+    out = _rank_overflow_omitted(q, pre, top_k=3)
+    assert {h.id for h in out} == {"id3", "id4"}
+
+
+def test_rank_overflow_omitted_empty_when_nothing_dropped() -> None:
+    from memo.cli_recall_hook import _rank_overflow_omitted
+
+    q = [_oh(i) for i in range(3)]  # exactly top_k, no nudge, no tail
+    assert _rank_overflow_omitted(q, q, top_k=3) == []

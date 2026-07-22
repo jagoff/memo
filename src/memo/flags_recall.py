@@ -227,13 +227,6 @@ SPECS: tuple[FlagSpec, ...] = (
     ),
     _spec("MEMO_RECALL_RERANK_INPUT_K", "int", 10, "recall", "Candidates fed to the reranker."),
     _spec(
-        "MEMO_RECALL_STALENESS_DAYS",
-        "int",
-        0,
-        "recall",
-        "DEPRECATED/inert since the hook paths unified on rank_hits — no consumer. Kept registered so set values still validate.",
-    ),
-    _spec(
         "MEMO_RECALL_SKIP_SLASH",
         "bool",
         True,
@@ -417,14 +410,6 @@ SPECS: tuple[FlagSpec, ...] = (
         True,
         "recall",
         "Scale per-hit body_chars proportionally to hit score: score>=0.85 -> 1.5x, score<0.65 -> 0.5x (min 80 chars). High-confidence hits get more context; marginal hits waste fewer tokens.",
-        opt_out=True,
-    ),
-    _spec(
-        "MEMO_RECALL_ADAPTIVE_CONTEXT",
-        "bool",
-        True,
-        "recall",
-        "DEPRECATED/inert since the hook paths unified on rank_hits (the daemon path never applied intent boosts). Kept registered so set values still validate.",
         opt_out=True,
     ),
     _spec(

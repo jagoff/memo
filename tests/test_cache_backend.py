@@ -16,7 +16,6 @@ def test_null_backend_is_inert() -> None:
     nb = cb.NullBackend()
     assert nb.push(object()) is False  # never claims a write succeeded
     assert nb.fetch("anything") == []
-    assert nb.has_current("id", "hash") is False
 
 
 def test_coerce_meta() -> None:
@@ -28,7 +27,7 @@ def test_coerce_meta() -> None:
     assert len(cb._coerce_meta("x" * 1000)) == 500
 
 
-@pytest.mark.parametrize("name", ["none", "vault", "bogus", "", "NONE"])
+@pytest.mark.parametrize("name", ["none", "bogus", "", "NONE"])
 def test_make_backend_falls_back_to_null(name: str) -> None:
     assert isinstance(cb.make_backend(name), cb.NullBackend)
 

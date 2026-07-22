@@ -61,18 +61,22 @@ def test_backend_native_replay_missing_memoria(mock_memory) -> None:
 
 
 def test_backend_native_replay_resolves_repo_index(mock_memory) -> None:
-    mock_memory.store.upsert_repo_index(
-        source={
-            "id": "repo1",
-            "name": "sample",
-            "url": "https://example.test/sample.git",
-            "ref": "HEAD",
-            "commit_sha": "abcdef1234567890",
-            "clone_path": "/tmp/sample",
-            "indexed_at": "2026-05-24T00:00:00Z",
-            "status": "semantic_pending",
-            "extra": {},
-        },
+    source = {
+        "id": "repo1",
+        "name": "sample",
+        "url": "https://example.test/sample.git",
+        "ref": "HEAD",
+        "commit_sha": "abcdef1234567890",
+        "clone_path": "/tmp/sample",
+        "indexed_at": "2026-05-24T00:00:00Z",
+        "status": "semantic_pending",
+        "extra": {},
+    }
+    mock_memory.store.upsert_repo_source(source=source)
+    mock_memory.store.upsert_repo_files(
+        repo_id=source["id"],
+        repo_name=source["name"],
+        indexed_at=source["indexed_at"],
         files=[
             {
                 "id": "file1",
@@ -109,7 +113,7 @@ def test_backend_native_replay_resolves_repo_index(mock_memory) -> None:
 
 
 def test_backend_native_replay_resolves_repo_uri(mock_memory) -> None:
-    mock_memory.store.upsert_repo_index(
+    mock_memory.store.upsert_repo_source(
         source={
             "id": "repo1",
             "name": "sample",
@@ -121,7 +125,6 @@ def test_backend_native_replay_resolves_repo_uri(mock_memory) -> None:
             "status": "ready",
             "extra": {},
         },
-        files=[],
     )
 
     payload = mock_memory.backend_native_replay_resolve("memo://repo/repo1")
@@ -132,7 +135,7 @@ def test_backend_native_replay_resolves_repo_uri(mock_memory) -> None:
 
 
 def test_backend_native_replay_missing_repo_index_commit(mock_memory) -> None:
-    mock_memory.store.upsert_repo_index(
+    mock_memory.store.upsert_repo_source(
         source={
             "id": "repo1",
             "name": "sample",
@@ -144,7 +147,6 @@ def test_backend_native_replay_missing_repo_index_commit(mock_memory) -> None:
             "status": "ready",
             "extra": {},
         },
-        files=[],
     )
 
     payload = mock_memory.backend_native_replay_resolve("memo://repo-index/sample/deadbeef")

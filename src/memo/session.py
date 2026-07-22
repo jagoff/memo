@@ -688,27 +688,6 @@ def mark_ids_recalled(
         pass
 
 
-def update_summary(
-    state_dir: Path,
-    session_id: str,
-    summary: str,
-) -> bool:
-    """Patch the `summary` field of an existing session. Used by the
-    capture-stop pipeline (which already has MLXChat warm) to enrich
-    the cheap heuristic summary set by `checkpoint()`. Returns True
-    on success, False if the session doesn't exist."""
-    summary = (summary or "").strip()
-    if not summary:
-        return False
-    with _session_write_lock(state_dir, session_id):
-        existing = _load(state_dir, session_id)
-        if existing is None:
-            return False
-        existing["summary"] = summary[:200]
-        _write(state_dir, session_id, existing)
-        return True
-
-
 def _clean_snapshot_summary(snapshot: dict[str, Any], width: int) -> str:
     """Pick the most useful short summary from a session snapshot."""
     for cand in (

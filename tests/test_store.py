@@ -379,8 +379,11 @@ def test_repo_index_rows_search_and_delete(store: VecStore):
         "status": "ready",
         "extra": {},
     }
-    store.upsert_repo_index(
-        source=source,
+    store.upsert_repo_source(source=source)
+    store.upsert_repo_files(
+        repo_id=source["id"],
+        repo_name=source["name"],
+        indexed_at=source["indexed_at"],
         files=[
             {
                 "id": "file1",
@@ -401,11 +404,14 @@ def test_repo_index_rows_search_and_delete(store: VecStore):
                         "line_end": 2,
                         "text_hash": "c1",
                         "body_text": "def alpha():\n    return 'needle'",
-                        "embedding": _emb(1, 0, 0, 0),
                     }
                 ],
             }
         ],
+    )
+    store.upsert_repo_embeddings(
+        repo_id=source["id"],
+        embeddings=[("chunk1", _emb(1, 0, 0, 0))],
     )
 
     repo_source = store.get_repo_source("sample")

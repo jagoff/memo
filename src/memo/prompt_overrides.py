@@ -32,7 +32,6 @@ PROMPT_NAMES = frozenset(
         "derive",  # memory/prompts.py _DERIVE_SYSTEM_PROMPT
         "extract_entities",  # memory/prompts.py _EXTRACT_ENTITIES_SYSTEM_PROMPT
         "contradiction",  # temporal.py _CONTRADICTION_SYSTEM_PROMPT
-        "suggestion",  # proactive.py _SUGGESTION_SYSTEM_PROMPT
         "merge",  # consolidation.py _MERGE_SYSTEM_PROMPT
         "capture_extract",  # capture.py _EXTRACT_SYSTEM_PROMPT
     }

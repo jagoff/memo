@@ -169,16 +169,6 @@ def test_collaborative_filter_recommend_connections(collaborative_graph, collabo
     assert isinstance(recommendations, list)
 
 
-def test_collaborative_filter_recommend_insights(collaborative_graph, collaborative_filter):
-    """Test recommending insights."""
-    collaborative_graph.add_insight("user1", "MLX is great for edge computing")
-    collaborative_graph.add_insight("user2", "Apple Silicon is powerful")
-
-    recommendations = collaborative_filter.recommend_insights(["MLX"])
-
-    assert isinstance(recommendations, list)
-
-
 def test_collaborative_manager_init(collaborative_manager):
     """Test CollaborativeManager initialization."""
     assert collaborative_manager.graph is not None
@@ -231,6 +221,30 @@ def test_collaborative_manager_get_top_insights(collaborative_manager):
     insights = collaborative_manager.get_top_insights(limit=10)
 
     assert isinstance(insights, list)
+
+
+def test_collaborative_manager_vote_connection(collaborative_manager):
+    """Votes cast through the Manager actually move the connection counter."""
+    conn = collaborative_manager.share_connection(
+        user_id="user1",
+        entity_a="MLX",
+        entity_b="Apple",
+        relationship="optimized for",
+    )
+
+    assert collaborative_manager.vote_connection(conn.connection_id) is True
+    assert collaborative_manager.get_shared_connections("MLX")[0].votes == 1
+    # Unknown id is a no-op, reported as False.
+    assert collaborative_manager.vote_connection("nonexistent") is False
+
+
+def test_collaborative_manager_vote_insight(collaborative_manager):
+    """Votes cast through the Manager actually move the insight counter."""
+    insight = collaborative_manager.share_insight("user1", "MLX runs on-device")
+
+    assert collaborative_manager.vote_insight(insight.insight_id) is True
+    assert collaborative_manager.get_top_insights()[0].upvotes == 1
+    assert collaborative_manager.vote_insight("nonexistent", upvote=False) is False
 
 
 def test_shared_connection_dataclass():

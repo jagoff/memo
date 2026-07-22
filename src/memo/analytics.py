@@ -4,7 +4,6 @@ Provides:
 - Dashboard web UI with corpus metrics
 - Growth charts over time
 - Distribution by type/tags
-- Access patterns (heatmaps)
 - Word cloud of most frequent entities
 """
 
@@ -42,14 +41,6 @@ class GrowthData:
 
     dates: list[str]
     counts: list[int]
-
-
-@dataclass
-class AccessPattern:
-    """Access pattern data."""
-
-    day_of_week: dict[str, int]  # Monday-Sunday
-    hour_of_day: dict[int, int]  # 0-23
 
 
 class AnalyticsEngine:
@@ -144,27 +135,6 @@ class AnalyticsEngine:
             counts=[date_counts[d] for d in sorted_dates],
         )
 
-    def compute_access_patterns(self) -> AccessPattern:
-        """Compute access patterns by day and hour.
-
-        Returns:
-            AccessPattern with day and hour distributions.
-        """
-        # This would analyze history store for access patterns
-        # For now, return placeholder data
-        return AccessPattern(
-            day_of_week={
-                "Monday": 0,
-                "Tuesday": 0,
-                "Wednesday": 0,
-                "Thursday": 0,
-                "Friday": 0,
-                "Saturday": 0,
-                "Sunday": 0,
-            },
-            hour_of_day={i: 0 for i in range(24)},
-        )
-
     def export_metrics_json(self, output_path: Path) -> None:
         """Export metrics to JSON.
 
@@ -173,12 +143,10 @@ class AnalyticsEngine:
         """
         metrics = self.compute_corpus_metrics()
         growth = self.compute_growth_data()
-        access = self.compute_access_patterns()
 
         data = {
             "metrics": metrics.__dict__,
             "growth": growth.__dict__,
-            "access": access.__dict__,
             "exported_at": datetime.now(UTC).isoformat(),
         }
 
@@ -230,42 +198,6 @@ class Dashboard:
 
     def __init__(self, analytics: AnalyticsEngine) -> None:
         self.analytics = analytics
-
-    def generate_summary(self) -> str:
-        """Generate a text summary of the dashboard.
-
-        Returns:
-            Formatted summary string.
-        """
-        metrics = self.analytics.compute_corpus_metrics()
-
-        lines = [
-            "=== Memory Analytics Dashboard ===",
-            "",
-            f"Total Memories: {metrics.total_memories}",
-            f"Total Entities: {metrics.total_entities}",
-            f"Growth Rate: {metrics.growth_rate:.2f} memories/day",
-            f"Average Access Count: {metrics.average_access_count:.2f}",
-            "",
-            "Type Distribution:",
-        ]
-
-        for t, c in metrics.type_distribution.items():
-            lines.append(f"  {t}: {c}")
-
-        lines.append("")
-        lines.append("Top 10 Tags:")
-
-        for i, (t, c) in enumerate(list(metrics.tag_frequency.items())[:10], 1):
-            lines.append(f"  {i}. {t}: {c}")
-
-        lines.append("")
-        lines.append("Top 10 Entities:")
-
-        for i, (e, c) in enumerate(list(metrics.entity_frequency.items())[:10], 1):
-            lines.append(f"  {i}. {e}: {c}")
-
-        return "\n".join(lines)
 
     def generate_html_dashboard(self, output_path: Path) -> None:
         """Generate an HTML dashboard.
@@ -343,7 +275,6 @@ class Dashboard:
 
 
 __all__ = [
-    "AccessPattern",
     "AnalyticsEngine",
     "CorpusMetrics",
     "Dashboard",

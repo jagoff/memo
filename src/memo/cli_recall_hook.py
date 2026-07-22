@@ -28,6 +28,20 @@ from memo.recall_logic import (
 
 _log = logging.getLogger("memo.cli_recall_hook")
 
+
+def _rank_overflow_omitted(qualifying: list[Any], pre_filter: list[Any], top_k: int) -> list[Any]:
+    """Hits omitted from the injection: the rank-overflow tail below the nudge
+    (``qualifying[top_k + 2:]``) plus any hit dropped by the injection filters
+    (present in ``pre_filter`` but not in ``qualifying``). Computed exactly like
+    the daemon path (recall_logic) so ``MEMO_RECALL_OMISSIONS_TAIL`` counts
+    identically across both paths."""
+    omitted = list(qualifying[top_k + 2 :])
+    if qualifying and len(qualifying) < len(pre_filter):
+        kept = {h.id for h in qualifying}
+        omitted.extend(h for h in pre_filter if h.id not in kept)
+    return omitted
+
+
 _TRIVIAL_WORDS: frozenset[str] = frozenset(
     {
         "yes",
@@ -471,6 +485,7 @@ def recall_hook() -> None:
                     file=sys.stderr,
                 )
 
+    pre_filter = qualifying
     qualifying = apply_injection_filters(qualifying)
     # Unmatched-term gate (daemon parity, recall_logic): drop the whole injection
     # when no hit lexically covers the query's salient terms. Default OFF.
@@ -562,6 +577,10 @@ def recall_hook() -> None:
     # Rank-overflow nudge (the hits just below the top-K cut) — same split the
     # daemon path renders, distinct from the graph-associative nudge below.
     nudge = qualifying[top_k : top_k + 2]
+    # Omitted tail (rank-overflow beyond the nudge + injection-filtered hits),
+    # computed exactly like the daemon path (recall_logic) so
+    # MEMO_RECALL_OMISSIONS_TAIL counts identically across both paths.
+    omitted = _rank_overflow_omitted(qualifying, pre_filter, top_k)
 
     if relevant and knobs.contextual:
         with contextlib.suppress(Exception):
@@ -674,6 +693,7 @@ def recall_hook() -> None:
         turn=_turn,
         body_chars=body_chars,
         token_budget=token_budget,
+        omitted=omitted,  # daemon parity — MEMO_RECALL_OMISSIONS_TAIL count
         disputed_by=_disputed_by,
         state_dir=cfg.state_dir,
     )

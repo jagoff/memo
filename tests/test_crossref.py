@@ -74,6 +74,46 @@ def test_crossref_get_backlinks_none(crossref_index):
     assert backlinks == []
 
 
+def test_crossref_get_backlinks_source_title_default_empty(crossref_index):
+    """Without a title_resolver, source_title stays '' (crossref stores ids only)."""
+    crossref_index.index_wikilinks("source1", "See [[target]]")
+    backlinks = crossref_index.get_backlinks("target")
+    assert backlinks[0].source_title == ""
+
+
+def test_crossref_get_backlinks_populates_source_title(crossref_index):
+    """A batched title_resolver populates source_title from source ids."""
+    crossref_index.index_wikilinks("source1", "See [[target]]")
+    crossref_index.index_wikilinks("source2", "Also [[target]]")
+
+    titles = {"source1": "First Source", "source2": "Second Source"}
+    seen_ids: list[list[str]] = []
+
+    def _resolver(ids):
+        seen_ids.append(ids)  # one batched call, not per-row
+        return {i: titles.get(i, "") for i in ids}
+
+    backlinks = crossref_index.get_backlinks("target", title_resolver=_resolver)
+
+    assert len(seen_ids) == 1
+    got = {b.source_id: b.source_title for b in backlinks}
+    assert got == {"source1": "First Source", "source2": "Second Source"}
+
+
+def test_crossref_get_backlinks_source_titles_via_helper(crossref_index):
+    """source_titles_via wraps a single-id get callable into a batched resolver."""
+    from types import SimpleNamespace
+
+    from memo.crossref import source_titles_via
+
+    crossref_index.index_wikilinks("source1", "See [[target]]")
+    store = {"source1": SimpleNamespace(title="Resolved Title")}
+    resolver = source_titles_via(lambda sid: store.get(sid))
+
+    backlinks = crossref_index.get_backlinks("target", title_resolver=resolver)
+    assert backlinks[0].source_title == "Resolved Title"
+
+
 def test_crossref_get_outlinks(crossref_index):
     """Test getting outlinks from a memoria."""
     crossref_index.index_wikilinks("source", "See [[target1]] and [[target2]]")

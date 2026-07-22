@@ -48,7 +48,6 @@ from memo.session import (
     render_active_memory,
     stamp_recall_turn,
     stamp_recap_turn,
-    update_summary,
 )
 
 
@@ -676,21 +675,6 @@ def test_format_relative_buckets():
     assert format_relative((now - timedelta(days=2)).isoformat(), now=now) == "2d ago"
     assert format_relative(None) == "—"
     assert format_relative("garbage") == "—"
-
-
-def test_update_summary_patches_existing(tmp_cfg, fake_git):
-    checkpoint(
-        tmp_cfg.state_dir,
-        session_id="patch-me-1234",
-        cwd=str(tmp_cfg.state_dir),
-    )
-    assert update_summary(tmp_cfg.state_dir, "patch-me-1234", "fresh LLM-derived label")
-    got = get_session(tmp_cfg.state_dir, "patch-me-1234")
-    assert got["summary"] == "fresh LLM-derived label"
-
-
-def test_update_summary_unknown_session(tmp_cfg):
-    assert not update_summary(tmp_cfg.state_dir, "does-not-exist-1234", "x")
 
 
 def test_checkpoint_requires_session_id(tmp_cfg):

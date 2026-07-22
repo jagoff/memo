@@ -132,29 +132,6 @@ VALID_ENTITY_TYPES = frozenset(
 )
 
 
-def decay_weight(
-    weight: float,
-    last_seen: str | None,
-    *,
-    now_iso: str,
-    half_life_days: float = 180.0,
-) -> float:
-    """Time-decayed edge weight: weight * 0.5 ** (age_days / half_life_days).
-    `last_seen` None or unparseable -> undecayed. Ready for Phase 2 ranking;
-    Phase 0 callers use raw weight."""
-    if not last_seen:
-        return weight
-    from datetime import date
-
-    try:
-        ls = date.fromisoformat(last_seen[:10])
-        now = date.fromisoformat(now_iso[:10])
-    except ValueError:
-        return weight
-    age = max(0, (now - ls).days)
-    return weight * (0.5 ** (age / half_life_days))
-
-
 @dataclass(frozen=True)
 class EntityMention:
     """Entity linked to a memory."""
@@ -309,7 +286,8 @@ class GraphStore:
     def drop_for_memoria(self, memory_id: str) -> int:
         """Called when a memory is deleted. Removes all entity_memory
         edges for it and decrements mention_count on each touched
-        entity. Returns the number of edges removed."""
+        entity, then cascades to drop any semantic_relations rows sourced
+        from this memory. Returns the number of entity_memory edges removed."""
         with self._tx() as cx:
             old = [
                 r["entity_id"]
@@ -327,6 +305,8 @@ class GraphStore:
                     "UPDATE entities SET mention_count = MAX(0, mention_count - 1) WHERE id = ?",
                     (eid,),
                 )
+        # Separate tx (the lock is non-reentrant): drop orphaned semantic edges.
+        self.delete_semantic_relations_for_source(memory_id)
         return len(old)
 
     def canonicalize_existing(self) -> int:
@@ -791,14 +771,6 @@ class GraphStore:
             other = r["id_b"] if r["id_a"] == anchor_id else r["id_a"]
             counts[other] = int(r["count"])
         return counts
-
-    def top_co_recalled(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Return the most frequently co-recalled pairs."""
-        rows = self._conn.execute(
-            "SELECT id_a, id_b, count FROM co_recall ORDER BY count DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [dict(r) for r in rows]
 
     def close(self) -> None:
         with suppress(BaseException):

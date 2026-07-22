@@ -57,11 +57,8 @@ class TestCoRecallGraph:
         g = GraphStore(tmp_path / "graph.db")
         g.record_co_recall(["x", "y"])
         g.record_co_recall(["x", "y"])
-        pairs = g.top_co_recalled(limit=10)
-        assert len(pairs) == 1
-        pair = pairs[0]
-        assert {pair["id_a"], pair["id_b"]} == {"x", "y"}
-        assert pair["count"] == 2
+        counts = g.co_recall_counts("x", ["y"])
+        assert counts == {"y": 2}
 
     def test_record_co_recall_order_independent(self, tmp_path):
         from memo.graph import GraphStore
@@ -69,20 +66,8 @@ class TestCoRecallGraph:
         g = GraphStore(tmp_path / "graph.db")
         g.record_co_recall(["b", "a"])
         g.record_co_recall(["a", "b"])
-        pairs = g.top_co_recalled()
-        assert len(pairs) == 1
-        assert pairs[0]["count"] == 2
-
-    def test_top_co_recalled_sorted_by_count(self, tmp_path):
-        from memo.graph import GraphStore
-
-        g = GraphStore(tmp_path / "graph.db")
-        g.record_co_recall(["a", "b"])
-        g.record_co_recall(["a", "b"])
-        g.record_co_recall(["c", "d"])
-        pairs = g.top_co_recalled(limit=10)
-        assert pairs[0]["count"] == 2
-        assert pairs[1]["count"] == 1
+        counts = g.co_recall_counts("a", ["b"])
+        assert counts == {"b": 2}
 
     def test_co_recall_counts_maps_anchor_to_candidates(self, tmp_path):
         from memo.graph import GraphStore

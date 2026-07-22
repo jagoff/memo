@@ -1,5 +1,6 @@
 """build_system_message — the human-visible 🧠 presence line (F1a)."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from memo.recall_logic import build_system_message
@@ -7,6 +8,17 @@ from memo.recall_logic import build_system_message
 
 def _hit(id_: str, title: str) -> SimpleNamespace:
     return SimpleNamespace(id=id_, title=title, body="", score=0.9)
+
+
+def _set_summary(state_dir: Path, session_id: str, summary: str) -> None:
+    """Local stand-in for the removed `session.update_summary`: patch the
+    session snapshot's `summary` field directly."""
+    from memo import session
+
+    data = session._load(state_dir, session_id)
+    assert data is not None
+    data["summary"] = summary[:200]
+    session._write(state_dir, session_id, data)
 
 
 def test_empty_hits_returns_empty_string() -> None:
@@ -217,7 +229,7 @@ def test_recap_line_folded_into_system_message_when_due(tmp_cfg, monkeypatch) ->
 
     from memo.cli import cli
     from memo.memory import MemoryRecord
-    from memo.session import checkpoint, update_summary
+    from memo.session import checkpoint
 
     monkeypatch.setattr(
         "memo.embedder.MLXEmbedder.embed",
@@ -253,7 +265,7 @@ def test_recap_line_folded_into_system_message_when_due(tmp_cfg, monkeypatch) ->
     sid = "recap-sysmsg-sess-0001"
     for _ in range(6):
         checkpoint(tmp_cfg.state_dir, session_id=sid, cwd=str(tmp_cfg.data_dir))
-    update_summary(tmp_cfg.state_dir, sid, "working on the recap systemMessage feature")
+    _set_summary(tmp_cfg.state_dir, sid, "working on the recap systemMessage feature")
 
     runner = CliRunner()
     payload = json.dumps(
@@ -282,7 +294,7 @@ def test_recap_line_absent_from_system_message_when_flag_off(tmp_cfg, monkeypatc
 
     from memo.cli import cli
     from memo.memory import MemoryRecord
-    from memo.session import checkpoint, update_summary
+    from memo.session import checkpoint
 
     monkeypatch.setattr(
         "memo.embedder.MLXEmbedder.embed",
@@ -317,7 +329,7 @@ def test_recap_line_absent_from_system_message_when_flag_off(tmp_cfg, monkeypatc
     sid = "recap-sysmsg-sess-0002"
     for _ in range(6):
         checkpoint(tmp_cfg.state_dir, session_id=sid, cwd=str(tmp_cfg.data_dir))
-    update_summary(tmp_cfg.state_dir, sid, "working on the recap systemMessage feature")
+    _set_summary(tmp_cfg.state_dir, sid, "working on the recap systemMessage feature")
 
     runner = CliRunner()
     payload = json.dumps(
@@ -344,7 +356,7 @@ def test_daemon_path_folds_recap_into_system_message_when_due(monkeypatch, tmp_p
     from types import SimpleNamespace
 
     from memo.recall_logic import _recall_logic
-    from memo.session import checkpoint, update_summary
+    from memo.session import checkpoint
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
@@ -357,7 +369,7 @@ def test_daemon_path_folds_recap_into_system_message_when_due(monkeypatch, tmp_p
     sid = "recap-daemon-sess-0001"
     for _ in range(6):
         checkpoint(state_dir, session_id=sid, cwd=str(tmp_path))
-    update_summary(state_dir, sid, "working on the daemon recap path")
+    _set_summary(state_dir, sid, "working on the daemon recap path")
 
     mem, _ = _daemon_stub_memory("sync tier decision")
     result, _log = _recall_logic(

@@ -73,6 +73,23 @@ def test_delete_semantic_relations_for_source(tmp_path) -> None:
     assert graph.semantic_relations_for(source_id="a") == []
 
 
+def test_drop_for_memoria_cascades_to_semantic_relations(tmp_path) -> None:
+    graph = GraphStore(tmp_path / "graph.db")
+    graph.upsert_semantic_relation(
+        source_kind="memory",
+        source_id="a",
+        target_kind="memory",
+        target_id="b",
+        relation="supersedes",
+        derived_from="test",
+    )
+    assert graph.semantic_relations_for(source_id="a") != []
+
+    graph.drop_for_memoria("a")
+
+    assert graph.semantic_relations_for(source_id="a") == []
+
+
 def test_store_relations_and_delete_by_derived_from(tmp_path) -> None:
     graph = GraphStore(tmp_path / "graph.db")
     rel = extract_relations_batch(

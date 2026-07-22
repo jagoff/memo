@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import os
 import threading
-import time
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -212,7 +211,6 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
         self._model: Any = None
         self._tokenizer: Any = None
         self._load_lock = threading.Lock()
-        self._last_use: float = 0.0  # reserved for future idle-unload watchdog
         # Query embedding cache (LRU). Uses the shared consciousness-contracts
         # cache when available. The embedder is a foundation module that must not
         # import memo.flags (see the architecture-boundary test), so flags-aware
@@ -278,7 +276,6 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
         responsibility to filter if zeros are unwanted.
         """
         self._ensure_loaded()
-        self._last_use = time.time()
         if not inputs:
             return []
 
@@ -433,11 +430,6 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
         """EmbedderBase contract: True once the MLX model is resident in RAM
         (after the first `embed()` triggers the lazy load)."""
         return self._model is not None
-
-    @property
-    def last_use(self) -> float:
-        """Wall-time epoch of last `embed()` call. Used by idle-unload watchdogs."""
-        return self._last_use
 
 
 def assert_valid_embedding(

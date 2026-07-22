@@ -27,13 +27,6 @@ _LABEL = {
 _ORDER = [KIND_RELIABILITY, KIND_CONTINUITY, KIND_DEJAVU, KIND_HEALTH, KIND_ROI]
 
 
-def render_badge(routed: Routed) -> str:
-    if routed.badge_count == 0:
-        return ""
-    icon = "⚠️" if routed.badge_kind == KIND_RELIABILITY else "💡"
-    return f"{icon}{routed.badge_count}"
-
-
 def render_urgent_line(n: Nudge) -> str:
     tail = f" · {n.action}" if n.action else ""
     return f"⚠️ memo: {n.title}{tail}"

@@ -13,12 +13,14 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 
 import click
 from rich.panel import Panel
 
-from memo.cli_common import console
+from memo.cli_common import console, log_cli_consult
 from memo.cli_common import get_memory as _get_memory
+from memo.cli_search import _sources_as_hits
 from memo.config import Config
 
 _log = logging.getLogger(__name__)
@@ -73,6 +75,12 @@ def chat_group() -> None:
         "immediately. Forces JSON output and disables the panel."
     ),
 )
+@click.option(
+    "--source",
+    default=None,
+    help="Identify the calling layer so the consult is attributed in "
+    "`memo usefulness` (falls back to MEMO_SOURCE).",
+)
 def chat_ask(
     question: str,
     k: int,
@@ -82,6 +90,7 @@ def chat_ask(
     context_json,
     as_json: bool,
     as_stream: bool,
+    source: str | None,
 ) -> None:
     """Chat-shaped RAG over memo — synthesise a conversational answer.
 
@@ -111,9 +120,12 @@ def chat_ask(
             _log.warning("chat ask: failed to load context JSON: %s", exc)
             context = {}
 
-    mem = _get_memory(Config.from_env())
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    t0 = int(time.time() * 1000)
 
     if as_stream:
+        stream_hits: list[dict] = []
         for event in mem.chat_ask_stream(
             question,
             k=k,
@@ -122,8 +134,13 @@ def chat_ask(
             context=context,
             snippet_chars=snippet_chars,
         ):
+            if isinstance(event, dict) and event.get("sources") and not stream_hits:
+                stream_hits = _sources_as_hits(event)
             sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
             sys.stdout.flush()
+        log_cli_consult(
+            cfg, verb="chat_ask", query=question, hits=stream_hits, t0_ms=t0, source=source
+        )
         return
 
     envelope = mem.chat_ask(
@@ -133,6 +150,14 @@ def chat_ask(
         history=history,
         context=context,
         snippet_chars=snippet_chars,
+    )
+    log_cli_consult(
+        cfg,
+        verb="chat_ask",
+        query=question,
+        hits=_sources_as_hits(envelope),
+        t0_ms=t0,
+        source=source,
     )
     if as_json:
         click.echo(json.dumps(envelope, ensure_ascii=False, indent=2))

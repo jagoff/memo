@@ -210,33 +210,6 @@ def test_apply_lifecycle_rules_dry_run(lifecycle_manager, mock_memory):
     assert actions["deleted"] == 0
 
 
-def test_get_lifecycle_report(lifecycle_manager, mock_memory):
-    """Test generating lifecycle report."""
-    # Create test memorias
-    mock_memory.save(
-        content="Test 1",
-        title="Test 1",
-        tags=["test"],
-    )
-    mock_memory.save(
-        content="Test 2",
-        title="Test 2",
-        tags=["test"],
-    )
-
-    report = lifecycle_manager.get_lifecycle_report(limit=10)
-
-    assert "total" in report
-    assert "archive_candidates" in report
-    assert "promotion_candidates" in report
-    assert "demotion_candidates" in report
-    assert "expiration_candidates" in report
-    assert "never_accessed" in report
-    assert "avg_access_count" in report
-
-    assert report["total"] == 2
-
-
 def test_lifecycle_action_dataclass():
     """Test LifecycleAction dataclass structure."""
     action = LifecycleAction(
@@ -382,17 +355,6 @@ def test_should_forget_skips_already_forgotten(mock_memory):
     mock_memory.forget(rec.id)
     should, _reason = mock_memory.lifecycle.should_forget(rec.id)
     assert should is False
-
-
-def test_lifecycle_report_counts_forget_candidates(mock_memory):
-    mock_memory.save(
-        content="elapsed alpha",
-        title="Elapsed",
-        extra={FORGET_AFTER_KEY: _past()},
-    )
-    mock_memory.save(content="plain gamma", title="Plain")
-    report = mock_memory.lifecycle.get_lifecycle_report()
-    assert report["forget_candidates"] == 1
 
 
 def test_forget_after_accepts_full_datetime(mock_memory):

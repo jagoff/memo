@@ -343,33 +343,6 @@ class CollaborativeFilter:
 
         return recommendations[:limit]
 
-    def recommend_insights(
-        self,
-        user_interests: list[str],
-        limit: int = 10,
-    ) -> list[CollectiveInsight]:
-        """Recommend insights based on the user's interests.
-
-        Args:
-            user_interests: List of the user's interests.
-            limit: Maximum number of results.
-
-        Returns:
-            List of recommended CollectiveInsight.
-        """
-        # Find insights that mention the interests
-        recommendations = []
-        for insight in self.graph._insights.values():
-            for interest in user_interests:
-                if interest.lower() in insight.content.lower():
-                    recommendations.append(insight)
-                    break
-
-        # Sort by upvotes
-        recommendations.sort(key=lambda i: i.upvotes - i.downvotes, reverse=True)
-
-        return recommendations[:limit]
-
 
 class CollaborativeManager:
     """Manages collaborative functionality.
@@ -438,6 +411,16 @@ class CollaborativeManager:
         """
         return self.filter.recommend_connections(entity, limit)
 
+    def vote_connection(self, connection_id: str, *, upvote: bool = True) -> bool:
+        """Cast a vote on a shared connection.
+
+        Returns True if the connection exists, False otherwise. The reachable
+        counterpart to the vote counters surfaced by `get_shared_connections`
+        / `get_recommended_connections` — without this wrapper those counters
+        could never move off zero.
+        """
+        return self.graph.vote_connection(connection_id, upvote=upvote)
+
     def share_insight(self, user_id: str, content: str) -> CollectiveInsight:
         """Share an insight with the community.
 
@@ -460,6 +443,16 @@ class CollaborativeManager:
             List of CollectiveInsight.
         """
         return self.graph.get_top_insights(limit)
+
+    def vote_insight(self, insight_id: str, *, upvote: bool = True) -> bool:
+        """Cast a vote on a collective insight.
+
+        Returns True if the insight exists, False otherwise. The reachable
+        counterpart to the upvote/downvote counters surfaced by
+        `get_top_insights` — without this wrapper those counters could never
+        move off zero.
+        """
+        return self.graph.vote_insight(insight_id, upvote=upvote)
 
 
 __all__ = [

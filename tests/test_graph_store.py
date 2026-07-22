@@ -171,15 +171,6 @@ def test_rebuild_edges_weights_by_shared_memories(tmp_path: Path) -> None:
     assert g.rebuild_edges() == 2
 
 
-def test_decay_weight_halves_after_one_half_life() -> None:
-    from memo.graph import decay_weight
-
-    w = decay_weight(8.0, "2025-07-01", now_iso="2025-12-28", half_life_days=180.0)
-    assert 3.8 < w < 4.2  # ~one half-life elapsed
-    # no date -> undecayed
-    assert decay_weight(8.0, None, now_iso="2025-12-28") == 8.0
-
-
 def test_edge_stats_reports_counts_and_weight_distribution(tmp_path: Path) -> None:
     g = _store(tmp_path)
     for mid in ("m1", "m2"):  # A-B co-occur twice -> weight 2
