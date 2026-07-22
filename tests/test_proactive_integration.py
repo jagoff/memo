@@ -1,7 +1,10 @@
-"""Task 12 — wire the proactive engine into briefing / statusline / Stop hook.
+"""Task 12 — wire the proactive engine into briefing / statusline / recall hook.
 
-All wiring is behind `MEMO_PROACTIVE_ENABLED` (default off) and must degrade to
-today's exact output when the flag is off or on any error.
+The urgent push rides the recall hook's `systemMessage` (the one synchronous
+channel Claude Code renders to the user) via `engine.pull_urgent`; the Stop hook
+no longer pushes (its async stdout is discarded). All wiring is behind
+`MEMO_PROACTIVE_ENABLED` (default off) and must degrade to today's exact output
+when the flag is off or on any error.
 """
 
 from __future__ import annotations
@@ -100,10 +103,58 @@ def test_briefing_omits_proactive_section_when_no_candidates(mock_memory, monkey
     assert "### Proactive" not in joined
 
 
-# ── Stop hook urgent push ────────────────────────────────────────────────────
+# ── recall-hook urgent push (pull_urgent owns the push slot) ─────────────────
 
 
-def test_capture_stop_prints_urgent_line_and_marks_pushed(tmp_path: Path, monkeypatch) -> None:
+def test_pull_urgent_marks_pushed_and_cools_down(tmp_path: Path, monkeypatch) -> None:
+    """`pull_urgent` returns the due nudge and consumes exactly one push slot;
+    a second call inside the cooldown returns None and does not re-push."""
+    monkeypatch.setenv("MEMO_PROACTIVE_ENABLED", "1")
+
+    from memo.proactive.engine import pull_urgent
+
+    s = ProactiveStore(tmp_path / "p.db")
+    s.put_candidates(
+        [
+            Nudge.make(
+                KIND_RELIABILITY,
+                subject_id="old1",
+                urgency=0.95,
+                value=0.9,
+                title="stale fact",
+                evidence=("new1", "old1"),
+                action="memo get old1",
+                created_at="2026-07-21T09:00:00Z",
+            )
+        ]
+    )
+
+    urgent = pull_urgent(s, now="2026-07-21T10:00:00Z", day="2026-07-21")
+    assert urgent is not None
+    line = render_urgent_line(urgent)
+    assert line.startswith("⚠️ memo:")
+    assert "memo get old1" in line
+    assert s.pushes_today("2026-07-21") == 1
+
+    # within cooldown → nothing due, no extra push slot consumed
+    assert pull_urgent(s, now="2026-07-21T10:30:00Z", day="2026-07-21") is None
+    assert s.pushes_today("2026-07-21") == 1
+
+
+def test_pull_urgent_noop_when_no_candidates(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_PROACTIVE_ENABLED", "1")
+
+    from memo.proactive.engine import pull_urgent
+
+    s = ProactiveStore(tmp_path / "p.db")
+    assert pull_urgent(s, now="2026-07-21T10:00:00Z", day="2026-07-21") is None
+    assert s.pushes_today("2026-07-21") == 0
+
+
+def test_capture_stop_stays_silent_with_proactive_enabled(tmp_path: Path, monkeypatch) -> None:
+    """The Stop hook no longer pushes proactive nudges (async stdout is
+    discarded by Claude Code): capture-stop emits only `{}` and consumes no
+    push slot, even with a due candidate and the flag on."""
     from click.testing import CliRunner
 
     import memo.capture as capture_mod
@@ -119,55 +170,6 @@ def test_capture_stop_prints_urgent_line_and_marks_pushed(tmp_path: Path, monkey
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
     monkeypatch.setenv("MEMO_PROACTIVE_ENABLED", "1")
-    monkeypatch.setattr(
-        capture_mod,
-        "run_capture",
-        lambda *a, **k: {"status": "no_trigger", "saved": [], "saved_titles": []},
-    )
-
-    cfg = Config.from_env()
-    now = datetime.now(tz=UTC).isoformat()
-    store = ProactiveStore(cfg.state_dir / "proactive.db")
-    store.put_candidates(
-        [
-            Nudge.make(
-                KIND_RELIABILITY,
-                subject_id="old1",
-                urgency=0.95,
-                value=0.9,
-                title="stale fact",
-                evidence=("new1", "old1"),
-                action="memo get old1",
-                created_at=now,
-            )
-        ]
-    )
-
-    payload = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
-    result = CliRunner().invoke(capture_stop, input=payload)
-
-    assert result.exit_code == 0
-    assert "memo get old1" in result.output
-    assert store.pushes_today(datetime.now(tz=UTC).date().isoformat()) == 1
-
-
-def test_capture_stop_proactive_disabled_prints_nothing_extra(tmp_path: Path, monkeypatch) -> None:
-    """Flag off → today's exact Stop-hook output (no proactive section, no crash)."""
-    from click.testing import CliRunner
-
-    import memo.capture as capture_mod
-    from memo.cli_capture import capture_stop
-    from memo.config import Config
-
-    state = tmp_path / "state"
-    state.mkdir()
-    transcript = tmp_path / "t.jsonl"
-    transcript.write_text("{}\n", encoding="utf-8")
-
-    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
-    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
-    monkeypatch.delenv("MEMO_PROACTIVE_ENABLED", raising=False)
     monkeypatch.setattr(
         capture_mod,
         "run_capture",
