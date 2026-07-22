@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.12.1] - 2026-07-22
+
+### Fixed
+
+- **Recall under-fill under the validity gate** (finding-7). Default recall and
+  `--as-of` apply the bi-temporal validity gate *after* the vec kNN, so a plain
+  `vec.k = limit` could return fewer than `limit` results when the nearest
+  neighbours were the rows being filtered out (contradiction-superseded or
+  out-of-as-of). vec-search now widens the candidate pool the same way it
+  already does for date/tag post-filters — but only when the gate can actually
+  drop rows (an `as_of` query, or a corpus that holds any invalid row, checked
+  via the `idx_meta_invalid_at` partial index), so the common all-valid recall
+  path pays nothing on the hot 5s budget.
+
 ## [3.12.0] - 2026-07-22
 
 ### Added
