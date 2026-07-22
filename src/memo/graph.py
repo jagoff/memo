@@ -354,6 +354,30 @@ class GraphStore:
         ).fetchall()
         return {str(row["extractor"]) for row in rows}
 
+    def prune_memory_links(self, live_memory_ids: set[str]) -> int:
+        """Remove graph memberships whose source memory is no longer indexed."""
+        linked_ids = {
+            str(row["memory_id"])
+            for row in self._conn.execute("SELECT DISTINCT memory_id FROM entity_memory")
+        }
+        orphan_ids = sorted(linked_ids - live_memory_ids)
+        if not orphan_ids:
+            return 0
+        with self._tx() as cx:
+            removed = 0
+            for memory_id in orphan_ids:
+                cur = cx.execute(
+                    "DELETE FROM entity_memory WHERE memory_id = ?",
+                    (memory_id,),
+                )
+                removed += int(cur.rowcount or 0)
+            cx.execute(
+                "UPDATE entities SET mention_count = "
+                "(SELECT COUNT(*) FROM entity_memory WHERE entity_id = entities.id)"
+            )
+            self._mark_projection_dirty(cx)
+        return removed
+
     def drop_for_memoria(self, memory_id: str) -> int:
         """Called when a memory is deleted. Removes all entity_memory
         edges for it and decrements mention_count on each touched

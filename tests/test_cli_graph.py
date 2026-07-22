@@ -31,3 +31,19 @@ def test_graph_export_json_creates_parent_directories(tmp_path, tmp_cfg) -> None
     data = json.loads(output.read_text(encoding="utf-8"))
     assert "nodes" in data
     assert "edges" in data
+
+
+def test_graph_rebuild_and_stats_json_report_projection(tmp_cfg) -> None:
+    runner = CliRunner()
+    env = _env(tmp_cfg)
+
+    rebuild = runner.invoke(cli, ["graph", "rebuild", "--json"], env=env)
+    stats = runner.invoke(cli, ["graph", "stats", "--json"], env=env)
+
+    assert rebuild.exit_code == 0, rebuild.output
+    assert stats.exit_code == 0, stats.output
+    rebuilt = json.loads(rebuild.output)
+    payload = json.loads(stats.output)
+    assert rebuilt["projection"]["activated"] is True
+    assert payload["projection"]["active_version"]
+    assert "rejection_reasons" in payload["projection"]

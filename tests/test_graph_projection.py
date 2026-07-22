@@ -198,3 +198,34 @@ def test_rebuild_quarantines_rejections_without_deleting_raw_rows(
     assert result.rejected_count == 1
     assert graph.count_entities() == 2
     assert graph.projection.health()["rejection_reasons"]["code_shape"] == 1
+
+
+def test_memory_rebuild_graph_prunes_orphans_and_activates_projection(
+    mem_with_stub,
+) -> None:
+    rec = mem_with_stub.save(
+        content="MLX daemon knowledge",
+        title="MLX runtime",
+        type_="decision",
+    )
+    mem_with_stub.graph.record_extraction(
+        memory_id=rec.id,
+        memory_date="2026-07-20",
+        entities=[{"name": "MLX", "type": "technology"}],
+        extracted_at="2026-07-20T00:00:00+00:00",
+        extractor="explicit",
+    )
+    mem_with_stub.graph.record_extraction(
+        memory_id="gone",
+        memory_date="2026-07-20",
+        entities=[{"name": "orphan", "type": "concept"}],
+        extracted_at="2026-07-20T00:00:00+00:00",
+        extractor="explicit",
+    )
+
+    result = mem_with_stub.rebuild_graph()
+
+    assert result.orphan_links_pruned == 1
+    assert result.projection.activated is True
+    assert mem_with_stub.graph.entity_memories("orphan") == []
+    assert mem_with_stub.graph.projection.read_model(36).memory_nodes(rec.id)

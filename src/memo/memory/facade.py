@@ -31,6 +31,7 @@ from memo.memory.capabilities import OPTIONAL_CAPABILITIES
 from memo.memory.chat_ask_ops import _ChatAskOpsMixin
 from memo.memory.consolidate_ops import _ConsolidateOpsMixin
 from memo.memory.delete_ops import _DeleteOpsMixin
+from memo.memory.graph_ops import _GraphOpsMixin
 from memo.memory.maintain_ops import _MaintainOpsMixin
 from memo.memory.record import _compose_for_embed
 from memo.memory.replay_ops import _ReplayOpsMixin
@@ -52,6 +53,7 @@ class Memory(
     _WriteOpsMixin,
     _UpdateOpsMixin,
     _DeleteOpsMixin,
+    _GraphOpsMixin,
     _SearchOpsMixin,
     _SearchScoringMixin,
     _AskOpsMixin,

@@ -7,6 +7,7 @@ root group in cli.py via `cli.add_command(graph_group)`.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import click
@@ -220,15 +221,21 @@ def graph_communities(min_size: int, as_json: bool) -> None:
 
 
 @graph_group.command(name="stats")
-def graph_stats() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def graph_stats(as_json: bool) -> None:
     """Entity-graph health: entity / link / edge counts + weight distribution.
 
     Example: memo graph stats
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)
-    s = mem.graph.stats()
-    es = mem.graph.edge_stats()
+    health = mem.graph_health()
+    if as_json:
+        click.echo(json.dumps(health, indent=2, ensure_ascii=False))
+        return
+    s = health["raw"]
+    es = health["edges"]
+    projection = health["projection"]
     console.print(
         f"[bold]entities[/bold] {s['entities']}  "
         f"[bold]links[/bold] {s['links']}  "
@@ -239,20 +246,37 @@ def graph_stats() -> None:
         f"edge weight: min {es['weight_min']:.0f} / mean {es['weight_mean']:.2f} / "
         f"max {es['weight_max']:.0f}  ([green]{es['edges_gt1']}[/green] = {pct:.1f}% > 1)"
     )
+    active = projection["active_version"]
+    if active:
+        console.print(
+            f"projection [cyan]{str(active)[:8]}[/cyan]: "
+            f"{projection['node_count']} nodes / {projection['edge_count']} edges / "
+            f"{projection['rejected_count']} rejected"
+        )
+    else:
+        console.print("projection: [yellow]missing[/yellow]")
 
 
 @graph_group.command(name="rebuild")
-def graph_rebuild() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def graph_rebuild(as_json: bool) -> None:
     """Canonicalize entities and rebuild the weighted edge table.
 
     Example: memo graph rebuild
     """
     cfg = Config.from_env()
     mem = _get_memory(cfg)
-    merged = mem.graph.canonicalize_existing()
-    edges = mem.graph.rebuild_edges()
+    result = mem.rebuild_graph()
+    if as_json:
+        click.echo(json.dumps(asdict(result), indent=2, ensure_ascii=False))
+        return
     console.print(
-        f"[green]graph rebuilt[/green]: merged {merged} duplicate entities, {edges} edges"
+        "[green]graph rebuilt[/green]: "
+        f"pruned {result.orphan_links_pruned} orphan links, "
+        f"merged {result.entities_merged} duplicate entities, "
+        f"{result.raw_edges} raw edges, "
+        f"{result.projection.node_count} projected nodes / "
+        f"{result.projection.edge_count} projected edges"
     )
 
 
