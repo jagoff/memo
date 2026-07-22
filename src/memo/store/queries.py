@@ -9,7 +9,7 @@ from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
 from ..util import safe_operation
-from .bm25_queries import _BM25QueriesMixin
+from .bm25_queries import _BM25QueriesMixin, _validity_filter
 from .rows import _row_to_dict
 from .signal_queries import _SignalQueriesMixin
 
@@ -1150,6 +1150,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         date_from: str | None = None,
         date_to: str | None = None,
         exclude_tags: set[str] | None = None,
+        include_invalid: bool = False,
     ) -> list[dict[str, Any]]:
         """Top-k by cosine. Returns metadata dicts with a `score` field
         added (1 - distance, so higher = more similar).
@@ -1157,7 +1158,12 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         `exclude_types` drops rows whose `type` is in the set (pushed into
         SQL, not post-filtered, so the candidate pool isn't wasted on rows
         the caller will throw away — e.g. the recall hook excluding the
-        bulk `reference` tier)."""
+        bulk `reference` tier).
+
+        `include_invalid=False` (default) drops rows whose world-validity
+        interval is closed as of now (contradiction-superseded facts stay
+        in-index but out of normal recall). Task 8's `--as-of` path passes
+        `True` to bypass this and apply its own valid-time predicate."""
         if len(embedding) != self.dims:
             raise ValueError(
                 f"Query embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
@@ -1202,7 +1208,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             "SELECT vec.id AS id, vec.distance AS distance, "
             "       meta.path, meta.title, meta.type, meta.tags, "
             "       meta.created, meta.updated, meta.body_hash, meta.extra_json, "
-            "       meta.verification_state, meta.verified_at "
+            "       meta.verification_state, meta.verified_at, "
+            "       meta.valid_at, meta.invalid_at "
             f"FROM vec JOIN meta ON vec.id = meta.id AND {deleted_filter} "
             f"WHERE vec.embedding MATCH {self._vec_bind_new()} AND vec.k = ? "
         )
@@ -1213,6 +1220,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         for clause in tag_clauses:
             sql += f"AND {clause} "
         params.extend(tag_params)
+        valid_sql, valid_params = _validity_filter("meta.", include_invalid)
+        sql += valid_sql + " "
+        params.extend(valid_params)
         sql += "ORDER BY distance ASC LIMIT ?"
         params.append(k_fetch if has_date_filter else limit)
         rows = self._conn.execute(sql, params).fetchall()

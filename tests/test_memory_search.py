@@ -146,6 +146,65 @@ def test_bm25_handles_empty_and_garbage_queries(mem_with_stub: Memory):
     assert isinstance(out, list)
 
 
+def test_store_vec_search_excludes_invalidated(mem_with_stub: Memory):
+    """Vec seam (queries.py inline SQL): default recall drops rows whose
+    validity interval is closed as of now, and surfaced rows carry the real
+    valid_at/invalid_at (not None)."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+
+    emb = [1.0, 0.0, 0.0, 0.0]
+    before = {r["id"]: r for r in mem_with_stub.store.search(emb, limit=10)}
+    assert a.id in before and b.id in before
+    # columns now flow through the vec SELECT
+    assert before[a.id]["valid_at"] == a.valid_at
+    assert before[a.id]["invalid_at"] is None
+
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+    after = {r["id"] for r in mem_with_stub.store.search(emb, limit=10)}
+    assert a.id not in after
+    assert b.id in after
+
+
+def test_store_bm25_search_excludes_invalidated(mem_with_stub: Memory):
+    """BM25 seam (bm25_queries.py): default recall drops the closed interval;
+    valid_at flows through the bm25 SELECT."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+
+    before = {r["id"]: r for r in mem_with_stub.store.search_bm25("prod db", limit=10)}
+    assert a.id in before and b.id in before
+    assert before[a.id]["valid_at"] == a.valid_at
+
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+    after = {r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10)}
+    assert a.id not in after
+    assert b.id in after
+
+
+def test_default_recall_excludes_invalidated(mem_with_stub: Memory):
+    """End-to-end: default `mem.search(...)` (hybrid) and the bm25 mode both
+    hide a record whose interval is closed, keeping the valid successor."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+
+    hybrid_ids = {r.id for r in mem_with_stub.search("prod db", limit=10)}
+    assert a.id not in hybrid_ids
+    assert b.id in hybrid_ids
+
+    bm25_ids = {r.id for r in mem_with_stub.search("prod db", mode="bm25", limit=10)}
+    assert a.id not in bm25_ids
+    assert b.id in bm25_ids
+
+
 def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
     seen_inputs: list[str] = []
 
