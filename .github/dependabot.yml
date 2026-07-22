@@ -9,12 +9,14 @@ updates:
         dependency-type: "production"
       python-development:
         dependency-type: "development"
-    # Keep Dependabot from widening the ML compatibility cap and manufacturing
-    # an invalid resolution. transformers 5.13 breaks the current mlx-lm
-    # tokenizer path.
+    # Keep Dependabot from widening ML compatibility caps and manufacturing an
+    # invalid resolution. transformers 5.13 breaks the current mlx-lm tokenizer
+    # path; mlx-vlm 0.6.5+ requires transformers 5.14+.
     ignore:
       - dependency-name: "transformers"
         versions: [">=5.13"]
+      - dependency-name: "mlx-vlm"
+        versions: [">=0.6.5"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

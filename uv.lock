@@ -1474,7 +1474,7 @@ requires-dist = [
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.158,<7" },
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.18,<1" },
     { name = "mlx-lm", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.18" },
-    { name = "mlx-vlm", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'multimodal'", specifier = ">=0.1.12" },
+    { name = "mlx-vlm", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'multimodal'", specifier = ">=0.1.12,<0.6.5" },
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'multimodal'", specifier = ">=0.4.1" },
     { name = "mutmut", marker = "extra == 'test-mutation'", specifier = ">=3,<4" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
