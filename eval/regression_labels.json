@@ -251,6 +251,13 @@
       "_note": "Guard reversal-signal probe (Task 6): prompt reads like reversing the decision 'Exact BM25 leg and confident-RRF skip added to hybrid search. rerank_input_k def' (132f48e4b24e477f8724a4c606a904af), which lowered rerank_input_k default 30→5. Tests 'revert'/'instead' reversal signals against a decision with a numeric parameter change."
     },
     {
+      "text": "what was the production database before we migrated",
+      "relevant": false,
+      "expect_ids": [],
+      "as_of": "2020-01-01T00:00:00",
+      "_note": "As-of / valid-time coverage (Task 11, bitemporal). Documents the schema-additive `as_of` field and exercises the harness threading it into live `Memory.search(as_of=...)` valid-time recall. Deliberately UNSCORED (relevant=false, expect_ids=[]) with an as_of predating the whole 2026 corpus, so it can only return an empty pool — it can never lower precision@K or raise noise@K on this machine. The ENFORCING superseding assertion (A valid_at 2026-06-01 surfaces at as_of=2026-06-15; its July successor B does not; B is the live hit now) lives in tests/test_eval_recall.py::test_run_config_honors_label_as_of, self-contained in a tmp index — the live dev corpus carries no superseded pair (0 records with invalid_at) to anchor a real expect_ids as-of label to."
+    },
+    {
       "text": "best pasta recipe for tonight",
       "relevant": false,
       "_note": "Noise probe — culinary content not in the developer's vault."

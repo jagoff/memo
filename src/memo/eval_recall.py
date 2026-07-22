@@ -76,6 +76,12 @@ class Prompt:
     # verdicts (verdict.log). A top-K hit matching one counts as noise@K.
     # Schema-additive on memo.eval_recall.labels.v1.
     avoid_ids: list[str] = field(default_factory=list)
+    # ISO date/datetime for valid-time (as-of) recall. When set, the harness
+    # runs `Memory.search(..., as_of=...)` so the candidate pool is filtered to
+    # records whose world-validity interval contains `as_of` (a since-superseded
+    # fact resurfaces as it stood at that time). None = default now-gate.
+    # Schema-additive on memo.eval_recall.labels.v1.
+    as_of: str | None = None
 
 
 # Alias so tests/code can import `Label` as the per-prompt record type.
@@ -97,6 +103,7 @@ def _label_from_dict(d: dict) -> Label:
         expect_associative_ids=tuple(str(x) for x in (d.get("expect_associative_ids") or ())),
         project=str(d["project"]) if d.get("project") else None,
         avoid_ids=[str(x) for x in (d.get("avoid_ids") or [])],
+        as_of=str(d["as_of"]) if d.get("as_of") else None,
     )
 
 
@@ -122,6 +129,7 @@ class LabelSet:
                         sorted(p.expect_associative_ids),
                         p.project,
                         sorted(p.avoid_ids),
+                        p.as_of,
                     )
                     for p in self.prompts
                 ],
@@ -674,15 +682,19 @@ def _run_config_inner(
         )
         t0 = time.time()
         trace: list[dict[str, Any]] = []
-        hits = _search_for_eval(
-            mem,
-            query,
-            trace=trace,
-            limit=k * 4,
-            mode=cfg.mode,
-            exclude_types=exclude_types,
-            exclude_tags=exclude_tags,
-        )
+        search_kwargs: dict[str, Any] = {
+            "limit": k * 4,
+            "mode": cfg.mode,
+            "exclude_types": exclude_types,
+            "exclude_tags": exclude_tags,
+        }
+        # A label carrying `as_of` measures valid-time recall: the search's
+        # candidate seams filter to records whose validity interval contains
+        # `as_of`, overriding the default now-gate (see Memory.search). Only
+        # passed when present so project-less/normal labels stay byte-identical.
+        if prompt.as_of:
+            search_kwargs["as_of"] = prompt.as_of
+        hits = _search_for_eval(mem, query, trace=trace, **search_kwargs)
         lat.append((time.time() - t0) * 1000)
         band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
         if band_days > 0:
