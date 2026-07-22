@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -28,6 +29,70 @@ def _emb(*xs: float) -> list[float]:
 
     norm = math.sqrt(sum(x * x for x in xs)) or 1.0
     return [x / norm for x in xs]
+
+
+def _put_for_delete(store: VecStore, id_: str) -> None:
+    store.upsert(
+        id_=id_,
+        path=f"memory/{id_}.md",
+        title=f"Memory {id_}",
+        type_="note",
+        tags=["delete-contract"],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body_hash=f"hash-{id_}",
+        embedding=_emb(1, 0, 0, 0),
+    )
+
+
+def test_delete_tantivy_document_commits_sidecar_delete(store: VecStore, monkeypatch) -> None:
+    tantivy = MagicMock()
+    monkeypatch.setattr(store, "_get_tantivy", MagicMock(return_value=tantivy))
+
+    assert store._delete_tantivy_document("memory-1") is True
+
+    tantivy.delete_document.assert_called_once_with("memory-1")
+    tantivy.commit.assert_called_once_with()
+
+
+def test_hard_delete_marks_tantivy_unhealthy_when_sidecar_delete_fails(
+    store: VecStore, monkeypatch
+) -> None:
+    _put_for_delete(store, "memory-1")
+    delete_sidecar = MagicMock(return_value=False)
+    mark_unhealthy = MagicMock()
+    monkeypatch.setattr(store, "_delete_tantivy_document", delete_sidecar)
+    monkeypatch.setattr(store, "_mark_tantivy_unhealthy", mark_unhealthy)
+
+    assert store.hard_delete("memory-1") is True
+
+    assert store.get("memory-1") is None
+    delete_sidecar.assert_called_once_with("memory-1")
+    mark_unhealthy.assert_called_once_with()
+
+
+def test_conditional_hard_delete_marks_tantivy_unhealthy_after_eligible_tombstone(
+    store: VecStore, monkeypatch
+) -> None:
+    _put_for_delete(store, "memory-1")
+    store.connection.execute(
+        "UPDATE meta SET deleted_at = ? WHERE id = ?",
+        ("2026-01-01T00:00:00+00:00", "memory-1"),
+    )
+    store.connection.commit()
+    delete_sidecar = MagicMock(return_value=False)
+    mark_unhealthy = MagicMock()
+    monkeypatch.setattr(store, "_delete_tantivy_document", delete_sidecar)
+    monkeypatch.setattr(store, "_mark_tantivy_unhealthy", mark_unhealthy)
+
+    assert (
+        store.hard_delete_if_soft_deleted_before("memory-1", before="2026-02-01T00:00:00+00:00")
+        is True
+    )
+
+    assert store.list_soft_deleted() == []
+    delete_sidecar.assert_called_once_with("memory-1")
+    mark_unhealthy.assert_called_once_with()
 
 
 def test_set_confidence_batch_writes_absolute_value(store: VecStore):
@@ -332,6 +397,7 @@ def test_existing_vec_table_dim_mismatch_fails_fast(tmp_path: Path):
     assert "memo reindex" in msg
 
 
+@pytest.mark.concurrency
 def test_existing_schema_init_does_not_need_writer_lock(tmp_path: Path):
     db_path = tmp_path / "vec.db"
     first = VecStore(db_path, dims=4)
@@ -450,6 +516,7 @@ def test_repo_embedding_cache_is_scoped_by_model_and_dims(store: VecStore):
     assert store.get_repo_embedding_cache(model="model-a", dims=8, input_hashes=["hash1"]) == {}
 
 
+@pytest.mark.concurrency
 def test_concurrent_writes_and_reads_do_not_collide(store: VecStore):
     """Regression: the FastMCP HTTP transport dispatches sync tool calls on a
     worker threadpool, so multiple threads hit one VecStore at once. A single
@@ -496,6 +563,7 @@ def test_concurrent_writes_and_reads_do_not_collide(store: VecStore):
     assert len(conn_ids) == 8
 
 
+@pytest.mark.concurrency
 def test_close_closes_live_worker_thread_connections(tmp_path: Path):
     """Closing the store must close thread-local connections owned by live workers.
 
@@ -782,6 +850,7 @@ def test_soft_deleted_rows_hidden_from_meta_queries(store: VecStore):
 # ── Tantivy dual-write ordering ───────────────────────────────────────────
 
 
+@pytest.mark.concurrency
 def test_tantivy_write_lock_spans_sqlite_commit(tmp_path: Path):
     """Regression: the tantivy dual-write must follow sqlite commit order.
     The write lock has to be held across the sqlite tx, so a writer that is
@@ -940,6 +1009,7 @@ def test_vec_dims_mismatch_raises_domain_storage_error(tmp_path: Path):
         VecStore(db_path, dims=8)
 
 
+@pytest.mark.concurrency
 def test_vec_migration_snapshot_inside_tx(tmp_path: Path):
     """Regression: `_validate_vec_schema` snapshotted the old vec table on the
     autocommit connection BEFORE opening the migration transaction, so a row

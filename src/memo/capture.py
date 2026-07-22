@@ -45,6 +45,11 @@ next Stop to retry; already-saved candidates are handled by normal dedup.
 Debug details print only when `MEMO_CAPTURE_DEBUG=1`.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from threading import RLock
+from typing import Any
+
 # Core capture logic
 from . import capture_core as _capture_core
 from . import capture_hooks as _capture_hooks
@@ -147,40 +152,60 @@ from .capture_hooks import (
     list_sessions_without_watermark as list_sessions_without_watermark,
 )
 
+_CAPTURE_PATCH_LOCK = RLock()
 
-def _sync_capture_core_patchables() -> None:
-    """Keep legacy monkeypatches on `memo.capture` effective.
+
+@contextmanager
+def _capture_core_patchables() -> Iterator[None]:
+    """Apply legacy monkeypatch seams only for the delegated call.
 
     Historically this module owned the capture implementation, so tests and
     downstream users patched `memo.capture.extract_insights` and friends. After
     the implementation moved to `capture_core`, the re-exported function
     objects still looked patchable but `_extract_and_save` resolved globals in
-    `capture_core`. Sync the patchable seams just before invoking core helpers.
+    `capture_core`. Keep the compatibility bridge scoped so one caller's
+    monkeypatch cannot leak into a later capture operation.
     """
-    _capture_core.extract_insights = extract_insights
-    _capture_core._passes_quality = _passes_quality
-    _capture_core.find_near_duplicate = find_near_duplicate
-    _capture_hooks._extract_and_save = _extract_and_save
+    with _CAPTURE_PATCH_LOCK:
+        originals: tuple[Any, Any, Any, Any] = (
+            _capture_core.extract_insights,
+            _capture_core._passes_quality,
+            _capture_core.find_near_duplicate,
+            _capture_hooks._extract_and_save,
+        )
+        try:
+            _capture_core.extract_insights = extract_insights
+            _capture_core._passes_quality = _passes_quality
+            _capture_core.find_near_duplicate = find_near_duplicate
+            _capture_hooks._extract_and_save = _extract_and_save
+            yield
+        finally:
+            (
+                _capture_core.extract_insights,
+                _capture_core._passes_quality,
+                _capture_core.find_near_duplicate,
+                _capture_hooks._extract_and_save,
+            ) = originals
 
 
 def _extract_and_save(*args, **kwargs):
-    _sync_capture_core_patchables()
-    return _capture_core._extract_and_save(*args, **kwargs)
+    with _capture_core_patchables():
+        return _capture_core._extract_and_save(*args, **kwargs)
 
 
 def run_capture(*args, **kwargs):
-    _sync_capture_core_patchables()
-    return _capture_hooks.run_capture(*args, **kwargs)
+    with _capture_core_patchables():
+        return _capture_hooks.run_capture(*args, **kwargs)
 
 
 def run_capture_incremental(*args, **kwargs):
-    _sync_capture_core_patchables()
-    return _capture_hooks.run_capture_incremental(*args, **kwargs)
+    with _capture_core_patchables():
+        return _capture_hooks.run_capture_incremental(*args, **kwargs)
 
 
 def extract_and_save_text(*args, **kwargs):
-    _sync_capture_core_patchables()
-    return _capture_core.extract_and_save_text(*args, **kwargs)
+    with _capture_core_patchables():
+        return _capture_core.extract_and_save_text(*args, **kwargs)
 
 
 __all__ = [

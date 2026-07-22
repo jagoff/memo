@@ -85,6 +85,27 @@ def apply_session_mode(knobs: RankKnobs, session_mode: str) -> RankKnobs:
     return knobs
 
 
+def _proactive_urgent_line(cfg: Config) -> str:
+    """Pull the optional urgent nudge without growing the recall-hook entrypoint."""
+    if not flag_bool("MEMO_PROACTIVE_ENABLED"):
+        return ""
+    try:
+        from datetime import UTC as _UTC
+        from datetime import datetime as _datetime
+
+        from memo.proactive.engine import pull_urgent
+        from memo.proactive.store import ProactiveStore
+        from memo.proactive.surfaces import render_urgent_line
+
+        now_dt = _datetime.now(tz=_UTC)
+        with ProactiveStore(cfg.state_dir / "proactive.db") as store:
+            urgent = pull_urgent(store, now=now_dt.isoformat(), day=now_dt.date().isoformat())
+        return render_urgent_line(urgent) if urgent is not None else ""
+    except Exception as exc:
+        _log.debug("recall proactive urgent failed: %s", exc)
+        return ""
+
+
 @click.command(name="recall-hook")
 def recall_hook() -> None:
     """UserPromptSubmit hook — inject relevant memories as additionalContext."""
@@ -764,25 +785,7 @@ def recall_hook() -> None:
     # respects the cooldown/daily-cap so this stays "útil sin molestar", and it
     # is MLX-free (one sqlite read + rank) so it fits the recall budget.
     # Best-effort; never blocks the recall.
-    _urgent_line = ""
-    if flag_bool("MEMO_PROACTIVE_ENABLED"):
-        try:
-            from datetime import UTC as _UTC
-            from datetime import datetime as _datetime
-
-            from memo.proactive.engine import pull_urgent
-            from memo.proactive.store import ProactiveStore
-            from memo.proactive.surfaces import render_urgent_line
-
-            _now_dt = _datetime.now(tz=_UTC)
-            with ProactiveStore(cfg.state_dir / "proactive.db") as _pstore:
-                _urgent = pull_urgent(
-                    _pstore, now=_now_dt.isoformat(), day=_now_dt.date().isoformat()
-                )
-            if _urgent is not None:
-                _urgent_line = render_urgent_line(_urgent)
-        except Exception as exc:
-            _log.debug("recall proactive urgent failed: %s", exc)
+    _urgent_line = _proactive_urgent_line(cfg)
 
     if _sysmsg or _recap_line or _urgent_line:
         from memo.cli_recap import compose_system_message

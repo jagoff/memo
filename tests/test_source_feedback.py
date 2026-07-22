@@ -7,37 +7,11 @@ for semantically-similar future queries.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from memo.config import Config
 from memo.memory import Memory
-
-
-@pytest.fixture
-def mem_with_stub(tmp_cfg: Config, monkeypatch) -> Memory:
-    """Identical to `mem_with_stub` in test_memory.py — kept local so
-    this file doesn't depend on cross-module fixtures."""
-    cfg = Config(
-        data_dir=tmp_cfg.data_dir,
-        vault_path=tmp_cfg.vault_path,
-        state_dir=tmp_cfg.state_dir,
-        embedder_dims=4,
-        reranker_enabled=False,
-    )
-
-    def _stub_embed(self, inputs):
-        out = []
-        for s in inputs:
-            h = sum(ord(c) for c in s) % 4
-            v = [0.0] * 4
-            v[h] = 1.0
-            out.append(v)
-        return out
-
-    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
-    mem = Memory(cfg)
-    yield mem
-    mem.close()
 
 
 def test_record_creates_row(mem_with_stub: Memory):
@@ -81,24 +55,19 @@ def test_feedback_isolated_to_similar_queries(mem_with_stub: Memory):
     one-hot buckets, so a 👎 on query A must not exclude the source
     when a dissimilar query B is asked."""
     rec_a = mem_with_stub.save(content="alpha body", title="Alpha")
-    # Save several other rows so the bm25 / vec fallback has matches
-    # for both query strings.
-    for i in range(5):
-        mem_with_stub.save(content=f"unrelated body {i}", title=f"u{i}")
     mem_with_stub.feedback_record(rec_a.id, query_text="alpha", rating="down")
-    # Source must still be discoverable for a dissimilar query — its
-    # presence depends on bm25/vec hits for the other query string,
-    # but if it surfaces here at all, the filter must not drop it.
-    # (We assert the negative path: the filter should NOT have applied.)
-    # The strongest check we can make deterministically is that the
-    # feedback row exists but doesn't unconditionally veto the source.
-    rows = mem_with_stub.feedback_list(source_id=rec_a.id)
-    assert len(rows) == 1
-    # And the source remains in the corpus (search by exact title).
-    direct = mem_with_stub.search("Alpha", limit=10)
-    if any(h.id == rec_a.id for h in direct):
-        # If it does match, fine — the orthogonal-query case is exercised.
-        pass
+    stored = mem_with_stub.get(rec_a.id)
+    assert stored is not None
+    candidate = replace(stored, score=0.5)
+
+    # "alpha" and "gamma" land in different one-hot buckets in the shared
+    # deterministic embedder. Exercise the feedback filter directly so the
+    # assertion cannot pass merely because an upstream retrieval leg omitted
+    # the candidate.
+    dissimilar_query = mem_with_stub.embedder.embed_query("gamma")
+    out = mem_with_stub._apply_source_feedback([candidate], dissimilar_query)
+
+    assert out == [candidate]
 
 
 def test_idempotent_same_vote(mem_with_stub: Memory):

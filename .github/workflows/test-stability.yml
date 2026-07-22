@@ -1,0 +1,47 @@
+name: test-stability
+
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: pip install uv==0.11.21
+      - name: Install stability environment
+        run: uv sync --frozen --extra dev --extra cpu --extra http --extra test-stability --python 3.13
+      - name: Full non-slow suite in replayable random order
+        env:
+          RANDOM_SEED: ${{ github.run_id }}
+        run: |
+          echo "Replay: pytest -m 'not slow' -n 0 --randomly-seed=$RANDOM_SEED"
+          .venv/bin/python -m pytest -m "not slow" -n 0 --timeout=120 \
+            --randomly-seed="$RANDOM_SEED" --junitxml=stability-full.xml
+      - name: Repeat concurrency and resource ownership sessions
+        env:
+          RANDOM_SEED: ${{ github.run_id }}
+        run: >-
+          .venv/bin/python -m pytest -m "concurrency or resource_hygiene"
+          -n 0 -x --timeout=120 --randomly-seed="$RANDOM_SEED"
+          --count=10 --repeat-scope=session --resource-hygiene
+          --junitxml=stability-repeat.xml
+      - name: Upload stability reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: stability-results-${{ github.run_id }}
+          path: stability-*.xml
+          if-no-files-found: warn

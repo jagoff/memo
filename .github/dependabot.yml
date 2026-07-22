@@ -9,14 +9,12 @@ updates:
         dependency-type: "production"
       python-development:
         dependency-type: "development"
-    # Keep Dependabot from widening compatibility caps and manufacturing an
-    # invalid resolution. transformers 5.13 breaks the current mlx-lm
-    # tokenizer path; pytest 9 conflicts with pytest-textual-snapshot 1.1.
+    # Keep Dependabot from widening the ML compatibility cap and manufacturing
+    # an invalid resolution. transformers 5.13 breaks the current mlx-lm
+    # tokenizer path.
     ignore:
       - dependency-name: "transformers"
         versions: [">=5.13"]
-      - dependency-name: "pytest"
-        versions: [">=9"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

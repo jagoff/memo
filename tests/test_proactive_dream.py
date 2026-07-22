@@ -9,8 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from memo.proactive.engine import refresh_candidates
 from memo.proactive.store import ProactiveStore
+
+pytestmark = pytest.mark.resource_hygiene
 
 
 class _FakeMem:
@@ -22,10 +26,10 @@ class _FakeMem:
 
 
 def test_refresh_writes_candidates(tmp_path: Path):
-    s = ProactiveStore(tmp_path / "p.db")
-    n = refresh_candidates(_FakeMem(), s, now="2026-07-21T00:00:00Z")
-    assert n == 2
-    assert len(s.active_candidates("2026-07-21T01:00:00Z")) == 2
+    with ProactiveStore(tmp_path / "p.db") as store:
+        n = refresh_candidates(_FakeMem(), store, now="2026-07-21T00:00:00Z")
+        assert n == 2
+        assert len(store.active_candidates("2026-07-21T01:00:00Z")) == 2
 
 
 def test_dream_pass_guarded(tmp_path: Path):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import tomllib
 from pathlib import Path
 from types import ModuleType
 
@@ -101,15 +102,39 @@ def test_collect_broad_exceptions_counts_per_file(tmp_path: Path) -> None:
     assert gate.collect_broad_exceptions(tmp_path) == {"src/memo/sample.py": 1}
 
 
+def test_collect_broad_exceptions_exempts_only_exact_audited_sites(tmp_path: Path) -> None:
+    gate = _quality_gate()
+    source = tmp_path / "src" / "memo" / "sample.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def fail_open():\n"
+        "    try:\n        pass\n    except Exception:\n        pass\n"
+        "def still_budgeted():\n"
+        "    try:\n        pass\n    except Exception:\n        pass\n",
+        encoding="utf-8",
+    )
+
+    metrics = gate.collect_broad_exceptions(
+        tmp_path,
+        exemptions={("sample.py", "fail_open", 1)},
+    )
+
+    assert metrics == {"src/memo/sample.py": 1}
+
+
 def test_quality_baseline_schema_and_configuration() -> None:
     gate = _quality_gate()
     baseline = json.loads((ROOT / "eval" / "quality_baseline.json").read_text(encoding="utf-8"))
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+    parsed = tomllib.loads(pyproject)
+    coverage_run = parsed["tool"]["coverage"]["run"]
+    coverage_report = parsed["tool"]["coverage"]["report"]
 
     assert baseline["version"] == 1
     assert set(baseline) == {"version", "complexity", "broad_exceptions"}
-    assert "fail_under = 72" in pyproject
+    assert coverage_run["branch"] is True
+    assert coverage_report["fail_under"] >= 74
     for module in gate.STRICT_MODULES:
         assert module in pyproject
     assert workflow.index("ruff format --check") < workflow.index("ruff check")

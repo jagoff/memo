@@ -17,6 +17,23 @@ def test_config_home_uses_memo_config_dir(tmp_path: Path) -> None:
     assert config_md.config_dir(env) == (tmp_path / "memo-home" / "config").resolve()
 
 
+def test_custom_env_without_config_dir_does_not_read_user_markdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    cfg = home / ".config" / "memo" / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "recall-config.md").write_text(
+        "```toml\n[recall]\ntop_k = 99\n```\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    config_md.invalidate_cache()
+
+    assert config_md.load_values({"MEMO_RECALL_TOP_K": "2"}) == {}
+    assert config_md.validate_markdown_config({"MEMO_RECALL_TOP_K": "2"}) == []
+
+
 def test_load_values_reads_fenced_toml_blocks(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"

@@ -107,6 +107,12 @@ def _domain_files(env: Mapping[str, str] | None = None) -> list[Path]:
 
 def _config_paths(env: Mapping[str, str] | None = None) -> list[Path]:
     """Return the index followed by domain files so domains retain precedence."""
+    if env is not None and env is not os.environ and not env.get("MEMO_CONFIG_DIR"):
+        # A caller-provided mapping is a complete, hermetic environment. Do
+        # not fill a missing config directory from the process user's home;
+        # validation and tests passing ``env={...}`` must inspect only that
+        # explicit mapping. This mirrors tuned_overlay's custom-env boundary.
+        return []
     index = index_path(env)
     return ([index] if index.is_file() else []) + _domain_files(env)
 

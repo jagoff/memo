@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -104,10 +105,10 @@ async def test_too_small_terminal_shows_requirement(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("terminal_size", [(80, 24), (100, 30), (140, 45)])
 def test_config_center_snapshots(
-    snap_compare,
     tmp_path: Path,
     terminal_size: tuple[int, int],
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     # Rich otherwise quantizes the SVG palette according to the invoking
     # terminal (for example NO_COLOR/TERM=dumb in headless local runs).
@@ -115,4 +116,24 @@ def test_config_center_snapshots(
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("COLORTERM", "truecolor")
     monkeypatch.setenv("TERM", "xterm-256color")
-    assert snap_compare(ConfigApp(_session(tmp_path)), terminal_size=terminal_size)
+
+    # Keep this small comparator local: pytest-textual-snapshot is pinned to
+    # an EOL pytest version through syrupy, while Textual's screenshot helper
+    # already produces the SVG artifact we need to compare.
+    from textual._doc import take_svg_screenshot
+
+    actual = take_svg_screenshot(
+        app=ConfigApp(_session(tmp_path)),
+        press=(),
+        terminal_size=terminal_size,
+        run_before=None,
+    )
+    expected_path = (
+        Path(__file__).parent / "__snapshots__" / Path(__file__).stem / f"{request.node.name}.svg"
+    )
+    expected = expected_path.read_text(encoding="utf-8")
+
+    def normalize(svg: str) -> str:
+        return re.sub(r"\bterminal-\d+-([\w-]+)", r"terminal-\1", svg)
+
+    assert normalize(actual) == normalize(expected)

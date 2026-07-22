@@ -1,0 +1,59 @@
+name: mutation-tests
+
+on:
+  schedule:
+    - cron: "0 5 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutate-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: pip install uv==0.11.21
+      - name: Install mutation environment
+        run: uv sync --frozen --extra dev --extra cpu --extra test-mutation --python 3.13
+      - name: Prove focused baseline is green
+        run: >-
+          .venv/bin/python -m pytest tests/test_vector_database_contracts.py
+          tests/test_store.py tests/test_search_scoring_ops_unit.py
+          tests/test_housekeeping_contracts.py tests/test_session.py
+          tests/test_sqlite_cleanup.py -q
+      - name: Run scoped mutations
+        id: mutate
+        shell: bash
+        run: |
+          set +e
+          .venv/bin/mutmut run 2>&1 | tee mutation-results.txt
+          run_status=${PIPESTATUS[0]}
+          .venv/bin/mutmut results 2>&1 | tee -a mutation-results.txt
+          results_status=${PIPESTATUS[0]}
+          if [ "$run_status" -ne 0 ]; then
+            exit "$run_status"
+          fi
+          if [ "$results_status" -ne 0 ]; then
+            exit "$results_status"
+          fi
+          .venv/bin/python scripts/check_mutation_results.py mutants \
+            2>&1 | tee -a mutation-results.txt
+          gate_status=${PIPESTATUS[0]}
+          exit "$gate_status"
+      - name: Upload mutation results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: mutation-results-${{ github.run_id }}
+          path: |
+            mutation-results.txt
+            mutants/
+          if-no-files-found: warn

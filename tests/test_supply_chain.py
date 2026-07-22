@@ -39,7 +39,7 @@ def test_dependabot_covers_every_shipped_dependency_surface() -> None:
     assert all(entry["schedule"]["interval"] == "weekly" for entry in updates)
 
 
-def test_dependabot_respects_mlx_and_test_dependency_caps() -> None:
+def test_dependabot_respects_mlx_cap_without_blocking_supported_pytest() -> None:
     config = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 
@@ -49,11 +49,11 @@ def test_dependabot_respects_mlx_and_test_dependency_caps() -> None:
     }
 
     assert ">=5.13" in ignored_versions["transformers"]
-    assert ">=9" in ignored_versions["pytest"]
+    assert "pytest" not in ignored_versions
     assert any(
         dependency.startswith("transformers<5.13;") for dependency in project["dependencies"]
     )
-    assert "pytest>=8.0,<9" in project["optional-dependencies"]["dev"]
+    assert "pytest>=9.0.3,<10" in project["optional-dependencies"]["dev"]
 
 
 def test_starlette_test_client_uses_the_supported_http_transport() -> None:
