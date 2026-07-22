@@ -98,7 +98,21 @@ _VALID_TYPES = DURABLE_TYPES | REFERENCE_TYPES | {"temp"}
 # (which pulls in the MLX runtime at module load). Applies to the REFERENCE tier
 # only — short durable facts/preferences ("User prefers dark mode") are kept.
 MIN_REFERENCE_CHARS = 60
-_REFERENCE_LINK_RE = re.compile(r"\[\[.+?\]\]|\[.+?\]\(.+?\)|https?://\S+")
+def _contains_reference_link(s: str) -> bool:
+    """Whether `s` holds a wikilink, a markdown link, or a URL.
+
+    Plain substring scans (linear, C-level, no backtracking) instead of a
+    regex: the previous `re` pattern used ambiguous lazy quantifiers that
+    CodeQL flagged as a polynomial ReDoS (py/polynomial-redos). Containment
+    checks are immune regardless of input length.
+    """
+    if "http://" in s or "https://" in s:
+        return True
+    wiki = s.find("[[")
+    if wiki != -1 and s.find("]]", wiki + 2) != -1:
+        return True
+    md = s.find("](")  # markdown link: [text](url)
+    return md > 0 and s.find(")", md + 2) != -1
 
 
 def is_reference_noise(body: str) -> bool:
@@ -108,7 +122,7 @@ def is_reference_noise(body: str) -> bool:
         return False
     if "#" in stripped and re.search(r"^#{1,6}\s+\S", stripped, re.MULTILINE):
         return False  # markdown heading — keep
-    return not _REFERENCE_LINK_RE.search(stripped)  # link/URL → keep; else noise
+    return not _contains_reference_link(stripped)  # link/URL → keep; else noise
 
 
 def is_verified_offload_content(
