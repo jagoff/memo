@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 import memo.embedder_client as embedder_client
+from memo.embed_protocol import MAX_LINE_BYTES
 from memo.recall_server import (
     _RecallServer,
     _socket_path,
@@ -300,6 +301,37 @@ def test_send_request_helper_round_trips(daemon: Path):
     raw = connect_and_send(daemon, {"op": "ping"}, timeout=2.0)
     assert raw is not None
     assert json.loads(raw)["ok"] is True
+
+
+@pytest.mark.parametrize(
+    ("wire", "expected_errors"),
+    [
+        pytest.param(b"", 0, id="eof"),
+        pytest.param(b"x" * MAX_LINE_BYTES, 1, id="oversized"),
+        pytest.param(b"{\n", 1, id="invalid-json"),
+        pytest.param(b"[]\n", 1, id="non-object-json"),
+    ],
+)
+def test_invalid_frames_are_answered_and_accounted(
+    daemon_server: tuple[Path, _RecallServer], wire: bytes, expected_errors: int
+):
+    state_dir, server = daemon_server
+    before = server._stats.snapshot()["ops"].get("parse", {"count": 0, "errors": 0})
+
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(2.0)
+        sock.connect(str(_socket_path(state_dir)))
+        if wire:
+            sock.sendall(wire)
+        sock.shutdown(socket.SHUT_WR)
+        response = b""
+        while b"\n" not in response:
+            response += sock.recv(65536)
+
+    assert json.loads(response) == {}
+    after = server._stats.snapshot()["ops"]["parse"]
+    assert after["count"] == before["count"] + 1
+    assert after["errors"] == before["errors"] + expected_errors
 
 
 # -- stats + status -------------------------------------------------------
