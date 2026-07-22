@@ -158,20 +158,74 @@ def resync_rules_in_repo(
     return out
 
 
-# --- rule source (delegates to the shared motor) -----------------------------
+# --- rule source (graduated motor + directive-shape filter) ------------------
+
+# Types that are directive by nature — the "how to work" tier.
+_RULE_TYPES = frozenset({"feedback", "preference"})
+
+# Strong directive / prohibition markers (en + es). A `decision` memory only
+# counts as a standing rule when its text carries one — this is what separates
+# "never `git add -A`" (a rule) from "bump version 2.10.0" (a recalled task log).
+_DIRECTIVE_MARKERS = (
+    "never",
+    "always",
+    "must",
+    "should",
+    "don't",
+    "do not",
+    "dont",
+    "avoid",
+    "prefer",
+    "ensure",
+    "forbid",
+    "prohib",
+    "nunca",
+    "siempre",
+    "evitá",
+    "evita",
+    "debe",
+    "preferí",
+    "no uses",
+)
+
+
+def _looks_like_rule(text: str) -> bool:
+    low = text.lower()
+    return any(marker in low for marker in _DIRECTIVE_MARKERS)
+
+
+def _is_rule_memory(mtype: str, text: str) -> bool:
+    """A standing rule is a directive, not an episodic task log.
+
+    ``feedback`` / ``preference`` memories are directive by nature; a
+    ``decision`` qualifies only when its text is imperatively shaped. Every
+    other type (note / fact / bug / synthesis / manual / reference) is
+    knowledge or a log — never an enforceable rule.
+    """
+    if mtype in _RULE_TYPES:
+        return True
+    if mtype == "decision":
+        return _looks_like_rule(text)
+    return False
 
 
 def gather_rules(mem: Any, cfg: Any, *, k: int = 3, min_used: float = 0.5) -> list[tuple[str, str]]:
     """Load-bearing standing rules as ``(memory_id, text)`` pairs.
 
-    Thin delegate to ``dream_profile._gather_rules`` — the same graduation
-    (cited in >= ``k`` distinct sessions) and retire-on-contradiction logic
-    that feeds the profile's Standing-rules block, so the mandate surface and
-    the profile surface can never disagree about what the standing rules are.
+    Candidates come from ``dream_profile._gather_rules`` (graduated by use +
+    retire-on-contradiction), then filtered to memories that are actually
+    *directives* — feedback/preference, or an imperatively-shaped decision. This
+    keeps recalled task-logs ("pushed to master", "bump version 2.10.0") out of
+    the mandate/drift surfaces, where only enforceable conventions belong.
     """
     from memo.dream_profile import _gather_rules
 
-    return _gather_rules(mem, cfg, k=k, min_used=min_used)
+    rules: list[tuple[str, str]] = []
+    for rid, text in _gather_rules(mem, cfg, k=k, min_used=min_used):
+        rec = mem.get(rid)
+        if rec is not None and _is_rule_memory(rec.type, text):
+            rules.append((rid, text))
+    return rules
 
 
 # --- opted-in repo registry + nightly auto-sync ------------------------------
