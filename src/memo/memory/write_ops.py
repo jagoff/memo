@@ -641,6 +641,15 @@ class _WriteOpsMixin(_MemoryBase):
 
             record_id = use_existing_id or uuid.uuid4().hex
 
+            # Default the world-validity start to learned-time (`created`) when
+            # the caller passed no explicit `valid_at`; an explicit value always
+            # wins. `invalid_at` stays open (None) until a supersede closes the
+            # interval. Both mirror to frontmatter below so markdown stays the
+            # source of truth and reindex folds them back. `created_iso` is final
+            # here (a topic_key upsert reuses the existing record's created).
+            if valid_at is None:
+                valid_at = created_iso
+
             post = frontmatter.Post(
                 content,
                 id=record_id,
@@ -649,11 +658,15 @@ class _WriteOpsMixin(_MemoryBase):
                 tags=norm_tags,
                 created=created_iso,
                 updated=now_iso,
+                valid_at=valid_at,
             )
             post["extra"] = extra_for_store or {}
             # Add verification state (always UNVERIFIED for new saves unless overridden)
             post["verification_state"] = "unverified"
             # verified_at is omitted for new saves (None)
+            # invalid_at is omitted while the interval is open (None)
+            if invalid_at is not None:
+                post["invalid_at"] = invalid_at
             if topic_key is not None:
                 post["topic_key"] = topic_key
             if normalized_hash is not None:
@@ -762,6 +775,8 @@ class _WriteOpsMixin(_MemoryBase):
                         normalized_hash=normalized_hash,
                         expected_disk_text=written_disk_text,
                         graph_extractor=graph_extractor,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
             self._record_graph_entities_from_extra(
                 record_id=record_id,
