@@ -34,6 +34,7 @@ from fastmcp import FastMCP
 from memo import server_analytics as _srv_analytics
 from memo import server_around as _srv_around
 from memo import server_asof as _srv_asof
+from memo import server_asof_valid as _srv_asof_valid
 from memo import server_backup as _srv_backup
 from memo import server_cache as _srv_cache
 from memo import server_collaborative as _srv_collaborative
@@ -298,6 +299,10 @@ def _build_server(
         _srv_multimodal.register(server, memory)
         _srv_collaborative.register(server, memory)
         _srv_asof.register(server, memory)
+        # Valid-time (world-validity) as-of tools — separate semantics from the
+        # transaction-time reconstruction tools above; route through the live
+        # index with as_of=.
+        _srv_asof_valid.register(server, memory)
         _srv_crush.register(server, memory)
         # Episodic memory: search past sessions by meaning (Phase 2)
         _srv_episodes.register(server, memory)

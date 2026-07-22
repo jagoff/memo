@@ -371,3 +371,119 @@ def test_no_module_level_mlx_imports() -> None:
             violations.append(f"line {node.lineno}: from {node.module} import ...")
 
     assert not violations, f"Module-level MLX imports found: {violations}"
+
+
+# --- valid-time as-of tools (server_asof_valid) ------------------------------
+#
+# Distinct from the transaction-time (time_machine.reconstruct) tools above:
+# these route straight through the live Memory.search/Memory.ask index with
+# `as_of=`, filtering by each record's world-validity interval.
+
+
+def test_valid_as_of_register_exposes_both_tools(tmp_cfg) -> None:
+    """register() exposes exactly the two valid-time as-of tools."""
+    from memo.memory import Memory
+    from memo.server_asof_valid import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    assert set(tools) == {"memo_search_valid_as_of", "memo_ask_valid_as_of"}
+
+
+def test_memo_search_valid_as_of_predecessor_and_successor(mem_with_stub) -> None:
+    """A valid [2026-06-01, 2026-07-01) is superseded by B valid [2026-07-01, ∞):
+    `as_of` in June returns A not B; `as_of` in August returns B not A. Routed
+    through the live index (Memory.search as_of=), not time_machine."""
+    from memo.server_asof_valid import register
+
+    server, tools = _make_server_and_tools()
+    register(server, mem_with_stub)
+
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at="2026-06-01T00:00:00", invalid_at="2026-07-01T00:00:00"
+    )
+    mem_with_stub.store.update_validity(
+        id_=b.id, valid_at="2026-07-01T00:00:00", invalid_at=None
+    )
+
+    june = tools["memo_search_valid_as_of"](query="prod db", as_of="2026-06-15T00:00:00")
+    june_ids = {h["id"] for h in june["results"]}
+    assert a.id in june_ids and b.id not in june_ids
+    assert june["as_of"] == "2026-06-15T00:00:00"
+
+    aug = tools["memo_search_valid_as_of"](query="prod db", as_of="2026-08-01T00:00:00")
+    aug_ids = {h["id"] for h in aug["results"]}
+    assert b.id in aug_ids and a.id not in aug_ids
+
+
+def test_memo_search_valid_as_of_forwards_as_of_to_search(tmp_cfg) -> None:
+    """The tool must thread as_of/limit/mode into Memory.search (never time_machine)."""
+    from memo.memory import Memory
+    from memo.server_asof_valid import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    hit = MagicMock()
+    hit.to_dict.return_value = {"id": "abc123", "type": "fact"}
+    mem.search.return_value = [hit]
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    result = tools["memo_search_valid_as_of"](
+        query="q", as_of="2026-06-15T00:00:00", limit=5, mode="vec"
+    )
+
+    kwargs = mem.search.call_args.kwargs
+    assert kwargs["as_of"] == "2026-06-15T00:00:00"
+    assert kwargs["limit"] == 5
+    assert kwargs["mode"] == "vec"
+    assert result["as_of"] == "2026-06-15T00:00:00"
+    assert result["results"][0]["id"] == "abc123"
+
+
+def test_memo_ask_valid_as_of_forwards_as_of_to_ask(tmp_cfg) -> None:
+    """memo_ask_valid_as_of threads as_of/k into Memory.ask and echoes as_of."""
+    from memo.memory import Memory
+    from memo.server_asof_valid import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.ask.return_value = {"question": "q", "answer": "A", "sources": [{"id": "x"}]}
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    out = tools["memo_ask_valid_as_of"](question="q", as_of="2026-06-15T00:00:00", k=3)
+
+    kwargs = mem.ask.call_args.kwargs
+    assert kwargs["as_of"] == "2026-06-15T00:00:00"
+    assert kwargs["k"] == 3
+    assert out["answer"] == "A"
+    assert out["as_of"] == "2026-06-15T00:00:00"
+
+
+def test_valid_as_of_no_module_level_mlx_imports() -> None:
+    """server_asof_valid must not have module-level MLX imports."""
+    import ast
+    import pathlib
+
+    src = pathlib.Path(__file__).parent.parent / "src" / "memo" / "server_asof_valid.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+
+    violations = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("mlx"):
+                    violations.append(f"line {node.lineno}: import {alias.name}")
+        elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("mlx"):
+            violations.append(f"line {node.lineno}: from {node.module} import ...")
+
+    assert not violations, f"Module-level MLX imports found: {violations}"
