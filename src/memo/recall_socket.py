@@ -236,26 +236,43 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         debug = flag_bool("MEMO_RECALL_DEBUG")
         op = "parse"
         error = False
+        stats_recorded = False
+
+        def record_stats() -> None:
+            """Publish request metrics before its response becomes observable."""
+            nonlocal stats_recorded
+            if stats_recorded:
+                return
+            stats_recorded = True
+            stats = getattr(self.server, "_stats", None)
+            if stats is not None:
+                latency_ms = (time.time() - t0) * 1000.0
+                stats.record(op, latency_ms, error=error)
+
+        def respond(result: str) -> bool:
+            record_stats()
+            return self._write_response(result, debug=debug)
+
         try:
             try:
                 line = self.rfile.readline(_MAX_LINE_BYTES)
                 if not line:
-                    self._write_response("{}", debug=debug)
+                    respond("{}")
                     return
                 if len(line) >= _MAX_LINE_BYTES and not line.endswith(b"\n"):
                     error = True
-                    self._write_response("{}", debug=debug)
+                    respond("{}")
                     return
                 req = json.loads(line.decode("utf-8", errors="replace").strip())
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError, OSError) as exc:
                 error = True
                 print(f"# recall-daemon: parse error: {type(exc).__name__}: {exc}", file=sys.stderr)
-                self._write_response("{}", debug=debug)
+                respond("{}")
                 return
 
             if not isinstance(req, dict):
                 error = True
-                self._write_response("{}", debug=debug)
+                respond("{}")
                 return
 
             op = str(req.get("op") or "recall").strip()
@@ -272,7 +289,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     _we = getattr(self.server, "_warm_event", None)
                     if _we is not None and not _we.is_set():
                         _log_lock_contention("recall_warming", 0.0, "warmup")
-                        self._write_response(BUSY_RESPONSE, debug=debug)
+                        respond(BUSY_RESPONSE)
                         return
                     prompt = (req.get("prompt") or "").strip()
                     cwd = req.get("cwd") or None
@@ -281,7 +298,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     _turn = int(_turn) if isinstance(_turn, (int, float)) else None
                     _client = req.get("client") or None
                     if not prompt:
-                        self._write_response("{}", debug=debug)
+                        respond("{}")
                         return
                     from memo.flags import flag_int
 
@@ -306,7 +323,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                                 f"# recall-daemon: lock busy >{timeout_s:.1f}s, bailing busy",
                                 file=sys.stderr,
                             )
-                        self._write_response(BUSY_RESPONSE, debug=debug)
+                        respond(BUSY_RESPONSE)
                         return
                     if wait_ms > _LOCK_WAIT_LOG_MS:
                         _log_lock_contention("recall_lock_wait", wait_ms, held_by)
@@ -378,14 +395,11 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                 )
                 result = json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
-            delivered = self._write_response(result, debug=debug)
+            delivered = respond(result)
             if delivered and log_fn is not None:
                 log_fn()
         finally:
-            latency_ms = (time.time() - t0) * 1000.0
-            stats = getattr(self.server, "_stats", None)
-            if stats is not None:
-                stats.record(op, latency_ms, error=error)
+            record_stats()
 
 
 # Lock acquisition order (to avoid deadlocks):

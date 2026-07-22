@@ -73,7 +73,7 @@ def _send_raw(state_dir: Path, payload: dict[str, Any], timeout: float = 2.0) ->
 
 
 @pytest.fixture
-def daemon() -> Iterator[Path]:
+def daemon_server() -> Iterator[tuple[Path, _RecallServer]]:
     """Spin up a real `_RecallServer` thread on a tmp Unix socket.
 
     macOS limits AF_UNIX paths to ~104 chars, well shorter than the
@@ -92,12 +92,17 @@ def daemon() -> Iterator[Path]:
     while time.time() < deadline and not sock_path.exists():
         time.sleep(0.01)
     try:
-        yield state_dir
+        yield state_dir, server
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2.0)
         shutil.rmtree(state_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def daemon(daemon_server: tuple[Path, _RecallServer]) -> Path:
+    return daemon_server[0]
 
 
 @pytest.fixture(autouse=True)
@@ -328,6 +333,44 @@ def test_stats_counts_errors(daemon: Path):
     snap = _send_raw(daemon, {"op": "stats"})
     assert snap["ops"]["warp_drive"]["count"] == 1
     assert snap["ops"]["warp_drive"]["errors"] == 1
+
+
+@pytest.mark.concurrency
+@pytest.mark.resource_hygiene
+def test_response_is_not_visible_before_request_stats(
+    daemon_server: tuple[Path, _RecallServer], monkeypatch: pytest.MonkeyPatch
+):
+    state_dir, server = daemon_server
+    record_entered = threading.Event()
+    release_record = threading.Event()
+    original_record = server._stats.record
+
+    def blocking_record(op: str, latency_ms: float, *, error: bool = False) -> None:
+        record_entered.set()
+        assert release_record.wait(timeout=2.0)
+        original_record(op, latency_ms, error=error)
+
+    monkeypatch.setattr(server._stats, "record", blocking_record)
+
+    sock_path = _socket_path(state_dir)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(2.0)
+        sock.connect(str(sock_path))
+        sock.sendall(b'{"op":"warp_drive"}\n')
+        assert record_entered.wait(timeout=2.0)
+        try:
+            sock.settimeout(0.05)
+            with pytest.raises(socket.timeout):
+                sock.recv(1)
+        finally:
+            release_record.set()
+
+        sock.settimeout(2.0)
+        response = b""
+        while b"\n" not in response:
+            response += sock.recv(65536)
+
+    assert "unknown op" in json.loads(response)["error"]
 
 
 def test_client_stats_via_socket(daemon: Path):
