@@ -82,7 +82,9 @@ def test_maintain_skips_transition_when_flag_off(tmp_path: Path, monkeypatch):
 
 def test_search_applies_decay_when_flag_on(mock_memory: Memory, monkeypatch):
     monkeypatch.setenv("MEMO_VERIFICATION_STATE_TRACKING", "1")
-    mock_memory.save(content="verification decay wiring probe token alpha", title="probe", type_="fact")
+    mock_memory.save(
+        content="verification decay wiring probe token alpha", title="probe", type_="fact"
+    )
 
     calls = {"n": 0}
     orig = _SearchScoringMixin._apply_verification_decay
@@ -99,7 +101,9 @@ def test_search_applies_decay_when_flag_on(mock_memory: Memory, monkeypatch):
 
 def test_search_skips_decay_when_flag_off(mock_memory: Memory, monkeypatch):
     monkeypatch.delenv("MEMO_VERIFICATION_STATE_TRACKING", raising=False)
-    mock_memory.save(content="verification decay wiring probe token beta", title="probe2", type_="fact")
+    mock_memory.save(
+        content="verification decay wiring probe token beta", title="probe2", type_="fact"
+    )
 
     calls = {"n": 0}
     orig = _SearchScoringMixin._apply_verification_decay
@@ -123,9 +127,7 @@ def test_verified_without_timestamp_gets_stamped_on_reindex(mock_memory: Memory)
     # Insert `verification_state: verified` into the frontmatter, no verified_at.
     assert text.startswith("---")
     end = text.index("---", 3)
-    md_path.write_text(
-        text[:end] + "verification_state: verified\n" + text[end:], encoding="utf-8"
-    )
+    md_path.write_text(text[:end] + "verification_state: verified\n" + text[end:], encoding="utf-8")
 
     mock_memory.reindex()
 

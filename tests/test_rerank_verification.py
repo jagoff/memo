@@ -15,7 +15,9 @@ from memo.memory.record import MemoryRecord
 from memo.tiers import VerificationState
 
 
-def _rec(id_: str, *, state: VerificationState, verified_at: int | None, score: float) -> MemoryRecord:
+def _rec(
+    id_: str, *, state: VerificationState, verified_at: int | None, score: float
+) -> MemoryRecord:
     return MemoryRecord(
         id=id_,
         path=f"test/{id_}.md",
@@ -60,8 +62,12 @@ def test_decay_reorders_a_higher_scored_stale_below_verified(mock_memory: Memory
     now = int(time.time())
     out = mock_memory._apply_verification_decay(
         [
-            _rec("stale_lead", state=VerificationState.STALE, verified_at=now, score=0.90),  # ×0.7=0.63
-            _rec("verified_tail", state=VerificationState.VERIFIED, verified_at=now, score=0.80),  # ×1.0=0.80
+            _rec(
+                "stale_lead", state=VerificationState.STALE, verified_at=now, score=0.90
+            ),  # ×0.7=0.63
+            _rec(
+                "verified_tail", state=VerificationState.VERIFIED, verified_at=now, score=0.80
+            ),  # ×1.0=0.80
         ]
     )
     assert out[0].id == "verified_tail"  # re-sorted ahead after decay

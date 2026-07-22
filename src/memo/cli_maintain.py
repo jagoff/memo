@@ -582,9 +582,7 @@ def maintain_cmd(
     # 3b. Verification-state decay: age VERIFIED→STALE→UNVERIFIED by verified_at -
     if flag_bool("MEMO_VERIFICATION_STATE_TRACKING"):
         try:
-            receipt["verification_transitioned"] = mem._transition_stale_memories(
-                dry_run=dry_run
-            )
+            receipt["verification_transitioned"] = mem._transition_stale_memories(dry_run=dry_run)
         except Exception as exc:
             receipt["errors"].append(f"verification: {type(exc).__name__}: {exc}")
 

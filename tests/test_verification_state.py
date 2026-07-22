@@ -70,7 +70,9 @@ def test_verification_state_defaults_unverified():
 def test_stale_transition(mock_memory: Memory):
     """VERIFIED memory transitions to STALE after the stale-days threshold."""
     old_ts = int(time.time()) - (35 * 86400)  # 35 days ago (> default 30)
-    mid = _seed(mock_memory, title="Old Verified", state=VerificationState.VERIFIED, verified_at=old_ts)
+    mid = _seed(
+        mock_memory, title="Old Verified", state=VerificationState.VERIFIED, verified_at=old_ts
+    )
 
     transitioned = mock_memory._transition_stale_memories()
 
@@ -99,7 +101,10 @@ def test_no_transition_when_too_recent(mock_memory: Memory):
     """A recently-verified memory does not transition."""
     recent_ts = int(time.time()) - (10 * 86400)  # within the 30-day threshold
     mid = _seed(
-        mock_memory, title="Recent Verified", state=VerificationState.VERIFIED, verified_at=recent_ts
+        mock_memory,
+        title="Recent Verified",
+        state=VerificationState.VERIFIED,
+        verified_at=recent_ts,
     )
 
     transitioned = mock_memory._transition_stale_memories()
@@ -113,7 +118,9 @@ def test_no_transition_when_too_recent(mock_memory: Memory):
 def test_dry_run_reports_but_does_not_persist(mock_memory: Memory):
     """dry_run counts would-be transitions without mutating the store."""
     old_ts = int(time.time()) - (35 * 86400)
-    mid = _seed(mock_memory, title="DryRun Verified", state=VerificationState.VERIFIED, verified_at=old_ts)
+    mid = _seed(
+        mock_memory, title="DryRun Verified", state=VerificationState.VERIFIED, verified_at=old_ts
+    )
 
     would = mock_memory._transition_stale_memories(dry_run=True)
 

@@ -326,9 +326,7 @@ def test_consolidate_db_merges_episode_fact_edge_and_verbatim_sidecars(
         merged_ep.close()
 
 
-def test_consolidate_db_merges_all_six_graph_tables(
-    tmp_path: Path, seeded_old_layout, monkeypatch
-):
+def test_consolidate_db_merges_all_six_graph_tables(tmp_path: Path, seeded_old_layout, monkeypatch):
     """graph.db has SIX tables; the migration used to merge only entities +
     entity_memory, silently orphaning co_recall / entity_edges / entity_aliases
     / semantic_relations into graph.db.bak. All six must cross over."""

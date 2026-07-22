@@ -434,7 +434,9 @@ def recall_hook() -> None:
                         f"# memo recall-hook: {_mode} embed failed ({exc}); bm25 fallback",
                         file=sys.stderr,
                     )
-                return _rank(query_text, _knobs=replace(_knobs, mode="bm25"), _mode="bm25", _vc=None)
+                return _rank(
+                    query_text, _knobs=replace(_knobs, mode="bm25"), _mode="bm25", _vc=None
+                )
             if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: search failed: {exc}", file=sys.stderr)
             return []
@@ -453,9 +455,7 @@ def recall_hook() -> None:
                     mem, days=_band_days, exclude_types=exclude_types, floor=_knobs.min_sim
                 ),
             )
-        return rank_hits(
-            hits, _knobs, vec_cosine=_vc, preferences=_prefs, graph_boost=_graph_boost
-        )
+        return rank_hits(hits, _knobs, vec_cosine=_vc, preferences=_prefs, graph_boost=_graph_boost)
 
     qualifying = _rank(prompt)
 
