@@ -1,8 +1,8 @@
 # Graph-Native v2 P0+P1 — Curated Projection and Evidence-Aware Retrieval
 
-Date: 2026-07-22  
-Status: approved by user directive; implementation authorized through `origin/master`  
-Scope: P0 graph substrate and P1 retrieval/evidence  
+Date: 2026-07-22
+Status: approved by user directive; implementation authorized through `origin/master`
+Scope: P0 graph substrate and P1 retrieval/evidence
 Follow-ups: P2 memory-to-code traceability; P3 communities, bridges, and synthesis
 
 ## Summary
