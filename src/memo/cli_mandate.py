@@ -134,25 +134,48 @@ def _write_mandate(target: Path, *, dry_run: bool) -> str:
 @click.option(
     "--dry-run", is_flag=True, help="With --write, show what would change without writing."
 )
-def mandate(*, client: str | None = None, do_write: bool = False, dry_run: bool = False) -> None:
+@click.option(
+    "--dynamic",
+    is_flag=True,
+    help="Also project your durable decisions/preferences as concrete standing "
+    "rules (from memo). Implies --write.",
+)
+@click.option(
+    "--sync",
+    "do_sync",
+    is_flag=True,
+    help="Regenerate the auto-rules block in files that already have one "
+    "(retires superseded rules, adds new ones). Creates no new files.",
+)
+def mandate(
+    *,
+    client: str | None = None,
+    do_write: bool = False,
+    dry_run: bool = False,
+    dynamic: bool = False,
+    do_sync: bool = False,
+) -> None:
     """Print (or install) the 'consult memo first' mandate for non-hook clients."""
-    if not client and not do_write:
+    if do_sync:
+        _run_rules_sync(dry_run=dry_run)
+        return
+
+    if not client and not do_write and not dynamic:
         click.echo(MANDATE_TEXT)
         click.echo(
             "\n# Paste into the client's instruction file, or run with "
             "--client <codex|devin|opencode|cursor|vscode|kiro|goose|...|all> --write "
-            "(project-local)."
+            "(project-local). Add --dynamic to also install your durable rules."
         )
         return
+
+    do_write = do_write or dynamic  # --dynamic is inherently a write
 
     if not do_write:
         click.echo(MANDATE_TEXT)
         return
 
-    if client in (None, "all"):
-        targets = list(_CLIENT_FILES)
-    elif client:
-        targets = [client]
+    targets = list(_CLIENT_FILES) if client in (None, "all") else [client]
     cwd = Path.cwd()
     seen: set[str] = set()
     for c in targets:
@@ -162,3 +185,38 @@ def mandate(*, client: str | None = None, do_write: bool = False, dry_run: bool 
         seen.add(rel)
         status = _write_mandate(cwd / rel, dry_run=dry_run)
         click.echo(f"  {rel:<22} {status}")
+
+    if dynamic:
+        _run_rules_write(targets, dry_run=dry_run)
+
+
+def _gather_dynamic_rules() -> list[tuple[str, str]]:
+    """Load the standing rules from the live store (heavy imports deferred)."""
+    from memo.cli_common import get_memory
+    from memo.config import Config
+    from memo.constitution import gather_rules
+
+    cfg = Config.from_env()
+    return gather_rules(get_memory(cfg), cfg)
+
+
+def _run_rules_write(targets: list[str], *, dry_run: bool) -> None:
+    from memo.constitution import write_rules_for_clients
+
+    rules = _gather_dynamic_rules()
+    click.echo("dynamic rules (durable decisions/preferences):")
+    for rel, status in write_rules_for_clients(targets, rules, dry_run=dry_run):
+        click.echo(f"  {rel:<22} {status}")
+    click.echo(f"  ({len(rules)} standing rule(s))")
+
+
+def _run_rules_sync(*, dry_run: bool) -> None:
+    from memo.constitution import resync_rules_in_repo
+
+    rules = _gather_dynamic_rules()
+    results = resync_rules_in_repo(rules, dry_run=dry_run)
+    if not results:
+        click.echo("no memo-rules block found here (run `memo mandate --dynamic --write` first)")
+    for rel, status in results:
+        click.echo(f"  {rel:<22} {status}")
+    click.echo(f"  ({len(rules)} standing rule(s) from durable decisions/preferences)")
