@@ -1009,21 +1009,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "misc",
-        "Enable the nightly graph-injection config tuner inside `memo dream run`. OFF by "
-        "default (separate opt-in from MEMO_DREAM_TUNE_ENABLED because it may flip "
-        "MEMO_RECALL_MODE to hybrid and toggle MEMO_GRAPH_RETRIEVAL_ENABLED / "
-        "MEMO_GRAPH_EXPANSION_ENABLED). Grids the candidate recall configs, applies the best "
-        "via the overlay only when it beats the plain-vec baseline within the recall-hook "
-        "latency budget, gated by the curated regression set, reverted on regression.",
+        "Deprecated inert compatibility switch. The graph-injection/expansion tuner was "
+        "removed; MEMO_DREAM_TUNE_ENABLED now evaluates only the curated graph signal.",
     ),
     _spec(
         "MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS",
         "float",
         2500.0,
         "misc",
-        "Search-latency p50 ceiling (ms) a candidate recall config must respect to be "
-        "eligible in the graph-injection tuner. A hybrid flip that helps precision but blows "
-        "this budget is rejected to protect the 5s recall-hook budget.",
+        "Deprecated inert compatibility value retained for old configuration files.",
         min_val=0.0,
     ),
     _spec(

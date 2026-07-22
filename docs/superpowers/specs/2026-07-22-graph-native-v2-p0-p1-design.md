@@ -136,6 +136,10 @@ graph_projection_nodes(
   doc_freq, degree, quality, is_hub
 )
 
+graph_projection_memberships(
+  version, memory_id, uri, extractor, extractor_version, confidence
+)
+
 graph_projection_edges(
   version, a_uri, b_uri, relation, weight, confidence,
   evidence_count, first_seen, last_seen, evidence_ids_json
@@ -443,4 +447,3 @@ P0+P1 is complete only when:
 - effective config, active projection, and live graph traces prove activation;
 - the implementation and activation documentation are committed and pushed to
   `origin/master` without force-push.
-

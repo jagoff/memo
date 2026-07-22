@@ -3,8 +3,8 @@
 
 Machine-local, never committed. Deleting the file restores pure defaults. The
 overlay holds scalar tuning params (float ranking knobs like
-``MEMO_RECALL_MIN_SIM``, plus boolean/string levers the retrieval tuner is
-allowed to flip, e.g. ``MEMO_GRAPH_RETRIEVAL_ENABLED`` / ``MEMO_RECALL_MODE``);
+``MEMO_RECALL_MIN_SIM`` plus atomic curated-signal settings such as
+``MEMO_GRAPH_SIGNAL_ENABLED`` / ``MEMO_GRAPH_SIGNAL_ALPHA``);
 `_meta` carries provenance + the previous values for one-step rollback.
 Every value round-trips through ``flag()``'s per-kind coercion, so it is stored
 as its native JSON scalar and surfaced to ``flag()`` as a coercible string.

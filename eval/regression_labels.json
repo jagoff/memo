@@ -137,6 +137,30 @@
       "_note": "Decision lookup — knowledge graph design decisions."
     },
     {
+      "text": "what were the measured graph A/B results for memo",
+      "relevant": true,
+      "expect_ids": [
+        "4d53bc7e"
+      ],
+      "_note": "Graph-native v2 baseline: guards the real-corpus A/B evidence used to approve early activation."
+    },
+    {
+      "text": "why did we choose a curated graph projection instead of serving the raw graph",
+      "relevant": true,
+      "expect_ids": [
+        "10d5f527"
+      ],
+      "_note": "Graph-native v2 architecture decision: curated projection and Markdown-config activation."
+    },
+    {
+      "text": "what URI scheme did we choose for memory to code traceability",
+      "relevant": true,
+      "expect_ids": [
+        "232028d1"
+      ],
+      "_note": "Graph-native v2 traceability decision: stable codegraph URI contract."
+    },
+    {
       "text": "what is memo's MCP server port",
       "relevant": true,
       "expect_ids": [],

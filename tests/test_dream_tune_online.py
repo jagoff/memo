@@ -151,11 +151,11 @@ def test_record_pending_captures_version_and_online(tmp_path):
 
 
 def test_resolve_pending_carries_knob(tmp_path, monkeypatch):
-    dto.write_pending(tmp_path, _pending(knob="MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"))
+    dto.write_pending(tmp_path, _pending(knob="MEMO_GRAPH_SIGNAL_ALPHA"))
     monkeypatch.setattr(dto, "online_fraction", lambda sd, v, **k: (0.55, 40))
     r = dto.resolve_pending(tmp_path, min_cohort=20, eps=0.02)
     assert r["status"] == "confirmed"
-    assert r["knob"] == "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"
+    assert r["knob"] == "MEMO_GRAPH_SIGNAL_ALPHA"
 
 
 def test_resolve_pending_knob_defaults_when_absent(tmp_path, monkeypatch):

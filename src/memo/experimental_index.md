@@ -79,7 +79,10 @@ integrated with the core save/search paths.
 Graph-based memory navigation. Extends `graph.py` with BFS shortest-path
 finding between entities, connected-component community detection, and
 Graphviz DOT / JSON export for visualisation. Complements `mapa` but
-operates on the entity graph rather than the embedding space.
+operates on the entity graph rather than the embedding space. These broad/raw
+navigation surfaces remain advanced; the versioned curated projection used by
+core search, `memo graph rebuild`, and `memo graph stats` is part of the stable
+retrieval/health path and is not classified as experimental here.
 
 ## proactive.py
 

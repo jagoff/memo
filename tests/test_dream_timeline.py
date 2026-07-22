@@ -72,7 +72,7 @@ def test_timeline_shows_knob_generically(tmp_path, monkeypatch):
         {
             "resolved_ts": "2026-07-03T03:00:00+00:00",
             "verdict": "confirmed",
-            "knob": "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT",
+            "knob": "MEMO_GRAPH_SIGNAL_ALPHA",
             "floor_before": 0.0,
             "floor_after": 0.2,
             "online_before": 0.5,
@@ -83,7 +83,7 @@ def test_timeline_shows_knob_generically(tmp_path, monkeypatch):
     )
     res = CliRunner().invoke(dream_cmd, ["timeline"])
     assert res.exit_code == 0, res.output
-    assert "graph_proximity_weight" in res.output
+    assert "memo_graph_signal_alpha" in res.output
     assert "min_sim" not in res.output
 
 

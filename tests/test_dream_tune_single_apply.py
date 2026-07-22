@@ -24,7 +24,15 @@ def test_graph_weight_defers_while_pending_in_flight(tmp_path, monkeypatch):
     monkeypatch.setattr(dream_tune, "load_graph_baseline", lambda sd: None)
     before = {"precision_at_k": 0.2, "noise_at_k": 0.0}
     after = {"precision_at_k": 0.3, "noise_at_k": 0.0}
-    monkeypatch.setattr(dream_tune, "search_graph_weight", lambda *a, **k: (0.2, before, after))
+    monkeypatch.setattr(
+        dream_tune,
+        "search_graph_signal",
+        lambda *a, **k: (
+            {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.2},
+            before,
+            after,
+        ),
+    )
 
     def _boom(*a, **k):
         raise AssertionError("overlay must not be written while a pending is in flight")
@@ -36,25 +44,10 @@ def test_graph_weight_defers_while_pending_in_flight(tmp_path, monkeypatch):
     assert dream_tune_online.read_pending(tmp_path) is not None  # untouched
 
 
-def test_graph_retrieval_defers_while_pending_in_flight(tmp_path, monkeypatch):
+def test_retired_graph_retrieval_pass_is_always_inert(tmp_path):
     dream_tune_online.write_pending(tmp_path, {"version_after": "v2"})
-    monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
-    monkeypatch.setattr(dream_tune, "load_retrieval_baseline", lambda sd: None)
-    # force a winning non-vec config so it would apply if not for the pending
-    good = {"precision_at_k": 0.9, "noise_at_k": 0.0, "latency_ms_p50": 10.0}
-    vecm = {"precision_at_k": 0.2, "noise_at_k": 0.0, "latency_ms_p50": 10.0}
-    monkeypatch.setattr(
-        dream_tune,
-        "measure_retrieval_config",
-        lambda mem, labels, *, k, mode, flags: good if mode == "hybrid" else vecm,
-    )
-
-    def _boom(*a, **k):
-        raise AssertionError("overlay must not be written while a pending is in flight")
-
-    monkeypatch.setattr(dream_tune, "write_overlay", _boom)
     res = dream_tune.run_graph_retrieval_pass(_cfg(tmp_path), object(), k=5)
-    assert res["status"] == "deferred_pending"
+    assert res["status"] == "retired"
 
 
 def test_graph_weight_applies_when_no_pending(tmp_path, monkeypatch):
@@ -66,7 +59,15 @@ def test_graph_weight_applies_when_no_pending(tmp_path, monkeypatch):
     monkeypatch.setattr(dream_tune, "load_graph_baseline", lambda sd: None)
     before = {"precision_at_k": 0.2, "noise_at_k": 0.0}
     after = {"precision_at_k": 0.3, "noise_at_k": 0.0}
-    monkeypatch.setattr(dream_tune, "search_graph_weight", lambda *a, **k: (0.2, before, after))
+    monkeypatch.setattr(
+        dream_tune,
+        "search_graph_signal",
+        lambda *a, **k: (
+            {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.2},
+            before,
+            after,
+        ),
+    )
     calls = {"overlay": None}
     monkeypatch.setattr(
         dream_tune,
@@ -77,7 +78,8 @@ def test_graph_weight_applies_when_no_pending(tmp_path, monkeypatch):
 
     res = dream_tune.run_graph_weight_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "applied"
-    assert calls["overlay"]["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.2
+    assert calls["overlay"]["MEMO_GRAPH_SIGNAL_ENABLED"] is True
+    assert calls["overlay"]["MEMO_GRAPH_SIGNAL_ALPHA"] == 0.2
 
 
 def test_graph_weight_defers_during_revert_cooldown(tmp_path, monkeypatch):
@@ -86,7 +88,15 @@ def test_graph_weight_defers_during_revert_cooldown(tmp_path, monkeypatch):
     monkeypatch.setattr(dream_tune, "load_graph_baseline", lambda sd: None)
     before = {"precision_at_k": 0.2, "noise_at_k": 0.0}
     after = {"precision_at_k": 0.3, "noise_at_k": 0.0}
-    monkeypatch.setattr(dream_tune, "search_graph_weight", lambda *a, **k: (0.2, before, after))
+    monkeypatch.setattr(
+        dream_tune,
+        "search_graph_signal",
+        lambda *a, **k: (
+            {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.2},
+            before,
+            after,
+        ),
+    )
 
     def _boom(*a, **k):
         raise AssertionError("must not apply during revert cooldown")
@@ -128,7 +138,7 @@ def test_graph_weight_skips_search_when_deferring(tmp_path, monkeypatch):
     def _boom_search(*a, **k):
         raise AssertionError("search must not run when the pass is going to defer")
 
-    monkeypatch.setattr(dream_tune, "search_graph_weight", _boom_search)
+    monkeypatch.setattr(dream_tune, "search_graph_signal", _boom_search)
     # a real object() as mem would also fail in search; the guard must return first
     res = dream_tune.run_graph_weight_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "deferred_pending"

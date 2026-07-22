@@ -430,10 +430,10 @@ def dream_run(
                 receipt["errors"].append(f"tuner: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[tune] recall self-tuner [yellow]warn[/yellow]")
 
-        # Phase 2 — graph-proximity weight tuner (grid-search), same gate + reversible.
-        # Runs after the min_sim pass; both merge the overlay so they coexist.
+        # Curated graph-signal tuner (graph-off plus bounded alpha candidates).
+        # Runs after the general pass; both merge the overlay so they coexist.
         if flag_bool("MEMO_DREAM_TUNE_ENABLED"):
-            progress.update(step, description="[tune] graph-weight tuner...")
+            progress.update(step, description="[tune] curated graph-signal tuner...")
             try:
                 from memo import dream_tune
                 from memo.flags import flag_float
@@ -454,49 +454,14 @@ def dream_run(
                 progress.update(
                     step,
                     description=(
-                        f"[tune] graph-weight tuner [green]✓[/green]  "
+                        f"[tune] curated graph-signal tuner [green]✓[/green]  "
                         f"{receipt['graph_tuner'].get('status')}"
                     ),
                 )
             except Exception as exc:
                 receipt["errors"].append(f"graph_tuner: {type(exc).__name__}: {exc}")
-                progress.update(step, description="[tune] graph-weight tuner [yellow]warn[/yellow]")
-
-        # Phase 2 — graph-injection config tuner (retrieval / expansion, may flip
-        # recall mode). Separate opt-in flag; latency-budget-gated + reversible.
-        if flag_bool("MEMO_DREAM_RETRIEVAL_TUNE_ENABLED"):
-            progress.update(step, description="[tune] graph-injection tuner...")
-            try:
-                from memo import dream_tune
-                from memo.flags import flag_float
-
-                receipt["retrieval_tuner"] = dream_tune.run_graph_retrieval_pass(
-                    cfg,
-                    mem,
-                    k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
-                    min_used_score=0.5
-                    if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
-                    else _mus,
-                    dry_run=dry_run,
-                    latency_budget_ms=flag_float("MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS")
-                    or 2500.0,
-                )
-                if receipt["retrieval_tuner"].get("status") == "error":
-                    # failures land in receipt["errors"], never silently swallowed
-                    receipt["errors"].append(
-                        f"retrieval_tuner: {receipt['retrieval_tuner'].get('error')}"
-                    )
                 progress.update(
-                    step,
-                    description=(
-                        f"[tune] graph-injection tuner [green]✓[/green]  "
-                        f"{receipt['retrieval_tuner'].get('status')}"
-                    ),
-                )
-            except Exception as exc:
-                receipt["errors"].append(f"retrieval_tuner: {type(exc).__name__}: {exc}")
-                progress.update(
-                    step, description="[tune] graph-injection tuner [yellow]warn[/yellow]"
+                    step, description="[tune] curated graph-signal tuner [yellow]warn[/yellow]"
                 )
 
         # Phase 1 — confidence calibration: refresh the predicted-vs-grounded map.
