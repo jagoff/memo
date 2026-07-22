@@ -470,13 +470,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "reversible, never deleted. Curation of edge confidence only; never "
         "touches recall ranking. Default off.",
     ),
-    _spec(
-        "MEMO_MEMFLOW_DIR",
-        "str",
-        ".memflow",
-        "maintain",
-        "Relative or absolute path to the .memflow directory (defaults to current dir/.memflow).",
-    ),
     # privacy / redaction (consumed by capture.py, cli_ingest.py)
     _spec(
         "MEMO_REDACT_SECRETS",

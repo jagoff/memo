@@ -476,6 +476,25 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             )
         return cur.rowcount > 0
 
+    def verification_candidates(self) -> list[dict[str, Any]]:
+        """Rows `{id, verification_state, verified_at}` for memories in a
+        decayable state (VERIFIED or STALE) with a `verified_at` set — the
+        transition candidates for `_transition_stale_memories`. Targeted (not a
+        full scan): UNVERIFIED memories, the default majority, are skipped."""
+        rows = self._conn.execute(
+            "SELECT id, verification_state, verified_at FROM meta "
+            "WHERE verification_state IN ('verified', 'stale') "
+            "AND verified_at IS NOT NULL"
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "verification_state": r["verification_state"],
+                "verified_at": r["verified_at"],
+            }
+            for r in rows
+        ]
+
     def update_path(self, id_: str, path: str) -> bool:
         """Update only ``meta.path`` while preserving vector and FTS rows."""
         with self._tx() as cx:

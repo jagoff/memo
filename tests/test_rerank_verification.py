@@ -1,215 +1,94 @@
-"""Tests for verification state decay in rerank."""
+"""Tests for the verification-state recall penalty (`_apply_verification_decay`).
+
+This is the live search-scoring pass (wired in search_ops behind
+MEMO_VERIFICATION_STATE_TRACKING): it multiplies each hit's score by its
+verification-state decay factor. verification_state / verified_at ride on the
+MemoryRecord, so the pass is pure — no memory_map, no store lookup.
+"""
 
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
 
-import pytest
-
-from memo.config import Config
-from memo.memory.facade import Memory
+from memo.memory import Memory
 from memo.memory.record import MemoryRecord
 from memo.tiers import VerificationState
 
 
-@pytest.fixture
-def tmp_cfg(tmp_path):
-    """Isolated test config."""
-    data_dir = tmp_path / "data"
-    state_dir = tmp_path / "state"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return Config(data_dir=str(data_dir), state_dir=str(state_dir))
+def _rec(
+    id_: str, *, state: VerificationState, verified_at: int | None, score: float
+) -> MemoryRecord:
+    return MemoryRecord(
+        id=id_,
+        path=f"test/{id_}.md",
+        title=id_,
+        type="fact",
+        tags=[],
+        created="2026-01-01T00:00:00",
+        updated="2026-01-01T00:00:00",
+        body=f"body for {id_}",
+        verification_state=state,
+        verified_at=verified_at,
+        score=score,
+    )
 
 
-def test_rerank_prioritizes_verified(tmp_cfg):
-    """VERIFIED memories score higher than UNVERIFIED when state tracking enabled."""
-    memory = Memory(tmp_cfg)
-
+def test_verified_outranks_unverified_at_equal_input_score(mock_memory: Memory):
     now = int(time.time())
-    verified_rec = MemoryRecord(
-        id="verified1",
-        path="test/verified.md",
-        title="verified fact",
-        type="fact",
-        tags=[],
-        created="2026-01-01T00:00:00",
-        updated="2026-01-01T00:00:00",
-        body="This is a verified fact",
-        verification_state=VerificationState.VERIFIED,
-        verified_at=now,
+    out = mock_memory._apply_verification_decay(
+        [
+            _rec("verified1", state=VerificationState.VERIFIED, verified_at=now, score=0.9),
+            _rec("unverified1", state=VerificationState.UNVERIFIED, verified_at=None, score=0.9),
+        ]
     )
-    unverified_rec = MemoryRecord(
-        id="unverified1",
-        path="test/unverified.md",
-        title="unverified fact",
-        type="fact",
-        tags=[],
-        created="2026-01-01T00:00:00",
-        updated="2026-01-01T00:00:00",
-        body="This is an unverified fact",
-        verification_state=VerificationState.UNVERIFIED,
-        verified_at=None,
-    )
-
-    # Populate memory_map (normally populated by search)
-    memory.memory_map = {"verified1": verified_rec, "unverified1": unverified_rec}
-
-    # Input hits with equal scores
-    hits = [
-        {"id": "verified1", "score": 0.9},
-        {"id": "unverified1", "score": 0.9},
-    ]
-
-    # Apply rerank logic with state tracking enabled
-    with patch("memo.memory.rerank_ops.flag_bool") as mock_flag_bool:
-
-        def flag_bool_side_effect(flag_name):
-            if flag_name == "MEMO_VERIFICATION_STATE_TRACKING":
-                return True
-            if flag_name == "MEMO_GRAPH_DISTANCE_DECAY":
-                return False
-            return False
-
-        mock_flag_bool.side_effect = flag_bool_side_effect
-        result = memory._rerank_logic(
-            hits=hits,
-            query="test",
-            rerank_candidates=2,
-        )
-
-    # Extract scores
-    verified_score = next((h["score"] for h in result if h["id"] == "verified1"), None)
-    unverified_score = next((h["score"] for h in result if h["id"] == "unverified1"), None)
-
-    # VERIFIED (1.0 decay) should be higher than UNVERIFIED (0.8 decay)
-    assert verified_score is not None, "verified1 should be in result"
-    assert unverified_score is not None, "unverified1 should be in result"
-    assert verified_score > unverified_score, (
-        f"VERIFIED {verified_score:.3f} should > UNVERIFIED {unverified_score:.3f}"
-    )
+    scores = {r.id: r.score for r in out}
+    assert scores["verified1"] > scores["unverified1"]  # 0.9×1.0 > 0.9×0.8
 
 
-def test_rerank_stale_decays(tmp_cfg):
-    """STALE memories score lower than VERIFIED."""
-    memory = Memory(tmp_cfg)
-
+def test_stale_is_penalized_below_verified(mock_memory: Memory):
     now = int(time.time())
-    verified_rec = MemoryRecord(
-        id="verified1",
-        path="test/verified.md",
-        title="verified fact",
-        type="fact",
-        tags=[],
-        created="2026-01-01T00:00:00",
-        updated="2026-01-01T00:00:00",
-        body="This is a verified fact",
-        verification_state=VerificationState.VERIFIED,
-        verified_at=now,
+    out = mock_memory._apply_verification_decay(
+        [
+            _rec("verified1", state=VerificationState.VERIFIED, verified_at=now, score=0.9),
+            _rec("stale1", state=VerificationState.STALE, verified_at=now, score=0.9),
+        ]
     )
-    stale_rec = MemoryRecord(
-        id="stale1",
-        path="test/stale.md",
-        title="stale fact",
-        type="fact",
-        tags=[],
-        created="2026-01-01T00:00:00",
-        updated="2026-01-01T00:00:00",
-        body="This is a stale fact",
-        verification_state=VerificationState.STALE,
-        verified_at=now,
-    )
-
-    memory.memory_map = {"verified1": verified_rec, "stale1": stale_rec}
-
-    hits = [
-        {"id": "verified1", "score": 0.9},
-        {"id": "stale1", "score": 0.9},
-    ]
-
-    with patch("memo.memory.rerank_ops.flag_bool") as mock_flag_bool:
-
-        def flag_bool_side_effect(flag_name):
-            if flag_name == "MEMO_VERIFICATION_STATE_TRACKING":
-                return True
-            if flag_name == "MEMO_GRAPH_DISTANCE_DECAY":
-                return False
-            return False
-
-        mock_flag_bool.side_effect = flag_bool_side_effect
-        result = memory._rerank_logic(
-            hits=hits,
-            query="test",
-            rerank_candidates=2,
-        )
-
-    verified_score = next((h["score"] for h in result if h["id"] == "verified1"), None)
-    stale_score = next((h["score"] for h in result if h["id"] == "stale1"), None)
-
-    # VERIFIED (1.0 decay) should be higher than STALE (0.7 decay)
-    assert verified_score is not None
-    assert stale_score is not None
-    assert verified_score > stale_score, (
-        f"VERIFIED {verified_score:.3f} should > STALE {stale_score:.3f}"
-    )
+    scores = {r.id: r.score for r in out}
+    assert scores["verified1"] > scores["stale1"]  # 0.9×1.0 > 0.9×0.7
 
 
-def test_rerank_no_state_decay_when_disabled(tmp_cfg):
-    """When state tracking is disabled, scores remain unchanged."""
-    memory = Memory(tmp_cfg)
-
+def test_decay_reorders_a_higher_scored_stale_below_verified(mock_memory: Memory):
+    """A STALE hit that led on raw score falls behind a fresh VERIFIED one."""
     now = int(time.time())
-    verified_rec = MemoryRecord(
-        id="verified1",
-        path="test/verified.md",
-        title="verified fact",
-        type="fact",
-        tags=[],
-        created="2026-01-01T00:00:00",
-        updated="2026-01-01T00:00:00",
-        body="This is a verified fact",
-        verification_state=VerificationState.VERIFIED,
-        verified_at=now,
+    out = mock_memory._apply_verification_decay(
+        [
+            _rec(
+                "stale_lead", state=VerificationState.STALE, verified_at=now, score=0.90
+            ),  # ×0.7=0.63
+            _rec(
+                "verified_tail", state=VerificationState.VERIFIED, verified_at=now, score=0.80
+            ),  # ×1.0=0.80
+        ]
     )
-    unverified_rec = MemoryRecord(
-        id="unverified1",
-        path="test/unverified.md",
-        title="unverified fact",
-        type="fact",
-        tags=[],
-        created="2026-01-01T00:00:00",
-        updated="2026-01-01T00:00:00",
-        body="This is an unverified fact",
-        verification_state=VerificationState.UNVERIFIED,
-        verified_at=None,
-    )
+    assert out[0].id == "verified_tail"  # re-sorted ahead after decay
+    assert out[1].id == "stale_lead"
 
-    memory.memory_map = {"verified1": verified_rec, "unverified1": unverified_rec}
 
+def test_all_verified_fresh_is_a_noop(mock_memory: Memory):
+    """Factor 1.0 for every hit → scores and order unchanged (identity)."""
+    now = int(time.time())
     hits = [
-        {"id": "verified1", "score": 0.8},
-        {"id": "unverified1", "score": 0.9},
+        _rec("a", state=VerificationState.VERIFIED, verified_at=now, score=0.9),
+        _rec("b", state=VerificationState.VERIFIED, verified_at=now, score=0.8),
     ]
+    out = mock_memory._apply_verification_decay(hits)
+    assert [(r.id, r.score) for r in out] == [("a", 0.9), ("b", 0.8)]
 
-    with patch("memo.memory.rerank_ops.flag_bool") as mock_flag_bool:
 
-        def flag_bool_side_effect(flag_name):
-            # State tracking disabled
-            if flag_name == "MEMO_VERIFICATION_STATE_TRACKING":
-                return False
-            if flag_name == "MEMO_GRAPH_DISTANCE_DECAY":
-                return False
-            return False
-
-        mock_flag_bool.side_effect = flag_bool_side_effect
-        result = memory._rerank_logic(
-            hits=hits,
-            query="test",
-            rerank_candidates=2,
-        )
-
-    # Without state decay, hits should be ordered by original score (0.9 > 0.8)
-    # so unverified1 should be first
-    assert result[0]["id"] == "unverified1", "Without state decay, should sort by original score"
-    assert result[1]["id"] == "verified1"
+def test_verified_but_old_gets_mild_penalty(mock_memory: Memory):
+    """VERIFIED older than 7 days decays to 0.95, not the full-fresh 1.0."""
+    old = int(time.time()) - (10 * 86400)
+    out = mock_memory._apply_verification_decay(
+        [_rec("v", state=VerificationState.VERIFIED, verified_at=old, score=1.0)]
+    )
+    assert out[0].score == 0.95

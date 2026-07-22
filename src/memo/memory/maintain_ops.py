@@ -19,7 +19,7 @@ import frontmatter
 from memo.embedder import assert_valid_embedding
 from memo.errors import StorageError
 from memo.fact_extraction import fact_edges_from_metadata, upsert_declared_fact_edges
-from memo.flags import flag_bool
+from memo.flags import flag_bool, flag_int
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -400,6 +400,11 @@ class _MaintainOpsMixin(_MemoryBase):
                 verification_state = VerificationState.UNVERIFIED.value
             if "verified_at" not in meta and prior is not None:
                 verified_at = prior.get("verified_at")
+            # A memory marked VERIFIED without an explicit verified_at enters the
+            # decay clock now, so _transition_stale_memories can age it and the
+            # recall penalty can distinguish fresh vs old verifications.
+            if verification_state == VerificationState.VERIFIED.value and verified_at is None:
+                verified_at = int(time.time())
 
             if existing is None:
                 # Path-collision guard: an .md may have its frontmatter id
@@ -1150,78 +1155,47 @@ class _MaintainOpsMixin(_MemoryBase):
             "stale_synthesis": self._gc_stale_syntheses(fix=fix),
         }
 
-    def _transition_stale_memories(
-        self, *, stale_age_days: int = 30, unverify_age_days: int = 60
-    ) -> int:
-        """Auto-transition verified memories to stale, and stale to unverified.
+    def _transition_stale_memories(self, *, dry_run: bool = False) -> int:
+        """Age verification state by `verified_at`: VERIFIED→STALE after
+        MEMO_VERIFICATION_STALE_DAYS (30), STALE→UNVERIFIED after
+        MEMO_VERIFICATION_UNVERIFY_DAYS (60).
 
-        VERIFIED memories older than stale_age_days transition to STALE.
-        STALE memories older than unverify_age_days transition to UNVERIFIED.
-        Updates memory_map and the store, but does NOT re-embed.
-
-        Returns the count of transitioned memories.
+        Loads only the decayable candidates from the store (a targeted query,
+        not a full-corpus scan — most memories are UNVERIFIED and skipped) and
+        persists each change via `update_verification` (meta only, no re-embed).
+        Returns the count transitioned (or would-transition, on `dry_run`).
+        Wired into `memo maintain` behind MEMO_VERIFICATION_STATE_TRACKING.
         """
+        stale_days = flag_int("MEMO_VERIFICATION_STALE_DAYS") or 30
+        unverify_days = flag_int("MEMO_VERIFICATION_UNVERIFY_DAYS") or 60
         now = int(time.time())
         transitioned = 0
 
-        # Iterate through memory_map (populated by maintain pipeline)
-        if not hasattr(self, "memory_map"):
-            return 0
-
-        for mem_id, mem in list(self.memory_map.items()):
-            if not mem.verified_at:
+        for row in self.store.verification_candidates():
+            verified_at = row.get("verified_at")
+            if not verified_at:
                 continue
+            days_old = (now - int(verified_at)) / 86400.0
+            state = row.get("verification_state")
+            mem_id = row["id"]
 
-            days_old = (now - mem.verified_at) / 86400.0
-
-            if mem.verification_state == VerificationState.VERIFIED and days_old > stale_age_days:
-                # Transition VERIFIED → STALE
-                from dataclasses import replace as dataclass_replace
-
-                mem_updated = dataclass_replace(
-                    mem,
-                    verification_state=VerificationState.STALE,
-                )
-                # Update store meta without re-embedding
-                self.store.update_meta(
-                    id_=mem_id,
-                    title=mem_updated.title,
-                    type_=mem_updated.type,
-                    tags=mem_updated.tags,
-                    updated=mem_updated.updated,
-                    extra=dict(mem_updated.extra) if mem_updated.extra else {},
-                )
-                self.store.update_verification(
-                    id_=mem_id,
-                    verification_state=mem_updated.verification_state.value,
-                    verified_at=mem_updated.verified_at,
-                )
-                self.memory_map[mem_id] = mem_updated
+            if state == VerificationState.VERIFIED.value and days_old > stale_days:
                 transitioned += 1
-            elif mem.verification_state == VerificationState.STALE and days_old > unverify_age_days:
-                # Transition STALE → UNVERIFIED
-                from dataclasses import replace as dataclass_replace
-
-                mem_updated = dataclass_replace(
-                    mem,
-                    verification_state=VerificationState.UNVERIFIED,
-                    verified_at=None,
-                )
-                # Update store meta without re-embedding
-                self.store.update_meta(
-                    id_=mem_id,
-                    title=mem_updated.title,
-                    type_=mem_updated.type,
-                    tags=mem_updated.tags,
-                    updated=mem_updated.updated,
-                    extra=dict(mem_updated.extra) if mem_updated.extra else {},
-                )
-                self.store.update_verification(
-                    id_=mem_id,
-                    verification_state=mem_updated.verification_state.value,
-                    verified_at=mem_updated.verified_at,
-                )
-                self.memory_map[mem_id] = mem_updated
+                if not dry_run:
+                    # verified_at preserved — the STALE clock keeps counting from
+                    # the original verification timestamp.
+                    self.store.update_verification(
+                        id_=mem_id,
+                        verification_state=VerificationState.STALE.value,
+                        verified_at=int(verified_at),
+                    )
+            elif state == VerificationState.STALE.value and days_old > unverify_days:
                 transitioned += 1
+                if not dry_run:
+                    self.store.update_verification(
+                        id_=mem_id,
+                        verification_state=VerificationState.UNVERIFIED.value,
+                        verified_at=None,
+                    )
 
         return transitioned

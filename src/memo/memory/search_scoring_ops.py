@@ -21,6 +21,7 @@ from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     MemoryRecord,
     _log,
+    _state_decay_factor,
 )
 
 
@@ -441,6 +442,38 @@ class _SearchScoringMixin(_MemoryBase):
             return out
         except Exception as exc:
             _log.debug("health_scores failed: %s", exc)
+            return results
+
+    def _apply_verification_decay(
+        self,
+        results: list[MemoryRecord],
+    ) -> list[MemoryRecord]:
+        """Multiply each result's score by its verification-state decay factor
+        (VERIFIED≈1.0, STALE 0.7, UNVERIFIED 0.8 — see `_state_decay_factor`),
+        so freshly-verified facts outrank stale/unverified ones.
+
+        `verification_state` + `verified_at` ride on the MemoryRecord (the meta
+        SELECT already carries them), so this is a pure in-memory pass with no
+        extra lookups — safe on the recall hot path. No-op for an all-UNVERIFIED
+        corpus (uniform 0.8 → order unchanged). Gated by the caller
+        (MEMO_VERIFICATION_STATE_TRACKING). Best-effort: any failure returns
+        results unchanged.
+        """
+        try:
+            changed = False
+            out = []
+            for r in results:
+                factor = _state_decay_factor(r)
+                if abs(factor - 1.0) < 1e-6:
+                    out.append(r)
+                    continue
+                out.append(replace(r, score=round((r.score or 0.0) * factor, 6)))
+                changed = True
+            if changed:
+                out.sort(key=lambda r: r.score or 0.0, reverse=True)
+            return out
+        except Exception as exc:
+            _log.debug("verification_decay failed: %s", exc)
             return results
 
     def _record_access(self, ids: list[str]) -> None:

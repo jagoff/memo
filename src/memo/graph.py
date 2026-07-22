@@ -539,6 +539,20 @@ class GraphStore:
             for row in self.memory_entities(memory_id)
         ]
 
+    def memory_degree(self, memory_id: str) -> int:
+        """Graph connectivity of a memory: how many entity_edges are incident to
+        any entity linked to it. Consumed by the (default-OFF) density rerank in
+        _fetch_graph_candidates (MEMO_GRAPH_DENSITY_BOOST). Returns 0 when the
+        memory has no linked entities or the edge table is empty (a fresh install
+        with no `memo graph rebuild`)."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM entity_edges "
+            "WHERE a_id IN (SELECT entity_id FROM entity_memory WHERE memory_id = ?) "
+            "   OR b_id IN (SELECT entity_id FROM entity_memory WHERE memory_id = ?)",
+            (memory_id, memory_id),
+        ).fetchone()
+        return int(row[0]) if row and row[0] else 0
+
     def count_entities(self) -> int:
         """Return the number of unique entities in the graph."""
         return int(self._conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0])
@@ -785,20 +799,6 @@ class GraphStore:
             (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
-
-    def distance_to_nearest_fact(self, memory_id: str) -> int:
-        """Compute shortest path distance from memory_id to any FACT-type memory.
-
-        Currently a stub returning 999 (unreachable). Will be implemented
-        when memory-to-memory distance tracking is fully integrated.
-
-        Args:
-            memory_id: The source memory ID.
-
-        Returns:
-            Shortest path distance to nearest FACT memory, or 999 if unreachable.
-        """
-        return 999
 
     def close(self) -> None:
         with suppress(BaseException):

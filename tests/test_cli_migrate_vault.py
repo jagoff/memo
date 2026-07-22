@@ -326,6 +326,52 @@ def test_consolidate_db_merges_episode_fact_edge_and_verbatim_sidecars(
         merged_ep.close()
 
 
+def test_consolidate_db_merges_all_six_graph_tables(tmp_path: Path, seeded_old_layout, monkeypatch):
+    """graph.db has SIX tables; the migration used to merge only entities +
+    entity_memory, silently orphaning co_recall / entity_edges / entity_aliases
+    / semantic_relations into graph.db.bak. All six must cross over."""
+    from memo.graph import GraphStore
+
+    cfg, _ = seeded_old_layout
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+
+    # Opening GraphStore materializes the full 6-table schema on graph.db.
+    GraphStore(cfg.state_dir / "graph.db").close()
+    with closing(sqlite3.connect(cfg.state_dir / "graph.db")) as conn:
+        conn.execute("INSERT INTO co_recall(id_a, id_b, count) VALUES ('a', 'b', 2)")
+        conn.execute(
+            "INSERT INTO entity_edges(a_id, b_id, weight, first_seen, last_seen) "
+            "VALUES (1, 2, 3, '2026-01-01', '2026-01-02')"
+        )
+        conn.execute(
+            "INSERT INTO entity_aliases(alias_key, canonical_id, alias_name) "
+            "VALUES ('k1', 1, 'Memo')"
+        )
+        conn.execute(
+            "INSERT INTO semantic_relations("
+            "source_kind, source_id, target_kind, target_id, relation, "
+            "derived_from, created_at) "
+            "VALUES ('memory', 'm1', 'memory', 'm2', 'supports', 'test', '2026-01-01')"
+        )
+        conn.commit()
+
+    cfg_file = tmp_path / "memo-config.toml"
+    env = _base_env(tmp_path, cfg, cfg_file)
+    result = CliRunner().invoke(cli, ["migrate", "--consolidate-db"], env=env)
+    assert result.exit_code == 0, result.output
+    assert (cfg.state_dir / "graph.db.bak").is_file()
+    assert not (cfg.state_dir / "graph.db").is_file()
+
+    with closing(sqlite3.connect(cfg.state_dir / "memvec.db")) as conn:
+        for tbl in ("co_recall", "entity_edges", "entity_aliases", "semantic_relations"):
+            assert conn.execute(f"SELECT count(*) FROM {tbl}").fetchone()[0] == 1, (  # noqa: S608
+                f"{tbl} orphaned by consolidate"
+            )
+
+
 def test_links_reindex_safe_under_single_db(tmp_path: Path, monkeypatch):
     """`memo links reindex` must truncate the crossref table, not unlink the DB
     file — under single_db that file IS memvec.db."""

@@ -31,7 +31,13 @@ class ProactiveStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path))
+        # Match the sidecar-store connection model (graph/history/crossref): a
+        # WAL connection with a real busy timeout and check_same_thread=False so
+        # a dream-refresh writer and a briefing reader don't hit SQLITE_BUSY
+        # inside the 5s default, and a future threaded holder can't raise.
+        self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=10000")
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_DDL)
 

@@ -207,6 +207,61 @@ def test_daemon_busy_marker_falls_through_to_subprocess(
     assert "Busy Fallback Memory" in parsed["hookSpecificOutput"]["additionalContext"]
 
 
+def test_vec_embed_failure_downgrades_to_bm25_in_subprocess(
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the subprocess-fallback vec/hybrid search raises (a busy-daemon
+    socket embed that timed out under the capped client timeout), `_rank` must
+    retry in bm25 mode rather than bail to an empty result — so a stalled daemon
+    degrades recall gracefully instead of losing it for the turn."""
+    from memo.memory import MemoryRecord
+
+    hit = MemoryRecord(
+        id="beefcafe55667788",
+        path="notes/bm25.md",
+        title="Bm25 Downgrade Memory",
+        type="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body="a body long enough to pass the min-body gate " * 3,
+        extra={},
+        score=0.9,
+    )
+    modes: list[str] = []
+
+    class _VecFailsMemory:
+        def __init__(self, cfg: object) -> None:
+            pass
+
+        def search(
+            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+        ):
+            modes.append(mode)
+            if mode in ("vec", "hybrid"):
+                raise RuntimeError("daemon socket embed timed out")
+            return [hit]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: '{"busy": true}')
+    monkeypatch.setattr("memo.memory.Memory", _VecFailsMemory)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "vec")
+    monkeypatch.setenv("MEMO_RECALL_FORCE_MODE", "1")  # skip the cold-start bm25 downgrade
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+
+    runner = CliRunner()
+    payload = json.dumps({"prompt": "some meaningful query here to test recall"})
+    result = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    assert modes[0] in ("vec", "hybrid")  # vec attempted first
+    assert "bm25" in modes  # then downgraded
+    parsed = json.loads(result.output.strip())
+    assert "Bm25 Downgrade Memory" in parsed["hookSpecificOutput"]["additionalContext"]
+
+
 def test_daemon_legit_empty_reply_still_prints(
     recall_env: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:

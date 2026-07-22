@@ -649,6 +649,10 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._apply_contradict_penalty(out)
             _add_trace("contradiction_penalty", input_count=before, output_count=len(out))
+        if out and flag_bool("MEMO_VERIFICATION_STATE_TRACKING"):
+            before = len(out)
+            out = self._apply_verification_decay(out)
+            _add_trace("verification_decay", input_count=before, output_count=len(out))
         if out and flag_bool("MEMO_GRAPH_EXPANSION_ENABLED"):
             before = len(out)
             out = self._apply_graph_expansion(

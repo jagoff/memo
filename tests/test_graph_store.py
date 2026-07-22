@@ -118,6 +118,33 @@ def test_canonicalize_merges_fragmented_entities(tmp_path: Path) -> None:
     assert g.canonicalize_existing() == 0
 
 
+def test_memory_degree_counts_incident_entity_edges(tmp_path: Path) -> None:
+    # Regression: memory_degree() was called by the density-boost rerank but
+    # never defined on GraphStore, so MEMO_GRAPH_DENSITY_BOOST silently no-oped
+    # (AttributeError swallowed). It must return a real incident-edge count.
+    g = _store(tmp_path)
+    for mid in ("m1", "m2"):
+        g.record_extraction(
+            memory_id=mid,
+            memory_date="2026-01-01",
+            entities=[{"name": "A", "type": "concept"}, {"name": "B", "type": "concept"}],
+            extracted_at="2026-01-01T00:00:00Z",
+        )
+    g.record_extraction(
+        memory_id="m3",
+        memory_date="2026-01-01",
+        entities=[{"name": "A", "type": "concept"}, {"name": "C", "type": "concept"}],
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+    assert g.memory_degree("m1") == 0  # no edges materialized yet
+    g.rebuild_edges()  # builds 2 undirected edge rows: (A,B) and (A,C)
+    # m1 links A & B; both edge rows are incident to A -> COUNT(*) == 2.
+    assert g.memory_degree("m1") == 2
+    # m3 links A & C; (A,B) incident via A, (A,C) via A&C -> 2 rows as well.
+    assert g.memory_degree("m3") == 2
+    assert g.memory_degree("no-such-memory") == 0
+
+
 def test_rebuild_edges_weights_by_shared_memories(tmp_path: Path) -> None:
     g = _store(tmp_path)
     # A & B share two memories; A & C share one.

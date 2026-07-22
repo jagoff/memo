@@ -165,10 +165,20 @@ def _injected_ids(context: str) -> tuple[list[str], list[str]]:
 
 
 def _expected_split(cwd: str, prefs: object | None) -> tuple[list[str], list[str]]:
-    """Rank the same pool exactly like the daemon path does."""
+    """Rank the same pool exactly like the daemon path does — including the
+    pre-top-K dedup-collapse (MEMO_RECALL_DEDUP_COLLAPSE, default ON) that both
+    the daemon and (now) the subprocess apply between apply_injection_filters
+    and the top_k/nudge split."""
+    from memo.flags import flag_bool, flag_float
+    from memo.recall_logic import collapse_near_dups
+
     knobs = knobs_from_flags(cwd=cwd)
     qualifying = rank_hits(_make_pool(), knobs, preferences=prefs)
     qualifying = apply_injection_filters(qualifying)
+    if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(qualifying) > 1:
+        qualifying = collapse_near_dups(
+            qualifying, threshold=flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8
+        )
     main = [h.id[:8] for h in qualifying[: knobs.top_k]]
     nudge = [h.id[:8] for h in qualifying[knobs.top_k : knobs.top_k + 2]]
     return main, nudge

@@ -905,21 +905,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "its share of the strongest co-recall edge in the result set. Only applied when "
         "MEMO_GRAPH_CO_RECALL is on.",
     ),
-    _spec(
-        "MEMO_GRAPH_DISTANCE_DECAY",
-        "bool",
-        False,
-        "graph",
-        "Enable inverse-distance decay weighting in rerank. Penalizes memories far from base facts.",
-    ),
-    _spec(
-        "MEMO_GRAPH_DISTANCE_DECAY_RATE",
-        "float",
-        0.15,
-        "graph",
-        "Decay coefficient: score *= 1 / (1 + rate * distance). Higher = steeper penalty.",
-        min_val=0.0,
-    ),
     # schema / embedding version check
     _spec(
         "MEMO_SKIP_MODEL_VERSION_CHECK",
@@ -1478,7 +1463,30 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "misc",
-        "Enable verification state tracking (UNVERIFIED/VERIFIED/STALE cycle) with decay weighting in rerank.",
+        "Master switch for the verification-state lifecycle (UNVERIFIED/VERIFIED/"
+        "STALE). When ON: (1) `memo maintain` ages VERIFIED→STALE→UNVERIFIED by "
+        "`verified_at` (see MEMO_VERIFICATION_STALE_DAYS / _UNVERIFY_DAYS), and "
+        "(2) live recall multiplies each hit's score by its state decay factor "
+        "(VERIFIED≈1.0, STALE 0.7, UNVERIFIED 0.8) so fresh facts outrank stale "
+        "ones. No-op for an all-UNVERIFIED corpus (uniform penalty). Default OFF.",
+    ),
+    _spec(
+        "MEMO_VERIFICATION_STALE_DAYS",
+        "int",
+        30,
+        "misc",
+        "Days after `verified_at` before a VERIFIED memory ages to STALE in "
+        "`memo maintain` (requires MEMO_VERIFICATION_STATE_TRACKING).",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_VERIFICATION_UNVERIFY_DAYS",
+        "int",
+        60,
+        "misc",
+        "Days after `verified_at` before a STALE memory ages to UNVERIFIED in "
+        "`memo maintain` (requires MEMO_VERIFICATION_STATE_TRACKING).",
+        min_val=1,
     ),
     # secret storage (encrypted credentials)
     _spec(
