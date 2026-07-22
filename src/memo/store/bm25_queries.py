@@ -30,22 +30,38 @@ _META_SELECT_COLUMNS = (
 )
 
 
-def _validity_filter(prefix: str, include_invalid: bool) -> tuple[str, list[Any]]:
-    """Default-recall temporal gate (record-level bi-temporal validity).
+def _validity_filter(
+    prefix: str, include_invalid: bool, as_of: str | None = None
+) -> tuple[str, list[Any]]:
+    """Temporal gate (record-level bi-temporal validity).
 
-    Excludes rows whose world-validity interval is already closed as of *now*
-    — SQL ``(invalid_at IS NULL OR invalid_at > ?)`` — so a contradiction-
-    superseded fact stays in-index (recoverable, as-of queryable) but drops out
-    of normal recall. Index-friendly via the ``idx_meta_invalid_at`` partial
-    index. Lexicographic ISO comparison is correct here even for mixed-precision
-    timestamps (bare date vs full datetime).
+    Three modes, in precedence order:
 
-    ``prefix`` qualifies the column for JOINed queries (``"meta."``) vs
-    single-table selects (``""``). ``include_invalid=True`` returns
-    ``("", [])`` — the bypass seam Task 8's ``--as-of`` valid-time path uses to
-    substitute its own predicate. Qmark binding matches the store's positional
-    param style.
+    - **``as_of`` set → valid-time.** The interval must CONTAIN ``as_of``:
+      ``COALESCE(valid_at, created) <= ? AND (invalid_at IS NULL OR invalid_at
+      > ?)`` (``as_of`` bound twice). This REPLACES the default now-gate, so a
+      fact superseded since ``as_of`` still resurfaces. ``COALESCE(valid_at,
+      created)`` resolves legacy/un-backfilled rows (NULL ``valid_at``) by
+      learned-time.
+    - **``include_invalid`` set, no ``as_of`` → no filter** (``("", [])``);
+      every row, closed intervals included.
+    - **default (neither) → now-gate.** Excludes rows whose interval is already
+      closed as of *now* — ``(invalid_at IS NULL OR invalid_at > ?)`` — so a
+      contradiction-superseded fact stays in-index (recoverable, as-of
+      queryable) but drops out of normal recall.
+
+    Index-friendly via the ``idx_meta_invalid_at`` partial index.
+    Lexicographic ISO comparison is correct even for mixed-precision timestamps
+    (bare date vs full datetime). ``prefix`` qualifies the columns for JOINed
+    queries (``"meta."``) vs single-table selects (``""``). Qmark binding
+    matches the store's positional param style.
     """
+    if as_of is not None:
+        return (
+            f" AND COALESCE({prefix}valid_at, {prefix}created) <= ?"
+            f" AND ({prefix}invalid_at IS NULL OR {prefix}invalid_at > ?)",
+            [as_of, as_of],
+        )
     if include_invalid:
         return "", []
     now = datetime.now(UTC).isoformat()
@@ -91,6 +107,7 @@ class _BM25QueriesMixin(_StoreBase):
         exclude_types: set[str] | None = None,
         field_boost: str | None = None,
         include_invalid: bool = False,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 keyword search. Dispatches to tantivy when available, FTS5 otherwise.
 
@@ -102,22 +119,25 @@ class _BM25QueriesMixin(_StoreBase):
         strict AND with no OR fallback.
 
         `include_invalid=False` (default) hides rows whose validity interval is
-        closed as of now; Task 8's as-of path passes `True` to bypass it.
+        closed as of now; `include_invalid=True` bypasses the gate. `as_of=T`
+        overrides both with a valid-time predicate (rows valid at T).
         """
         if not query or not query.strip():
             return []
         if field_boost == "exact":
             return self._search_bm25_fts5(
                 query, limit, type_, exclude_types, field_boost="exact",
-                include_invalid=include_invalid,
+                include_invalid=include_invalid, as_of=as_of,
             )
         t = self._get_tantivy()
         if t is not None:
             return self._search_bm25_tantivy(
-                query, limit, type_, exclude_types, t, include_invalid=include_invalid
+                query, limit, type_, exclude_types, t,
+                include_invalid=include_invalid, as_of=as_of,
             )
         return self._search_bm25_fts5(
-            query, limit, type_, exclude_types, include_invalid=include_invalid
+            query, limit, type_, exclude_types,
+            include_invalid=include_invalid, as_of=as_of,
         )
 
     def _search_bm25_tantivy(
@@ -128,6 +148,7 @@ class _BM25QueriesMixin(_StoreBase):
         exclude_types: set[str] | None,
         t: Any,
         include_invalid: bool = False,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         # Fetch more candidates when filtering by type so we can honour `limit`
         # after post-filtering against the meta table.
@@ -138,7 +159,7 @@ class _BM25QueriesMixin(_StoreBase):
         # Resolve metadata from sqlite in one batched query.
         id_score = {h["id"]: h["score"] for h in hits}
         placeholders = ",".join("?" for _ in id_score)
-        valid_sql, valid_params = _validity_filter("", include_invalid)
+        valid_sql, valid_params = _validity_filter("", include_invalid, as_of)
         sql = (
             f"SELECT {_META_SELECT_COLUMNS} "  # noqa: S608
             f"FROM meta WHERE id IN ({placeholders}){self._deleted_filter_sql()}{valid_sql}"
@@ -167,6 +188,7 @@ class _BM25QueriesMixin(_StoreBase):
         exclude_types: set[str] | None,
         field_boost: str | None = None,
         include_invalid: bool = False,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         # FTS5 needs an explicit MATCH expression. Pre-2026-05-07 we wrapped
         # the whole query in `"..."` (phrase match) to dodge FTS5 syntax
@@ -234,7 +256,7 @@ class _BM25QueriesMixin(_StoreBase):
             if exclude_types:
                 sql += f"AND meta.type NOT IN ({','.join('?' for _ in exclude_types)}) "
                 params.extend(sorted(exclude_types))
-            valid_sql, valid_params = _validity_filter("meta.", include_invalid)
+            valid_sql, valid_params = _validity_filter("meta.", include_invalid, as_of)
             sql += valid_sql + " "
             params.extend(valid_params)
             sql += "ORDER BY bm25_score ASC LIMIT ?"
@@ -278,6 +300,7 @@ class _BM25QueriesMixin(_StoreBase):
         type_: str | None = None,
         exclude_types: set[str] | None = None,
         include_invalid: bool = False,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         """Fuzzy (typo-tolerant) BM25 search via tantivy.
 
@@ -285,14 +308,16 @@ class _BM25QueriesMixin(_StoreBase):
         (no true fuzzy without tantivy, but better than nothing).
         Returns rows shaped like `search()`.
 
-        `include_invalid` mirrors `search_bm25`: default hides closed intervals.
+        `include_invalid`/`as_of` mirror `search_bm25`: default hides closed
+        intervals; `as_of=T` applies a valid-time (valid-at-T) predicate.
         """
         if not query or not query.strip():
             return []
         t = self._get_tantivy()
         if t is None:
             return self._search_bm25_fts5(
-                query, limit, type_, exclude_types, include_invalid=include_invalid
+                query, limit, type_, exclude_types,
+                include_invalid=include_invalid, as_of=as_of,
             )
         candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
         hits = t.search_fuzzy(query, candidate_k)
@@ -300,7 +325,7 @@ class _BM25QueriesMixin(_StoreBase):
             return []
         id_score = {h["id"]: h["score"] for h in hits}
         placeholders = ",".join("?" for _ in id_score)
-        valid_sql, valid_params = _validity_filter("", include_invalid)
+        valid_sql, valid_params = _validity_filter("", include_invalid, as_of)
         sql = (
             f"SELECT {_META_SELECT_COLUMNS} "  # noqa: S608
             f"FROM meta WHERE id IN ({placeholders}){self._deleted_filter_sql()}{valid_sql}"

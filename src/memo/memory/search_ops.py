@@ -106,6 +106,7 @@ class _SearchOpsMixin(_MemoryBase):
         date_from: str | None = None,
         date_to: str | None = None,
         quality_rerank: bool | None = None,
+        as_of: str | None = None,
         _trace: list[dict[str, Any]] | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
@@ -142,6 +143,11 @@ class _SearchOpsMixin(_MemoryBase):
             quality_rerank: Explicit opt-in for quality-aware reranking on
                 consumer-facing search paths. Ambient recall leaves this off
                 even when the feature flag is enabled.
+            as_of: ISO date/datetime for valid-time recall. When set, the
+                candidate seams filter to records whose world-validity interval
+                CONTAINS `as_of` (`COALESCE(valid_at, created) <= as_of` and not
+                yet invalidated at `as_of`), overriding the default now-gate — so
+                a since-superseded fact resurfaces as it stood at that time.
         """
 
         def _add_trace(stage: str, **data: Any) -> None:
@@ -163,7 +169,7 @@ class _SearchOpsMixin(_MemoryBase):
 
         if mode == "bm25":
             rows = self.store.search_bm25(
-                query, limit=limit, type_=type_, exclude_types=exclude_types
+                query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
             _add_trace(
                 "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
@@ -178,13 +184,14 @@ class _SearchOpsMixin(_MemoryBase):
                 type_=type_,
                 exclude_types=exclude_types,
                 field_boost="exact",
+                as_of=as_of,
             )
             _add_trace(
                 "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
             )
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
-                query, limit=limit, type_=type_, exclude_types=exclude_types
+                query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
             _add_trace(
                 "candidate_generation", mode=mode, fuzzy_count=len(rows), output_count=len(rows)
@@ -203,6 +210,7 @@ class _SearchOpsMixin(_MemoryBase):
                 date_from=date_from,
                 date_to=date_to,
                 exclude_tags=exclude_tags,
+                as_of=as_of,
             )
             _add_trace(
                 "candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows)
@@ -255,6 +263,7 @@ class _SearchOpsMixin(_MemoryBase):
                     date_from=date_from,
                     date_to=date_to,
                     exclude_tags=exclude_tags,
+                    as_of=as_of,
                 )
             except Exception as exc:
                 _log.warning(
@@ -286,7 +295,7 @@ class _SearchOpsMixin(_MemoryBase):
                         input_k = max(limit + 5, 15)
                     # else: medium diversity → keep input_k unchanged
             bm_hits = self.store.search_bm25(
-                query, limit=k_each, type_=type_, exclude_types=exclude_types
+                query, limit=k_each, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
             exact_hits = self.store.search_bm25(
                 query,
@@ -294,6 +303,7 @@ class _SearchOpsMixin(_MemoryBase):
                 type_=type_,
                 exclude_types=exclude_types,
                 field_boost="exact",
+                as_of=as_of,
             )
 
             fact_hits = (
