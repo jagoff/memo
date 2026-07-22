@@ -28,8 +28,8 @@ def _make_server_and_tools():
     return server, tools
 
 
-def test_register_exposes_all_five_tools(tmp_cfg) -> None:
-    """register() must expose all five expected MCP tools."""
+def test_register_exposes_all_import_export_tools(tmp_cfg) -> None:
+    """register() must expose every expected import/export MCP tool."""
     from memo.memory import Memory
     from memo.server_import_export import register
 
@@ -42,9 +42,11 @@ def test_register_exposes_all_five_tools(tmp_cfg) -> None:
     expected = {
         "memo_import_json",
         "memo_import_csv",
+        "memo_import_passport",
         "memo_export_json",
         "memo_export_csv",
         "memo_export_markdown_bundle",
+        "memo_export_passport",
     }
     assert expected == set(tools), f"Tool mismatch: {set(tools)}"
 

@@ -138,7 +138,7 @@ memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 
 memo is built to **spend fewer tokens, not more**.
 
-- **~90% smaller MCP surface.** The default `agent` profile exposes **14 tools / ~1.4k schema tokens**, versus **131 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **~90% smaller MCP surface.** The default `agent` profile exposes **14 tools / ~1.4k schema tokens**, versus **133 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -163,7 +163,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
 - **Exact transcript lookup (opt-in).** `memo verbatim search` can find the precise wording of past local transcript turns through a private, lexical-only FTS5 index. It never enters ambient recall.
-- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 14 tools, not 131.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 14 tools, not 133.
 
 ## Requirements
 
@@ -421,7 +421,7 @@ memo runs four background daemons:
 |---|---|---|---|
 | `agent` (default) | 14 | ~1.4k | Standard agent work — max token economy |
 | `core` / `slim` | 34 | ~3.0k | Constrained clients (Codex, OpenCode), admin-lite |
-| `full` / `default` | 131 | ~15k | Power users, debugging |
+| `full` / `default` | 133 | ~15k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 

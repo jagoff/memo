@@ -149,3 +149,39 @@ def register(server: FastMCP, memory: Memory) -> None:
         safe = _resolve_safe_path(output_path, "export")
         result = memory.import_export.export_to(safe, "markdown_bundle")
         return result.__dict__
+
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
+    def memo_export_passport(
+        output_path: str,
+    ) -> dict[str, Any]:
+        """Export a versioned, vendor-neutral memory passport (memo.passport.v1).
+
+        Higher fidelity than JSON: a stable schema header plus the provenance /
+        verification `extra` bag, so another memo (or tool) can validate and
+        re-import the canonical record intact. See docs/PASSPORT.md.
+
+        Args:
+            output_path: Path to write the passport file (under current dir,
+                Downloads, Desktop, or Documents).
+        """
+        safe = _resolve_safe_path(output_path, "export")
+        result = memory.import_export.export_to(safe, "passport")
+        return result.__dict__
+
+    @annotated_tool(server, **WRITE)
+    def memo_import_passport(
+        input_path: str,
+    ) -> dict[str, Any]:
+        """Import a versioned memo.passport.v1 file (validated, high-fidelity).
+
+        Preserves content/title/type/tags/created and the provenance /
+        verification `extra` bag; ids and derived indexes are rebuilt by this
+        store. Rejects a malformed / wrong-schema passport before writing.
+
+        Args:
+            input_path: Path to the passport file (under current dir, Downloads,
+                Desktop, or Documents).
+        """
+        safe = _resolve_safe_path(input_path, "import")
+        result = memory.import_export.import_from(safe, "passport")
+        return result.__dict__
