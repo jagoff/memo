@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 
+from click import unstyle
 from click.testing import CliRunner
 
 import memo.runtime.update as upd
@@ -363,7 +364,8 @@ def test_pypi_fallback_recommends_only_immutable_release_specs(monkeypatch):
     result = CliRunner().invoke(cli, ["update"])
 
     assert result.exit_code == 0, result.output
-    assert "/v9.9.9/install.sh" in result.output
-    assert "mlx-memo==9.9.9" in result.output
-    assert "/master/install.sh" not in result.output
-    assert "git+https://github.com/jagoff/memo.git" not in result.output
+    output = unstyle(result.output)
+    assert "/v9.9.9/install.sh" in output
+    assert "mlx-memo==9.9.9" in output
+    assert "/master/install.sh" not in output
+    assert "git+https://github.com/jagoff/memo.git" not in output
