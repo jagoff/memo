@@ -57,6 +57,54 @@ def test_edit_md_then_reindex_markdown_wins(mem_with_stub: Memory):
     assert "contenido original" not in fetched.body
 
 
+def test_reindex_folds_valid_at_from_markdown(mem_with_stub: Memory):
+    """A hand-edited `valid_at` in the canonical markdown wins on reindex
+    (disk overwrites the index), like the other allowlisted frontmatter keys."""
+    rec = mem_with_stub.save(content="prod db is postgres", title="Fact", type_="fact")
+    assert rec.valid_at is not None
+    abs_path = mem_with_stub.cfg.memory_dir / rec.path
+    post = frontmatter.load(str(abs_path))
+    post["valid_at"] = "2020-01-01T00:00:00"
+    abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    mem_with_stub.reindex()
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert fetched.valid_at == "2020-01-01T00:00:00"
+
+
+def test_reindex_keeps_index_invalid_at_when_markdown_omits_it(mem_with_stub: Memory):
+    """`invalid_at` is written to frontmatter ONLY when non-None (open intervals
+    omit it, like `verified_at`). So a missing `invalid_at` key on reindex must
+    mean "leave the existing index value as-is", never "clear it" — while a
+    present `valid_at` still folds from disk."""
+    rec = mem_with_stub.save(content="prod db is postgres", title="Fact", type_="fact")
+    assert mem_with_stub.get(rec.id).invalid_at is None
+
+    # Simulate an index-only closed interval (e.g. a contradiction-supersede that
+    # set invalid_at directly) while the markdown — an OPEN interval by the
+    # frontmatter convention — omits the key entirely.
+    with mem_with_stub.store._tx() as cx:
+        cx.execute(
+            "UPDATE meta SET invalid_at = ? WHERE id = ?",
+            ("2030-01-01T00:00:00", rec.id),
+        )
+    assert mem_with_stub.get(rec.id).invalid_at == "2030-01-01T00:00:00"
+
+    # Edit valid_at in the canonical markdown; leave invalid_at absent.
+    abs_path = mem_with_stub.cfg.memory_dir / rec.path
+    post = frontmatter.load(str(abs_path))
+    post["valid_at"] = "2019-05-05T00:00:00"
+    assert "invalid_at" not in post.metadata
+    abs_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    mem_with_stub.reindex()
+    fetched = mem_with_stub.get(rec.id)
+    assert fetched is not None
+    assert fetched.valid_at == "2019-05-05T00:00:00"  # markdown wins
+    assert fetched.invalid_at == "2030-01-01T00:00:00"  # absent key = leave as-is
+
+
 def test_reindex_rebuild_preserves_signal(mem_with_stub: Memory):
     a = mem_with_stub.save(content="memoria una", title="A")
     b = mem_with_stub.save(content="memoria dos", title="B")
