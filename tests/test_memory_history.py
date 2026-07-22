@@ -63,6 +63,38 @@ def test_extract_entities_skip_already_indexed(mem_with_stub: Memory, monkeypatc
     monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
     mem_with_stub.extract_entities(ids=[rec.id])
     assert calls[0] == 1
+
+
+def test_extract_entities_upgrades_regex_only_membership(mem_with_stub: Memory, monkeypatch):
+    rec = mem_with_stub.save(
+        content="FastAPI powers the service architecture.",
+        title="FastAPI service",
+    )
+    assert mem_with_stub.graph.memory_extraction_provenance(rec.id) == {"regex"}
+
+    calls = [0]
+
+    def _stub_chat(self, model, messages, options=None):
+        calls[0] += 1
+        return {
+            "message": {
+                "content": (
+                    '{"entities": '
+                    '[{"name": "FastAPI", "type": "technology"}]}'
+                )
+            }
+        }
+
+    monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)
+
+    first = mem_with_stub.extract_entities(ids=[rec.id], skip_already_indexed=True)
+    second = mem_with_stub.extract_entities(ids=[rec.id], skip_already_indexed=True)
+
+    assert first["processed"] == 1
+    assert second["processed"] == 0
+    assert calls[0] == 1
+    assert mem_with_stub.graph.memory_extraction_provenance(rec.id) == {"llm"}
+    assert mem_with_stub.graph.memory_entities(rec.id)[0]["type"] == "technology"
     counts = mem_with_stub.extract_entities(ids=[rec.id])
     assert counts["processed"] == 0
     assert calls[0] == 1
