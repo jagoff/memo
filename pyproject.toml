@@ -105,7 +105,9 @@ tantivy = [
 # mlx-whisper audio transcription. Apple Silicon only, ingest-time only.
 # Install: pip install "mlx-memo[multimodal]"
 multimodal = [
-    "mlx-vlm>=0.1.12; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # mlx-vlm >=0.6.5 requires transformers >=5.14, which conflicts with the
+    # core MLX runtime cap above. Lift both caps together.
+    "mlx-vlm>=0.1.12,<0.6.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-whisper>=0.4.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 # Shared trinity schemas (memo + memflow + synapse). Optional: enables

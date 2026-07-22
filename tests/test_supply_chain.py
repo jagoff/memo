@@ -39,7 +39,7 @@ def test_dependabot_covers_every_shipped_dependency_surface() -> None:
     assert all(entry["schedule"]["interval"] == "weekly" for entry in updates)
 
 
-def test_dependabot_respects_mlx_cap_without_blocking_supported_pytest() -> None:
+def test_dependabot_respects_mlx_caps_without_blocking_supported_pytest() -> None:
     config = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8"))
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 
@@ -49,9 +49,14 @@ def test_dependabot_respects_mlx_cap_without_blocking_supported_pytest() -> None
     }
 
     assert ">=5.13" in ignored_versions["transformers"]
+    assert ">=0.6.5" in ignored_versions["mlx-vlm"]
     assert "pytest" not in ignored_versions
     assert any(
         dependency.startswith("transformers<5.13;") for dependency in project["dependencies"]
+    )
+    assert any(
+        dependency.startswith("mlx-vlm>=0.1.12,<0.6.5;")
+        for dependency in project["optional-dependencies"]["multimodal"]
     )
     assert "pytest>=9.0.3,<10" in project["optional-dependencies"]["dev"]
 
