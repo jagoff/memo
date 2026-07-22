@@ -1329,6 +1329,31 @@ SPECS: tuple[FlagSpec, ...] = (
         "Min distinct sessions on a project before it is consolidated cross-session.",
         min_val=2,
     ),
+    # dream v2 — bi-temporal validity extraction (LLM off the recall hot path)
+    _spec(
+        "MEMO_DREAM_VALIDITY_EXTRACT_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly validity-extract pass in `memo dream run`. OFF by "
+        "default. For recent durable facts/decisions whose TEXT explicitly states "
+        "a validity window ('contract runs through Q3 2026', 'valid until Dec', "
+        "'as of March we use X'), an MLX LLM extracts a structured valid_at/"
+        "invalid_at and writes it via store.update_validity + a frontmatter "
+        "mirror. Never hallucinates — a boundary is set only when the note text "
+        "explicitly supports it (the extracted year must appear verbatim in the "
+        "text); records with no explicit window are skipped. Per-record results "
+        "and errors land in the dream receipt.",
+    ),
+    _spec(
+        "MEMO_DREAM_VALIDITY_EXTRACT_LIMIT",
+        "int",
+        50,
+        "misc",
+        "Max recent durable facts/decisions scanned per validity-extract pass "
+        "(bounds nightly MLX cost; least-recently-updated skipped first).",
+        min_val=1,
+    ),
     # Tier-1 #1 (+ Tier-2 #24) — profile distillation + directive graduation
     _spec(
         "MEMO_DREAM_PROFILE_ENABLED",
