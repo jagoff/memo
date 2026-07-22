@@ -72,14 +72,14 @@ def _corpus_fingerprint(mem: Memory) -> str | None:
 
 def _make_progress() -> Progress:
     """Create a Rich progress bar, disabled in non-TTY environments."""
-    import sys
-
     from memo.cli_common import console
     from memo.flags import flag_bool
 
     # Non-interactive runs (launchd, piped output) skip the live-render
-    # ANSI control stream to reduce output noise.
-    disable = flag_bool("MEMO_NONINTERACTIVE") or not sys.stderr.isatty()
+    # ANSI control stream to reduce output noise. Key the decision off the SAME
+    # console the Progress renders to (stdout) — not sys.stderr — so a redirected
+    # stderr can't silence a spinner on an interactive stdout, and vice versa.
+    disable = flag_bool("MEMO_NONINTERACTIVE") or not console.is_terminal
     return Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
