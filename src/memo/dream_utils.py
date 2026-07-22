@@ -20,9 +20,11 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    Task,
     TextColumn,
     TimeElapsedColumn,
 )
+from rich.text import Text
 
 if TYPE_CHECKING:
     from memo.config import Config
@@ -70,6 +72,34 @@ def _corpus_fingerprint(mem: Memory) -> str | None:
         return None
 
 
+class _DeterminateBarColumn(BarColumn):
+    """A bar that stays blank for indeterminate tasks (``total is None``).
+
+    The dream pipeline runs two tasks in one Progress: an ``overall`` task with a
+    real ``total`` (the N-of-14 pipeline bar) and a rolling ``step`` status line
+    with ``total=None``. The stock BarColumn renders a full/pulsing bar for the
+    indeterminate step — a bar with no valid measure — so blank it out there.
+    """
+
+    def render(self, task: Task) -> Any:
+        if task.total is None:
+            return Text("")
+        return super().render(task)
+
+
+class _DeterminateMofNColumn(MofNCompleteColumn):
+    """A completed/total counter that stays blank for indeterminate tasks.
+
+    Avoids the meaningless ``0/?`` the stock column prints for the rolling
+    status ``step`` task (``total=None``).
+    """
+
+    def render(self, task: Task) -> Text:
+        if task.total is None:
+            return Text("")
+        return super().render(task)
+
+
 def _make_progress() -> Progress:
     """Create a Rich progress bar, disabled in non-TTY environments."""
     from memo.cli_common import console
@@ -83,8 +113,8 @@ def _make_progress() -> Progress:
     return Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
-        BarColumn(bar_width=24),
-        MofNCompleteColumn(),
+        _DeterminateBarColumn(bar_width=24),
+        _DeterminateMofNColumn(),
         TimeElapsedColumn(),
         console=console,
         transient=False,

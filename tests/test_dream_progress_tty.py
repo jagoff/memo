@@ -40,3 +40,28 @@ def test_make_progress_disabled_when_noninteractive(monkeypatch) -> None:
     monkeypatch.setattr(cli_common, "console", Console(force_terminal=True))
     progress = _make_progress()
     assert progress.disable is True
+
+
+def _render_tasks(progress) -> str:
+    cap = Console(record=True, width=90)
+    cap.print(progress.make_tasks_table(progress.tasks))
+    return cap.export_text()
+
+
+def test_indeterminate_step_has_no_bar_or_counter(monkeypatch) -> None:
+    # The rolling status line (total=None) must not render a full/pulsing bar or
+    # a meaningless "0/?" counter — only the determinate pipeline task does.
+    monkeypatch.delenv("MEMO_NONINTERACTIVE", raising=False)
+    monkeypatch.setattr(cli_common, "console", Console(force_terminal=True))
+    progress = _make_progress()
+    overall = progress.add_task("pipeline", total=14)
+    progress.update(overall, completed=3)
+    progress.add_task("recall self-tuner...", total=None)
+
+    text = _render_tasks(progress)
+    step_line = next(ln for ln in text.splitlines() if "recall self-tuner" in ln)
+    over_line = next(ln for ln in text.splitlines() if "pipeline" in ln)
+
+    assert "/?" not in step_line
+    assert not any(ch in step_line for ch in "━╸╺▰▱█")
+    assert "3/14" in over_line
