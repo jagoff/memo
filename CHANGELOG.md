@@ -9,6 +9,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.11.2] - 2026-07-22
+
+### Fixed
+
+- **`memo dream run` no longer shows a meaningless `0/?` bar on the status
+  line.** The pipeline runs two Rich tasks in one Progress: a determinate
+  `overall` task (the N/14 bar) and a rolling `step` status line with
+  `total=None`. The stock `BarColumn` + `MofNCompleteColumn` rendered a
+  full/pulsing bar and a `0/?` counter for the indeterminate step (e.g.
+  `recall self-tuner... 0/?`). Both columns now blank out when `task.total is
+  None`, so the step shows only spinner + description + elapsed while the
+  overall bar keeps its real N/14 measure.
+
 ## [3.11.1] - 2026-07-22
 
 ### Fixed
