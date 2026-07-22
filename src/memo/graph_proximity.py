@@ -26,9 +26,7 @@ def extract_query_entities(prompt: str, graph: Any) -> list[str]:
         return out
     tokens = [token for token in _TOKEN_RE.findall(prompt.lower()) if len(token) >= 3]
     candidates = set(tokens)
-    candidates.update(
-        f"{tokens[index]} {tokens[index + 1]}" for index in range(len(tokens) - 1)
-    )
+    candidates.update(f"{tokens[index]} {tokens[index + 1]}" for index in range(len(tokens) - 1))
     for candidate in sorted(candidates):
         if candidate in names and candidate not in seen:
             out.append(candidate)

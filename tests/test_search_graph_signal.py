@@ -184,8 +184,6 @@ def test_missing_projection_is_exact_identity(mem_with_stub, monkeypatch) -> Non
     trace: list[dict[str, object]] = []
     enabled = mem.search("mlx", mode="bm25", limit=5, _trace=trace)
 
-    assert [(hit.id, hit.score) for hit in enabled] == [
-        (hit.id, hit.score) for hit in base
-    ]
+    assert [(hit.id, hit.score) for hit in enabled] == [(hit.id, hit.score) for hit in base]
     graph_stage = next(item for item in trace if item["stage"] == "graph_signal")
     assert graph_stage["skipped"] == "projection_missing"

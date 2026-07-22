@@ -77,12 +77,7 @@ def test_extract_entities_upgrades_regex_only_membership(mem_with_stub: Memory, 
     def _stub_chat(self, model, messages, options=None):
         calls[0] += 1
         return {
-            "message": {
-                "content": (
-                    '{"entities": '
-                    '[{"name": "FastAPI", "type": "technology"}]}'
-                )
-            }
+            "message": {"content": ('{"entities": [{"name": "FastAPI", "type": "technology"}]}')}
         }
 
     monkeypatch.setattr("memo.llm.MLXChat.chat", _stub_chat)

@@ -967,6 +967,7 @@ def rank_hits(
         raw = _apply_altitude_boost(raw, knobs.altitude, broad=_is_broad_query(query))
         if explain is not None:
             _explain_stage(explain, raw, "altitude")
+
     def _passes(h: Any) -> bool:
         gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
         if gate is not None and gate < knobs.min_sim:

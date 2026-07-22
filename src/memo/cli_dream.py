@@ -1074,14 +1074,11 @@ def dream_run(
             graph_projection = _run_graph_projection(mem, dry_run=dry_run)
             receipt["graph_projection"] = graph_projection
             if graph_projection.get("status") == "error":
-                receipt["errors"].append(
-                    f"graph_projection: {graph_projection.get('error')}"
-                )
+                receipt["errors"].append(f"graph_projection: {graph_projection.get('error')}")
             progress.update(
                 step,
                 description=(
-                    "[graph] curated projection [green]✓[/green]  "
-                    f"{graph_projection.get('status')}"
+                    f"[graph] curated projection [green]✓[/green]  {graph_projection.get('status')}"
                 ),
             )
             progress.advance(overall)

@@ -205,8 +205,7 @@ class GraphStore:
                 rename_legacy_columns(self._conn, "entity_memory", {"memoria_id": "memory_id"})
             self._conn.executescript(_SCHEMA_DDL)
             columns = {
-                str(row["name"])
-                for row in self._conn.execute("PRAGMA table_info(entity_memory)")
+                str(row["name"]) for row in self._conn.execute("PRAGMA table_info(entity_memory)")
             }
             provenance_columns = {
                 "extractor": "TEXT NOT NULL DEFAULT 'legacy'",

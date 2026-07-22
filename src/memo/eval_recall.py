@@ -1084,11 +1084,7 @@ def check_gate(
     bp = float(baseline.get("precision_at_k", 0.0))
     bn = float(baseline.get("noise_at_k", 1.0))
     baseline_fingerprint = str(baseline.get("labels_fingerprint") or "")
-    if (
-        labels_fingerprint
-        and baseline_fingerprint
-        and labels_fingerprint != baseline_fingerprint
-    ):
+    if labels_fingerprint and baseline_fingerprint and labels_fingerprint != baseline_fingerprint:
         message = (
             "FAIL — label set changed "
             f"({baseline_fingerprint} -> {labels_fingerprint}); verify the prior label set, "

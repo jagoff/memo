@@ -176,9 +176,7 @@ def collect_graph_signal(
                 skipped="no_query_entities",
                 started=started,
             )
-        allowed = tuple(
-            node for node in resolved if node.idf >= cfg.min_entity_idf or node.is_hub
-        )
+        allowed = tuple(node for node in resolved if node.idf >= cfg.min_entity_idf or node.is_hub)
         if not allowed:
             return _identity(
                 candidate_ids,

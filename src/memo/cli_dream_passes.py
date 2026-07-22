@@ -836,11 +836,7 @@ def _run_graph_projection(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
         return {"status": "disabled"}
     try:
         health = mem.graph_health()["projection"]
-        due = bool(
-            health["dirty"]
-            or not health["active_version"]
-            or health["stale"]
-        )
+        due = bool(health["dirty"] or not health["active_version"] or health["stale"])
         if not due:
             return {
                 "status": "fresh",
