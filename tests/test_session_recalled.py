@@ -119,7 +119,6 @@ def test_subprocess_path_dedup_short_ref_on_second_turn(tmp_cfg, monkeypatch) ->
         "MEMO_RECALL_SKIP_BELOW": "0.0",
         "MEMO_EMBEDDER_VIA_DAEMON": "0",
         "MEMO_RECALL_EXPAND_CONTEXT": "0",
-        "MEMO_RECALL_ADAPTIVE_CONTEXT": "0",
         "MEMO_RECALL_CONTEXTUAL": "0",
         "MEMO_RECALL_FEEDBACK_HINT": "0",
         "MEMO_RECALL_DIRECTIVE_ONCE": "0",

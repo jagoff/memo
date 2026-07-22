@@ -101,7 +101,6 @@ def _hook_env(tmp_cfg: Config, **extra: str) -> dict[str, str]:
         "MEMO_RECALL_SKIP_BELOW": "0.0",
         "MEMO_EMBEDDER_VIA_DAEMON": "0",
         "MEMO_RECALL_EXPAND_CONTEXT": "0",
-        "MEMO_RECALL_ADAPTIVE_CONTEXT": "0",
         "MEMO_RECALL_CONTEXTUAL": "0",
     }
     env.update(extra)

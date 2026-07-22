@@ -312,7 +312,6 @@ def test_hook_subprocess_hits_are_post_session_dedup(
         "MEMO_RECALL_MIN_BODY_CHARS": "0",
         "MEMO_RECALL_TOKEN_BUDGET": "0",
         "MEMO_RECALL_EXPAND_CONTEXT": "0",
-        "MEMO_RECALL_ADAPTIVE_CONTEXT": "0",
         "MEMO_RECALL_CONTEXTUAL": "0",
         # Isolate SESSION dedup: the A/B fixture bodies differ by one word, so
         # the default-ON pre-top-K paraphrase collapse would strip B — off here.
