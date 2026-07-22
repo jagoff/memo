@@ -1274,6 +1274,51 @@ def test_merge_expect_ids_beat_avoid_ids() -> None:
     assert merged[0]["avoid_ids"] == ["eeeeffff"]  # grounded evidence wins
 
 
+# --- as-of valid-time recall -------------------------------------------------
+
+
+def test_label_parses_as_of() -> None:
+    from memo.eval_recall import _label_from_dict
+
+    lab = _label_from_dict({"text": "q", "as_of": "2026-06-15T00:00:00"})
+    assert lab.as_of == "2026-06-15T00:00:00"
+
+
+def test_fingerprint_changes_with_as_of() -> None:
+    a = LabelSet(prompts=[Prompt("q")])
+    b = LabelSet(prompts=[Prompt("q", as_of="2026-06-15T00:00:00")])
+    assert a.fingerprint() != b.fingerprint()
+
+
+def test_run_config_honors_label_as_of(mock_memory) -> None:
+    """A label carrying `as_of` measures valid-time recall: the fact valid at T
+    surfaces at as_of=T while its later superseding successor does not; without
+    as_of (recall as of now) only the successor — the currently-valid fact —
+    surfaces. Self-contained: seeds its own two superseding records in the
+    isolated tmp index rather than depending on the committed corpus."""
+    a = mock_memory.save(content="prod db is postgres", type_="fact", valid_at="2026-06-01T00:00:00")
+    b = mock_memory.save(content="prod db is mysql", type_="fact", valid_at="2026-07-01T00:00:00")
+    # Close A's interval at B's start (contradiction-supersede, in place).
+    mock_memory.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2026-07-01T00:00:00"
+    )
+
+    cfg = eval_recall.Cfg("asof vec/-1/keep", "vec", -1.0, exclude_archived=False)
+
+    def _precision(expect_id: str, *, as_of: str | None) -> float:
+        labels = LabelSet(
+            prompts=[Prompt("prod db", relevant=True, expect_ids=[expect_id], as_of=as_of)]
+        )
+        return eval_recall.run_config(mock_memory, cfg, 1, labels).precision_at_k
+
+    # As of June 15: A is the valid fact; B (valid from July) is still future.
+    assert _precision(a.id[:12], as_of="2026-06-15T00:00:00") == 1.0
+    assert _precision(b.id[:12], as_of="2026-06-15T00:00:00") == 0.0
+    # Recall as of now: A is invalidated, B is the live hit.
+    assert _precision(b.id[:12], as_of=None) == 1.0
+    assert _precision(a.id[:12], as_of=None) == 0.0
+
+
 def test_hyde_config_is_named_only_not_default() -> None:
     names = [c.name for c in eval_recall.default_configs()]
     assert not any("hyde" in n.lower() for n in names)  # default grid stays no-MLX
