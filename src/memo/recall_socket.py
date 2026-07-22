@@ -279,16 +279,12 @@ class _RecallHandler(socketserver.StreamRequestHandler):
             except (json.JSONDecodeError, UnicodeDecodeError, ValueError, OSError) as exc:
                 error = True
                 print(f"# recall-daemon: parse error: {type(exc).__name__}: {exc}", file=sys.stderr)
-                self._write_tracked_response(
-                    "{}", debug=debug, started_at=t0, op=op, error=error
-                )
+                self._write_tracked_response("{}", debug=debug, started_at=t0, op=op, error=error)
                 return
 
             if not isinstance(req, dict):
                 error = True
-                self._write_tracked_response(
-                    "{}", debug=debug, started_at=t0, op=op, error=error
-                )
+                self._write_tracked_response("{}", debug=debug, started_at=t0, op=op, error=error)
                 return
 
             op = str(req.get("op") or "recall").strip()
