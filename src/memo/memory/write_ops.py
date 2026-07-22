@@ -403,13 +403,21 @@ class _WriteOpsMixin(_MemoryBase):
         if flag_bool("MEMO_SAVE_NORMALIZE_DATES") and type_ not in REFERENCE_TYPES:
             import datetime as _dt
 
-            from memo.memory.consolidate_ops import _normalize_relative_dates
+            from memo.memory.consolidate_ops import ground_relative_dates
 
-            try:
-                _ref = _dt.date.fromisoformat(created[:10]) if created else _dt.date.today()
-            except ValueError:
-                _ref = _dt.date.today()
-            content = _normalize_relative_dates(content, _ref)
+            # Observation Date = the save's own timestamp (`created` when the
+            # caller back-dates an import, else now — equal to `created_iso`,
+            # computed below). Grounding is day-precision, so anchoring to that
+            # date keeps re-processing stable. Besides annotating the content
+            # inline, grounding returns the resolved absolute date when the text
+            # anchors a single unambiguous day.
+            _observed_at = created or _dt.datetime.now(_dt.UTC).isoformat()
+            content, _grounded_valid_at = ground_relative_dates(content, _observed_at)
+            # Grounded date fills `valid_at` only when the caller passed none:
+            # explicit > grounded > created-default (the None case falls through
+            # to the `valid_at = created_iso` default at the write step below).
+            if valid_at is None and _grounded_valid_at is not None:
+                valid_at = _grounded_valid_at
 
         if auto_derive:
             # Only fire the LLM if at least one field looks "default-y".
