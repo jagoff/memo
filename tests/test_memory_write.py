@@ -150,6 +150,7 @@ def test_two_memory_instances_do_not_duplicate_topic_key(tmp_cfg: Config):
         second.close()
 
 
+@pytest.mark.float32_precision  # compares raw embedding blob to serialize_float32(); int8 blobs are 1B/dim
 def test_concurrent_topic_key_save_keeps_markdown_fts_and_vector_coherent(tmp_cfg: Config):
     first = Memory(tmp_cfg)
     second = Memory(tmp_cfg)

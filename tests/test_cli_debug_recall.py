@@ -184,6 +184,7 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+@pytest.mark.float32_precision  # asserts vec_sim == 1.0 within abs=1e-6; int8 cosine is ~1/127-quantized
 def test_debug_recall_json_shape(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     _install_keyword_stub(monkeypatch)
     alpha_id, beta_id = _seed(tmp_cfg)

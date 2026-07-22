@@ -126,12 +126,13 @@ for _trust_flag in (
 # int8 vec quantization (memo v3.9.0+) graduated to the default. Existing
 # fixtures/tests that build a `Memory`/`VecStore` and assert exact float32
 # cosine scores (e.g. `pytest.approx(1.0, abs=1e-6)`) predate quantization and
-# would flake against int8's ~1/127 precision. Hard-set off (overrides a
-# developer's exported `=int8`) so the suite is hermetic; the dedicated
-# `tests/test_vec_quantize.py` opts back in via `monkeypatch.delenv`/
+# would flake against int8's ~1/127 precision. Soft-set off (`setdefault`, like
+# the other pins above) so the suite is hermetic by default, but the CI int8
+# lane can still export `MEMO_VEC_QUANTIZE=int8` and have it take effect; the
+# dedicated `tests/test_vec_quantize.py` opts back in via `monkeypatch.delenv`/
 # `monkeypatch.setenv`, and direct `VecStore(...)` construction without
 # `vec_quant=` is unaffected (its own default is independent of this env var).
-os.environ["MEMO_VEC_QUANTIZE"] = "off"
+os.environ.setdefault("MEMO_VEC_QUANTIZE", "off")
 
 
 @pytest.fixture

@@ -80,6 +80,7 @@ def _shard_files(cache_dir: Path) -> list[Path]:
     return sorted(cache_dir.glob("*.json"))
 
 
+@pytest.mark.float32_precision  # asserts doc["model"] == "stub"; int8 stores tag shards "stub+int8" by design
 def test_export_import_roundtrip(remote: Path, tmp_path: Path, monkeypatch):
     """Export derives (hash → vector) pairs from A's live index; importing them
     into a fresh store makes the exact vectors available under the same keys."""
@@ -222,6 +223,8 @@ def test_export_covers_chunks_of_durable_parents(remote: Path, tmp_path: Path, m
     assert out["rows"] == n_rows
 
 
+@pytest.mark.float32_precision  # shard doc is hand-crafted model="stub" (float32); int8 store expects
+# "stub+int8" and by-design skips the whole (foreign-profile) shard, not just poisoned rows
 def test_import_skips_invalid_vectors(remote: Path, tmp_path: Path, monkeypatch):
     """A poisoned shard row (zero-norm / NaN) is skipped; valid rows import."""
     import base64

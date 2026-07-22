@@ -203,6 +203,7 @@ addopts = ["--import-mode=importlib"]
 markers = [
     "requires_mlx: smoke test que carga modelos MLX reales (Apple Silicon only). Auto-skipea sin mlx_lm.",
     "slow: tests >1s (real MLX model loads); no default deselection — CI jobs pass `-m 'not slow'` explicitly (nightly slow-tests runs them).",
+    "float32_precision: asserts an exact float32 value/representation (tight-tolerance cosine, raw blob bytes, or a float32-only model tag) that legitimately diverges under MEMO_VEC_QUANTIZE=int8; deselected by the int8 CI lane.",
 ]
 
 [tool.mypy]
