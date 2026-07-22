@@ -7,21 +7,19 @@ applies the winner via the tuned-params overlay. Every apply must not regress
 the curated regression set; a later night whose live config regresses vs the
 saved baseline rolls back. OFF by default (``MEMO_DREAM_TUNE_ENABLED``).
 
-Three tuner passes, each gated + reversible, sharing the mined∪curated label
+Two tuner families, each gated + reversible, sharing the mined∪curated label
 set and the (precision@K, -noise@K) objective:
   - ``run_tuning_pass``          — line-searches ``MEMO_RECALL_MIN_SIM`` plus
     the Fase-3 rank knobs (``MEMO_RECALL_MMR_LAMBDA``,
     ``MEMO_RECALL_SYNTHESIS_BOOST``) through the recall-faithful
     ``eval_recall.Cfg.knob_overrides`` seam, applying at most ONE knob change
     per night (curated no-regression + latency gated).
-  - ``run_graph_weight_pass``    — grid-searches the graph-proximity boost
-    weight (``MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT``) via the recall-faithful
-    ``rank_hits()`` seam.
-  - ``run_graph_retrieval_pass`` — selects among candidate recall CONFIGS
-    (whether to inject entity-graph candidates as a retrieval source and/or
-    expand 1-hop, incl. the ``MEMO_RECALL_MODE`` flip retrieval needs),
-    applying the winner only when it beats the plain-vec baseline within the
-    recall-hook latency budget.
+  - ``run_graph_weight_pass``    — selects between graph-off and bounded curated
+    graph-signal alphas through the production ``Memory.search`` path.
+
+The former graph candidate-injection/expansion tuner is retired. Its public
+entry point returns an inert compatibility receipt and no nightly path invokes
+it, so historical overlays cannot re-enable those removed serving paths.
 
 Each writes only its own key(s) into the shared overlay and preserves the
 others, so the passes coexist. A later night whose live config regresses vs the
@@ -58,11 +56,26 @@ _MIN_SIM = "MEMO_RECALL_MIN_SIM"
 _BASELINE = "dream_baseline.json"
 _FLOOR_LO, _FLOOR_HI, _FLOOR_STEP = 0.40, 0.85, 0.05
 
-# Graph-proximity weight tuning (Phase 2). Separate knob + baseline file so it
-# tunes independently of min_sim and never clobbers it in the overlay.
-_GRAPH_WEIGHT = "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"
+# Curated graph signal tuning. The enabled switch and alpha form one atomic
+# configuration: online rollback restores both together.
+_GRAPH_ENABLED = "MEMO_GRAPH_SIGNAL_ENABLED"
+_GRAPH_ALPHA = "MEMO_GRAPH_SIGNAL_ALPHA"
 _GRAPH_BASELINE = "dream_graph_baseline.json"
-GRAPH_WEIGHT_GRID: tuple[float, ...] = (0.0, 0.05, 0.1, 0.2)
+_MANAGED_GRAPH_SIGNAL_KEYS = (_GRAPH_ENABLED, _GRAPH_ALPHA)
+_LEGACY_GRAPH_OVERLAY_KEYS = (
+    "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT",
+    "MEMO_GRAPH_RETRIEVAL_ENABLED",
+    "MEMO_GRAPH_EXPANSION_ENABLED",
+    "MEMO_GRAPH_FALLBACK_MIN_HITS",
+    "MEMO_GRAPH_OUTCOME_WEIGHT",
+    "MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS",
+)
+GRAPH_SIGNAL_CANDIDATES: tuple[dict[str, bool | float], ...] = (
+    {_GRAPH_ENABLED: False, _GRAPH_ALPHA: 0.0},
+    {_GRAPH_ENABLED: True, _GRAPH_ALPHA: 0.10},
+    {_GRAPH_ENABLED: True, _GRAPH_ALPHA: 0.15},
+    {_GRAPH_ENABLED: True, _GRAPH_ALPHA: 0.25},
+)
 
 # Online-only project-boost tuning (F3 boosts). Distinct from the offline knob
 # tuners above: the project-affinity boost fires only for hits in the cwd
@@ -247,6 +260,24 @@ def _save_knob_baseline(state_dir: Path, knob: str, metrics: dict[str, float]) -
         saver(state_dir, metrics)
 
 
+def _restore_online_revert(state_dir: Path, resolution: dict[str, Any]) -> None:
+    """Restore every key managed by one reverted online experiment."""
+    params = _scalar_overlay(state_dir)
+    managed_before = resolution.get("managed_before")
+    if isinstance(managed_before, dict):
+        for key in resolution.get("managed_keys", managed_before):
+            params.pop(str(key), None)
+        params.update(managed_before)
+    else:
+        params[resolution["knob"]] = resolution["floor_before"]
+    write_overlay(state_dir, params, {"set_by": "dream-online-revert"})
+    saver = _KNOB_BASELINE_SAVERS.get(resolution["knob"])
+    if saver is not None:
+        saver(state_dir, resolution["offline_before"])
+    dream_tune_online.set_revert_cooldown(state_dir)
+    pin_prev_to_current(state_dir)
+
+
 def run_tuning_pass(
     cfg: Any,
     mem: Any,
@@ -294,20 +325,7 @@ def run_tuning_pass(
             )
             res["online"] = resolution
             if resolution["status"] == "reverted":
-                # Self-contained, knob-generic revert: restore the reverted knob to
-                # its pre-apply value by merging into the CURRENT overlay (not the
-                # shared one-step _meta.prev), and restore that knob's own offline
-                # baseline file.
-                params = _scalar_overlay(cfg.state_dir)
-                params[resolution["knob"]] = resolution["floor_before"]
-                write_overlay(cfg.state_dir, params, {"set_by": "dream-online-revert"})
-                _saver = _KNOB_BASELINE_SAVERS.get(resolution["knob"])
-                if _saver is not None:
-                    _saver(cfg.state_dir, resolution["offline_before"])
-                dream_tune_online.set_revert_cooldown(cfg.state_dir)
-                # Self-heal _meta.prev so a later offline rollback-guard can't
-                # resurrect the config the online loop just reverted away.
-                pin_prev_to_current(cfg.state_dir)
+                _restore_online_revert(cfg.state_dir, resolution)
                 res["status"] = "online_reverted"
                 return res
             if resolution["status"] == "waiting":
@@ -739,71 +757,77 @@ def run_hyde_pass(
     return res
 
 
-# --- graph-proximity weight tuning -------------------------------------------
+# --- curated graph-signal tuning --------------------------------------------
 
 
-def measure_graph_weight(
-    mem: Any, labels: LabelSet, *, k: int, weight: float, floor: float
-) -> dict[str, float]:
-    """precision@K / noise@K for the live index with the graph-proximity boost
-    applied at ``weight`` (gated at ``floor`` = current ``min_sim``).
-
-    Mirrors ``eval_recall.run_config``'s vec ranking but threads the Phase-2
-    ``graph_boost`` seam through ``rank_hits`` so the measurement reflects the
-    real recall path. ``eval_recall`` itself is not graph-boost aware, so this
-    measure lives here rather than extending the shared harness.
-    """
-    from memo.eval_recall import _is_noise, _is_relevant
-    from memo.graph_proximity import extract_query_entities, graph_boost_factory
-    from memo.recall_logic import RankKnobs, rank_hits
-
-    graph = getattr(mem, "graph", None)
-    knobs = RankKnobs(top_k=k, min_sim=floor, min_body_chars=0, mode="vec")
-    prec_hits = prec_total = noise_hits = 0
-    n_prompts = len(labels.prompts) or 1
-    for prompt in labels.prompts:
-        hits = mem.search(prompt.text, limit=k * 4, mode="vec")
-        graph_boost = None
-        if weight > 0 and graph is not None:
-            graph_boost = graph_boost_factory(
-                graph, extract_query_entities(prompt.text, graph), weight=weight
-            )
-        ranked = rank_hits(hits, knobs, graph_boost=graph_boost)
-        ranked = [h for h in ranked if not _is_noise(h, labels)]
-        top = ranked[:k]
-        noise_hits += sum(1 for h in top if _is_noise(h, labels))
-        if prompt.relevant or prompt.expect_ids:
-            prec_total += k
-            prec_hits += sum(1 for h in top if _is_relevant(h, prompt, labels))
-    return {
-        "precision_at_k": round(prec_hits / prec_total, 3) if prec_total else 0.0,
-        "noise_at_k": round(noise_hits / (n_prompts * k), 3) if (n_prompts * k) else 0.0,
-    }
+def graph_signal_candidates() -> list[dict[str, bool | float]]:
+    """Return fresh copies of the only graph configurations the tuner may try."""
+    return [dict(candidate) for candidate in GRAPH_SIGNAL_CANDIDATES]
 
 
-def search_graph_weight(
+def measure_graph_signal(
     mem: Any,
     labels: LabelSet,
     *,
     k: int,
-    current: float,
+    enabled: bool,
+    alpha: float,
     floor: float,
-    grid: tuple[float, ...],
+) -> dict[str, float]:
+    """Measure one curated graph configuration through production search."""
+    cfg = Cfg(
+        name=f"graph/{'on' if enabled else 'off'}/{alpha:.2f}",
+        mode="vec",
+        floor=floor,
+        exclude_archived=True,
+        flag_overrides={
+            _GRAPH_ENABLED: "1" if enabled else "0",
+            _GRAPH_ALPHA: str(alpha),
+            "MEMO_GRAPH_REASON_ENABLED": "1" if enabled else "0",
+            "MEMO_GRAPH_HUB_SUPPRESSION": "1",
+        },
+    )
+    rows = evaluate(mem, k=k, labels=labels, configs=[cfg])
+    metrics = gate_metrics(rows)
+    if rows:
+        metrics["latency_ms_p50"] = round(rows[0].latency_ms_p50, 1)
+    return metrics
+
+
+def search_graph_signal(
+    mem: Any,
+    labels: LabelSet,
+    *,
+    k: int,
+    current: dict[str, bool | float],
+    floor: float,
+    candidates: list[dict[str, bool | float]],
     max_evals: int,
-) -> tuple[float, dict[str, float], dict[str, float]]:
-    """Grid-search the graph-proximity weight maximising (precision, -noise).
-    Returns ``(best_weight, metrics_before, metrics_best)``. Mirrors
-    ``search_min_sim``."""
-    before = measure_graph_weight(mem, labels, k=k, weight=current, floor=floor)
-    best_weight, best = current, before
-    for evals, w in enumerate(grid):
+) -> tuple[dict[str, bool | float], dict[str, float], dict[str, float]]:
+    """Select the graph config maximizing precision and then minimizing noise."""
+
+    def _measure(candidate: dict[str, bool | float]) -> dict[str, float]:
+        return measure_graph_signal(
+            mem,
+            labels,
+            k=k,
+            enabled=bool(candidate[_GRAPH_ENABLED]),
+            alpha=float(candidate[_GRAPH_ALPHA]),
+            floor=floor,
+        )
+
+    before = _measure(current)
+    best_config, best = dict(current), before
+    for evals, candidate in enumerate(candidates):
         if evals >= max_evals:
             break
-        cand = round(w, 4)
-        m = measure_graph_weight(mem, labels, k=k, weight=cand, floor=floor)
-        if (m["precision_at_k"], -m["noise_at_k"]) > (best["precision_at_k"], -best["noise_at_k"]):
-            best_weight, best = cand, m
-    return best_weight, before, best
+        metrics = _measure(candidate)
+        if (metrics["precision_at_k"], -metrics["noise_at_k"]) > (
+            best["precision_at_k"],
+            -best["noise_at_k"],
+        ):
+            best_config, best = dict(candidate), metrics
+    return best_config, before, best
 
 
 def _graph_baseline_path(state_dir: Path) -> Path:
@@ -829,15 +853,19 @@ def save_graph_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
 # time, so monkeypatching either function works correctly in tests.
 _KNOB_BASELINE_SAVERS = {
     _MIN_SIM: lambda sd, m: save_baseline(sd, m),
-    _GRAPH_WEIGHT: lambda sd, m: save_graph_baseline(sd, m),
+    _GRAPH_ALPHA: lambda sd, m: save_graph_baseline(sd, m),
     _MMR_LAMBDA: lambda sd, m: save_rank_knob_baseline(sd, _MMR_LAMBDA, m),
     _SYNTHESIS_BOOST: lambda sd, m: save_rank_knob_baseline(sd, _SYNTHESIS_BOOST, m),
 }
 
 
+def _scalar_overlay(state_dir: Path) -> dict[str, Any]:
+    """Return all scalar overlay params with native types preserved."""
+    return {k: v for k, v in read_overlay(state_dir).items() if k != "_meta"}
+
+
 def _overlay_params(state_dir: Path) -> dict[str, float]:
-    """Current numeric overlay params (no ``_meta``) — so a graph-weight write
-    preserves a min_sim value a prior pass set, instead of clobbering it."""
+    """Current numeric overlay params (no ``_meta``)."""
     return {
         key: float(val)
         for key, val in read_overlay(state_dir).items()
@@ -845,25 +873,66 @@ def _overlay_params(state_dir: Path) -> dict[str, float]:
     }
 
 
-def _graph_weight_curated_gate(
+def _graph_signal_curated_gate(
     cfg: Any,
     mem: Any,
     labels: LabelSet,
     res: dict[str, Any],
     *,
     k: int,
-    current: float,
-    best_weight: float,
+    current: dict[str, bool | float],
+    best_config: dict[str, bool | float],
     floor: float,
 ) -> bool:
-    """Record the curated graph-weight comparison and return its verdict."""
+    """Record the curated graph-signal comparison and return its verdict."""
     curated = _curated_label_set(cfg.state_dir)
     if curated is None:
         return True
-    cur_before = measure_graph_weight(mem, curated, k=k, weight=current, floor=floor)
-    cur_after = measure_graph_weight(mem, curated, k=k, weight=best_weight, floor=floor)
+    cur_before = measure_graph_signal(
+        mem,
+        curated,
+        k=k,
+        enabled=bool(current[_GRAPH_ENABLED]),
+        alpha=float(current[_GRAPH_ALPHA]),
+        floor=floor,
+    )
+    cur_after = measure_graph_signal(
+        mem,
+        curated,
+        k=k,
+        enabled=bool(best_config[_GRAPH_ENABLED]),
+        alpha=float(best_config[_GRAPH_ALPHA]),
+        floor=floor,
+    )
     res["curated"] = {"before": cur_before, "after": cur_after}
     return not _regressed(cur_after, cur_before)
+
+
+def _rollback_regressed_graph(
+    state_dir: Path,
+    mem: Any,
+    labels: LabelSet,
+    *,
+    k: int,
+    current: dict[str, bool | float],
+    floor: float,
+    dry_run: bool,
+) -> dict[str, Any] | None:
+    """Rollback a live graph config only when its saved baseline regressed."""
+    baseline = load_graph_baseline(state_dir)
+    if baseline is None or dry_run:
+        return None
+    live = measure_graph_signal(
+        mem,
+        labels,
+        k=k,
+        enabled=bool(current[_GRAPH_ENABLED]),
+        alpha=float(current[_GRAPH_ALPHA]),
+        floor=floor,
+    )
+    if not _regressed(live, baseline):
+        return None
+    return rollback_overlay(state_dir)
 
 
 def run_graph_weight_pass(
@@ -875,11 +944,8 @@ def run_graph_weight_pass(
     min_used_score: float = 0.5,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """One nightly graph-proximity-weight tuning pass. Mirrors
-    ``run_tuning_pass``: build labels, roll back a regressed live config first,
-    grid-search the weight, apply the winner via the overlay (preserving other
-    params), save the graph baseline. Never raises."""
-    from memo.flags import flag_float
+    """Tune the bounded curated graph signal and apply one atomic config."""
+    from memo.flags import flag_bool, flag_float
 
     res: dict[str, Any] = {"status": "noop"}
     try:
@@ -900,54 +966,60 @@ def run_graph_weight_pass(
 
         floor = flag_float(_MIN_SIM)
         floor = 0.5 if floor is None else floor
-        current = flag_float(_GRAPH_WEIGHT) or 0.0
+        enabled = flag_bool(_GRAPH_ENABLED)
+        alpha = flag_float(_GRAPH_ALPHA)
+        current: dict[str, bool | float] = {
+            _GRAPH_ENABLED: enabled,
+            _GRAPH_ALPHA: (0.15 if alpha is None else alpha) if enabled else 0.0,
+        }
 
-        # rollback guard: if the LIVE weight already regressed vs baseline, revert.
-        baseline = load_graph_baseline(cfg.state_dir)
-        if baseline is not None:
-            live = measure_graph_weight(mem, labels, k=k, weight=current, floor=floor)
-            if _regressed(live, baseline) and not dry_run:
-                rolled = rollback_overlay(cfg.state_dir)
-                if rolled is not None:
-                    res["status"] = "rolled_back"
-                    res["restored"] = rolled
-                    return res
-
-        best_weight, before, after = search_graph_weight(
+        rolled = _rollback_regressed_graph(
+            cfg.state_dir,
             mem,
             labels,
             k=k,
             current=current,
             floor=floor,
-            grid=GRAPH_WEIGHT_GRID,
+            dry_run=dry_run,
+        )
+        if rolled is not None:
+            res["status"] = "rolled_back"
+            res["restored"] = rolled
+            return res
+
+        best_config, before, after = search_graph_signal(
+            mem,
+            labels,
+            k=k,
+            current=current,
+            floor=floor,
+            candidates=graph_signal_candidates(),
             max_evals=max_evals,
         )
         res.update(
             {
                 "before": before,
                 "after": after,
-                "weight_before": current,
-                "weight_after": best_weight,
+                "config_before": current,
+                "config_after": best_config,
             }
         )
 
-        if not _is_improved_change(
-            before,
-            after,
-            value_before=current,
-            value_after=best_weight,
+        if best_config == current or (after["precision_at_k"], -after["noise_at_k"]) <= (
+            before["precision_at_k"],
+            -before["noise_at_k"],
         ):
             res["status"] = "noop"
             return res
         # Curated no-regression gate — same bar as the rank knobs.
-        if not _graph_weight_curated_gate(
+        if not _graph_signal_curated_gate(
             cfg,
             mem,
             labels,
             res,
             k=k,
             current=current,
-            best_weight=best_weight,
+            best_config=best_config,
             floor=floor,
         ):
             res["status"] = "curated_rejected"
@@ -957,13 +1029,15 @@ def run_graph_weight_pass(
             return res
 
         version_before = params_version(cfg.state_dir)
-        params = _overlay_params(cfg.state_dir)
-        params[_GRAPH_WEIGHT] = best_weight
+        params = _scalar_overlay(cfg.state_dir)
+        for key in (*_MANAGED_GRAPH_SIGNAL_KEYS, *_LEGACY_GRAPH_OVERLAY_KEYS):
+            params.pop(key, None)
+        params.update(best_config)
         write_overlay(
             cfg.state_dir,
             params,
             {
-                "set_by": "dream-graph",
+                "set_by": "dream-curated-graph",
                 "baseline_prec": after["precision_at_k"],
                 "baseline_noise": after["noise_at_k"],
             },
@@ -973,12 +1047,15 @@ def run_graph_weight_pass(
         # out-of-sample next cycle (and reverted by knob if it regresses).
         dream_tune_online.record_pending(
             cfg.state_dir,
-            knob=_GRAPH_WEIGHT,
-            value_before=current,
-            value_after=best_weight,
+            knob=_GRAPH_ALPHA,
+            value_before=current[_GRAPH_ALPHA],
+            value_after=best_config[_GRAPH_ALPHA],
             offline_before=before,
             offline_after=after,
             version_before=version_before,
+            managed_before=current,
+            managed_after=best_config,
+            managed_keys=_MANAGED_GRAPH_SIGNAL_KEYS,
         )
         res["status"] = "applied"
     except Exception as exc:  # surfaced into the receipt, never silent
@@ -987,211 +1064,9 @@ def run_graph_weight_pass(
     return res
 
 
-# --- graph-injection (retrieval / expansion) config tuning -------------------
-#
-# Distinct from the two knob tuners above: those move a scalar (min_sim /
-# proximity weight); this one selects among a small set of *candidate recall
-# configs* — whether to inject entity-graph candidates as a retrieval source
-# (hybrid RRF) and/or expand 1-hop after ranking, including the recall mode flip
-# that graph retrieval requires. It applies the winning config via the overlay
-# only when it beats the plain-vec baseline AND stays within the recall-hook
-# latency budget (a hybrid flip that helps precision but blows the 5s budget is
-# rejected — see MEMO recall-hook budget in CLAUDE.md). Reversible like the
-# others.
-
-_RETRIEVAL_BASELINE = "dream_retrieval_baseline.json"
-_RECALL_MODE = "MEMO_RECALL_MODE"
-# Graph-injection env levers this pass owns (cleared/reset per measurement so a
-# prior night's overlay never leaks into another config's numbers).
-_MANAGED_RETRIEVAL_FLAGS = ("MEMO_GRAPH_RETRIEVAL_ENABLED", "MEMO_GRAPH_EXPANSION_ENABLED")
-# All overlay keys this pass manages (so applying a winner clears a prior one).
-_MANAGED_RETRIEVAL_KEYS = (_RECALL_MODE, *_MANAGED_RETRIEVAL_FLAGS)
-# Search-latency ceiling (p50, ms) a config must respect to be eligible. Hybrid
-# is materially slower; the recall hook has ~3s for embed+search+format after a
-# ~2s cold MLX load, so a config whose search p50 exceeds this would risk the
-# 5s budget and is refused regardless of precision.
-_RETRIEVAL_LATENCY_BUDGET_MS = 2500.0
-
-# name -> (recall mode, {env flag: "0"/"1"}, overlay-to-apply-if-it-wins).
-# The plain-vec baseline carries an empty overlay (pure defaults).
-RETRIEVAL_CONFIGS: tuple[dict[str, Any], ...] = (
-    {
-        "name": "vec",
-        "mode": "vec",
-        "flags": {"MEMO_GRAPH_RETRIEVAL_ENABLED": "0", "MEMO_GRAPH_EXPANSION_ENABLED": "0"},
-        "overlay": {},
-    },
-    {
-        "name": "vec+expansion",
-        "mode": "vec",
-        "flags": {"MEMO_GRAPH_RETRIEVAL_ENABLED": "0", "MEMO_GRAPH_EXPANSION_ENABLED": "1"},
-        "overlay": {"MEMO_GRAPH_EXPANSION_ENABLED": True},
-    },
-    {
-        "name": "hybrid+retrieval",
-        "mode": "hybrid",
-        "flags": {"MEMO_GRAPH_RETRIEVAL_ENABLED": "1", "MEMO_GRAPH_EXPANSION_ENABLED": "0"},
-        "overlay": {_RECALL_MODE: "hybrid", "MEMO_GRAPH_RETRIEVAL_ENABLED": True},
-    },
-    {
-        "name": "hybrid+retrieval+expansion",
-        "mode": "hybrid",
-        "flags": {"MEMO_GRAPH_RETRIEVAL_ENABLED": "1", "MEMO_GRAPH_EXPANSION_ENABLED": "1"},
-        "overlay": {
-            _RECALL_MODE: "hybrid",
-            "MEMO_GRAPH_RETRIEVAL_ENABLED": True,
-            "MEMO_GRAPH_EXPANSION_ENABLED": True,
-        },
-    },
-)
-
-
-def _retrieval_baseline_path(state_dir: Path) -> Path:
-    return Path(state_dir) / "eval" / _RETRIEVAL_BASELINE
-
-
-def load_retrieval_baseline(state_dir: Path) -> dict[str, float] | None:
-    try:
-        return json.loads(_retrieval_baseline_path(state_dir).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def save_retrieval_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
-    p = _retrieval_baseline_path(state_dir)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-
-
-def measure_retrieval_config(
-    mem: Any, labels: LabelSet, *, k: int, mode: str, flags: dict[str, str]
-) -> dict[str, float]:
-    """precision@K / noise@K / latency_ms_p50 for one candidate recall config.
-
-    The graph-injection flags are set in ``os.environ`` around a reuse of the
-    shared ``evaluate()`` harness (which reads them inside ``mem.search`` and
-    applies the real hybrid true-cosine gate), so the numbers reflect the
-    production recall path. Both managed flags are always fully specified so a
-    prior night's overlay cannot leak into the measurement. The environment is
-    restored afterwards.
-    """
-    import os
-
-    from memo.flags import flag_float
-
-    saved = {kk: os.environ.get(kk) for kk in _MANAGED_RETRIEVAL_FLAGS}
-    try:
-        for kk, vv in flags.items():
-            os.environ[kk] = vv
-        floor = flag_float(_MIN_SIM)
-        floor = 0.5 if floor is None else floor
-        cfg = Cfg(name=mode, mode=mode, floor=floor, exclude_archived=True)
-        rows = evaluate(mem, k=k, labels=labels, configs=[cfg])
-        metrics = gate_metrics(rows)
-        metrics["latency_ms_p50"] = round(rows[0].latency_ms_p50, 1) if rows else 0.0
-        return metrics
-    finally:
-        for kk, prev in saved.items():
-            if prev is None:
-                os.environ.pop(kk, None)
-            else:
-                os.environ[kk] = prev
-
-
-def _scalar_overlay(state_dir: Path) -> dict[str, Any]:
-    """Current overlay params (no ``_meta``), native types preserved — so
-    applying a retrieval winner keeps a float knob a prior pass set."""
-    return {k: v for k, v in read_overlay(state_dir).items() if k != "_meta"}
-
-
-def _live_retrieval_config(state_dir: Path) -> dict[str, Any]:
-    """The RETRIEVAL_CONFIGS entry the overlay currently applies (for the
-    rollback guard). Matches on the managed levers; defaults to plain vec."""
-    ov = read_overlay(state_dir)
-    live_mode = str(ov.get(_RECALL_MODE, "vec"))
-    live_ret = bool(ov.get("MEMO_GRAPH_RETRIEVAL_ENABLED", False))
-    live_exp = bool(ov.get("MEMO_GRAPH_EXPANSION_ENABLED", False))
-    for c in RETRIEVAL_CONFIGS:
-        if (
-            c["mode"] == live_mode
-            and (c["flags"]["MEMO_GRAPH_RETRIEVAL_ENABLED"] == "1") == live_ret
-            and (c["flags"]["MEMO_GRAPH_EXPANSION_ENABLED"] == "1") == live_exp
-        ):
-            return c
-    return RETRIEVAL_CONFIGS[0]
-
-
-def _measure_retrieval_candidates(
-    mem: Any,
-    labels: LabelSet,
-    *,
-    k: int,
-    latency_budget_ms: float,
-) -> tuple[
-    list[tuple[dict[str, Any], dict[str, float]]],
-    list[str],
-    tuple[dict[str, Any], dict[str, float]],
-]:
-    """Measure all configs and select the best latency-eligible candidate."""
-    measured = []
-    for config in RETRIEVAL_CONFIGS:
-        metrics = measure_retrieval_config(
-            mem,
-            labels,
-            k=k,
-            mode=config["mode"],
-            flags=config["flags"],
-        )
-        measured.append((config, metrics))
-    eligible = [
-        (config, metrics)
-        for config, metrics in measured
-        if config["name"] == "vec" or metrics["latency_ms_p50"] <= latency_budget_ms
-    ]
-    latency_rejected = [
-        config["name"]
-        for config, metrics in measured
-        if config["name"] != "vec" and metrics["latency_ms_p50"] > latency_budget_ms
-    ]
-    best = max(
-        eligible,
-        key=lambda candidate: (
-            candidate[1]["precision_at_k"],
-            -candidate[1]["noise_at_k"],
-        ),
-    )
-    return measured, latency_rejected, best
-
-
-def _retrieval_curated_gate(
-    cfg: Any,
-    mem: Any,
-    best_cfg: dict[str, Any],
-    res: dict[str, Any],
-    *,
-    k: int,
-) -> bool:
-    """Record the curated retrieval comparison and return its verdict."""
-    curated = _curated_label_set(cfg.state_dir)
-    if curated is None:
-        return True
-    vec_cfg = RETRIEVAL_CONFIGS[0]
-    cur_before = measure_retrieval_config(
-        mem,
-        curated,
-        k=k,
-        mode=vec_cfg["mode"],
-        flags=vec_cfg["flags"],
-    )
-    cur_after = measure_retrieval_config(
-        mem,
-        curated,
-        k=k,
-        mode=best_cfg["mode"],
-        flags=best_cfg["flags"],
-    )
-    res["curated"] = {"before": cur_before, "after": cur_after}
-    return not _regressed(cur_after, cur_before)
+# --- retired graph candidate injection --------------------------------------
+# Kept as an inert callable for third-party imports. The production serving
+# paths and nightly invocation were removed in favour of the curated signal.
 
 
 def run_graph_retrieval_pass(
@@ -1201,98 +1076,11 @@ def run_graph_retrieval_pass(
     k: int = 5,
     min_used_score: float = 0.5,
     dry_run: bool = False,
-    latency_budget_ms: float = _RETRIEVAL_LATENCY_BUDGET_MS,
+    latency_budget_ms: float = 2500.0,
 ) -> dict[str, Any]:
-    """One nightly graph-injection config pass. Grid the candidate recall
-    configs, apply the best via the overlay when it beats the plain-vec
-    baseline within the latency budget, revert a regressed live config first.
-    Never raises — mirrors ``run_graph_weight_pass``."""
-    res: dict[str, Any] = {"status": "noop"}
-    try:
-        labels, curated_used = build_labels(cfg, min_used_score=min_used_score)
-        res["n_labels"] = len(labels.prompts)
-        res["curated_used"] = curated_used
-        if not labels.prompts:
-            return res
-
-        # One overlay change per proof cycle: if the proof loop has an
-        # unresolved pending OR a revert just happened this cycle, hold the overlay
-        # steady — skip the (expensive) search entirely and defer.
-        if dream_tune_online.has_unresolved_pending(
-            cfg.state_dir
-        ) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
-            res["status"] = "deferred_pending"
-            return res
-
-        # rollback guard: if the LIVE overlay config already regressed vs the
-        # saved baseline, revert before considering new configs.
-        baseline = load_retrieval_baseline(cfg.state_dir)
-        if baseline is not None:
-            live_cfg = _live_retrieval_config(cfg.state_dir)
-            live = measure_retrieval_config(
-                mem, labels, k=k, mode=live_cfg["mode"], flags=live_cfg["flags"]
-            )
-            if _regressed(live, baseline) and not dry_run:
-                rolled = rollback_overlay(cfg.state_dir)
-                if rolled is not None:
-                    res["status"] = "rolled_back"
-                    res["restored"] = rolled
-                    return res
-
-        measured, latency_rejected, (best_cfg, best) = _measure_retrieval_candidates(
-            mem,
-            labels,
-            k=k,
-            latency_budget_ms=latency_budget_ms,
-        )
-        base = measured[0][1]
-        res["baseline"] = base
-        res["configs"] = [{"name": c["name"], **m} for c, m in measured]
-
-        # Eligible = respects the latency budget. The baseline (plain vec) is
-        # always eligible so we never get stuck with nothing to compare against.
-        res["latency_rejected"] = latency_rejected
-        res["best"] = {"name": best_cfg["name"], **best}
-
-        improved = (best["precision_at_k"], -best["noise_at_k"]) > (
-            base["precision_at_k"],
-            -base["noise_at_k"],
-        )
-        if not improved or best_cfg["name"] == "vec":
-            res["status"] = "noop"
-            return res
-        # Curated no-regression gate — same bar as the rank knobs.
-        if not _retrieval_curated_gate(cfg, mem, best_cfg, res, k=k):
-            res["status"] = "curated_rejected"
-            return res
-        if dry_run:
-            res["status"] = "would_apply"
-            res["would_apply"] = best_cfg["name"]
-            return res
-
-        # Apply: preserve prior scalar knobs, clear any retrieval levers we
-        # manage, then set the winner's overlay.
-        params = _scalar_overlay(cfg.state_dir)
-        for kk in _MANAGED_RETRIEVAL_KEYS:
-            params.pop(kk, None)
-        params.update(best_cfg["overlay"])
-        write_overlay(
-            cfg.state_dir,
-            params,
-            {
-                "set_by": "dream-retrieval",
-                "config": best_cfg["name"],
-                "baseline_prec": best["precision_at_k"],
-                "baseline_noise": best["noise_at_k"],
-            },
-        )
-        save_retrieval_baseline(cfg.state_dir, best)
-        res["status"] = "applied"
-        res["applied"] = best_cfg["name"]
-    except Exception as exc:  # surfaced into the receipt, never silent
-        res["status"] = "error"
-        res["error"] = f"{type(exc).__name__}: {exc}"
-    return res
+    """Return an inert receipt for the removed injection/expansion tuner."""
+    _ = (cfg, mem, k, min_used_score, dry_run, latency_budget_ms)
+    return {"status": "retired", "replacement": "curated_graph_signal"}
 
 
 # --- online-only project-boost tuner ----------------------------------------
@@ -1366,19 +1154,17 @@ def run_boost_pass(
 
 
 __all__ = [
-    "GRAPH_WEIGHT_GRID",
+    "GRAPH_SIGNAL_CANDIDATES",
     "RANK_KNOB_GRIDS",
-    "RETRIEVAL_CONFIGS",
     "build_labels",
     "curated_gate",
+    "graph_signal_candidates",
     "load_baseline",
     "load_graph_baseline",
     "load_rank_knob_baseline",
-    "load_retrieval_baseline",
     "measure",
-    "measure_graph_weight",
+    "measure_graph_signal",
     "measure_rank_knob",
-    "measure_retrieval_config",
     "read_overlay",
     "run_boost_pass",
     "run_graph_retrieval_pass",
@@ -1388,8 +1174,7 @@ __all__ = [
     "save_baseline",
     "save_graph_baseline",
     "save_rank_knob_baseline",
-    "save_retrieval_baseline",
-    "search_graph_weight",
+    "search_graph_signal",
     "search_min_sim",
     "search_rank_knob",
 ]

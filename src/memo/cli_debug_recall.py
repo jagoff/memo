@@ -13,7 +13,6 @@ from __future__ import annotations
 import contextlib
 import json as _json
 import os
-from collections.abc import Callable
 from typing import Any
 
 import click
@@ -79,16 +78,6 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             with contextlib.suppress(Exception):
                 prefs = mem.contextual.context.get_preferences()
 
-        graph_boost: Callable[[list[Any]], list[Any]] | None = None
-        gpw = flag_float("MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT") or 0.0
-        if flag_bool("MEMO_RECALL_GRAPH_PROXIMITY") and gpw > 0:
-            with contextlib.suppress(Exception):
-                from memo.graph_proximity import extract_query_entities, graph_boost_factory
-
-                graph_boost = graph_boost_factory(
-                    mem.graph, extract_query_entities(prompt, mem.graph), weight=gpw
-                )
-
         traced = mem.search_with_trace(
             prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
         )
@@ -102,8 +91,8 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             knobs,
             vec_cosine=vec_cosine,
             preferences=prefs,
-            graph_boost=graph_boost,
             explain=explain,
+            query=prompt,
         )
 
         # Post-rank_hits output filters — the hook path (recall_logic._recall_logic)
@@ -152,7 +141,6 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
                     "search_score": e.get("raw_score", h.score),
                     "tier_boost": e.get("tier_boost"),
                     "preference_boost": e.get("preference_boost"),
-                    "graph_boost": e.get("graph_boost"),
                     "synthesis_boost": e.get("synthesis_boost"),
                     "mmr": e.get("mmr"),
                     "final_score": e.get("final_score"),
@@ -186,7 +174,10 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             "project_tag": project_tag,
             "project_boost": project_boost,
             "global_boost": global_boost,
-            "graph_proximity_weight": gpw if graph_boost is not None else 0.0,
+            "graph_signal": next(
+                (item for item in trace if item.get("stage") == "graph_signal"),
+                None,
+            ),
             "mmr_lambda": mmr_lambda,
             "synthesis_boost": synthesis_boost,
             "contextual": contextual,
@@ -208,7 +199,6 @@ def _boosts_cell(row: dict[str, Any]) -> str:
     for key, label in (
         ("tier_boost", "tier"),
         ("preference_boost", "pref"),
-        ("graph_boost", "graph"),
         ("synthesis_boost", "synth"),
     ):
         v = row.get(key)

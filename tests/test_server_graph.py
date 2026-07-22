@@ -28,8 +28,7 @@ def _make_server_and_tools() -> tuple[MagicMock, dict]:
     return server, tools
 
 
-def test_register_exposes_all_six_tools(tmp_cfg) -> None:
-    """register() must expose all six expected MCP tools."""
+def test_register_exposes_graph_tools(tmp_cfg) -> None:
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
 
@@ -45,8 +44,44 @@ def test_register_exposes_all_six_tools(tmp_cfg) -> None:
         "memo_graph_communities",
         "memo_graph_centrality",
         "memo_graph_export",
+        "memo_graph_trace",
+        "memo_graph_discover",
     }
     assert expected == set(tools), f"Tool mismatch: {set(tools)}"
+
+
+def test_memo_graph_trace_routes_to_core_api(tmp_cfg) -> None:
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.graph_trace.return_value = {"available": True, "code_refs": []}
+    server, tools = _make_server_and_tools()
+    from memo.server_graph import register
+
+    register(server, mem)
+    result = tools["memo_graph_trace"](memory_id="abc", limit=20)
+
+    assert result["available"] is True
+    mem.graph_trace.assert_called_once_with(memory_id="abc", code=None, limit=20)
+
+
+def test_memo_graph_discover_routes_to_core_api(tmp_cfg) -> None:
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.graph_discover.return_value = {"available": True, "communities": [], "bridges": []}
+    server, tools = _make_server_and_tools()
+    from memo.server_graph import register
+
+    register(server, mem)
+    result = tools["memo_graph_discover"](min_community_size=3, include_code=False)
+
+    assert result["available"] is True
+    mem.graph_discover.assert_called_once_with(
+        min_community_size=3,
+        min_bridge_side=2,
+        max_communities=5,
+        max_bridges=5,
+        include_code=False,
+    )
 
 
 def test_memo_graph_path_found(tmp_cfg) -> None:

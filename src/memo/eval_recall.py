@@ -693,8 +693,8 @@ def _run_config_inner(
                 ),
             )
         # Rank exactly as the daemon does (shared rank_hits): dedup + the hybrid
-        # true-cosine gate + the Phase-2 graph_boost seam — so the eval measures
-        # the real ranking, not a hand-rolled floor filter. cfg.floor -> min_sim.
+        # true-cosine gate. Curated graph order is already part of Memory.search,
+        # so the eval measures the real ranking without a second graph pass.
         vc = make_vec_cosine(mem, query) if cfg.mode == "hybrid" else None
         # Per-label project fidelity: a label harvested with a project context
         # ranks with project_tag set — the same 3-tier boosts the hook applies
@@ -849,6 +849,7 @@ def graph_ab_configs(configs: list[Cfg]) -> tuple[list[Cfg], list[Cfg]]:
                 name=f"{cfg.name} graph-off",
                 flag_overrides={
                     **base_flags,
+                    "MEMO_GRAPH_PROJECTION_ENABLED": "0",
                     "MEMO_GRAPH_SIGNAL_ENABLED": "0",
                     "MEMO_GRAPH_REASON_ENABLED": "0",
                 },
@@ -860,6 +861,7 @@ def graph_ab_configs(configs: list[Cfg]) -> tuple[list[Cfg], list[Cfg]]:
                 name=f"{cfg.name} graph-on",
                 flag_overrides={
                     **base_flags,
+                    "MEMO_GRAPH_PROJECTION_ENABLED": "1",
                     "MEMO_GRAPH_SIGNAL_ENABLED": "1",
                     "MEMO_GRAPH_REASON_ENABLED": "1",
                     "MEMO_GRAPH_HUB_SUPPRESSION": "1",
@@ -1065,7 +1067,13 @@ def gate_metrics(rows: list[Row]) -> dict[str, Any]:
     }
 
 
-def check_gate(rows: list[Row], baseline: dict[str, float], *, tol: float = 1e-9) -> GateResult:
+def check_gate(
+    rows: list[Row],
+    baseline: dict[str, Any],
+    *,
+    tol: float = 1e-9,
+    labels_fingerprint: str | None = None,
+) -> GateResult:
     """Compare the current best config against a saved baseline.
 
     The gate FAILS if precision@K dropped below, or noise@K rose above, the
@@ -1075,6 +1083,14 @@ def check_gate(rows: list[Row], baseline: dict[str, float], *, tol: float = 1e-9
     m = gate_metrics(rows)
     bp = float(baseline.get("precision_at_k", 0.0))
     bn = float(baseline.get("noise_at_k", 1.0))
+    baseline_fingerprint = str(baseline.get("labels_fingerprint") or "")
+    if labels_fingerprint and baseline_fingerprint and labels_fingerprint != baseline_fingerprint:
+        message = (
+            "FAIL — label set changed "
+            f"({baseline_fingerprint} -> {labels_fingerprint}); verify the prior label set, "
+            "then refresh the baseline with --update-baseline"
+        )
+        return GateResult(False, message, m["precision_at_k"], m["noise_at_k"], bp, bn)
     prec_ok = m["precision_at_k"] >= bp - tol
     noise_ok = m["noise_at_k"] <= bn + tol
     passed = prec_ok and noise_ok

@@ -38,6 +38,7 @@ from memo.cli_dream_passes import (
     _run_eval_recall,
     _run_eviction,
     _run_floor_calibration,
+    _run_graph_projection,
     _run_harvest_labels,
     _run_presynthesis,
     _run_prewarm_queries,
@@ -288,6 +289,7 @@ def dream_run(
     _prewarm_n = flag_int("MEMO_DREAM_PREWARM_QUERIES") or 0
     _presynthesis_n = flag_int("MEMO_DREAM_PRESYNTHESIS_QUERIES") or 0
     _outcome_on = flag_bool("MEMO_OUTCOME_RANKING_ENABLED")
+    _projection_on = flag_bool("MEMO_GRAPH_PROJECTION_ENABLED")
 
     receipt: dict[str, Any] = {
         "dry_run": dry_run,
@@ -301,6 +303,7 @@ def dream_run(
         "archived_stale": [],
         "synthesized": [],
         "entities_extracted": 0,
+        "graph_projection": {"status": "disabled"},
         "roi_reconciled": 0,
         "dead_archived": [],
         "roi_decayed": 0,
@@ -315,11 +318,12 @@ def dream_run(
         "errors": [],
     }
 
-    total_steps = 13
+    total_steps = 14
     skipped = (
         (1 if skip_signal_gather or dry_run else 0)
         + (4 if skip_maintain else 0)
         + (1 if skip_entities or dry_run else 0)
+        + (1 if not _projection_on else 0)
         + (1 if not _outcome_on or dry_run else 0)
         + (1 if skip_decay or dry_run else 0)
         + (1 if skip_prune_floor or dry_run else 0)
@@ -426,10 +430,10 @@ def dream_run(
                 receipt["errors"].append(f"tuner: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[tune] recall self-tuner [yellow]warn[/yellow]")
 
-        # Phase 2 — graph-proximity weight tuner (grid-search), same gate + reversible.
-        # Runs after the min_sim pass; both merge the overlay so they coexist.
+        # Curated graph-signal tuner (graph-off plus bounded alpha candidates).
+        # Runs after the general pass; both merge the overlay so they coexist.
         if flag_bool("MEMO_DREAM_TUNE_ENABLED"):
-            progress.update(step, description="[tune] graph-weight tuner...")
+            progress.update(step, description="[tune] curated graph-signal tuner...")
             try:
                 from memo import dream_tune
                 from memo.flags import flag_float
@@ -450,49 +454,14 @@ def dream_run(
                 progress.update(
                     step,
                     description=(
-                        f"[tune] graph-weight tuner [green]✓[/green]  "
+                        f"[tune] curated graph-signal tuner [green]✓[/green]  "
                         f"{receipt['graph_tuner'].get('status')}"
                     ),
                 )
             except Exception as exc:
                 receipt["errors"].append(f"graph_tuner: {type(exc).__name__}: {exc}")
-                progress.update(step, description="[tune] graph-weight tuner [yellow]warn[/yellow]")
-
-        # Phase 2 — graph-injection config tuner (retrieval / expansion, may flip
-        # recall mode). Separate opt-in flag; latency-budget-gated + reversible.
-        if flag_bool("MEMO_DREAM_RETRIEVAL_TUNE_ENABLED"):
-            progress.update(step, description="[tune] graph-injection tuner...")
-            try:
-                from memo import dream_tune
-                from memo.flags import flag_float
-
-                receipt["retrieval_tuner"] = dream_tune.run_graph_retrieval_pass(
-                    cfg,
-                    mem,
-                    k=5 if (_k := flag_int("MEMO_DREAM_TUNE_K")) is None else _k,
-                    min_used_score=0.5
-                    if (_mus := flag_float("MEMO_DREAM_MINE_MIN_USED_SCORE")) is None
-                    else _mus,
-                    dry_run=dry_run,
-                    latency_budget_ms=flag_float("MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS")
-                    or 2500.0,
-                )
-                if receipt["retrieval_tuner"].get("status") == "error":
-                    # failures land in receipt["errors"], never silently swallowed
-                    receipt["errors"].append(
-                        f"retrieval_tuner: {receipt['retrieval_tuner'].get('error')}"
-                    )
                 progress.update(
-                    step,
-                    description=(
-                        f"[tune] graph-injection tuner [green]✓[/green]  "
-                        f"{receipt['retrieval_tuner'].get('status')}"
-                    ),
-                )
-            except Exception as exc:
-                receipt["errors"].append(f"retrieval_tuner: {type(exc).__name__}: {exc}")
-                progress.update(
-                    step, description="[tune] graph-injection tuner [yellow]warn[/yellow]"
+                    step, description="[tune] curated graph-signal tuner [yellow]warn[/yellow]"
                 )
 
         # Phase 1 — confidence calibration: refresh the predicted-vs-grounded map.
@@ -1099,6 +1068,21 @@ def dream_run(
         else:
             progress.update(step, description="[5/6] entities [dim]skip[/dim]")
 
+        # 5b. Curated graph projection — after typed entity upgrades ----------
+        if _projection_on:
+            progress.update(step, description="[graph] refreshing curated projection...")
+            graph_projection = _run_graph_projection(mem, dry_run=dry_run)
+            receipt["graph_projection"] = graph_projection
+            if graph_projection.get("status") == "error":
+                receipt["errors"].append(f"graph_projection: {graph_projection.get('error')}")
+            progress.update(
+                step,
+                description=(
+                    f"[graph] curated projection [green]✓[/green]  {graph_projection.get('status')}"
+                ),
+            )
+            progress.advance(overall)
+
         # 6a. ROI reconcile (outcome loop) — MUST run before decay so the
         # scores that decay are the outcome-derived ones, not a flat 1.0.
         # This is what actually closes the grounding→utility→roi→ranking loop;
@@ -1356,6 +1340,12 @@ def dream_run(
     release_dream_lock(_lock_fh)
 
 
+def _render_graph_projection_status(data: dict[str, Any]) -> None:
+    projection = data.get("graph_projection")
+    if projection:
+        console.print(f"  graph:      {projection.get('status')}")
+
+
 @dream_cmd.command(name="status")
 def dream_status() -> None:
     """Show when dream last ran and what it changed."""
@@ -1379,6 +1369,7 @@ def dream_status() -> None:
     console.print(f"  stale:      {len(data.get('archived_stale', []))}")
     console.print(f"  syntheses:  {len(data.get('synthesized', []))}")
     console.print(f"  entities:   {data.get('entities_extracted', 0)}")
+    _render_graph_projection_status(data)
     console.print(f"  roi decay:  {data.get('roi_decayed', 0)} rows")
     if data.get("tuner"):
         t = data["tuner"]

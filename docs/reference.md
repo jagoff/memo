@@ -448,40 +448,83 @@ now applies recency, health, project/global, and optional graph/synthesis
 signals after raw vector similarity. Tune higher for precision-only corpora or
 lower on very sparse corpora.
 
-### Graph retrieval controls
+### Curated graph retrieval
 
-Graph retrieval signal is conservative by default: ranking effects and
-per-result reasons are off unless explicitly enabled, graph work is bounded for
-hot search/recall paths, and high-document-frequency entity hubs are suppressed.
+Search uses a versioned curated projection rather than the raw extraction
+tables. Ranking only reorders already-eligible hits, stays within a deadline,
+suppresses broad hubs, and preserves the primary retrieval score. Persistent
+settings belong in `graph-config.md`; use `memo config set` so keys are typed
+and written to the right Markdown file.
 
-| Env var | Default | Purpose |
+| Config key (`MEMO_*` equivalent) | Default | Purpose |
 |---|---|---|
-| `MEMO_GRAPH_SIGNAL_ENABLED` | `0` | Enable bounded graph signal collection after primary search. |
-| `MEMO_GRAPH_REASON_ENABLED` | `0` | Attach `extra.graph_reason` to graph-touched search results. |
-| `MEMO_GRAPH_SEMANTIC_RELATIONS` | `0` | Include deterministic semantic relations from `graph.db` in graph reasons. |
-| `MEMO_GRAPH_HUB_SUPPRESSION` | `1` | Suppress broad entity hubs from graph ranking signal. |
-| `MEMO_GRAPH_SIGNAL_BUDGET_MS` | `150` | Millisecond budget for graph signal work in hot paths. |
-| `MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO` | `0.25` | Treat entities above this corpus document-frequency ratio as hubs. |
-| `MEMO_GRAPH_MIN_ENTITY_IDF` | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
-| `MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED` | `0` | Modulate graph-touched boosts by outcome `roi_score`. |
-| `MEMO_GRAPH_OUTCOME_WEIGHT` | `0.05` | Strength of optional outcome modulation on graph boosts. |
+| `graph.projection_enabled` (`MEMO_GRAPH_PROJECTION_ENABLED`) | `0` | Build and serve the versioned curated projection. |
+| `graph.signal_enabled` (`MEMO_GRAPH_SIGNAL_ENABLED`) | `0` | Enable bounded graph signal collection after primary search. |
+| `graph.reason_enabled` (`MEMO_GRAPH_REASON_ENABLED`) | `0` | Attach `extra.graph_reason` to graph-touched search results. |
+| `graph.semantic_relations` (`MEMO_GRAPH_SEMANTIC_RELATIONS`) | `0` | Include deterministic semantic relations from `graph.db` in graph reasons. |
+| `graph.hub_suppression` (`MEMO_GRAPH_HUB_SUPPRESSION`) | `1` | Suppress broad entity hubs from graph ranking signal. |
+| `graph.signal_budget_ms` (`MEMO_GRAPH_SIGNAL_BUDGET_MS`) | `150` | Millisecond budget for graph signal work in hot paths. |
+| `graph.signal_alpha` (`MEMO_GRAPH_SIGNAL_ALPHA`) | `0.15` | Bounded graph leg weight in weighted reciprocal-rank fusion. |
+| `graph.code_trace_enabled` (`MEMO_GRAPH_CODE_TRACE_ENABLED`) | `0` | Resolve captured file/code evidence into stable `codegraph://` references. |
+| `graph.discovery_enabled` (`MEMO_GRAPH_DISCOVERY_ENABLED`) | `0` | Expose curated community/bridge insight packets. |
+| `graph.dream_communities_enabled` (`MEMO_DREAM_COMMUNITIES_ENABLED`) | `0` | Save evidence-bearing community syntheses during dream. |
+| `graph.dream_bridges_enabled` (`MEMO_DREAM_BRIDGES_ENABLED`) | `0` | Save evidence-bearing articulation-bridge syntheses during dream. |
+| `graph.hub_max_doc_freq_ratio` (`MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO`) | `0.25` | Treat entities above this corpus document-frequency ratio as hubs. |
+| `graph.min_entity_idf` (`MEMO_GRAPH_MIN_ENTITY_IDF`) | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
+| `graph.outcome_signal_enabled` (`MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`) | `0` | Modulate graph-touched boosts by outcome `roi_score`. |
+| `graph.outcome_weight` (`MEMO_GRAPH_OUTCOME_WEIGHT`) | `0.05` | Strength of optional outcome modulation on graph boosts. |
 
 Example:
 
 ```bash
-MEMO_GRAPH_SIGNAL_ENABLED=1 MEMO_GRAPH_REASON_ENABLED=1 memo search "recall hook budget" --json
+memo config set graph.projection_enabled true
+memo config set graph.signal_enabled true
+memo config set graph.reason_enabled true
+memo config set graph.semantic_relations true
+memo config set graph.hub_suppression true
+memo config set graph.signal_alpha 0.15
+memo config set graph.code_trace_enabled true
+memo config set graph.discovery_enabled true
+memo config set graph.dream_communities_enabled true
+memo config set graph.dream_bridges_enabled true
+memo config validate
+memo graph rebuild --json
+memo graph stats --json
+memo search "recall hook budget" --explain
 ```
 
-Graph-touched JSON hits include `extra.graph_reason` with the mode, query
-entities, hit entities, neighbor edges, optional semantic relations, and
-optional outcome score. Human `memo search --explain` prints the same reason
-compactly under the result table. The same graph can be inspected directly:
+`memo graph rebuild` atomically cuts over only after projection validation;
+`memo graph stats` reports its active version, freshness, node/edge counts and
+rejections. If the projection is missing, stale, malformed, or over budget,
+search fails open to the unchanged primary ordering.
+
+Graph-touched JSON hits include exact stored edge evidence in
+`extra.graph_reason`. Human `memo search --explain` prints the same reason
+compactly. The graph can also be inspected directly:
 
 ```bash
 memo graph why "mlx" "daemon"
 memo graph hubs --limit 30
 memo graph relations rebuild --limit 500
+memo graph trace --memory 4d53bc7e --json
+memo graph trace --code src/memo/graph_projection.py --json
+memo graph discover --include-code --json
 ```
+
+Memory↔code traceability uses stable
+`codegraph://<repo-id>/<stable-symbol-id>` URIs. Projection rebuild resolves
+explicit `extra.code_refs` plus capture-stamped `files_read` and
+`files_modified`; unresolved paths stay unresolved. Reverse lookup returns the
+memories and exact relation/evidence that touched a code node.
+
+Discovery removes projected hubs, detects bounded regions and articulation
+bridges, and returns the exact projected edges and memory IDs behind each
+candidate. The dream community/bridge passes consume this packet and store its
+projection version and edge evidence with every synthesis.
+
+`MEMO_GRAPH_RETRIEVAL_ENABLED`, `MEMO_GRAPH_EXPANSION_ENABLED`, and the old
+recall graph-proximity weight remain accepted only for configuration
+compatibility. They no longer change serving or nightly tuning behavior.
 
 The MCP `memo_graph` tool exposes the same explanation with
 `verb="why", a="mlx", b="daemon"`. It returns the weighted path, per-hop edge

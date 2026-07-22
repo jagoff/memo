@@ -270,7 +270,11 @@ def eval_recall_cmd(
             baseline = json.loads(bp.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise click.ClickException(f"unreadable baseline {bp}: {exc}") from exc
-        result = eval_recall.check_gate(rows, baseline)
+        result = eval_recall.check_gate(
+            rows,
+            baseline,
+            labels_fingerprint=labels.fingerprint(),
+        )
         if as_json:
             click.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
         else:

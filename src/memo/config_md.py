@@ -29,6 +29,30 @@ _CONFIG_FILENAMES = {
     "advanced-config.md",
 }
 
+# Graph controls originally lived in search/entity Markdown namespaces. Read
+# those paths indefinitely, but expose and write only the canonical graph keys.
+LEGACY_PATH_ALIASES: dict[str, str] = {
+    "search.graph_expansion_enabled": "graph.expansion_enabled",
+    "search.graph_signal_enabled": "graph.signal_enabled",
+    "search.graph_reason_enabled": "graph.reason_enabled",
+    "search.graph_semantic_relations": "graph.semantic_relations",
+    "search.graph_hub_suppression": "graph.hub_suppression",
+    "search.graph_signal_budget_ms": "graph.signal_budget_ms",
+    "search.graph_hub_max_doc_freq_ratio": "graph.hub_max_doc_freq_ratio",
+    "search.graph_min_entity_idf": "graph.min_entity_idf",
+    "search.graph_outcome_signal_enabled": "graph.outcome_signal_enabled",
+    "search.graph_outcome_weight": "graph.outcome_weight",
+    "entity.graph_retrieval_enabled": "graph.retrieval_enabled",
+    "entity.graph_density_boost": "graph.density_boost",
+    "entity.graph_fallback_min_hits": "graph.fallback_min_hits",
+    "recall.graph_proximity": "graph.signal_enabled",
+    "recall.graph_proximity_weight": "graph.signal_alpha",
+}
+
+
+def _canonical_path_key(path_key: str) -> str:
+    return LEGACY_PATH_ALIASES.get(path_key, path_key)
+
 
 @dataclass(frozen=True)
 class ConfigValue:
@@ -223,6 +247,20 @@ def _validate_mapped_values(values: Mapping[str, ConfigValue]) -> list[ConfigPro
     return problems
 
 
+def _canonical_entries(
+    parsed: dict[str, Any],
+    existing: Mapping[str, ConfigValue],
+) -> list[tuple[str, Any]]:
+    """Flatten one TOML block while preserving canonical-key precedence."""
+    entries: list[tuple[str, Any]] = []
+    for parsed_key, raw in _flatten("", parsed).items():
+        key = _canonical_path_key(parsed_key)
+        if key != parsed_key and key in existing:
+            continue
+        entries.append((key, raw))
+    return entries
+
+
 def _read_uncached(
     paths: list[Path], *, validate_values: bool
 ) -> tuple[dict[str, ConfigValue], list[ConfigProblem]]:
@@ -251,7 +289,7 @@ def _read_uncached(
                     ConfigProblem(str(path), f"block:{idx}", "", f"TOML parse error: {exc}")
                 )
                 continue
-            for key, raw in _flatten("", parsed).items():
+            for key, raw in _canonical_entries(parsed, values):
                 env_name = flag_paths.get(key)
                 field_name = field_paths.get(key)
                 if env_name is None and field_name is None:
@@ -430,6 +468,7 @@ def write_default_config(
 
 
 def set_value(path_key: str, raw_value: str, env: Mapping[str, str] | None = None) -> Path:
+    path_key = _canonical_path_key(path_key)
     policy_error = _persistence_error(path_key)
     if policy_error:
         raise ValueError(policy_error)
@@ -443,6 +482,7 @@ def set_value(path_key: str, raw_value: str, env: Mapping[str, str] | None = Non
 
 
 def unset_value(path_key: str, env: Mapping[str, str] | None = None) -> Path:
+    path_key = _canonical_path_key(path_key)
     policy_error = _persistence_error(path_key)
     if policy_error:
         raise ValueError(policy_error)

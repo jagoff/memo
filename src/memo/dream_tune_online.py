@@ -95,6 +95,9 @@ def record_pending(
     offline_before: dict[str, float],
     offline_after: dict[str, float],
     version_before: str,
+    managed_before: dict[str, Any] | None = None,
+    managed_after: dict[str, Any] | None = None,
+    managed_keys: tuple[str, ...] | None = None,
 ) -> None:
     """Record an applied tuner change for a later night to resolve online.
 
@@ -103,19 +106,23 @@ def record_pending(
     captured BEFORE that write. ``online_before`` is the pre-apply grounded
     fraction of the old-version cohort. Field names ``floor_before/after`` are
     kept for ledger back-compat (they hold the knob's before/after value)."""
-    write_pending(
-        state_dir,
-        {
-            "knob": knob,
-            "floor_before": value_before,
-            "floor_after": value_after,
-            "version_before": version_before,
-            "version_after": params_version(state_dir),
-            "offline_before": offline_before,
-            "offline_after": offline_after,
-            "online_before": online_fraction(state_dir, version_before)[0],
-        },
-    )
+    record: dict[str, Any] = {
+        "knob": knob,
+        "floor_before": value_before,
+        "floor_after": value_after,
+        "version_before": version_before,
+        "version_after": params_version(state_dir),
+        "offline_before": offline_before,
+        "offline_after": offline_after,
+        "online_before": online_fraction(state_dir, version_before)[0],
+    }
+    if managed_before is not None:
+        record["managed_before"] = managed_before
+    if managed_after is not None:
+        record["managed_after"] = managed_after
+    if managed_keys is not None:
+        record["managed_keys"] = list(managed_keys)
+    write_pending(state_dir, record)
 
 
 def clear_pending(state_dir: Path) -> None:
@@ -221,6 +228,9 @@ def resolve_pending(
                 "version_before": pending.get("version_before"),
                 "version_after": version_after,
                 "n_after": n_after,
+                "managed_before": pending.get("managed_before"),
+                "managed_after": pending.get("managed_after"),
+                "managed_keys": pending.get("managed_keys"),
             }
             append_ledger(state_dir, entry)
             clear_pending(state_dir)
@@ -249,6 +259,9 @@ def resolve_pending(
         "online_after": round(online_after, 4),
         "n_after": n_after,
         "realized_delta": realized,
+        "managed_before": pending.get("managed_before"),
+        "managed_after": pending.get("managed_after"),
+        "managed_keys": pending.get("managed_keys"),
     }
     append_ledger(state_dir, entry)
     clear_pending(state_dir)

@@ -926,18 +926,17 @@ def rank_hits(
     *,
     vec_cosine: Callable[[Any], float | None] | None = None,
     preferences: Any | None = None,
-    graph_boost: Callable[[list[Any]], list[Any]] | None = None,
     explain: dict[str, dict[str, Any]] | None = None,
     query: str | None = None,
 ) -> list[Any]:
     """The daemon's post-search ranking core, pure + reusable.
 
     project-tiers -> preference-boost -> synthesis-boost -> altitude-boost ->
-    [graph_boost seam] -> dedup_hits -> min_sim/cosine + min_body gate ->
+    dedup_hits -> min_sim/cosine + min_body gate ->
     synthesis-dedup -> [MMR diversity reorder]. Returns the gated,
     deduped, ordered candidate list (caller splits top_k vs nudge). Used by both
-    ``_recall_logic`` and the eval harness so they cannot diverge; Phase 2's
-    graph-proximity term plugs into ``graph_boost``.
+    ``_recall_logic`` and the eval harness so they cannot diverge. Graph ordering
+    is already applied once by ``Memory.search``.
 
     ``explain`` (debug only — ``memo debug-recall``): pass a dict and it is
     filled per hit id with the score breakdown (raw_score, per-stage boost
@@ -968,11 +967,6 @@ def rank_hits(
         raw = _apply_altitude_boost(raw, knobs.altitude, broad=_is_broad_query(query))
         if explain is not None:
             _explain_stage(explain, raw, "altitude")
-    if graph_boost is not None:
-        with contextlib.suppress(Exception):
-            raw = graph_boost(raw)
-        if explain is not None:
-            _explain_stage(explain, raw, "graph_boost")
 
     def _passes(h: Any) -> bool:
         gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
@@ -1261,27 +1255,13 @@ def _recall_logic(
     # the TRUE vec cosine in hybrid mode (via make_vec_cosine) while keeping the
     # hybrid RANK order; vec/bm25 keep `h.score`. Default vec mode → cosine never
     # built. Ranking now lives in the shared rank_hits() so the eval harness
-    # ranks identically (the Phase 2 graph term plugs into its graph_boost seam).
+    # ranks identically. Curated graph ordering already happens in Memory.search.
     _vec_cosine = make_vec_cosine(mem, prompt)
 
     _prefs: Any | None = None
     if contextual:
         with contextlib.suppress(Exception):
             _prefs = mem.contextual.context.get_preferences()
-
-    # Phase 2 graph-proximity boost (default OFF): nudge candidates whose entities
-    # neighbour the query's entities in the materialized entity graph. Pure graph
-    # lookups (no MLX/embedding) so the 5s hook budget is untouched. When the flag
-    # is off or the weight is 0 the seam stays None → ranking is identical.
-    _graph_boost: Callable[[list[Any]], list[Any]] | None = None
-    _gpw = _flag_float("MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT") or 0.0
-    if flag_bool("MEMO_RECALL_GRAPH_PROXIMITY") and _gpw > 0:
-        with contextlib.suppress(Exception):
-            from memo.graph_proximity import extract_query_entities, graph_boost_factory
-
-            _graph_boost = graph_boost_factory(
-                mem.graph, extract_query_entities(prompt, mem.graph), weight=_gpw
-            )
 
     try:
         if use_fallback and micro_embedder:
@@ -1336,7 +1316,6 @@ def _recall_logic(
                         knobs,
                         vec_cosine=_vec_cosine,
                         preferences=_prefs,
-                        graph_boost=_graph_boost,
                         query=prompt,
                     )
                 else:
@@ -1352,7 +1331,6 @@ def _recall_logic(
                         knobs,
                         vec_cosine=_vec_cosine,
                         preferences=_prefs,
-                        graph_boost=_graph_boost,
                         query=prompt,
                     )
         else:
@@ -1377,7 +1355,6 @@ def _recall_logic(
                 knobs,
                 vec_cosine=_vec_cosine,
                 preferences=_prefs,
-                graph_boost=_graph_boost,
                 query=prompt,
             )
     except Exception as exc:
@@ -1403,7 +1380,6 @@ def _recall_logic(
                     knobs,
                     vec_cosine=_vec_cosine,
                     preferences=_prefs,
-                    graph_boost=_graph_boost,
                     query=prompt,
                 )
                 if debug and qualifying:

@@ -15,6 +15,7 @@ command group surfaces both.
 Flag specs are split across domain modules to keep each file under 800 lines:
   flags_recall.py   — recall hook / daemon flags
   flags_search.py   — search ranking flags
+  flags_graph.py    — graph projection / retrieval flags
   flags_behavior.py — entity, session, capture, maintenance, synthesis
   flags_ingest.py   — transcript, briefing, repo indexing
   flags_misc.py     — embedder, feedback, MCP, synapse, cache, misc, ROI, WhatsApp, schema
@@ -33,6 +34,7 @@ from memo.errors import ValidationError as MemoValidationError
 from memo.flags_base import _FALSE, _TRUE, FlagKind, FlagSpec, _spec  # noqa: F401
 from memo.flags_behavior import SPECS as _behavior_specs
 from memo.flags_capture import SPECS as _capture_specs
+from memo.flags_graph import SPECS as _graph_specs
 from memo.flags_ingest import SPECS as _ingest_specs
 from memo.flags_misc import SPECS as _misc_specs
 from memo.flags_recall import SPECS as _recall_specs
@@ -42,7 +44,13 @@ _log = logging.getLogger(__name__)
 
 # ── Registry ────────────────────────────────────────────────────────────────
 _SPECS: tuple[FlagSpec, ...] = (
-    _recall_specs + _search_specs + _behavior_specs + _capture_specs + _ingest_specs + _misc_specs
+    _recall_specs
+    + _search_specs
+    + _graph_specs
+    + _behavior_specs
+    + _capture_specs
+    + _ingest_specs
+    + _misc_specs
 )
 
 REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}

@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS entity_memory (
     memory_id    TEXT NOT NULL,
     occurrences   INTEGER NOT NULL DEFAULT 1,
     extracted_at  TEXT NOT NULL,
+    extractor     TEXT NOT NULL DEFAULT 'legacy',
+    extractor_version TEXT NOT NULL DEFAULT '0',
+    confidence    REAL NOT NULL DEFAULT 0.35,
+    updated_at    TEXT,
     UNIQUE(entity_id, memory_id)
 );
 
@@ -117,6 +121,11 @@ CREATE TABLE IF NOT EXISTS semantic_relations (
 CREATE INDEX IF NOT EXISTS idx_sr_source ON semantic_relations(source_kind, source_id);
 CREATE INDEX IF NOT EXISTS idx_sr_target ON semantic_relations(target_kind, target_id);
 CREATE INDEX IF NOT EXISTS idx_sr_relation ON semantic_relations(relation);
+
+CREATE TABLE IF NOT EXISTS graph_projection_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -130,6 +139,7 @@ VALID_ENTITY_TYPES = frozenset(
         "concept",
     }
 )
+VALID_EXTRACTORS = frozenset({"legacy", "regex", "llm", "explicit"})
 
 
 @dataclass(frozen=True)
@@ -150,7 +160,12 @@ class GraphStore:
     on the same memory refreshes the link set without duplicating.
     """
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        projection_factory: Callable[..., Any] | None = None,
+    ) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
@@ -189,6 +204,26 @@ class GraphStore:
                 rename_legacy_table(self._conn, "entity_memoria", "entity_memory")
                 rename_legacy_columns(self._conn, "entity_memory", {"memoria_id": "memory_id"})
             self._conn.executescript(_SCHEMA_DDL)
+            columns = {
+                str(row["name"]) for row in self._conn.execute("PRAGMA table_info(entity_memory)")
+            }
+            provenance_columns = {
+                "extractor": "TEXT NOT NULL DEFAULT 'legacy'",
+                "extractor_version": "TEXT NOT NULL DEFAULT '0'",
+                "confidence": "REAL NOT NULL DEFAULT 0.35",
+                "updated_at": "TEXT",
+            }
+            for name, ddl in provenance_columns.items():
+                if name not in columns:
+                    self._conn.execute(f"ALTER TABLE entity_memory ADD COLUMN {name} {ddl}")
+            self._conn.execute(
+                "UPDATE entity_memory SET updated_at = extracted_at WHERE updated_at IS NULL"
+            )
+        # Higher layers may compose an application-specific read projection.
+        # GraphStore stays a foundation leaf and owns only raw graph storage.
+        self.projection = (
+            projection_factory(self._conn, self._tx) if projection_factory is not None else None
+        )
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -213,6 +248,9 @@ class GraphStore:
         memory_date: str,
         entities: list[dict[str, str]],
         extracted_at: str,
+        extractor: str = "explicit",
+        extractor_version: str = "1",
+        confidence: float = 0.95,
     ) -> int:
         """Idempotently link a memory to its extracted entities.
 
@@ -227,6 +265,11 @@ class GraphStore:
         Returns the number of links written.
         """
         n = 0
+        normalized_extractor = extractor.strip().lower()
+        if normalized_extractor not in VALID_EXTRACTORS:
+            normalized_extractor = "legacy"
+        normalized_confidence = max(0.0, min(1.0, float(confidence)))
+        normalized_version = extractor_version.strip() or "0"
         with self._tx() as cx:
             # Get current entity_ids for this memory so we can
             # decrement mention_count if any are removed.
@@ -268,9 +311,18 @@ class GraphStore:
                     continue
                 cx.execute(
                     "INSERT OR IGNORE INTO entity_memory "
-                    "(entity_id, memory_id, occurrences, extracted_at) "
-                    "VALUES (?, ?, 1, ?)",
-                    (eid["id"], memory_id, extracted_at),
+                    "(entity_id, memory_id, occurrences, extracted_at, extractor, "
+                    "extractor_version, confidence, updated_at) "
+                    "VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
+                    (
+                        eid["id"],
+                        memory_id,
+                        extracted_at,
+                        normalized_extractor,
+                        normalized_version,
+                        normalized_confidence,
+                        extracted_at,
+                    ),
                 )
                 # Bump mention_count + adjust first/last_seen.
                 cx.execute(
@@ -281,7 +333,56 @@ class GraphStore:
                     (memory_date, memory_date, eid["id"]),
                 )
                 n += 1
+            self._mark_projection_dirty(cx)
         return n
+
+    @staticmethod
+    def _mark_projection_dirty(cx: sqlite3.Connection) -> None:
+        cx.execute(
+            "INSERT INTO graph_projection_state (key, value) VALUES ('dirty', '1') "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        )
+
+    def mark_projection_dirty(self) -> None:
+        with self._tx() as cx:
+            self._mark_projection_dirty(cx)
+
+    def projection_dirty(self) -> bool:
+        row = self._conn.execute(
+            "SELECT value FROM graph_projection_state WHERE key = 'dirty'"
+        ).fetchone()
+        return row is None or str(row["value"]) == "1"
+
+    def memory_extraction_provenance(self, memory_id: str) -> set[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT extractor FROM entity_memory WHERE memory_id = ?",
+            (memory_id,),
+        ).fetchall()
+        return {str(row["extractor"]) for row in rows}
+
+    def prune_memory_links(self, live_memory_ids: set[str]) -> int:
+        """Remove graph memberships whose source memory is no longer indexed."""
+        linked_ids = {
+            str(row["memory_id"])
+            for row in self._conn.execute("SELECT DISTINCT memory_id FROM entity_memory")
+        }
+        orphan_ids = sorted(linked_ids - live_memory_ids)
+        if not orphan_ids:
+            return 0
+        with self._tx() as cx:
+            removed = 0
+            for memory_id in orphan_ids:
+                cur = cx.execute(
+                    "DELETE FROM entity_memory WHERE memory_id = ?",
+                    (memory_id,),
+                )
+                removed += int(cur.rowcount or 0)
+            cx.execute(
+                "UPDATE entities SET mention_count = "
+                "(SELECT COUNT(*) FROM entity_memory WHERE entity_id = entities.id)"
+            )
+            self._mark_projection_dirty(cx)
+        return removed
 
     def drop_for_memoria(self, memory_id: str) -> int:
         """Called when a memory is deleted. Removes all entity_memory
@@ -305,6 +406,7 @@ class GraphStore:
                     "UPDATE entities SET mention_count = MAX(0, mention_count - 1) WHERE id = ?",
                     (eid,),
                 )
+            self._mark_projection_dirty(cx)
         # Separate tx (the lock is non-reentrant): drop orphaned semantic edges.
         self.delete_semantic_relations_for_source(memory_id)
         return len(old)
@@ -362,6 +464,8 @@ class GraphStore:
                     "(SELECT COUNT(*) FROM entity_memory WHERE entity_id = ?) WHERE id = ?",
                     (cid, cid),
                 )
+            if merged:
+                self._mark_projection_dirty(cx)
             return merged
 
     def list_entities(self, *, min_mentions: int = 1) -> list[dict[str, Any]]:
@@ -398,6 +502,7 @@ class GraphStore:
                 "(SELECT COUNT(*) FROM entity_memory WHERE entity_id = ?) WHERE id = ?",
                 (canonical_id, canonical_id),
             )
+            self._mark_projection_dirty(cx)
 
     def rebuild_edges(self) -> int:
         """Materialize entity_edges from entity_memory co-occurrence. Idempotent.
@@ -425,6 +530,7 @@ class GraphStore:
                     "INSERT INTO entity_edges (a_id, b_id, weight, last_seen) VALUES (?, ?, ?, ?)",
                     (a, b, w, ls),
                 )
+            self._mark_projection_dirty(cx)
             return len(edges)
 
     def all_weighted_edges(self) -> list[tuple[str, str, float]]:

@@ -336,3 +336,82 @@ def test_configured_values_keeps_source_file(tmp_path: Path) -> None:
 
     assert value.value == 7
     assert value.file == str(path)
+
+
+def test_legacy_search_graph_key_loads_as_canonical_graph_key(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    path = cfg / "search-config.md"
+    path.write_text(
+        "```toml\n[search]\ngraph_signal_enabled = true\n```\n",
+        encoding="utf-8",
+    )
+
+    values = config_md.load_values({"MEMO_CONFIG_DIR": str(home)})
+
+    assert values["graph.signal_enabled"].value is True
+    assert values["graph.signal_enabled"].file == str(path)
+    assert config_md.flag_values({"MEMO_CONFIG_DIR": str(home)}) == {
+        "MEMO_GRAPH_SIGNAL_ENABLED": "on"
+    }
+
+
+def test_legacy_recall_graph_keys_load_as_curated_signal_keys(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    config_dir = home / "config"
+    config_dir.mkdir(parents=True)
+    path = config_dir / "recall-config.md"
+    path.write_text(
+        "```toml\n[recall]\ngraph_proximity = true\ngraph_proximity_weight = 0.25\n```\n",
+        encoding="utf-8",
+    )
+
+    values = config_md.load_values({"MEMO_CONFIG_DIR": str(home)})
+
+    assert values["graph.signal_enabled"].value is True
+    assert values["graph.signal_alpha"].value == 0.25
+    assert config_md.flag_values({"MEMO_CONFIG_DIR": str(home)}) == {
+        "MEMO_GRAPH_SIGNAL_ALPHA": "0.25",
+        "MEMO_GRAPH_SIGNAL_ENABLED": "on",
+    }
+
+
+def test_set_graph_signal_writes_graph_domain_file(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    config_md.write_default_config(
+        data_dir=tmp_path / "data",
+        env={"MEMO_CONFIG_DIR": str(home)},
+    )
+
+    changed = config_md.set_value(
+        "graph.signal_enabled",
+        "on",
+        env={"MEMO_CONFIG_DIR": str(home)},
+    )
+
+    assert changed == home / "config" / "graph-config.md"
+    assert 'signal_enabled = "on"' in changed.read_text(encoding="utf-8")
+
+
+def test_trace_discovery_and_synthesis_switches_route_to_graph_config(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    config_md.write_default_config(
+        data_dir=tmp_path / "data",
+        env={"MEMO_CONFIG_DIR": str(home)},
+    )
+
+    keys = (
+        "graph.code_trace_enabled",
+        "graph.discovery_enabled",
+        "graph.dream_communities_enabled",
+        "graph.dream_bridges_enabled",
+    )
+    paths = {config_md.set_value(key, "on", env={"MEMO_CONFIG_DIR": str(home)}) for key in keys}
+
+    assert paths == {home / "config" / "graph-config.md"}
+    values = config_md.flag_values({"MEMO_CONFIG_DIR": str(home)})
+    assert values["MEMO_GRAPH_CODE_TRACE_ENABLED"] == "on"
+    assert values["MEMO_GRAPH_DISCOVERY_ENABLED"] == "on"
+    assert values["MEMO_DREAM_COMMUNITIES_ENABLED"] == "on"
+    assert values["MEMO_DREAM_BRIDGES_ENABLED"] == "on"

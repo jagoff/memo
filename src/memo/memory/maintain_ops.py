@@ -977,7 +977,13 @@ class _MaintainOpsMixin(_MemoryBase):
 
         # Pre-filter already-indexed unless --force.
         if skip_already_indexed:
-            target = [tid for tid in target if not self.graph.memory_entities(tid)]
+            target = [
+                tid
+                for tid in target
+                if not self.graph.memory_extraction_provenance(tid).intersection(
+                    {"explicit", "llm"}
+                )
+            ]
 
         if max_batch is not None:
             target = target[:max_batch]
@@ -1059,6 +1065,9 @@ class _MaintainOpsMixin(_MemoryBase):
                 memory_date=r["created"][:10] if r.get("created") else _now_iso()[:10],
                 entities=ents,
                 extracted_at=_now_iso(),
+                extractor="llm",
+                extractor_version="helper-v1",
+                confidence=0.85,
             )
             counts["processed"] += 1
             counts["entities_extracted"] += len(ents)

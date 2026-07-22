@@ -215,6 +215,7 @@ class _WriteOpsMixin(_MemoryBase):
         record_id: str,
         created_iso: str,
         extra: dict[str, Any],
+        extractor: str,
     ) -> None:
         entities = _graph_entities_from_extra(extra)
         if not entities:
@@ -225,6 +226,9 @@ class _WriteOpsMixin(_MemoryBase):
                 memory_date=created_iso[:10],
                 entities=entities,
                 extracted_at=_now_iso(),
+                extractor=extractor,
+                extractor_version="save-v1",
+                confidence=0.95 if extractor == "explicit" else 0.45,
             )
         except Exception as exc:
             _log.debug("graph entity write skipped for %s: %s", record_id[:8], exc)
@@ -544,6 +548,7 @@ class _WriteOpsMixin(_MemoryBase):
                     _log.debug("pattern hash generation failed")
 
         extra_for_store = dict(extra or {})
+        graph_extractor = "explicit" if extra_for_store.get("entities") else "regex"
         if defer_embed:
             extra_for_store["_memo_embed_pending"] = True
         # Entity extraction (regex, dependency-free, no MLX). Written on EVERY
@@ -698,6 +703,7 @@ class _WriteOpsMixin(_MemoryBase):
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
                 expected_disk_text=written_disk_text,
+                graph_extractor=graph_extractor,
             )
 
         if defer_embed:
@@ -742,11 +748,13 @@ class _WriteOpsMixin(_MemoryBase):
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
                         expected_disk_text=written_disk_text,
+                        graph_extractor=graph_extractor,
                     )
             self._record_graph_entities_from_extra(
                 record_id=record_id,
                 created_iso=created_iso,
                 extra=extra_for_store,
+                extractor=graph_extractor,
             )
             _upsert_declared_fact_edges_best_effort(
                 self,
@@ -853,6 +861,7 @@ class _WriteOpsMixin(_MemoryBase):
                     record_id=record_id,
                     created_iso=created_iso,
                     extra=extra_for_store,
+                    extractor=graph_extractor,
                 )
                 _upsert_declared_fact_edges_best_effort(
                     self,
@@ -903,6 +912,7 @@ class _WriteOpsMixin(_MemoryBase):
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
                 expected_disk_text=written_disk_text,
+                graph_extractor=graph_extractor,
             )
 
         if not topic_write_superseded:
@@ -977,6 +987,7 @@ class _WriteOpsMixin(_MemoryBase):
         topic_key: str | None = None,
         normalized_hash: str | None = None,
         expected_disk_text: str | None = None,
+        graph_extractor: str = "regex",
     ) -> MemoryRecord:
         """Recovery path when indexing fails AFTER the canonical `.md` is on disk.
 
@@ -1060,6 +1071,7 @@ class _WriteOpsMixin(_MemoryBase):
                 record_id=record_id,
                 created_iso=created_iso,
                 extra=extra_for_store,
+                extractor=graph_extractor,
             )
             _upsert_declared_fact_edges_best_effort(
                 self,

@@ -5,24 +5,7 @@ from __future__ import annotations
 from memo.dream_bridges import bridge_insights, decide_bridges, run_synthesize_bridges
 
 
-class _Graph:
-    def all_weighted_edges(self):
-        return [
-            ("j", "a1", 1.0),
-            ("j", "a2", 1.0),
-            ("a1", "a2", 1.0),
-            ("j", "b1", 1.0),
-            ("j", "b2", 1.0),
-            ("b1", "b2", 1.0),
-        ]
-
-    def entity_memories(self, name, type_=None):
-        return {"j": ["m1"], "a1": ["m2"], "b1": ["m3"]}.get(name, [])
-
-
 class _Mem:
-    graph = _Graph()
-
     def search(self, *a, **k):
         return []
 
@@ -31,6 +14,26 @@ class _Mem:
 
     def save(self, **kwargs):
         self.saved.append(kwargs)
+
+    def graph_discover(self, **kwargs):
+        return {
+            "available": True,
+            "projection_version": "v1",
+            "bridges": [
+                {
+                    "bridge": {"label": "j"},
+                    "left": [{"label": "a1"}, {"label": "a2"}],
+                    "right": [{"label": "b1"}, {"label": "b2"}],
+                    "left_rep": {"label": "a1"},
+                    "right_rep": {"label": "b1"},
+                    "memory_ids": ["m1", "m2", "m3"],
+                    "edge_evidence": [
+                        {"evidence_ids": ["memory://m1"]},
+                        {"evidence_ids": ["memory://m2"]},
+                    ],
+                }
+            ],
+        }
 
 
 def test_bridge_insights_maps_reps_and_source_memories():
@@ -43,6 +46,8 @@ def test_bridge_insights_maps_reps_and_source_memories():
     assert br["left_rep"] == "a1"
     assert br["right_rep"] == "b1"
     assert set(br["memory_ids"]) == {"m1", "m2", "m3"}
+    assert br["projection_version"] == "v1"
+    assert br["edge_evidence"]
 
 
 def test_is_junk_anchor():
@@ -57,27 +62,26 @@ def test_is_junk_anchor():
     assert not _is_junk_anchor("recall hook")
 
 
-class _JunkGraph:
-    def all_weighted_edges(self):
-        d = "2026-06-23"  # the joining node is a date -> a junk anchor
-        return [
-            (d, "a1", 1.0),
-            (d, "a2", 1.0),
-            ("a1", "a2", 1.0),
-            (d, "b1", 1.0),
-            (d, "b2", 1.0),
-            ("b1", "b2", 1.0),
-        ]
-
-    def entity_memories(self, name, type_=None):
-        return []
-
-
 class _JunkMem:
-    graph = _JunkGraph()
-
     def search(self, *a, **k):
         return []
+
+    def graph_discover(self, **kwargs):
+        return {
+            "available": True,
+            "projection_version": "v1",
+            "bridges": [
+                {
+                    "bridge": {"label": "2026-06-23"},
+                    "left": [{"label": "a1"}, {"label": "a2"}],
+                    "right": [{"label": "b1"}, {"label": "b2"}],
+                    "left_rep": {"label": "a1"},
+                    "right_rep": {"label": "b1"},
+                    "memory_ids": [],
+                    "edge_evidence": [],
+                }
+            ],
+        }
 
 
 def test_bridge_insights_filters_date_anchor():
@@ -129,6 +133,7 @@ def test_run_synthesize_bridges_disabled_by_default(monkeypatch):
 
 def test_run_synthesize_bridges_saves_bounded_and_cites(monkeypatch):
     monkeypatch.setenv("MEMO_DREAM_BRIDGES_ENABLED", "1")
+    monkeypatch.setenv("MEMO_GRAPH_DISCOVERY_ENABLED", "1")
     mem = _Mem()
     res = run_synthesize_bridges(None, mem)
     assert res["status"] == "done"
@@ -140,12 +145,15 @@ def test_run_synthesize_bridges_saves_bounded_and_cites(monkeypatch):
     assert "via j" in rec["content"]
     assert rec["extra"]["synthesis_sources"] == ["j", "a1", "b1"]
     assert set(rec["extra"]["synthesis_source_memories"]) == {"m1", "m2", "m3"}
+    assert rec["extra"]["graph_projection_version"] == "v1"
+    assert rec["extra"]["graph_edge_evidence"]
     # provenance hash is embedded for dedup
     assert "[bridge " in rec["content"]
 
 
 def test_run_synthesize_bridges_dedups_on_existing(monkeypatch):
     monkeypatch.setenv("MEMO_DREAM_BRIDGES_ENABLED", "1")
+    monkeypatch.setenv("MEMO_GRAPH_DISCOVERY_ENABLED", "1")
 
     class _Hit:
         def __init__(self, body):

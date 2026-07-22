@@ -6,6 +6,7 @@ VALID_ENTITY_TYPES (person/project/technology/file/org/concept).
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from memo.graph import GraphStore
@@ -54,6 +55,59 @@ def test_record_extraction_is_idempotent(tmp_path: Path) -> None:
         memory_id="m1", memory_date="2026-01-01", entities=ents, extracted_at="2026-01-02T00:00:00Z"
     )
     assert len(g.memory_entities("m1")) == 1
+
+
+def test_legacy_entity_memory_rows_gain_conservative_provenance(tmp_path: Path) -> None:
+    db = tmp_path / "graph.db"
+    cx = sqlite3.connect(db)
+    cx.executescript(
+        "CREATE TABLE entities ("
+        "id INTEGER PRIMARY KEY, name TEXT, type TEXT, mention_count INTEGER, "
+        "first_seen TEXT, last_seen TEXT, UNIQUE(name,type));"
+        "CREATE TABLE entity_memory ("
+        "entity_id INTEGER, memory_id TEXT, occurrences INTEGER, extracted_at TEXT, "
+        "UNIQUE(entity_id,memory_id));"
+        "INSERT INTO entities VALUES "
+        "(1,'memo','project',1,'2026-01-01','2026-01-01');"
+        "INSERT INTO entity_memory VALUES "
+        "(1,'m1',1,'2026-01-01T00:00:00Z');"
+    )
+    cx.commit()
+    cx.close()
+
+    graph = GraphStore(db)
+    row = graph._conn.execute(
+        "SELECT extractor, extractor_version, confidence, updated_at FROM entity_memory"
+    ).fetchone()
+
+    assert tuple(row) == ("legacy", "0", 0.35, "2026-01-01T00:00:00Z")
+
+
+def test_typed_extraction_replaces_regex_membership_and_marks_dirty(tmp_path: Path) -> None:
+    graph = GraphStore(tmp_path / "graph.db")
+    graph.record_extraction(
+        memory_id="m1",
+        memory_date="2026-01-01",
+        entities=[{"name": "FastAPI", "type": "concept"}],
+        extracted_at="2026-01-01T00:00:00Z",
+        extractor="regex",
+        confidence=0.45,
+    )
+    graph.record_extraction(
+        memory_id="m1",
+        memory_date="2026-01-01",
+        entities=[{"name": "FastAPI", "type": "technology"}],
+        extracted_at="2026-01-02T00:00:00Z",
+        extractor="llm",
+        extractor_version="helper-v1",
+        confidence=0.85,
+    )
+
+    assert graph.memory_entities("m1") == [
+        {"name": "fastapi", "type": "technology", "mention_count": 1}
+    ]
+    assert graph.memory_extraction_provenance("m1") == {"llm"}
+    assert graph.projection_dirty() is True
 
 
 def test_drop_for_memoria(tmp_path: Path) -> None:

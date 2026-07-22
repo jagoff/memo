@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import logging as _logging
+import sqlite3
 from collections.abc import Callable
+from dataclasses import asdict
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,6 +25,7 @@ from memo.dream_utils import (
     _iso_now,
     _older_id,
 )
+from memo.errors import MemoError
 from memo.outcome import dead_weight, reconcile_roi, reconcile_source_feedback
 from memo.tiers import EVICTION_PROTECTED_TYPES
 from memo.transcript_miner import mine_transcripts
@@ -827,6 +830,31 @@ def _run_entities(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     return result
 
 
+def _run_graph_projection(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Refresh the curated graph only when enabled and dirty, missing, or stale."""
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_GRAPH_PROJECTION_ENABLED"):
+        return {"status": "disabled"}
+    try:
+        health = mem.graph_health()["projection"]
+        due = bool(health["dirty"] or not health["active_version"] or health["stale"])
+        if not due:
+            return {
+                "status": "fresh",
+                "active_version": health["active_version"],
+            }
+        if dry_run:
+            return {
+                "status": "would_rebuild",
+                "active_version": health["active_version"],
+            }
+        return {"status": "rebuilt", **asdict(mem.rebuild_graph())}
+    except (MemoError, OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
+        _log.warning("graph projection pass failed: %s", exc)
+        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
+
 def _run_roi_reconcile(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     """Reconcile ROI scores from grounding (outcome loop).
 
@@ -944,6 +972,9 @@ def _render_run_summary(receipt: dict[str, Any], dry_run: bool) -> None:
             f"  emergent syntheses:        {saved} saved, {len(receipt['synthesized'])} proposed"
         )
     console.print(f"  entities extracted:        {receipt['entities_extracted']}")
+    graph_projection = receipt.get("graph_projection", {})
+    if graph_projection:
+        console.print(f"  graph projection:          {graph_projection.get('status')}")
     console.print(
         f"  roi reconciled (grounding):{receipt['roi_reconciled']} rescored, "
         f"{len(receipt['dead_archived'])} dead-archived"

@@ -88,18 +88,27 @@ def test_apply_writes_pending(tmp_path, monkeypatch):
     assert pend["online_before"] == 0.5
 
 
-def test_graph_weight_reverted_restores_graph_knob_and_baseline(tmp_path, monkeypatch):
+def test_graph_signal_revert_restores_atomic_config_and_baseline(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
-    # a graph-weight change is pending; its online cohort regressed
+    # A graph-signal activation is pending; its online cohort regressed.
     dream_tune_online.write_pending(
         tmp_path,
         {
-            "knob": "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT",
+            "knob": "MEMO_GRAPH_SIGNAL_ALPHA",
             "version_after": "v2",
             "floor_before": 0.0,
             "online_before": 0.6,
             "offline_before": {"precision_at_k": 0.2, "noise_at_k": 0.0},
+            "managed_before": {
+                "MEMO_GRAPH_SIGNAL_ENABLED": False,
+                "MEMO_GRAPH_SIGNAL_ALPHA": 0.0,
+            },
+            "managed_after": {
+                "MEMO_GRAPH_SIGNAL_ENABLED": True,
+                "MEMO_GRAPH_SIGNAL_ALPHA": 0.15,
+            },
+            "managed_keys": ["MEMO_GRAPH_SIGNAL_ENABLED", "MEMO_GRAPH_SIGNAL_ALPHA"],
         },
     )
     monkeypatch.setattr(dream_tune_online, "online_fraction", lambda sd, v, **k: (0.40, 50))
@@ -121,7 +130,8 @@ def test_graph_weight_reverted_restores_graph_knob_and_baseline(tmp_path, monkey
 
     res = dream_tune.run_tuning_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "online_reverted"
-    assert calls["overlay"]["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.0  # graph knob restored
+    assert calls["overlay"]["MEMO_GRAPH_SIGNAL_ENABLED"] is False
+    assert calls["overlay"]["MEMO_GRAPH_SIGNAL_ALPHA"] == 0.0
     assert calls["graph_baseline"] == {
         "precision_at_k": 0.2,
         "noise_at_k": 0.0,
@@ -129,13 +139,21 @@ def test_graph_weight_reverted_restores_graph_knob_and_baseline(tmp_path, monkey
     assert calls["min_baseline"] is None  # NOT the min_sim baseline
 
 
-def test_graph_weight_apply_records_pending(tmp_path, monkeypatch):
+def test_graph_signal_apply_records_atomic_pending(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _one_label())
     monkeypatch.setattr(dream_tune, "load_graph_baseline", lambda sd: None)
     before = {"precision_at_k": 0.2, "noise_at_k": 0.0}
     after = {"precision_at_k": 0.3, "noise_at_k": 0.0}
-    monkeypatch.setattr(dream_tune, "search_graph_weight", lambda *a, **k: (0.2, before, after))
+    monkeypatch.setattr(
+        dream_tune,
+        "search_graph_signal",
+        lambda *a, **k: (
+            {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.2},
+            before,
+            after,
+        ),
+    )
     monkeypatch.setattr(dream_tune, "write_overlay", lambda sd, params, meta: None)
     monkeypatch.setattr(dream_tune, "save_graph_baseline", lambda sd, m: None)
     monkeypatch.setattr(dream_tune, "params_version", lambda sd: "vGW")
@@ -145,8 +163,16 @@ def test_graph_weight_apply_records_pending(tmp_path, monkeypatch):
     res = dream_tune.run_graph_weight_pass(_cfg(tmp_path), object(), k=5)
     assert res["status"] == "applied"
     pend = dream_tune_online.read_pending(tmp_path)
-    assert pend["knob"] == "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"
+    assert pend["knob"] == "MEMO_GRAPH_SIGNAL_ALPHA"
     assert pend["floor_after"] == 0.2
+    assert pend["managed_before"] == {
+        "MEMO_GRAPH_SIGNAL_ENABLED": False,
+        "MEMO_GRAPH_SIGNAL_ALPHA": 0.0,
+    }
+    assert pend["managed_after"] == {
+        "MEMO_GRAPH_SIGNAL_ENABLED": True,
+        "MEMO_GRAPH_SIGNAL_ALPHA": 0.2,
+    }
 
 
 def test_online_revert_pins_prev_so_offline_rollback_is_noop(tmp_path, monkeypatch):

@@ -7,6 +7,13 @@ from pathlib import Path
 from memo import flags
 
 
+def _isolated_env(tmp_path: Path) -> dict[str, str]:
+    return {
+        "MEMO_CONFIG_DIR": str(tmp_path / "no-md-config"),
+        "MEMO_STATE_DIR": str(tmp_path / "no-overlay-state"),
+    }
+
+
 def test_every_spec_has_a_group_and_help() -> None:
     for name, spec in flags.REGISTRY.items():
         assert spec.name == name
@@ -26,14 +33,14 @@ def test_no_duplicate_flag_names_across_spec_modules() -> None:
     assert len(flags._SPECS) == len(flags.REGISTRY)
 
 
-def test_graph_semantic_relations_uses_the_live_search_spec() -> None:
+def test_graph_semantic_relations_uses_the_graph_domain_spec() -> None:
     spec = flags.REGISTRY["MEMO_GRAPH_SEMANTIC_RELATIONS"]
-    assert spec.group == "search"
+    assert spec.group == "graph"
     assert "stub" not in spec.help.lower()
 
 
-def test_flag_returns_default_when_unset() -> None:
-    env: dict[str, str] = {}
+def test_flag_returns_default_when_unset(tmp_path: Path) -> None:
+    env = _isolated_env(tmp_path)
     assert flags.flag("MEMO_RECALL_TOP_K", env=env) == 3
     assert flags.flag("MEMO_RECALL_MIN_SIM", env=env) == 0.5
     assert flags.flag("MEMO_RECALL_MODE", env=env) == "vec"
@@ -45,8 +52,8 @@ def test_flag_returns_default_when_unset() -> None:
     assert flags.flag_int("MEMO_DREAM_COMPRESS_THRESHOLD", env=env) == 0
 
 
-def test_graph_integration_flags_have_safe_defaults() -> None:
-    env: dict[str, str] = {}
+def test_graph_integration_flags_have_safe_defaults(tmp_path: Path) -> None:
+    env = _isolated_env(tmp_path)
     assert flags.flag_bool("MEMO_GRAPH_SIGNAL_ENABLED", env=env) is False
     assert flags.flag_bool("MEMO_GRAPH_REASON_ENABLED", env=env) is False
     assert flags.flag_bool("MEMO_GRAPH_SEMANTIC_RELATIONS", env=env) is False

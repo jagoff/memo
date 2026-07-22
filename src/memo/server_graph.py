@@ -89,6 +89,36 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [c.__dict__ for c in communities]
 
     @annotated_tool(server, **READ_ONLY)
+    def memo_graph_trace(
+        memory_id: str | None = None,
+        code: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Trace evidence from one memory to code, or one code reference to memories.
+
+        Provide exactly one of ``memory_id`` or ``code``. Code accepts a stable
+        codegraph URI, symbol id, qualified name, or file path.
+        """
+        return memory.graph_trace(memory_id=memory_id, code=code, limit=limit)
+
+    @annotated_tool(server, **READ_ONLY)
+    def memo_graph_discover(
+        min_community_size: int = 4,
+        min_bridge_side: int = 2,
+        max_communities: int = 5,
+        max_bridges: int = 5,
+        include_code: bool = True,
+    ) -> dict[str, Any]:
+        """Discover bounded curated communities and bridges with exact evidence."""
+        return memory.graph_discover(
+            min_community_size=min_community_size,
+            min_bridge_side=min_bridge_side,
+            max_communities=max_communities,
+            max_bridges=max_bridges,
+            include_code=include_code,
+        )
+
+    @annotated_tool(server, **READ_ONLY)
     def memo_graph_centrality(
         top: int = 20,
     ) -> dict[str, Any]:

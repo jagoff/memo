@@ -156,14 +156,18 @@ def test_explain_no_stages_when_both_off() -> None:
 # ── flag registry + _recall_logic wiring ────────────────────────────────────
 
 
-def test_flags_registered_default_off() -> None:
+def test_flags_registered_default_off(tmp_path) -> None:
     from memo.flags import REGISTRY, flag_float
 
+    env = {
+        "MEMO_CONFIG_DIR": str(tmp_path / "no-md-config"),
+        "MEMO_STATE_DIR": str(tmp_path / "no-overlay-state"),
+    }
     for name in ("MEMO_RECALL_MMR_LAMBDA", "MEMO_RECALL_SYNTHESIS_BOOST"):
         spec = REGISTRY[name]
         assert spec.kind == "float"
         assert spec.default == 0.0
-        assert flag_float(name, env={}) == 0.0
+        assert flag_float(name, env=env) == 0.0
 
 
 def test_recall_logic_wires_flags_into_knobs(monkeypatch, tmp_path) -> None:

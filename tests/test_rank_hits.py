@@ -49,17 +49,13 @@ def test_rank_hits_hybrid_gate_uses_injected_vec_cosine() -> None:
     assert [h.id for h in out] == ["a"]  # b gated out by true cosine
 
 
-def test_rank_hits_graph_boost_seam_runs_before_gate() -> None:
-    hits = [_mk("a", 0.9), _mk("b", 0.8)]
-    seen: list[str] = []
+def test_rank_hits_preserves_graph_order_from_search_without_resorting_scores() -> None:
+    hits = [_mk("graph-first", 0.61), _mk("base-first", 0.72)]
 
-    def boost(raw: list[Any]) -> list[Any]:
-        seen.extend(h.id for h in raw)
-        return list(reversed(raw))
+    out = rank_hits(hits, RankKnobs(min_sim=0.5, min_body_chars=0), query="mlx")
 
-    out = rank_hits(hits, RankKnobs(min_sim=0.0, min_body_chars=0), graph_boost=boost)
-    assert seen == ["a", "b"]  # boost saw the raw candidates
-    assert [h.id for h in out] == ["b", "a"]  # boost reordering took effect
+    assert [hit.id for hit in out] == ["graph-first", "base-first"]
+    assert [hit.score for hit in out] == [0.61, 0.72]
 
 
 def test_rank_hits_drops_synthesis_sources() -> None:

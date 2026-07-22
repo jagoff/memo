@@ -296,18 +296,6 @@ class _SearchOpsMixin(_MemoryBase):
                 field_boost="exact",
             )
 
-            # Graph-based candidates (Entity-aware retrieval).
-            # Enabled by MEMO_GRAPH_RETRIEVAL_ENABLED or when vec hits fall below
-            # MEMO_GRAPH_FALLBACK_MIN_HITS threshold (fallback seeding).
-            graph_hits = []
-            use_graph = flag_bool("MEMO_GRAPH_RETRIEVAL_ENABLED")
-            fallback_threshold = flag_int("MEMO_GRAPH_FALLBACK_MIN_HITS") or 0
-            if not use_graph and fallback_threshold > 0 and len(vec_hits) < fallback_threshold:
-                use_graph = True  # Fallback: vec is weak, try graph
-            if use_graph:
-                graph_hits = self._fetch_graph_candidates(
-                    query, limit=k_each, type_=type_, exclude_types=exclude_types
-                )
             fact_hits = (
                 self._fetch_fact_candidates(
                     query,
@@ -326,7 +314,7 @@ class _SearchOpsMixin(_MemoryBase):
             # lists diverge) — off by default so the eval baseline holds.
             base_k_flag = flag_int("MEMO_RRF_K")
             base_k = 25 if base_k_flag is None else base_k_flag
-            rrf_lists = [vec_hits, bm_hits, exact_hits, graph_hits]
+            rrf_lists = [vec_hits, bm_hits, exact_hits]
             if fact_hits:
                 rrf_lists.append(fact_hits)
             rrf_k = (
@@ -339,9 +327,7 @@ class _SearchOpsMixin(_MemoryBase):
             # allow the user to tilt fusion toward semantic or keyword retrieval.
             # Defaults (0.5 each) preserve the historical equal-weight behaviour.
             # Exact BM25 reuses the keyword weight: it is still lexical evidence,
-            # just stricter and metadata-boosted. Graph leg is always weight 1.0
-            # (unscaled) because it contributes entity-context candidates, not a
-            # competing retrieval signal.
+            # just stricter and metadata-boosted.
             w_vec = flag_float("MEMO_SEARCH_VEC_WEIGHT")
             w_bm25 = flag_float("MEMO_SEARCH_BM25_WEIGHT")
             # Default is 0.5/0.5; treat None as default (should not happen given
@@ -372,8 +358,8 @@ class _SearchOpsMixin(_MemoryBase):
                 w_vec, w_bm25 = 0.35, 0.65
             fact_weight = flag_float("MEMO_FACT_RETRIEVAL_WEIGHT")
             # Build weight list aligned with the lists passed to _rrf_fuse:
-            # [vec, bm25, exact, graph, facts] → [w_vec, w_bm25, w_bm25, 1.0, fact_weight]
-            rrf_weights = [w_vec, w_bm25, w_bm25, 1.0]
+            # [vec, bm25, exact, facts] → [w_vec, w_bm25, w_bm25, fact_weight]
+            rrf_weights = [w_vec, w_bm25, w_bm25]
             if fact_hits:
                 rrf_weights.append(fact_weight or 0.0)
 
@@ -389,7 +375,6 @@ class _SearchOpsMixin(_MemoryBase):
                 vec_count=len(vec_hits),
                 bm25_count=len(bm_hits),
                 exact_count=len(exact_hits),
-                graph_count=len(graph_hits),
                 fact_count=len(fact_hits),
                 output_count=len(rows),
                 rrf_k=rrf_k,
@@ -438,70 +423,6 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._attach_related_fact_edges(query, out)
             _add_trace("fact_surface", input_count=before, output_count=len(out))
-        if out and flag_bool("MEMO_GRAPH_SIGNAL_ENABLED"):
-            try:
-                from dataclasses import replace as dc_replace
-
-                from memo.graph_reason import build_graph_reason
-                from memo.graph_signal import collect_graph_signal
-
-                outcome_scores: dict[str, float] | None = None
-                if flag_bool("MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED"):
-                    health = self.store.get_health_batch([r.id for r in out])
-                    outcome_scores = {
-                        mid: float(values.get("roi_score", 1.0)) for mid, values in health.items()
-                    }
-                graph_signal = collect_graph_signal(
-                    self.graph,
-                    query,
-                    [r.id for r in out],
-                    outcome_scores=outcome_scores,
-                )
-                _add_trace(
-                    "graph_signal",
-                    enabled=graph_signal.enabled,
-                    query_entities=graph_signal.query_entities,
-                    touched_count=len(graph_signal.boosts),
-                    skipped=graph_signal.skipped,
-                    outcome_signal=outcome_scores is not None,
-                    elapsed_ms=round(graph_signal.elapsed_ms, 3),
-                )
-                if graph_signal.boosts:
-                    out = [
-                        dc_replace(
-                            r,
-                            score=round((r.score or 0.0) + graph_signal.boosts.get(r.id, 0.0), 6),
-                        )
-                        for r in out
-                    ]
-                    out.sort(key=lambda r: r.score or 0.0, reverse=True)
-                if flag_bool("MEMO_GRAPH_REASON_ENABLED") and graph_signal.traces:
-                    relations_by_id: dict[str, list[dict[str, Any]]] = {}
-                    if flag_bool("MEMO_GRAPH_SEMANTIC_RELATIONS"):
-                        for r in out:
-                            relations_by_id[r.id] = self.graph.semantic_relations_for(
-                                source_id=r.id,
-                                limit=10,
-                            )
-                    out = [
-                        dc_replace(
-                            r,
-                            extra={
-                                **(r.extra or {}),
-                                "graph_reason": build_graph_reason(
-                                    r.id,
-                                    graph_signal.traces[r.id],
-                                    relations=relations_by_id.get(r.id),
-                                ),
-                            },
-                        )
-                        if r.id in graph_signal.traces
-                        else r
-                        for r in out
-                    ]
-            except Exception as exc:
-                _log.debug("graph_signal failed: %s", exc)
-                _add_trace("graph_signal", enabled=True, skipped="error")
         # Drop soft-forgotten memories (forget_after TTL elapsed, see
         # lifecycle.py) before feedback/rerank so they never reach the
         # consumer — recall, ask, chat all route through here. Reversible
@@ -653,14 +574,6 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._apply_verification_decay(out)
             _add_trace("verification_decay", input_count=before, output_count=len(out))
-        if out and flag_bool("MEMO_GRAPH_EXPANSION_ENABLED"):
-            before = len(out)
-            out = self._apply_graph_expansion(
-                out,
-                load_bodies=load_bodies,
-                exclude_types=exclude_types,
-            )
-            _add_trace("graph_expansion", input_count=before, output_count=len(out))
         if out and flag_bool("MEMO_RETRIEVAL_BOOST"):
             before = len(out)
             out = self._apply_retrieval_boost(query, out)
@@ -709,6 +622,7 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = self._map_chunks_to_parents(out)
             _add_trace("chunk_parent", input_count=before, output_count=len(out))
+        out = self._apply_curated_graph_order(query, out, _add_trace)
         self._record_access([r.id for r in out])
         # Co-recall graph edges: record which memories surface together.
         # Gated by flag so the graph DB write stays opt-in (off by default).
@@ -732,6 +646,75 @@ class _SearchOpsMixin(_MemoryBase):
             out = resolved
         _add_trace("final", output_count=len(out), limit=limit)
         return out
+
+    def _apply_curated_graph_order(
+        self,
+        query: str,
+        out: list[MemoryRecord],
+        trace: Any,
+    ) -> list[MemoryRecord]:
+        """Apply one identity-safe graph ordering pass without changing scores."""
+        if not out or not flag_bool("MEMO_GRAPH_SIGNAL_ENABLED"):
+            return out
+        if not flag_bool("MEMO_GRAPH_PROJECTION_ENABLED"):
+            trace("graph_signal", enabled=True, touched_count=0, skipped="projection_disabled")
+            return out
+        try:
+            from memo.graph_reason import build_graph_reason
+            from memo.graph_signal import collect_graph_signal, config_from_flags
+
+            config = config_from_flags()
+            model = self.graph.projection.read_model(config.max_age_hours)
+            result = collect_graph_signal(
+                model,
+                query,
+                [record.id for record in out],
+                config=config,
+            )
+            trace(
+                "graph_signal",
+                enabled=result.enabled,
+                projection_version=model.version,
+                query_nodes=list(result.query_nodes),
+                touched_count=len(result.signals),
+                skipped=result.skipped,
+                elapsed_ms=round(result.elapsed_ms, 3),
+            )
+            if not result.signals:
+                return out
+            by_id = {record.id: record for record in out}
+            ordered = [by_id[memory_id] for memory_id in result.ordered_ids]
+            if not flag_bool("MEMO_GRAPH_REASON_ENABLED"):
+                return ordered
+            relations_by_id: dict[str, list[dict[str, Any]]] = {}
+            if flag_bool("MEMO_GRAPH_SEMANTIC_RELATIONS"):
+                relations_by_id = {
+                    memory_id: self.graph.semantic_relations_for(
+                        source_id=memory_id,
+                        limit=10,
+                    )
+                    for memory_id in result.traces
+                }
+            return [
+                dataclasses.replace(
+                    record,
+                    extra={
+                        **(record.extra or {}),
+                        "graph_reason": build_graph_reason(
+                            record.id,
+                            result.traces[record.id],
+                            relations=relations_by_id.get(record.id),
+                        ),
+                    },
+                )
+                if record.id in result.traces
+                else record
+                for record in ordered
+            ]
+        except Exception as exc:
+            _log.debug("graph_signal failed: %s", exc)
+            trace("graph_signal", enabled=True, touched_count=0, skipped="error")
+            return out
 
     def _hype_fold_candidates(
         self,

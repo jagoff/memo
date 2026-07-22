@@ -101,37 +101,65 @@ def test_run_tuning_pass_dry_run_writes_nothing(tmp_cfg, monkeypatch):
     assert dt.read_overlay(tmp_cfg.state_dir) == {}  # nothing written
 
 
-# --- graph-proximity weight tuning (Phase 2, mirrors the min_sim path) -------
+# --- curated graph-signal tuning --------------------------------------------
 
-_GRAPH_SCORES = {0.0: 0.1, 0.05: 0.15, 0.1: 0.3, 0.2: 0.2}  # precision peaks at 0.1
+_GRAPH_SCORES = {
+    (False, 0.0): 0.1,
+    (True, 0.1): 0.15,
+    (True, 0.15): 0.3,
+    (True, 0.25): 0.2,
+}
 
 
-def _stub_graph_measure(mem, labels, *, k, weight, floor):
-    return {"precision_at_k": _GRAPH_SCORES.get(round(weight, 4), 0.0), "noise_at_k": 0.0}
+def _stub_graph_measure(mem, labels, *, k, enabled, alpha, floor):
+    return {
+        "precision_at_k": _GRAPH_SCORES.get((enabled, round(alpha, 4)), 0.0),
+        "noise_at_k": 0.0,
+    }
 
 
-def test_search_graph_weight_selects_max(monkeypatch):
-    monkeypatch.setattr(dt, "measure_graph_weight", _stub_graph_measure)
+def test_graph_signal_candidates_only_use_curated_signal_flags():
+    candidates = dt.graph_signal_candidates()
+    assert candidates == [
+        {"MEMO_GRAPH_SIGNAL_ENABLED": False, "MEMO_GRAPH_SIGNAL_ALPHA": 0.0},
+        {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.10},
+        {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.15},
+        {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.25},
+    ]
+    assert all("MEMO_GRAPH_RETRIEVAL_ENABLED" not in item for item in candidates)
+    assert all("MEMO_GRAPH_EXPANSION_ENABLED" not in item for item in candidates)
+
+
+def test_search_graph_signal_selects_max(monkeypatch):
+    monkeypatch.setattr(dt, "measure_graph_signal", _stub_graph_measure)
     labels = LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])])
-    best, before, after = dt.search_graph_weight(
-        _StubMem(), labels, k=3, current=0.0, floor=0.5, grid=(0.0, 0.05, 0.1, 0.2), max_evals=20
+    best, before, after = dt.search_graph_signal(
+        _StubMem(),
+        labels,
+        k=3,
+        current={"MEMO_GRAPH_SIGNAL_ENABLED": False, "MEMO_GRAPH_SIGNAL_ALPHA": 0.0},
+        floor=0.5,
+        candidates=dt.graph_signal_candidates(),
+        max_evals=20,
     )
-    assert best == 0.1  # the weight maximizing the stubbed precision
+    assert best == {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.15}
     assert after["precision_at_k"] == 0.3
-    assert before["precision_at_k"] == 0.1  # weight=current(0.0) baseline
+    assert before["precision_at_k"] == 0.1
 
 
-def test_run_graph_weight_pass_applies_and_writes_overlay(tmp_cfg, monkeypatch):
+def test_run_graph_signal_pass_applies_and_writes_overlay(tmp_cfg, monkeypatch):
     monkeypatch.setattr(
         dt,
         "build_labels",
         lambda *a, **k: (LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])]), True),
     )
-    monkeypatch.setattr(dt, "measure_graph_weight", _stub_graph_measure)
+    monkeypatch.setattr(dt, "measure_graph_signal", _stub_graph_measure)
     res = dt.run_graph_weight_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, dry_run=False)
     assert res["status"] == "applied"
-    assert res["weight_after"] == 0.1
-    assert dt.read_overlay(tmp_cfg.state_dir)["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1
+    assert res["config_after"]["MEMO_GRAPH_SIGNAL_ALPHA"] == 0.15
+    overlay = dt.read_overlay(tmp_cfg.state_dir)
+    assert overlay["MEMO_GRAPH_SIGNAL_ENABLED"] is True
+    assert overlay["MEMO_GRAPH_SIGNAL_ALPHA"] == 0.15
 
 
 def test_run_graph_weight_pass_dry_run_writes_nothing(tmp_cfg, monkeypatch):
@@ -140,7 +168,7 @@ def test_run_graph_weight_pass_dry_run_writes_nothing(tmp_cfg, monkeypatch):
         "build_labels",
         lambda *a, **k: (LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])]), True),
     )
-    monkeypatch.setattr(dt, "measure_graph_weight", _stub_graph_measure)
+    monkeypatch.setattr(dt, "measure_graph_signal", _stub_graph_measure)
     res = dt.run_graph_weight_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, dry_run=True)
     assert res["status"] == "would_apply"
     assert dt.read_overlay(tmp_cfg.state_dir) == {}
@@ -154,12 +182,13 @@ def test_run_graph_weight_pass_preserves_existing_overlay_params(tmp_cfg, monkey
         "build_labels",
         lambda *a, **k: (LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])]), True),
     )
-    monkeypatch.setattr(dt, "measure_graph_weight", _stub_graph_measure)
+    monkeypatch.setattr(dt, "measure_graph_signal", _stub_graph_measure)
     res = dt.run_graph_weight_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, dry_run=False)
     assert res["status"] == "applied"
     overlay = dt.read_overlay(tmp_cfg.state_dir)
     assert overlay["MEMO_RECALL_MIN_SIM"] == 0.6  # preserved
-    assert overlay["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1
+    assert overlay["MEMO_GRAPH_SIGNAL_ENABLED"] is True
+    assert overlay["MEMO_GRAPH_SIGNAL_ALPHA"] == 0.15
 
 
 def test_run_tuning_pass_preserves_existing_overlay_params(tmp_cfg, monkeypatch):
@@ -167,7 +196,9 @@ def test_run_tuning_pass_preserves_existing_overlay_params(tmp_cfg, monkeypatch)
     # overlay; the min_sim pass must merge, not clobber it (else the next night
     # silently disables the graph boost).
     dt.write_overlay(
-        tmp_cfg.state_dir, {"MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT": 0.1}, {"set_by": "dream-graph"}
+        tmp_cfg.state_dir,
+        {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.15},
+        {"set_by": "dream-graph"},
     )
     monkeypatch.setattr(
         dt,
@@ -181,159 +212,17 @@ def test_run_tuning_pass_preserves_existing_overlay_params(tmp_cfg, monkeypatch)
     res = dt.run_tuning_pass(tmp_cfg, _StubMem(), k=3, max_evals=20, dry_run=False)
     assert res["status"] == "applied"
     overlay = dt.read_overlay(tmp_cfg.state_dir)
-    assert overlay["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1  # preserved
+    assert overlay["MEMO_GRAPH_SIGNAL_ENABLED"] is True
+    assert overlay["MEMO_GRAPH_SIGNAL_ALPHA"] == 0.15
     assert overlay["MEMO_RECALL_MIN_SIM"] == res["floor_after"]
 
 
-# --- graph-injection config tuning (retrieval / expansion) -------------------
-
-
-def _cfg_name(mode, ret_on, exp_on):
-    if mode == "vec":
-        return "vec+expansion" if exp_on else "vec"
-    return "hybrid+retrieval+expansion" if exp_on else "hybrid+retrieval"
-
-
-def _stub_retrieval_measure(scores):
-    """scores: config-name -> (precision, noise, latency_ms_p50)."""
-
-    def fn(mem, labels, *, k, mode, flags):
-        name = _cfg_name(
-            mode,
-            flags["MEMO_GRAPH_RETRIEVAL_ENABLED"] == "1",
-            flags["MEMO_GRAPH_EXPANSION_ENABLED"] == "1",
-        )
-        p, n, lat = scores[name]
-        return {"precision_at_k": p, "noise_at_k": n, "latency_ms_p50": lat}
-
-    return fn
-
-
-def _patch_labels(monkeypatch):
-    monkeypatch.setattr(
-        dt,
-        "build_labels",
-        lambda *a, **k: (LabelSet(prompts=[Prompt("q", relevant=True, expect_ids=["x"])]), True),
-    )
-
-
-def test_retrieval_pass_noop_when_vec_wins(tmp_cfg, monkeypatch):
-    _patch_labels(monkeypatch)
-    monkeypatch.setattr(
-        dt,
-        "measure_retrieval_config",
-        _stub_retrieval_measure(
-            {
-                "vec": (0.20, 0.0, 30.0),
-                "vec+expansion": (0.20, 0.0, 32.0),
-                "hybrid+retrieval": (0.18, 0.0, 900.0),
-                "hybrid+retrieval+expansion": (0.15, 0.0, 950.0),
-            }
-        ),
-    )
-    res = dt.run_graph_retrieval_pass(tmp_cfg, _StubMem(), k=3, dry_run=False)
-    assert res["status"] == "noop"
-    assert dt.read_overlay(tmp_cfg.state_dir) == {}  # nothing applied
-
-
-def test_retrieval_pass_applies_winner_and_flips_mode(tmp_cfg, monkeypatch):
-    _patch_labels(monkeypatch)
-    monkeypatch.setattr(
-        dt,
-        "measure_retrieval_config",
-        _stub_retrieval_measure(
-            {
-                "vec": (0.20, 0.0, 30.0),
-                "vec+expansion": (0.20, 0.0, 32.0),
-                "hybrid+retrieval": (0.35, 0.0, 900.0),  # clear winner, within budget
-                "hybrid+retrieval+expansion": (0.33, 0.0, 950.0),
-            }
-        ),
-    )
-    res = dt.run_graph_retrieval_pass(tmp_cfg, _StubMem(), k=3, dry_run=False)
-    assert res["status"] == "applied"
-    assert res["applied"] == "hybrid+retrieval"
-    overlay = dt.read_overlay(tmp_cfg.state_dir)
-    assert overlay["MEMO_RECALL_MODE"] == "hybrid"
-    assert overlay["MEMO_GRAPH_RETRIEVAL_ENABLED"] is True
-    assert "MEMO_GRAPH_EXPANSION_ENABLED" not in overlay
-    # a baseline was saved for the rollback guard
-    assert dt.load_retrieval_baseline(tmp_cfg.state_dir)["precision_at_k"] == 0.35
-
-
-def test_retrieval_pass_latency_budget_rejects_faster_win(tmp_cfg, monkeypatch):
-    # hybrid has the best precision but blows the latency budget -> rejected,
-    # so a lower-precision but in-budget config (or vec) must win instead.
-    _patch_labels(monkeypatch)
-    monkeypatch.setattr(
-        dt,
-        "measure_retrieval_config",
-        _stub_retrieval_measure(
-            {
-                "vec": (0.20, 0.0, 30.0),
-                "vec+expansion": (0.28, 0.0, 40.0),  # in budget, beats vec
-                "hybrid+retrieval": (0.50, 0.0, 9000.0),  # best precision but 9s -> over budget
-                "hybrid+retrieval+expansion": (0.48, 0.0, 9200.0),
-            }
-        ),
-    )
-    res = dt.run_graph_retrieval_pass(
-        tmp_cfg, _StubMem(), k=3, dry_run=False, latency_budget_ms=2500.0
-    )
-    assert res["status"] == "applied"
-    assert res["applied"] == "vec+expansion"  # the in-budget winner
-    assert "hybrid+retrieval" in res["latency_rejected"]
-    assert dt.read_overlay(tmp_cfg.state_dir)["MEMO_GRAPH_EXPANSION_ENABLED"] is True
-    assert "MEMO_RECALL_MODE" not in dt.read_overlay(tmp_cfg.state_dir)
-
-
-def test_retrieval_pass_dry_run_writes_nothing(tmp_cfg, monkeypatch):
-    _patch_labels(monkeypatch)
-    monkeypatch.setattr(
-        dt,
-        "measure_retrieval_config",
-        _stub_retrieval_measure(
-            {
-                "vec": (0.20, 0.0, 30.0),
-                "vec+expansion": (0.20, 0.0, 32.0),
-                "hybrid+retrieval": (0.35, 0.0, 900.0),
-                "hybrid+retrieval+expansion": (0.33, 0.0, 950.0),
-            }
-        ),
-    )
-    res = dt.run_graph_retrieval_pass(tmp_cfg, _StubMem(), k=3, dry_run=True)
-    assert res["status"] == "would_apply"
-    assert res["would_apply"] == "hybrid+retrieval"
-    assert dt.read_overlay(tmp_cfg.state_dir) == {}
-
-
-def test_retrieval_pass_preserves_existing_float_overlay(tmp_cfg, monkeypatch):
-    # A prior min_sim / graph-weight tune wrote float knobs; applying a
-    # retrieval config must merge, not clobber them.
-    dt.write_overlay(
-        tmp_cfg.state_dir,
-        {"MEMO_RECALL_MIN_SIM": 0.6, "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT": 0.1},
-        {"set_by": "dream"},
-    )
-    _patch_labels(monkeypatch)
-    monkeypatch.setattr(
-        dt,
-        "measure_retrieval_config",
-        _stub_retrieval_measure(
-            {
-                "vec": (0.20, 0.0, 30.0),
-                "vec+expansion": (0.35, 0.0, 40.0),
-                "hybrid+retrieval": (0.20, 0.0, 900.0),
-                "hybrid+retrieval+expansion": (0.20, 0.0, 950.0),
-            }
-        ),
-    )
-    res = dt.run_graph_retrieval_pass(tmp_cfg, _StubMem(), k=3, dry_run=False)
-    assert res["status"] == "applied"
-    overlay = dt.read_overlay(tmp_cfg.state_dir)
-    assert overlay["MEMO_RECALL_MIN_SIM"] == 0.6  # preserved
-    assert overlay["MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT"] == 0.1  # preserved
-    assert overlay["MEMO_GRAPH_EXPANSION_ENABLED"] is True  # applied
+def test_retired_graph_retrieval_pass_never_mutates_overlay(tmp_cfg):
+    dt.write_overlay(tmp_cfg.state_dir, {"MEMO_RECALL_MIN_SIM": 0.6}, {"set_by": "test"})
+    before = dt.read_overlay(tmp_cfg.state_dir)
+    res = dt.run_graph_retrieval_pass(tmp_cfg, _StubMem())
+    assert res == {"status": "retired", "replacement": "curated_graph_signal"}
+    assert dt.read_overlay(tmp_cfg.state_dir) == before
 
 
 def test_build_labels_merges_negative_verdicts(tmp_cfg) -> None:
