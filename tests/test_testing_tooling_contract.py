@@ -12,6 +12,10 @@ def _pyproject() -> dict:
 
 def test_testing_dependencies_are_scoped_by_ci_cost() -> None:
     optional = _pyproject()["project"]["optional-dependencies"]
+    assert "pytest>=9.0.3,<10" in optional["dev"]
+    assert not any(
+        dependency.startswith("pytest-textual-snapshot") for dependency in optional["dev"]
+    )
     assert "hypothesis>=6.158,<7" in optional["dev"]
     assert "diff-cover>=9,<10" in optional["dev"]
     assert optional["test-stability"] == [

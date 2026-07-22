@@ -53,7 +53,7 @@ def test_dependabot_respects_mlx_and_test_dependency_caps() -> None:
     assert any(
         dependency.startswith("transformers<5.13;") for dependency in project["dependencies"]
     )
-    assert "pytest>=8.0,<9" in project["optional-dependencies"]["dev"]
+    assert "pytest>=9.0.3,<10" in project["optional-dependencies"]["dev"]
 
 
 def test_starlette_test_client_uses_the_supported_http_transport() -> None:
