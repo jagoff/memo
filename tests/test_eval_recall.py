@@ -380,6 +380,23 @@ def test_check_gate_fails_on_precision_drop():
     assert "precision@k" in res.message
 
 
+def test_check_gate_rejects_a_baseline_from_different_labels() -> None:
+    rows = _rows((0.8, 0.0))
+
+    res = eval_recall.check_gate(
+        rows,
+        {
+            "precision_at_k": 0.6,
+            "noise_at_k": 0.1,
+            "labels_fingerprint": "old-labels",
+        },
+        labels_fingerprint="new-labels",
+    )
+
+    assert not res.passed
+    assert "label set changed" in res.message
+
+
 def test_check_gate_fails_on_noise_rise():
     rows = _rows((0.6, 0.3))
     res = eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1})

@@ -1067,7 +1067,13 @@ def gate_metrics(rows: list[Row]) -> dict[str, Any]:
     }
 
 
-def check_gate(rows: list[Row], baseline: dict[str, float], *, tol: float = 1e-9) -> GateResult:
+def check_gate(
+    rows: list[Row],
+    baseline: dict[str, Any],
+    *,
+    tol: float = 1e-9,
+    labels_fingerprint: str | None = None,
+) -> GateResult:
     """Compare the current best config against a saved baseline.
 
     The gate FAILS if precision@K dropped below, or noise@K rose above, the
@@ -1077,6 +1083,18 @@ def check_gate(rows: list[Row], baseline: dict[str, float], *, tol: float = 1e-9
     m = gate_metrics(rows)
     bp = float(baseline.get("precision_at_k", 0.0))
     bn = float(baseline.get("noise_at_k", 1.0))
+    baseline_fingerprint = str(baseline.get("labels_fingerprint") or "")
+    if (
+        labels_fingerprint
+        and baseline_fingerprint
+        and labels_fingerprint != baseline_fingerprint
+    ):
+        message = (
+            "FAIL — label set changed "
+            f"({baseline_fingerprint} -> {labels_fingerprint}); verify the prior label set, "
+            "then refresh the baseline with --update-baseline"
+        )
+        return GateResult(False, message, m["precision_at_k"], m["noise_at_k"], bp, bn)
     prec_ok = m["precision_at_k"] >= bp - tol
     noise_ok = m["noise_at_k"] <= bn + tol
     passed = prec_ok and noise_ok
