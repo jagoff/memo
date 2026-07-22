@@ -209,8 +209,16 @@ def render(snap: dict[str, Any], prev: dict[str, Any] | None, log: pathlib.Path)
     row("views (14d)", "views_total", gh, pgh, "README hits")
     row("unique viewers (14d)", "views_unique", gh, pgh, "[green]best interest proxy[/green]")
     t.add_section()
-    row("clones (14d)", "clones_total", gh, pgh, "[yellow]polluted: install+CI+auto-update[/yellow]")
-    row("unique cloners (14d)", "clones_unique", gh, pgh, "[yellow]closer, still CI+your Macs[/yellow]")
+    row(
+        "clones (14d)", "clones_total", gh, pgh, "[yellow]polluted: install+CI+auto-update[/yellow]"
+    )
+    row(
+        "unique cloners (14d)",
+        "clones_unique",
+        gh,
+        pgh,
+        "[yellow]closer, still CI+your Macs[/yellow]",
+    )
     t.add_section()
     if "_error" in pypi:
         t.add_row("PyPI downloads", f"[dim]{pypi['_error']}[/dim]", "retry later (429)")

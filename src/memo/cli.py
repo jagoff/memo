@@ -656,8 +656,7 @@ def _prompt_usage_sharing() -> None:
         )
     else:
         console.print(
-            "[dim]no usage sharing. Enable later: "
-            "memo config set update.check_enabled true[/dim]"
+            "[dim]no usage sharing. Enable later: memo config set update.check_enabled true[/dim]"
         )
 
 
