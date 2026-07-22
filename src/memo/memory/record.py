@@ -17,6 +17,7 @@ import hashlib
 import logging
 import re
 import threading
+import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -472,6 +473,36 @@ class MemoryRecord:
             "verification_state": self.verification_state.value,
             "verified_at": self.verified_at,
         }
+
+
+def _state_decay_factor(memory_record: MemoryRecord) -> float:
+    """Score multiplier for a memory's verification state + age.
+
+    VERIFIED memories rank at (or near) full weight; STALE and UNVERIFIED are
+    penalized so freshly-verified facts surface first. Returns a float in
+    (0.7, 1.0]:
+
+    - VERIFIED & fresh (< 7 days): 1.0 (no penalty)
+    - VERIFIED & old (7+ days): 0.95 (5% penalty)
+    - STALE: 0.7 (30% penalty)
+    - UNVERIFIED (or no verified_at): 0.8 (20% penalty)
+
+    Consumed by the recall penalty (`_apply_verification_decay`) — gated by
+    MEMO_VERIFICATION_STATE_TRACKING — so it is a no-op multiplier for a corpus
+    that never marks anything VERIFIED (all-UNVERIFIED → uniform 0.8, ordering
+    unchanged).
+    """
+    if not memory_record.verified_at:
+        return 0.8  # UNVERIFIED: 20% penalty
+
+    days_since_verified = (int(time.time()) - memory_record.verified_at) / 86400.0
+
+    if memory_record.verification_state == VerificationState.VERIFIED:
+        return 1.0 if days_since_verified < 7 else 0.95
+    elif memory_record.verification_state == VerificationState.STALE:
+        return 0.7  # STALE: 30% penalty
+    else:  # UNVERIFIED
+        return 0.8
 
 
 def record_from_row(row: dict[str, Any], *, body: str = "") -> MemoryRecord:

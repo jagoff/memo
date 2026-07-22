@@ -73,6 +73,7 @@ class _MemoryBase:
     def _apply_health_scores(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_quality_rerank(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_retrieval_boost(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _apply_verification_decay(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_source_feedback(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_write_policy(self, *a: Any, **k: Any) -> Any: ...
     def _fetch_graph_candidates(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]

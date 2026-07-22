@@ -8,19 +8,17 @@ verbatim from the former `memory.py` god-file.
 from __future__ import annotations
 
 import sqlite3
-import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
-from memo.flags import flag_bool, flag_float
+from memo.flags import flag_float
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     AmbiguousIdError,
     MemoryRecord,
     _log,
 )
-from memo.tiers import VerificationState
 
 
 def _feedback_recency_weight(
@@ -51,31 +49,6 @@ def _feedback_knob(value: float | None, name: str, default: float) -> float:
         return value
     configured = flag_float(name)
     return default if configured is None else configured
-
-
-def _state_decay_factor(memory_record: MemoryRecord) -> float:
-    """Compute decay factor based on verification state + age.
-
-    Verified memories score higher; STALE and UNVERIFIED memories are penalized.
-    Returns a float multiplier (0.7–1.0) applied to hit scores.
-
-    - VERIFIED & fresh (< 7 days): 1.0 (no penalty)
-    - VERIFIED & old (7+ days): 0.95 (5% penalty)
-    - STALE: 0.7 (30% penalty)
-    - UNVERIFIED: 0.8 (20% penalty)
-    """
-    if not memory_record.verified_at:
-        return 0.8  # UNVERIFIED: 20% penalty
-
-    now = int(time.time())
-    days_since_verified = (now - memory_record.verified_at) / 86400.0
-
-    if memory_record.verification_state == VerificationState.VERIFIED:
-        return 1.0 if days_since_verified < 7 else 0.95
-    elif memory_record.verification_state == VerificationState.STALE:
-        return 0.7  # STALE: 30% penalty
-    else:  # UNVERIFIED
-        return 0.8
 
 
 class _RerankOpsMixin(_MemoryBase):
@@ -437,46 +410,3 @@ class _RerankOpsMixin(_MemoryBase):
             fused.append(replace(h, score=final))
         fused.sort(key=lambda h: h.score or 0.0, reverse=True)
         return fused[:top_n]
-
-    def _rerank_logic(
-        self,
-        hits: list[dict[str, Any]],
-        query: str,
-        rerank_candidates: int,
-    ) -> list[dict[str, Any]]:
-        """Apply distance decay + verification state weighting to hits.
-
-        Takes pre-scored hits and applies inverse-distance decay and/or
-        verification state decay if enabled, returning the reordered list.
-        Distance decay penalizes memories far from base facts in the knowledge
-        graph via BFS distance. State decay prioritizes VERIFIED memories.
-
-        Args:
-            hits: List of hit dicts with "id" and "score" fields
-            query: Query text (for context, unused in this version)
-            rerank_candidates: Maximum hits to return
-
-        Returns:
-            Reordered hits with decayed scores and debug fields
-            (when decay is enabled)
-        """
-        scored_hits = list(hits or [])  # Copy to avoid mutation
-
-        # Apply verification state decay if enabled
-        if flag_bool("MEMO_VERIFICATION_STATE_TRACKING") and hasattr(self, "memory_map"):
-            for hit in scored_hits:
-                mem_id = hit.get("id")
-                if mem_id and mem_id in self.memory_map:
-                    mem = self.memory_map[mem_id]
-                    state_decay = _state_decay_factor(mem)
-                    current_score = hit.get("score", 0.0)
-                    hit["score"] = current_score * state_decay
-                    hit["_verification_state"] = mem.verification_state.value  # Debug
-
-        # Sort by score descending
-        scored_hits.sort(key=lambda h: h.get("score", 0.0), reverse=True)
-
-        # Return top-N if rerank_candidates is specified
-        if rerank_candidates > 0:
-            return scored_hits[:rerank_candidates]
-        return scored_hits

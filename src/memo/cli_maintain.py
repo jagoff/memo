@@ -425,6 +425,7 @@ def maintain_cmd(
         "merged": [],  # duplicate clusters consolidated
         "forgotten": [],  # forget_after TTL elapsed (soft, reversible)
         "archived_stale": [],
+        "verification_transitioned": 0,  # VERIFIED→STALE→UNVERIFIED aged by verified_at
         "synthesized": [],  # emergent cross-memory insights generated
         "synthesis_count": 0,  # new clusters synthesized by proactive pass
         "outcome_reconciled": 0,  # memories whose roi_score was re-derived from outcomes
@@ -577,6 +578,15 @@ def maintain_cmd(
                 receipt["archived_stale"].append({"id": mid, "days": item.get("days_since_update")})
         except Exception as exc:
             receipt["errors"].append(f"stale: {type(exc).__name__}: {exc}")
+
+    # 3b. Verification-state decay: age VERIFIED→STALE→UNVERIFIED by verified_at -
+    if flag_bool("MEMO_VERIFICATION_STATE_TRACKING"):
+        try:
+            receipt["verification_transitioned"] = mem._transition_stale_memories(
+                dry_run=dry_run
+            )
+        except Exception as exc:
+            receipt["errors"].append(f"verification: {type(exc).__name__}: {exc}")
 
     # 4. Vacuum: permanently delete soft-deleted records older than --vacuum-days ---
     if vacuum:
