@@ -52,6 +52,13 @@ _TRIVIAL_WORDS: frozenset[str] = frozenset(
     }
 )
 
+# Budget cap for the subprocess-fallback query embed. A busy/warming daemon
+# still answers `ping`, so the fallback `Memory` auto-routes embeds back through
+# the socket; without a cap that wait is the 30s `_QUERY_TIMEOUT_S`, which blows
+# Claude Code's hook kill. 4s leaves headroom under the 12s kill for the bm25
+# downgrade that `_rank` falls to when a capped embed fails.
+_FALLBACK_EMBED_TIMEOUT_S = 4.0
+
 
 def apply_session_mode(knobs: RankKnobs, session_mode: str) -> RankKnobs:
     """Apply bounded per-session ranking adjustments."""
@@ -355,6 +362,15 @@ def recall_hook() -> None:
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
     # '_uncertain' quarantine (default on) — daemon parity (recall_logic).
     exclude_tags = uncertain_exclusion()
+    # Budget guard for the fallback embed: a busy/warming daemon answers `ping`
+    # (so `Memory` routes embeds through the socket) but not recall — cap the
+    # client timeout to the residual budget and require the daemon, so a stalled
+    # embed raises fast instead of cold-loading a 2nd MLX copy that fights the
+    # daemon for the GPU lock. `_rank` downgrades to bm25 on that failure.
+    # setdefault keeps an explicit operator override authoritative.
+    if mode in ("vec", "hybrid"):
+        os.environ.setdefault("MEMO_EMBEDDER_CLIENT_TIMEOUT", str(_FALLBACK_EMBED_TIMEOUT_S))
+        os.environ.setdefault("MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON", "1")
     try:
         from memo.memory import Memory
 
@@ -390,24 +406,55 @@ def recall_hook() -> None:
     # "{}" before the marker gate.
     _search_ok = False
 
-    def _rank(query_text: str) -> list:
+    def _rank(
+        query_text: str,
+        *,
+        _knobs: RankKnobs = knobs,
+        _mode: str = mode,
+        _vc: Callable[[Any], float | None] | None = _vec_cosine,
+    ) -> list:
         nonlocal _search_ok
         try:
             hits = mem.search(
                 query_text,
                 limit=search_k,
-                mode=mode,
+                mode=_mode,
                 recency=True,
                 exclude_types=exclude_types,
                 exclude_tags=exclude_tags,
             )
         except Exception as exc:
+            # A vec/hybrid embed can stall on a busy daemon socket (capped to
+            # _FALLBACK_EMBED_TIMEOUT_S above). Downgrade to bm25 — no embed, no
+            # cold-load GPU fight — so recall stays within the hook budget
+            # instead of bailing to an empty result.
+            if _mode in ("vec", "hybrid"):
+                if flag_bool("MEMO_RECALL_DEBUG"):
+                    print(
+                        f"# memo recall-hook: {_mode} embed failed ({exc}); bm25 fallback",
+                        file=sys.stderr,
+                    )
+                return _rank(query_text, _knobs=replace(_knobs, mode="bm25"), _mode="bm25", _vc=None)
             if flag_bool("MEMO_RECALL_DEBUG"):
                 print(f"# memo recall-hook: search failed: {exc}", file=sys.stderr)
             return []
         _search_ok = True
+        # Recency band (daemon parity, recall_logic): re-fetch recent hits above
+        # the floor so freshness isn't lost to the similarity cut. Default OFF.
+        # Skipped on the bm25 downgrade — fetch_recency_band would re-embed and
+        # re-stall on the same busy daemon we just fell away from.
+        _band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
+        if _band_days > 0 and _mode != "bm25":
+            from memo.recall_logic import apply_recency_band, fetch_recency_band
+
+            hits = apply_recency_band(
+                hits,
+                fetch_recency_band(
+                    mem, days=_band_days, exclude_types=exclude_types, floor=_knobs.min_sim
+                ),
+            )
         return rank_hits(
-            hits, knobs, vec_cosine=_vec_cosine, preferences=_prefs, graph_boost=_graph_boost
+            hits, _knobs, vec_cosine=_vc, preferences=_prefs, graph_boost=_graph_boost
         )
 
     qualifying = _rank(prompt)
@@ -425,6 +472,13 @@ def recall_hook() -> None:
                 )
 
     qualifying = apply_injection_filters(qualifying)
+    # Unmatched-term gate (daemon parity, recall_logic): drop the whole injection
+    # when no hit lexically covers the query's salient terms. Default OFF.
+    if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and qualifying:
+        from memo.recall_logic import unmatched_term_gate
+
+        if unmatched_term_gate(prompt, qualifying):
+            qualifying = []
 
     _guard_banner: str | None = None
     _guard_ids: list[str] = []
@@ -467,6 +521,17 @@ def recall_hook() -> None:
             )
         except Exception as exc:
             _log.debug("recall metrics stamp failed: %s", exc)
+
+    # Pre-top-K paraphrase collapse (daemon parity, recall_logic): drop lexical
+    # near-dups from the over-fetched pool BEFORE truncation so they don't crowd
+    # out distinct results. Default ON. Distinct from the post-top-K intra-dedup
+    # below (MEMO_RECALL_INTRA_DEDUP), which can't recover a crowded-out result.
+    if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(qualifying) > 1:
+        from memo.recall_logic import collapse_near_dups
+
+        qualifying = collapse_near_dups(
+            qualifying, threshold=flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8
+        )
 
     relevant = qualifying[:top_k]
 

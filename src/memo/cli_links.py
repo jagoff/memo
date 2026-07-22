@@ -190,7 +190,10 @@ def links_reindex() -> None:
     for rec in all_records:
         body = rec.body or ""
         if body:
-            mem.crossref.index_wikilinks(rec.id, body)
+            # index_source (delete-then-insert, incl. typed `- rel [[target]]`
+            # edges), matching save/update/reindex — index_wikilinks is
+            # append-only and drops typed edges, leaving stale rows.
+            mem.crossref.index_source(rec.id, body)
             indexed += 1
 
     console.print(f"[green]Reindexed {indexed} memories[/green]")

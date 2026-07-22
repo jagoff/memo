@@ -297,12 +297,14 @@ def proactive_lines(mem: Any, *, max_lines: int = 3) -> list[str]:
         from memo.proactive.store import ProactiveStore
         from memo.proactive.surfaces import render_digest
 
-        store = ProactiveStore(mem.cfg.state_dir / "proactive.db")
-        now_dt = datetime.now(tz=UTC)
-        routed = compute_routed(store, now=now_dt.isoformat(), day=now_dt.date().isoformat())
-        if not routed.digest:
-            return []
-        body = render_digest(routed).splitlines()[:max_lines]
+        # `with` so the sqlite connection is closed on the SessionStart hot path
+        # rather than left to refcount GC (cli_memory does the same).
+        with ProactiveStore(mem.cfg.state_dir / "proactive.db") as store:
+            now_dt = datetime.now(tz=UTC)
+            routed = compute_routed(store, now=now_dt.isoformat(), day=now_dt.date().isoformat())
+            if not routed.digest:
+                return []
+            body = render_digest(routed).splitlines()[:max_lines]
         if not body:
             return []
         return ["### Proactive", "", *body, ""]

@@ -54,7 +54,14 @@ def _consolidate_sidecar_dbs() -> None:
     # single_db=1 must be merged here, or its data is silently orphaned.
     legacy_tables: dict[Path, list[str]] = {
         cfg.state_dir / "history.db": ["events", "sync_state"],
-        cfg.state_dir / "graph.db": ["entities", "entity_memory"],
+        cfg.state_dir / "graph.db": [
+            "entities",
+            "entity_memory",
+            "co_recall",
+            "entity_edges",
+            "entity_aliases",
+            "semantic_relations",
+        ],
         cfg.state_dir / "contradictions.db": ["pairs"],
         cfg.state_dir / "crossref.db": ["backlinks"],
         cfg.state_dir / "episodes.db": ["episode_meta", "episode_schema_meta", "episode_vec"],
