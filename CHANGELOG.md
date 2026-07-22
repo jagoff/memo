@@ -9,6 +9,42 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-07-22
+
+### Added
+
+- **Graph mindmap visualization** (#80). New `memo graph mindmap [ENTITY]`
+  renders a graph neighborhood as a self-contained, offline-clean interactive
+  HTML mindmap (pan / zoom / fold). A pure-Python tree builder converts the
+  existing `GraphNavigator.export_json()` subgraph into a nested tree (BFS,
+  depth-bounded, node-capped, cycle-safe); the renderer mirrors the Health
+  Dashboard security pattern (inlined CSS/JS, CSP-nonce,
+  `atomic_write_text(mode=0o600)`, no external `<script src>`/CDN) with a small
+  memo-owned vanilla-SVG drawer — no vendored third-party JS. Defaults the
+  center to the highest-degree entity; empty graph is a graceful no-op. Viz
+  output only — not an MCP tool (respects the no-cognition invariant).
+- **Record-level bi-temporal validity** (#79). Memories now carry world-validity
+  (`valid_at` / `invalid_at`) distinct from learned-time (`created`).
+  Supersede-by-contradiction closes the loser's interval in place instead of
+  hiding it; default recall filters to currently-valid records; valid-time
+  queries via `memo search --as-of T` and MCP `memo_search_valid_as_of` /
+  `memo_ask_valid_as_of`. A gated dream pass
+  (`MEMO_DREAM_VALIDITY_EXTRACT_ENABLED`) extracts validity windows from bodies
+  (guarded against hallucination), and `memo migrate --backfill-valid-time`
+  backfills an existing corpus.
+- **Sharper memory extraction** (#79). The shared capture/dream extraction
+  prompt now preserves proper nouns and numbers verbatim, folds "switched X→Y"
+  transitions into a single memory, and noise-gates one-off/volatile turns.
+
+### Fixed
+
+- **Validity recall gate** (#79): the validity filter now covers all candidate
+  legs (fact-retrieval and hype folds, not just the SQL vec/bm25 legs), so a
+  superseded record with a fact edge can no longer leak into default or as-of
+  recall. Timezone handling for the validity filter binds `now`/`as-of` in the
+  same local offset the records stamp, fixing a lexicographic-compare skew on
+  UTC-offset machines.
+
 ## [3.11.0] - 2026-07-21
 
 ### Added
