@@ -473,6 +473,11 @@ class MemoryRecord:
     score: float | None = None  # populated by `search()`; None for direct fetches.
     verification_state: VerificationState = VerificationState.UNVERIFIED
     verified_at: int | None = None  # Unix timestamp
+    # Record-level bi-temporal validity (distinct from `created`/`updated`,
+    # which are learned/transaction time). `valid_at` = world-validity start;
+    # `invalid_at` = world-validity end (None = interval still open). Both ISO8601.
+    valid_at: str | None = None
+    invalid_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -488,6 +493,8 @@ class MemoryRecord:
             "score": self.score,
             "verification_state": self.verification_state.value,
             "verified_at": self.verified_at,
+            "valid_at": self.valid_at,
+            "invalid_at": self.invalid_at,
         }
 
 
@@ -556,6 +563,8 @@ def record_from_row(row: dict[str, Any], *, body: str = "") -> MemoryRecord:
         score=row.get("score"),
         verification_state=verification_state,
         verified_at=verified_at,
+        valid_at=row.get("valid_at"),
+        invalid_at=row.get("invalid_at"),
     )
 
 

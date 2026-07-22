@@ -306,6 +306,8 @@ class _WriteOpsMixin(_MemoryBase):
         skip_memflow_receipt: bool = False,
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
@@ -337,6 +339,11 @@ class _WriteOpsMixin(_MemoryBase):
           `MEMO_RESPECT_SYNAPSE_FREEZE=1` (opt-in). Only fires when
           `extra` carries a `synapse_trace_id` — anonymous saves
           bypass the check.
+        - `valid_at`/`invalid_at`: optional ISO8601 world-validity interval
+          (distinct from `created`/`updated` learned-time). Pure pass-through
+          here — persisted to the row when supplied, else left None. Default
+          population (`valid_at = created`) and frontmatter mirroring are
+          separate paths.
         """
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
@@ -679,6 +686,8 @@ class _WriteOpsMixin(_MemoryBase):
                         body_text=content,
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
                 except Exception as exc:
                     reservation_error = exc
@@ -704,6 +713,8 @@ class _WriteOpsMixin(_MemoryBase):
                 normalized_hash=normalized_hash,
                 expected_disk_text=written_disk_text,
                 graph_extractor=graph_extractor,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
 
         if defer_embed:
@@ -722,6 +733,8 @@ class _WriteOpsMixin(_MemoryBase):
                         body_text=content,
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
                 except Exception as exc:
                     # The .md is already on disk (embed-pending). A failed
@@ -782,6 +795,8 @@ class _WriteOpsMixin(_MemoryBase):
                 updated=now_iso,
                 body=content,
                 extra=extra_for_store,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
             self._emit_save_receipt(
                 deferred_rec,
@@ -829,6 +844,8 @@ class _WriteOpsMixin(_MemoryBase):
                 body_text=content,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
             if topic_key:
                 # Embedding is intentionally outside the global file lock.
@@ -913,6 +930,8 @@ class _WriteOpsMixin(_MemoryBase):
                 normalized_hash=normalized_hash,
                 expected_disk_text=written_disk_text,
                 graph_extractor=graph_extractor,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
 
         if not topic_write_superseded:
@@ -934,6 +953,8 @@ class _WriteOpsMixin(_MemoryBase):
             updated=now_iso,
             body=content,
             extra=extra_for_store,
+            valid_at=valid_at,
+            invalid_at=invalid_at,
         )
         if topic_write_superseded:
             _log.info(
@@ -988,6 +1009,8 @@ class _WriteOpsMixin(_MemoryBase):
         normalized_hash: str | None = None,
         expected_disk_text: str | None = None,
         graph_extractor: str = "regex",
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> MemoryRecord:
         """Recovery path when indexing fails AFTER the canonical `.md` is on disk.
 
@@ -1037,6 +1060,8 @@ class _WriteOpsMixin(_MemoryBase):
                         body_text=content,
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
         if superseded:
             _log.info(
@@ -1060,6 +1085,8 @@ class _WriteOpsMixin(_MemoryBase):
                 updated=now_iso,
                 body=content,
                 extra=extra_for_store,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
             self._write_gen += 1
             return rec
@@ -1100,6 +1127,8 @@ class _WriteOpsMixin(_MemoryBase):
             updated=now_iso,
             body=content,
             extra=extra_for_store,
+            valid_at=valid_at,
+            invalid_at=invalid_at,
         )
         self._emit_save_receipt(rec, deferred=True, disabled=skip_memflow_receipt)
         self._write_gen += 1

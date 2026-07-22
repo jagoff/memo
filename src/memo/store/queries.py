@@ -19,7 +19,7 @@ _log = logging.getLogger(__name__)
 
 META_SELECT_COLUMNS = (
     "id, path, title, type, tags, created, updated, body_hash, extra_json, "
-    "verification_state, verified_at"
+    "verification_state, verified_at, valid_at, invalid_at"
 )
 
 
@@ -85,12 +85,21 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> None:
-        """Write one complete memory row using the caller's transaction."""
+        """Write one complete memory row using the caller's transaction.
+
+        `valid_at`/`invalid_at` (world-validity interval) are written on INSERT
+        but intentionally left OUT of the ON CONFLICT update set — like
+        `created`, they are set once and preserved across a re-save/edit;
+        dedicated statements (contradiction-supersede, reindex-fold) own their
+        later mutation.
+        """
         if self._has_pattern_cols:
             cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash, valid_at, invalid_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "path=excluded.path, title=excluded.title, type=excluded.type, "
                 "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
@@ -107,12 +116,14 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     json.dumps(extra, default=str) if extra is not None else None,
                     topic_key,
                     normalized_hash,
+                    valid_at,
+                    invalid_at,
                 ),
             )
         else:
             cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, valid_at, invalid_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET "
                 "path=excluded.path, title=excluded.title, type=excluded.type, "
                 "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
@@ -127,6 +138,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     updated,
                     body_hash,
                     json.dumps(extra, default=str) if extra is not None else None,
+                    valid_at,
+                    invalid_at,
                 ),
             )
         cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
@@ -165,6 +178,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> None:
         self._validate_embedding(id_, embedding)
         # Dual-write: the tantivy write lock spans the sqlite commit AND the
@@ -188,6 +203,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     body_text=body_text,
                     topic_key=topic_key,
                     normalized_hash=normalized_hash,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
                 )
             tantivy = self._get_tantivy()
             if tantivy is not None:
@@ -517,19 +534,23 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> None:
         """Write metadata + FTS row without a vector embedding.
 
         This keeps CRUD and BM25 search usable on fresh installs or while
         models are downloading. A later `memo reindex` fills the missing vector.
+        `valid_at`/`invalid_at` mirror the `upsert()` semantics: written on
+        INSERT, preserved (not clobbered) on the ON CONFLICT re-save.
         """
         # Lock spans sqlite commit + tantivy write — see upsert().
         with self._tantivy_write_lock:
             with self._tx() as cx:
                 if self._has_pattern_cols:
                     cx.execute(
-                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash, valid_at, invalid_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                         "ON CONFLICT(id) DO UPDATE SET "
                         "path=excluded.path, title=excluded.title, type=excluded.type, "
                         "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
@@ -546,12 +567,14 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                             json.dumps(extra, default=str) if extra is not None else None,
                             topic_key,
                             normalized_hash,
+                            valid_at,
+                            invalid_at,
                         ),
                     )
                 else:
                     cx.execute(
-                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, valid_at, invalid_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                         "ON CONFLICT(id) DO UPDATE SET "
                         "path=excluded.path, title=excluded.title, type=excluded.type, "
                         "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
@@ -566,6 +589,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                             updated,
                             body_hash,
                             json.dumps(extra, default=str) if extra is not None else None,
+                            valid_at,
+                            invalid_at,
                         ),
                     )
                 cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
