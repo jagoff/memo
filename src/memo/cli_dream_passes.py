@@ -686,6 +686,98 @@ def _run_stale(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     return result
 
 
+def _mirror_validity_to_markdown(
+    mem: Memory, rec: Any, *, valid_at: str | None, invalid_at: str | None
+) -> None:
+    """Mirror an extracted validity window onto the canonical markdown.
+
+    Same mechanism as ``lifecycle.invalidate_in_place`` / the migrate backfill:
+    load frontmatter, set only the extracted key(s), write back — so a later
+    ``reindex --rebuild`` from disk preserves the window. Best-effort: a failed
+    write leaves the index authoritative and never aborts the pass.
+    """
+    source_path = mem._resolve_existing(rec.path)
+    if not source_path.is_file():
+        return
+    import frontmatter
+
+    post = frontmatter.loads(source_path.read_text(encoding="utf-8"))
+    if valid_at is not None:
+        post["valid_at"] = valid_at
+    if invalid_at is not None:
+        post["invalid_at"] = invalid_at
+    source_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+
+def _run_validity_extract(
+    mem: Memory, receipt: dict[str, Any], *, limit: int = 50, dry_run: bool = False
+) -> None:
+    """Dream validity-extract pass — LLM off the recall hot path (default OFF).
+
+    For recent durable facts/decisions with an OPEN interval, ask the temporal
+    analyzer to extract an EXPLICIT validity window (never hallucinated — see
+    ``TemporalAnalyzer.extract_validity_window``) and, when it finds one, close
+    ``valid_at``/``invalid_at`` via ``store.update_validity`` + a frontmatter
+    mirror. Records with no stated window are left untouched.
+
+    Writes its fragment to ``receipt["validity_extract"]`` and appends every
+    per-record failure (and any whole-pass failure) to ``receipt["errors"]`` —
+    failures are surfaced, never silently swallowed (mirrors
+    ``_run_proactive_refresh``). Caller gates this behind
+    ``MEMO_DREAM_VALIDITY_EXTRACT_ENABLED``.
+    """
+    result: dict[str, Any] = {"scanned": 0, "updated": []}
+    receipt["validity_extract"] = result
+    try:
+        conn = mem.store._conn
+        rows = conn.execute(
+            "SELECT id FROM meta WHERE type IN ('fact', 'decision') "
+            "AND invalid_at IS NULL ORDER BY updated DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            rec = mem.get(row["id"])
+            if not rec or not (rec.body or "").strip():
+                continue
+            result["scanned"] += 1
+            try:
+                window = mem.temporal.extract_validity_window(rec)
+            except Exception as exc:
+                receipt["errors"].append(
+                    f"validity_extract: {rec.id[:8]}: {type(exc).__name__}: {exc}"
+                )
+                continue
+            if not window:
+                continue
+            new_valid = window.get("valid_at") or rec.valid_at
+            new_invalid = window.get("invalid_at") or rec.invalid_at
+            if new_valid == rec.valid_at and new_invalid == rec.invalid_at:
+                continue  # extraction reproduced what's already stored — no-op
+            if not dry_run:
+                mem.store.update_validity(id_=rec.id, valid_at=new_valid, invalid_at=new_invalid)
+                try:
+                    _mirror_validity_to_markdown(
+                        mem,
+                        rec,
+                        valid_at=window.get("valid_at"),
+                        invalid_at=window.get("invalid_at"),
+                    )
+                except Exception as exc:
+                    receipt["errors"].append(
+                        f"validity_extract: {rec.id[:8]}: frontmatter mirror: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+            result["updated"].append(
+                {
+                    "id": rec.id,
+                    "valid_at": window.get("valid_at"),
+                    "invalid_at": window.get("invalid_at"),
+                }
+            )
+    except Exception as exc:  # whole-pass failure — surfaced, never silent
+        receipt["errors"].append(f"validity_extract: {type(exc).__name__}: {exc}")
+
+
 def _run_synthesis(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     """Generate emergent cross-cluster synthesis memories.
 

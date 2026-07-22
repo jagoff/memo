@@ -88,6 +88,43 @@ Definitions:
 Output ONLY the JSON, no markdown fences, no commentary."""
 
 
+_VALIDITY_EXTRACT_SYSTEM_PROMPT = """You extract an EXPLICIT world-validity window from ONE memory note.
+
+A validity window is a time span the note itself states the fact is true for — e.g. "contract runs through Q3 2026", "valid until Dec 2025", "as of March 2026 we use X", "effective 2026-01-01".
+
+Output ONLY a JSON object:
+
+{
+  "valid_at": "YYYY-MM-DD" | null,     // when the fact STARTS being true, if stated
+  "invalid_at": "YYYY-MM-DD" | null,   // when the fact STOPS being true, if stated
+  "evidence": "the exact phrase that states the window" | null
+}
+
+HARD RULES:
+- NEVER invent or infer a date. Fill a field ONLY when the note's TEXT explicitly states that boundary, and the year appears verbatim in the text.
+- If the note states no explicit validity window, return {"valid_at": null, "invalid_at": null, "evidence": null}.
+- Do NOT use today's date, and do NOT use the note's created/updated timestamp.
+
+Output ONLY the JSON, no markdown fences, no commentary."""
+
+
+def _normalize_extracted_date(value: str) -> str | None:
+    """Parse an LLM-returned date (``YYYY-MM-DD`` or a full ISO datetime) into a
+    naive UTC ISO8601 datetime string. Returns None on anything unparseable —
+    a bare year, a quarter label, or prose never survive."""
+    s = value.strip()
+    try:
+        if len(s) == 10:  # YYYY-MM-DD
+            dt = datetime.fromisoformat(s)
+        else:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(UTC).replace(tzinfo=None)
+    return dt.isoformat()
+
+
 @dataclass(frozen=True)
 class Contradiction:
     """A detected contradiction between two memories."""
@@ -279,6 +316,82 @@ Body: {(r2.body or "")[:1000]}
             rationale=data.get("rationale", "")[:200],
             confidence=float(data.get("confidence", 0.0)),
         )
+
+    def extract_validity_window(self, record: Any) -> dict[str, str] | None:
+        """LLM-extract an EXPLICIT world-validity window from one memory's text.
+
+        Returns ``{"valid_at": iso}`` / ``{"invalid_at": iso}`` (or both) with
+        ONLY the boundary(ies) the note text explicitly supports, else None when
+        the text states no window. Two hard anti-hallucination guards back the
+        prompt: (1) the returned string must parse as an ISO date, and (2) its
+        year must appear verbatim in the note body — a fabricated date whose
+        year is absent from the source is rejected. A genuine backend error
+        propagates to the caller (the dream pass records it in the receipt);
+        only "no window" / unparseable output returns None.
+
+        Off the recall hot path — MLX imports stay deferred inside
+        ``chat_with_timeout`` (MLX invariant #4).
+        """
+        body = record.body or ""
+        if not body.strip():
+            return None
+
+        chat = self._ensure_chat()
+        prompt = (
+            f"Title: {record.title}\n"
+            f"Type: {record.type}\n"
+            f"Note text:\n{body[:2000]}\n\n"
+            "Extract the explicit validity window, if any."
+        )
+
+        from memo.memory.record import chat_with_timeout
+
+        out = chat_with_timeout(
+            chat,
+            timeout=_pair_classify_timeout(),
+            model=self.memory.cfg.helper_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": resolve_prompt(
+                        "validity_extract",
+                        _VALIDITY_EXTRACT_SYSTEM_PROMPT,
+                        self.memory.cfg.state_dir,
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            options={"temperature": 0.0, "max_tokens": 200, "thinking": False},
+        )
+        if out is None:
+            return None
+
+        raw = ((out.get("message") or {}).get("content") or "").strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE)
+
+        import json
+
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+
+        window: dict[str, str] = {}
+        for key in ("valid_at", "invalid_at"):
+            val = data.get(key)
+            if not val or not isinstance(val, str):
+                continue
+            iso = _normalize_extracted_date(val)
+            if iso is None:
+                continue
+            # Anti-hallucination: the year MUST appear verbatim in the note text.
+            if iso[:4] not in body:
+                continue
+            window[key] = iso
+        return window or None
 
     def build_entity_timeline(
         self,

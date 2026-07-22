@@ -49,6 +49,7 @@ from memo.cli_dream_passes import (
     _run_signal_gather,
     _run_stale,
     _run_synthesis,
+    _run_validity_extract,
 )
 from memo.config import Config
 from memo.dream_utils import (
@@ -636,6 +637,34 @@ def dream_run(
             except Exception as exc:
                 receipt["errors"].append(f"consolidate_episodes: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[consolidate] [yellow]warn[/yellow]")
+
+        # Bi-temporal validity extraction: LLM off the recall hot path (default
+        # OFF). For recent facts/decisions whose TEXT explicitly states a
+        # validity window, set valid_at/invalid_at — never hallucinated.
+        # `_run_validity_extract` is internally guarded: per-record + whole-pass
+        # failures land in receipt["errors"], never raise. Real runs only.
+        if flag_bool("MEMO_DREAM_VALIDITY_EXTRACT_ENABLED") and not dry_run:
+            progress.update(step, description="[validity] extracting validity windows...")
+            try:
+                _run_validity_extract(
+                    mem,
+                    receipt,
+                    limit=50
+                    if (_vl := flag_int("MEMO_DREAM_VALIDITY_EXTRACT_LIMIT")) is None
+                    else _vl,
+                    dry_run=dry_run,
+                )
+                _ve = receipt.get("validity_extract", {})
+                progress.update(
+                    step,
+                    description=(
+                        f"[validity] [green]✓[/green]  "
+                        f"{len(_ve.get('updated', []))} windows / {_ve.get('scanned', 0)} scanned"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"validity_extract: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[validity] [yellow]warn[/yellow]")
 
         # Tier-1 #1 — profile distillation: rewrite-in-place profile.md files -
         if flag_bool("MEMO_DREAM_PROFILE_ENABLED"):

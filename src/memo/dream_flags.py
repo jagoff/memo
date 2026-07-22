@@ -169,6 +169,12 @@ GATES: dict[str, GateSpec] = dict(
         _g(
             "MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED", "manual", "meta: gates episode consolidation"
         ),
+        _g(
+            "MEMO_DREAM_VALIDITY_EXTRACT_ENABLED",
+            "manual",
+            "meta: gates the LLM validity-window extraction pass (bi-temporal "
+            "valid_at/invalid_at); not a recall A/B knob",
+        ),
         _g("MEMO_DREAM_PROFILE_ENABLED", "manual", "meta: gates profile distillation"),
         _g("MEMO_DREAM_RETAG_GLOBAL_ENABLED", "manual", "meta: gates the retag pass"),
         _g("MEMO_DREAM_GRADUATION_ENABLED", "manual", "meta: gates quarantine graduation"),
