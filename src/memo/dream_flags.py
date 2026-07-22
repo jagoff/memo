@@ -103,6 +103,11 @@ GATES: dict[str, GateSpec] = dict(
         _g("MEMO_GRAPH_REASON_ENABLED", "manual", "attribution metadata only, no ranking effect"),
         _g("MEMO_VERDICT_ENABLED", "manual", "next-turn reaction telemetry; no retrieval effect"),
         _g("MEMO_MAINT_SLEEP_CYCLE_ENABLED", "manual", "background maintenance; op cost decision"),
+        _g(
+            "MEMO_DYNAMIC_MANDATE_SYNC_ENABLED",
+            "manual",
+            "ops: auto-refresh mandate rule blocks in opted-in repos; gate = user judgement",
+        ),
         _g("MEMO_SYNC_MEMFLOW_ENABLED", "manual", "memflow integration; op decision"),
         _g("MEMO_CRUSHER_ENABLED", "manual", "ingest token economy; gate = memo eval tokens"),
         _g("MEMO_VLM_CAPTION_ENABLED", "manual", "ingest-time VLM cost; gate = ingest quality"),

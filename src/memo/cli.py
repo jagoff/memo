@@ -53,6 +53,7 @@ from memo.cli_diag import (
 )
 from memo.cli_doctor import doctor
 from memo.cli_dream import dream_cmd
+from memo.cli_drift import drift as drift_cmd
 from memo.cli_embed_daemon import embed_daemon_group
 from memo.cli_entities import entities, entity, extract_entities
 from memo.cli_eval import eval_group
@@ -385,6 +386,7 @@ cli.add_command(gaps_cmd)
 cli.add_command(outcome_cmd)
 cli.add_command(digest)
 cli.add_command(mandate_cmd)
+cli.add_command(drift_cmd)
 cli.add_command(map_cmd)
 cli.add_command(tui)
 cli.add_command(hook_log)

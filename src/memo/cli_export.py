@@ -38,6 +38,29 @@ def export_json(output_path: str) -> None:
     console.print(f"Output: {result.output_path}")
 
 
+@export_group.command(name="passport")
+@click.argument("output_path", type=click.Path())
+def export_passport(output_path: str) -> None:
+    """Export a versioned, vendor-neutral passport (memo.passport.v1).
+
+    Higher fidelity than `json`: a stable schema header + the provenance /
+    verification `extra` bag, so another memo (or tool) can validate and
+    re-import with the canonical record intact.
+
+    Example: memo export passport /path/to/brain.passport
+    """
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    from pathlib import Path
+
+    result = mem.import_export.export_to(Path(output_path), "passport")
+
+    console.print("[green]Passport exported[/green]")
+    console.print(f"Exported: {result.exported_count}")
+    console.print(f"Output: {result.output_path}")
+
+
 @export_group.command(name="csv")
 @click.argument("output_path", type=click.Path())
 def export_csv(output_path: str) -> None:

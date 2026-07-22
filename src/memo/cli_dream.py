@@ -609,6 +609,23 @@ def dream_run(
                 receipt["errors"].append(f"anticipate: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[anticipate] [yellow]warn[/yellow]")
 
+        # Refresh dynamic mandate rule blocks in opted-in repos (self-syncing
+        # constitution): superseded rules retire, new ones appear, on their own.
+        if flag_bool("MEMO_DYNAMIC_MANDATE_SYNC_ENABLED"):
+            progress.update(step, description="[mandate-sync] refreshing rule blocks...")
+            from memo.constitution import run_mandate_sync_pass
+
+            receipt["mandate_sync"] = run_mandate_sync_pass(cfg, mem)
+            if receipt["mandate_sync"].get("error"):
+                receipt["errors"].append(f"mandate_sync: {receipt['mandate_sync']['error']}")
+            progress.update(
+                step,
+                description=(
+                    f"[mandate-sync] [green]✓[/green]  "
+                    f"{len(receipt['mandate_sync'].get('synced', []))} repo(s)"
+                ),
+            )
+
         # Phase 2 — episodic→semantic: cross-session consolidation -----------
         if flag_bool("MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED"):
             progress.update(step, description="[consolidate] cross-session...")
