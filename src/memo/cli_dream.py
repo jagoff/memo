@@ -90,31 +90,6 @@ def _run_verbatim_pass(
     )
 
 
-def _run_graduation_pass(
-    cfg: Config, mem: Any, *, dry_run: bool, receipt: dict[str, Any]
-) -> dict[str, Any]:
-    """Nightly graduation controller. Gated + best-effort: never raises out."""
-    from memo.flags import flag_bool
-
-    if not flag_bool("MEMO_GRADUATION_CONTROLLER_ENABLED"):
-        return receipt
-    try:
-        from memo.graduation.controller import run_graduation_controller
-
-        receipt["graduation"] = run_graduation_controller(cfg, mem, dry_run=dry_run)
-    except Exception as exc:  # best-effort pass, mirror the other tuners
-        receipt["errors"].append(f"graduation: {type(exc).__name__}: {exc}")
-    return receipt
-
-
-def _count_graduated(receipt: dict[str, Any]) -> int:
-    """Count candidates with status "graduated" in a dream receipt. Defensive
-    against a malformed/non-dict "graduation" or "candidates" value."""
-    graduation = receipt.get("graduation", {})
-    candidates = graduation.get("candidates", []) if isinstance(graduation, dict) else []
-    return sum(1 for c in candidates if isinstance(c, dict) and c.get("status") == "graduated")
-
-
 def _run_calibration_pass(
     cfg: Config, mem: Any, *, dry_run: bool, receipt: dict[str, Any]
 ) -> dict[str, Any]:
@@ -519,16 +494,6 @@ def dream_run(
                 progress.update(
                     step, description="[tune] graph-injection tuner [yellow]warn[/yellow]"
                 )
-
-        # Phase 0 — graduation controller: prove + flip dark flags, reversible.
-        if flag_bool("MEMO_GRADUATION_CONTROLLER_ENABLED"):
-            progress.update(step, description="[graduation] controller...")
-            _run_graduation_pass(cfg, mem, dry_run=dry_run, receipt=receipt)
-            _flipped = _count_graduated(receipt)
-            progress.update(
-                step,
-                description=f"[graduation] controller [green]✓[/green]  {_flipped} graduated",
-            )
 
         # Phase 1 — confidence calibration: refresh the predicted-vs-grounded map.
         if flag_bool("MEMO_RECALL_CONFIDENCE_GATE"):
@@ -1431,15 +1396,14 @@ def dream_status() -> None:
             )
 
     _gk = 5 if (_gk_flag := flag_int("MEMO_DREAM_TUNE_GRADUATION_K")) is None else _gk_flag
-    _grad = read_ledger(cfg.state_dir, limit=max(_gk * 4, 20))
-    if _grad:
-        from memo.dream_tune_online import graduation_streak
+    if read_ledger(cfg.state_dir, limit=max(_gk * 4, 20)):
+        from memo.dream_tune_online import graduation_status
 
-        _streak = graduation_streak(_grad)
+        _gs = graduation_status(cfg.state_dir, k=_gk)
         _verdict = (
-            "[green]✓ ready to enable by default[/green]" if _streak >= _gk else "accumulating"
+            "[green]✓ ready to enable by default[/green]" if _gs["graduated"] else "accumulating"
         )
-        console.print(f"  graduation: {_streak}/{_gk} confirmed nights — {_verdict}")
+        console.print(f"  graduation: {_gs['streak']}/{_gk} confirmed nights — {_verdict}")
     if data.get("anticipated"):
         from memo.dream_anticipate import briefing_line
 

@@ -13,7 +13,6 @@ from memo.secret_store import (
     decrypt_secret,
     derive_secret_key,
     detect_secrets_heuristic,
-    detect_secrets_llm,
     encrypt_secret,
 )
 from memo.tiers import DURABLE_TYPES, SECRET_KINDS
@@ -148,23 +147,3 @@ def test_no_false_positives_on_normal_text():
     content = "The password to the kingdom is not here."
     matches = detect_secrets_heuristic(content)
     assert len(matches) == 0
-
-
-def test_llm_detection_skipped_if_no_heuristic_matches():
-    """LLM detection should skip if heuristic found nothing."""
-    content = "This is normal text."
-    mock_llm = object()  # Would fail if called
-    matches = detect_secrets_llm(content, [], mock_llm)
-    assert matches == []
-
-
-def test_llm_detection_with_mock():
-    """LLM detection should parse and return LLM response."""
-
-    class MockLLM:
-        def chat(self, messages):
-            return '[{"kind": "api_token", "confidence": 0.95}]'
-
-    heuristic_matches = [("api_token", 0.7)]
-    result = detect_secrets_llm("some content", heuristic_matches, MockLLM())
-    assert result == [("api_token", 0.95)]

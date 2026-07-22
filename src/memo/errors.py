@@ -46,10 +46,6 @@ class ConfigTransactionError(StorageError):
     """A staged configuration batch could not commit or roll back cleanly."""
 
 
-class ConfigActivationError(MemoError, RuntimeError):
-    """Configuration saved but one or more confirmed activation actions failed."""
-
-
 class AmbiguousIdError(MemoError, ValueError):
     """Raised when an id prefix matches more than one record. Carries
     the candidate matches so the caller can surface them in an error."""

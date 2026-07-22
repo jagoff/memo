@@ -91,70 +91,6 @@ def load(force: bool = False) -> tuple[dict[str, set[str]], dict[tuple[str, str]
     return _graph
 
 
-def find_path(start: str, end: str, max_hops: int = 3) -> list[str] | None:
-    """Find the shortest path between two symbols in the codegraph.
-
-    Uses BFS. Returns a list of node names forming the path, or None if
-    unreachable. Tries flexible matching: exact, ``memo_`` prefix, or substring.
-    """
-    adjacency, _ = load()
-
-    start_node = _resolve_node(start, adjacency)
-    end_node = _resolve_node(end, adjacency)
-
-    if not start_node or not end_node:
-        return None
-
-    if start_node == end_node:
-        return [start_node]
-
-    queue: list[tuple[str, list[str]]] = [(start_node, [start_node])]
-    visited: set[str] = {start_node}
-
-    while queue:
-        node, path = queue.pop(0)
-
-        if len(path) > max_hops:
-            continue
-
-        for neighbor in adjacency.get(node, []):
-            if neighbor == end_node:
-                return [*path, neighbor]
-            if neighbor not in visited:
-                visited.add(neighbor)
-                queue.append((neighbor, [*path, neighbor]))
-
-    return None
-
-
-def _resolve_node(name: str, adjacency: dict[str, set[str]]) -> str | None:
-    """Resolve an entity name to a codegraph node with flexible matching.
-
-    Priority: exact > ``memo_`` prefix > shortest substring match.
-    """
-    name = name.lower().strip()
-
-    if name in adjacency:
-        return name
-
-    candidate = f"memo_{name}"
-    if candidate in adjacency:
-        return candidate
-
-    candidates = [node for node in adjacency if name in node]
-    if candidates:
-        return min(candidates, key=len)
-
-    return None
-
-
-def find_node_fuzzy(query: str) -> list[str]:
-    """Find all nodes matching a query substring (for exploration)."""
-    query = query.lower().strip()
-    adjacency, _ = load()
-    return [node for node in adjacency if query in node][:20]
-
-
 def is_stale() -> bool:
     """Codegraph self-maintains its index via a file-watcher.
 
@@ -178,13 +114,6 @@ def refresh(force: bool = False) -> bool:
 def auto_update_on_commit() -> None:
     """No-op kept for API parity (codegraph watches the working tree itself)."""
     return None
-
-
-def node_count() -> int:
-    """Return the cached node count (0 if not loaded)."""
-    if _graph is None:
-        return 0
-    return len(_graph[0])
 
 
 def reset() -> None:

@@ -230,6 +230,37 @@ def test_version_manager_rollback_to_version(version_manager, mock_memory):
     assert restored.title == "Original"
 
 
+def test_hard_delete_purges_version_history(mock_memory, monkeypatch):
+    """A hard delete drops the memory's rows from versions.db so it can't grow
+    unbounded (the delete-path cascade wired into `_delete_locked`). Version
+    history is derived state, not present in the markdown source of truth."""
+    monkeypatch.setenv("MEMO_SOFT_DELETE", "0")  # exercise the hard-delete path
+    rec = mock_memory.save(content="original body", title="Doc")
+    # A body change tracks a pre-update snapshot version via update_ops.
+    mock_memory.update(rec.id, content="revised body")
+
+    vm = mock_memory.versioning
+    assert vm.get_version_history(rec.id), "update should have tracked a version"
+
+    assert mock_memory.delete(rec.id) is True
+
+    assert vm.get_version_history(rec.id) == []
+
+
+def test_soft_delete_keeps_version_history(mock_memory):
+    """Soft delete (the default) leaves version history intact — only the
+    hard-delete path purges it."""
+    rec = mock_memory.save(content="original body", title="Doc")
+    mock_memory.update(rec.id, content="revised body")
+
+    vm = mock_memory.versioning
+    assert vm.get_version_history(rec.id)
+
+    assert mock_memory.delete(rec.id) is True
+
+    assert vm.get_version_history(rec.id)  # untouched under soft delete
+
+
 def test_version_dataclass():
     """Test Version dataclass structure."""
     v = Version(

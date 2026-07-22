@@ -11,8 +11,6 @@ def score(n: Nudge, mult: float, *, w_urgency: float = 0.6, w_value: float = 0.4
 
 @dataclass(frozen=True)
 class Routed:
-    badge_count: int
-    badge_kind: str | None
     digest: list[Nudge]
     urgent: Nudge | None
 
@@ -41,8 +39,6 @@ def route(
                 urgent = n
                 break
     return Routed(
-        badge_count=len(ranked),
-        badge_kind=ranked[0].kind if ranked else None,
         digest=ranked[:digest_top],
         urgent=urgent,
     )

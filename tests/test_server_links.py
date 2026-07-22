@@ -70,7 +70,11 @@ def test_memo_links_backlinks_returns_list_of_dicts(tmp_cfg) -> None:
 
     result = tools["memo_links_backlinks"](memory_id="tgt-xyz")
 
-    mem.crossref.get_backlinks.assert_called_once_with("tgt-xyz")
+    # get_backlinks is now called with a batched title_resolver so source_title
+    # is populated from the store instead of always "".
+    call = mem.crossref.get_backlinks.call_args
+    assert call.args == ("tgt-xyz",)
+    assert "title_resolver" in call.kwargs
     assert isinstance(result, list)
     assert len(result) == 1
     item = result[0]
@@ -95,7 +99,7 @@ def test_memo_links_backlinks_empty(tmp_cfg) -> None:
 
     result = tools["memo_links_backlinks"](memory_id="orphan-id")
     assert result == []
-    mem.crossref.get_backlinks.assert_called_once_with("orphan-id")
+    assert mem.crossref.get_backlinks.call_args.args == ("orphan-id",)
 
 
 def test_memo_links_outlinks_returns_list_of_dicts(tmp_cfg) -> None:

@@ -431,58 +431,6 @@ class LifecycleManager:
 
         return actions
 
-    def get_lifecycle_report(self, limit: int = 100) -> dict[str, Any]:
-        """Generate a report on the lifecycle state of memories.
-
-        Returns:
-            Dict with statistics and recommendations.
-        """
-        all_records = self.memory.list(limit=limit)
-
-        stats = {
-            "total": len(all_records),
-            "forget_candidates": 0,
-            "archive_candidates": 0,
-            "promotion_candidates": 0,
-            "demotion_candidates": 0,
-            "expiration_candidates": 0,
-            "never_accessed": 0,
-            "avg_access_count": 0.0,
-        }
-
-        total_access = 0
-        for rec in all_records:
-            access_count = self.get_access_count(rec.id)
-            total_access += access_count
-
-            if access_count == 0:
-                stats["never_accessed"] += 1
-
-            should_forget, _ = self.should_forget(rec.id)
-            if should_forget:
-                stats["forget_candidates"] += 1
-
-            should_archive, _ = self.should_archive(rec.id)
-            if should_archive:
-                stats["archive_candidates"] += 1
-
-            should_promote, _ = self.should_promote(rec.id)
-            if should_promote:
-                stats["promotion_candidates"] += 1
-
-            should_demote, _ = self.should_demote(rec.id)
-            if should_demote:
-                stats["demotion_candidates"] += 1
-
-            should_expire, _ = self.should_expire(rec.id)
-            if should_expire:
-                stats["expiration_candidates"] += 1
-
-        if len(all_records) > 0:
-            stats["avg_access_count"] = total_access / len(all_records)
-
-        return stats
-
 
 __all__ = [
     "LifecycleAction",

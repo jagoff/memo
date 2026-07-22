@@ -102,15 +102,6 @@ def test_synthesis_max_clusters_default():
 
 
 # ---------------------------------------------------------------------------
-# Initiative 2 — Adaptive recall context flag
-# ---------------------------------------------------------------------------
-
-
-def test_adaptive_context_enabled_by_default():
-    assert flag_bool("MEMO_RECALL_ADAPTIVE_CONTEXT") is True
-
-
-# ---------------------------------------------------------------------------
 # Initiative 7 — Outcome loop on by default
 # ---------------------------------------------------------------------------
 

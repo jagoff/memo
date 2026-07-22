@@ -65,7 +65,7 @@ def bench_group() -> None:
     default="policy",
     show_default=True,
     help="policy = memo retrieval+answer; oracle = answer over raw turns "
-    "(ceiling anchor, no memory). 'shuffled' floor is not yet implemented.",
+    "(ceiling anchor, no memory).",
 )
 @click.option(
     "--contradict-scan",

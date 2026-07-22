@@ -42,18 +42,7 @@ def test_load_builds_symbol_adjacency(monkeypatch, tmp_path: Path) -> None:
     assert adjacency["alpha"] == {"beta"}
     assert adjacency["beta"] == {"alpha", "gamma"}
     assert ("alpha", "gamma") not in edge_weights
-    assert codegraph_loader.node_count() == 3
-
-
-def test_find_path_uses_codegraph(monkeypatch, tmp_path: Path) -> None:
-    db = tmp_path / ".codegraph" / "codegraph.db"
-    db.parent.mkdir(parents=True)
-    _seed_db(db)
-    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", db)
-    codegraph_loader.reset()
-
-    assert codegraph_loader.find_path("Alpha", "Gamma") == ["alpha", "beta", "gamma"]
-    assert codegraph_loader.find_path("Alpha", "nope") is None
+    assert len(adjacency) == 3
 
 
 def test_refresh_is_noop_and_is_stale_only_when_missing(monkeypatch, tmp_path: Path) -> None:

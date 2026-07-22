@@ -12,6 +12,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from memo.crossref import source_titles_via
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
 
@@ -29,7 +30,9 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             memory_id: The memory ID to find backlinks for.
         """
-        backlinks = memory.crossref.get_backlinks(memory_id)
+        backlinks = memory.crossref.get_backlinks(
+            memory_id, title_resolver=source_titles_via(memory.get)
+        )
         return [dataclasses.asdict(b) for b in backlinks]
 
     @annotated_tool(server, **READ_ONLY)

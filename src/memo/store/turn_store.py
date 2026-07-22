@@ -205,13 +205,6 @@ class TurnStore(_ConnectionMixin):
                 )
         return int(cur.rowcount)
 
-    def sessions_watermark(self) -> dict[str, int]:
-        """Map of `session_id -> max turn_idx` currently indexed."""
-        rows = self._conn.execute(
-            "SELECT session_id, MAX(turn_idx) AS max_idx FROM turns GROUP BY session_id"
-        ).fetchall()
-        return {row["session_id"]: int(row["max_idx"]) for row in rows}
-
     def stats(self) -> dict[str, int]:
         sessions = self._conn.execute(
             "SELECT COUNT(DISTINCT session_id) AS n FROM turns"

@@ -112,6 +112,50 @@ def test_dry_run_on_empty_corpus_is_safe_noop(tmp_path: Path):
     assert receipt["archived_stale"] == []
 
 
+def test_maintain_evicts_expired_crush_cache_entries(tmp_path: Path):
+    """An expired crush-cache original is unlinked by the maintain run and the
+    receipt reports the count. retrieve() only skips at read-time; maintain is
+    what reclaims the disk."""
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    state = tmp_path / "state"
+    cache_dir = state / "crush_cache"
+    cache_dir.mkdir(parents=True)
+
+    expired = cache_dir / ("a" * 16 + ".json")
+    old_ts = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    expired.write_text(_json.dumps({"ts": old_ts, "content": "[]"}), encoding="utf-8")
+
+    fresh = cache_dir / ("b" * 16 + ".json")
+    fresh_ts = datetime.now(UTC).isoformat()
+    fresh.write_text(_json.dumps({"ts": fresh_ts, "content": "[]"}), encoding="utf-8")
+
+    result = CliRunner().invoke(cli, ["maintain", "--json"], env=_env(tmp_path))
+    assert result.exit_code == 0, result.output
+
+    receipt = json.loads(result.output)
+    assert receipt["crush_cache_evicted"] == 1
+    assert not expired.exists()
+    assert fresh.exists()
+
+
+def test_maintain_dry_run_does_not_evict_crush_cache(tmp_path: Path):
+    """A --dry-run maintain must not unlink expired crush-cache entries."""
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    cache_dir = tmp_path / "state" / "crush_cache"
+    cache_dir.mkdir(parents=True)
+    expired = cache_dir / ("c" * 16 + ".json")
+    old_ts = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    expired.write_text(_json.dumps({"ts": old_ts, "content": "[]"}), encoding="utf-8")
+
+    result = CliRunner().invoke(cli, ["maintain", "--dry-run", "--json"], env=_env(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert expired.exists()
+
+
 # -- Memory.lint() (was untested) ------------------------------------------
 
 

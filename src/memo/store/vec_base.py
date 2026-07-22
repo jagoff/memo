@@ -125,8 +125,5 @@ class VecStoreBase:
     def get_fts_body_by_path(self, path: str) -> str:
         raise NotImplementedError
 
-    def rebuild_fts(self) -> None:
-        """Rebuild the full-text search index. No-op if not supported."""
-
     def close(self) -> None:
         """Release any held resources."""

@@ -121,7 +121,6 @@ GATES: dict[str, GateSpec] = dict(
             "MCP client-sampling for synthesis; not recall-measurable — quality "
             "gates in synapse eval-chat, human flips via config",
         ),
-        _g("MEMO_GRADUATION_CONTROLLER_ENABLED", "manual", "memory graduation; own shadow eval"),
         # --- manual (meta): flags gating nightly passes themselves ------------
         _g("MEMO_DREAM_TUNE_ENABLED", "manual", "meta: gates the tuner pass; op cost decision"),
         _g("MEMO_DREAM_TUNE_BOOST_ENABLED", "manual", "meta: gates the boost explorer"),

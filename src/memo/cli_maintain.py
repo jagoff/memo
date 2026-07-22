@@ -600,6 +600,20 @@ def maintain_cmd(
         except Exception as exc:
             receipt["errors"].append(f"vacuum: {type(exc).__name__}: {exc}")
 
+    # 4b. Crush-cache TTL eviction: unlink expired reversible-compression
+    # originals. retrieve() only skips them at read-time; nothing reclaimed the
+    # disk until this pass. Best-effort — a cache hiccup never sinks maintain.
+    try:
+        from memo.flags_capture import flag_crusher_cache_ttl_days
+        from memo.store.crush_cache import CrushCache
+
+        if not dry_run:
+            receipt["crush_cache_evicted"] = CrushCache(cfg.state_dir).evict_expired(
+                ttl_days=flag_crusher_cache_ttl_days()
+            )
+    except Exception as exc:
+        receipt["errors"].append(f"crush_cache: {type(exc).__name__}: {exc}")
+
     # 5. Emergent synthesis (opt-out: MEMO_SYNTHESIS_ENABLED=0 to disable) -----
     if not skip_synthesize and flag_bool("MEMO_SYNTHESIS_ENABLED"):
         try:
@@ -705,6 +719,8 @@ def maintain_cmd(
     console.print(f"  stale memories archived: {len(receipt['archived_stale'])}")
     if receipt.get("vacuumed"):
         console.print(f"  soft-deleted records vacuumed: {receipt['vacuumed']}")
+    if receipt.get("crush_cache_evicted"):
+        console.print(f"  crush-cache entries evicted: {receipt['crush_cache_evicted']}")
     if receipt["synthesized"]:
         saved = sum(1 for s in receipt["synthesized"] if s.get("saved"))
         console.print(

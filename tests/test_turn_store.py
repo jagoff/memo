@@ -83,7 +83,6 @@ def test_replace_session_idempotent_swaps_rows(store: TurnStore):
 
     assert n == 3
     assert store.stats() == {"sessions": 1, "turns": 3}
-    assert store.sessions_watermark() == {"sess-1": 2}
     # search must reflect the new content, not the stale first-pass row.
     hits = store.search("editado")
     assert len(hits) == 1
@@ -172,23 +171,6 @@ def test_prune_older_than_removes_old_rows_from_both_tables(store: TurnStore):
     assert store.search("antiguo") == []
     assert store.search("legado") == []
     assert len(store.search("reciente")) == 1
-
-
-def test_sessions_watermark(store: TurnStore):
-    store.replace_session(
-        "sess-a",
-        "claude-code",
-        [
-            {"idx": 0, "role": "user", "ts": "2026-07-01T10:00:00", "text": "a"},
-            {"idx": 3, "role": "user", "ts": "2026-07-01T10:00:05", "text": "b"},
-        ],
-    )
-    store.replace_session(
-        "sess-b",
-        "claude-code",
-        [{"idx": 1, "role": "user", "ts": "2026-07-01T10:00:00", "text": "c"}],
-    )
-    assert store.sessions_watermark() == {"sess-a": 3, "sess-b": 1}
 
 
 def test_stats_empty_store(store: TurnStore):

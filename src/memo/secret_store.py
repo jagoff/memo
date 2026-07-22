@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -11,7 +10,6 @@ import secrets
 import socket
 import stat
 from pathlib import Path
-from typing import Any
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -239,46 +237,3 @@ def detect_secrets_heuristic(content: str) -> list[tuple[str, float]]:
         if pattern.search(content):
             found.append((kind, 0.7))
     return found
-
-
-def detect_secrets_llm(
-    content: str,
-    heuristic_matches: list[tuple[str, float]],
-    llm_instance: Any,
-) -> list[tuple[str, float]]:
-    """
-    Ask LLM to confirm/refine heuristic matches.
-    Skipped if no heuristic matches or MEMO_DETECT_SECRETS_LLM=False.
-    Returns: [(kind, confidence), ...]
-    """
-    from memo.flags import flag_bool
-
-    if not heuristic_matches or not flag_bool("MEMO_DETECT_SECRETS_LLM"):
-        return heuristic_matches
-
-    prompt = f"""
-    Analyze the following text snippet for secrets (API keys, passwords, tokens, credentials).
-
-    For each potential secret found, respond with JSON:
-    [
-        {{"kind": "api_token|password|ssh_key|db_credential|certificate|generic", "confidence": 0.95}},
-        ...
-    ]
-
-    Text:
-    {content[:600]}
-
-    Return only valid JSON array, no other text.
-    """
-
-    try:
-        response = llm_instance.chat([{"role": "user", "content": prompt}])
-        parsed = json.loads(response)
-        if isinstance(parsed, list) and all(
-            isinstance(item, dict) and "kind" in item and "confidence" in item for item in parsed
-        ):
-            return [(item["kind"], item["confidence"]) for item in parsed]
-    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
-        _log.debug("LLM detection failed: %s, falling back to heuristic", exc)
-
-    return heuristic_matches

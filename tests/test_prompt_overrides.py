@@ -70,7 +70,6 @@ _CALL_SITES = [
     ("src/memo/memory/maintain_ops.py", "extract_entities"),
     ("src/memo/cli_transcripts.py", "reflect"),
     ("src/memo/temporal.py", "contradiction"),
-    ("src/memo/proactive/suggester.py", "suggestion"),
     ("src/memo/consolidation.py", "merge"),
 ]
 

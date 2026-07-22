@@ -9,6 +9,7 @@ consolidate_ops.py.
 from __future__ import annotations
 
 import builtins
+import contextlib
 import json
 import time
 from pathlib import Path
@@ -317,14 +318,18 @@ class _MaintainOpsMixin(_MemoryBase):
             rel_path = md_path.relative_to(self.cfg.memory_dir)
             is_secret = meta.get("type") == "secret" or rel_path.parts[:1] == ("secrets",)
             if is_secret:
-                if rebuild_rows is None and isinstance(md_id, str):
-                    _purge_legacy_secret_index(
+                if (
+                    rebuild_rows is None
+                    and isinstance(md_id, str)
+                    and _purge_legacy_secret_index(
                         self.store,
                         md_path,
                         self.cfg.memory_dir,
                         md_id,
                         meta,
                     )
+                ):
+                    self._purge_version_history(md_id)
                 skipped += 1
                 continue
             if not is_canonical_memory_id(md_id):
@@ -853,6 +858,18 @@ class _MaintainOpsMixin(_MemoryBase):
             )
             return 0
 
+    def _purge_version_history(self, id_: str) -> None:
+        """Best-effort purge of derived version rows for a hard-deleted id.
+
+        Mirrors delete_ops._delete_locked: version rows live in versions.db, not
+        markdown, so a direct store.hard_delete (bypassing Memory.delete) would
+        otherwise orphan them. Guarded on versions.db existing so a maintain pass
+        never eagerly creates an empty db.
+        """
+        if (self.cfg.state_dir / "versions.db").is_file():
+            with contextlib.suppress(Exception):
+                self.versioning.version_store.delete_versions(id_)
+
     def _prune_chunks(
         self,
         parent_id: str,
@@ -865,6 +882,7 @@ class _MaintainOpsMixin(_MemoryBase):
             if row["id"] in keep:
                 continue
             self.store.hard_delete(row["id"])
+            self._purge_version_history(row["id"])
             _log.debug("reindex: pruned stale chunk %s (parent %s)", row["id"][:12], parent_id[:8])
 
     def lint(self) -> dict[str, builtins.list[dict[str, Any]]]:
@@ -1078,6 +1096,7 @@ class _MaintainOpsMixin(_MemoryBase):
                 if fix:
                     if parent_id:
                         self.store.hard_delete(row["id"])
+                        self._purge_version_history(row["id"])
                     else:
                         self.store.delete(row["id"])
         return orphan_store
