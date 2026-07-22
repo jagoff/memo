@@ -76,9 +76,12 @@ def test_gate_off_archives_older_side(mock_memory, tmp_path):
     assert result.exit_code == 0, result.output
     receipt = _receipt(result.output)
     assert receipt["superseded"], receipt
-    # exactly one side got archived
-    gone = [i for i in (old.id, new.id) if mock_memory.get(i) is None]
-    assert len(gone) == 1
+    # Invalidate-don't-delete: both sides stay queryable (nothing deleted); the
+    # superseded (older) side has its interval closed in place instead.
+    assert mock_memory.get(old.id) is not None
+    assert mock_memory.get(new.id) is not None
+    closed = [i for i in (old.id, new.id) if (r := mock_memory.get(i)) and r.invalid_at]
+    assert len(closed) == 1
 
 
 def test_maintain_marks_competing_within_margin(mock_memory, monkeypatch):

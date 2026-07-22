@@ -544,15 +544,23 @@ def maintain_cmd(
                     continue
                 assert decision.action == ARCHIVE
                 target = decision.dominated_id
-                action = "delete" if hard_delete else "archive"
+                action = "delete" if hard_delete else "invalidate"
                 if not dry_run:
-                    ok = (
-                        mem.delete(target)
-                        if hard_delete
-                        else mem.lifecycle.archive_memory(
-                            target, superseded_by=decision.dominant_id
+                    if hard_delete:
+                        ok = mem.delete(target)
+                    else:
+                        # Invalidate-don't-delete (Zep-faithful): close the
+                        # loser's interval at the SUCCESSOR's valid_at (not
+                        # scan-time now()) and keep its .md + index row live.
+                        # COALESCE to the winner's created for legacy rows saved
+                        # before valid_at existed.
+                        winner = mem.get(decision.dominant_id)
+                        winner_valid_at = (winner.valid_at or winner.created) if winner else None
+                        ok = winner_valid_at is not None and mem.lifecycle.invalidate_in_place(
+                            loser_id=target,
+                            winner_id=decision.dominant_id,
+                            invalid_at=winner_valid_at,
                         )
-                    )
                     if not ok:
                         # Mutation failed (e.g. target vanished concurrently):
                         # pair stays open — don't record it as superseded, or
