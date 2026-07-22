@@ -17,9 +17,12 @@ def test_is_reference_noise_predicate():
     assert is_reference_noise("# Title") is False
     # wikilink / md link / URL → kept
     assert is_reference_noise("[[Ideas]]") is False
+    assert is_reference_noise("[docs](url)") is False
     assert is_reference_noise("see https://example.com") is False
     # long enough → kept regardless
     assert is_reference_noise("x" * 80) is False
+    # pathological ReDoS input must not hang (linear substring scans)
+    assert is_reference_noise("[a](" * 60_000) is False
 
 
 def test_save_rejects_reference_noise(mock_memory):
