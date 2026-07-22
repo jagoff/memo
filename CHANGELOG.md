@@ -9,6 +9,54 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-07-21
+
+### Added
+
+- **Verification-state decay** (opt-in via `MEMO_VERIFICATION_STATE_TRACKING`,
+  default OFF). A verification lifecycle that had been implemented but never
+  wired is now live end-to-end: a memory marked `verification_state: verified`
+  without a `verified_at` gets one stamped on reindex; `memo maintain` ages
+  VERIFIED→STALE→UNVERIFIED by `verified_at` (thresholds
+  `MEMO_VERIFICATION_STALE_DAYS` = 30, `MEMO_VERIFICATION_UNVERIFY_DAYS` = 60),
+  recording the count in its receipt; and live recall multiplies each hit's
+  score by a state decay factor (VERIFIED ≈ 1.0, STALE 0.7, UNVERIFIED 0.8) so
+  fresh facts outrank stale ones. Pure in-memory on the hot path; a no-op for an
+  all-UNVERIFIED corpus. Replaces the earlier, thread-unsafe `memory_map`
+  approach with per-call data sourced from the record/store.
+
+### Fixed
+
+- **Recall hook budget:** the subprocess fallback re-embedded over the daemon
+  socket at a 30 s timeout — a busy/warming daemon still answers `ping`, so a
+  stalled embed could exceed the hook kill. The fallback now caps the embed
+  timeout, requires the daemon (fail fast, no cold-load GPU fight), and
+  downgrades vec/hybrid → bm25 on embed failure instead of returning nothing.
+- **Recall daemon/subprocess parity:** ported the daemon-only post-rank gates to
+  the subprocess fallback — `MEMO_RECALL_DEDUP_COLLAPSE` (default ON), the
+  unmatched-term gate, and the recency band — so recall no longer differs when
+  the daemon is down.
+- **Graph density boost:** implemented `GraphStore.memory_degree()` — it was
+  called by the density-boost rerank but never defined, so
+  `MEMO_GRAPH_DENSITY_BOOST` silently did nothing.
+- **`memo migrate --consolidate-db`:** now merges all six of `graph.db`'s tables
+  (previously only two), so co-recall / entity-edge / alias / semantic-relation
+  data is no longer orphaned into `graph.db.bak`.
+- **`memo links reindex`:** uses `index_source` (delete-then-insert, including
+  typed `- rel [[target]]` edges) instead of the append-only `index_wikilinks`,
+  which dropped typed edges and left stale rows.
+- **ProactiveStore:** aligned with the sidecar connection model (WAL,
+  `check_same_thread=False`, busy timeout); the briefing path now closes its
+  connection instead of leaking it on the SessionStart hot path.
+
+### Removed
+
+- Dead, unreachable code with no callers: the never-wired token-economy Wave 2
+  modules (`stream_compress`, `prefix_optimizer`), the graph-distance rerank
+  (a stub `distance_to_nearest_fact` + an in-memory `Graph` used only by tests),
+  and the dead flags `MEMO_STREAM_COMPRESS`, `MEMO_PREFIX_CACHE_ALIGN`,
+  `MEMO_MEMFLOW_DIR`, `MEMO_GRAPH_DISTANCE_DECAY`, `MEMO_GRAPH_DISTANCE_DECAY_RATE`.
+
 ## [3.10.0] - 2026-07-21
 
 ### Changed
