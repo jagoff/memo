@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from datetime import UTC, datetime
 from typing import Any
 
 from ._base import _StoreBase
@@ -25,8 +26,30 @@ _TYPE_FILTER_CANDIDATE_MULT = 20
 
 _META_SELECT_COLUMNS = (
     "id, path, title, type, tags, created, updated, body_hash, extra_json, "
-    "verification_state, verified_at"
+    "verification_state, verified_at, valid_at, invalid_at"
 )
+
+
+def _validity_filter(prefix: str, include_invalid: bool) -> tuple[str, list[Any]]:
+    """Default-recall temporal gate (record-level bi-temporal validity).
+
+    Excludes rows whose world-validity interval is already closed as of *now*
+    — SQL ``(invalid_at IS NULL OR invalid_at > ?)`` — so a contradiction-
+    superseded fact stays in-index (recoverable, as-of queryable) but drops out
+    of normal recall. Index-friendly via the ``idx_meta_invalid_at`` partial
+    index. Lexicographic ISO comparison is correct here even for mixed-precision
+    timestamps (bare date vs full datetime).
+
+    ``prefix`` qualifies the column for JOINed queries (``"meta."``) vs
+    single-table selects (``""``). ``include_invalid=True`` returns
+    ``("", [])`` — the bypass seam Task 8's ``--as-of`` valid-time path uses to
+    substitute its own predicate. Qmark binding matches the store's positional
+    param style.
+    """
+    if include_invalid:
+        return "", []
+    now = datetime.now(UTC).isoformat()
+    return f" AND ({prefix}invalid_at IS NULL OR {prefix}invalid_at > ?)", [now]
 
 
 def _env_float(
@@ -67,6 +90,7 @@ class _BM25QueriesMixin(_StoreBase):
         type_: str | None = None,
         exclude_types: set[str] | None = None,
         field_boost: str | None = None,
+        include_invalid: bool = False,
     ) -> list[dict[str, Any]]:
         """BM25 keyword search. Dispatches to tantivy when available, FTS5 otherwise.
 
@@ -76,15 +100,25 @@ class _BM25QueriesMixin(_StoreBase):
         `field_boost="exact"` forces the FTS5 path (so the elevated tag/title
         weights apply deterministically regardless of backend) and runs a
         strict AND with no OR fallback.
+
+        `include_invalid=False` (default) hides rows whose validity interval is
+        closed as of now; Task 8's as-of path passes `True` to bypass it.
         """
         if not query or not query.strip():
             return []
         if field_boost == "exact":
-            return self._search_bm25_fts5(query, limit, type_, exclude_types, field_boost="exact")
+            return self._search_bm25_fts5(
+                query, limit, type_, exclude_types, field_boost="exact",
+                include_invalid=include_invalid,
+            )
         t = self._get_tantivy()
         if t is not None:
-            return self._search_bm25_tantivy(query, limit, type_, exclude_types, t)
-        return self._search_bm25_fts5(query, limit, type_, exclude_types)
+            return self._search_bm25_tantivy(
+                query, limit, type_, exclude_types, t, include_invalid=include_invalid
+            )
+        return self._search_bm25_fts5(
+            query, limit, type_, exclude_types, include_invalid=include_invalid
+        )
 
     def _search_bm25_tantivy(
         self,
@@ -93,6 +127,7 @@ class _BM25QueriesMixin(_StoreBase):
         type_: str | None,
         exclude_types: set[str] | None,
         t: Any,
+        include_invalid: bool = False,
     ) -> list[dict[str, Any]]:
         # Fetch more candidates when filtering by type so we can honour `limit`
         # after post-filtering against the meta table.
@@ -103,11 +138,12 @@ class _BM25QueriesMixin(_StoreBase):
         # Resolve metadata from sqlite in one batched query.
         id_score = {h["id"]: h["score"] for h in hits}
         placeholders = ",".join("?" for _ in id_score)
+        valid_sql, valid_params = _validity_filter("", include_invalid)
         sql = (
             f"SELECT {_META_SELECT_COLUMNS} "  # noqa: S608
-            f"FROM meta WHERE id IN ({placeholders}){self._deleted_filter_sql()}"
+            f"FROM meta WHERE id IN ({placeholders}){self._deleted_filter_sql()}{valid_sql}"
         )
-        params: list[Any] = list(id_score.keys())
+        params: list[Any] = [*id_score.keys(), *valid_params]
         if type_:
             sql += " AND type = ?"
             params.append(type_)
@@ -130,6 +166,7 @@ class _BM25QueriesMixin(_StoreBase):
         type_: str | None,
         exclude_types: set[str] | None,
         field_boost: str | None = None,
+        include_invalid: bool = False,
     ) -> list[dict[str, Any]]:
         # FTS5 needs an explicit MATCH expression. Pre-2026-05-07 we wrapped
         # the whole query in `"..."` (phrase match) to dodge FTS5 syntax
@@ -179,7 +216,8 @@ class _BM25QueriesMixin(_StoreBase):
                 "       bm25(fts, ?, ?, ?, ?) AS bm25_score, "
                 "       meta.path, meta.title, meta.type, meta.tags, "
                 "       meta.created, meta.updated, meta.body_hash, meta.extra_json, "
-                "       meta.verification_state, meta.verified_at "
+                "       meta.verification_state, meta.verified_at, "
+                "       meta.valid_at, meta.invalid_at "
                 "FROM fts JOIN meta ON meta.id = fts.id "
                 "WHERE fts MATCH ? "
             )
@@ -196,6 +234,9 @@ class _BM25QueriesMixin(_StoreBase):
             if exclude_types:
                 sql += f"AND meta.type NOT IN ({','.join('?' for _ in exclude_types)}) "
                 params.extend(sorted(exclude_types))
+            valid_sql, valid_params = _validity_filter("meta.", include_invalid)
+            sql += valid_sql + " "
+            params.extend(valid_params)
             sql += "ORDER BY bm25_score ASC LIMIT ?"
             params.append(candidate_k)
             try:
@@ -236,29 +277,35 @@ class _BM25QueriesMixin(_StoreBase):
         limit: int = 10,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        include_invalid: bool = False,
     ) -> list[dict[str, Any]]:
         """Fuzzy (typo-tolerant) BM25 search via tantivy.
 
         Falls back to `_search_bm25_fts5` when tantivy is not available
         (no true fuzzy without tantivy, but better than nothing).
         Returns rows shaped like `search()`.
+
+        `include_invalid` mirrors `search_bm25`: default hides closed intervals.
         """
         if not query or not query.strip():
             return []
         t = self._get_tantivy()
         if t is None:
-            return self._search_bm25_fts5(query, limit, type_, exclude_types)
+            return self._search_bm25_fts5(
+                query, limit, type_, exclude_types, include_invalid=include_invalid
+            )
         candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
         hits = t.search_fuzzy(query, candidate_k)
         if not hits:
             return []
         id_score = {h["id"]: h["score"] for h in hits}
         placeholders = ",".join("?" for _ in id_score)
+        valid_sql, valid_params = _validity_filter("", include_invalid)
         sql = (
             f"SELECT {_META_SELECT_COLUMNS} "  # noqa: S608
-            f"FROM meta WHERE id IN ({placeholders}){self._deleted_filter_sql()}"
+            f"FROM meta WHERE id IN ({placeholders}){self._deleted_filter_sql()}{valid_sql}"
         )
-        params: list[Any] = list(id_score.keys())
+        params: list[Any] = [*id_score.keys(), *valid_params]
         if type_:
             sql += " AND type = ?"
             params.append(type_)
