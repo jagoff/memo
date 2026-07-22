@@ -26,9 +26,9 @@ def test_no_duplicate_flag_names_across_spec_modules() -> None:
     assert len(flags._SPECS) == len(flags.REGISTRY)
 
 
-def test_graph_semantic_relations_uses_the_live_search_spec() -> None:
+def test_graph_semantic_relations_uses_the_graph_domain_spec() -> None:
     spec = flags.REGISTRY["MEMO_GRAPH_SEMANTIC_RELATIONS"]
-    assert spec.group == "search"
+    assert spec.group == "graph"
     assert "stub" not in spec.help.lower()
 
 

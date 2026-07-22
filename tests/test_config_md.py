@@ -336,3 +336,39 @@ def test_configured_values_keeps_source_file(tmp_path: Path) -> None:
 
     assert value.value == 7
     assert value.file == str(path)
+
+
+def test_legacy_search_graph_key_loads_as_canonical_graph_key(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    path = cfg / "search-config.md"
+    path.write_text(
+        "```toml\n[search]\ngraph_signal_enabled = true\n```\n",
+        encoding="utf-8",
+    )
+
+    values = config_md.load_values({"MEMO_CONFIG_DIR": str(home)})
+
+    assert values["graph.signal_enabled"].value is True
+    assert values["graph.signal_enabled"].file == str(path)
+    assert config_md.flag_values({"MEMO_CONFIG_DIR": str(home)}) == {
+        "MEMO_GRAPH_SIGNAL_ENABLED": "on"
+    }
+
+
+def test_set_graph_signal_writes_graph_domain_file(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    config_md.write_default_config(
+        data_dir=tmp_path / "data",
+        env={"MEMO_CONFIG_DIR": str(home)},
+    )
+
+    changed = config_md.set_value(
+        "graph.signal_enabled",
+        "on",
+        env={"MEMO_CONFIG_DIR": str(home)},
+    )
+
+    assert changed == home / "config" / "graph-config.md"
+    assert "signal_enabled = \"on\"" in changed.read_text(encoding="utf-8")

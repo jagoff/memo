@@ -83,36 +83,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "exists corpus-wide and entity retrieval works the moment it's enabled, "
         "without a backfill. Set 0 to skip the on-save write.",
     ),
-    _spec(
-        "MEMO_GRAPH_RETRIEVAL_ENABLED",
-        "bool",
-        False,
-        "entity",
-        "Include knowledge-graph candidates in hybrid search. Memories sharing entities with the query are fused via RRF.",
-    ),
-    _spec(
-        "MEMO_GRAPH_DENSITY_BOOST",
-        "float",
-        0.0,
-        "entity",
-        "Reranking boost for well-connected memories in the knowledge graph. "
-        "Multiplies graph candidates' scores by (1.0 + boost * degree). "
-        "0.0 (default) = off. Higher values favor semantically central memories.",
-        min_val=0.0,
-    ),
-    _spec(
-        "MEMO_GRAPH_FALLBACK_MIN_HITS",
-        "int",
-        0,
-        "entity",
-        "Fallback seeding: if vec retrieval returns fewer than this many hits, "
-        "automatically enable graph candidates to boost coverage. "
-        "0 (default) = off (graph only used if MEMO_GRAPH_RETRIEVAL_ENABLED=1).",
-        min_val=0,
-    ),
-    # NB: MEMO_GRAPH_SEMANTIC_RELATIONS lives in flags_search.py (the live
-    # spec — search_ops reads it). A stale duplicate here used to shadow it
-    # in REGISTRY because behavior specs are merged after search specs.
     # session checkpoints / resume
     _spec(
         "MEMO_SESSION_DISABLE", "bool", False, "session", "Disable session checkpoint/recent hooks."

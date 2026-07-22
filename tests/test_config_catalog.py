@@ -45,6 +45,13 @@ def test_catalog_owns_markdown_mappings() -> None:
     assert domain_file_for_key("update.auto_update") == "advanced-config.md"
 
 
+def test_graph_flags_are_routed_to_graph_domain() -> None:
+    assert REGISTRY["MEMO_GRAPH_PROJECTION_ENABLED"].group == "graph"
+    assert path_to_env()["graph.signal_enabled"] == "MEMO_GRAPH_SIGNAL_ENABLED"
+    assert path_to_env()["graph.signal_alpha"] == "MEMO_GRAPH_SIGNAL_ALPHA"
+    assert domain_file_for_key("graph.signal_enabled") == "graph-config.md"
+
+
 def test_model_profile_exposes_safe_choices() -> None:
     profile = catalog_by_key()["models.model_profile"]
 
