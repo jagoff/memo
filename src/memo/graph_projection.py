@@ -7,10 +7,21 @@ storage and retrieval live here too so hot paths never need raw graph tables.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 import re
-from dataclasses import dataclass
+import sqlite3
+import uuid
+from collections import Counter, defaultdict
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import quote
 
+from memo.errors import MemoError
 from memo.graph_canonical import fold_key
 
 _SCALAR_RE = re.compile(
@@ -29,6 +40,77 @@ _EXTRACTOR_WEIGHT = {
     "explicit": 1.0,
 }
 
+_PROJECTION_DDL = """
+CREATE TABLE IF NOT EXISTS graph_projection_versions (
+    version             TEXT PRIMARY KEY,
+    status              TEXT NOT NULL,
+    built_at            TEXT NOT NULL,
+    source_fingerprint  TEXT NOT NULL,
+    total_memories      INTEGER NOT NULL DEFAULT 0,
+    node_count          INTEGER NOT NULL DEFAULT 0,
+    edge_count          INTEGER NOT NULL DEFAULT 0,
+    rejected_count      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS graph_projection_nodes (
+    version        TEXT NOT NULL,
+    uri            TEXT NOT NULL,
+    entity_id      INTEGER NOT NULL,
+    entity_type    TEXT NOT NULL,
+    canonical_key  TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    doc_freq       INTEGER NOT NULL,
+    degree         INTEGER NOT NULL,
+    quality        REAL NOT NULL,
+    is_hub         INTEGER NOT NULL,
+    idf            REAL NOT NULL,
+    PRIMARY KEY (version, uri)
+);
+
+CREATE TABLE IF NOT EXISTS graph_projection_memberships (
+    version       TEXT NOT NULL,
+    memory_id     TEXT NOT NULL,
+    uri           TEXT NOT NULL,
+    confidence    REAL NOT NULL,
+    evidence_id   TEXT NOT NULL,
+    PRIMARY KEY (version, memory_id, uri)
+);
+
+CREATE TABLE IF NOT EXISTS graph_projection_edges (
+    version            TEXT NOT NULL,
+    a_uri              TEXT NOT NULL,
+    b_uri              TEXT NOT NULL,
+    relation           TEXT NOT NULL,
+    weight             REAL NOT NULL,
+    confidence         REAL NOT NULL,
+    evidence_count     INTEGER NOT NULL,
+    first_seen         TEXT,
+    last_seen          TEXT,
+    evidence_ids_json  TEXT NOT NULL,
+    PRIMARY KEY (version, a_uri, b_uri, relation)
+);
+
+CREATE TABLE IF NOT EXISTS graph_projection_rejections (
+    version        TEXT NOT NULL,
+    entity_id      INTEGER NOT NULL,
+    candidate_uri  TEXT NOT NULL,
+    quality        REAL NOT NULL,
+    reason         TEXT NOT NULL,
+    PRIMARY KEY (version, entity_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gpn_version ON graph_projection_nodes(version);
+CREATE INDEX IF NOT EXISTS idx_gpm_memory ON graph_projection_memberships(version, memory_id);
+CREATE INDEX IF NOT EXISTS idx_gpm_uri ON graph_projection_memberships(version, uri);
+CREATE INDEX IF NOT EXISTS idx_gpe_a ON graph_projection_edges(version, a_uri);
+CREATE INDEX IF NOT EXISTS idx_gpe_b ON graph_projection_edges(version, b_uri);
+CREATE INDEX IF NOT EXISTS idx_gpr_version ON graph_projection_rejections(version);
+"""
+
+
+class ProjectionBuildError(MemoError, RuntimeError):
+    """A candidate projection could not be validated or activated."""
+
 
 @dataclass(frozen=True)
 class ProjectionMemoryState:
@@ -46,6 +128,8 @@ class RawEntityEvidence:
     confidences: tuple[float, ...]
     memories: tuple[ProjectionMemoryState, ...]
     alias_count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +145,611 @@ class ProjectionDecision:
     quality: float
     reason: str | None
     uri: str
+
+
+@dataclass(frozen=True)
+class ProjectedNode:
+    uri: str
+    label: str
+    entity_type: str
+    canonical_key: str
+    doc_freq: int
+    degree: int
+    quality: float
+    is_hub: bool
+    idf: float
+
+
+@dataclass(frozen=True)
+class ProjectedEdge:
+    source_uri: str
+    target_uri: str
+    relation: str
+    weight: float
+    confidence: float
+    evidence_ids: tuple[str, ...]
+    first_seen: str | None
+    last_seen: str | None
+
+
+@dataclass(frozen=True)
+class ProjectionBuildResult:
+    version: str
+    activated: bool
+    node_count: int
+    edge_count: int
+    rejected_count: int
+    built_at: str
+
+
+class GraphReadModel:
+    """Immutable in-memory view of one complete projection version."""
+
+    def __init__(
+        self,
+        *,
+        available: bool,
+        skip_reason: str | None = None,
+        version: str | None = None,
+        built_at: str | None = None,
+        total_memories: int = 0,
+        nodes: Mapping[str, ProjectedNode] | None = None,
+        memberships: Mapping[str, tuple[str, ...]] | None = None,
+        edges: Mapping[str, tuple[ProjectedEdge, ...]] | None = None,
+    ) -> None:
+        self.available = available
+        self.skip_reason = skip_reason
+        self.version = version
+        self.built_at = built_at
+        self.total_memories = total_memories
+        self._nodes = dict(nodes or {})
+        self._memberships = dict(memberships or {})
+        self._edges = dict(edges or {})
+
+    @classmethod
+    def unavailable(cls, reason: str) -> GraphReadModel:
+        return cls(available=False, skip_reason=reason)
+
+    def resolve_query_entities(self, query: str) -> tuple[ProjectedNode, ...]:
+        query_lower = query.lower()
+        compact_query = fold_key(query)
+        found: list[ProjectedNode] = []
+        for node in self._nodes.values():
+            label_pattern = rf"(?<!\w){re.escape(node.label.lower())}(?!\w)"
+            label_match = bool(re.search(label_pattern, query_lower))
+            compact_match = len(node.canonical_key) >= 4 and node.canonical_key in compact_query
+            if label_match or compact_match:
+                found.append(node)
+        return tuple(sorted(found, key=lambda node: (-len(node.canonical_key), node.uri)))
+
+    def node(self, uri: str) -> ProjectedNode | None:
+        return self._nodes.get(uri)
+
+    def memory_nodes(self, memory_id: str) -> tuple[ProjectedNode, ...]:
+        return tuple(
+            self._nodes[uri]
+            for uri in self._memberships.get(memory_id, ())
+            if uri in self._nodes
+        )
+
+    def neighbors(self, uri: str) -> tuple[ProjectedEdge, ...]:
+        return self._edges.get(uri, ())
+
+
+class GraphProjectionStore:
+    """Build, atomically activate, and read curated projection versions."""
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        tx_factory: Callable[[], AbstractContextManager[sqlite3.Connection]],
+    ) -> None:
+        self._conn = conn
+        self._tx_factory = tx_factory
+        with self._tx_factory() as cx:
+            cx.executescript(_PROJECTION_DDL)
+
+    @staticmethod
+    def _state(cx: sqlite3.Connection, key: str) -> str | None:
+        row = cx.execute(
+            "SELECT value FROM graph_projection_state WHERE key = ?",
+            (key,),
+        ).fetchone()
+        return str(row["value"]) if row is not None else None
+
+    @staticmethod
+    def _set_state(cx: sqlite3.Connection, key: str, value: str) -> None:
+        cx.execute(
+            "INSERT INTO graph_projection_state (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+    @staticmethod
+    def _load_raw_evidence(
+        cx: sqlite3.Connection,
+        memories: Mapping[str, ProjectionMemoryState],
+    ) -> list[RawEntityEvidence]:
+        alias_counts = {
+            int(row["canonical_id"]): int(row["n"])
+            for row in cx.execute(
+                "SELECT canonical_id, COUNT(*) AS n FROM entity_aliases GROUP BY canonical_id"
+            )
+        }
+        rows = cx.execute(
+            "SELECT e.id, e.name, e.type, e.first_seen, e.last_seen, "
+            "em.memory_id, em.extractor, em.confidence "
+            "FROM entities e LEFT JOIN entity_memory em ON em.entity_id = e.id "
+            "ORDER BY e.id, em.memory_id"
+        ).fetchall()
+        grouped: dict[int, list[sqlite3.Row]] = defaultdict(list)
+        for row in rows:
+            grouped[int(row["id"])].append(row)
+
+        evidence: list[RawEntityEvidence] = []
+        for entity_id, members in sorted(grouped.items()):
+            first = members[0]
+            linked = [row for row in members if row["memory_id"] in memories]
+            evidence.append(
+                RawEntityEvidence(
+                    entity_id=entity_id,
+                    name=str(first["name"]),
+                    entity_type=str(first["type"]),
+                    extractors=tuple(str(row["extractor"]) for row in linked),
+                    confidences=tuple(float(row["confidence"]) for row in linked),
+                    memories=tuple(memories[str(row["memory_id"])] for row in linked),
+                    alias_count=alias_counts.get(entity_id, 0),
+                    first_seen=first["first_seen"],
+                    last_seen=first["last_seen"],
+                )
+            )
+        return evidence
+
+    @staticmethod
+    def _source_fingerprint(
+        raw: list[RawEntityEvidence],
+        config: ProjectionBuildConfig,
+    ) -> str:
+        payload = {
+            "config": asdict(config),
+            "evidence": [asdict(item) for item in raw],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _build_rows(
+        raw: list[RawEntityEvidence],
+        memories: Mapping[str, ProjectionMemoryState],
+        config: ProjectionBuildConfig,
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
+        accepted: dict[str, dict[str, Any]] = {}
+        rejections: list[dict[str, Any]] = []
+        for item in raw:
+            decision = evaluate_entity(item, config)
+            if not decision.eligible:
+                rejections.append(
+                    {
+                        "entity_id": item.entity_id,
+                        "uri": decision.uri,
+                        "quality": decision.quality,
+                        "reason": decision.reason or "unknown",
+                    }
+                )
+                continue
+            candidate = accepted.setdefault(
+                decision.uri,
+                {
+                    "entity_id": item.entity_id,
+                    "uri": decision.uri,
+                    "entity_type": item.entity_type,
+                    "canonical_key": fold_key(item.name),
+                    "label": item.name,
+                    "quality": decision.quality,
+                    "first_seen": item.first_seen,
+                    "last_seen": item.last_seen,
+                    "memberships": {},
+                },
+            )
+            if decision.quality > float(candidate["quality"]):
+                candidate.update(
+                    entity_id=item.entity_id,
+                    entity_type=item.entity_type,
+                    label=item.name,
+                    quality=decision.quality,
+                )
+            memberships: dict[str, float] = candidate["memberships"]
+            for memory, confidence in zip(item.memories, item.confidences, strict=True):
+                if memory.forgotten:
+                    continue
+                memberships[memory.id] = max(
+                    memberships.get(memory.id, 0.0),
+                    max(0.0, min(1.0, confidence)),
+                )
+
+        live_total = sum(not memory.forgotten for memory in memories.values())
+        membership_rows: list[dict[str, Any]] = []
+        memory_nodes: dict[str, dict[str, float]] = defaultdict(dict)
+        for node in accepted.values():
+            memberships = node["memberships"]
+            node["doc_freq"] = len(memberships)
+            ratio = len(memberships) / live_total if live_total else 0.0
+            node["is_hub"] = ratio > config.hub_max_doc_freq_ratio
+            node["idf"] = math.log((1 + live_total) / (1 + len(memberships))) + 1.0
+            for memory_id, confidence in sorted(memberships.items()):
+                membership_rows.append(
+                    {
+                        "memory_id": memory_id,
+                        "uri": node["uri"],
+                        "confidence": confidence,
+                        "evidence_id": memory_uri(memory_id),
+                    }
+                )
+                memory_nodes[memory_id][node["uri"]] = confidence
+
+        edge_accumulator: dict[tuple[str, str], dict[str, Any]] = {}
+        for memory_id, uri_confidences in sorted(memory_nodes.items()):
+            uris = sorted(uri_confidences)
+            for index, a_uri in enumerate(uris):
+                for b_uri in uris[index + 1 :]:
+                    edge = edge_accumulator.setdefault(
+                        (a_uri, b_uri),
+                        {"confidences": [], "evidence_ids": []},
+                    )
+                    edge["confidences"].append(
+                        min(uri_confidences[a_uri], uri_confidences[b_uri])
+                    )
+                    edge["evidence_ids"].append(memory_uri(memory_id))
+
+        edge_rows: list[dict[str, Any]] = []
+        degrees: Counter[str] = Counter()
+        for (a_uri, b_uri), values in sorted(edge_accumulator.items()):
+            evidence_ids = tuple(sorted(values["evidence_ids"]))
+            confidences = values["confidences"]
+            degrees[a_uri] += 1
+            degrees[b_uri] += 1
+            edge_rows.append(
+                {
+                    "a_uri": a_uri,
+                    "b_uri": b_uri,
+                    "relation": "co_occurs",
+                    "weight": float(len(evidence_ids)),
+                    "confidence": sum(confidences) / len(confidences),
+                    "evidence_count": len(evidence_ids),
+                    "first_seen": None,
+                    "last_seen": None,
+                    "evidence_ids": evidence_ids[: max(0, config.evidence_limit)],
+                }
+            )
+        node_rows = []
+        for node in sorted(accepted.values(), key=lambda value: value["uri"]):
+            node["degree"] = degrees[node["uri"]]
+            node.pop("memberships", None)
+            node_rows.append(node)
+        return node_rows, membership_rows, edge_rows, rejections
+
+    @staticmethod
+    def _validate_version(cx: sqlite3.Connection, version: str) -> None:
+        row = cx.execute(
+            "SELECT node_count, edge_count, rejected_count "
+            "FROM graph_projection_versions WHERE version = ?",
+            (version,),
+        ).fetchone()
+        if row is None:
+            raise ProjectionBuildError("projection version row missing")
+        actual = (
+            cx.execute(
+                "SELECT COUNT(*) FROM graph_projection_nodes WHERE version = ?",
+                (version,),
+            ).fetchone()[0],
+            cx.execute(
+                "SELECT COUNT(*) FROM graph_projection_edges WHERE version = ?",
+                (version,),
+            ).fetchone()[0],
+            cx.execute(
+                "SELECT COUNT(*) FROM graph_projection_rejections WHERE version = ?",
+                (version,),
+            ).fetchone()[0],
+        )
+        expected = (row["node_count"], row["edge_count"], row["rejected_count"])
+        if actual != expected:
+            raise ProjectionBuildError(
+                f"projection row-count mismatch: expected={expected}, actual={actual}"
+            )
+        dangling = cx.execute(
+            "SELECT COUNT(*) FROM graph_projection_edges e "
+            "LEFT JOIN graph_projection_nodes a "
+            "ON a.version = e.version AND a.uri = e.a_uri "
+            "LEFT JOIN graph_projection_nodes b "
+            "ON b.version = e.version AND b.uri = e.b_uri "
+            "WHERE e.version = ? AND (a.uri IS NULL OR b.uri IS NULL)",
+            (version,),
+        ).fetchone()[0]
+        if dangling:
+            raise ProjectionBuildError(f"projection has {dangling} dangling edges")
+
+    @staticmethod
+    def _retain_active_and_previous(
+        cx: sqlite3.Connection,
+        active: str,
+        previous: str | None,
+    ) -> None:
+        keep = [active]
+        if previous and previous != active:
+            keep.append(previous)
+        placeholders = ",".join("?" for _ in keep)
+        for table in (
+            "graph_projection_memberships",
+            "graph_projection_edges",
+            "graph_projection_nodes",
+            "graph_projection_rejections",
+            "graph_projection_versions",
+        ):
+            cx.execute(
+                f"DELETE FROM {table} WHERE version NOT IN ({placeholders})",  # noqa: S608
+                keep,
+            )
+
+    def rebuild(
+        self,
+        memories: Mapping[str, ProjectionMemoryState],
+        config: ProjectionBuildConfig,
+        now: datetime | None = None,
+    ) -> ProjectionBuildResult:
+        built_at = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+        version = uuid.uuid4().hex
+        try:
+            with self._tx_factory() as cx:
+                raw = self._load_raw_evidence(cx, memories)
+                node_rows, memberships, edge_rows, rejections = self._build_rows(
+                    raw,
+                    memories,
+                    config,
+                )
+                cx.execute(
+                    "INSERT INTO graph_projection_versions "
+                    "(version, status, built_at, source_fingerprint, total_memories, "
+                    "node_count, edge_count, rejected_count) VALUES (?, 'ready', ?, ?, ?, ?, ?, ?)",
+                    (
+                        version,
+                        built_at,
+                        self._source_fingerprint(raw, config),
+                        sum(not memory.forgotten for memory in memories.values()),
+                        len(node_rows),
+                        len(edge_rows),
+                        len(rejections),
+                    ),
+                )
+                for node in node_rows:
+                    cx.execute(
+                        "INSERT INTO graph_projection_nodes "
+                        "(version, uri, entity_id, entity_type, canonical_key, label, "
+                        "doc_freq, degree, quality, is_hub, idf) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            version,
+                            node["uri"],
+                            node["entity_id"],
+                            node["entity_type"],
+                            node["canonical_key"],
+                            node["label"],
+                            node["doc_freq"],
+                            node["degree"],
+                            node["quality"],
+                            int(node["is_hub"]),
+                            node["idf"],
+                        ),
+                    )
+                for membership in memberships:
+                    cx.execute(
+                        "INSERT INTO graph_projection_memberships "
+                        "(version, memory_id, uri, confidence, evidence_id) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            version,
+                            membership["memory_id"],
+                            membership["uri"],
+                            membership["confidence"],
+                            membership["evidence_id"],
+                        ),
+                    )
+                for edge in edge_rows:
+                    cx.execute(
+                        "INSERT INTO graph_projection_edges "
+                        "(version, a_uri, b_uri, relation, weight, confidence, "
+                        "evidence_count, first_seen, last_seen, evidence_ids_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            version,
+                            edge["a_uri"],
+                            edge["b_uri"],
+                            edge["relation"],
+                            edge["weight"],
+                            edge["confidence"],
+                            edge["evidence_count"],
+                            edge["first_seen"],
+                            edge["last_seen"],
+                            json.dumps(edge["evidence_ids"]),
+                        ),
+                    )
+                for rejection in rejections:
+                    cx.execute(
+                        "INSERT INTO graph_projection_rejections "
+                        "(version, entity_id, candidate_uri, quality, reason) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (
+                            version,
+                            rejection["entity_id"],
+                            rejection["uri"],
+                            rejection["quality"],
+                            rejection["reason"],
+                        ),
+                    )
+                self._validate_version(cx, version)
+                previous = self._state(cx, "active_version")
+                self._set_state(cx, "active_version", version)
+                self._set_state(cx, "dirty", "0")
+                self._set_state(cx, "last_success_at", built_at)
+                self._set_state(cx, "last_error", "")
+                self._retain_active_and_previous(cx, version, previous)
+        except Exception as exc:
+            failed_at = datetime.now(UTC).isoformat()
+            with self._tx_factory() as cx:
+                self._set_state(cx, "last_error", f"{type(exc).__name__}: {exc}")
+                self._set_state(cx, "last_failed_at", failed_at)
+            raise
+        return ProjectionBuildResult(
+            version=version,
+            activated=True,
+            node_count=len(node_rows),
+            edge_count=len(edge_rows),
+            rejected_count=len(rejections),
+            built_at=built_at,
+        )
+
+    def read_model(
+        self,
+        max_age_hours: int,
+        now: datetime | None = None,
+    ) -> GraphReadModel:
+        active = self._state(self._conn, "active_version")
+        if not active:
+            return GraphReadModel.unavailable("projection_missing")
+        try:
+            version_row = self._conn.execute(
+                "SELECT built_at, total_memories, status FROM graph_projection_versions "
+                "WHERE version = ?",
+                (active,),
+            ).fetchone()
+            if version_row is None or version_row["status"] != "ready":
+                return GraphReadModel.unavailable("projection_missing")
+            built_at = datetime.fromisoformat(str(version_row["built_at"]))
+            if built_at.tzinfo is None:
+                built_at = built_at.replace(tzinfo=UTC)
+            age = (now or datetime.now(UTC)).astimezone(UTC) - built_at.astimezone(UTC)
+            if age.total_seconds() > max(0, max_age_hours) * 3600:
+                return GraphReadModel.unavailable("projection_stale")
+
+            nodes = {
+                str(row["uri"]): ProjectedNode(
+                    uri=str(row["uri"]),
+                    label=str(row["label"]),
+                    entity_type=str(row["entity_type"]),
+                    canonical_key=str(row["canonical_key"]),
+                    doc_freq=int(row["doc_freq"]),
+                    degree=int(row["degree"]),
+                    quality=float(row["quality"]),
+                    is_hub=bool(row["is_hub"]),
+                    idf=float(row["idf"]),
+                )
+                for row in self._conn.execute(
+                    "SELECT * FROM graph_projection_nodes WHERE version = ?",
+                    (active,),
+                )
+            }
+            memberships: dict[str, list[str]] = defaultdict(list)
+            for row in self._conn.execute(
+                "SELECT memory_id, uri FROM graph_projection_memberships "
+                "WHERE version = ? ORDER BY memory_id, uri",
+                (active,),
+            ):
+                memberships[str(row["memory_id"])].append(str(row["uri"]))
+            edges: dict[str, list[ProjectedEdge]] = defaultdict(list)
+            for row in self._conn.execute(
+                "SELECT * FROM graph_projection_edges WHERE version = ? "
+                "ORDER BY a_uri, b_uri, relation",
+                (active,),
+            ):
+                evidence = json.loads(str(row["evidence_ids_json"]))
+                if not isinstance(evidence, list) or not all(
+                    isinstance(value, str) for value in evidence
+                ):
+                    raise ValueError("malformed projection edge evidence")
+                edge = ProjectedEdge(
+                    source_uri=str(row["a_uri"]),
+                    target_uri=str(row["b_uri"]),
+                    relation=str(row["relation"]),
+                    weight=float(row["weight"]),
+                    confidence=float(row["confidence"]),
+                    evidence_ids=tuple(evidence),
+                    first_seen=row["first_seen"],
+                    last_seen=row["last_seen"],
+                )
+                edges[edge.source_uri].append(edge)
+                edges[edge.target_uri].append(edge)
+            return GraphReadModel(
+                available=True,
+                version=active,
+                built_at=str(version_row["built_at"]),
+                total_memories=int(version_row["total_memories"]),
+                nodes=nodes,
+                memberships={key: tuple(value) for key, value in memberships.items()},
+                edges={key: tuple(value) for key, value in edges.items()},
+            )
+        except (KeyError, TypeError, ValueError, sqlite3.Error, json.JSONDecodeError):
+            return GraphReadModel.unavailable("projection_malformed")
+
+    def health(self, now: datetime | None = None) -> dict[str, Any]:
+        active = self._state(self._conn, "active_version")
+        dirty = self._state(self._conn, "dirty") != "0"
+        last_error = self._state(self._conn, "last_error") or ""
+        if not active:
+            return {
+                "active_version": None,
+                "dirty": dirty,
+                "built_at": None,
+                "age_hours": None,
+                "node_count": 0,
+                "edge_count": 0,
+                "rejected_count": 0,
+                "rejection_reasons": {},
+                "last_error": last_error,
+            }
+        row = self._conn.execute(
+            "SELECT built_at, node_count, edge_count, rejected_count "
+            "FROM graph_projection_versions WHERE version = ?",
+            (active,),
+        ).fetchone()
+        if row is None:
+            return {
+                "active_version": active,
+                "dirty": dirty,
+                "built_at": None,
+                "age_hours": None,
+                "node_count": 0,
+                "edge_count": 0,
+                "rejected_count": 0,
+                "rejection_reasons": {},
+                "last_error": last_error,
+            }
+        built = datetime.fromisoformat(str(row["built_at"]))
+        if built.tzinfo is None:
+            built = built.replace(tzinfo=UTC)
+        age = (now or datetime.now(UTC)).astimezone(UTC) - built.astimezone(UTC)
+        reasons = {
+            str(reason["reason"]): int(reason["n"])
+            for reason in self._conn.execute(
+                "SELECT reason, COUNT(*) AS n FROM graph_projection_rejections "
+                "WHERE version = ? GROUP BY reason ORDER BY reason",
+                (active,),
+            )
+        }
+        return {
+            "active_version": active,
+            "dirty": dirty,
+            "built_at": str(row["built_at"]),
+            "age_hours": max(0.0, age.total_seconds() / 3600),
+            "node_count": int(row["node_count"]),
+            "edge_count": int(row["edge_count"]),
+            "rejected_count": int(row["rejected_count"]),
+            "rejection_reasons": reasons,
+            "last_error": last_error,
+        }
 
 
 def entity_uri(entity_type: str, name: str) -> str:
@@ -128,7 +817,13 @@ def evaluate_entity(
 
 
 __all__ = [
+    "GraphProjectionStore",
+    "GraphReadModel",
+    "ProjectedEdge",
+    "ProjectedNode",
     "ProjectionBuildConfig",
+    "ProjectionBuildError",
+    "ProjectionBuildResult",
     "ProjectionDecision",
     "ProjectionMemoryState",
     "RawEntityEvidence",

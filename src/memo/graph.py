@@ -215,6 +215,9 @@ class GraphStore:
             self._conn.execute(
                 "UPDATE entity_memory SET updated_at = extracted_at WHERE updated_at IS NULL"
             )
+        from memo.graph_projection import GraphProjectionStore
+
+        self.projection = GraphProjectionStore(self._conn, self._tx)
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
+from memo.graph import GraphStore
 from memo.graph_projection import (
     ProjectionBuildConfig,
+    ProjectionBuildError,
     ProjectionMemoryState,
     RawEntityEvidence,
     entity_uri,
@@ -95,3 +99,102 @@ def test_forgotten_evidence_is_not_live() -> None:
     decision = evaluate_entity(evidence, ProjectionBuildConfig())
 
     assert decision.reason == "no_live_memory"
+
+
+def _states(*ids: str) -> dict[str, ProjectionMemoryState]:
+    return {id_: ProjectionMemoryState(id=id_, type="decision") for id_ in ids}
+
+
+def _connected_graph(tmp_path: Path) -> GraphStore:
+    graph = GraphStore(tmp_path / "graph.db")
+    for memory_id in ("m1", "m2"):
+        graph.record_extraction(
+            memory_id=memory_id,
+            memory_date="2026-07-20",
+            entities=[
+                {"name": "MLX", "type": "technology"},
+                {"name": "recall daemon", "type": "project"},
+            ],
+            extracted_at="2026-07-20T00:00:00+00:00",
+            extractor="explicit",
+        )
+    graph.rebuild_edges()
+    return graph
+
+
+def test_projection_rebuild_activates_complete_version(tmp_path: Path) -> None:
+    graph = _connected_graph(tmp_path)
+
+    result = graph.projection.rebuild(_states("m1", "m2"), ProjectionBuildConfig())
+    model = graph.projection.read_model(max_age_hours=36)
+
+    assert result.activated is True
+    assert model.version == result.version
+    assert model.memory_nodes("m1")
+    edge = next(iter(model.neighbors(entity_uri("technology", "mlx"))))
+    assert edge.evidence_ids == ("memory://m1", "memory://m2")
+
+
+def test_failed_projection_validation_preserves_previous_active_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = _connected_graph(tmp_path)
+    first = graph.projection.rebuild(_states("m1", "m2"), ProjectionBuildConfig())
+
+    def _fail_validation(*_args: object) -> None:
+        raise ProjectionBuildError("invalid")
+
+    monkeypatch.setattr(graph.projection, "_validate_version", _fail_validation)
+
+    with pytest.raises(ProjectionBuildError):
+        graph.projection.rebuild(_states("m1", "m2"), ProjectionBuildConfig())
+
+    health = graph.projection.health()
+    assert health["active_version"] == first.version
+    assert "invalid" in health["last_error"]
+
+
+def test_stale_projection_returns_unavailable_read_model(tmp_path: Path) -> None:
+    graph = _connected_graph(tmp_path)
+    built = datetime(2026, 7, 20, tzinfo=UTC)
+    graph.projection.rebuild(
+        _states("m1", "m2"),
+        ProjectionBuildConfig(),
+        now=built,
+    )
+
+    model = graph.projection.read_model(
+        max_age_hours=24,
+        now=built + timedelta(hours=25),
+    )
+
+    assert model.available is False
+    assert model.skip_reason == "projection_stale"
+
+
+def test_rebuild_quarantines_rejections_without_deleting_raw_rows(
+    tmp_path: Path,
+) -> None:
+    graph = GraphStore(tmp_path / "graph.db")
+    graph.record_extraction(
+        memory_id="m1",
+        memory_date="2026-07-20",
+        entities=[{"name": "Memo", "type": "project"}],
+        extracted_at="2026-07-20T00:00:00+00:00",
+        extractor="explicit",
+    )
+    graph.record_extraction(
+        memory_id="m2",
+        memory_date="2026-07-20",
+        entities=[{"name": "test_rank_hits", "type": "concept"}],
+        extracted_at="2026-07-20T00:00:00+00:00",
+        extractor="regex",
+        confidence=0.45,
+    )
+
+    result = graph.projection.rebuild(_states("m1", "m2"), ProjectionBuildConfig())
+
+    assert result.rejected_count == 1
+    assert graph.count_entities() == 2
+    assert graph.projection.health()["rejection_reasons"]["code_shape"] == 1
