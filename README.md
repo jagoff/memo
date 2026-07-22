@@ -384,7 +384,7 @@ memo runs four background daemons:
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
-### All 126 top-level CLI commands
+### All 127 top-level CLI commands
 
 <details>
 <summary>Click to expand</summary>
@@ -397,7 +397,7 @@ memo runs four background daemons:
 
 **Maintenance:** `reindex` `maintain` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `invalidate` `temporal` `compress-context`
 
-**Analysis & Quality:** `health` `stats` `doctor` `lint` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile` `confidence` `graduation` `hype`
+**Analysis & Quality:** `health` `stats` `doctor` `lint` `drift` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile` `confidence` `graduation` `hype`
 
 **Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version` `related`
 
