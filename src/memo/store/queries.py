@@ -235,6 +235,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         normalized_hash: str | None = None,
         verification_state: str = "unverified",
         verified_at: int | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
     ) -> None:
         """Atomically transfer one canonical path from ``stale_id`` to ``id_``.
 
@@ -284,6 +286,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     body_text=body_text,
                     topic_key=topic_key,
                     normalized_hash=normalized_hash,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
                 )
                 cx.execute(
                     "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
@@ -491,6 +495,26 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             cur = cx.execute(
                 "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
                 (verification_state, verified_at, id_),
+            )
+        return cur.rowcount > 0
+
+    def update_validity(
+        self,
+        *,
+        id_: str,
+        valid_at: str | None,
+        invalid_at: str | None,
+    ) -> bool:
+        """Set the world-validity interval on one memory.
+
+        `valid_at`/`invalid_at` are intentionally excluded from the `upsert()`
+        ON CONFLICT update set (see `_upsert_memory_row`), so a re-save/edit
+        never touches them. This dedicated statement is how the reindex-fold and
+        the contradiction-supersede own their mutation."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "UPDATE meta SET valid_at = ?, invalid_at = ? WHERE id = ?",
+                (valid_at, invalid_at, id_),
             )
         return cur.rowcount > 0
 

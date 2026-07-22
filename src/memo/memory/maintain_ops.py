@@ -411,6 +411,19 @@ class _MaintainOpsMixin(_MemoryBase):
             if verification_state == VerificationState.VERIFIED.value and verified_at is None:
                 verified_at = int(time.time())
 
+            # World-validity interval (bi-temporal). `valid_at` is always written
+            # to frontmatter (defaulted to `created` on save); `invalid_at` is
+            # written ONLY when non-None (open intervals omit it, like
+            # `verified_at`). So an ABSENT key means "leave the current index
+            # value as-is" — never "clear it" — mirroring the verified_at
+            # fallback above: only a value actually present in the markdown folds.
+            valid_at = meta.get("valid_at")
+            if "valid_at" not in meta and prior is not None:
+                valid_at = prior.get("valid_at")
+            invalid_at = meta.get("invalid_at")
+            if "invalid_at" not in meta and prior is not None:
+                invalid_at = prior.get("invalid_at")
+
             if existing is None:
                 # Path-collision guard: an .md may have its frontmatter id
                 # regenerated (manual edit, restore-from-backup, or a stale
@@ -460,6 +473,8 @@ class _MaintainOpsMixin(_MemoryBase):
                         normalized_hash=normalized_hash,
                         verification_state=verification_state,
                         verified_at=verified_at,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                     )
                     if rebuild_rows is not None:
                         rebuild_rows.append(row)
@@ -551,6 +566,11 @@ class _MaintainOpsMixin(_MemoryBase):
                         verification_state=verification_state,
                         verified_at=verified_at,
                     )
+                    self.store.update_validity(
+                        id_=md_id,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
+                    )
                 except Exception as exc:
                     _log.warning("reindex: skipping %s (re-embed failed): %s", md_path.name, exc)
                     skipped += 1
@@ -582,6 +602,11 @@ class _MaintainOpsMixin(_MemoryBase):
                     id_=md_id,
                     verification_state=verification_state,
                     verified_at=verified_at,
+                )
+                self.store.update_validity(
+                    id_=md_id,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
                 )
             if chunk_ingest:
                 reindexed += self._reindex_emit_chunks(
