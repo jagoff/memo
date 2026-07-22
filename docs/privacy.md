@@ -12,6 +12,12 @@ All four startup behaviors default to `0`/false:
   a local update notification.
 - `MEMO_AUTO_UPDATE=1` permits that check and may install a newer tagged memo
   release in the background for the next startup.
+- `MEMO_UPDATE_ENDPOINT=<url>` (empty by default) routes the tag check above
+  through an HTTP endpoint instead of `git ls-remote`. It sends three anonymous
+  fields — `id=sha256(device_id)[:16]` (hashed on-device, raw id never sent),
+  `v` (version), `os` (OS name) — letting the operator count active installs. No
+  memory content, paths, or IP. Only fires when a tag check is already enabled;
+  unset → no such request. Falls back to `git ls-remote` on any HTTP failure.
 - `MEMO_STATUSLINE_SELFHEAL=1` permits memo to repair its statusline entry in
   local Claude settings.
 - `MEMO_HOOK_SELFHEAL=1` permits memo to repair its local recall-hook entries.

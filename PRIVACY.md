@@ -31,6 +31,23 @@ The **only** way memory leaves your machine is if **you** explicitly configure a
 git `memo-sync` remote. In that case your memory markdown is pushed to **that
 remote, which you own and control** — memo neither hosts nor has access to it.
 
+### Optional update-check heartbeat (off by default)
+
+memo can check for a newer release on startup. By default that check uses
+`git ls-remote` against the public GitHub repo and sends **nothing** about you.
+
+If **you** set `MEMO_UPDATE_ENDPOINT` (empty by default) *and* enable update
+checks (`MEMO_UPDATE_CHECK_ENABLED` or `MEMO_AUTO_UPDATE`, both off by default),
+the check instead GETs that endpoint, which lets the operator count active
+installs. The **entire** payload is three anonymous fields:
+
+- `id` — `sha256(device_id)[:16]`, a one-way hash computed on your machine; the
+  raw device id never leaves it and the hash is not reversible to identity.
+- `v` — your memo version. `os` — your OS name (e.g. `Darwin`).
+
+No memory content, file paths, queries, or IP are collected. This is **opt-in**:
+leave `MEMO_UPDATE_ENDPOINT` unset and memo never contacts any such endpoint.
+
 The explicit `memo map` and `memo dashboard` browser views use Canvas/SVG
 renderers contained in their generated HTML. They make no third-party request
 and remain usable offline. The local renderer keeps filtering, hover, click
@@ -39,8 +56,10 @@ pan/zoom/export controls to avoid a large browser dependency.
 
 ## Third-party sharing
 
-memo shares your data with **no third parties**. There is no server operated by
-the author that receives, stores, or processes your content.
+memo shares your data with **no third parties**. No server operated by the author
+receives, stores, or processes your memory **content** — ever. The only optional
+exception is the opt-in update-check heartbeat above, which sends a hashed
+install id, version, and OS name (never content) and only when you configure it.
 
 ## Retention & deletion
 
