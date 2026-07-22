@@ -22,6 +22,7 @@ from memo.contextual_retrieval import get_or_generate_context, prepend_context
 from memo.contradict import ContradictionScanner, ContradictionStore
 from memo.errors import MemoError
 from memo.graph import GraphStore
+from memo.graph_projection import GraphProjectionStore
 from memo.llm import ChatBackend, MLXChat
 
 if TYPE_CHECKING:
@@ -174,7 +175,7 @@ class Memory(
         self._chat_lock = threading.RLock()
         # Knowledge-graph store. Cheap to open (just sqlite); creating
         # eagerly so graph queries never lazy-stall a CLI command.
-        self.graph = GraphStore(cfg.graph_db)
+        self.graph = GraphStore(cfg.graph_db, projection_factory=GraphProjectionStore)
         self.fact_edges = FactEdgeStore(cfg.fact_edges_db)
         # Persistent contradiction sidecar — opened lazily so callers
         # that never scan don't pay for the extra sqlite handle.

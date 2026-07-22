@@ -9,6 +9,7 @@ import pytest
 from memo.code_traceability import CodeReference, codegraph_uri
 from memo.graph import GraphStore
 from memo.graph_projection import (
+    GraphProjectionStore,
     ProjectionBuildConfig,
     ProjectionBuildError,
     ProjectionMemoryState,
@@ -107,7 +108,7 @@ def _states(*ids: str) -> dict[str, ProjectionMemoryState]:
 
 
 def _connected_graph(tmp_path: Path) -> GraphStore:
-    graph = GraphStore(tmp_path / "graph.db")
+    graph = GraphStore(tmp_path / "graph.db", projection_factory=GraphProjectionStore)
     for memory_id in ("m1", "m2"):
         graph.record_extraction(
             memory_id=memory_id,
@@ -211,7 +212,7 @@ def test_stale_projection_returns_unavailable_read_model(tmp_path: Path) -> None
 def test_rebuild_quarantines_rejections_without_deleting_raw_rows(
     tmp_path: Path,
 ) -> None:
-    graph = GraphStore(tmp_path / "graph.db")
+    graph = GraphStore(tmp_path / "graph.db", projection_factory=GraphProjectionStore)
     graph.record_extraction(
         memory_id="m1",
         memory_date="2026-07-20",

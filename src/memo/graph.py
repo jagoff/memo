@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -160,7 +160,12 @@ class GraphStore:
     on the same memory refreshes the link set without duplicating.
     """
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        projection_factory: Callable[..., Any] | None = None,
+    ) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
@@ -215,9 +220,11 @@ class GraphStore:
             self._conn.execute(
                 "UPDATE entity_memory SET updated_at = extracted_at WHERE updated_at IS NULL"
             )
-        from memo.graph_projection import GraphProjectionStore
-
-        self.projection = GraphProjectionStore(self._conn, self._tx)
+        # Higher layers may compose an application-specific read projection.
+        # GraphStore stays a foundation leaf and owns only raw graph storage.
+        self.projection = (
+            projection_factory(self._conn, self._tx) if projection_factory is not None else None
+        )
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
