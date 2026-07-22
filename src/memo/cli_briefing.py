@@ -116,6 +116,19 @@ def briefing(*, compact: bool) -> None:
                 compact_lines.append(f"State: {compact_text(state, max_chars=200)}")
         else:
             compact_lines.append("No recent session in this project.")
+        # Proactive nudge (compact) — the full `### Proactive` section only
+        # rides the non-compact briefing; SessionStart runs `--compact`, so
+        # surface a one-liner here or the digest never reaches the user at
+        # startup. Gated + best-effort (empty when disabled / no candidates).
+        try:
+            from memo.briefing import proactive_compact_line
+
+            _pline = proactive_compact_line(mem)
+            if _pline:
+                compact_lines.append(_pline)
+        except Exception as exc:
+            if debug:
+                print(f"# memo briefing: proactive compact failed: {exc}", file=_sys.stderr)
         # Sync-onboarding nudge — honest (only when no remote is configured),
         # dismissable, and included in the compact output budget.
         from memo.sync_git import sync_nudge_dismissed, sync_tier

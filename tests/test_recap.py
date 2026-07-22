@@ -284,3 +284,32 @@ def test_compose_system_message_recap_only() -> None:
 
 def test_compose_system_message_both_empty_returns_empty_string() -> None:
     assert compose_system_message("", "") == ""
+
+
+def test_compose_system_message_urgent_sits_between_presence_and_recap() -> None:
+    combined = compose_system_message(
+        "🧠 memo · 1: some title",
+        "※ memo recap: fix the bug",
+        "⚠️ memo: superseded fact · memo get abc123",
+    )
+
+    assert combined == (
+        "🧠 memo · 1: some title\n"
+        "⚠️ memo: superseded fact · memo get abc123\n"
+        "※ memo recap: fix the bug"
+    )
+
+
+def test_compose_system_message_urgent_only() -> None:
+    assert (
+        compose_system_message("", "", "⚠️ memo: superseded fact · memo get abc123")
+        == "⚠️ memo: superseded fact · memo get abc123"
+    )
+
+
+def test_compose_system_message_urgent_default_preserves_two_arg_calls() -> None:
+    # Existing 2-arg callers keep behaving exactly as before.
+    assert (
+        compose_system_message("🧠 memo · 1: t", "※ memo recap: r")
+        == "🧠 memo · 1: t\n※ memo recap: r"
+    )

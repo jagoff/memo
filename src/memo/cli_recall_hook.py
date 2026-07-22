@@ -768,10 +768,36 @@ def recall_hook() -> None:
         except Exception as exc:
             _log.debug("recap write failed: %s", exc)
 
-    if _sysmsg or _recap_line:
+    # Proactive urgent nudge — the recall hook's systemMessage is the only
+    # synchronous channel Claude Code renders to the user (the Stop hook is
+    # async, its stdout discarded). `pull_urgent` owns the push slot: it
+    # respects the cooldown/daily-cap so this stays "útil sin molestar", and it
+    # is MLX-free (one sqlite read + rank) so it fits the recall budget.
+    # Best-effort; never blocks the recall.
+    _urgent_line = ""
+    if flag_bool("MEMO_PROACTIVE_ENABLED"):
+        try:
+            from datetime import UTC as _UTC
+            from datetime import datetime as _datetime
+
+            from memo.proactive.engine import pull_urgent
+            from memo.proactive.store import ProactiveStore
+            from memo.proactive.surfaces import render_urgent_line
+
+            _now_dt = _datetime.now(tz=_UTC)
+            with ProactiveStore(cfg.state_dir / "proactive.db") as _pstore:
+                _urgent = pull_urgent(
+                    _pstore, now=_now_dt.isoformat(), day=_now_dt.date().isoformat()
+                )
+            if _urgent is not None:
+                _urgent_line = render_urgent_line(_urgent)
+        except Exception as exc:
+            _log.debug("recall proactive urgent failed: %s", exc)
+
+    if _sysmsg or _recap_line or _urgent_line:
         from memo.cli_recap import compose_system_message
 
-        _combined = compose_system_message(_sysmsg, _recap_line)
+        _combined = compose_system_message(_sysmsg, _recap_line, _urgent_line)
         if _combined:
             output["systemMessage"] = _combined
 

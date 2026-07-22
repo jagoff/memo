@@ -9,6 +9,7 @@ from .detectors.dejavu import detect_dejavu
 from .detectors.health import detect_health
 from .detectors.reliability import detect_reliability
 from .detectors.roi import detect_roi
+from .nudge import Nudge
 from .store import ProactiveStore
 
 _FEEDBACK_WINDOW_DAYS = 30
@@ -62,3 +63,20 @@ def compute_routed(store: ProactiveStore, *, now: str, day: str) -> Routed:
         urgent_min=urgent_min,
         can_push=push_gate(store, now=now, day=day, cooldown_h=cooldown_h, daily_cap=daily_cap),
     )
+
+
+def pull_urgent(store: ProactiveStore, *, now: str, day: str) -> Nudge | None:
+    """Route once and, if an urgent nudge is due, consume its push slot.
+
+    The single "push owner" for the recall-hook `systemMessage` channel — the
+    only synchronous surface Claude Code renders to the user (the Stop hook is
+    `async`, its stdout discarded). `compute_routed` already applies
+    `push_gate`, so `.urgent` is `None` when the cooldown/daily-cap disallows a
+    push; when it is present we `mark_pushed(now)` so the cooldown starts
+    counting and the nudge is not repeated every prompt. Returns the `Nudge` to
+    render, or `None` when nothing is due.
+    """
+    urgent = compute_routed(store, now=now, day=day).urgent
+    if urgent is not None:
+        store.mark_pushed(now)
+    return urgent

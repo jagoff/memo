@@ -100,14 +100,16 @@ def due_for_recap(snapshot: dict[str, Any] | None, *, every_n: int) -> bool:
     return turn_count >= every_n and (turn_count - last_recap_turn) >= every_n
 
 
-def compose_system_message(presence_line: str, recap_line: str) -> str:
-    """Join the 🧠 presence line and the ``※ memo recap:`` line into one
-    ``systemMessage`` string, newline-separated, without clobbering either.
+def compose_system_message(presence_line: str, recap_line: str, urgent_line: str = "") -> str:
+    """Join the 🧠 presence line, the ⚠️ proactive-urgent line, and the
+    ``※ memo recap:`` line into one ``systemMessage`` string, newline-separated,
+    without clobbering any. Order: presence, urgent, recap — the urgent nudge
+    sits directly under presence so it reads first.
 
-    Either side may be empty (feature flag off, no hits, no recap due) — the
-    other is returned unchanged. Both empty returns ``""``.
+    Any side may be empty (feature flag off, no hits, no nudge due, no recap
+    due) — the rest are returned unchanged. All empty returns ``""``.
     """
-    lines = [line for line in (presence_line, recap_line) if line]
+    lines = [line for line in (presence_line, urgent_line, recap_line) if line]
     return "\n".join(lines)
 
 

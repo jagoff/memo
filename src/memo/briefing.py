@@ -313,6 +313,40 @@ def proactive_lines(mem: Any, *, max_lines: int = 3) -> list[str]:
         return []
 
 
+def proactive_compact_line(mem: Any) -> str:
+    """One-line proactive summary for the `--compact` SessionStart capsule.
+
+    The full ``### Proactive`` section (`proactive_lines`) only rides the
+    non-compact briefing; SessionStart runs `memo briefing --compact`, so
+    without this the digest never reaches the user at startup. This is a *pull*
+    surface (routes but never `mark_pushed`), so it does not touch the urgent
+    push cooldown/daily-cap owned by the recall hook. Empty when disabled, the
+    store has no active candidates, or on any failure — points at `memo digest`
+    for the full list. Gated by `MEMO_PROACTIVE_ENABLED` (default off).
+    """
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_PROACTIVE_ENABLED"):
+        return ""
+    try:
+        from memo.proactive.engine import compute_routed
+        from memo.proactive.store import ProactiveStore
+
+        with ProactiveStore(mem.cfg.state_dir / "proactive.db") as store:
+            now_dt = datetime.now(tz=UTC)
+            routed = compute_routed(store, now=now_dt.isoformat(), day=now_dt.date().isoformat())
+        if not routed.digest:
+            return ""
+        top = routed.digest[0]
+        n = len(routed.digest)
+        tail = f" · {top.action}" if top.action else ""
+        plural = "s" if n != 1 else ""
+        return f"⚠️ memo: {n} nudge{plural} — {top.title}{tail} (`memo digest`)"
+    except Exception as exc:
+        _log.debug("briefing: proactive compact line failed: %s", exc)
+        return ""
+
+
 _PROFILE_MAX_CHARS = 6000  # defensive cap; the dream pass already budgets the file
 
 

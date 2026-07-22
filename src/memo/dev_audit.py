@@ -76,6 +76,9 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("cli_recall_hook.py", "recall_hook", 19),
     ("cli_recall_hook.py", "recall_hook", 20),
     ("cli_recall_hook.py", "recall_hook", 21),
+    # Proactive urgent nudge folded into the recall systemMessage: fail-open,
+    # a nudge is a nice-to-have and must never block or delay recall.
+    ("cli_recall_hook.py", "recall_hook", 22),
     # MEMO_HIT_DOSSIER batched contradict-pairs lookup: fail-open, degrades to
     # an empty disputed_by map on any store/read error (never blocks recall).
     ("memory/write_ops.py", "_upsert_declared_fact_edges_best_effort", 1),
