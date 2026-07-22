@@ -69,6 +69,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "Git repo URL to check tags / install from (empty → the memo default).",
     ),
     _spec(
+        "MEMO_UPDATE_ENDPOINT",
+        "str",
+        "",
+        "update",
+        "HTTP endpoint for the update check. When set (and update checks are "
+        "on), memo resolves the latest tag via GET <endpoint>?id=&v=&os= — a "
+        "functional version check that also emits an anonymous deduped "
+        "active-install heartbeat (id = sha256(device_id)[:16]; raw id never "
+        "sent). Empty (default) → git ls-remote only, no heartbeat. Falls back "
+        "to git on any HTTP failure.",
+    ),
+    _spec(
         "MEMO_STATUSLINE_SELFHEAL",
         "bool",
         False,
