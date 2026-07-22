@@ -98,6 +98,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "for `memo config validate`. Default on; set =0 to opt out.",
         opt_out=True,
     ),
+    _spec(
+        "MEMO_PRESENCE_NOTIFY",
+        "bool",
+        True,
+        "update",
+        "Prepend a one-line activity summary (🧠 recalls · 💾 saves · ~tokens "
+        "saved today) to the `notification` field of memo's MCP tool responses, "
+        "so agents without a statusline (Codex, Devin, opencode, Cursor) still "
+        "see memo working on every call. Default on; set =0 to silence just "
+        "this channel (the statusline badge is unaffected).",
+        opt_out=True,
+    ),
     # MCP transport
     _spec(
         "MEMO_MCP_TRANSPORT",

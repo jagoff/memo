@@ -51,6 +51,28 @@ def test_writers_never_raise_on_unwritable_dir(tmp_path: Path) -> None:
     presence.set_tokens(target / "sub", 5)  # must swallow
 
 
+def test_summary_line_empty_when_no_activity() -> None:
+    assert presence.summary_line({"recalls": 0, "saves": 0, "tokens_saved": 0}) == ""
+
+
+def test_summary_line_renders_nonzero_segments() -> None:
+    line = presence.summary_line({"recalls": 3, "saves": 1, "tokens_saved": 2500})
+    assert line.startswith("※ memo today · ")
+    assert "🧠 3 recalled" in line
+    assert "💾 1 saved" in line
+    assert "~2k tok" in line
+
+
+def test_summary_line_omits_zero_segments() -> None:
+    assert presence.summary_line({"recalls": 2, "saves": 0, "tokens_saved": 0}) == (
+        "※ memo today · 🧠 2 recalled"
+    )
+
+
+def test_summary_line_tokens_below_1k_shown_raw() -> None:
+    assert "~500 tok" in presence.summary_line({"recalls": 0, "saves": 0, "tokens_saved": 500})
+
+
 def test_rollover_then_bump_resets_counter(tmp_path: Path) -> None:
     """Stale-date file is discarded; new bump starts from 0, not stale+new."""
     presence.presence_path(tmp_path).write_text(

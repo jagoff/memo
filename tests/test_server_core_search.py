@@ -63,6 +63,68 @@ def test_read_only_tools_peek_notification_without_consuming(tmp_cfg, monkeypatc
         assert path.is_file(), f"{name} consumed the pending notification"
 
 
+def test_notification_carries_presence_for_mcp_agents(tmp_cfg, monkeypatch) -> None:
+    """MCP-only agents (no statusline) see today's activity in the notification
+    field of every tool response, alongside any pending idle notice."""
+    import memo.server_core_search as search_server
+    from memo import presence
+    from memo.memory import Memory
+
+    monkeypatch.setattr(search_server, "log_consult", lambda *a, **k: None)
+    memory = MagicMock(spec=Memory)
+    memory.cfg = tmp_cfg
+    memory.search.return_value = []
+    server = _RecordingServer()
+    search_server.register(server, memory)
+
+    presence.bump(tmp_cfg.state_dir, recalls=2, saves=1)
+    (tmp_cfg.state_dir / "pending_idle_notification.txt").write_text(
+        "※ MEMO auto-saved\n", encoding="utf-8"
+    )
+
+    notification = server.tools["memo_search"](query="needle")["notification"]
+    assert "※ memo today" in notification
+    assert "🧠 2 recalled" in notification and "💾 1 saved" in notification
+    assert "※ MEMO auto-saved" in notification  # idle notice preserved
+
+
+def test_presence_notify_flag_off_silences_only_that_channel(tmp_cfg, monkeypatch) -> None:
+    import memo.server_core_search as search_server
+    from memo import presence
+    from memo.memory import Memory
+
+    monkeypatch.setattr(search_server, "log_consult", lambda *a, **k: None)
+    monkeypatch.setenv("MEMO_PRESENCE_NOTIFY", "0")
+    memory = MagicMock(spec=Memory)
+    memory.cfg = tmp_cfg
+    memory.search.return_value = []
+    server = _RecordingServer()
+    search_server.register(server, memory)
+
+    presence.bump(tmp_cfg.state_dir, recalls=2)
+    assert "※ memo today" not in server.tools["memo_search"](query="needle")["notification"]
+
+
+def test_search_hits_bump_recall_presence(tmp_cfg, monkeypatch) -> None:
+    """An MCP search that surfaces memories increments the recall counter, so an
+    agent that never runs the Claude recall-hook still shows honest activity."""
+    import memo.server_core_search as search_server
+    from memo import presence
+    from memo.memory import Memory
+
+    monkeypatch.setattr(search_server, "log_consult", lambda *a, **k: None)
+    memory = MagicMock(spec=Memory)
+    memory.cfg = tmp_cfg
+    rec = MagicMock()
+    rec.to_dict.return_value = {"id": "abc", "body": "hit"}
+    memory.search.return_value = [rec, rec]
+    server = _RecordingServer()
+    search_server.register(server, memory)
+
+    server.tools["memo_search"](query="needle")
+    assert presence.read_today(tmp_cfg.state_dir)["recalls"] == 2
+
+
 def test_search_with_file_announces_dropped_date_filters_and_explain(tmp_cfg, monkeypatch) -> None:
     """search_by_file takes no date filters and computes no explain trace —
     memo_search must say so in the response instead of silently dropping the

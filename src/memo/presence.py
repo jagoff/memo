@@ -68,3 +68,29 @@ def set_tokens(state_dir: Path, tokens_saved: int) -> None:
         _write(state_dir, data)
     except Exception:  # noqa: S110  # decoration — never break the caller
         pass
+
+
+def summary_line(data: dict) -> str:
+    """One-line plain-text activity summary for cross-agent surfaces.
+
+    Agents without a statusline (Codex, Devin, opencode, Cursor) reach memo over
+    MCP; this renders the same counters the statusline shows into a line memo can
+    prepend to its MCP ``notification`` field, so they still see memo working.
+    Returns ``""`` when nothing happened today — presence must never claim
+    activity that did not occur.
+    """
+    recalls = int(data.get("recalls", 0) or 0)
+    saves = int(data.get("saves", 0) or 0)
+    tokens = int(data.get("tokens_saved", 0) or 0)
+    parts: list[str] = []
+    if recalls:
+        parts.append(f"🧠 {recalls} recalled")
+    if saves:
+        parts.append(f"💾 {saves} saved")
+    if tokens >= 1000:
+        parts.append(f"~{tokens // 1000}k tok")
+    elif tokens:
+        parts.append(f"~{tokens} tok")
+    if not parts:
+        return ""
+    return "※ memo today · " + " · ".join(parts)
