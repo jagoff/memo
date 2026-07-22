@@ -248,6 +248,96 @@ def test_store_search_as_of_overrides_now_gate(mem_with_stub: Memory):
     }
 
 
+def test_fact_leg_drops_invalidated_record(mem_with_stub: Memory, monkeypatch):
+    """Fact-retrieval seam (search_ops `_fetch_fact_candidates`): a record whose
+    interval is closed as of now must NOT leak back into default hybrid recall
+    through its still-matching fact edge. `store.get` filters only
+    `deleted_at IS NULL` (no validity gate), so the fused fact candidate would
+    otherwise bypass the SQL validity filter the vec/bm25 legs enforce."""
+    monkeypatch.setenv("MEMO_FACT_RETRIEVAL_ENABLED", "1")
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+    a = mem_with_stub.save(
+        content="short operational note",
+        title="Capture graph design",
+        type_="fact",
+        extra={
+            "fact_edges": [
+                {"subject": "memo capture", "predicate": "records", "object": "graph facts"}
+            ]
+        },
+    )
+    # Sanity: the fact edge surfaces A in default hybrid recall while valid.
+    assert a.id in {r.id for r in mem_with_stub.search("graph facts", mode="hybrid", limit=5)}
+
+    # Close A's world-validity interval (contradiction-supersede leaves the
+    # index row + fact_edges in place, only stamps invalid_at).
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at=a.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+
+    after = {r.id for r in mem_with_stub.search("graph facts", mode="hybrid", limit=5)}
+    assert a.id not in after
+
+
+def test_fact_leg_respects_as_of(mem_with_stub: Memory, monkeypatch):
+    """Fact-retrieval seam honors `as_of`: an as-of query in the past must not
+    surface a record (nor its fact edge) that was not yet valid at T."""
+    monkeypatch.setenv("MEMO_FACT_RETRIEVAL_ENABLED", "1")
+    monkeypatch.setenv("MEMO_HEALTH_SCORES_DISABLED", "1")
+    a = mem_with_stub.save(
+        content="short operational note",
+        title="Capture graph design",
+        type_="fact",
+        extra={
+            "fact_edges": [
+                {"subject": "memo capture", "predicate": "records", "object": "graph facts"}
+            ]
+        },
+    )
+    # Default recall (as_of=None): the fact leg surfaces A (valid now).
+    assert a.id in {r.id for r in mem_with_stub.search("graph facts", mode="hybrid", limit=5)}
+
+    # as_of before A (and its edge) were valid: the fact leg must stay blind to it.
+    past = {
+        r.id
+        for r in mem_with_stub.search(
+            "graph facts", mode="hybrid", limit=5, as_of="2000-01-01T00:00:00"
+        )
+    }
+    assert a.id not in past
+
+
+def test_passes_validity_gate_helper():
+    """Unit-test the shared drop predicate directly (mirrors the SQL
+    `_validity_filter` semantics for records materialized outside SQL)."""
+    from memo.memory.search_ops import _passes_validity_gate
+
+    open_row = {
+        "created": "2026-01-01T00:00:00",
+        "valid_at": "2026-01-01T00:00:00",
+        "invalid_at": None,
+    }
+    closed_past = {**open_row, "invalid_at": "2000-01-01T00:00:00"}
+    closed_future = {**open_row, "invalid_at": "2999-01-01T00:00:00"}
+
+    # default now-gate
+    assert _passes_validity_gate(open_row, None)
+    assert not _passes_validity_gate(closed_past, None)
+    assert _passes_validity_gate(closed_future, None)
+
+    # as_of: half-open interval [valid_at, invalid_at)
+    interval = {
+        "created": "2026-06-01T00:00:00",
+        "valid_at": "2026-06-01T00:00:00",
+        "invalid_at": "2026-07-01T00:00:00",
+    }
+    assert _passes_validity_gate(interval, "2026-06-15T00:00:00")  # inside
+    assert not _passes_validity_gate(interval, "2026-08-01T00:00:00")  # after close
+    assert not _passes_validity_gate(interval, "2026-05-01T00:00:00")  # before valid
+    # bare date is normalized (end-of-day) like the SQL path — inside interval
+    assert _passes_validity_gate(interval, "2026-06-15")
+
+
 def test_cli_search_forwards_as_of(tmp_path):
     """`memo search --as-of T` threads T into Memory.search(as_of=T)."""
     from unittest.mock import MagicMock, patch

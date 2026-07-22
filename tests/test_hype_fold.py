@@ -254,6 +254,32 @@ def test_flag_on_fold_appended_candidate_respects_type_filter(
     assert [r.id for r in out] == [rec_a.id]
 
 
+def test_flag_on_fold_appended_candidate_respects_validity(
+    hype_mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fold-appended candidate (question-space only, not a doc hit) must honor
+    the bi-temporal validity gate. `_hype_fold_candidates` materializes it via
+    `store.get` (deleted_at-only), so without the gate a record whose interval
+    is closed as of now resurfaces through the fold — bypassing the SQL validity
+    filter the vec doc leg enforces."""
+    rec_a = hype_mem.save(content="zzalpha note body", title="Alpha zzalpha")
+    rec_b = hype_mem.save(content="zzbeta note body", title="Beta zzbeta")
+    # B is only reachable via the question-space fold (doc vector orthogonal).
+    _populate_hype(hype_mem.cfg, rec_b.id, list(_QUERY_VEC))
+    monkeypatch.setenv("MEMO_HYPE_ENABLED", "1")
+
+    # Sanity: the fold surfaces B while valid.
+    assert rec_b.id in [r.id for r in hype_mem.search("zzquery topic", mode="vec", limit=5)]
+
+    # Close B's world-validity interval — it must drop out of the fold too.
+    hype_mem.store.update_validity(
+        id_=rec_b.id, valid_at=rec_b.valid_at, invalid_at="2000-01-01T00:00:00"
+    )
+    out = hype_mem.search("zzquery topic", mode="vec", limit=5)
+    assert rec_b.id not in [r.id for r in out]
+    assert rec_a.id in [r.id for r in out]
+
+
 def test_fold_variant_mismatch_warns_in_trace_but_still_folds(
     hype_mem, monkeypatch: pytest.MonkeyPatch
 ) -> None:
