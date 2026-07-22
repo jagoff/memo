@@ -483,8 +483,8 @@ def test_stale_archive_failure_is_not_recorded_as_archived(tmp_path: Path):
     assert any("stale: archive failed for bbbb2222" in e for e in receipt["errors"])
 
 
-def test_supersede_archive_failure_is_not_recorded_as_superseded(tmp_path: Path):
-    """When the archive/delete of the dominated side fails, the pair stays
+def test_supersede_invalidate_failure_is_not_recorded_as_superseded(tmp_path: Path):
+    """When the invalidate/delete of the dominated side fails, the pair stays
     open and must NOT be listed in receipt['superseded']."""
     from types import SimpleNamespace
     from unittest.mock import MagicMock
@@ -507,8 +507,12 @@ def test_supersede_archive_failure_is_not_recorded_as_superseded(tmp_path: Path)
         "aaaa1111": "2026-01-01T00:00:00+00:00",
         "bbbb2222": "2026-01-02T00:00:00+00:00",
     }
-    mem.get.side_effect = lambda i: SimpleNamespace(updated=updated[i])
-    mem.lifecycle.archive_memory.return_value = False
+    # The winner (bbbb2222) must expose a valid_at so the call site can compute
+    # the loser's close-date before invoking invalidate_in_place.
+    mem.get.side_effect = lambda i: SimpleNamespace(
+        updated=updated[i], valid_at=updated[i], created=updated[i]
+    )
+    mem.lifecycle.invalidate_in_place.return_value = False
 
     decision = SimpleNamespace(
         action=ARCHIVE,
@@ -532,5 +536,5 @@ def test_supersede_archive_failure_is_not_recorded_as_superseded(tmp_path: Path)
     assert result.exit_code == 0, result.output
     receipt = json.loads(result.output)
     assert receipt["superseded"] == []
-    assert any("supersede: archive failed for aaaa1111" in e for e in receipt["errors"])
+    assert any("supersede: invalidate failed for aaaa1111" in e for e in receipt["errors"])
     mem.contradict_store.resolve.assert_not_called()
