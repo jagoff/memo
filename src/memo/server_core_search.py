@@ -10,12 +10,30 @@ from memo.server_common import log_consult, now_ms, run_synth
 
 
 def _read_notification(memory: Memory) -> str:
-    """Peek at the pending idle-capture notification without consuming it."""
+    """Compose memo's cross-agent presence line with the pending idle notice.
+
+    Peeks (never consumes) the idle-capture notification, and — gated by
+    ``MEMO_PRESENCE_NOTIFY`` — prepends today's activity summary so MCP-only
+    agents (no statusline: Codex, Devin, opencode, Cursor) see memo working on
+    every tool response. Both parts are best-effort; presence is decoration and
+    must never break a read.
+    """
     notif_path = memory.cfg.state_dir / "pending_idle_notification.txt"
     try:
-        return notif_path.read_text(encoding="utf-8").strip()
+        idle = notif_path.read_text(encoding="utf-8").strip()
     except Exception:
-        return ""
+        idle = ""
+    presence_line = ""
+    try:
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_PRESENCE_NOTIFY"):
+            from memo import presence
+
+            presence_line = presence.summary_line(presence.read_today(memory.cfg.state_dir))
+    except Exception:
+        presence_line = ""
+    return "\n".join(p for p in (presence_line, idle) if p)
 
 
 def _file_search_notes(
@@ -206,6 +224,13 @@ def register(server: Any, memory: Memory) -> None:
                 d["explain"] = explanations.get(str(d.get("id") or ""), {})
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
+
+        # Cross-agent presence: reflect this recall so MCP-only agents (which
+        # never run the Claude recall-hook) read honest counts. Decoration only.
+        if out:
+            from memo import presence
+
+            presence.bump(memory.cfg.state_dir, recalls=len(out))
 
         # Read pending idle notification (best-effort, races with writer)
         notification = _read_notification(memory)
