@@ -241,8 +241,9 @@ Expected: forbidden state absent and required agent assets present.
 
 - [ ] **Step 6: Install artifact under Python 3.13 and 3.14**
 
-For each Python, create a QA_ROOT venv, install the wheel, change directory to
-/tmp, import memo and memo.server, and run memo --version.
+For each Python, create a QA_ROOT venv with uv venv, install the wheel with
+uv pip install --python pointing at that venv's interpreter, change directory
+to /tmp, import memo and memo.server, and run memo --version.
 
 Expected: imports resolve from isolated site-packages, not the checkout.
 
@@ -557,7 +558,7 @@ Expected: all pass.
 
 Run:
 
-    uv run --no-sync pytest tests/test_hook_contract.py tests/test_recall_hooks.py tests/test_recall_server.py tests/test_recall_shutdown.py tests/test_recall_daemon_health.py tests/test_recall_daemon_restart.py tests/test_daemon_startup_flock.py tests/test_embedder_client.py tests/test_maint_daemon.py tests/test_runtime_daemon_install.py tests/test_install_watcher.py -q | tee "$QA_ROOT/logs/gate-08/daemons-hooks.txt"
+    uv run --no-sync pytest tests/test_hook_contract.py tests/test_recall_hooks.py tests/test_recall_server.py tests/test_recall_shutdown.py tests/test_recall_daemon_health.py tests/test_recall_daemon_restart.py tests/test_daemon_startup_flock.py tests/test_embedder_client.py tests/test_maint_daemon.py tests/test_runtime_daemon_install.py tests/test_runtime_isolation.py -q | tee "$QA_ROOT/logs/gate-08/daemons-hooks.txt"
 
 Expected: all pass within their timeout budgets.
 
