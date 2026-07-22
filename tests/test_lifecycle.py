@@ -262,6 +262,40 @@ def test_invalidate_in_place_clamps_inverted_interval(lifecycle_manager, mock_me
     assert ga.invalid_at == loser.valid_at
 
 
+def test_invalidate_in_place_returns_false_when_loser_gone(lifecycle_manager):
+    """A loser that no longer exists is a clean no-op (False), never a crash."""
+    ok = lifecycle_manager.invalidate_in_place(
+        loser_id="deadbeef" * 4,
+        winner_id="cafef00d" * 4,
+        invalid_at="2026-07-01T00:00:00",
+    )
+    assert ok is False
+
+
+def test_invalidate_in_place_frontmatter_mirror_failure_is_non_fatal(
+    lifecycle_manager, mock_memory, monkeypatch
+):
+    """A failed markdown mirror leaves the index authoritative and still returns
+    True — it must not crash the maintain pass."""
+    import frontmatter
+
+    loser = mock_memory.save(content="prod db is postgres", title="old", type_="fact")
+    winner = mock_memory.save(content="prod db is mysql", title="new", type_="fact")
+
+    def boom(*a, **k):
+        raise RuntimeError("yaml dump failed")
+
+    # dumps runs only inside the mirror try-block (index writes precede it).
+    monkeypatch.setattr(frontmatter, "dumps", boom)
+
+    ok = lifecycle_manager.invalidate_in_place(
+        loser_id=loser.id, winner_id=winner.id, invalid_at=winner.valid_at
+    )
+    assert ok is True
+    # Index still closed the interval even though the disk mirror failed.
+    assert mock_memory.get(loser.id).invalid_at == winner.valid_at
+
+
 def test_apply_lifecycle_rules_dry_run(lifecycle_manager, mock_memory):
     """Test applying lifecycle rules in dry-run mode."""
     # Create test memorias

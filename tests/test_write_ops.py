@@ -31,3 +31,17 @@ def test_save_does_not_override_explicit_valid_at(mock_memory: Memory) -> None:
     assert rec.invalid_at is None
     md = (mock_memory.cfg.memory_dir / rec.path).read_text(encoding="utf-8")
     assert "valid_at: '2020-01-01T00:00:00'" in md or "valid_at: 2020-01-01T00:00:00" in md
+
+
+def test_save_with_explicit_invalid_at_mirrors_to_frontmatter(mock_memory: Memory) -> None:
+    """A save carrying a closed interval mirrors `invalid_at` onto disk so a
+    `reindex --rebuild` from markdown preserves it."""
+    rec = mock_memory.save(
+        content="expired clause",
+        type_="fact",
+        valid_at="2020-01-01T00:00:00",
+        invalid_at="2021-01-01T00:00:00",
+    )
+    assert rec.invalid_at == "2021-01-01T00:00:00"
+    md = (mock_memory.cfg.memory_dir / rec.path).read_text(encoding="utf-8")
+    assert "invalid_at:" in md and "2021-01-01" in md

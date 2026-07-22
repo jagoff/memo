@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from memo.cli_dream_passes import _run_validity_extract
+import memo.cli_dream_passes as passes
+from memo.cli_dream_passes import _mirror_validity_to_markdown, _run_validity_extract
 
 # --- completeness gate (RED first) -------------------------------------------
 
@@ -141,3 +142,150 @@ def test_extract_returns_none_when_no_window_stated(mock_memory):
     mock_memory._chat = _FakeChatJSON('{"valid_at": null, "invalid_at": null}')
     got = mock_memory.temporal.extract_validity_window(_record("We use Python here."))
     assert got is None
+
+
+# --- extract_validity_window: remaining parse/guard branches -----------------
+
+
+class _FakeChatNone:
+    """Chat double whose call returns None → chat_with_timeout yields None."""
+
+    def chat(self, model, messages, options=None):
+        return None
+
+
+def test_extract_empty_body_returns_none_without_calling_llm(mock_memory):
+    # Whitespace-only body short-circuits before the LLM is ever consulted.
+    mock_memory._chat = _FakeChatNone()
+    assert mock_memory.temporal.extract_validity_window(_record("   \n\t")) is None
+
+
+def test_extract_none_chat_output_returns_none(mock_memory):
+    mock_memory._chat = _FakeChatNone()
+    assert mock_memory.temporal.extract_validity_window(_record("Valid until 2026.")) is None
+
+
+def test_extract_strips_markdown_fences(mock_memory):
+    mock_memory._chat = _FakeChatJSON(
+        '```json\n{"valid_at": null, "invalid_at": "2026-09-30"}\n```'
+    )
+    got = mock_memory.temporal.extract_validity_window(_record("Contract ends 2026-09-30."))
+    assert got == {"invalid_at": "2026-09-30T00:00:00"}
+
+
+def test_extract_malformed_json_returns_none(mock_memory):
+    mock_memory._chat = _FakeChatJSON("not json at all {{{")
+    assert mock_memory.temporal.extract_validity_window(_record("Ends 2026-09-30.")) is None
+
+
+def test_extract_non_dict_json_returns_none(mock_memory):
+    mock_memory._chat = _FakeChatJSON("[1, 2, 3]")
+    assert mock_memory.temporal.extract_validity_window(_record("Ends 2026-09-30.")) is None
+
+
+def test_extract_skips_unparseable_date_value(mock_memory):
+    # A bare year never normalizes to an ISO datetime → the field is dropped and,
+    # with no other boundary, the whole extraction returns None.
+    mock_memory._chat = _FakeChatJSON('{"valid_at": "2026", "invalid_at": null}')
+    assert mock_memory.temporal.extract_validity_window(_record("Since 2026 we ship.")) is None
+
+
+# --- _normalize_extracted_date: direct unit coverage -------------------------
+
+
+def test_normalize_extracted_date_rejects_bare_year():
+    from memo.temporal import _normalize_extracted_date
+
+    assert _normalize_extracted_date("2026") is None
+    assert _normalize_extracted_date("not-a-date") is None
+
+
+def test_normalize_extracted_date_folds_offset_to_naive_utc():
+    from memo.temporal import _normalize_extracted_date
+
+    # A full ISO datetime with a +02:00 offset is converted instant-preservingly
+    # to naive UTC (12:00+02:00 → 10:00).
+    assert _normalize_extracted_date("2026-09-30T12:00:00+02:00") == "2026-09-30T10:00:00"
+
+
+# --- _mirror_validity_to_markdown: direct unit coverage ----------------------
+
+
+def test_mirror_returns_when_source_not_a_file(mock_memory):
+    # A record whose path doesn't resolve to a real file is a silent no-op.
+    ghost = SimpleNamespace(path="no/such/bucket/ghost.md")
+    _mirror_validity_to_markdown(
+        mock_memory, ghost, valid_at="2026-01-01T00:00:00", invalid_at=None
+    )  # must not raise
+
+
+def test_mirror_writes_valid_at_to_frontmatter(mock_memory):
+    rec = mock_memory.save(content="A dated fact.", type_="fact")
+    _mirror_validity_to_markdown(mock_memory, rec, valid_at="2026-01-01T00:00:00", invalid_at=None)
+    md = mock_memory._resolve_existing(rec.path).read_text(encoding="utf-8")
+    assert "valid_at:" in md and "2026-01-01" in md
+
+
+# --- _run_validity_extract: remaining loop/error branches --------------------
+
+
+def test_pass_skips_when_record_vanished(mock_memory, monkeypatch):
+    mock_memory.save(content="Contract runs through 2026-09-30.", type_="fact")
+    # get() returns None for the selected row (concurrent delete) → skipped.
+    monkeypatch.setattr(mock_memory, "get", lambda *a, **k: None)
+    receipt = _fresh_receipt()
+    _run_validity_extract(mock_memory, receipt)
+    assert receipt["validity_extract"]["scanned"] == 0
+    assert receipt["validity_extract"]["updated"] == []
+    assert receipt["errors"] == []
+
+
+def test_pass_noop_when_extraction_reproduces_stored_window(mock_memory, monkeypatch):
+    a = mock_memory.save(content="Contract runs through 2026-09-30.", type_="fact")
+    # Extraction returns exactly the already-stored valid_at → no-op, not an update.
+    monkeypatch.setattr(
+        mock_memory.temporal,
+        "extract_validity_window",
+        lambda record: {"valid_at": record.valid_at},
+    )
+    receipt = _fresh_receipt()
+    _run_validity_extract(mock_memory, receipt)
+    assert receipt["validity_extract"]["updated"] == []
+    assert receipt["errors"] == []
+    assert mock_memory.get(a.id).invalid_at is None
+
+
+def test_pass_frontmatter_mirror_failure_lands_in_receipt(mock_memory, monkeypatch):
+    a = mock_memory.save(content="Contract runs through 2026-09-30.", type_="fact")
+    monkeypatch.setattr(
+        mock_memory.temporal,
+        "extract_validity_window",
+        lambda record: {"invalid_at": "2027-01-01T00:00:00"},
+    )
+
+    def boom(*a, **k):
+        raise RuntimeError("mirror kaput")
+
+    monkeypatch.setattr(passes, "_mirror_validity_to_markdown", boom)
+
+    receipt = _fresh_receipt()
+    _run_validity_extract(mock_memory, receipt)
+
+    # Index write still happened; the mirror failure is surfaced, not fatal.
+    assert mock_memory.get(a.id).invalid_at == "2027-01-01T00:00:00"
+    assert any("frontmatter mirror" in e for e in receipt["errors"])
+    assert receipt["validity_extract"]["updated"]
+
+
+def test_pass_whole_pass_failure_lands_in_receipt(mock_memory, monkeypatch):
+    mock_memory.save(content="Contract runs through 2026-09-30.", type_="fact")
+
+    def boom(*a, **k):
+        raise RuntimeError("store exploded")
+
+    # get() raises OUTSIDE the per-record try → the whole-pass guard catches it.
+    monkeypatch.setattr(mock_memory, "get", boom)
+
+    receipt = _fresh_receipt()
+    _run_validity_extract(mock_memory, receipt)
+    assert any("validity_extract" in e and "store exploded" in e for e in receipt["errors"])

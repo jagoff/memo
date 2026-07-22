@@ -434,12 +434,12 @@ class _SchemaMixin(_StoreBase):
         if "valid_at" not in mcols:
             try:
                 self._conn.execute("ALTER TABLE meta ADD COLUMN valid_at TEXT")
-            except Exception as e:
+            except Exception as e:  # pragma: no cover - defensive: sqlite ALTER failure
                 _log.debug("schema migration meta.valid_at failed: %s", e)
         if "invalid_at" not in mcols:
             try:
                 self._conn.execute("ALTER TABLE meta ADD COLUMN invalid_at TEXT")
-            except Exception as e:
+            except Exception as e:  # pragma: no cover - defensive: sqlite ALTER failure
                 _log.debug("schema migration meta.invalid_at failed: %s", e)
         # Partial index keeps the default-recall "currently valid" filter cheap.
         try:
@@ -447,7 +447,7 @@ class _SchemaMixin(_StoreBase):
                 "CREATE INDEX IF NOT EXISTS idx_meta_invalid_at "
                 "ON meta(invalid_at) WHERE invalid_at IS NOT NULL"
             )
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - defensive: sqlite CREATE INDEX failure
             _log.debug("schema migration idx_meta_invalid_at failed: %s", e)
 
         # Ensure sessions table exists (session pattern)
