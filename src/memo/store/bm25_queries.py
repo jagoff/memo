@@ -30,6 +30,46 @@ _META_SELECT_COLUMNS = (
 )
 
 
+def _now_iso_local() -> str:
+    """Wall-clock *now* in the machine's LOCAL UTC offset, ms precision — the
+    EXACT shape ``memo.memory.record._now_iso()`` stamps ``created`` /
+    ``valid_at`` / ``invalid_at`` with. Replicated here rather than imported
+    because the store is a foundation layer that must not import up into
+    ``memo.memory`` (that would cycle: ``memory.facade`` → ``store`` →
+    ``memory.record``); the sibling store modules (``episode_store`` etc.) keep
+    their own ``_now_iso`` for the same reason. Matching the stored columns'
+    offset+precision is what makes ``_validity_filter``'s lexicographic TEXT
+    compare correct — see its tz note.
+    """
+    return datetime.now(tz=UTC).astimezone().isoformat(timespec="milliseconds")
+
+
+def _normalize_as_of(as_of: str) -> str:
+    """Normalize a caller-supplied ``as_of`` into the local-offset ISO shape the
+    validity columns are stamped in, so the lexicographic TEXT compare in
+    ``_validity_filter`` is correct on THIS machine.
+
+    - **Bare date** (``YYYY-MM-DD``, no time) → the END of that day
+      (``T23:59:59.999999``) so a fact that became valid *later that same day*
+      (``valid_at="…-06-15T14:00…"``) is still included — "as of end of day D".
+    - **Naive datetime** (no offset) → assumed local wall-clock time.
+    - **Offset-aware** value → converted instant-preservingly to the local
+      offset (``…T14:00:00+00:00`` on a UTC-3 box → ``…T11:00:00-03:00``).
+
+    Unparseable input falls back to the raw string (old behaviour — no crash on
+    a malformed boundary), which then simply matches lexicographically as-is.
+    """
+    s = as_of.strip()
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return as_of
+    if "T" not in s and " " not in s:  # bare date → end of that day
+        dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    # naive → assume local; aware → convert to the machine's local offset.
+    return dt.astimezone().isoformat()
+
+
 def _validity_filter(
     prefix: str, include_invalid: bool, as_of: str | None = None
 ) -> tuple[str, list[Any]]:
@@ -50,22 +90,32 @@ def _validity_filter(
       contradiction-superseded fact stays in-index (recoverable, as-of
       queryable) but drops out of normal recall.
 
-    Index-friendly via the ``idx_meta_invalid_at`` partial index.
-    Lexicographic ISO comparison is correct even for mixed-precision timestamps
-    (bare date vs full datetime). ``prefix`` qualifies the columns for JOINed
-    queries (``"meta."``) vs single-table selects (``""``). Qmark binding
-    matches the store's positional param style.
+    **Timezone (single-machine consistent).** The columns are TEXT and compared
+    lexicographically, so the bound value must carry the SAME UTC offset the
+    columns were stamped in. Stored ``valid_at``/``invalid_at``/``created`` use
+    ``record._now_iso()`` = the machine's LOCAL offset (e.g. ``-03:00``), so the
+    bound is normalized to that same local offset here — ``now`` via
+    ``_now_iso_local()``, ``as_of`` via ``_normalize_as_of()`` — NOT a fixed
+    ``+00:00``. Binding ``+00:00`` skewed the boundary by the machine's UTC
+    offset (superseded facts resurfacing / future interval-ends hiding early).
+    KNOWN LIMITATION: cross-machine git sync can still land values stamped in a
+    different offset into one DB; that pre-existing mixed-offset case (shared
+    with ``created``/``updated`` recency sorting) is out of scope.
+
+    Index-friendly via the ``idx_meta_invalid_at`` partial index. ``prefix``
+    qualifies the columns for JOINed queries (``"meta."``) vs single-table
+    selects (``""``). Qmark binding matches the store's positional param style.
     """
     if as_of is not None:
+        bound = _normalize_as_of(as_of)
         return (
             f" AND COALESCE({prefix}valid_at, {prefix}created) <= ?"
             f" AND ({prefix}invalid_at IS NULL OR {prefix}invalid_at > ?)",
-            [as_of, as_of],
+            [bound, bound],
         )
     if include_invalid:
         return "", []
-    now = datetime.now(UTC).isoformat()
-    return f" AND ({prefix}invalid_at IS NULL OR {prefix}invalid_at > ?)", [now]
+    return f" AND ({prefix}invalid_at IS NULL OR {prefix}invalid_at > ?)", [_now_iso_local()]
 
 
 def _env_float(
