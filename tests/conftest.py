@@ -109,6 +109,13 @@ os.environ["MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON"] = "0"
 os.environ["MEMO_SUPPORT_CONFIDENCE_LIFT"] = "0"
 os.environ["MEMO_SUPERSEDE_SUPPORT_GATE"] = "0"
 
+# The update check (opt-in) points MEMO_UPDATE_ENDPOINT at the live telemetry
+# endpoint by default. A test that exercises the update path must NOT emit a real
+# heartbeat to production, so hard-set the endpoint to the disable sentinel;
+# telemetry tests opt back in via `monkeypatch.setenv("MEMO_UPDATE_ENDPOINT", ...)`
+# and default-value assertions via `monkeypatch.delenv`.
+os.environ["MEMO_UPDATE_ENDPOINT"] = "off"
+
 # Trust & belief-revision program flags (memo v3.0.0+). A machine running the
 # *activated* trust program exports these via ~/.claude/settings.json `env` (and
 # the launchd fleet), and Claude Code passes them down to a `pytest` subprocess —

@@ -23,30 +23,35 @@ All data is stored **locally on your own device**:
 
 ## What is sent off your device
 
-**Nothing, by default.** Embeddings and any LLM steps run **in-process** — MLX on
-Apple Silicon, CPU `sentence-transformers` elsewhere. memo makes **no calls to any
-cloud API**, uses **no API keys**, and collects **no telemetry or analytics**.
+**Nothing, unless you opt in.** Embeddings and any LLM steps run **in-process** —
+MLX on Apple Silicon, CPU `sentence-transformers` elsewhere. memo makes **no calls
+to any cloud API** for your data, uses **no API keys**, and never transmits memory
+content, file paths, or queries.
 
-The **only** way memory leaves your machine is if **you** explicitly configure a
-git `memo-sync` remote. In that case your memory markdown is pushed to **that
-remote, which you own and control** — memo neither hosts nor has access to it.
+The only way your memory **content** leaves your machine is if **you** explicitly
+configure a git `memo-sync` remote. In that case your memory markdown is pushed to
+**that remote, which you own and control** — memo neither hosts nor has access to it.
 
-### Optional update-check heartbeat (off by default)
+### Anonymous usage heartbeat (opt-in — you're asked once at setup)
 
-memo can check for a newer release on startup. By default that check uses
-`git ls-remote` against the public GitHub repo and sends **nothing** about you.
-
-If **you** set `MEMO_UPDATE_ENDPOINT` (empty by default) *and* enable update
-checks (`MEMO_UPDATE_CHECK_ENABLED` or `MEMO_AUTO_UPDATE`, both off by default),
-the check instead GETs that endpoint, which lets the operator count active
-installs. The **entire** payload is three anonymous fields:
+To gauge how many people use memo, memo can send a tiny anonymous heartbeat on
+startup (throttled to ~once every 6h). It is **off by default**: the first-run
+setup (`memo init`) asks you a single yes/no question, and only a **yes** turns it
+on. Nothing is sent unless you opt in. The **entire** payload is three anonymous
+fields:
 
 - `id` — `sha256(device_id)[:16]`, a one-way hash computed on your machine; the
   raw device id never leaves it and the hash is not reversible to identity.
 - `v` — your memo version. `os` — your OS name (e.g. `Darwin`).
 
-No memory content, file paths, queries, or IP are collected. This is **opt-in**:
-leave `MEMO_UPDATE_ENDPOINT` unset and memo never contacts any such endpoint.
+No memory content, file paths, queries, or IP are collected. Change your mind
+anytime:
+
+- `memo config set update.check_enabled false` — turn the heartbeat off.
+- `memo config set update.check_enabled true` — turn it on later.
+
+(If you enable update checks but want no heartbeat, set `MEMO_UPDATE_ENDPOINT=off`
+— checks then use `git ls-remote` against public GitHub.)
 
 The explicit `memo map` and `memo dashboard` browser views use Canvas/SVG
 renderers contained in their generated HTML. They make no third-party request
@@ -57,9 +62,9 @@ pan/zoom/export controls to avoid a large browser dependency.
 ## Third-party sharing
 
 memo shares your data with **no third parties**. No server operated by the author
-receives, stores, or processes your memory **content** — ever. The only optional
-exception is the opt-in update-check heartbeat above, which sends a hashed
-install id, version, and OS name (never content) and only when you configure it.
+receives, stores, or processes your memory **content** — ever. The only exception
+is the anonymous usage heartbeat above (a hashed install id, version, and OS name —
+never content), and only if you opted in when memo asked at setup.
 
 ## Retention & deletion
 

@@ -619,6 +619,46 @@ def _run_picker_and_save() -> None:
         )
     console.print(f"[dim]config saved: {written[0].parent}[/dim]")
     console.print("💡 Tip: sincronizá memorias entre Macs → `memo sync setup` cuando quieras")
+    _prompt_usage_sharing()
+
+
+def _prompt_usage_sharing() -> None:
+    """Ask once, at first-run/init, whether to share anonymous usage stats.
+
+    Opt-IN (default no). Enabling flips ``update.check_enabled`` on, which turns on
+    the anonymous update-check heartbeat — a hashed install id + memo version + OS
+    name, never memory content — via the default ``MEMO_UPDATE_ENDPOINT``. Skipped
+    entirely when non-interactive (no prompt → no consent → no telemetry).
+    """
+    from memo.runtime.install import _init_is_interactive
+
+    if not _init_is_interactive():
+        return
+    console.print(
+        "\n[bold]Help improve memo?[/bold] memo can send an anonymous usage "
+        "heartbeat on startup — a [bold]hashed[/bold] install id, the memo version, "
+        "and your OS name. [bold]Never[/bold] your memories, queries, or files. It "
+        "just lets the author see how many people use memo."
+    )
+    try:
+        share = click.confirm("Share anonymous usage?", default=False)
+    except (click.exceptions.Abort, EOFError):
+        # No readable answer (closed stdin, Ctrl-C) → treat as a decline. Never
+        # crash setup, and never enable sharing without a clear yes.
+        share = False
+    from memo.config_md import set_value
+
+    set_value("update.check_enabled", "true" if share else "false")
+    if share:
+        console.print(
+            "[green]✓[/green] thanks — anonymous usage sharing on. Turn it off "
+            "anytime: [dim]memo config set update.check_enabled false[/dim]"
+        )
+    else:
+        console.print(
+            "[dim]no usage sharing. Enable later: "
+            "memo config set update.check_enabled true[/dim]"
+        )
 
 
 def main() -> None:

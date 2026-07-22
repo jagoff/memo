@@ -1,23 +1,31 @@
 # Privacy and Network Policy
 
-memo stores memories, embeddings, caches, and history locally. Normal
-`memo-mcp` startup is offline by default: it makes no outbound network request
-and does not modify Claude, Codex, or other agent configuration.
+memo stores memories, embeddings, caches, and history locally. `memo-mcp` startup
+is **offline by default**: it transmits no memory content, paths, or queries, and
+does not modify Claude, Codex, or other agent configuration. The only outbound
+request is the anonymous usage heartbeat below — and only if you opted in.
+
+## Usage heartbeat (opt-in — asked once at setup)
+
+- `MEMO_UPDATE_CHECK_ENABLED` (**default off**) permits a throttled (~6h) remote
+  tag check and records a local update notification. memo asks a single yes/no
+  question at first-run/`memo init`; only a yes sets this on (via
+  `memo config set update.check_enabled true`). Turn it off anytime with
+  `memo config set update.check_enabled false`.
+- `MEMO_UPDATE_ENDPOINT` (**default** = memo's update endpoint) is where that
+  check goes when enabled. It returns the latest tag and records an anonymous,
+  deduplicated active-install count from three fields — `id=sha256(device_id)[:16]`
+  (hashed on-device, raw id never sent), `v` (version), `os` (OS name). No memory
+  content, paths, or IP. Set to `off` to keep the check but send no heartbeat
+  (`git ls-remote` only); it also falls back to `git ls-remote` on any HTTP failure.
 
 ## Startup opt-ins
 
-All four startup behaviors default to `0`/false:
+These startup behaviors default to `0`/false:
 
-- `MEMO_UPDATE_CHECK_ENABLED=1` permits a throttled remote tag check and records
-  a local update notification.
-- `MEMO_AUTO_UPDATE=1` permits that check and may install a newer tagged memo
-  release in the background for the next startup.
-- `MEMO_UPDATE_ENDPOINT=<url>` (empty by default) routes the tag check above
-  through an HTTP endpoint instead of `git ls-remote`. It sends three anonymous
-  fields — `id=sha256(device_id)[:16]` (hashed on-device, raw id never sent),
-  `v` (version), `os` (OS name) — letting the operator count active installs. No
-  memory content, paths, or IP. Only fires when a tag check is already enabled;
-  unset → no such request. Falls back to `git ls-remote` on any HTTP failure.
+- `MEMO_AUTO_UPDATE=1` permits the tag check above **and** may install a newer
+  tagged memo release in the background for the next startup. Installation never
+  happens without this flag.
 - `MEMO_STATUSLINE_SELFHEAL=1` permits memo to repair its statusline entry in
   local Claude settings.
 - `MEMO_HOOK_SELFHEAL=1` permits memo to repair its local recall-hook entries.

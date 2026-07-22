@@ -187,16 +187,21 @@ def latest_tag_via_endpoint(
     return None
 
 
-def resolve_latest_tag(cfg: Config, repo_url: str, *, timeout: int = 10) -> str | None:
-    """Latest tag via the configured HTTP endpoint if set, else git ls-remote.
+_ENDPOINT_DISABLED = frozenset({"", "off", "none", "disabled"})
 
-    When ``MEMO_UPDATE_ENDPOINT`` is empty (the default) this is exactly
-    ``latest_remote_tag`` — no network destination changes, no heartbeat. When
-    set, the HTTP endpoint is tried first (functional version check + anonymous
-    heartbeat) and the git probe is the fallback on any failure.
+
+def resolve_latest_tag(cfg: Config, repo_url: str, *, timeout: int = 10) -> str | None:
+    """Latest tag via the ``MEMO_UPDATE_ENDPOINT`` HTTP endpoint, else git ls-remote.
+
+    This only runs when update checks are enabled (opt-in — memo asks at first-run;
+    see ``MEMO_UPDATE_CHECK_ENABLED``). The endpoint defaults to memo's update
+    endpoint, so an opted-in install's check is a functional version probe that
+    also emits an anonymous heartbeat (see PRIVACY.md), with git ls-remote as the
+    fallback on any failure. Set the endpoint to ``off`` (or empty/``none``) to use
+    git only and send no heartbeat even with checks on.
     """
-    endpoint = flag_str("MEMO_UPDATE_ENDPOINT")
-    if endpoint:
+    endpoint = flag_str("MEMO_UPDATE_ENDPOINT").strip()
+    if endpoint.lower() not in _ENDPOINT_DISABLED:
         from memo import __version__
 
         tag = latest_tag_via_endpoint(

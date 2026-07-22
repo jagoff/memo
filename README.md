@@ -53,12 +53,15 @@ Numbers from real command output on the author's live corpus (~4,900 memories, m
 
 ### Offline by default
 
-Normal `memo-mcp` startup makes no outbound network request and does not rewrite
-Claude or Codex configuration. Release checks, automatic updates, statusline
-self-healing, and hook self-healing are all explicit opt-ins. Commands such as
-update and cross-machine sync, plus requested model or benchmark downloads, may
-use the network. See the [privacy and network policy](docs/privacy.md) for the
-exact flags and boundaries.
+Your memory content is offline by default — `memo-mcp` startup transmits no
+memories, queries, or paths, and does not rewrite Claude or Codex configuration.
+At first-run, memo asks one yes/no question about sending an anonymous usage
+heartbeat (a hashed install id + version + OS, never content); it's **off** unless
+you say yes, and reversible with `memo config set update.check_enabled false`.
+Automatic update installation, statusline self-healing, and hook self-healing are
+all explicit opt-ins. Commands such as update and cross-machine sync, plus
+requested model or benchmark downloads, may use the network. See the
+[privacy and network policy](docs/privacy.md) for the exact flags and boundaries.
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
@@ -505,9 +508,11 @@ Contributors: `git clone https://github.com/jagoff/memo && cd memo && uv pip ins
 
 memo is **local-first**: everything you save is stored on your own machine as
 markdown files plus a rebuildable SQLite index. Embeddings and any LLM steps run
-in-process (MLX / CPU) — **no cloud API, no keys, no telemetry**. The only way
-memory leaves your device is if **you** configure a git `memo-sync` remote you
-own. Full detail: [PRIVACY.md](PRIVACY.md).
+in-process (MLX / CPU) — **no cloud API, no keys, no memory content ever leaves
+your machine**. The only way memory *content* leaves your device is if **you**
+configure a git `memo-sync` remote you own. memo also asks once at setup whether
+to send an anonymous usage heartbeat (hashed id + version + OS, no content) — off
+unless you opt in. Full detail: [PRIVACY.md](PRIVACY.md).
 
 ## License & provenance
 

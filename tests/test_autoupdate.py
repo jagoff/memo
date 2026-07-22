@@ -170,15 +170,27 @@ def test_latest_tag_via_endpoint_rejects_non_semver_and_failures(monkeypatch):
     )
 
 
-def test_resolve_latest_tag_uses_git_when_endpoint_unset(tmp_cfg, monkeypatch):
-    monkeypatch.delenv("MEMO_UPDATE_ENDPOINT", raising=False)
+@pytest.mark.parametrize("disabled", ["off", "none", "OFF", "disabled"])
+def test_resolve_latest_tag_uses_git_when_endpoint_disabled(tmp_cfg, monkeypatch, disabled):
+    # Heartbeat opt-out (off/none/disabled) → git ls-remote, no HTTP.
+    monkeypatch.setenv("MEMO_UPDATE_ENDPOINT", disabled)
     monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v1.4.0")
     monkeypatch.setattr(
         au,
         "latest_tag_via_endpoint",
-        lambda *a, **k: pytest.fail("endpoint must not be called when unset"),
+        lambda *a, **k: pytest.fail("endpoint must not be called when disabled"),
     )
     assert au.resolve_latest_tag(tmp_cfg, "https://example/repo.git") == "v1.4.0"
+
+
+def test_update_endpoint_default_is_set_but_checks_off(monkeypatch):
+    # The endpoint is configured by default, but the check that uses it is opt-in.
+    from memo.flags import flag_bool, flag_str
+
+    monkeypatch.delenv("MEMO_UPDATE_ENDPOINT", raising=False)
+    monkeypatch.delenv("MEMO_UPDATE_CHECK_ENABLED", raising=False)
+    assert flag_str("MEMO_UPDATE_ENDPOINT").startswith("https://")
+    assert flag_bool("MEMO_UPDATE_CHECK_ENABLED") is False
 
 
 def test_resolve_latest_tag_prefers_endpoint_then_falls_back_to_git(tmp_cfg, monkeypatch):

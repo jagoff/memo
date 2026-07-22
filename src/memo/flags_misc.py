@@ -42,8 +42,11 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "update",
-        "On memo-mcp start, check for a newer tagged release and record a "
-        "notification. Default off; set =1 to opt in to remote checks.",
+        "On memo-mcp start, check for a newer tagged release (throttled ~6h) and "
+        "record a notification. When on, the check goes through "
+        "MEMO_UPDATE_ENDPOINT, which also emits an anonymous usage heartbeat "
+        "(hashed id + version + OS; no memory content). Default OFF — memo asks "
+        "once at first-run/`memo init` whether to opt in; set =1/0 to force it.",
     ),
     _spec(
         "MEMO_AUTO_UPDATE",
@@ -71,14 +74,15 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_UPDATE_ENDPOINT",
         "str",
-        "",
+        "https://memo-update.fernandoferrari.workers.dev/v1/latest",
         "update",
-        "HTTP endpoint for the update check. When set (and update checks are "
-        "on), memo resolves the latest tag via GET <endpoint>?id=&v=&os= — a "
-        "functional version check that also emits an anonymous deduped "
-        "active-install heartbeat (id = sha256(device_id)[:16]; raw id never "
-        "sent). Empty (default) → git ls-remote only, no heartbeat. Falls back "
-        "to git on any HTTP failure.",
+        "HTTP endpoint for the update check. Used only when update checks are on "
+        "(opt-in, see MEMO_UPDATE_CHECK_ENABLED): memo resolves the latest tag via "
+        "GET <endpoint>?id=&v=&os= — a functional version check that also emits an "
+        "anonymous deduped active-install heartbeat (id = sha256(device_id)[:16]; "
+        "raw id never sent; no memory content). Set to `off` to use git ls-remote "
+        "only (no heartbeat) even with checks on. Falls back to git on any HTTP "
+        "failure.",
     ),
     _spec(
         "MEMO_STATUSLINE_SELFHEAL",
