@@ -103,6 +103,32 @@ def test_briefing_omits_proactive_section_when_no_candidates(mock_memory, monkey
     assert "### Proactive" not in joined
 
 
+def test_compact_line_surfaces_digest_without_consuming_push(mock_memory, monkeypatch):
+    """The `--compact` SessionStart capsule reaches the user via a one-liner —
+    and, being a pull surface, must not consume the urgent push slot."""
+    monkeypatch.setenv("MEMO_PROACTIVE_ENABLED", "1")
+    now = datetime.now(tz=UTC).isoformat()
+    _seed_candidate(mock_memory, now=now)
+
+    from memo.briefing import proactive_compact_line
+
+    line = proactive_compact_line(mock_memory)
+    assert "memo get old1" in line
+    assert "memo digest" in line
+
+    store = ProactiveStore(mock_memory.cfg.state_dir / "proactive.db")
+    assert store.pushes_today(datetime.now(tz=UTC).date().isoformat()) == 0
+
+
+def test_compact_line_empty_when_disabled(mock_memory, monkeypatch):
+    monkeypatch.delenv("MEMO_PROACTIVE_ENABLED", raising=False)
+    _seed_candidate(mock_memory, now=datetime.now(tz=UTC).isoformat())
+
+    from memo.briefing import proactive_compact_line
+
+    assert proactive_compact_line(mock_memory) == ""
+
+
 # ── recall-hook urgent push (pull_urgent owns the push slot) ─────────────────
 
 
