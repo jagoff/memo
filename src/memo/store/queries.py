@@ -1151,6 +1151,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         date_to: str | None = None,
         exclude_tags: set[str] | None = None,
         include_invalid: bool = False,
+        as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         """Top-k by cosine. Returns metadata dicts with a `score` field
         added (1 - distance, so higher = more similar).
@@ -1162,8 +1163,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
 
         `include_invalid=False` (default) drops rows whose world-validity
         interval is closed as of now (contradiction-superseded facts stay
-        in-index but out of normal recall). Task 8's `--as-of` path passes
-        `True` to bypass this and apply its own valid-time predicate."""
+        in-index but out of normal recall). `as_of=T` overrides the now-gate
+        with a valid-time predicate (rows valid at T); `include_invalid=True`
+        bypasses the gate entirely."""
         if len(embedding) != self.dims:
             raise ValueError(
                 f"Query embedding dim mismatch: got {len(embedding)}, expected {self.dims}",
@@ -1220,7 +1222,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         for clause in tag_clauses:
             sql += f"AND {clause} "
         params.extend(tag_params)
-        valid_sql, valid_params = _validity_filter("meta.", include_invalid)
+        valid_sql, valid_params = _validity_filter("meta.", include_invalid, as_of)
         sql += valid_sql + " "
         params.extend(valid_params)
         sql += "ORDER BY distance ASC LIMIT ?"

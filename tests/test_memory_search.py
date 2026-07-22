@@ -205,6 +205,80 @@ def test_default_recall_excludes_invalidated(mem_with_stub: Memory):
     assert b.id in bm25_ids
 
 
+def test_as_of_search_valid_time_predecessor_and_successor(mem_with_stub: Memory):
+    """Valid-time as-of (Task 8): A valid [2026-06-01, 2026-07-01) is superseded
+    by B valid [2026-07-01, ∞). `as_of` in June returns A not B; `as_of` in
+    August returns B not A; default recall returns B not A."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    b = mem_with_stub.save(content="prod db is mysql", title="B", type_="fact")
+
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at="2026-06-01T00:00:00", invalid_at="2026-07-01T00:00:00"
+    )
+    mem_with_stub.store.update_validity(id_=b.id, valid_at="2026-07-01T00:00:00", invalid_at=None)
+
+    at_june = {r.id for r in mem_with_stub.search("prod db", limit=10, as_of="2026-06-15T00:00:00")}
+    assert a.id in at_june and b.id not in at_june
+
+    at_aug = {r.id for r in mem_with_stub.search("prod db", limit=10, as_of="2026-08-01T00:00:00")}
+    assert b.id in at_aug and a.id not in at_aug
+
+    default_ids = {r.id for r in mem_with_stub.search("prod db", limit=10)}
+    assert b.id in default_ids and a.id not in default_ids
+
+
+def test_store_search_as_of_overrides_now_gate(mem_with_stub: Memory):
+    """The store seams (vec + bm25) honor `as_of`: a record already closed as of
+    now still surfaces when `as_of` falls inside its validity interval."""
+    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
+    mem_with_stub.store.update_validity(
+        id_=a.id, valid_at="2026-06-01T00:00:00", invalid_at="2026-07-01T00:00:00"
+    )
+    emb = [1.0, 0.0, 0.0, 0.0]
+    # default now-gate: closed → absent from both seams
+    assert a.id not in {r["id"] for r in mem_with_stub.store.search(emb, limit=10)}
+    assert a.id not in {r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10)}
+    # as_of inside the interval: present in both seams
+    assert a.id in {
+        r["id"] for r in mem_with_stub.store.search(emb, limit=10, as_of="2026-06-15T00:00:00")
+    }
+    assert a.id in {
+        r["id"]
+        for r in mem_with_stub.store.search_bm25("prod db", limit=10, as_of="2026-06-15T00:00:00")
+    }
+
+
+def test_cli_search_forwards_as_of(tmp_path):
+    """`memo search --as-of T` threads T into Memory.search(as_of=T)."""
+    from unittest.mock import MagicMock, patch
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    hit = MagicMock()
+    hit.to_dict.return_value = {"id": "abc123", "title": "A", "type": "fact", "score": 0.9}
+    mem = MagicMock()
+    mem.search.return_value = [hit]
+
+    env = {
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+    }
+    with patch("memo.cli_search._get_memory", return_value=mem):
+        result = CliRunner().invoke(
+            cli,
+            ["search", "prod db", "--as-of", "2026-06-15T00:00:00", "--json"],
+            env=env,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert mem.search.call_args.kwargs["as_of"] == "2026-06-15T00:00:00"
+
+
 def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
     seen_inputs: list[str] = []
 
