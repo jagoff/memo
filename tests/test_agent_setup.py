@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from importlib.metadata import version
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -136,7 +137,7 @@ def test_agent_doctor_verifies_runtime_profile_protocol_and_isolated_smoke(
         if args[:4] == ["codex", "mcp", "get", "memo"]:
             stdout = f"command: {runtime}\nenv: MEMO_MCP_PROFILE=core\n"
         elif "--version" in args:
-            stdout = "memo, version 3.11.0\n"
+            stdout = f"memo, version {version('mlx-memo')}\n"
         elif "save" in args:
             stdout = '{"id":"smoke-id"}'
         elif "search" in args:
