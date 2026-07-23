@@ -88,10 +88,18 @@ eval_group.add_command(bench_group)
     default=Path("eval/regression_labels.json"),
     show_default=True,
 )
-@click.option("--profile", "eval_profile", type=click.Choice(["quick", "pre-push", "default", "matrix"]), default="quick", show_default=True)
+@click.option(
+    "--profile",
+    "eval_profile",
+    type=click.Choice(["quick", "pre-push", "default", "matrix"]),
+    default="quick",
+    show_default=True,
+)
 @click.option("--max-prompts", type=click.IntRange(min=1), default=None)
 @click.option("--json", "as_json", is_flag=True)
-@click.option("--gate", is_flag=True, help="Compare precision/noise with the saved recall baseline.")
+@click.option(
+    "--gate", is_flag=True, help="Compare precision/noise with the saved recall baseline."
+)
 def eval_memory_cmd(
     k: int,
     labels_path: Path,

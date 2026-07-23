@@ -37,9 +37,7 @@ def memory_profile(scope: str, limit: int, budget_chars: int, as_json: bool) -> 
 
     mem = get_memory(Config.from_env())
     try:
-        payload = build_memory_profile(
-            mem, scope=scope, limit=limit, budget_chars=budget_chars
-        )
+        payload = build_memory_profile(mem, scope=scope, limit=limit, budget_chars=budget_chars)
     finally:
         mem.close()
     if as_json:
