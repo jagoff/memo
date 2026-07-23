@@ -303,9 +303,7 @@ class _UpdateOpsMixin(_MemoryBase):
         if canonical_topic is not None:
             topic_conflicts = [
                 row
-                for row in self.store.find_active_by_topic_identity(
-                    new_namespace, canonical_topic
-                )
+                for row in self.store.find_active_by_topic_identity(new_namespace, canonical_topic)
                 if str(row.get("id")) != id_
             ]
             if topic_conflicts:
@@ -358,20 +356,14 @@ class _UpdateOpsMixin(_MemoryBase):
             body_changed or title_changed or new_type != r["type"] or new_tags != r["tags"]
         )
         prior_snapshot = (
-            sanitize_persisted_text(
-                str(r["title"]), entropy=flag_bool("MEMO_REDACT_ENTROPY")
-            ).text
+            sanitize_persisted_text(str(r["title"]), entropy=flag_bool("MEMO_REDACT_ENTROPY")).text
             or "untitled",
             str(r["type"]),
             [
-                sanitize_persisted_text(
-                    str(tag), entropy=flag_bool("MEMO_REDACT_ENTROPY")
-                ).text
+                sanitize_persisted_text(str(tag), entropy=flag_bool("MEMO_REDACT_ENTROPY")).text
                 for tag in r["tags"]
             ],
-            sanitize_persisted_text(
-                old_body, entropy=flag_bool("MEMO_REDACT_ENTROPY")
-            ).text,
+            sanitize_persisted_text(old_body, entropy=flag_bool("MEMO_REDACT_ENTROPY")).text,
         )
 
         source_path = self._resolve_existing(r["path"])

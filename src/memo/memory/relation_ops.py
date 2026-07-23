@@ -260,11 +260,7 @@ class _RelationOpsMixin(_MemoryBase):
             for pair in legacy.list_all(limit=limit):
                 seen += 1
                 before = self.store.find_relation_pair(pair.memory_id_a, pair.memory_id_b)
-                suggested = (
-                    "conflicts_with"
-                    if pair.relationship == "contradiction"
-                    else "related"
-                )
+                suggested = "conflicts_with" if pair.relationship == "contradiction" else "related"
                 row = self.store.create_relation_candidate(
                     source_id=pair.memory_id_a,
                     target_id=pair.memory_id_b,

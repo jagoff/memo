@@ -51,9 +51,7 @@ def _process_exact_save(
 
 def _file_snapshot(root: Path) -> dict[str, bytes]:
     return {
-        str(path.relative_to(root)): path.read_bytes()
-        for path in root.rglob("*")
-        if path.is_file()
+        str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
     }
 
 
@@ -132,11 +130,7 @@ def test_direct_save_redacts_before_any_persistence(
         tags=[f"tag-{token}"],
         topic_key=f"topic-{token}",
         normalized_hash=f"legacy-{token}",
-        extra={
-            f"key-{token}": {
-                "nested": [token, f"<private>{private_canary}</private>"]
-            }
-        },
+        extra={f"key-{token}": {"nested": [token, f"<private>{private_canary}</private>"]}},
         auto_project=False,
     )
 
@@ -368,9 +362,10 @@ def test_update_recomputes_identity_and_rejects_occupied_topic_without_mutation(
     assert updated is not None
     identity = mem_with_stub.store.get_identity_keys(beta.id)
     assert identity["normalized_title"] == "beta revised"
-    assert identity["normalized_content_hash"] != mem_with_stub.store.get_identity_keys(
-        alpha.id
-    )["normalized_content_hash"]
+    assert (
+        identity["normalized_content_hash"]
+        != mem_with_stub.store.get_identity_keys(alpha.id)["normalized_content_hash"]
+    )
 
 
 def test_corroboration_transaction_failure_rolls_back_all_signals(

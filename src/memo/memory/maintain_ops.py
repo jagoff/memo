@@ -403,9 +403,7 @@ class _MaintainOpsMixin(_MemoryBase):
                 title=title,
                 tags=tags,
                 topic_key=str(topic_key) if topic_key is not None else None,
-                normalized_hash=(
-                    str(normalized_hash) if normalized_hash is not None else None
-                ),
+                normalized_hash=(str(normalized_hash) if normalized_hash is not None else None),
                 extra=extra,
                 entropy=flag_bool("MEMO_REDACT_ENTROPY"),
                 allow_empty_content=True,

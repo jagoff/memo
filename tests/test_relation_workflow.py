@@ -25,7 +25,9 @@ def test_post_save_candidates_are_capped_namespace_safe_and_llm_free(
         type_="decision",
         tags=["project:beta"],
     )
-    hits = [replace(record, score=0.9 - index * 0.01) for index, record in enumerate([*alpha, beta])]
+    hits = [
+        replace(record, score=0.9 - index * 0.01) for index, record in enumerate([*alpha, beta])
+    ]
     monkeypatch.setattr(mock_memory, "search", lambda *_a, **_k: hits)
     monkeypatch.setattr(
         mock_memory,
