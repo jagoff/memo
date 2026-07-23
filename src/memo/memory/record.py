@@ -444,6 +444,7 @@ def strip_llm_output(text: str) -> str:
 # keep working. New code may import from either module.
 from memo.errors import (  # noqa: E402, F401
     AmbiguousIdError,
+    IdentityConflictError,
     MemoError,
     NotFoundError,
     StorageError,
@@ -478,9 +479,13 @@ class MemoryRecord:
     # `invalid_at` = world-validity end (None = interval still open). Both ISO8601.
     valid_at: str | None = None
     invalid_at: str | None = None
+    # Set only on the immediate result of save(). Reads/lists keep these
+    # ephemeral outcome fields absent from their serialized representation.
+    action: str | None = None
+    index_pending: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "id": self.id,
             "path": self.path,
             "title": self.title,
@@ -496,6 +501,10 @@ class MemoryRecord:
             "valid_at": self.valid_at,
             "invalid_at": self.invalid_at,
         }
+        if self.action is not None:
+            result["action"] = self.action
+            result["index_pending"] = self.index_pending
+        return result
 
 
 def _state_decay_factor(memory_record: MemoryRecord) -> float:

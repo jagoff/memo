@@ -28,6 +28,28 @@ class ValidationError(MemoError, ValueError):
     """Caller-supplied input failed validation before any side effect."""
 
 
+class IdentityConflictError(ValidationError):
+    """A requested write would make durable identity ambiguous.
+
+    Structured attributes let CLI/MCP callers render a safe response without
+    parsing exception text. The message deliberately contains no memory body.
+    """
+
+    def __init__(
+        self,
+        *,
+        kind: str,
+        incoming: dict[str, Any] | None = None,
+        conflicts: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    ) -> None:
+        self.kind = kind
+        self.incoming = dict(incoming or {})
+        self.conflicts = tuple(dict(item) for item in conflicts)
+        ids = [str(item.get("id", ""))[:8] for item in self.conflicts if item.get("id")]
+        suffix = f" ({', '.join(ids)})" if ids else ""
+        super().__init__(f"memory identity conflict: {kind}{suffix}")
+
+
 class StorageError(MemoError, RuntimeError):
     """A storage-layer operation (sqlite / filesystem) failed. Wraps the
     low-level error with operation context so callers don't see bare
