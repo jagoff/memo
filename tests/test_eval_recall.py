@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from click import unstyle
 from click.testing import CliRunner
 
 from memo import eval_recall
@@ -510,8 +511,9 @@ def test_cli_eval_recall_fresh_human_run_prints_progress(tmp_path: Path, monkeyp
     )
 
     assert result.exit_code == 0, result.output
-    assert "Running recall eval: 4 config(s) x 1 prompt(s) = 4 search(es)." in result.output
-    assert "eval A vec/0.60/keep: prompt 1/1" in result.output
+    output = unstyle(result.output)
+    assert "Running recall eval: 4 config(s) x 1 prompt(s) = 4 search(es)." in output
+    assert "eval A vec/0.60/keep: prompt 1/1" in output
 
 
 def test_cli_eval_recall_profile_pre_push_selects_named_subset(tmp_path: Path, monkeypatch) -> None:

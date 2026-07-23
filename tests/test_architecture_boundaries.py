@@ -12,8 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src" / "memo"
 
 # Foundation layer: building blocks that everything else composes. They must
-# not import any *other* memo module, which keeps them free of import cycles
-# and safe to reuse anywhere (incl. the god-modules memory.py / cli.py).
+# not import any *higher-level* memo module, which keeps them free of import
+# cycles and safe to reuse anywhere (incl. memory.py / cli.py).
 # (config.py is foundation too but lazily imports memo.setup for file IO, so
 # it's intentionally excluded from this strict leaf set.)
 FOUNDATION_MODULES = ["util", "store", "embedder", "graph"]
@@ -32,6 +32,15 @@ PURE_LEAF_MODULES = {
     "embed_base",
     "model_pins",
     "tiers",
+}
+
+# Store migrations rebuild derived metadata from the Markdown/index source of
+# truth. Reusing the product's canonical identity and privacy policies here is
+# safer than copying those rules into the foundation layer. Both dependencies
+# are acyclic leaves with respect to store; the separate store->memory guard
+# below preserves the critical layering boundary.
+FOUNDATION_ALLOWED_IMPORTS: dict[str, set[str]] = {
+    "store": {"errors", "identity", "redact"},
 }
 
 
@@ -123,12 +132,13 @@ def test_supported_windsurf_project_files_are_ignored() -> None:
 
 @pytest.mark.parametrize("module", FOUNDATION_MODULES)
 def test_foundation_modules_import_no_other_memo_module(module: str) -> None:
-    """Foundation modules stay leaf-level — no memo->memo imports, no cycles."""
+    """Foundation modules use only explicit acyclic lower-level dependencies."""
     imports = _module_imports(module)
     imports.discard(module)
     imports -= PURE_LEAF_MODULES  # depending on a pure-stdlib leaf can't cycle
+    imports -= FOUNDATION_ALLOWED_IMPORTS.get(module, set())
     assert imports == set(), (
-        f"{module}.py must not import other memo modules, found: {sorted(imports)}"
+        f"{module}.py imports undeclared memo modules: {sorted(imports)}"
     )
 
 

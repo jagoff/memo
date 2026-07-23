@@ -83,3 +83,28 @@ def test_invalid_scope_returns_structured_error(mem: Memory):
     out = save(content="x", scope="personal")
 
     assert out["error"] == "invalid_scope"
+
+
+def test_save_returns_created_then_corroborated_action(mem: Memory):
+    save = _tool(build_server(memory=mem), "memo_save")
+
+    first = save(content="same MCP fact", title="MCP identity", scope="global")
+    second = save(content="same MCP fact", title="MCP identity", scope="global")
+
+    assert first["id"] == second["id"]
+    assert first["action"] == "created"
+    assert first["index_pending"] is False
+    assert second["action"] == "corroborated"
+
+
+def test_save_returns_structured_identity_conflict(mem: Memory):
+    save = _tool(build_server(memory=mem), "memo_save")
+
+    out = save(
+        content="ambiguous MCP fact",
+        tags=["project:one", "project:two"],
+    )
+
+    assert out["status"] == "conflict"
+    assert out["error"] == "identity_conflict"
+    assert out["kind"] == "ambiguous_namespace"

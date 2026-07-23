@@ -444,6 +444,7 @@ def strip_llm_output(text: str) -> str:
 # keep working. New code may import from either module.
 from memo.errors import (  # noqa: E402, F401
     AmbiguousIdError,
+    IdentityConflictError,
     MemoError,
     NotFoundError,
     StorageError,
@@ -473,14 +474,21 @@ class MemoryRecord:
     score: float | None = None  # populated by `search()`; None for direct fetches.
     verification_state: VerificationState = VerificationState.UNVERIFIED
     verified_at: int | None = None  # Unix timestamp
+    review_after: str | None = None
     # Record-level bi-temporal validity (distinct from `created`/`updated`,
     # which are learned/transaction time). `valid_at` = world-validity start;
     # `invalid_at` = world-validity end (None = interval still open). Both ISO8601.
     valid_at: str | None = None
     invalid_at: str | None = None
+    # Set only on the immediate result of save(). Reads/lists keep these
+    # ephemeral outcome fields absent from their serialized representation.
+    action: str | None = None
+    index_pending: bool = False
+    relation_candidates: list[dict[str, Any]] | None = None
+    relation_detection: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "id": self.id,
             "path": self.path,
             "title": self.title,
@@ -493,9 +501,17 @@ class MemoryRecord:
             "score": self.score,
             "verification_state": self.verification_state.value,
             "verified_at": self.verified_at,
+            "review_after": self.review_after,
             "valid_at": self.valid_at,
             "invalid_at": self.invalid_at,
         }
+        if self.action is not None:
+            result["action"] = self.action
+            result["index_pending"] = self.index_pending
+            if self.relation_detection is not None:
+                result["relation_detection"] = self.relation_detection
+                result["relation_candidates"] = list(self.relation_candidates or [])
+        return result
 
 
 def _state_decay_factor(memory_record: MemoryRecord) -> float:
@@ -563,6 +579,7 @@ def record_from_row(row: dict[str, Any], *, body: str = "") -> MemoryRecord:
         score=row.get("score"),
         verification_state=verification_state,
         verified_at=verified_at,
+        review_after=row.get("review_after"),
         valid_at=row.get("valid_at"),
         invalid_at=row.get("invalid_at"),
     )

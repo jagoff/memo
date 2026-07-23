@@ -1,42 +1,46 @@
-"""Stable identity for memo: which MACHINE, which SESSION/terminal.
+"""Stable process identity and canonical identity policy for memories.
 
-The sync layer needs a stable per-machine id to attribute git commits, decide
-same-machine vs cross-machine, and own the machine-level git coordinator lock.
-The session/terminal id makes each open agent session addressable — so memflow
-can reference "terminal X" for a task in future. memo only EXPOSES this; the
-addressing/coordination is memflow's job (YAGNI here).
-
-Machine identity is decoupled from the trinity by design: ``hostname`` is the
-shared match key every tool computes identically; memo's persisted
-``cfg.device_id`` (``state_dir/.device_id``) adds uniqueness. No hard dependency
-on ``consciousness_contracts`` — its ``IdentityClaim`` is an assertion record,
-not a machine-id provider.
+The historical ``Identity``/``current`` API identifies the machine and agent
+session. Canonical memory functions are colocated here so write, reindex,
+migration, and diagnostics cannot drift into subtly different identity rules.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import socket
+import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
+
+from memo.errors import IdentityConflictError
+from memo.project import LIFECYCLE_ARCHIVE_DIRS, slugify_project
+
+GLOBAL_NAMESPACE = "_global"
+UNSCOPED_NAMESPACE = "_unscoped"
+PROJECT_NAMESPACE_PREFIX = "project:"
+
+_WS_RE = re.compile(r"\s+")
 
 
 @dataclass(frozen=True)
 class Identity:
     """Who this memo process is. Immutable snapshot resolved at use time."""
 
-    machine_id: str  # stable, unique per machine (persisted device_id)
-    hostname: str  # cross-tool match key (every trinity tool computes it the same)
-    session_id: str | None  # the open agent session, if the client supplied one
-    terminal: str | None  # controlling TTY, when attached — for future addressing
+    machine_id: str
+    hostname: str
+    session_id: str | None
+    terminal: str | None
 
     @property
     def label(self) -> str:
-        """Human/commit-friendly label, e.g. ``MacBook-Pro·a1b2c3d4``."""
-        s = self.hostname
+        value = self.hostname
         if self.session_id:
-            s = f"{s}·{self.session_id[:8]}"
-        return s
+            value = f"{value}·{self.session_id[:8]}"
+        return value
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -56,12 +60,10 @@ def _hostname() -> str:
 
 
 def _session_id() -> str | None:
-    # Clients pass their session id via env (memo's own var wins). Best-effort:
-    # the machine id is what sync correctness depends on; session is provenance.
-    for k in ("MEMO_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"):
-        v = os.environ.get(k)
-        if v and v.strip():
-            return v.strip()
+    for key in ("MEMO_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"):
+        value = os.environ.get(key)
+        if value and value.strip():
+            return value.strip()
     return None
 
 
@@ -75,11 +77,129 @@ def _terminal() -> str | None:
 
 
 def current(cfg: Any) -> Identity:
-    """Resolve this process's identity. ``cfg.device_id`` is the persisted stable
-    machine id; ``hostname`` is the cross-tool match key."""
+    """Resolve stable machine identity plus optional session provenance."""
     return Identity(
         machine_id=str(getattr(cfg, "device_id", "") or "unknown"),
         hostname=_hostname(),
         session_id=_session_id(),
         terminal=_terminal(),
+    )
+
+
+@dataclass(frozen=True)
+class IdentityKeys:
+    namespace: str
+    topic_key: str | None
+    normalized_title: str
+    normalized_content_hash: str
+
+
+def _canonical_identity_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value)
+    return _WS_RE.sub(" ", normalized.strip()).casefold()
+
+
+def canonical_topic_key(value: str | None) -> str | None:
+    """Canonical topic key, or ``None`` for absent/whitespace-only input."""
+    if value is None:
+        return None
+    canonical = _canonical_identity_text(value)
+    return canonical or None
+
+
+def normalized_title(value: str) -> str:
+    """Normalize title spelling without erasing word boundaries."""
+    return _canonical_identity_text(value)
+
+
+def normalized_content(value: str) -> str:
+    """Canonical content used only for exact identity hashing.
+
+    Internal whitespace remains significant. Only Unicode/newline spelling,
+    trailing line whitespace, and outer whitespace are normalized.
+    """
+    text = unicodedata.normalize("NFKC", value).replace("\r\n", "\n").replace("\r", "\n")
+    return "\n".join(line.rstrip() for line in text.split("\n")).strip()
+
+
+def normalized_content_hash(value: str) -> str:
+    return hashlib.sha256(normalized_content(value).encode("utf-8")).hexdigest()
+
+
+def _project_slugs(tags: Sequence[str]) -> tuple[tuple[str, ...], bool]:
+    slugs: list[str] = []
+    invalid = False
+    for tag in tags:
+        folded = str(tag).strip().casefold()
+        if not folded.startswith(PROJECT_NAMESPACE_PREFIX):
+            continue
+        slug = slugify_project(folded[len(PROJECT_NAMESPACE_PREFIX) :])
+        if not slug:
+            invalid = True
+            continue
+        if slug not in slugs:
+            slugs.append(slug)
+    return tuple(slugs), invalid
+
+
+def namespace_for_write(tags: Sequence[str], *, auto_project: bool) -> str:
+    """Derive the namespace for a new write and reject ambiguous project tags."""
+    slugs, invalid = _project_slugs(tags)
+    if invalid or len(slugs) > 1:
+        raise IdentityConflictError(
+            kind="ambiguous_namespace",
+            incoming={"project_tags": slugs, "invalid_project_tag": invalid},
+        )
+    if slugs:
+        return f"{PROJECT_NAMESPACE_PREFIX}{slugs[0]}"
+    return UNSCOPED_NAMESPACE if auto_project else GLOBAL_NAMESPACE
+
+
+def namespace_for_index(tags: Sequence[str], *, path: str) -> str | None:
+    """Derive namespace for an existing Markdown/index row.
+
+    Historical rows with incompatible/invalid project tags remain ambiguous
+    (``None``). Explicit global/unscoped buckets retain their meaning; older
+    untagged flat paths retain the historical global namespace.
+    """
+    slugs, invalid = _project_slugs(tags)
+    if invalid or len(slugs) > 1:
+        return None
+    if slugs:
+        return f"{PROJECT_NAMESPACE_PREFIX}{slugs[0]}"
+    first = path.replace("\\", "/").strip("/").split("/", 1)[0]
+    if first == GLOBAL_NAMESPACE:
+        return GLOBAL_NAMESPACE
+    if first == UNSCOPED_NAMESPACE:
+        return UNSCOPED_NAMESPACE
+    # Before explicit unscoped buckets existed, every untagged flat record was
+    # treated as global. Preserve that historical meaning on rebuild.
+    return GLOBAL_NAMESPACE
+
+
+def bucket_for_namespace(namespace: str) -> str:
+    """Safe physical folder for a canonical namespace."""
+    if namespace in {GLOBAL_NAMESPACE, UNSCOPED_NAMESPACE}:
+        return namespace
+    if not namespace.startswith(PROJECT_NAMESPACE_PREFIX):
+        raise ValueError(f"unknown memory namespace: {namespace!r}")
+    slug = slugify_project(namespace[len(PROJECT_NAMESPACE_PREFIX) :])
+    if not slug:
+        raise ValueError("project namespace must contain a non-empty slug")
+    return f"_{slug}" if slug in LIFECYCLE_ARCHIVE_DIRS else slug
+
+
+def identity_keys(
+    *,
+    title: str,
+    content: str,
+    tags: Sequence[str],
+    topic_key: str | None,
+    auto_project: bool,
+) -> IdentityKeys:
+    return IdentityKeys(
+        namespace=namespace_for_write(tags, auto_project=auto_project),
+        topic_key=canonical_topic_key(topic_key),
+        normalized_title=normalized_title(title),
+        normalized_content_hash=normalized_content_hash(content),
     )

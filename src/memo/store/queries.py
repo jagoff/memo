@@ -7,6 +7,16 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from ..identity import (
+    canonical_topic_key,
+    namespace_for_index,
+)
+from ..identity import (
+    normalized_content_hash as content_identity_hash,
+)
+from ..identity import (
+    normalized_title as canonical_title,
+)
 from ..sqlite_compat import import_sqlite_vec
 from ..util import safe_operation
 from .bm25_queries import _BM25QueriesMixin, _validity_filter
@@ -19,7 +29,8 @@ _log = logging.getLogger(__name__)
 
 META_SELECT_COLUMNS = (
     "id, path, title, type, tags, created, updated, body_hash, extra_json, "
-    "verification_state, verified_at, valid_at, invalid_at"
+    "review_after, verification_state, verified_at, valid_at, invalid_at, topic_key, normalized_hash, "
+    "namespace, normalized_title, normalized_content_hash"
 )
 
 
@@ -68,6 +79,31 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 id_[:8],
             )
 
+    def _derive_identity_values(
+        self,
+        *,
+        path: str,
+        title: str,
+        type_: str,
+        tags: list[str],
+        body_text: str,
+        topic_key: str | None,
+        namespace: str | None,
+        normalized_title: str | None,
+        normalized_content_hash: str | None,
+    ) -> tuple[str | None, str | None, str, str]:
+        del type_  # Included in the caller's exact-identity tuple, not normalized.
+        return (
+            namespace if namespace is not None else namespace_for_index(tags, path=path),
+            canonical_topic_key(topic_key),
+            normalized_title if normalized_title is not None else canonical_title(title),
+            (
+                normalized_content_hash
+                if normalized_content_hash is not None
+                else content_identity_hash(body_text)
+            ),
+        )
+
     def _upsert_memory_row(
         self,
         cx: sqlite3.Connection,
@@ -85,6 +121,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        namespace: str | None = None,
+        normalized_title: str | None = None,
+        normalized_content_hash: str | None = None,
         valid_at: str | None = None,
         invalid_at: str | None = None,
     ) -> None:
@@ -96,7 +135,52 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         dedicated statements (contradiction-supersede, reindex-fold) own their
         later mutation.
         """
-        if self._has_pattern_cols:
+        namespace, topic_key, normalized_title, normalized_content_hash = (
+            self._derive_identity_values(
+                path=path,
+                title=title,
+                type_=type_,
+                tags=tags,
+                body_text=body_text,
+                topic_key=topic_key,
+                namespace=namespace,
+                normalized_title=normalized_title,
+                normalized_content_hash=normalized_content_hash,
+            )
+        )
+        if self._has_identity_cols:
+            cx.execute(
+                "INSERT INTO meta (id, path, title, type, tags, created, updated, "
+                "body_hash, extra_json, topic_key, normalized_hash, namespace, "
+                "normalized_title, normalized_content_hash, valid_at, invalid_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "path=excluded.path, title=excluded.title, type=excluded.type, "
+                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, "
+                "normalized_hash=excluded.normalized_hash, namespace=excluded.namespace, "
+                "normalized_title=excluded.normalized_title, "
+                "normalized_content_hash=excluded.normalized_content_hash",
+                (
+                    id_,
+                    path,
+                    title,
+                    type_,
+                    json.dumps(tags),
+                    created,
+                    updated,
+                    body_hash,
+                    json.dumps(extra, default=str) if extra is not None else None,
+                    topic_key,
+                    normalized_hash,
+                    namespace,
+                    normalized_title,
+                    normalized_content_hash,
+                    valid_at,
+                    invalid_at,
+                ),
+            )
+        elif self._has_pattern_cols:
             cx.execute(
                 "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash, valid_at, invalid_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -178,6 +262,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        namespace: str | None = None,
+        normalized_title: str | None = None,
+        normalized_content_hash: str | None = None,
         valid_at: str | None = None,
         invalid_at: str | None = None,
     ) -> None:
@@ -203,6 +290,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     body_text=body_text,
                     topic_key=topic_key,
                     normalized_hash=normalized_hash,
+                    namespace=namespace,
+                    normalized_title=normalized_title,
+                    normalized_content_hash=normalized_content_hash,
                     valid_at=valid_at,
                     invalid_at=invalid_at,
                 )
@@ -233,8 +323,12 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        namespace: str | None = None,
+        normalized_title: str | None = None,
+        normalized_content_hash: str | None = None,
         verification_state: str = "unverified",
         verified_at: int | None = None,
+        review_after: str | None = None,
         valid_at: str | None = None,
         invalid_at: str | None = None,
     ) -> None:
@@ -286,12 +380,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     body_text=body_text,
                     topic_key=topic_key,
                     normalized_hash=normalized_hash,
+                    namespace=namespace,
+                    normalized_title=normalized_title,
+                    normalized_content_hash=normalized_content_hash,
                     valid_at=valid_at,
                     invalid_at=invalid_at,
                 )
                 cx.execute(
-                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
-                    (verification_state, verified_at, id_),
+                    "UPDATE meta SET review_after = ?, verification_state = ?, verified_at = ? "
+                    "WHERE id = ?",
+                    (review_after, verification_state, verified_at, id_),
                 )
 
             tantivy = self._get_tantivy()
@@ -366,8 +464,33 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         embedding spaces.  Their non-vector source rows remain intact and can be
         re-embedded lazily/by their normal rebuild paths.
         """
-        for row in rows:
+        prepared_rows: list[dict[str, Any]] = []
+        topic_identities: set[tuple[str, str]] = set()
+        topic_conflict = False
+        for source_row in rows:
+            row = dict(source_row)
             self._validate_embedding(str(row["id_"]), list(row["embedding"]))
+            namespace, topic_key, norm_title, content_hash = self._derive_identity_values(
+                path=str(row["path"]),
+                title=str(row["title"]),
+                type_=str(row["type_"]),
+                tags=list(row["tags"]),
+                body_text=str(row.get("body_text") or ""),
+                topic_key=row.get("topic_key"),
+                namespace=row.get("namespace"),
+                normalized_title=row.get("normalized_title"),
+                normalized_content_hash=row.get("normalized_content_hash"),
+            )
+            row["namespace"] = namespace
+            row["topic_key"] = topic_key
+            row["normalized_title"] = norm_title
+            row["normalized_content_hash"] = content_hash
+            if namespace is not None and topic_key is not None:
+                identity = (namespace, topic_key)
+                if identity in topic_identities:
+                    topic_conflict = True
+                topic_identities.add(identity)
+            prepared_rows.append(row)
 
         stored_model_row = self._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'embedder_model'"
@@ -420,6 +543,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
 
         with self._tx() as cx:
             previous_count = int(cx.execute("SELECT COUNT(*) FROM meta").fetchone()[0])
+            if topic_conflict:
+                cx.execute("DROP INDEX IF EXISTS idx_meta_active_topic_unique")
             cx.execute("DELETE FROM meta")
             cx.execute("DELETE FROM fts")
             if dimensions_changed:
@@ -451,14 +576,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     stamp_identity=stamp_identity,
                     current_model=current_model,
                 )
-            for source_row in rows:
+            for source_row in prepared_rows:
                 row = dict(source_row)
                 verification_state = str(row.pop("verification_state", "unverified"))
                 verified_at = row.pop("verified_at", None)
+                review_after = row.pop("review_after", None)
                 self._upsert_memory_row(cx, **row)
                 cx.execute(
-                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
-                    (verification_state, verified_at, row["id_"]),
+                    "UPDATE meta SET review_after = ?, verification_state = ?, verified_at = ? "
+                    "WHERE id = ?",
+                    (review_after, verification_state, verified_at, row["id_"]),
                 )
             if stamp_identity:
                 cx.execute(
@@ -471,6 +598,18 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                     (str(self.dims),),
                 )
+            identity_capability = "blocked" if topic_conflict else "enabled"
+            if not topic_conflict:
+                cx.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_active_topic_unique "
+                    "ON meta(namespace, topic_key) WHERE namespace IS NOT NULL "
+                    "AND topic_key IS NOT NULL AND (deleted_at IS NULL OR deleted_at = '')"
+                )
+            cx.execute(
+                "INSERT INTO schema_meta(key, value) VALUES "
+                "('identity_topic_unique', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (identity_capability,),
+            )
 
         # Hold the write lock so per-row dual-writers can't interleave between
         # the rebuild's fts SELECT and the tantivy rebuild (their doc would be
@@ -524,15 +663,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         transition candidates for `_transition_stale_memories`. Targeted (not a
         full scan): UNVERIFIED memories, the default majority, are skipped."""
         rows = self._conn.execute(
-            "SELECT id, verification_state, verified_at FROM meta "
+            "SELECT id, verification_state, verified_at, review_after FROM meta "
             "WHERE verification_state IN ('verified', 'stale') "
-            "AND verified_at IS NOT NULL"
+            "AND verified_at IS NOT NULL AND review_after IS NOT NULL"
         ).fetchall()
         return [
             {
                 "id": r["id"],
                 "verification_state": r["verification_state"],
                 "verified_at": r["verified_at"],
+                "review_after": r["review_after"],
             }
             for r in rows
         ]
@@ -558,6 +698,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         body_text: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
+        namespace: str | None = None,
+        normalized_title: str | None = None,
+        normalized_content_hash: str | None = None,
         valid_at: str | None = None,
         invalid_at: str | None = None,
     ) -> None:
@@ -568,10 +711,55 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         `valid_at`/`invalid_at` mirror the `upsert()` semantics: written on
         INSERT, preserved (not clobbered) on the ON CONFLICT re-save.
         """
+        namespace, topic_key, normalized_title, normalized_content_hash = (
+            self._derive_identity_values(
+                path=path,
+                title=title,
+                type_=type_,
+                tags=tags,
+                body_text=body_text,
+                topic_key=topic_key,
+                namespace=namespace,
+                normalized_title=normalized_title,
+                normalized_content_hash=normalized_content_hash,
+            )
+        )
         # Lock spans sqlite commit + tantivy write — see upsert().
         with self._tantivy_write_lock:
             with self._tx() as cx:
-                if self._has_pattern_cols:
+                if self._has_identity_cols:
+                    cx.execute(
+                        "INSERT INTO meta (id, path, title, type, tags, created, updated, "
+                        "body_hash, extra_json, topic_key, normalized_hash, namespace, "
+                        "normalized_title, normalized_content_hash, valid_at, invalid_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(id) DO UPDATE SET "
+                        "path=excluded.path, title=excluded.title, type=excluded.type, "
+                        "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
+                        "deleted_at=NULL, extra_json=excluded.extra_json, "
+                        "topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash, "
+                        "namespace=excluded.namespace, normalized_title=excluded.normalized_title, "
+                        "normalized_content_hash=excluded.normalized_content_hash",
+                        (
+                            id_,
+                            path,
+                            title,
+                            type_,
+                            json.dumps(tags),
+                            created,
+                            updated,
+                            body_hash,
+                            json.dumps(extra, default=str) if extra is not None else None,
+                            topic_key,
+                            normalized_hash,
+                            namespace,
+                            normalized_title,
+                            normalized_content_hash,
+                            valid_at,
+                            invalid_at,
+                        ),
+                    )
+                elif self._has_pattern_cols:
                     cx.execute(
                         "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash, valid_at, invalid_at) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -732,6 +920,225 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             return (None, None)
         return (row["topic_key"], row["normalized_hash"])
 
+    def get_identity_keys(self, id_: str) -> dict[str, str | None]:
+        if not self._has_identity_cols:
+            return {
+                "namespace": None,
+                "topic_key": None,
+                "normalized_title": None,
+                "normalized_content_hash": None,
+            }
+        row = self._conn.execute(
+            "SELECT namespace, topic_key, normalized_title, normalized_content_hash "
+            "FROM meta WHERE id = ?",
+            (id_,),
+        ).fetchone()
+        if row is None:
+            return {}
+        return dict(row)
+
+    def find_active_by_topic_identity(
+        self, namespace: str, topic_key: str
+    ) -> list[dict[str, Any]]:
+        if not self._has_identity_cols or not namespace or not topic_key:
+            return []
+        rows = self._conn.execute(
+            "SELECT id, path, created, updated, title, type, tags, topic_key, "
+            "normalized_hash, namespace, normalized_title, normalized_content_hash "
+            "FROM meta WHERE namespace = ? AND topic_key = ? "
+            "AND (deleted_at IS NULL OR deleted_at = '') ORDER BY created, id",
+            (namespace, canonical_topic_key(topic_key)),
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def find_active_by_exact_identity(
+        self,
+        namespace: str,
+        type_: str,
+        normalized_title: str,
+        normalized_content_hash: str,
+    ) -> list[dict[str, Any]]:
+        if not self._has_identity_cols or not namespace:
+            return []
+        rows = self._conn.execute(
+            "SELECT id, path, created, updated, title, type, tags, topic_key, "
+            "normalized_hash, namespace, normalized_title, normalized_content_hash "
+            "FROM meta WHERE namespace = ? AND type = ? AND normalized_title = ? "
+            "AND normalized_content_hash = ? "
+            "AND (deleted_at IS NULL OR deleted_at = '') ORDER BY created, id",
+            (namespace, type_, normalized_title, normalized_content_hash),
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+
+    def corroborate_identity(self, id_: str, *, seen_at: str) -> dict[str, int | str]:
+        """Atomically strengthen one canonical record without rewriting it."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "UPDATE meta SET duplicate_count = COALESCE(duplicate_count, 0) + 1, "
+                "last_seen_at = ? WHERE id = ? "
+                "AND (deleted_at IS NULL OR deleted_at = '')",
+                (seen_at, id_),
+            )
+            if cur.rowcount == 0:
+                return {"support_count": 0, "duplicate_count": 0, "last_seen_at": seen_at}
+            cx.execute(
+                "INSERT OR IGNORE INTO memory_health"
+                "(id, confidence, roi_score, updated_at, support_count) "
+                "VALUES (?, 1.0, 1.0, ?, 0)",
+                (id_, seen_at),
+            )
+            cx.execute(
+                "UPDATE memory_health SET support_count = support_count + 1 WHERE id = ?",
+                (id_,),
+            )
+            row = cx.execute(
+                "SELECT m.duplicate_count, m.last_seen_at, h.support_count "
+                "FROM meta m JOIN memory_health h ON h.id = m.id WHERE m.id = ?",
+                (id_,),
+            ).fetchone()
+        return {
+            "support_count": int(row["support_count"]),
+            "duplicate_count": int(row["duplicate_count"]),
+            "last_seen_at": str(row["last_seen_at"]),
+        }
+
+    def attach_topic_identity(
+        self, id_: str, *, namespace: str, topic_key: str, seen_at: str
+    ) -> bool:
+        """Attach the first explicit topic without touching vector/FTS content."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "UPDATE meta SET namespace = ?, topic_key = ?, last_seen_at = ?, "
+                "revision_count = COALESCE(revision_count, 1) + 1 "
+                "WHERE id = ? AND topic_key IS NULL "
+                "AND (deleted_at IS NULL OR deleted_at = '')",
+                (namespace, canonical_topic_key(topic_key), seen_at, id_),
+            )
+        return cur.rowcount > 0
+
+    def note_identity_revision(self, id_: str, *, seen_at: str) -> None:
+        with self._tx() as cx:
+            cx.execute(
+                "UPDATE meta SET revision_count = COALESCE(revision_count, 1) + 1, "
+                "last_seen_at = ? WHERE id = ?",
+                (seen_at, id_),
+            )
+
+    def revise_identity(self, id_: str, *, seen_at: str) -> dict[str, int | str]:
+        """Atomically record a same-topic revision and its supporting evidence."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "UPDATE meta SET revision_count = COALESCE(revision_count, 1) + 1, "
+                "duplicate_count = COALESCE(duplicate_count, 0) + 1, last_seen_at = ? "
+                "WHERE id = ? AND (deleted_at IS NULL OR deleted_at = '')",
+                (seen_at, id_),
+            )
+            if cur.rowcount == 0:
+                return {"support_count": 0, "duplicate_count": 0, "last_seen_at": seen_at}
+            cx.execute(
+                "INSERT OR IGNORE INTO memory_health"
+                "(id, confidence, roi_score, updated_at, support_count) "
+                "VALUES (?, 1.0, 1.0, ?, 0)",
+                (id_, seen_at),
+            )
+            cx.execute(
+                "UPDATE memory_health SET support_count = support_count + 1 WHERE id = ?",
+                (id_,),
+            )
+            row = cx.execute(
+                "SELECT m.duplicate_count, m.last_seen_at, h.support_count "
+                "FROM meta m JOIN memory_health h ON h.id = m.id WHERE m.id = ?",
+                (id_,),
+            ).fetchone()
+        return {
+            "support_count": int(row["support_count"]),
+            "duplicate_count": int(row["duplicate_count"]),
+            "last_seen_at": str(row["last_seen_at"]),
+        }
+
+    def reconcile_identity_constraint(self, *, force: bool = False) -> str:
+        """Enable the active topic uniqueness index only for a clean corpus."""
+        if not self._has_identity_cols:
+            return "unavailable"
+        if not force:
+            cached = self._conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'identity_topic_unique'"
+            ).fetchone()
+            index_exists = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' "
+                "AND name='idx_meta_active_topic_unique'"
+            ).fetchone()
+            if cached is not None:
+                cached_status = str(cached["value"])
+                if (cached_status == "enabled" and index_exists is not None) or (
+                    cached_status == "blocked" and index_exists is None
+                ):
+                    return cached_status
+        conflict = self._conn.execute(
+            "SELECT 1 FROM meta WHERE namespace IS NOT NULL AND topic_key IS NOT NULL "
+            "AND (deleted_at IS NULL OR deleted_at = '') "
+            "GROUP BY namespace, topic_key HAVING COUNT(*) > 1 LIMIT 1"
+        ).fetchone()
+        status = "blocked" if conflict is not None else "enabled"
+        with self._tx() as cx:
+            if conflict is not None:
+                cx.execute("DROP INDEX IF EXISTS idx_meta_active_topic_unique")
+            else:
+                cx.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_active_topic_unique "
+                    "ON meta(namespace, topic_key) WHERE namespace IS NOT NULL "
+                    "AND topic_key IS NOT NULL AND (deleted_at IS NULL OR deleted_at = '')"
+                )
+            cx.execute(
+                "INSERT INTO schema_meta(key, value) VALUES "
+                "('identity_topic_unique', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (status,),
+            )
+        return status
+
+    def identity_diagnostics(self) -> dict[str, Any]:
+        if not self._has_identity_cols:
+            return {
+                "ok": False,
+                "identity_constraint": "unavailable",
+                "multiple_project_tag_rows": 0,
+                "topic_collision_groups": 0,
+                "exact_duplicate_groups": 0,
+                "legacy_identity_rows": self.count(),
+            }
+        capability = self._conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'identity_topic_unique'"
+        ).fetchone()
+        topic_groups = self._conn.execute(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM meta WHERE namespace IS NOT NULL "
+            "AND topic_key IS NOT NULL AND (deleted_at IS NULL OR deleted_at = '') "
+            "GROUP BY namespace, topic_key HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+        exact_groups = self._conn.execute(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM meta WHERE namespace IS NOT NULL "
+            "AND normalized_title IS NOT NULL AND normalized_content_hash IS NOT NULL "
+            "AND (deleted_at IS NULL OR deleted_at = '') GROUP BY namespace, type, "
+            "normalized_title, normalized_content_hash HAVING COUNT(*) > 1)"
+        ).fetchone()[0]
+        ambiguous = self._conn.execute(
+            "SELECT COUNT(*) FROM meta WHERE namespace IS NULL "
+            "AND (deleted_at IS NULL OR deleted_at = '')"
+        ).fetchone()[0]
+        legacy = self._conn.execute(
+            "SELECT COUNT(*) FROM meta WHERE namespace IS NULL OR normalized_title IS NULL "
+            "OR normalized_content_hash IS NULL"
+        ).fetchone()[0]
+        status = str(capability["value"]) if capability else "unavailable"
+        return {
+            "ok": not any((topic_groups, exact_groups, ambiguous, legacy))
+            and status == "enabled",
+            "identity_constraint": status,
+            "multiple_project_tag_rows": int(ambiguous),
+            "topic_collision_groups": int(topic_groups),
+            "exact_duplicate_groups": int(exact_groups),
+            "legacy_identity_rows": int(legacy),
+        }
+
     def get_fts_bodies(self, ids: list[str]) -> dict[str, str]:
         """Batch-fetch FTS body text for many ids in one query.
 
@@ -748,7 +1155,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         return {r["id"]: str(r["body"]) for r in rows}
 
     def find_by_topic_key(self, topic_key: str) -> dict[str, str] | None:
-        """Return the active row keyed by ``topic_key`` for save-path upserts."""
+        """Legacy global lookup. New writes use composite topic identity."""
         if not topic_key:
             return None
         try:
@@ -756,7 +1163,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 "SELECT id, path, created FROM meta "
                 "WHERE topic_key = ? AND (deleted_at IS NULL OR deleted_at = '') "
                 "LIMIT 1",
-                (topic_key,),
+                (canonical_topic_key(topic_key),),
             ).fetchone()
         except sqlite3.OperationalError as exc:
             # Older stores may not have pattern columns yet.
@@ -793,6 +1200,10 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         tags: list[str],
         updated: str,
         extra: dict[str, Any] | None = None,
+        namespace: str | None = None,
+        normalized_title: str | None = None,
+        normalized_content_hash: str | None = None,
+        dedup_keys: tuple[str | None, str | None] | None = None,
     ) -> bool:
         """Patch metadata fields without touching the embedding. Used by
         `Memory.update()` when only title/type/tags/extra changed and
@@ -801,18 +1212,78 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         # Lock spans sqlite commit + tantivy write — see upsert().
         with self._tantivy_write_lock:
             with self._tx() as cx:
-                cur = cx.execute(
-                    "UPDATE meta SET title = ?, type = ?, tags = ?, updated = ?, extra_json = ? "
-                    "WHERE id = ?",
-                    (
-                        title,
-                        type_,
-                        json.dumps(tags),
-                        updated,
-                        json.dumps(extra, default=str) if extra is not None else None,
-                        id_,
-                    ),
-                )
+                identity_row = cx.execute(
+                    "SELECT path, topic_key, normalized_hash FROM meta WHERE id = ?", (id_,)
+                ).fetchone()
+                existing_body = cx.execute(
+                    "SELECT body FROM fts WHERE id = ?", (id_,)
+                ).fetchone()
+                if identity_row is not None:
+                    current_topic_key = identity_row["topic_key"]
+                    current_normalized_hash = identity_row["normalized_hash"]
+                    if dedup_keys is not None:
+                        current_topic_key, current_normalized_hash = dedup_keys
+                    namespace, current_topic_key, normalized_title, normalized_content_hash = (
+                        self._derive_identity_values(
+                            path=str(identity_row["path"]),
+                            title=title,
+                            type_=type_,
+                            tags=tags,
+                            body_text=str(existing_body["body"] if existing_body else ""),
+                            topic_key=current_topic_key,
+                            namespace=namespace,
+                            normalized_title=normalized_title,
+                            normalized_content_hash=normalized_content_hash,
+                        )
+                    )
+                if self._has_identity_cols:
+                    cur = cx.execute(
+                        "UPDATE meta SET title = ?, type = ?, tags = ?, updated = ?, "
+                        "extra_json = ?, namespace = ?, normalized_title = ?, "
+                        "normalized_content_hash = ?, topic_key = ?, normalized_hash = ? "
+                        "WHERE id = ?",
+                        (
+                            title,
+                            type_,
+                            json.dumps(tags),
+                            updated,
+                            json.dumps(extra, default=str) if extra is not None else None,
+                            namespace,
+                            normalized_title,
+                            normalized_content_hash,
+                            current_topic_key,
+                            current_normalized_hash,
+                            id_,
+                        ),
+                    )
+                elif self._has_pattern_cols:
+                    cur = cx.execute(
+                        "UPDATE meta SET title = ?, type = ?, tags = ?, updated = ?, "
+                        "extra_json = ?, topic_key = ?, normalized_hash = ? WHERE id = ?",
+                        (
+                            title,
+                            type_,
+                            json.dumps(tags),
+                            updated,
+                            json.dumps(extra, default=str) if extra is not None else None,
+                            current_topic_key,
+                            current_normalized_hash,
+                            id_,
+                        ),
+                    )
+                else:
+                    cur = cx.execute(
+                        "UPDATE meta SET title = ?, type = ?, tags = ?, updated = ?, "
+                        "extra_json = ? WHERE id = ?",
+                        (
+                            title,
+                            type_,
+                            json.dumps(tags),
+                            updated,
+                            json.dumps(extra, default=str) if extra is not None else None,
+                            id_,
+                        ),
+                    )
                 # Sync FTS title + tags only when the meta row was actually updated.
                 # Unconditional delete+insert would create a ghost FTS row for a
                 # non-existent id_ (rowcount 0 means no meta row matched).

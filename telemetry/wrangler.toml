@@ -1,0 +1,17 @@
+# Cloudflare Worker: memo update endpoint + anonymous active-install heartbeat.
+# Deploy:
+#   cd telemetry
+#   npx wrangler kv namespace create MEMO_TEL      # copy the id below
+#   npx wrangler secret put STATS_TOKEN            # a long random string
+#   npx wrangler deploy
+name = "memo-update"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+[vars]
+GH_REPO = "jagoff/memo"
+
+# Replace <KV_ID> with the id printed by `wrangler kv namespace create MEMO_TEL`.
+[[kv_namespaces]]
+binding = "MEMO_TEL"
+id = "<KV_ID>"

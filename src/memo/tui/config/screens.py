@@ -178,19 +178,21 @@ class FirstRunWizard(_ConfigModal):
                 id="wizard-capture-enabled",
                 animate=False,
             )
-            yield Label("Redact detected secrets")
+            yield Label("Early capture secret redaction")
             yield Switch(
                 bool(self.values.get("privacy.redact_secrets", True)),
                 id="wizard-redact-secrets",
                 animate=False,
             )
-            yield Label("Honor private markers")
+            yield Label("Strip private markers before extraction")
             yield Switch(
                 bool(self.values.get("privacy.private_markers", True)),
                 id="wizard-private-markers",
                 animate=False,
             )
             yield Static(
+                "Known secrets and <private> spans are always sanitized at final "
+                "memory persistence; these switches control earlier preprocessing.\n\n"
                 "Draft summary\n"
                 + "\n".join(f"  {key}: {value}" for key, value in self.values.items())
                 + "\nReview will show every change before any file is created.",

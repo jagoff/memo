@@ -24,6 +24,39 @@ def test_save_writes_md_and_indexes(mem_with_stub: Memory):
     assert mem_with_stub.store.count() == 1
 
 
+def test_save_enforces_final_privacy_boundary_even_when_early_flags_are_off(
+    mem_with_stub: Memory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = "ghp_" + "a" * 32 + "WXYZ"
+    monkeypatch.setenv("MEMO_REDACT_SECRETS", "0")
+    monkeypatch.setenv("MEMO_PRIVATE_MARKERS", "0")
+
+    rec = mem_with_stub.save(
+        content=f"public <private>never persist</private> {token}",
+        title=f"title {token}",
+        tags=[f"tag-{token}"],
+        topic_key=f"topic-{token}",
+        normalized_hash=f"legacy-{token}",
+        extra={"nested": [token]},
+        auto_project=False,
+        defer_embed=True,
+    )
+
+    markdown = (mem_with_stub.cfg.memory_dir / rec.path).read_text(encoding="utf-8")
+    fts = mem_with_stub.store.get_fts_body(rec.id)
+    combined = "\n".join((markdown, fts, repr(rec.to_dict())))
+    assert token not in combined
+    assert "never persist" not in combined
+    assert "_redacted" in rec.tags
+
+
+def test_private_only_save_fails_without_mutation(mem_with_stub: Memory) -> None:
+    with pytest.raises(ValueError, match="empty after privacy"):
+        mem_with_stub.save(content="<private>do not save</private>", auto_project=False)
+    assert mem_with_stub.store.count() == 0
+    assert list(mem_with_stub.cfg.memory_dir.rglob("*.md")) == []
+
+
 def test_two_memory_instances_serialize_same_title_path_allocation(tmp_cfg: Config):
     """The path lock must be shared by independent Memory instances."""
     first_selected = threading.Event()
@@ -35,8 +68,8 @@ def test_two_memory_instances_serialize_same_title_path_allocation(tmp_cfg: Conf
     second = Memory(tmp_cfg)
     original_build = first._build_rel_path
 
-    def _pause_after_first_probe(title, now_iso, tags=None):
-        candidate = original_build(title, now_iso, tags)
+    def _pause_after_first_probe(title, now_iso, tags=None, **kwargs):
+        candidate = original_build(title, now_iso, tags, **kwargs)
         first_selected.set()
         if not release_first.wait(timeout=5):
             raise TimeoutError("test did not release first path allocation")
@@ -329,6 +362,31 @@ def test_update_preserves_topic_and_normalized_hash_identity(mem_with_stub: Memo
     assert mem_with_stub.store.count() == 1
 
 
+def test_update_sanitizes_complete_legacy_record_before_rewrite(mem_with_stub: Memory) -> None:
+    token = "ghp_" + "a" * 32 + "WXYZ"
+    rec = mem_with_stub.save(content="safe initial", title="Safe", auto_project=False)
+    path = mem_with_stub.cfg.memory_dir / rec.path
+    post = frontmatter.load(str(path))
+    post.content = f"legacy {token} <private>old private</private>"
+    post["title"] = f"legacy {token}"
+    post["extra"] = {"nested": token}
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    updated = mem_with_stub.update(rec.id, append="new safe observation")
+
+    assert updated is not None
+    combined = "\n".join(
+        (
+            path.read_text(encoding="utf-8"),
+            mem_with_stub.store.get_fts_body(rec.id),
+            repr(updated.to_dict()),
+        )
+    )
+    assert token not in combined
+    assert "old private" not in combined
+    assert "_redacted" in updated.tags
+
+
 def test_delete_serializes_against_inflight_update(
     tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
 ):
@@ -513,7 +571,6 @@ def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
         cfg.db_path,
         cfg.history_db,
         cfg.graph_db,
-        cfg.contradictions_db,
         cfg.crossref_db,
     ]
     assert all(path.is_file() for path in expected_files)
@@ -522,7 +579,6 @@ def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
         cfg.db_path: ("meta", "id = ?", (rec.id,)),
         cfg.history_db: ("events", "record_id = ? AND op = 'save'", (rec.id,)),
         cfg.graph_db: ("entity_memory", "memory_id = ?", (rec.id,)),
-        cfg.contradictions_db: ("pairs", "1 = 1", ()),
         cfg.crossref_db: ("backlinks", "source_id = ?", (rec.id,)),
     }
     for db_path, (table, where, params) in checks.items():
@@ -531,10 +587,8 @@ def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
                 f"SELECT COUNT(*) FROM {table} WHERE {where}",  # noqa: S608
                 params,
             ).fetchone()[0]
-        if table == "pairs":
-            assert count == 0
-        else:
-            assert count > 0
+        assert count > 0
+    assert not cfg.contradictions_db.exists()
 
 
 def test_save_rejects_invalid_type(mem_with_stub: Memory):

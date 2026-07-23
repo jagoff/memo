@@ -153,7 +153,9 @@ def contradict_scan(
 )
 @click.option(
     "--status",
-    type=click.Choice(["open", "fused", "kept_newer", "kept_older", "evolved", "dismissed"]),
+    type=click.Choice(
+        ["open", "fused", "kept_newer", "kept_older", "evolved", "competing", "dismissed"]
+    ),
     default="open",
     help="Filter by status (default: open)",
 )
@@ -342,18 +344,18 @@ def contradict_triage(
             continue
         if choice == "n":
             if click.confirm(f"Delete OLDER {rec_a.id[:8]}?", default=False):
-                mem.delete(rec_a.id)
                 mem.contradict_store.resolve(
                     pair.pair_id, "kept_newer", note=f"deleted older {rec_a.id}"
                 )
+                mem.delete(rec_a.id)
                 console.print(f"[green]kept newer.[/green] older {rec_a.id[:8]} deleted.")
             continue
         if choice == "o":
             if click.confirm(f"Delete NEWER {rec_b.id[:8]}?", default=False):
-                mem.delete(rec_b.id)
                 mem.contradict_store.resolve(
                     pair.pair_id, "kept_older", note=f"deleted newer {rec_b.id}"
                 )
+                mem.delete(rec_b.id)
                 console.print(f"[green]kept older.[/green] newer {rec_b.id[:8]} deleted.")
             continue
         if choice == "f":

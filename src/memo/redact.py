@@ -31,6 +31,9 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
+from typing import Any
+
+from memo.errors import ValidationError
 
 # The anthropic/openai prefix overlap is resolved by the negative lookahead,
 # so pattern order is not load-bearing.
@@ -63,6 +66,19 @@ class RedactionResult:
 
     text: str
     found: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SanitizedMemoryInput:
+    """Complete caller-controlled record after persistence sanitization."""
+
+    content: str
+    title: str | None
+    tags: list[str]
+    topic_key: str | None
+    normalized_hash: str | None
+    extra: dict[str, Any]
+    changed: bool
 
 
 def _mask(token: str) -> str:
@@ -144,3 +160,117 @@ def strip_private_spans(text: str) -> str:
     out = _PRIVATE_SPAN_RE.sub("", text)
     out = _PRIVATE_OPEN_RE.sub("", out)
     return out.strip()
+
+
+def sanitize_persisted_text(text: str, *, entropy: bool = False) -> RedactionResult:
+    """Mandatory final text sanitizer used by every persistence path."""
+    private_stripped = strip_private_spans(text)
+    redacted = redact_secrets(private_stripped, entropy=entropy)
+    found = list(redacted.found)
+    if private_stripped != text:
+        found.insert(0, "private-span")
+    return RedactionResult(redacted.text, tuple(dict.fromkeys(found)))
+
+
+def _sanitize_value(value: Any, *, entropy: bool) -> tuple[Any, bool]:
+    if isinstance(value, str):
+        result = sanitize_persisted_text(value, entropy=entropy)
+        return result.text, result.text != value
+    if isinstance(value, list):
+        changed = False
+        out: list[Any] = []
+        for item in value:
+            clean, item_changed = _sanitize_value(item, entropy=entropy)
+            out.append(clean)
+            changed = changed or item_changed
+        return out, changed
+    if isinstance(value, tuple):
+        changed = False
+        out_items: list[Any] = []
+        for item in value:
+            clean, item_changed = _sanitize_value(item, entropy=entropy)
+            out_items.append(clean)
+            changed = changed or item_changed
+        return tuple(out_items), changed
+    if isinstance(value, dict):
+        changed = False
+        out_dict: dict[Any, Any] = {}
+        for key, item in value.items():
+            clean_key, key_changed = _sanitize_value(key, entropy=entropy)
+            if isinstance(clean_key, str) and not clean_key.strip():
+                raise ValidationError("sanitized metadata contains an empty key")
+            if clean_key in out_dict:
+                raise ValidationError("sanitized metadata contains colliding keys")
+            clean_item, item_changed = _sanitize_value(item, entropy=entropy)
+            out_dict[clean_key] = clean_item
+            changed = changed or key_changed or item_changed
+        return out_dict, changed
+    return value, False
+
+
+def sanitize_memory_input(
+    *,
+    content: str,
+    title: str | None = None,
+    tags: list[str] | None = None,
+    topic_key: str | None = None,
+    normalized_hash: str | None = None,
+    extra: dict[str, Any] | None = None,
+    entropy: bool = False,
+    allow_empty_content: bool = False,
+) -> SanitizedMemoryInput:
+    """Sanitize every caller-controlled value before it can be persisted.
+
+    Pattern masking and private-span stripping are unconditional. Entropy
+    scanning is the only optional tier because it has a higher false-positive
+    rate. The function is pure and never logs source values.
+    """
+    clean_content = sanitize_persisted_text(content, entropy=entropy).text
+    if not clean_content.strip() and not allow_empty_content:
+        raise ValidationError("memory content is empty after privacy sanitization")
+
+    clean_title: str | None = None
+    if title is not None:
+        candidate = sanitize_persisted_text(title, entropy=entropy).text.strip()
+        clean_title = candidate or None
+
+    clean_tags: list[str] = []
+    for tag in tags or []:
+        candidate = sanitize_persisted_text(str(tag), entropy=entropy).text.strip()
+        if candidate:
+            clean_tags.append(candidate)
+
+    clean_topic: str | None = None
+    if topic_key is not None:
+        candidate = sanitize_persisted_text(topic_key, entropy=entropy).text.strip()
+        if not candidate:
+            raise ValidationError("topic_key is empty after privacy sanitization")
+        clean_topic = candidate
+
+    clean_legacy_hash: str | None = None
+    if normalized_hash is not None:
+        clean_legacy_hash = sanitize_persisted_text(normalized_hash, entropy=entropy).text.strip()
+        clean_legacy_hash = clean_legacy_hash or None
+
+    clean_extra_raw, extra_changed = _sanitize_value(dict(extra or {}), entropy=entropy)
+    clean_extra = dict(clean_extra_raw)
+    changed = (
+        clean_content != content
+        or clean_title != title
+        or clean_tags != list(tags or [])
+        or clean_topic != topic_key
+        or clean_legacy_hash != normalized_hash
+        or extra_changed
+    )
+    if changed and not any(tag.casefold() == "_redacted" for tag in clean_tags):
+        clean_tags.append("_redacted")
+
+    return SanitizedMemoryInput(
+        content=clean_content,
+        title=clean_title,
+        tags=clean_tags,
+        topic_key=clean_topic,
+        normalized_hash=clean_legacy_hash,
+        extra=clean_extra,
+        changed=changed,
+    )

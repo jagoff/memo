@@ -54,7 +54,9 @@ from .connection import _ConnectionHolder, _ConnectionMixin
 from .feedback_store import _FeedbackMixin
 from .migrations import _MigrationsMixin
 from .queries import _QueriesMixin
+from .relation_queries import _RelationQueriesMixin
 from .repo_store import _RepoStoreMixin
+from .review_queries import _ReviewQueriesMixin
 from .schema import _SchemaMixin
 from .tantivy_index import TantivyFTSIndex, _tantivy_available
 from .vec_base import VecStoreBase
@@ -66,6 +68,8 @@ class VecStore(
     _ConnectionMixin,
     _SchemaMixin,
     _MigrationsMixin,
+    _RelationQueriesMixin,
+    _ReviewQueriesMixin,
     _QueriesMixin,
     _RepoStoreMixin,
     _FeedbackMixin,

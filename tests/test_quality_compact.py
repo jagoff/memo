@@ -125,8 +125,20 @@ def test_quality_compact_preview_skips_ambiguous_multi_project_scope(mock_memory
     ambiguous = mock_memory.save(
         content="Ambiguous duplicate.",
         title="Ambiguous duplicate",
-        tags=["project:memo", "project:other"],
+        tags=["project:memo"],
         extra={"canonical_id": canonical.id},
+    )
+    # New writes reject multiple project namespaces. Seed the shape through
+    # the rebuildable index to model a hand-edited/legacy Markdown record and
+    # keep quality-compaction's defensive behavior covered.
+    assert mock_memory.store.update_meta(
+        id_=ambiguous.id,
+        title=ambiguous.title,
+        type_=ambiguous.type,
+        tags=["project:memo", "project:other"],
+        updated=ambiguous.updated,
+        extra=ambiguous.extra,
+        namespace=None,
     )
 
     payload = preview_quality_compaction(mock_memory, limit=20)

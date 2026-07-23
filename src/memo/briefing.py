@@ -440,6 +440,22 @@ def memo_native_briefing_lines(
         with contextlib.suppress(Exception):
             lines.extend(proactive_lines(mem))
 
+    # Judged relation truth only; pending candidates belong to review surfaces.
+    with contextlib.suppress(Exception):
+        judged = [
+            row
+            for row in mem.store.list_relations(status="judged", limit=12)
+            if row.get("relation") not in {None, "not_conflict"}
+        ][:3]
+        if judged:
+            lines.extend(["### Memory relations", ""])
+            for row in judged:
+                lines.append(
+                    f"- `{str(row['source_id'])[:8]}` {row['relation']} "
+                    f"`{str(row['target_id'])[:8]}`"
+                )
+            lines.append("")
+
     # ── Open loops: recently updated memories ────────────────────────────
     try:
         cutoff = (datetime.now(tz=UTC) - timedelta(days=loops_days)).isoformat()

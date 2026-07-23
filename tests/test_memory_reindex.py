@@ -7,6 +7,7 @@ import pytest
 
 from memo.config import Config
 from memo.errors import StorageError
+from memo.identity import normalized_content_hash
 from memo.memory import Memory
 from memo.store import VecStore
 
@@ -55,6 +56,137 @@ def test_edit_md_then_reindex_markdown_wins(mem_with_stub: Memory):
     assert fetched is not None
     assert "EDITADO a mano" in fetched.body
     assert "contenido original" not in fetched.body
+
+
+def test_reindex_sanitizes_derived_index_without_rewriting_markdown(
+    mem_with_stub: Memory,
+) -> None:
+    token = "ghp_" + "a" * 32 + "WXYZ"
+    rec = mem_with_stub.save(content="safe initial", title="Editable")
+    path = mem_with_stub.cfg.memory_dir / rec.path
+    post = frontmatter.load(str(path))
+    post.content = f"hand edited {token} <private>private note</private>"
+    post["extra"] = {"nested": token}
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    out = mem_with_stub.reindex(force=True)
+
+    assert out["reindexed"] >= 1
+    assert token in path.read_text(encoding="utf-8")  # Markdown source is untouched.
+    assert token not in mem_with_stub.store.get_fts_body(rec.id)
+    indexed = mem_with_stub.store.get(rec.id)
+    assert indexed is not None
+    assert token not in repr(indexed["extra"])
+    assert "_redacted" in indexed["tags"]
+
+
+def test_reindex_rederives_namespaces_topics_and_hand_edited_content(
+    mem_with_stub: Memory,
+) -> None:
+    project = mem_with_stub.save(
+        content="project original",
+        title="Project",
+        tags=["project:alpha"],
+        topic_key="project-topic",
+    )
+    global_record = mem_with_stub.save(
+        content="global original",
+        title="Global",
+        auto_project=False,
+        topic_key="global-topic",
+    )
+    unscoped = mem_with_stub.save(
+        content="unscoped original",
+        title="Unscoped",
+        auto_project=True,
+        topic_key="unscoped-topic",
+    )
+
+    project_path = mem_with_stub.cfg.memory_dir / project.path
+    post = frontmatter.load(str(project_path))
+    post.content = "project hand edited\nwith trailing space   "
+    post["topic_key"] = "  PROJECT   TÓPIC  "
+    project_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    mem_with_stub.reindex(rebuild=True)
+
+    project_identity = mem_with_stub.store.get_identity_keys(project.id)
+    assert project_identity["namespace"] == "project:alpha"
+    assert project_identity["topic_key"] == "project tópic"
+    assert project_identity["normalized_content_hash"] == normalized_content_hash(
+        "project hand edited\nwith trailing space"
+    )
+    assert mem_with_stub.store.get_identity_keys(global_record.id)["namespace"] == "_global"
+    assert mem_with_stub.store.get_identity_keys(unscoped.id)["namespace"] == "_unscoped"
+
+
+def test_incremental_reindex_honors_removed_topic_key(mem_with_stub: Memory) -> None:
+    record = mem_with_stub.save(
+        content="topic may be removed by hand",
+        title="Removable topic",
+        topic_key="remove-me",
+        auto_project=False,
+    )
+    path = mem_with_stub.cfg.memory_dir / record.path
+    post = frontmatter.load(str(path))
+    del post["topic_key"]
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    mem_with_stub.reindex()
+
+    assert mem_with_stub.store.get_identity_keys(record.id)["topic_key"] is None
+
+
+def test_rebuild_keeps_ambiguous_namespaces_readable(mem_with_stub: Memory) -> None:
+    record = mem_with_stub.save(
+        content="historical ambiguous tags",
+        title="Ambiguous tags",
+        tags=["project:one"],
+    )
+    path = mem_with_stub.cfg.memory_dir / record.path
+    post = frontmatter.load(str(path))
+    post["tags"] = ["project:one", "project:two"]
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    mem_with_stub.reindex(rebuild=True)
+
+    assert mem_with_stub.store.get(record.id) is not None
+    assert mem_with_stub.store.get_identity_keys(record.id)["namespace"] is None
+    assert mem_with_stub.store.identity_diagnostics()["legacy_identity_rows"] == 1
+
+
+def test_rebuild_blocks_then_reenables_topic_constraint(mem_with_stub: Memory) -> None:
+    records = [
+        mem_with_stub.save(
+            content=f"collision body {index}",
+            title=f"Collision {index}",
+            tags=["project:alpha"],
+            topic_key=f"original-{index}",
+        )
+        for index in range(2)
+    ]
+    for record in records:
+        path = mem_with_stub.cfg.memory_dir / record.path
+        post = frontmatter.load(str(path))
+        post["topic_key"] = "hand-collision"
+        path.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    mem_with_stub.reindex(rebuild=True)
+
+    diagnostics = mem_with_stub.store.identity_diagnostics()
+    assert diagnostics["identity_constraint"] == "blocked"
+    assert diagnostics["topic_collision_groups"] == 1
+    assert all(mem_with_stub.store.get(record.id) is not None for record in records)
+
+    second_path = mem_with_stub.cfg.memory_dir / records[1].path
+    second_post = frontmatter.load(str(second_path))
+    second_post["topic_key"] = "collision-fixed"
+    second_path.write_text(frontmatter.dumps(second_post), encoding="utf-8")
+    mem_with_stub.reindex(rebuild=True)
+
+    repaired = mem_with_stub.store.identity_diagnostics()
+    assert repaired["identity_constraint"] == "enabled"
+    assert repaired["topic_collision_groups"] == 0
 
 
 def test_reindex_folds_valid_at_from_markdown(mem_with_stub: Memory):

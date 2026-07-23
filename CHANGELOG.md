@@ -9,6 +9,66 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- Namespaced memory identity (`project:<slug>`, `_global`, `_unscoped`) with
+  deterministic create/corroborate/revise outcomes, additive `action` and
+  `index_pending` save fields, schema-v5 diagnostics, and read-only
+  `memo doctor --db` trust preflight.
+- Canonical relation convergence in `memory_relations`: deterministic unordered
+  pair identity, bounded/no-LLM post-save candidates, auditable idempotent
+  judgments, `supersedes` validity transitions, orphan retention, compact
+  search/ask/briefing annotations, and an idempotent legacy contradiction import.
+- Explicit freshness lifecycle with first-class `review_after`, durable review
+  evidence, policy schedules, `memo review due|mark`, and MCP review,
+  invalidation, and supersession tools. Review timing is separate from truth
+  validity and never auto-invalidates a memory.
+- Bounded FIFO coordination for mutating MCP calls, including typed
+  retryable saturation, cancellation semantics, safe error translation, and
+  queue/wait/rejection diagnostics via `memo_write_queue_status`.
+- Declarative Codex and Claude Code adoption through `memo setup`, including
+  detection/dry-run plans, atomic managed instructions, backups, compensating
+  rollback, partial-install receipts, and `memo doctor --agent` verification
+  with an isolated save/search smoke test.
+- A fixed 12-case relation policy corpus and `memo eval relations --gate` for
+  candidate recall, noise, namespace isolation, and reproducible fingerprinting.
+
+### Changed
+
+- The contradiction scanner and legacy CLI now write/project the canonical
+  relation ledger. `contradictions.db` is an import-only compatibility source;
+  no new path dual-writes it.
+- Verification decay now moves only explicitly scheduled, due `VERIFIED`
+  records to `STALE`; stale records remain stale until review or invalidation.
+- MCP profile inventories are now 15 tools for `agent`, 35 for `core`, and 143
+  for `full`, including always-on write-queue diagnostics.
+- Canonical relation candidate generation and judged-relation annotations are
+  now on by default after passing the fixed 12-case policy corpus and measured
+  save-latency gate. Both remain independently reversible with their
+  `MEMO_RELATION_*_ENABLED=0` opt-outs.
+- Mutating MCP calls now use the process-local FIFO coordinator by default with
+  capacity 32. `MEMO_MCP_WRITE_QUEUE_SIZE=0` restores direct dispatch; the
+  data-directory lock remains the cross-process authority.
+- Internal post-save candidate searches no longer record user access or
+  co-recall signals, preventing derived maintenance work from contaminating
+  usage telemetry.
+- Existing vaults with the experimental integer-keyed `memory_relations` table
+  are migrated transactionally to canonical text identities before default-on
+  relation writes begin; legacy rows and lookup aliases are preserved.
+
+### Removed
+
+- Dead fixed-age verification flags `MEMO_VERIFICATION_STALE_DAYS` and
+  `MEMO_VERIFICATION_UNVERIFY_DAYS`; record-specific `review_after` owns
+  freshness policy.
+
+### Security
+
+- All memory save, update, reindex, capture, and ingest persistence paths now
+  enforce known-secret masking and `<private>` stripping at the final storage
+  boundary. Entropy masking remains opt-in; legacy redaction flags now control
+  only earlier defense-in-depth passes.
+
 ## [3.12.1] - 2026-07-22
 
 ### Fixed

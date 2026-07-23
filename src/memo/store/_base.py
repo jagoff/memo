@@ -21,6 +21,7 @@ class _StoreBase:
     vec_quant: str
     _quant_int8: bool
     _has_pattern_cols: bool
+    _has_identity_cols: bool
     _local: threading.local
     tantivy_index_dir: Path
     _tantivy_inst: TantivyFTSIndex | None
@@ -42,4 +43,5 @@ class _StoreBase:
     def _vec_bind_stored(self) -> str: ...  # type: ignore[empty-body]
     def _create_vec_tables(self, conn: sqlite3.Connection) -> None: ...
     def _run_migrations(self) -> None: ...
+    def reconcile_identity_constraint(self, *, force: bool = False) -> str: ...  # type: ignore[empty-body]
     def set_user_version(self, version: int) -> None: ...

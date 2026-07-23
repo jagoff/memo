@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 from memo.config import Config
 from memo.consolidation import AdvancedConsolidator
 from memo.contextual_retrieval import get_or_generate_context, prepend_context
-from memo.contradict import ContradictionScanner, ContradictionStore
+from memo.contradict import CanonicalContradictionAdapter, ContradictionScanner
 from memo.errors import MemoError
 from memo.graph import GraphStore
 from memo.graph_projection import GraphProjectionStore
@@ -33,8 +33,10 @@ from memo.memory.chat_ask_ops import _ChatAskOpsMixin
 from memo.memory.consolidate_ops import _ConsolidateOpsMixin
 from memo.memory.delete_ops import _DeleteOpsMixin
 from memo.memory.graph_ops import _GraphOpsMixin
+from memo.memory.lifecycle_ops import _LifecycleOpsMixin
 from memo.memory.maintain_ops import _MaintainOpsMixin
 from memo.memory.record import _compose_for_embed
+from memo.memory.relation_ops import _RelationOpsMixin
 from memo.memory.replay_ops import _ReplayOpsMixin
 from memo.memory.repo_ops import _RepoOpsMixin
 from memo.memory.rerank_ops import _RerankOpsMixin
@@ -53,6 +55,8 @@ _log = logging.getLogger(__name__)
 class Memory(
     _WriteOpsMixin,
     _UpdateOpsMixin,
+    _RelationOpsMixin,
+    _LifecycleOpsMixin,
     _DeleteOpsMixin,
     _GraphOpsMixin,
     _SearchOpsMixin,
@@ -177,9 +181,9 @@ class Memory(
         # eagerly so graph queries never lazy-stall a CLI command.
         self.graph = GraphStore(cfg.graph_db, projection_factory=GraphProjectionStore)
         self.fact_edges = FactEdgeStore(cfg.fact_edges_db)
-        # Persistent contradiction sidecar — opened lazily so callers
-        # that never scan don't pay for the extra sqlite handle.
-        self._contradict_store: ContradictionStore | None = None
+        # Compatibility projection over the canonical relation ledger. The old
+        # contradictions.db is opened only by the one-way importer.
+        self._contradict_store: CanonicalContradictionAdapter | None = None
         self._contradict_scanner: ContradictionScanner | None = None
         self._consolidator: AdvancedConsolidator | None = None
         # Cache-tier manager (opt-in via MEMO_CACHE_MODE) — lazy @property
@@ -338,13 +342,14 @@ class Memory(
         return self._consolidator
 
     @property
-    def contradict_store(self) -> ContradictionStore:
-        """Lazy accessor for the persistent contradictions sidecar."""
+    def contradict_store(self) -> CanonicalContradictionAdapter:
+        """Old contradiction API projected from canonical relation rows."""
         if self._contradict_store is None:
             with self._chat_lock:
                 if self._contradict_store is None:
                     try:
-                        self._contradict_store = ContradictionStore(self.cfg.contradictions_db)
+                        self._contradict_store = CanonicalContradictionAdapter(self)
+                        self.import_legacy_contradictions()
                     except Exception as exc:
                         _log.warning("contradict_store init failed: %s", exc)
                         raise

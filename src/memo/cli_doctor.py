@@ -39,6 +39,13 @@ from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs
     is_flag=True,
     help="Report only — skip the default auto-repair of MCP config paths.",
 )
+@click.option(
+    "--agent",
+    "agents",
+    multiple=True,
+    type=click.Choice(["codex", "claude-code"]),
+    help="Verify one first-class agent setup (repeatable).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit a stable JSON health report.")
 def doctor(
     do_gc: bool,
@@ -46,6 +53,7 @@ def doctor(
     check_db: bool,
     strict_runtime: bool,
     check_only: bool,
+    agents: tuple[str, ...],
     as_json: bool,
 ) -> None:
     """Self-check: vault present, sqlite-vec loadable, MLX importable, models in cache.
@@ -70,10 +78,38 @@ def doctor(
             do_gc=do_gc,
             fix=fix,
         )
+        if agents:
+            from memo.runtime.agent_registry import verify_agent
+
+            agent_reports = [verify_agent(agent) for agent in agents]
+            report["agent_setup"] = agent_reports
+            report["ok"] = bool(report["ok"] and all(item["ok"] for item in agent_reports))
         click.echo(json.dumps(report, ensure_ascii=False, indent=2, default=str))
         sys.exit(0 if report["ok"] else 1)
 
     ok = True
+
+    if agents:
+        from memo.runtime.agent_registry import verify_agent
+
+        for agent in agents:
+            agent_report = verify_agent(agent)
+            marker = "[green]✓[/green]" if agent_report["ok"] else "[red]✗[/red]"
+            checks = agent_report["checks"]
+            console.print(
+                f"{marker} agent:{agent} detected={checks['detected']} "
+                f"mcp={checks['mcp_configured']} mcp-runtime={checks['mcp_runtime_current']} "
+                f"runtime={checks['runtime_isolated']} pair={checks['runtime_pair']} "
+                f"version={checks['runtime_version']} "
+                f"version-match={checks['runtime_version_match']} smoke={checks['runtime_smoke']} "
+                f"storage={checks['storage_writable']} profile={checks['profile']} "
+                f"profile-current={checks['profile_current']} protocol={checks['protocol_mode']} "
+                f"protocol-current={checks['protocol_current']} "
+                f"instructions={checks['instruction_marker']} writable={checks['instruction_writable']}"
+            )
+            if not agent_report["ok"]:
+                console.print(f"  [dim]repair with `memo setup {agent}`[/dim]")
+                ok = False
 
     runtime_report = _runtime_install_report()
     _print_runtime_install_report(runtime_report)
@@ -288,6 +324,25 @@ def doctor(
                 console.print(f"[yellow]![/yellow] db:{db['label']} missing: {db['path']}")
             if not db["ok"]:
                 ok = False
+        from memo.trust_preflight import trust_preflight
+
+        trust = trust_preflight(cfg)
+        marker = "[green]✓[/green]" if trust["ok"] else "[yellow]![/yellow]"
+        console.print(
+            f"{marker} trust: identity={trust['identity_constraint']} "
+            f"topic_collisions={trust['topic_collision_groups']} "
+            f"exact_duplicates={trust['exact_duplicate_groups']} "
+            f"ambiguous_projects={trust['multiple_project_tag_rows']} "
+            f"legacy_rows={trust['legacy_identity_rows']} "
+            f"secret_files={trust['secret_pattern_files']} "
+            f"private_files={trust['private_marker_files']}"
+        )
+        if not trust["ok"]:
+            console.print(
+                "  [dim]review the vault, then run `memo reindex --rebuild`; "
+                "doctor never rewrites or merges trust findings[/dim]"
+            )
+            ok = False
 
     if do_gc:
         report = _gc_report(cfg, fix=fix)
@@ -358,8 +413,8 @@ def doctor(
             console.print(
                 f"[yellow]![/yellow] token cost: {_profile_label}  {_tool_count} tools "
                 f"({_tok_cost} tokens/connection)  "
-                "[dim](set MEMO_MCP_PROFILE=agent for 14 tools / ~1.4k tokens, or "
-                "`memo install-mcp --profile core` for 34 tools / ~3.0k tokens — "
+                "[dim](set MEMO_MCP_PROFILE=agent for 15 tools / ~1.5k tokens, or "
+                "`memo install-mcp --profile core` for 35 tools / ~3.1k tokens — "
                 "for constrained clients)[/dim]"
             )
         try:

@@ -23,6 +23,8 @@ def test_all_candidates_spans_bool_numeric_and_report_only() -> None:
     # report-only present:
     assert "MEMO_RECALL_RERANK_INPUT_K" in flags
     assert "MEMO_DREAM_GRADUATION_ENABLED" in flags
+    assert "MEMO_RELATION_CANDIDATES_ENABLED" not in flags
+    assert "MEMO_RELATION_ANNOTATIONS_ENABLED" not in flags
 
     # Both types are present:
     assert any(isinstance(c, NumericCandidate) for c in cands)

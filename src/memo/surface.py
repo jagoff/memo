@@ -65,6 +65,7 @@ AGENT_MCP_TOOLS: frozenset[str] = frozenset(
         "memo_start_session",
         "memo_save_text",
         "memo_version",
+        "memo_write_queue_status",
     }
 )
 
@@ -97,6 +98,7 @@ CORE_MCP_TOOLS: frozenset[str] = frozenset(
         "memo_unforget",
         "memo_unified_briefing",
         "memo_update",
+        "memo_write_queue_status",
     }
 )
 
@@ -123,7 +125,7 @@ def mcp_include_advanced_tools() -> bool:
 
 
 def mcp_profile() -> str:
-    """Resolve the MCP surface profile, defaulting agent clients to 14 tools."""
+    """Resolve the MCP surface profile, defaulting agent clients to 15 tools."""
     profile = _profile("MEMO_MCP_PROFILE", default="agent", strict=True)
     if flags.flag_bool("MEMO_MCP_SLIM"):
         return "core"
@@ -140,9 +142,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("14", "~1.4k"),
-    "core": ("34", "~3.0k"),
-    "slim": ("34", "~3.0k"),
+    "agent": ("15", "~1.5k"),
+    "core": ("35", "~3.1k"),
+    "slim": ("35", "~3.1k"),
 }
 
 
@@ -151,5 +153,5 @@ def mcp_profile_token_cost(profile: str | None = None) -> tuple[str, str, bool]:
     (or the active profile when ``None``). ``is_reduced`` is False only for the
     full/default surface — the costly one doctor warns about."""
     resolved = profile if profile is not None else mcp_profile()
-    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("131", "~15k"))
+    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("143", "~16k"))
     return count, cost, resolved in _PROFILE_TOKEN_COST

@@ -86,19 +86,33 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("memory/write_ops.py", "_WriteOpsMixin._presence_bump_save", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._record_graph_entities_from_extra", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._derive_metadata", 1),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 1),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 2),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 3),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 4),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 5),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 6),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 7),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 8),
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 9),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 1),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 2),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 3),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 4),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 5),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 6),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 7),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 8),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 9),
     # defer_embed save without topic_key: index failure routes through
     # _save_index_pending (stamps _memo_embed_pending + text-only index) so the
     # .md never silently vanishes — recovery, not a swallow.
-    ("memory/write_ops.py", "_WriteOpsMixin.save", 10),
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 10),
+    # Post-commit cache capacity enforcement is optional. The durable Markdown
+    # and sqlite write already succeeded, so cache backend failure must not
+    # turn a committed save into a caller-visible failure.
+    ("memory/write_ops.py", "_WriteOpsMixin._save_core", 11),
+    # Receipts are explicitly post-commit observability. Failure is logged and
+    # cannot invalidate a durable save.
+    ("memory/write_ops.py", "_WriteOpsMixin._emit_save_receipt", 1),
+    # Topic attachment restores the previous Markdown bytes for every store
+    # failure and then re-raises; the broad catch is a rollback boundary, not a
+    # swallowed error.
+    ("memory/write_ops.py", "_WriteOpsMixin._attach_topic_identity_locked", 1),
+    # Recovery translates any sqlite/index implementation failure into the
+    # stable StorageError domain contract, preserving the original cause.
+    ("memory/write_ops.py", "_WriteOpsMixin._recover_topic_reservation_locked", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._apply_write_policy", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._absorb_into_existing", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._read_body", 1),

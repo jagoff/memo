@@ -18,15 +18,19 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import logging
 import os
+import platform
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol
@@ -135,6 +139,76 @@ def latest_remote_tag(repo_url: str, *, timeout: int = 10) -> str | None:
         if ver is not None and (best is None or ver > best):
             best, best_tag = ver, ref
     return best_tag
+
+
+def _anon_id(cfg: Config) -> str:
+    """Anonymous, stable per-install id: sha256 of the persisted device_id.
+
+    The raw ``device_id`` never leaves the machine — only its truncated hash,
+    which lets the update endpoint dedupe active installs without identifying
+    them. Empty string if device_id is unavailable (no id is sent).
+    """
+    raw = str(getattr(cfg, "device_id", "") or "")
+    if not raw:
+        return ""
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def latest_tag_via_endpoint(
+    endpoint: str,
+    *,
+    anon_id: str,
+    version: str,
+    os_name: str,
+    timeout: int = 10,
+) -> str | None:
+    """Resolve the latest tag from an HTTP update endpoint, or None on failure.
+
+    The GET both (a) returns the latest release tag — its real job, so this is a
+    functional version check, not pure telemetry — and (b) lets the endpoint
+    record a deduped active-install heartbeat from the query params. All params
+    are anonymous: a hashed install id, the current version, and the OS name.
+    Any failure returns None so the caller falls back to the git probe.
+    """
+    from urllib.parse import urlencode
+
+    query = urlencode({"id": anon_id, "v": version, "os": os_name})
+    url = f"{endpoint}{'&' if '?' in endpoint else '?'}{query}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": f"memo/{version}"})  # noqa: S310
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        _log.debug("update-endpoint: unreachable (%s)", exc)
+        return None
+    tag = data.get("latest") if isinstance(data, dict) else None
+    if isinstance(tag, str) and _parse_semver(tag) is not None:
+        return tag
+    return None
+
+
+def resolve_latest_tag(cfg: Config, repo_url: str, *, timeout: int = 10) -> str | None:
+    """Latest tag via the configured HTTP endpoint if set, else git ls-remote.
+
+    When ``MEMO_UPDATE_ENDPOINT`` is empty (the default) this is exactly
+    ``latest_remote_tag`` — no network destination changes, no heartbeat. When
+    set, the HTTP endpoint is tried first (functional version check + anonymous
+    heartbeat) and the git probe is the fallback on any failure.
+    """
+    endpoint = flag_str("MEMO_UPDATE_ENDPOINT")
+    if endpoint:
+        from memo import __version__
+
+        tag = latest_tag_via_endpoint(
+            endpoint,
+            anon_id=_anon_id(cfg),
+            version=__version__,
+            os_name=platform.system(),
+            timeout=timeout,
+        )
+        if tag is not None:
+            return tag
+    return latest_remote_tag(repo_url, timeout=timeout)
 
 
 def tag_is_on_remote_master(repo_url: str, tag: str, *, timeout: int = 60) -> bool:
@@ -597,7 +671,7 @@ def notify_if_newer(cfg: Config | None = None, *, force: bool = False) -> str | 
         from memo import __version__
 
         repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
-        tag = latest_remote_tag(repo)
+        tag = resolve_latest_tag(cfg, repo)
         if tag and is_newer(tag, __version__) and tag_is_on_remote_master(repo, tag):
             _write_notify(cfg, tag)
             return tag
@@ -637,7 +711,7 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
         repo = flag_str("MEMO_AUTO_UPDATE_REPO") or DEFAULT_REPO
         # Fast path: if notify_if_newer already confirmed a newer version
         # (wrote the update_available file), trust it and skip the network call.
-        tag = pending_update_tag(cfg) or latest_remote_tag(repo)
+        tag = pending_update_tag(cfg) or resolve_latest_tag(cfg, repo)
         if not tag or not is_newer(tag, __version__) or not tag_is_on_remote_master(repo, tag):
             _clear_notify(cfg)
             return False

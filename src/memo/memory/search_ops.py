@@ -145,6 +145,7 @@ class _SearchOpsMixin(_MemoryBase):
         date_to: str | None = None,
         quality_rerank: bool | None = None,
         as_of: str | None = None,
+        _track_usage: bool = True,
         _trace: list[dict[str, Any]] | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
@@ -186,6 +187,9 @@ class _SearchOpsMixin(_MemoryBase):
                 CONTAINS `as_of` (`COALESCE(valid_at, created) <= as_of` and not
                 yet invalidated at `as_of`), overriding the default now-gate — so
                 a since-superseded fact resurfaces as it stood at that time.
+            _track_usage: Internal callers may disable access/co-recall writes
+                when search is only a derived processing step rather than a
+                user-visible retrieval.
         """
 
         def _add_trace(stage: str, **data: Any) -> None:
@@ -672,10 +676,11 @@ class _SearchOpsMixin(_MemoryBase):
             out = self._map_chunks_to_parents(out)
             _add_trace("chunk_parent", input_count=before, output_count=len(out))
         out = self._apply_curated_graph_order(query, out, _add_trace)
-        self._record_access([r.id for r in out])
+        if _track_usage:
+            self._record_access([r.id for r in out])
         # Co-recall graph edges: record which memories surface together.
         # Gated by flag so the graph DB write stays opt-in (off by default).
-        if len(out) >= 2 and flag_bool("MEMO_GRAPH_CO_RECALL"):
+        if _track_usage and len(out) >= 2 and flag_bool("MEMO_GRAPH_CO_RECALL"):
             try:
                 self.graph.record_co_recall([r.id for r in out])
             except Exception as _co_exc:
@@ -693,6 +698,10 @@ class _SearchOpsMixin(_MemoryBase):
                 disk = self._read_body(r.path)
                 resolved.append(dataclasses.replace(r, body=disk) if disk else r)
             out = resolved
+        # Judged relations are compact, derived annotations. Pending candidates
+        # stay out of normal recall and are visible only in review surfaces.
+        if out:
+            out = self.annotate_relations(out)
         _add_trace("final", output_count=len(out), limit=limit)
         return out
 
