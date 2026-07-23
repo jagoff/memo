@@ -52,6 +52,9 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 - Internal post-save candidate searches no longer record user access or
   co-recall signals, preventing derived maintenance work from contaminating
   usage telemetry.
+- Existing vaults with the experimental integer-keyed `memory_relations` table
+  are migrated transactionally to canonical text identities before default-on
+  relation writes begin; legacy rows and lookup aliases are preserved.
 
 ### Removed
 

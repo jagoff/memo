@@ -526,7 +526,7 @@ class _SchemaMixin(_StoreBase):
             "CREATE INDEX IF NOT EXISTS idx_memory_reviews_memory "
             "ON memory_reviews(memory_id, reviewed_at)"
         )
-        # user_version=7 covers canonical relation identity and review evidence.
+        # user_version=8 covers canonical relation identity types and review evidence.
         # The independently stamped capability says whether historical topic
         # conflicts allow the partial active-row uniqueness constraint.
         self.reconcile_identity_constraint()

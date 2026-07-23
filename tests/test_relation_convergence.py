@@ -79,7 +79,7 @@ def test_v5_relation_rows_migrate_non_destructively(tmp_path):
     migrated = VecStore(path, dims=4, embedder_model="stub")
     row = migrated.get_relation("legacy")
     assert row is not None and row["pair_key"]
-    assert migrated.get_user_version() == 7
+    assert migrated.get_user_version() == 8
     migrated.close()
 
 
@@ -106,7 +106,52 @@ def test_v5_database_without_relation_table_migrates(tmp_path):
     candidate = migrated.create_relation_candidate(source_id="a", target_id="b")
 
     assert candidate["judgment_status"] == "pending"
-    assert migrated.get_user_version() == 7
+    assert migrated.get_user_version() == 8
+    migrated.close()
+
+
+def test_v7_integer_relation_table_rebuilds_with_text_identity(tmp_path):
+    path = tmp_path / "integer-relations.db"
+    store = VecStore(path, dims=4, embedder_model="stub")
+    with store._tx() as cx:
+        for index in (
+            "idx_rel_source",
+            "idx_rel_target",
+            "idx_rel_status",
+            "idx_rel_pair_unique",
+            "idx_rel_migration_unique",
+        ):
+            cx.execute(f"DROP INDEX IF EXISTS {index}")
+        cx.execute("DROP TABLE memory_relations")
+        cx.execute(
+            "CREATE TABLE memory_relations ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, sync_id TEXT UNIQUE, "
+            "source_id INTEGER NOT NULL, target_id INTEGER NOT NULL, relation TEXT, "
+            "judgment_status TEXT DEFAULT 'pending', reason TEXT, confidence REAL, "
+            "session_id TEXT, created_at TEXT NOT NULL, updated_at TEXT)"
+        )
+        cx.execute(
+            "INSERT INTO memory_relations "
+            "(sync_id, source_id, target_id, relation, judgment_status, created_at) "
+            "VALUES ('legacy-sync', 'a', 'b', 'related', 'judged', '2026-01-01')"
+        )
+        cx.execute("PRAGMA user_version=7")
+    store.close()
+
+    migrated = VecStore(path, dims=4, embedder_model="stub")
+    column_types = {
+        row["name"]: row["type"]
+        for row in migrated._conn.execute("PRAGMA table_info(memory_relations)").fetchall()
+    }
+    legacy = migrated.get_relation("legacy-sync")
+    candidate = migrated.create_relation_candidate(source_id="new", target_id="old")
+
+    assert column_types["id"] == "TEXT"
+    assert column_types["source_id"] == "TEXT"
+    assert column_types["target_id"] == "TEXT"
+    assert legacy is not None and legacy["pair_key"]
+    assert candidate["id"].startswith("rel-")
+    assert migrated.get_user_version() == 8
     migrated.close()
 
 
