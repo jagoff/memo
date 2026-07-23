@@ -138,7 +138,7 @@ memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 
 memo is built to **spend fewer tokens, not more**.
 
-- **~90% smaller MCP surface.** The default `agent` profile exposes **14 tools / ~1.4k schema tokens**, versus **137 tools / ~15k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **~90% smaller MCP surface.** The default `agent` profile exposes **15 tools / ~1.5k schema tokens**, versus **143 tools / ~16k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -163,7 +163,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
 - **Exact transcript lookup (opt-in).** `memo verbatim search` can find the precise wording of past local transcript turns through a private, lexical-only FTS5 index. It never enters ambient recall.
-- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 14 tools, not 137.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 15 tools, not 143.
 
 ## Requirements
 
@@ -189,6 +189,7 @@ After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`,
 
 ```bash
 memo doctor                                            # self-check: models, vault, sqlite-vec
+memo setup --detect --dry-run                           # preview Codex/Claude Code wiring
 memo config                                            # terminal-only configuration center
 memo save 'MLX prefill ~30% faster than Ollama on M3 Max' --title 'MLX bench' -t mlx -t bench
 memo search 'how fast was the MLX benchmark'           # search by meaning, not just keywords
@@ -252,9 +253,10 @@ No other agent-memory system offers this. Full historical reconstruction via rev
 ```bash
 memo contradict scan                  # detect conflicting facts corpus-wide
 memo contradict triage                # resolve interactively: fuse / newer-wins / dismiss
+memo review due                       # explicit freshness obligations; never auto-invalidates
 ```
 
-The LLM classifies each candidate pair. Results persist in `contradictions.db`; resolved conflicts inform future saves.
+The LLM classifies each candidate pair. Results persist as canonical relations in the main rebuildable index; legacy `contradictions.db` data is imported once and remains readable during the compatibility window.
 
 ### 🔮 Synthesis & autonomous maintenance
 
@@ -405,7 +407,7 @@ memo runs four background daemons:
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
-### All 127 top-level CLI commands
+### All 129 top-level CLI commands
 
 <details>
 <summary>Click to expand</summary>
@@ -416,7 +418,7 @@ memo runs four background daemons:
 
 **Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes` `chronicle`
 
-**Maintenance:** `reindex` `maintain` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `invalidate` `temporal` `compress-context`
+**Maintenance:** `reindex` `maintain` `review` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `invalidate` `temporal` `compress-context`
 
 **Analysis & Quality:** `health` `stats` `doctor` `lint` `drift` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile` `confidence` `graduation` `hype`
 
@@ -428,7 +430,7 @@ memo runs four background daemons:
 
 **Visualization:** `tui` `dashboard` `map` `logs` `hook-log`
 
-**Setup & Config:** `init` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `upgrade` `self-update` `watch` `release` `onboard`
+**Setup & Config:** `init` `setup` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `upgrade` `self-update` `watch` `release` `onboard`
 
 **Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon` `idle-daemon`
 
@@ -440,9 +442,9 @@ memo runs four background daemons:
 
 | Profile | Tools | Schema tokens | Use when |
 |---|---|---|---|
-| `agent` (default) | 14 | ~1.4k | Standard agent work — max token economy |
-| `core` / `slim` | 34 | ~3.0k | Constrained clients (Codex, OpenCode), admin-lite |
-| `full` / `default` | 137 | ~15k | Power users, debugging |
+| `agent` (default) | 15 | ~1.5k | Standard agent work — max token economy |
+| `core` / `slim` | 35 | ~3.1k | Constrained clients (Codex, OpenCode), admin-lite |
+| `full` / `default` | 143 | ~16k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 

@@ -30,6 +30,7 @@ from memo.memory.record import (
     _now_iso,
     is_derived_chunk_id,
 )
+from memo.tiers import VerificationState
 from memo.util import sha256_short as _sha256_short
 
 _log = logging.getLogger(__name__)
@@ -413,6 +414,8 @@ class _UpdateOpsMixin(_MemoryBase):
         post["verification_state"] = r.get("verification_state", "unverified")
         if r.get("verified_at") is not None:
             post["verified_at"] = r["verified_at"]
+        if r.get("review_after") is not None:
+            post["review_after"] = r["review_after"]
         if topic_key is not None:
             post["topic_key"] = topic_key
         if normalized_hash is not None:
@@ -571,6 +574,11 @@ class _UpdateOpsMixin(_MemoryBase):
             updated=now_iso,
             body=new_body,
             extra=new_extra,
+            verification_state=VerificationState(
+                str(r.get("verification_state", VerificationState.UNVERIFIED.value))
+            ),
+            verified_at=r.get("verified_at"),
+            review_after=r.get("review_after"),
             valid_at=r.get("valid_at"),
             invalid_at=r.get("invalid_at"),
         )

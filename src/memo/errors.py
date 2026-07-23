@@ -50,6 +50,29 @@ class IdentityConflictError(ValidationError):
         super().__init__(f"memory identity conflict: {kind}{suffix}")
 
 
+class RelationConflictError(ValidationError):
+    """A relation already has an incompatible durable judgment."""
+
+    def __init__(self, relation_id: str, existing: str, requested: str) -> None:
+        self.relation_id = relation_id
+        self.existing = existing
+        self.requested = requested
+        super().__init__(
+            f"relation {relation_id} is already judged as {existing!r}; "
+            f"cannot replace it with {requested!r}"
+        )
+
+
+class QueueFullError(MemoError, RuntimeError):
+    """A bounded process-local coordinator rejected work before mutation."""
+
+    retryable = True
+
+
+class SetupError(MemoError, RuntimeError):
+    """Declarative agent setup could not complete safely."""
+
+
 class StorageError(MemoError, RuntimeError):
     """A storage-layer operation (sqlite / filesystem) failed. Wraps the
     low-level error with operation context so callers don't see bare

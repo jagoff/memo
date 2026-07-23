@@ -693,6 +693,10 @@ class _SearchOpsMixin(_MemoryBase):
                 disk = self._read_body(r.path)
                 resolved.append(dataclasses.replace(r, body=disk) if disk else r)
             out = resolved
+        # Judged relations are compact, derived annotations. Pending candidates
+        # stay out of normal recall and are visible only in review surfaces.
+        if out:
+            out = self.annotate_relations(out)
         _add_trace("final", output_count=len(out), limit=limit)
         return out
 

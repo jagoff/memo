@@ -571,7 +571,6 @@ def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
         cfg.db_path,
         cfg.history_db,
         cfg.graph_db,
-        cfg.contradictions_db,
         cfg.crossref_db,
     ]
     assert all(path.is_file() for path in expected_files)
@@ -580,7 +579,6 @@ def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
         cfg.db_path: ("meta", "id = ?", (rec.id,)),
         cfg.history_db: ("events", "record_id = ? AND op = 'save'", (rec.id,)),
         cfg.graph_db: ("entity_memory", "memory_id = ?", (rec.id,)),
-        cfg.contradictions_db: ("pairs", "1 = 1", ()),
         cfg.crossref_db: ("backlinks", "source_id = ?", (rec.id,)),
     }
     for db_path, (table, where, params) in checks.items():
@@ -589,10 +587,8 @@ def test_memory_uses_all_default_sqlite_databases(mem_with_stub: Memory):
                 f"SELECT COUNT(*) FROM {table} WHERE {where}",  # noqa: S608
                 params,
             ).fetchone()[0]
-        if table == "pairs":
-            assert count == 0
-        else:
-            assert count > 0
+        assert count > 0
+    assert not cfg.contradictions_db.exists()
 
 
 def test_save_rejects_invalid_type(mem_with_stub: Memory):

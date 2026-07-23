@@ -318,6 +318,50 @@ class _WriteOpsMixin(_MemoryBase):
         valid_at: str | None = None,
         invalid_at: str | None = None,
     ) -> MemoryRecord:
+        """Persist a memory, then run bounded post-commit relation detection."""
+        record = self._save_core(
+            content=content,
+            title=title,
+            type_=type_,
+            type=type,
+            tags=tags,
+            extra=extra,
+            auto_derive=auto_derive,
+            auto_project=auto_project,
+            cwd=cwd,
+            created=created,
+            defer_embed=defer_embed,
+            respect_synapse_freeze=respect_synapse_freeze,
+            skip_memflow_receipt=skip_memflow_receipt,
+            topic_key=topic_key,
+            normalized_hash=normalized_hash,
+            valid_at=valid_at,
+            invalid_at=invalid_at,
+        )
+        record = self.ensure_review_schedule(record)
+        return self.attach_post_save_relations(record)
+
+    def _save_core(
+        self,
+        *,
+        content: str,
+        title: str | None = None,
+        type_: str = "note",
+        type: str | None = None,
+        tags: list[str] | None = None,
+        extra: dict[str, Any] | None = None,
+        auto_derive: bool = False,
+        auto_project: bool = True,
+        cwd: str | None = None,
+        created: str | None = None,
+        defer_embed: bool = False,
+        respect_synapse_freeze: bool | None = None,
+        skip_memflow_receipt: bool = False,
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
+    ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
         - `content`: free-form markdown body (no frontmatter; we add it).

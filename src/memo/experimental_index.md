@@ -38,9 +38,10 @@ implemented in the core.
 
 Contradiction and staleness radar. Scans the corpus for pairs of memories
 that contradict each other or have become stale using `TemporalAnalyzer`
-classifications, stores verdicts in a sidecar `contradictions.db`, and
-exposes a triage workflow for resolving them. Scanning a large corpus is
-expensive (O(n²) vec lookups).
+classifications, stores verdicts in the canonical `memory_relations` signal
+ledger, and exposes a triage workflow for resolving them. The historical
+`contradictions.db` is read only for one-way import/compatibility. Scanning a
+large corpus is expensive (O(n²) vec lookups).
 
 ## chunker.py
 

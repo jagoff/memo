@@ -189,8 +189,34 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 14 tools) | core/slim (stable core) | full/default (all tools).",
+        "MCP surface profile: agent (default, 15 tools) | core/slim (stable core) | full/default (all tools).",
         choices=("agent", "core", "slim", "full", "default"),
+    ),
+    _spec(
+        "MEMO_MCP_WRITE_QUEUE_SIZE",
+        "int",
+        0,
+        "mcp",
+        "Bounded process-local FIFO for mutating MCP calls. 0 disables it; "
+        "the data-directory lock remains cross-process authority.",
+        min_val=0,
+        max_val=1024,
+    ),
+    _spec(
+        "MEMO_RELATION_CANDIDATES_ENABLED",
+        "bool",
+        False,
+        "relations",
+        "Generate at most three canonical relation candidates after eligible saves. "
+        "Default off until the fixed-corpus graduation gate passes.",
+    ),
+    _spec(
+        "MEMO_RELATION_ANNOTATIONS_ENABLED",
+        "bool",
+        False,
+        "relations",
+        "Attach judged canonical relations to normal retrieval results. "
+        "Pending candidates are never attached.",
     ),
     _spec(
         "MEMO_RESOURCE_BODY_CHARS",
@@ -1508,29 +1534,11 @@ SPECS: tuple[FlagSpec, ...] = (
         False,
         "misc",
         "Master switch for the verification-state lifecycle (UNVERIFIED/VERIFIED/"
-        "STALE). When ON: (1) `memo maintain` ages VERIFIED→STALE→UNVERIFIED by "
-        "`verified_at` (see MEMO_VERIFICATION_STALE_DAYS / _UNVERIFY_DAYS), and "
+        "STALE). When ON: (1) `memo maintain` marks VERIFIED memories STALE when "
+        "their explicit `review_after` date is due, and "
         "(2) live recall multiplies each hit's score by its state decay factor "
         "(VERIFIED≈1.0, STALE 0.7, UNVERIFIED 0.8) so fresh facts outrank stale "
         "ones. No-op for an all-UNVERIFIED corpus (uniform penalty). Default OFF.",
-    ),
-    _spec(
-        "MEMO_VERIFICATION_STALE_DAYS",
-        "int",
-        30,
-        "misc",
-        "Days after `verified_at` before a VERIFIED memory ages to STALE in "
-        "`memo maintain` (requires MEMO_VERIFICATION_STATE_TRACKING).",
-        min_val=1,
-    ),
-    _spec(
-        "MEMO_VERIFICATION_UNVERIFY_DAYS",
-        "int",
-        60,
-        "misc",
-        "Days after `verified_at` before a STALE memory ages to UNVERIFIED in "
-        "`memo maintain` (requires MEMO_VERIFICATION_STATE_TRACKING).",
-        min_val=1,
     ),
     # secret storage (encrypted credentials)
     _spec(

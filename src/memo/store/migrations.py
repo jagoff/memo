@@ -8,7 +8,7 @@ from ._base import _StoreBase
 
 _log = logging.getLogger(__name__)
 
-_CURRENT_USER_VERSION = 5
+_CURRENT_USER_VERSION = 7
 
 
 class _MigrationsMixin(_StoreBase):
@@ -33,6 +33,8 @@ class _MigrationsMixin(_StoreBase):
     #       and temporal decay weighting in rerank.
     #   5 — rebuildable canonical identity columns (namespace,
     #       normalized_title, normalized_content_hash).
+    #   6 — canonical relation provenance and pair idempotency metadata.
+    #   7 — review evidence signal table.
 
     def get_user_version(self) -> int:
         """Return the on-disk schema version (0 by default)."""
@@ -177,3 +179,86 @@ class _MigrationsMixin(_StoreBase):
                 )
                 self.set_user_version(5)
             _log.info("migrated to v5: canonical memory identity metadata")
+            current = 5
+
+        if current < 6:
+            from memo.errors import ValidationError
+            from memo.store.relation_queries import relation_pair_key
+
+            with self._tx() as cx:
+                # Some v5 databases predate the experimental session-relation
+                # table entirely. Migrations run before schema.py's inline
+                # guards, so establish the legacy baseline here first.
+                cx.execute(
+                    "CREATE TABLE IF NOT EXISTS memory_relations ("
+                    "id TEXT PRIMARY KEY, sync_id TEXT, source_id TEXT NOT NULL, "
+                    "target_id TEXT NOT NULL, relation TEXT, "
+                    "judgment_status TEXT DEFAULT 'pending', reason TEXT, "
+                    "confidence REAL, session_id TEXT, created_at TEXT, updated_at TEXT)"
+                )
+                cols = {
+                    row["name"]
+                    for row in cx.execute("PRAGMA table_info(memory_relations)").fetchall()
+                }
+                additions = {
+                    "pair_key": "ALTER TABLE memory_relations ADD COLUMN pair_key TEXT",
+                    "actor": "ALTER TABLE memory_relations ADD COLUMN actor TEXT",
+                    "actor_kind": "ALTER TABLE memory_relations ADD COLUMN actor_kind TEXT",
+                    "model": "ALTER TABLE memory_relations ADD COLUMN model TEXT",
+                    "provenance_json": (
+                        "ALTER TABLE memory_relations ADD COLUMN provenance_json TEXT"
+                    ),
+                    "migration_key": ("ALTER TABLE memory_relations ADD COLUMN migration_key TEXT"),
+                    "migrated_from": ("ALTER TABLE memory_relations ADD COLUMN migrated_from TEXT"),
+                }
+                for column, ddl in additions.items():
+                    if column not in cols:
+                        cx.execute(ddl)
+                rows = cx.execute(
+                    "SELECT id, source_id, target_id, created_at FROM memory_relations "
+                    "ORDER BY COALESCE(created_at, ''), id"
+                ).fetchall()
+                claimed: set[str] = set()
+                for row in rows:
+                    try:
+                        key = relation_pair_key(str(row["source_id"]), str(row["target_id"]))
+                    except ValidationError as exc:
+                        _log.warning(
+                            "relation migration skipped invalid row %s: %s", row["id"], exc
+                        )
+                        continue
+                    if key in claimed:
+                        cx.execute(
+                            "UPDATE memory_relations SET judgment_status='orphaned' WHERE id=?",
+                            (row["id"],),
+                        )
+                        continue
+                    claimed.add(key)
+                    cx.execute(
+                        "UPDATE memory_relations SET pair_key=? WHERE id=?", (key, row["id"])
+                    )
+                cx.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_pair_unique "
+                    "ON memory_relations(pair_key) WHERE pair_key IS NOT NULL"
+                )
+                cx.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_migration_unique "
+                    "ON memory_relations(migration_key) WHERE migration_key IS NOT NULL"
+                )
+                self.set_user_version(6)
+            _log.info("migrated to v6: canonical relation metadata")
+            current = 6
+
+        if current < 7:
+            with self._tx() as cx:
+                cx.execute(
+                    "CREATE TABLE IF NOT EXISTS memory_reviews ("
+                    "id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, reviewed_at TEXT NOT NULL, "
+                    "evidence TEXT, actor TEXT, next_review_after TEXT)"
+                )
+                cx.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_memory_reviews_memory "
+                    "ON memory_reviews(memory_id, reviewed_at)"
+                )
+                self.set_user_version(7)
+            _log.info("migrated to v7: review evidence metadata")

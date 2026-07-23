@@ -177,5 +177,5 @@ Devin Desktop after `~/.devin/mcp.json` changes.
 | `~/.local/share/memo/memvec.db` | sqlite-vec index; safe to rebuild |
 | `~/.local/share/memo/history.db` | Audit log used by time-machine |
 | `~/.local/share/memo/graph.db` | Entity graph sidecar |
-| `~/.local/share/memo/contradictions.db` | Contradiction radar sidecar |
+| `~/.local/share/memo/contradictions.db` | Legacy contradiction import source (read-only compatibility window) |
 | `~/.devin/mcp.json` | Devin Desktop MCP config |

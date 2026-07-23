@@ -1,4 +1,4 @@
-"""EXPERIMENTAL — not covered by the test suite. API may change without notice.
+"""Contradiction compatibility surface backed by canonical memory relations.
 
 Persistent contradiction & staleness radar for the memory corpus.
 
@@ -6,8 +6,8 @@ This module sits on top of `TemporalAnalyzer` (which already classifies
 pairs as contradiction / evolution / consistent / unrelated) and adds
 the missing pieces needed for a triage workflow:
 
-- **Sidecar DB** (`contradictions.db`) so the LLM verdict on a pair is
-  not recomputed every time. Status of each pair lives across runs.
+- **Legacy sidecar reader** (`contradictions.db`) retained only for migration.
+  New scans and triage writes go to the canonical `memory_relations` table.
 - **Corpus-wide scan** that walks every memory, finds near-neighbors
   via vec search, and classifies the pairs that look promising. Pair
   IDs are canonical (lower id first) so the same pair is never stored
@@ -201,7 +201,7 @@ _PAIR_COLS = (
 
 
 class ContradictionStore:
-    """Sidecar sqlite store for contradiction pairs.
+    """Legacy sidecar store retained as a read/import compatibility source.
 
     Lifecycle of a pair:
       1. `upsert_open(...)` — scanner inserts a newly detected pair.
@@ -310,6 +310,13 @@ class ContradictionStore:
             (a, b),
         ).fetchone()
         return bool(row and row["status"] != "open")
+
+    def is_open_pair(self, memory_id_a: str, memory_id_b: str) -> bool:
+        a, b = _canonical_pair(memory_id_a, memory_id_b)
+        row = self._conn.execute(
+            "SELECT status FROM pairs WHERE memory_id_a=? AND memory_id_b=?", (a, b)
+        ).fetchone()
+        return bool(row and row["status"] == "open")
 
     def list_open(
         self,
@@ -427,6 +434,200 @@ class ContradictionStore:
         )
 
 
+def _canonical_pair_id(row: dict[str, Any]) -> int:
+    migration_key = str(row.get("migration_key") or "")
+    if migration_key.startswith("legacy-contradiction:"):
+        with suppress(ValueError):
+            return int(migration_key.rsplit(":", 1)[-1])
+    relation_id = str(row.get("id") or "")
+    digest = relation_id.removeprefix("rel-")[:15]
+    with suppress(ValueError):
+        return int(digest, 16)
+    return int(uuid.uuid5(uuid.NAMESPACE_URL, relation_id).int & ((1 << 63) - 1))
+
+
+def _legacy_status(row: dict[str, Any]) -> str:
+    provenance = row.get("provenance") or {}
+    migrated_status = provenance.get("legacy_status") if isinstance(provenance, dict) else None
+    if migrated_status in VALID_STATUSES:
+        return str(migrated_status)
+    state = str(row.get("judgment_status") or "pending")
+    relation = str(row.get("relation") or "")
+    if state == "pending":
+        return "open"
+    return {
+        "not_conflict": "dismissed",
+        "related": "evolved",
+        "compatible": "fused",
+        "supersedes": "kept_newer",
+        "conflicts_with": "competing",
+        "scoped": "competing",
+    }.get(relation, "dismissed")
+
+
+class CanonicalContradictionAdapter:
+    """Old contradiction API projected from the canonical relation ledger."""
+
+    def __init__(self, memory: Any) -> None:
+        self.memory = memory
+
+    def close(self) -> None:
+        return None
+
+    def upsert_open(
+        self,
+        memory_id_a: str,
+        memory_id_b: str,
+        relationship: str,
+        confidence: float,
+        rationale: str,
+    ) -> int:
+        suggested = "conflicts_with" if relationship == "contradiction" else "related"
+        row = self.memory.store.create_relation_candidate(
+            source_id=memory_id_a,
+            target_id=memory_id_b,
+            suggested_relation=suggested,
+            reason=rationale,
+            confidence=confidence,
+            provenance={"generator": "contradiction_scanner"},
+        )
+        return _canonical_pair_id(row)
+
+    def already_resolved(self, memory_id_a: str, memory_id_b: str) -> bool:
+        row = self.memory.store.find_relation_pair(memory_id_a, memory_id_b)
+        return bool(row and row.get("judgment_status") != "pending")
+
+    def is_open_pair(self, memory_id_a: str, memory_id_b: str) -> bool:
+        row = self.memory.store.find_relation_pair(memory_id_a, memory_id_b)
+        return bool(row and row.get("judgment_status") == "pending")
+
+    def _record(self, row: dict[str, Any]) -> PairRecord:
+        relation = str(row.get("relation") or "")
+        relationship = "contradiction" if relation == "conflicts_with" else "evolution"
+        status = _legacy_status(row)
+        updated = str(row.get("updated_at") or row.get("created_at") or "")
+        return PairRecord(
+            pair_id=_canonical_pair_id(row),
+            memory_id_a=str(row.get("source_id") or ""),
+            memory_id_b=str(row.get("target_id") or ""),
+            relationship=relationship,
+            confidence=float(row.get("confidence") or 0.0),
+            rationale=str(row.get("reason") or ""),
+            status=status,
+            detected_at=str(row.get("created_at") or ""),
+            resolved_at=updated if status != "open" else None,
+            resolution_note=str(row.get("reason") or "") or None,
+        )
+
+    @staticmethod
+    def _compatible_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            provenance = row.get("provenance") or {}
+            generator = provenance.get("generator") if isinstance(provenance, dict) else None
+            if (
+                generator == "contradiction_scanner"
+                or row.get("migrated_from") == "contradictions.db"
+                or row.get("relation")
+                in {"conflicts_with", "related", "supersedes", "compatible", "not_conflict"}
+            ):
+                out.append(row)
+        return out
+
+    def list_open(
+        self,
+        limit: int = 50,
+        min_confidence: float = 0.0,
+        relationship: str | None = None,
+    ) -> list[PairRecord]:
+        rows = self._compatible_rows(
+            self.memory.store.list_relations(status="pending", limit=max(limit * 3, limit))
+        )
+        records = [self._record(row) for row in rows]
+        records = [record for record in records if record.confidence >= min_confidence]
+        if relationship:
+            records = [record for record in records if record.relationship == relationship]
+        return records[:limit]
+
+    def list_all(self, status: str | None = None, limit: int = 200) -> list[PairRecord]:
+        rows = self._compatible_rows(
+            self.memory.store.list_relations(limit=max(limit * 3, limit))
+        )
+        records = [self._record(row) for row in rows]
+        if status:
+            records = [record for record in records if record.status == status]
+        return records[:limit]
+
+    def get(self, pair_id: int) -> PairRecord | None:
+        return next((record for record in self.list_all(limit=1000) if record.pair_id == pair_id), None)
+
+    def _row_for_pair_id(self, pair_id: int) -> dict[str, Any] | None:
+        return next(
+            (
+                row
+                for row in self._compatible_rows(self.memory.store.list_relations(limit=1000))
+                if _canonical_pair_id(row) == pair_id
+            ),
+            None,
+        )
+
+    def resolve(self, pair_id: int, status: str, note: str | None = None) -> bool:
+        if status not in VALID_STATUSES or status == "open":
+            raise ValueError(f"invalid resolution status: {status!r}")
+        row = self._row_for_pair_id(pair_id)
+        if row is None:
+            return False
+        relation = {
+            "dismissed": "not_conflict",
+            "evolved": "related",
+            "fused": "compatible",
+            "competing": "conflicts_with",
+            "kept_newer": "supersedes",
+            "kept_older": "supersedes",
+        }[status]
+        if status in {"kept_newer", "kept_older"}:
+            first = self.memory.get(str(row["source_id"]))
+            second = self.memory.get(str(row["target_id"]))
+            if first is not None and second is not None:
+                older, newer = (
+                    (first, second)
+                    if first.updated <= second.updated
+                    else (second, first)
+                )
+                source, target = (newer, older) if status == "kept_newer" else (older, newer)
+                row = self.memory.store.reorient_pending_relation(
+                    str(row["id"]), source_id=source.id, target_id=target.id
+                )
+        self.memory.judge_relation(
+            str(row["id"]),
+            relation,
+            reason=note or f"legacy contradiction resolution: {status}",
+            actor_kind="compatibility",
+            provenance={"legacy_status": status},
+        )
+        return True
+
+    def reopen(self, pair_id: int) -> bool:
+        row = self._row_for_pair_id(pair_id)
+        return bool(row and self.memory.store.reopen_relation(str(row["id"])))
+
+    def drop_for_memoria(self, memory_id: str) -> int:
+        return self.memory.store.orphan_relations_for(memory_id)
+
+    def pairs_for_ids(self, ids: list[str], *, status: str = "open") -> list[PairRecord]:
+        if not ids:
+            return []
+        rows = self._compatible_rows(self.memory.store.list_relations(memory_ids=ids, limit=1000))
+        records = [self._record(row) for row in rows]
+        return [record for record in records if record.status == status]
+
+    def stats(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for record in self.list_all(limit=1000):
+            counts[record.status] = counts.get(record.status, 0) + 1
+        return counts
+
+
 @dataclass(frozen=True)
 class ScanResult:
     scanned_memories: int
@@ -458,7 +659,7 @@ class ContradictionScanner:
     def __init__(
         self,
         memory: Any,
-        store: ContradictionStore,
+        store: Any,
         analyzer: TemporalAnalyzer | None = None,
     ) -> None:
         self.memory = memory
@@ -645,12 +846,8 @@ def _enough_days_apart(a: str, b: str, min_days: int) -> bool:
     return abs((da - db).total_seconds()) / 86400 >= min_days
 
 
-def _is_open(store: ContradictionStore, a: str, b: str) -> bool:
-    row = store._conn.execute(
-        "SELECT status FROM pairs WHERE memory_id_a=? AND memory_id_b=?",
-        (a, b),
-    ).fetchone()
-    return bool(row and row["status"] == "open")
+def _is_open(store: Any, a: str, b: str) -> bool:
+    return bool(store.is_open_pair(a, b))
 
 
 def emit_anomaly(

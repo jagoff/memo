@@ -478,10 +478,27 @@ class _SchemaMixin(_StoreBase):
         # Ensure memory_relations table exists (session pattern)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_relations ("
-            "id TEXT PRIMARY KEY, sync_id TEXT, source_id TEXT NOT NULL, target_id TEXT NOT NULL, "
-            "relation TEXT, judgment_status TEXT DEFAULT 'pending', reason TEXT, "
-            "confidence REAL, session_id TEXT, created_at TEXT, updated_at TEXT)"
+            "id TEXT PRIMARY KEY, pair_key TEXT, sync_id TEXT, source_id TEXT NOT NULL, "
+            "target_id TEXT NOT NULL, relation TEXT, judgment_status TEXT DEFAULT 'pending', "
+            "reason TEXT, confidence REAL, session_id TEXT, actor TEXT, actor_kind TEXT, "
+            "model TEXT, provenance_json TEXT, migration_key TEXT, migrated_from TEXT, "
+            "created_at TEXT, updated_at TEXT)"
         )
+        relation_cols = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(memory_relations)")
+        }
+        relation_additions = {
+            "pair_key": "ALTER TABLE memory_relations ADD COLUMN pair_key TEXT",
+            "actor": "ALTER TABLE memory_relations ADD COLUMN actor TEXT",
+            "actor_kind": "ALTER TABLE memory_relations ADD COLUMN actor_kind TEXT",
+            "model": "ALTER TABLE memory_relations ADD COLUMN model TEXT",
+            "provenance_json": "ALTER TABLE memory_relations ADD COLUMN provenance_json TEXT",
+            "migration_key": "ALTER TABLE memory_relations ADD COLUMN migration_key TEXT",
+            "migrated_from": "ALTER TABLE memory_relations ADD COLUMN migrated_from TEXT",
+        }
+        for column, ddl in relation_additions.items():
+            if column not in relation_cols:
+                self._conn.execute(ddl)
         # Ensure indexes for relations
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_rel_source ON memory_relations(source_id)"
@@ -492,9 +509,26 @@ class _SchemaMixin(_StoreBase):
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_rel_status ON memory_relations(judgment_status)"
         )
-        # user_version=5 means the additive columns exist. The independently
-        # stamped capability says whether historical topic conflicts allow the
-        # partial active-row uniqueness constraint to be installed.
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_pair_unique "
+            "ON memory_relations(pair_key) WHERE pair_key IS NOT NULL"
+        )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_migration_unique "
+            "ON memory_relations(migration_key) WHERE migration_key IS NOT NULL"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_reviews ("
+            "id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, reviewed_at TEXT NOT NULL, "
+            "evidence TEXT, actor TEXT, next_review_after TEXT)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_reviews_memory "
+            "ON memory_reviews(memory_id, reviewed_at)"
+        )
+        # user_version=7 covers canonical relation identity and review evidence.
+        # The independently stamped capability says whether historical topic
+        # conflicts allow the partial active-row uniqueness constraint.
         self.reconcile_identity_constraint()
 
     # Secondary B-tree indices on `meta` that older DBs predate. Kept out of

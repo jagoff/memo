@@ -12,6 +12,7 @@ import builtins
 import contextlib
 import json
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ import frontmatter
 from memo.embedder import assert_valid_embedding
 from memo.errors import StorageError
 from memo.fact_extraction import fact_edges_from_metadata, upsert_declared_fact_edges
-from memo.flags import flag_bool, flag_int
+from memo.flags import flag_bool
 from memo.identity import (
     canonical_topic_key,
     namespace_for_index,
@@ -443,6 +444,9 @@ class _MaintainOpsMixin(_MemoryBase):
             # recall penalty can distinguish fresh vs old verifications.
             if verification_state == VerificationState.VERIFIED.value and verified_at is None:
                 verified_at = int(time.time())
+            review_after = meta.get("review_after")
+            if "review_after" not in meta and prior is not None:
+                review_after = prior.get("review_after")
 
             # World-validity interval (bi-temporal). `valid_at` is always written
             # to frontmatter (defaulted to `created` on save); `invalid_at` is
@@ -509,6 +513,7 @@ class _MaintainOpsMixin(_MemoryBase):
                         normalized_content_hash=identity_content_hash,
                         verification_state=verification_state,
                         verified_at=verified_at,
+                        review_after=review_after,
                         valid_at=valid_at,
                         invalid_at=invalid_at,
                     )
@@ -524,9 +529,10 @@ class _MaintainOpsMixin(_MemoryBase):
                             verification = {
                                 "verification_state": row.pop("verification_state"),
                                 "verified_at": row.pop("verified_at"),
+                                "review_after": row.pop("review_after"),
                             }
                             self.store.upsert(**row)
-                            self.store.update_verification(id_=md_id, **verification)
+                            self.store.update_review_state(id_=md_id, **verification)
                 except Exception as exc:
                     if rebuild_rows is not None:
                         raise StorageError(
@@ -600,8 +606,9 @@ class _MaintainOpsMixin(_MemoryBase):
                         normalized_title=identity_title,
                         normalized_content_hash=identity_content_hash,
                     )
-                    self.store.update_verification(
+                    self.store.update_review_state(
                         id_=md_id,
+                        review_after=review_after,
                         verification_state=verification_state,
                         verified_at=verified_at,
                     )
@@ -632,6 +639,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     or identity_title != existing.get("normalized_title")
                     or identity_content_hash != existing.get("normalized_content_hash")
                     or normalized_hash != existing.get("normalized_hash")
+                    or review_after != existing.get("review_after")
                 )
                 if meta_changed:
                     self.store.update_meta(
@@ -646,8 +654,9 @@ class _MaintainOpsMixin(_MemoryBase):
                         normalized_content_hash=identity_content_hash,
                         dedup_keys=(identity_topic_key, normalized_hash),
                     )
-                self.store.update_verification(
+                self.store.update_review_state(
                     id_=md_id,
+                    review_after=review_after,
                     verification_state=verification_state,
                     verified_at=verified_at,
                 )
@@ -1257,9 +1266,7 @@ class _MaintainOpsMixin(_MemoryBase):
         }
 
     def _transition_stale_memories(self, *, dry_run: bool = False) -> int:
-        """Age verification state by `verified_at`: VERIFIED→STALE after
-        MEMO_VERIFICATION_STALE_DAYS (30), STALE→UNVERIFIED after
-        MEMO_VERIFICATION_UNVERIFY_DAYS (60).
+        """Mark VERIFIED records STALE when their own review date passes.
 
         Loads only the decayable candidates from the store (a targeted query,
         not a full-corpus scan — most memories are UNVERIFIED and skipped) and
@@ -1267,36 +1274,36 @@ class _MaintainOpsMixin(_MemoryBase):
         Returns the count transitioned (or would-transition, on `dry_run`).
         Wired into `memo maintain` behind MEMO_VERIFICATION_STATE_TRACKING.
         """
-        stale_days = flag_int("MEMO_VERIFICATION_STALE_DAYS") or 30
-        unverify_days = flag_int("MEMO_VERIFICATION_UNVERIFY_DAYS") or 60
-        now = int(time.time())
+        now_dt = datetime.now(UTC)
         transitioned = 0
 
         for row in self.store.verification_candidates():
             verified_at = row.get("verified_at")
             if not verified_at:
                 continue
-            days_old = (now - int(verified_at)) / 86400.0
             state = row.get("verification_state")
             mem_id = row["id"]
+            try:
+                review_after = datetime.fromisoformat(
+                    str(row.get("review_after") or "").replace("Z", "+00:00")
+                )
+                if review_after.tzinfo is None:
+                    review_after = review_after.replace(tzinfo=UTC)
+            except ValueError:
+                review_after = None
 
-            if state == VerificationState.VERIFIED.value and days_old > stale_days:
+            if (
+                state == VerificationState.VERIFIED.value
+                and review_after is not None
+                and review_after <= now_dt
+            ):
                 transitioned += 1
                 if not dry_run:
-                    # verified_at preserved — the STALE clock keeps counting from
-                    # the original verification timestamp.
-                    self.store.update_verification(
-                        id_=mem_id,
-                        verification_state=VerificationState.STALE.value,
+                    self._set_review_metadata(
+                        mem_id,
+                        review_after=str(row["review_after"]),
+                        verification_state=VerificationState.STALE,
                         verified_at=int(verified_at),
-                    )
-            elif state == VerificationState.STALE.value and days_old > unverify_days:
-                transitioned += 1
-                if not dry_run:
-                    self.store.update_verification(
-                        id_=mem_id,
-                        verification_state=VerificationState.UNVERIFIED.value,
-                        verified_at=None,
                     )
 
         return transitioned

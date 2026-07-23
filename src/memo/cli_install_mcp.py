@@ -88,6 +88,10 @@ class _GenericPreset:
 def _effective_profile(profile: str, agent: str) -> str:
     if profile:
         return profile
+    from memo.runtime.agent_registry import AGENT_REGISTRY
+
+    if adapter := AGENT_REGISTRY.get(agent):
+        return adapter.mcp_profile
     return "core" if agent in CONSTRAINED_CLIENTS else ""
 
 
@@ -207,6 +211,10 @@ def _fallback_register_agent_mcp(
 
 def _agent_present(agent: str) -> bool:
     """True if this agent looks installed on the current machine (best-effort)."""
+    from memo.runtime.agent_registry import AGENT_REGISTRY
+
+    if adapter := AGENT_REGISTRY.get(agent):
+        return shutil.which(adapter.binary) is not None
     preset = AGENT_PRESETS.get(agent)
     if preset is not None:
         if preset.writer is Writer.SNIPPET:
@@ -279,8 +287,8 @@ def _report(result: dict[str, Any]) -> None:
     "--profile",
     default="",
     type=click.Choice(["", "core", "slim", "default"], case_sensitive=False),
-    help="MCP surface profile. 'core'/'slim' expose 34 tools (~3.0k tokens); "
-    "'default' exposes all 131 tools (~15k tokens). "
+    help="MCP surface profile. 'core'/'slim' expose 35 tools (~3.1k tokens); "
+    "'default' exposes all 143 tools (~16k tokens). "
     "Constrained clients (codex, opencode) default to 'core' automatically.",
 )
 def install_mcp(

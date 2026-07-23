@@ -1,0 +1,102 @@
+{
+  "schema": "memo.eval_relations.v1",
+  "thresholds": {"recall_min": 1.0, "noise_max": 0.0},
+  "cases": [
+    {
+      "id": "project-decision",
+      "source": {"type": "decision", "tags": ["project:alpha"]},
+      "candidate": {"type": "decision", "tags": ["project:alpha"]},
+      "source_namespace": "project:alpha",
+      "candidate_namespace": "project:alpha",
+      "expect_candidate": true
+    },
+    {
+      "id": "project-global-policy",
+      "source": {"type": "decision", "tags": ["project:alpha"]},
+      "candidate": {"type": "note", "tags": ["policy"]},
+      "source_namespace": "project:alpha",
+      "candidate_namespace": "_global",
+      "expect_candidate": true
+    },
+    {
+      "id": "preference-global",
+      "source": {"type": "preference", "tags": []},
+      "candidate": {"type": "preference", "tags": []},
+      "source_namespace": "_global",
+      "candidate_namespace": "_global",
+      "expect_candidate": true
+    },
+    {
+      "id": "architecture-durable",
+      "source": {"type": "note", "tags": ["architecture"]},
+      "candidate": {"type": "decision", "tags": []},
+      "source_namespace": "_unscoped",
+      "candidate_namespace": "_unscoped",
+      "expect_candidate": true
+    },
+    {
+      "id": "config-durable",
+      "source": {"type": "note", "tags": ["config"]},
+      "candidate": {"type": "note", "tags": ["policy"]},
+      "source_namespace": "_unscoped",
+      "candidate_namespace": "_global",
+      "expect_candidate": true
+    },
+    {
+      "id": "cross-project-blocked",
+      "source": {"type": "decision", "tags": ["project:alpha"]},
+      "candidate": {"type": "decision", "tags": ["project:beta"]},
+      "source_namespace": "project:alpha",
+      "candidate_namespace": "project:beta",
+      "expect_candidate": false
+    },
+    {
+      "id": "global-cannot-see-project",
+      "source": {"type": "preference", "tags": []},
+      "candidate": {"type": "decision", "tags": ["project:alpha"]},
+      "source_namespace": "_global",
+      "candidate_namespace": "project:alpha",
+      "expect_candidate": false
+    },
+    {
+      "id": "unscoped-cannot-see-project",
+      "source": {"type": "decision", "tags": []},
+      "candidate": {"type": "decision", "tags": ["project:alpha"]},
+      "source_namespace": "_unscoped",
+      "candidate_namespace": "project:alpha",
+      "expect_candidate": false
+    },
+    {
+      "id": "source-ineligible",
+      "source": {"type": "note", "tags": ["misc"]},
+      "candidate": {"type": "decision", "tags": []},
+      "source_namespace": "_unscoped",
+      "candidate_namespace": "_unscoped",
+      "expect_candidate": false
+    },
+    {
+      "id": "candidate-ineligible",
+      "source": {"type": "decision", "tags": []},
+      "candidate": {"type": "reference", "tags": ["misc"]},
+      "source_namespace": "_unscoped",
+      "candidate_namespace": "_unscoped",
+      "expect_candidate": false
+    },
+    {
+      "id": "reference-config-ineligible",
+      "source": {"type": "reference", "tags": ["config"]},
+      "candidate": {"type": "decision", "tags": []},
+      "source_namespace": "_unscoped",
+      "candidate_namespace": "_unscoped",
+      "expect_candidate": false
+    },
+    {
+      "id": "global-unscoped-blocked",
+      "source": {"type": "preference", "tags": []},
+      "candidate": {"type": "decision", "tags": []},
+      "source_namespace": "_global",
+      "candidate_namespace": "_unscoped",
+      "expect_candidate": false
+    }
+  ]
+}

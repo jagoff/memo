@@ -552,8 +552,17 @@ class _AskOpsMixin(_MemoryBase):
                 and f.get("object")
             ][:3]
             facts_info = f"  |  facts: {'; '.join(related_facts)}" if related_facts else ""
+            memory_relations = [
+                f"{item.get('direction')}:{item.get('relation')}:{str(item.get('other_id') or '')[:8]}"
+                for item in (h.extra or {}).get("memory_relations", [])
+                if isinstance(item, dict) and item.get("relation") and item.get("other_id")
+            ][:3]
+            relations_info = (
+                f"  |  relations: {'; '.join(memory_relations)}" if memory_relations else ""
+            )
             snippet_lines.append(
-                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}{graph_info}{facts_info}\n{snippet}\n"
+                f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}"
+                f"{graph_info}{facts_info}{relations_info}\n{snippet}\n"
             )
             extra = h.extra or {}
             source = {
@@ -566,6 +575,7 @@ class _AskOpsMixin(_MemoryBase):
                 "snippet": snippet,
                 "graph_expanded": bool(extra.get("graph_expanded")),
                 "related_fact_edges": extra.get("related_fact_edges") or [],
+                "memory_relations": extra.get("memory_relations") or [],
                 "synapse_trace_id": extra.get("synapse_trace_id") or "",
                 "synapse_agent_id": extra.get("synapse_agent_id") or "",
             }

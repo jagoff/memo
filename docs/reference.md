@@ -165,8 +165,20 @@ prints commands pinned to the resolved `memo-mcp` executable so clients don't
 accidentally start a copy from a project `.venv`:
 
 ```bash
+memo setup --detect --dry-run       # inspect Codex / Claude Code changes
+memo setup codex                    # MCP + AGENTS.md mandate
+memo setup claude-code              # MCP + CLAUDE.md mandate
 memo install-slash
 ```
+
+`memo setup` is the first-class, plan-before-mutation path for Codex and Claude
+Code. It is idempotent, preserves unknown instruction text, backs up existing
+files, reports partial external-CLI failures with an exact remediation command,
+and never runs implicitly during startup or upgrade. Verify the result with
+`memo doctor --agent codex` or `memo doctor --agent claude-code`; the doctor
+checks the configured runtime/profile, managed protocol marker, writable paths,
+matching runtime version, and an isolated deferred-save + BM25-search smoke test.
+Use `install-mcp` / `install-slash` for the broader compatibility matrix.
 
 `install-slash` configures Claude Code, Codex, Devin Desktop, and Devin where each
 supports it, and forwards current `MEMO_*` model/storage env vars into each MCP
@@ -179,10 +191,10 @@ Released wheels include the Claude/Codex/Devin agent assets, so a normal
 checkout, pass `--repo /path/to/memo` to test uncommitted plugin changes.
 
 Tools surface inside the agent as `mcp__memo__memo_*`. Agent installs default to
-a 14-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
+a 15-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
 `search`, `unified_briefing`, `version`, and session/capture notification
 helpers) so administrative schemas don't consume model context — set
-`MEMO_MCP_PROFILE=core`/`slim` (34 tools) or `full`/`default` (131 tools) only
+`MEMO_MCP_PROFILE=core`/`slim` (35 tools) or `full`/`default` (143 tools) only
 for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
@@ -318,16 +330,16 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 
 | Profile | Tool count | Use |
 |---|---:|---|
-| `agent` (default) | 14 | Minimal always-on agent surface; optimized for schema-token cost. |
-| `core` / `slim` | 34 | CRUD, search, embeddings, history, sessions, lint, and lightweight graph/offload. |
-| `full` / `default` | 131 | Every advanced domain module and compatibility tool. |
+| `agent` (default) | 15 | Minimal always-on agent surface; optimized for schema-token cost. |
+| `core` / `slim` | 35 | CRUD, search, embeddings, history, sessions, lint, and lightweight graph/offload. |
+| `full` / `default` | 143 | Every advanced domain module and compatibility tool. |
 
 The default `agent` profile exposes exactly:
 
 `memo_ask`, `memo_context`, `memo_get`, `memo_graph`, `memo_idle_capture`,
 `memo_offload`, `memo_pop_notification`, `memo_rename`, `memo_save`,
 `memo_save_text`, `memo_search`, `memo_start_session`, `memo_unified_briefing`,
-`memo_version`.
+`memo_version`, `memo_write_queue_status`.
 
 The `core` / `slim` profile adds CRUD/admin-lite tools:
 
@@ -338,7 +350,8 @@ The `core` / `slim` profile adds CRUD/admin-lite tools:
 `memo_session_list`, `memo_stats`, `memo_unforget`, `memo_update`.
 
 The `full` / `default` profile also registers advanced domains: repository
-index/search, entities, temporal analysis, contradiction triage, consolidation,
+index/search, entities, temporal analysis, canonical relation review, explicit
+lifecycle review/invalidation/supersession, contradiction triage, consolidation,
 synthesis, reflection, advanced graph navigation/export, related/around,
 health reports, contextual retrieval, backlinks, version rollback, saved
 queries, backup/restore, sync, cache management, analytics, import/export,

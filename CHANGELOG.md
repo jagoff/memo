@@ -15,6 +15,39 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   deterministic create/corroborate/revise outcomes, additive `action` and
   `index_pending` save fields, schema-v5 diagnostics, and read-only
   `memo doctor --db` trust preflight.
+- Canonical relation convergence in `memory_relations`: deterministic unordered
+  pair identity, bounded/no-LLM post-save candidates, auditable idempotent
+  judgments, `supersedes` validity transitions, orphan retention, compact
+  search/ask/briefing annotations, and an idempotent legacy contradiction import.
+- Explicit freshness lifecycle with first-class `review_after`, durable review
+  evidence, policy schedules, `memo review due|mark`, and MCP review,
+  invalidation, and supersession tools. Review timing is separate from truth
+  validity and never auto-invalidates a memory.
+- Optional bounded FIFO coordination for mutating MCP calls, including typed
+  retryable saturation, cancellation semantics, safe error translation, and
+  queue/wait/rejection diagnostics via `memo_write_queue_status`.
+- Declarative Codex and Claude Code adoption through `memo setup`, including
+  detection/dry-run plans, atomic managed instructions, backups, compensating
+  rollback, partial-install receipts, and `memo doctor --agent` verification
+  with an isolated save/search smoke test.
+- A fixed 12-case relation policy corpus and `memo eval relations --gate` for
+  candidate recall, noise, namespace isolation, and reproducible fingerprinting.
+
+### Changed
+
+- The contradiction scanner and legacy CLI now write/project the canonical
+  relation ledger. `contradictions.db` is an import-only compatibility source;
+  no new path dual-writes it.
+- Verification decay now moves only explicitly scheduled, due `VERIFIED`
+  records to `STALE`; stale records remain stale until review or invalidation.
+- MCP profile inventories are now 15 tools for `agent`, 35 for `core`, and 143
+  for `full`, including always-on write-queue diagnostics.
+
+### Removed
+
+- Dead fixed-age verification flags `MEMO_VERIFICATION_STALE_DAYS` and
+  `MEMO_VERIFICATION_UNVERIFY_DAYS`; record-specific `review_after` owns
+  freshness policy.
 
 ### Security
 

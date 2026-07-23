@@ -40,7 +40,7 @@ PURE_LEAF_MODULES = {
 # are acyclic leaves with respect to store; the separate store->memory guard
 # below preserves the critical layering boundary.
 FOUNDATION_ALLOWED_IMPORTS: dict[str, set[str]] = {
-    "store": {"identity", "redact"},
+    "store": {"errors", "identity", "redact"},
 }
 
 

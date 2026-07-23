@@ -13,11 +13,21 @@ from memo.memory.record import MemoryRecord
 from memo.tiers import VerificationState
 
 
-def _seed(mem: Memory, *, title: str, state: VerificationState, verified_at: int | None) -> str:
+def _seed(
+    mem: Memory,
+    *,
+    title: str,
+    state: VerificationState,
+    verified_at: int | None,
+    review_after: str | None = None,
+) -> str:
     """Save a fact and set its verification state directly in the store."""
     rec = mem.save(content=f"a durable fact body for {title}", title=title, type_="fact")
-    mem.store.update_verification(
-        id_=rec.id, verification_state=state.value, verified_at=verified_at
+    mem.store.update_review_state(
+        id_=rec.id,
+        review_after=review_after,
+        verification_state=state.value,
+        verified_at=verified_at,
     )
     return rec.id
 
@@ -71,7 +81,11 @@ def test_stale_transition(mock_memory: Memory):
     """VERIFIED memory transitions to STALE after the stale-days threshold."""
     old_ts = int(time.time()) - (35 * 86400)  # 35 days ago (> default 30)
     mid = _seed(
-        mock_memory, title="Old Verified", state=VerificationState.VERIFIED, verified_at=old_ts
+        mock_memory,
+        title="Old Verified",
+        state=VerificationState.VERIFIED,
+        verified_at=old_ts,
+        review_after="2020-01-01T00:00:00+00:00",
     )
 
     transitioned = mock_memory._transition_stale_memories()
@@ -83,18 +97,18 @@ def test_stale_transition(mock_memory: Memory):
     assert updated.verified_at == old_ts  # preserved: STALE clock keeps counting
 
 
-def test_stale_to_unverified_transition(mock_memory: Memory):
-    """STALE memory transitions to UNVERIFIED after the unverify-days threshold."""
+def test_stale_remains_stale_until_reviewed_or_invalidated(mock_memory: Memory):
+    """STALE no longer decays into semantically never-verified state."""
     old_ts = int(time.time()) - (65 * 86400)  # 65 days ago (> default 60)
     mid = _seed(mock_memory, title="Stale One", state=VerificationState.STALE, verified_at=old_ts)
 
     transitioned = mock_memory._transition_stale_memories()
 
-    assert transitioned == 1
+    assert transitioned == 0
     updated = mock_memory.get(mid)
     assert updated is not None
-    assert updated.verification_state == VerificationState.UNVERIFIED
-    assert updated.verified_at is None  # cleared on un-verification
+    assert updated.verification_state == VerificationState.STALE
+    assert updated.verified_at == old_ts
 
 
 def test_no_transition_when_too_recent(mock_memory: Memory):
@@ -119,7 +133,11 @@ def test_dry_run_reports_but_does_not_persist(mock_memory: Memory):
     """dry_run counts would-be transitions without mutating the store."""
     old_ts = int(time.time()) - (35 * 86400)
     mid = _seed(
-        mock_memory, title="DryRun Verified", state=VerificationState.VERIFIED, verified_at=old_ts
+        mock_memory,
+        title="DryRun Verified",
+        state=VerificationState.VERIFIED,
+        verified_at=old_ts,
+        review_after="2020-01-01T00:00:00+00:00",
     )
 
     would = mock_memory._transition_stale_memories(dry_run=True)

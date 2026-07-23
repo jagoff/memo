@@ -137,6 +137,17 @@ GATES: dict[str, GateSpec] = dict(
         _g("MEMO_UPDATE_CHECK_ENABLED", "manual", "ops/update policy; human-only"),
         _g("MEMO_ASK_GAPS_ENABLED", "manual", "ask-path UX nudge; no retrieval metric"),
         _g(
+            "MEMO_RELATION_CANDIDATES_ENABLED",
+            "manual",
+            "canonical relation proposal generation; fixed-corpus relation eval and "
+            "production latency gate",
+        ),
+        _g(
+            "MEMO_RELATION_ANNOTATIONS_ENABLED",
+            "manual",
+            "retrieval metadata only; graduates with canonical relation candidates",
+        ),
+        _g(
             "MEMO_PROACTIVE_ENABLED",
             "manual",
             "proactive engine (statusline badge, urgent push, memo digest); UX/ops "

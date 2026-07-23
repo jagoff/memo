@@ -42,6 +42,7 @@ from memo import server_consolidate as _srv_consolidate
 from memo import server_context_pack as _srv_context_pack
 from memo import server_contextual as _srv_contextual
 from memo import server_contradict as _srv_contradict
+from memo import server_coordinator as _srv_coordinator
 from memo import server_core_history as _srv_core_history
 from memo import server_core_records as _srv_core_records
 from memo import server_core_search as _srv_core_search
@@ -54,6 +55,7 @@ from memo import server_graph_tool as _srv_graph_tool
 from memo import server_health as _srv_health
 from memo import server_idle_capture as _srv_idle_capture
 from memo import server_import_export as _srv_import_export
+from memo import server_lifecycle as _srv_lifecycle
 from memo import server_links as _srv_links
 from memo import server_multimodal as _srv_multimodal
 from memo import server_offload as _srv_offload
@@ -241,11 +243,20 @@ def _build_server(
 ) -> FastMCP:
     """Register the complete surface around an already constructed Memory."""
 
+    from memo.flags import flag_int
+    from memo.server_write_coordinator import (
+        McpWriteCoordinator,
+        make_write_coordinator_middleware,
+    )
+
+    write_coordinator = McpWriteCoordinator(flag_int("MEMO_MCP_WRITE_QUEUE_SIZE") or 0)
+
     @asynccontextmanager
     async def lifespan(_server: FastMCP) -> AsyncIterator[dict[str, Any]]:
         try:
             yield {}
         finally:
+            await write_coordinator.close()
             if owns_memory:
                 memory.close()
 
@@ -264,11 +275,14 @@ def _build_server(
     _trace_mw = _make_trace_middleware()
     if _trace_mw is not None:
         server.add_middleware(_trace_mw)
+    _write_mw = make_write_coordinator_middleware(server, write_coordinator)
+    if _write_mw is not None:
+        server.add_middleware(_write_mw)
 
     # Stable and advanced domain tool modules register their @server.tool()
     # closures here. Presence on the MCP surface does not by itself mean a
     # feature is part of memo's stable core contract; see experimental_index.md.
-    # Skip when MEMO_MCP_SLIM=1 — reduces 131 tools to the 34-tool core surface
+    # Skip when MEMO_MCP_SLIM=1 — reduces 143 tools to the 35-tool core surface
     # for local/constrained LLMs where tool-definition tokens are expensive.
     from memo.surface import mcp_include_advanced_tools
 
@@ -288,6 +302,7 @@ def _build_server(
         _srv_context_pack.register(server, memory)
         _srv_contextual.register(server, memory)
         _srv_links.register(server, memory)
+        _srv_lifecycle.register(server, memory)
         _srv_version.register(server, memory)
         _srv_query.register(server, memory)
         _srv_backup.register(server, memory)
@@ -332,6 +347,9 @@ def _build_server(
 
     for tool_name in mcp_tools_to_remove():
         server.local_provider.remove_tool(tool_name)
+
+    # Operational write-pressure status stays visible in every surface profile.
+    _srv_coordinator.register(server, write_coordinator)
 
     server.custom_route("/health", methods=["GET"])(_health_route_handler)
     server.custom_route("/chat/stream", methods=["POST"])(_make_chat_stream_route(memory, auth))

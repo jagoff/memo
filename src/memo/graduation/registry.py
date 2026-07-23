@@ -126,6 +126,16 @@ def report_only_candidates() -> list[Candidate]:
             on_flags={"MEMO_ASK_GAPS_ENABLED": "1"},
             auto_flip=False,  # asking a human is not offline-measurable
         ),
+        Candidate(
+            flag="MEMO_RELATION_CANDIDATES_ENABLED",
+            on_flags={"MEMO_RELATION_CANDIDATES_ENABLED": "1"},
+            auto_flip=False,  # custom relation corpus + production latency gate
+        ),
+        Candidate(
+            flag="MEMO_RELATION_ANNOTATIONS_ENABLED",
+            on_flags={"MEMO_RELATION_ANNOTATIONS_ENABLED": "1"},
+            auto_flip=False,  # graduates with candidates as one product behavior
+        ),
     ]
 
 

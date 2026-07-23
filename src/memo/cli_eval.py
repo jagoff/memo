@@ -67,6 +67,41 @@ def eval_group() -> None:
 eval_group.add_command(bench_group)
 
 
+@eval_group.command(name="relations")
+@click.option(
+    "--labels",
+    "labels_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("eval/relation_candidate_labels.json"),
+    show_default=True,
+)
+@click.option("--gate", is_flag=True, help="Exit non-zero when the fixture thresholds fail.")
+@click.option("--json", "as_json", is_flag=True, help="Emit raw JSON.")
+def eval_relations_cmd(labels_path: Path, gate: bool, as_json: bool) -> None:
+    """Measure deterministic relation eligibility and namespace leakage."""
+    from dataclasses import asdict
+
+    from memo.eval_relations import evaluate
+
+    try:
+        result = evaluate(labels_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    payload = asdict(result)
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        mark = "✓" if result.passed else "✗"
+        color = "green" if result.passed else "red"
+        console.print(
+            f"[{color}]{mark}[/{color}] relation gate: recall={result.recall:.3f} "
+            f"precision={result.precision:.3f} noise={result.noise:.3f} "
+            f"({result.cases} cases, {result.elapsed_ms:.3f} ms)"
+        )
+    if gate and not result.passed:
+        raise click.exceptions.Exit(1)
+
+
 @eval_group.command(name="recall")
 @click.option("--k", type=int, default=3, help="Top-K to score (default: 3).")
 @click.option(

@@ -36,12 +36,12 @@ def _put(
     )
 
 
-def test_fresh_schema_has_v5_identity_and_independent_capability(tmp_path: Path) -> None:
+def test_fresh_schema_has_v7_identity_relations_and_reviews(tmp_path: Path) -> None:
     store = VecStore(tmp_path / "vec.db", dims=4)
     try:
         cols = {row["name"] for row in store._conn.execute("PRAGMA table_info(meta)")}
         assert {"namespace", "normalized_title", "normalized_content_hash"} <= cols
-        assert store.get_user_version() == 5
+        assert store.get_user_version() == 7
         capability = store._conn.execute(
             "SELECT value FROM schema_meta WHERE key='identity_topic_unique'"
         ).fetchone()
@@ -83,7 +83,7 @@ def test_v4_migration_backfills_identity_without_touching_markdown(tmp_path: Pat
             "normalized_title": normalized_title("PLAN"),
             "normalized_content_hash": normalized_content_hash("Body"),
         }
-        assert migrated.get_user_version() == 5
+        assert migrated.get_user_version() == 7
         assert markdown.read_bytes() == b"canonical bytes stay unchanged\n"
     finally:
         migrated.close()

@@ -60,6 +60,15 @@ class _MemoryBase:
     def save(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def search(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def get(self, id_: str) -> MemoryRecord | None: ...  # type: ignore[empty-body]
+    def supersede(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _set_validity_metadata(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def attach_post_save_relations(self, record: MemoryRecord) -> MemoryRecord: ...  # type: ignore[empty-body]
+    def ensure_review_schedule(self, record: MemoryRecord) -> MemoryRecord: ...  # type: ignore[empty-body]
+    def annotate_relations(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _set_review_metadata(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _resolve_existing(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _data_dir_write_lock(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _atomic_write_text(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def update(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _update_locked(
         self,
@@ -100,8 +109,6 @@ class _MemoryBase:
     def _chat_retrieval_question(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _compose_for_embed(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _derive_metadata(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
-    def _data_dir_write_lock(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
-    def _atomic_write_text(self, *a: Any, **k: Any) -> Any: ...
     def _embed_cached(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _emit_ledger(self, *a: Any, **k: Any) -> Any: ...
     def _emit_save_receipt(self, *a: Any, **k: Any) -> Any: ...
@@ -119,6 +126,5 @@ class _MemoryBase:
     def _repo_corpus(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _repo_replay_payload(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _rerank(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
-    def _resolve_existing(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _resolve_source_id(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _verbatim_short_circuit(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]

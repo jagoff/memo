@@ -29,7 +29,7 @@ _log = logging.getLogger(__name__)
 
 META_SELECT_COLUMNS = (
     "id, path, title, type, tags, created, updated, body_hash, extra_json, "
-    "verification_state, verified_at, valid_at, invalid_at, topic_key, normalized_hash, "
+    "review_after, verification_state, verified_at, valid_at, invalid_at, topic_key, normalized_hash, "
     "namespace, normalized_title, normalized_content_hash"
 )
 
@@ -328,6 +328,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         normalized_content_hash: str | None = None,
         verification_state: str = "unverified",
         verified_at: int | None = None,
+        review_after: str | None = None,
         valid_at: str | None = None,
         invalid_at: str | None = None,
     ) -> None:
@@ -386,8 +387,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                     invalid_at=invalid_at,
                 )
                 cx.execute(
-                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
-                    (verification_state, verified_at, id_),
+                    "UPDATE meta SET review_after = ?, verification_state = ?, verified_at = ? "
+                    "WHERE id = ?",
+                    (review_after, verification_state, verified_at, id_),
                 )
 
             tantivy = self._get_tantivy()
@@ -578,10 +580,12 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 row = dict(source_row)
                 verification_state = str(row.pop("verification_state", "unverified"))
                 verified_at = row.pop("verified_at", None)
+                review_after = row.pop("review_after", None)
                 self._upsert_memory_row(cx, **row)
                 cx.execute(
-                    "UPDATE meta SET verification_state = ?, verified_at = ? WHERE id = ?",
-                    (verification_state, verified_at, row["id_"]),
+                    "UPDATE meta SET review_after = ?, verification_state = ?, verified_at = ? "
+                    "WHERE id = ?",
+                    (review_after, verification_state, verified_at, row["id_"]),
                 )
             if stamp_identity:
                 cx.execute(
@@ -659,15 +663,16 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         transition candidates for `_transition_stale_memories`. Targeted (not a
         full scan): UNVERIFIED memories, the default majority, are skipped."""
         rows = self._conn.execute(
-            "SELECT id, verification_state, verified_at FROM meta "
+            "SELECT id, verification_state, verified_at, review_after FROM meta "
             "WHERE verification_state IN ('verified', 'stale') "
-            "AND verified_at IS NOT NULL"
+            "AND verified_at IS NOT NULL AND review_after IS NOT NULL"
         ).fetchall()
         return [
             {
                 "id": r["id"],
                 "verification_state": r["verification_state"],
                 "verified_at": r["verified_at"],
+                "review_after": r["review_after"],
             }
             for r in rows
         ]
