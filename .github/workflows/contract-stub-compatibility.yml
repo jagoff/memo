@@ -1,0 +1,19 @@
+name: contract-stub-compatibility
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  contract-stub-compatibility:
+    name: contract-stub-compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile compatibility surface
+        run: python -m compileall -q src tests
