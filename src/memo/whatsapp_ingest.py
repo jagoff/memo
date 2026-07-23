@@ -4,8 +4,8 @@ Reads messages from the local `whatsapp-mcp` bridge and writes **one
 human-readable Markdown note per contact** in `Obsidian/Whatsapp/<contact>.md`
 (transcript grouped by date, no `id:` in the frontmatter). Those notes are
 indexed in Memo via `memo ingest` (source=vault-ingest), so they become
-searchable by `memo search` / `ask` and by the synapse chat on :8765 — and at
-the same time browsable in Obsidian alongside the dossiers in `Obsidian/Contacts`.
+searchable by `memo search` / `ask` and memo's MCP tools — and at the same time
+browsable in Obsidian alongside the dossiers in `Obsidian/Contacts`.
 
 No dependency on `rag`. The scope is opt-in (`include_chats` or `all_chats`).
 The notes are fully regenerated on every run (idempotent): re-running updates

@@ -49,7 +49,6 @@ from memo.dashboard import (  # noqa: E402
     recall_health,
     verdict,
 )
-from memo.dashboard_panels import _fetch_memflow_utility  # noqa: E402
 from memo.embedder_select import resolve_backend  # noqa: E402
 from memo.errors import MemoError  # noqa: E402
 from memo.html_security import (  # noqa: E402
@@ -971,7 +970,6 @@ def collect_data(
         "doctor_raw": doctor,
         "contradictions": contradictions or {},
         "verdict": verdict(cfg.state_dir, limit=500),
-        "memflow_util": _fetch_memflow_utility(),
         "gerencial": _gerencial(cfg),
         "gaps": _gaps(cfg),
         "sync": _sync_health(cfg),

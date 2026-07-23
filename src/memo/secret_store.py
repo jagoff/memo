@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import platform
 import re
 import secrets
 import socket
@@ -132,13 +133,7 @@ def _load_or_create_machine_salt() -> str:
 
 def _derive_legacy_secret_key() -> bytes:
     """Derive the pre-v3.5.1 key so existing ciphertext can be migrated."""
-    try:
-        from consciousness_contracts.uri import device_id as get_device_id
-
-        device_id = get_device_id()
-    except Exception:
-        device_id = "unknown"
-
+    device_id = hashlib.sha256(platform.node().encode()).hexdigest()[:16]
     hostname = socket.gethostname()
     machine_salt = _load_or_create_machine_salt()
 

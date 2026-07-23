@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "3.12.1"
+version = "4.0.0"
 description = "Local-first semantic memory for AI agents — MLX (Apple Silicon) or CPU sentence-transformers (Linux/Ubuntu) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -110,26 +110,11 @@ multimodal = [
     "mlx-vlm>=0.1.12,<0.6.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-whisper>=0.4.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-# Shared trinity schemas (memo + memflow + synapse). Optional: enables
-# cross-agent ledger, synapse backend, replay URIs, and extended embedder
-# cache. memo works fully without it (all imports are guarded).
-# Install: pip install "mlx-memo[contracts]"
-contracts = [
-    "consciousness-contracts>=0.2.0",
-]
-
 # Optional REST API server (`memo http-api`).
 http = [
     "fastapi>=0.115",
     "uvicorn>=0.34",
 ]
-
-[tool.uv]
-# Private and intentionally absent from public indexes. The with-contracts CI
-# job installs it explicitly from the authenticated repository after `uv sync`.
-# Excluding it keeps the public universal lock reproducible without changing the
-# wheel's published optional-extra metadata.
-exclude-dependencies = ["consciousness-contracts"]
 
 [project.scripts]
 memo = "memo.cli:main"
@@ -223,13 +208,10 @@ python_version = "3.13"
 
 [[tool.mypy.overrides]]
 # pyobjc (Quartz/Vision/Foundation) ship no py.typed marker.
-# consciousness_contracts is an optional, non-PyPI dep absent in CI — its
-# importers guard the import, so missing-stub there is expected, not a bug.
 # mlx / mlx_lm (Apple-Silicon-only) and huggingface_hub are deferred,
 # platform-gated imports never installed on the Linux CI runner.
 # numpy is only pulled in by the optional consolidate path; absent in CI.
 module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
-          "consciousness_contracts", "consciousness_contracts.*",
           "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "mlx_vlm", "mlx_vlm.*", "huggingface_hub",
           "numpy", "tantivy",
           # Optional REST API server dependencies, absent unless [http] is used.
@@ -327,7 +309,7 @@ ignore = [
     "S101",
     # S603: subprocess with trusted internal args (no user input in argv)
     "S603",
-    # S607: partial executable paths are intentional (git, gh, memo, memflow, etc.
+    # S607: partial executable paths are intentional (git, gh, memo, etc.
     #       expected to be on PATH in the managed runtime environment)
     "S607",
 ]

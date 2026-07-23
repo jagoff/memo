@@ -18,7 +18,7 @@ Two physical signals feed the ledger, one per agent class:
 
   * **grounded** (Claude Code) — a surfaced memory the answer USED, scored by the
     Stop-hook grounding pass over the transcript. Strong signal.
-  * **consults** (every other agent: codex/opencode/devin/synapse/memflow/...) —
+  * **consults** (every other agent: codex/opencode/devin/other agents) —
     a memo search that returned >=1 hit, logged in recall.log with its
     ``source``/``client``. These agents read memo over MCP/CLI/socket and we
     never see their answer, so we cannot ground them; a productive consult is the
@@ -60,7 +60,7 @@ _DEFAULT_TOKENS_PER_CONSULT = 200
 
 # Grounded rows are attributed to Claude Code — grounding runs only from Claude
 # Code's Stop hook over its transcript, and every grounding.log row confirms
-# client="claude-code". Other agents (codex/opencode/devin/synapse/memflow) never
+# client="claude-code". Other agents (codex/opencode/devin and others) never
 # reach grounding; their savings ride the consult signal below, so their consults
 # in recall.log must NOT double-count against a client that also grounds.
 _GROUNDED_CLIENT = "claude-code"

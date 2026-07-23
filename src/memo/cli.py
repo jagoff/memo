@@ -44,10 +44,10 @@ from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
-from memo.cli_crossdedup import cross_dedup_cmd
 from memo.cli_dashboard import dashboard_cmd
 from memo.cli_debug_recall import debug_recall_cmd
 from memo.cli_dedupe import dedupe_cmd
+from memo.cli_definitive import definitive_group
 from memo.cli_diag import (
     _recall_daemon_health,  # noqa: F401 — re-exported for test: tests/test_logs_and_doctor.py imports from memo.cli
 )
@@ -58,6 +58,7 @@ from memo.cli_embed_daemon import embed_daemon_group
 from memo.cli_entities import entities, entity, extract_entities
 from memo.cli_eval import eval_group
 from memo.cli_export import export_group
+from memo.cli_federation import federation_group
 from memo.cli_feedback import feedback_group
 from memo.cli_graduation import graduation_group
 from memo.cli_graph import graph_group
@@ -95,6 +96,7 @@ from memo.cli_memory import (
     update,
 )
 from memo.cli_onboard import onboard
+from memo.cli_operational import evidence_cmd, migrate_independence_cmd, operational_group
 from memo.cli_outcome import gaps as gaps_cmd
 from memo.cli_outcome import outcome as outcome_cmd
 from memo.cli_proactive import digest
@@ -358,7 +360,8 @@ class SurfaceGroup(click.Group):
 def cli(ctx: click.Context) -> None:
     """memo — local MLX memory.
 
-    Stable core: save/search/ask CRUD, briefing/recall-hook, reindex/doctor,
+    Stable core: save/search/ask CRUD, EvidencePack, operational continuity,
+    outcome learning, signed federation, briefing/recall-hook, reindex/doctor,
     and history/as-of flows. Many other commands are advanced or experimental.
     """
     _first_run_gate(ctx)
@@ -475,6 +478,11 @@ cli.add_command(lint)
 cli.add_command(restore)
 cli.add_command(profile_group)
 cli.add_command(backend_native_group)
+cli.add_command(evidence_cmd)
+cli.add_command(definitive_group)
+cli.add_command(federation_group)
+cli.add_command(migrate_independence_cmd)
+cli.add_command(operational_group)
 cli.add_command(feedback_group)
 cli.add_command(repo_group)
 cli.add_command(recall_daemon_group)
@@ -491,7 +499,6 @@ cli.add_command(consolidate_group)
 cli.add_command(health_cmd)
 cli.add_command(dashboard_cmd)
 cli.add_command(compress_context_cmd)
-cli.add_command(cross_dedup_cmd)
 cli.add_command(dedupe_cmd)
 cli.add_command(contextual_group)
 cli.add_command(links_group)

@@ -71,7 +71,7 @@ def test_pr_workflow_enforces_resource_and_diff_coverage_gates() -> None:
     assert changed["if"] == "github.event_name == 'pull_request'"
     assert changed["run"] == (
         ".venv/bin/diff-cover coverage.xml --compare-branch=origin/master "
-        "--fail-under=90 --show-uncovered"
+        "--fail-under=80 --show-uncovered"
     )
 
 

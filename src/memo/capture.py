@@ -1,4 +1,4 @@
-"""Durable session capture: record turns, ingest into memo, bridge to memflow.
+"""Durable session capture: record turns and ingest them into Memo.
 
 Hook fires on every assistant turn (Stop event), reads the just-finished
 exchange from the transcript, asks the configured helper LLM to

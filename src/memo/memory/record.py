@@ -24,6 +24,8 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
+from memo.contracts import MEMO_BACKEND_SCHEMA, PROVENANCE_KEYS, normalize_provenance
+
 # Re-export the system prompts — callers import them from here (ask_ops,
 # write_ops, maintain_ops, cli_capture, memory/__init__). Unused in this module
 # itself, hence the per-symbol noqa.
@@ -170,37 +172,16 @@ def markdown_body(post: Any) -> str:
     return parsed_body
 
 
-SYNAPSE_BACKEND_NATIVE_SCHEMA = "synapse.backend_native.v1"
-NATIVE_BACKEND_PROTOCOL_VERSION = "backend_native.v1"
+MEMO_BACKEND_NATIVE_SCHEMA = MEMO_BACKEND_SCHEMA
+NATIVE_BACKEND_PROTOCOL_VERSION = MEMO_BACKEND_SCHEMA
 MEMO_BACKEND_NAME = "memo"
 
-# Provenance keys carried in `extra` and persisted to both `meta.extra_json`
-# and `history.events.delta_json`. Set by callers that operate as part of a
-# Synapse-orchestrated write (route_intent → remember). Each key is optional;
-# memo never invents values. Sourced from `consciousness_contracts` so the
-# trinity shares ONE definition of "which fields are provenance"; the literal
-# below is only a fallback for CI / clean installs without the package, and is
-# guarded against drift by `tests/test_synapse_backend.py`.
-try:
-    from consciousness_contracts import PROVENANCE_KEYS as _PROVENANCE_KEYS
-except ImportError:  # pragma: no cover - optional dep, absent in CI/clean installs
-    _PROVENANCE_KEYS: frozenset[str] = frozenset(  # type: ignore[no-redef]
-        {
-            "synapse_trace_id",
-            "synapse_route_reason",
-            "synapse_write_policy_schema",
-            "synapse_write_target",
-            "synapse_agent_id",
-            "synapse_agent_signature",
-        }
-    )
+_PROVENANCE_KEYS = PROVENANCE_KEYS
 
 
 def _extract_provenance(extra: dict[str, Any] | None) -> dict[str, Any]:
     """Return only the provenance subset of an extra bag (or {})."""
-    if not extra:
-        return {}
-    return {k: extra[k] for k in _PROVENANCE_KEYS if k in extra}
+    return normalize_provenance(extra)
 
 
 def _norm_dedup_path(path: str | None) -> str:
@@ -884,29 +865,3 @@ def _normalise_tags(tags: list[str]) -> list[str]:
         seen.add(t)
         out.append(t)
     return out
-
-
-def _build_freeze_query(
-    *,
-    title: str | None,
-    content: str,
-    tags: list[str] | None,
-) -> str:
-    """Compose a synapse `conflicts` query from the most signal-dense
-    fields of a pending write.
-
-    Priority: explicit title → first non-empty tag → first non-empty
-    content line (truncated). Synapse semantic search is keyword-tier
-    today, so a 4-8 word query is the sweet spot.
-    """
-    if title and title.strip():
-        return title.strip()[:120]
-    for tag in tags or []:
-        tag = (tag or "").strip()
-        if tag and not tag.startswith("project:"):
-            return tag[:120]
-    for line in (content or "").splitlines():
-        line = line.strip()
-        if line:
-            return line[:120]
-    return ""

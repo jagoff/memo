@@ -47,8 +47,7 @@ def test_flag_returns_default_when_unset(tmp_path: Path) -> None:
     assert flags.flag("MEMO_RECALL_DISABLE", env=env) is False
     assert flags.flag("MEMO_RECALL_TOKEN_BUDGET", env=env) == 600
     assert flags.flag("MEMO_CONTRADICT_PENALTY_ENABLED", env=env) is False
-    # opt-out default-on bool
-    assert flags.flag("MEMO_EMIT_LEDGER", env=env) is True
+    assert "MEMO_EMIT_LEDGER" not in flags.REGISTRY
     assert flags.flag_int("MEMO_DREAM_COMPRESS_THRESHOLD", env=env) == 0
 
 

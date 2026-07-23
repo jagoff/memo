@@ -266,27 +266,19 @@ def _model_cache_report(cfg: Config) -> list[dict[str, Any]]:
     return out
 
 
-def _typed_embedder_profile(cfg: Config) -> dict[str, Any] | None:
-    """Return a ``consciousness_contracts.EmbedderProfile`` dict.
-
-    Memo is the authoritative source of the active vector space across the
-    trinity (M4). Other repos must read this profile and refuse to operate
-    on incompatible dimensions / models. Returns ``None`` when the optional
-    contracts package is not installed (memo functions fine without it).
-    """
-    try:
-        from consciousness_contracts import EmbedderProfile
-    except ImportError:
-        return None
+def _typed_embedder_profile(cfg: Config) -> dict[str, Any]:
+    """Return Memo's native embedding-space contract."""
     from memo.embedder_select import active_embedder_identity
 
-    profile = EmbedderProfile(
-        model_id=active_embedder_identity(cfg),
-        dims=int(cfg.embedder_dims),
-        normalization="l2",
-        provider="memo",
-    )
-    return profile.to_dict()
+    return {
+        "schema": "memo.embedder_profile.v1",
+        "model_id": active_embedder_identity(cfg),
+        "dims": int(cfg.embedder_dims),
+        "normalization": "l2",
+        "max_seq_len": None,
+        "quantization": None,
+        "provider": "memo",
+    }
 
 
 def _profile_status_report(

@@ -413,8 +413,8 @@ def doctor(
             console.print(
                 f"[yellow]![/yellow] token cost: {_profile_label}  {_tool_count} tools "
                 f"({_tok_cost} tokens/connection)  "
-                "[dim](set MEMO_MCP_PROFILE=agent for 15 tools / ~1.5k tokens, or "
-                "`memo install-mcp --profile core` for 35 tools / ~3.1k tokens — "
+                "[dim](set MEMO_MCP_PROFILE=agent for 30 tools / ~3k tokens, or "
+                "`memo install-mcp --profile core` for 50 tools / ~4.6k tokens — "
                 "for constrained clients)[/dim]"
             )
         try:

@@ -46,6 +46,13 @@ SPECS: tuple[FlagSpec, ...] = (
     ),
     _spec("MEMO_RECALL_BODY_CHARS", "int", 400, "recall", "Max body chars per injected memory."),
     _spec(
+        "MEMO_RECALL_SESSION_MODE",
+        "str",
+        "",
+        "recall",
+        "Optional native per-session ranking preset.",
+    ),
+    _spec(
         "MEMO_RECALL_MIN_BODY_CHARS",
         "int",
         40,

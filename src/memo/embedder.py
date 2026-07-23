@@ -39,19 +39,9 @@ from memo.embed_base import EmbedderBase
 from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
 from memo.model_pins import ModelPinError, model_identity, resolve_model_snapshot
 
-try:
-    from consciousness_contracts.cache import (
-        get_default_cache,  # type: ignore[import-not-found,unused-ignore]
-    )
-
-    _HAS_SHARED_CACHE = True
-except Exception:
-    _HAS_SHARED_CACHE = False
-
 
 class _SimpleLRU:
-    """Minimal get/put LRU used when consciousness_contracts is unavailable, so
-    MEMO_QUERY_CACHE_SIZE isn't silently ignored on a clean install."""
+    """Minimal process-local query embedding cache."""
 
     def __init__(self, maxsize: int) -> None:
         from collections import OrderedDict
@@ -211,21 +201,16 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
         self._model: Any = None
         self._tokenizer: Any = None
         self._load_lock = threading.Lock()
-        # Query embedding cache (LRU). Uses the shared consciousness-contracts
-        # cache when available. The embedder is a foundation module that must not
+        # Query embedding cache (LRU). The embedder is a foundation module that must not
         # import memo.flags (see the architecture-boundary test), so flags-aware
         # callers (Memory facade, recall daemon) pass the registry default via
         # `cache_size`. When that is None we keep the legacy bare-embedder env
         # fallback for tests and standalone use.
         if cache_size is None:
             cache_size = int(os.environ.get("MEMO_QUERY_CACHE_SIZE", "0") or 0)
-        # Either the shared consciousness-contracts cache or the local _SimpleLRU
-        # fallback — both expose get(str)/put(str, value).
         self._query_cache: Any
         if cache_size <= 0:
             self._query_cache = None
-        elif _HAS_SHARED_CACHE:
-            self._query_cache = get_default_cache()
         else:
             self._query_cache = _SimpleLRU(cache_size)
 

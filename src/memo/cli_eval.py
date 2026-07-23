@@ -7,8 +7,8 @@ p50 latency per config, recommends the winning knobs, and caches results
 (keyed by corpus fingerprint + label set + K) so repeat runs are instant.
 
 NOTE: there is deliberately no `memo autoloop`. The autonomous tuning loop in
-`scripts/autoloop/run.py` drives the *synapse* chat pipeline (`synapse
-eval-chat`, `SYNAPSE_*` knobs, Ollama) — it belongs in synapse, not memo.
+Evaluation in this module is self-contained and exercises Memo's own retrieval,
+grounding, and answer surfaces.
 """
 
 from __future__ import annotations

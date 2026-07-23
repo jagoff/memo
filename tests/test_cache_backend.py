@@ -1,46 +1,59 @@
-"""Tests for cache_backend — NullBackend, factory routing, meta coercion.
-
-MemflowBackend's subprocess path is not exercised (external CLI); the factory
-falls back to NullBackend when the binary/project-root is absent, which is what
-matters for correctness here.
-"""
+"""Tests for Memo's dependency-free cache archive."""
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import pytest
 
 from memo import cache_backend as cb
 
 
+def _record(**overrides):
+    values = {
+        "id": "abc-123",
+        "title": "Native archive",
+        "type": "decision",
+        "body": "Memo owns this durable cache record",
+        "tags": ("memo", "native"),
+        "created": "2026-07-23T00:00:00Z",
+        "updated": "2026-07-23T01:00:00Z",
+        "extra": {"trust_tier": "agent_verified"},
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def test_null_backend_is_inert() -> None:
-    nb = cb.NullBackend()
-    assert nb.push(object()) is False  # never claims a write succeeded
-    assert nb.fetch("anything") == []
-
-
-def test_coerce_meta() -> None:
-    assert cb._coerce_meta(None) == ""
-    assert cb._coerce_meta(True) == "true"
-    assert cb._coerce_meta(False) == "false"
-    assert cb._coerce_meta("a\nb") == "a b"
-    assert cb._coerce_meta(42) == "42"
-    assert len(cb._coerce_meta("x" * 1000)) == 500
+    backend = cb.NullBackend()
+    assert backend.push(object()) is False
+    assert backend.fetch("anything") == []
 
 
 @pytest.mark.parametrize("name", ["none", "bogus", "", "NONE"])
-def test_make_backend_falls_back_to_null(name: str) -> None:
-    assert isinstance(cb.make_backend(name), cb.NullBackend)
+def test_make_backend_falls_back_to_null(name: str, tmp_path) -> None:
+    assert isinstance(cb.make_backend(name, root=tmp_path), cb.NullBackend)
 
 
-def test_make_backend_memflow_unavailable_is_null(monkeypatch: pytest.MonkeyPatch) -> None:
-    # No memflow binary → MemflowBackend.available is False → NullBackend.
-    monkeypatch.setattr(cb, "_binary", lambda: None)
-    assert isinstance(cb.make_backend("memflow"), cb.NullBackend)
+@pytest.mark.parametrize("name", ["vault", "native"])
+def test_make_backend_builds_native_archive(name: str, tmp_path) -> None:
+    assert isinstance(cb.make_backend(name, root=tmp_path), cb.NativeVaultBackend)
 
 
-def test_make_backend_memflow_available_is_memflow(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
-    monkeypatch.setattr(cb, "_binary", lambda: "/usr/bin/true")
-    monkeypatch.setattr(cb, "_project_root", lambda: tmp_path)
-    assert isinstance(cb.make_backend("memflow"), cb.MemflowBackend)
+def test_native_archive_round_trip(tmp_path) -> None:
+    backend = cb.NativeVaultBackend(tmp_path)
+    assert backend.push(_record()) is True
+
+    hits = backend.fetch("durable memo", limit=5)
+
+    assert len(hits) == 1
+    assert hits[0]["id"] == "abc-123"
+    assert hits[0]["schema"] == "memo.cache_archive.v1"
+    assert hits[0]["from_backend"] is True
+
+
+def test_native_archive_rejects_empty_and_path_like_ids(tmp_path) -> None:
+    backend = cb.NativeVaultBackend(tmp_path)
+    assert backend.push(_record(id="", title="", body="")) is False
+    assert backend.push(_record(id="../../outside")) is True
+    assert not (tmp_path.parent / "outside.json").exists()

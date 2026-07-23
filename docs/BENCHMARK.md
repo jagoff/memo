@@ -210,8 +210,8 @@ Read these before quoting any number above:
   exists.
 - **Retrieval only.** Precision/noise/recall measure whether the right memory
   surfaces, not whether a downstream answer synthesized from it is correct.
-  Synthesis quality is evaluated elsewhere (in the synapse layer) and is out of
-  scope here.
+  Synthesis quality is covered by memo's separate answer-quality evaluations
+  and is out of scope here.
 - **precision@5 is a weak label on this corpus.** Term-labeled relevance uses a
   30-term global vocabulary that ~83% of this corpus already matches, so the
   0.75–0.83 aggregate sits at the vocabulary's base rate and mostly tracks

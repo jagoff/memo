@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
 
+from memo.contracts import normalize_provenance
 from memo.grounding_judge import score_grounding
 from memo.memory._base import _MemoryBase
 from memo.memory.prompts import _ASK_IMMUTABLE_UNTRUSTED_DATA_POLICY
@@ -425,8 +426,8 @@ class _AskOpsMixin(_MemoryBase):
         # *recent* material (freshness decay) — a conversation ask shouldn't
         # down-weight by age.
         # Detect intent on the original user question too, not only the
-        # (possibly rewritten / context-wrapped) retrieval text. Synapse sends
-        # memo a cleaned `retrieval_question` that can drop the recency token,
+        # (possibly rewritten / context-wrapped) retrieval text. Callers can send
+        # memo a cleaned `retrieval_question` that drops the recency token,
         # which would silently disable the recency path; `intent_text` carries
         # the raw question so the signal survives.
         intent_src = f"{question} {intent_text or ''}"
@@ -565,6 +566,7 @@ class _AskOpsMixin(_MemoryBase):
                 f"{graph_info}{facts_info}{relations_info}\n{snippet}\n"
             )
             extra = h.extra or {}
+            provenance = normalize_provenance(extra)
             source = {
                 "source": "memory",
                 "id": h.id,
@@ -576,8 +578,7 @@ class _AskOpsMixin(_MemoryBase):
                 "graph_expanded": bool(extra.get("graph_expanded")),
                 "related_fact_edges": extra.get("related_fact_edges") or [],
                 "memory_relations": extra.get("memory_relations") or [],
-                "synapse_trace_id": extra.get("synapse_trace_id") or "",
-                "synapse_agent_id": extra.get("synapse_agent_id") or "",
+                "provenance": provenance,
             }
             sources.append(source)
             primary_memory_sources[h.id] = source

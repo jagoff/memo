@@ -11,9 +11,6 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform != 'win32'",
 ]
 
-[manifest]
-excludes = ["consciousness-contracts"]
-
 [[package]]
 name = "aiofile"
 version = "3.11.1"
@@ -1402,7 +1399,7 @@ wheels = [
 
 [[package]]
 name = "mlx-memo"
-version = "3.12.1"
+version = "4.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1464,7 +1461,6 @@ test-stability = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1.7" },
-    { name = "consciousness-contracts", marker = "extra == 'contracts'", specifier = ">=0.2.0" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "diff-cover", marker = "extra == 'dev'", specifier = ">=9,<11" },
     { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.115" },
@@ -1503,7 +1499,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.34" },
     { name = "watchdog", specifier = ">=4.0" },
 ]
-provides-extras = ["dev", "test-stability", "test-mutation", "ocr", "cpu", "tantivy", "multimodal", "contracts", "http"]
+provides-extras = ["dev", "test-stability", "test-mutation", "ocr", "cpu", "tantivy", "multimodal", "http"]
 
 [[package]]
 name = "mlx-metal"

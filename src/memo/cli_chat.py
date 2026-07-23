@@ -63,7 +63,7 @@ def chat_group() -> None:
     "--context-json",
     type=click.File("r"),
     default=None,
-    help="Caller-supplied federation context (e.g. Synapse packet) for richer synthesis.",
+    help="Caller-supplied federation context (for example a verified Memo bundle).",
 )
 @click.option("--json", "as_json", is_flag=True)
 @click.option(

@@ -27,7 +27,7 @@ def test_read_only_tools_peek_notification_without_consuming(tmp_cfg, monkeypatc
 
     monkeypatch.setenv("MEMO_CONTEXT_SURFACE", "1")
     monkeypatch.setattr("memo.briefing.memo_native_briefing_lines", lambda *a, **k: [])
-    monkeypatch.setattr("memo.briefing.synapse_briefing_lines", lambda *a, **k: [])
+    monkeypatch.setattr("memo.briefing.operational_briefing_lines", lambda *a, **k: [])
     monkeypatch.setattr(
         "memo.context_surface.build_context_surface",
         lambda *a, **k: {"schema": "memo.context.v1", "hits": []},

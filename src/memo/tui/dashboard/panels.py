@@ -80,7 +80,6 @@ _corpus_cache: _TTLCache = _TTLCache(ttl_s=10.0)
 _recall_quality_cache: _TTLCache = _TTLCache(ttl_s=30.0)
 _consumers_cache: _TTLCache = _TTLCache(ttl_s=30.0)
 _verdict_cache: _TTLCache = _TTLCache(ttl_s=30.0)
-_memflow_cache: _TTLCache = _TTLCache(ttl_s=60.0)
 
 
 def _get_corpus_rows(memory: Any) -> list[dict[str, Any]]:
@@ -585,79 +584,6 @@ def _panel_recall_trend(state_dir: Path) -> Group:
     else:
         tbl.add_row("never cited", Text("sin datos aún", style="dim italic"))
     return Group(header, tbl, Text())
-
-
-def _memflow_bin() -> str | None:
-    for cand in (
-        os.path.expanduser("~/.memflow/bin/memflow"),
-        os.path.expanduser("~/repos/memflow/.venv/bin/memflow"),
-    ):
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
-            return cand
-    from shutil import which
-
-    return which("memflow")
-
-
-def _fetch_memflow_utility() -> dict[str, Any]:
-    cached = _memflow_cache.get("u")
-    if cached is not None:
-        return cached
-    data: dict[str, Any] = {}
-    bin_path = _memflow_bin()
-    if bin_path:
-        try:
-            out = subprocess.run(
-                [bin_path, "utility", "--since-days", "7", "--json"],
-                capture_output=True,
-                text=True,
-                timeout=8,
-            )
-            if out.returncode == 0 and out.stdout.strip():
-                import json
-
-                data = json.loads(out.stdout)
-        except Exception as exc:
-            _log.debug("dashboard: memflow utility fetch failed: %s", exc)
-            data = {}
-    _memflow_cache.set(data, "u")
-    return data
-
-
-def _panel_memflow(_state_dir: Path) -> Panel:
-    """memflow's own utility report (B) — does the layer above memo work?"""
-    data = _fetch_memflow_utility()
-    if not data:
-        body = Text("memflow unavailable", style="dim italic")
-        return Panel(
-            body, title="[bold]memflow[/bold]", border_style="bright_black", padding=(0, 1)
-        )
-
-    cons = data.get("consumption") or {}
-    out = data.get("outcome") or {}
-    reads = int(cons.get("total_read_calls") or 0)
-    re_explain = int(out.get("re_explain") or 0)
-    used_rate = out.get("memory_used_rate")
-
-    # Verdict: useful only when read and not drowning in re-explains.
-    if reads < 5:
-        border, head = "red", "❌ barely read"
-    elif used_rate is None:
-        border, head = "yellow", "⚠️ no outcomes yet"
-    elif used_rate >= 0.10 and re_explain < 10:
-        border, head = "green", "✅ useful"
-    else:
-        border, head = "yellow", "⚠️ barely useful"
-
-    ur = "—" if used_rate is None else f"{used_rate * 100:.0f}%"
-    tbl = Table.grid(padding=(0, 2))
-    tbl.add_column(style="dim", width=14)
-    tbl.add_column(style="bold")
-    tbl.add_row("status", Text(head, style=border if border != "bright_black" else "dim"))
-    tbl.add_row("reads 7d", str(reads))
-    tbl.add_row("memory_used", ur)
-    tbl.add_row("re_explain", f"[red]{re_explain}[/red]" if re_explain >= 10 else str(re_explain))
-    return Panel(tbl, title="[bold]memflow utility[/bold]", border_style=border, padding=(0, 1))
 
 
 def _panel_consumers(state_dir: Path) -> Group:

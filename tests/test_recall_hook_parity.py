@@ -143,7 +143,7 @@ def _base_env(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "0")
     monkeypatch.setenv("MEMO_RECALL_CITE_INSTRUCTION", "0")
     monkeypatch.setenv("MEMO_RECALL_FEEDBACK_HINT", "0")
-    monkeypatch.delenv("MEMFLOW_SESSION_MODE", raising=False)
+    monkeypatch.delenv("MEMO_RECALL_SESSION_MODE", raising=False)
 
 
 def _run_hook(prompt: str, cwd: str) -> dict:

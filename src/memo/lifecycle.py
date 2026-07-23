@@ -1,10 +1,9 @@
 """Memory lifecycle management — forgetting, archival, expiration.
 
-Internal maintenance layer driven by `memo maintain` (NOT exposed on the
-public CLI or MCP surface — see tests/test_architecture_boundaries.py;
-memo is the memory store, orchestration lives in Synapse). The user-facing
+Internal maintenance layer driven by `memo maintain`. The user-facing
 primitives are `Memory.forget()` / `Memory.unforget()` (CRUD-like, exposed
-as the `memo_forget` / `memo_unforget` MCP tools).
+as the `memo_forget` / `memo_unforget` MCP tools), while outcome-backed
+promotion is owned by Memo's operational and procedural APIs.
 
 Manages the lifecycle of memories over time:
 - Explicit forget with a TTL (`forget_after`) — soft, reversible
@@ -28,8 +27,8 @@ Memories that haven't been accessed in N days are archived to an
 
 ## Promotion/Demotion
 
-Access counts (from the history store) drive a report of promotion/demotion
-candidates. Advisory only — no priority flag is written today.
+Access counts and observed task outcomes drive promotion/demotion and persist
+the resulting priority in Markdown metadata.
 
 ## Expiration
 
@@ -194,6 +193,14 @@ class LifecycleManager:
         if access_count >= self.policy.promotion_threshold:
             return True, f"Accessed {access_count} times"
 
+        record = self.memory.get(memory_id)
+        stats = (record.extra or {}).get("outcome_stats") if record is not None else None
+        if isinstance(stats, dict):
+            successes = int(stats.get("successes") or 0)
+            utility = float(stats.get("utility") or 0.0)
+            if successes >= 2 and utility >= 0.8:
+                return True, f"Outcome utility {utility:.2f} across {successes} successes"
+
         return False, f"Accessed only {access_count} times"
 
     def should_demote(self, memory_id: str) -> tuple[bool, str]:
@@ -202,6 +209,14 @@ class LifecycleManager:
         Returns:
             (should_demote, reason)
         """
+        record = self.memory.get(memory_id)
+        stats = (record.extra or {}).get("outcome_stats") if record is not None else None
+        if isinstance(stats, dict):
+            total = int(stats.get("total") or 0)
+            failures = int(stats.get("failures") or 0)
+            if total >= 2 and failures / total > 0.5:
+                return True, f"Failed {failures} of {total} observed outcomes"
+
         access_count = self.get_access_count(memory_id)
 
         if access_count < self.policy.demotion_threshold:
@@ -484,49 +499,58 @@ class LifecycleManager:
         }
 
         for rec in all_records:
-            # Explicit forget TTL first — soft, reversible, keeps the file.
-            should_forget, forget_reason = self.should_forget(rec.id)
-            if should_forget:
-                if not dry_run:
-                    self.memory.forget(rec.id, reason=forget_reason)
-                actions["forgotten"] += 1
-                continue
-
-            # Check expiration next
-            should_expire, _expire_reason = self.should_expire(rec.id)
-            if should_expire:
-                if self.policy.delete_expired:
-                    if not dry_run:
-                        self.memory.delete(rec.id)
-                    actions["deleted"] += 1
-                else:
-                    if not dry_run:
-                        self.archive_memory(rec.id)
-                    actions["expired"] += 1
-                continue
-
-            # Check archival
-            should_archive, _archive_reason = self.should_archive(rec.id)
-            if should_archive:
-                if not dry_run:
-                    self.archive_memory(rec.id)
-                actions["archived"] += 1
-                continue
-
-            # Check promotion/demotion
-            should_promote, _promote_reason = self.should_promote(rec.id)
-            should_demote, _demote_reason = self.should_demote(rec.id)
-
-            if should_promote:
-                actions["promoted"] += 1
-                # In a full implementation, would set a priority flag in frontmatter
-            elif should_demote:
-                actions["demoted"] += 1
-                # In a full implementation, would set a low priority flag
-            else:
-                actions["skipped"] += 1
+            action = self._apply_record_lifecycle(rec.id, dry_run=dry_run)
+            actions[action] += 1
 
         return actions
+
+    def _apply_record_lifecycle(self, memory_id: str, *, dry_run: bool) -> str:
+        should_forget, reason = self.should_forget(memory_id)
+        if should_forget:
+            if not dry_run:
+                self.memory.forget(memory_id, reason=reason)
+            return "forgotten"
+
+        should_expire, _ = self.should_expire(memory_id)
+        if should_expire:
+            return self._expire_record(memory_id, dry_run=dry_run)
+
+        should_archive, _ = self.should_archive(memory_id)
+        if should_archive:
+            if not dry_run:
+                self.archive_memory(memory_id)
+            return "archived"
+
+        should_demote, _ = self.should_demote(memory_id)
+        if should_demote:
+            self._persist_priority(memory_id, "low", dry_run=dry_run)
+            return "demoted"
+        should_promote, _ = self.should_promote(memory_id)
+        if should_promote:
+            self._persist_priority(memory_id, "high", dry_run=dry_run)
+            return "promoted"
+        return "skipped"
+
+    def _expire_record(self, memory_id: str, *, dry_run: bool) -> str:
+        if self.policy.delete_expired:
+            if not dry_run:
+                self.memory.delete(memory_id)
+            return "deleted"
+        if not dry_run:
+            self.archive_memory(memory_id)
+        return "expired"
+
+    def _persist_priority(self, memory_id: str, priority: str, *, dry_run: bool) -> None:
+        if dry_run:
+            return
+        current = self.memory.get(memory_id)
+        if current is None:
+            return
+        extra = dict(current.extra or {})
+        if extra.get("priority") == priority:
+            return
+        extra["priority"] = priority
+        self.memory.update(memory_id, extra=extra)
 
 
 __all__ = [

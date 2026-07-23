@@ -133,7 +133,7 @@ def _resolve_ingest_row(store, path_str):
 @click.option(
     "--prune/--no-prune",
     default=False,
-    help="Delete stale vault-ingest chunks under this label: files moved/renamed/deleted (abs_path gone) and leftover chunks of notes edited down to fewer chunks. Default off (ingest is purely additive); the synapse vault-ingest agent passes --prune so the index self-heals.",
+    help="Delete stale vault-ingest chunks under this label: files moved/renamed/deleted (abs_path gone) and leftover chunks of notes edited down to fewer chunks. Default off (ingest is purely additive); scheduled ingestion should pass --prune so the index self-heals.",
 )
 def ingest(
     vault_path: str,
@@ -780,8 +780,8 @@ def ingest(
     # A row for an un-walked modality (audio when --include-audio is off,
     # pdf when pdftotext is absent, images when --no-include-orphan-images
     # or --no-ocr) means "not walked, not in seen_abs" — that MUST NOT be
-    # treated as "file gone from disk". The nightly synapse ingest agent
-    # never passes --include-audio, so every vault-ingest-audio row would
+    # treated as "file gone from disk". Scheduled ingestion commonly omits
+    # --include-audio, so every vault-ingest-audio row would
     # otherwise be silently deleted every night.
     if prune:
         walked_audio = include_audio and audio_supported

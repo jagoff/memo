@@ -79,6 +79,10 @@ class StorageError(MemoError, RuntimeError):
     `sqlite3.OperationalError` with no hint of what memo was doing."""
 
 
+class FederationError(MemoError, RuntimeError):
+    """A signed federation bundle failed ACL or integrity validation."""
+
+
 class ConfigConflictError(MemoError, RuntimeError):
     """A persisted setting changed after the configuration session opened."""
 
@@ -105,20 +109,18 @@ class AmbiguousIdError(MemoError, ValueError):
 
 
 class WriteRefused(MemoError, RuntimeError):
-    """Raised by `Memory.save()` when a synapse RealityConflict with
-    `freeze_write=true` overlaps the topic of the pending write.
+    """Raised by `Memory.save()` when a native conflict or policy blocks a write.
 
     Carries the offending conflict dict so callers (CLI / MCP / agent)
     can show the user the conflict id, severity, and summary before
-    they decide to retry with `respect_synapse_freeze=False`.
+    they decide whether to resolve it or submit an explicit human override.
     """
 
     def __init__(self, conflict: dict[str, Any]) -> None:
         cid = conflict.get("conflict_id") or "?"
         summary = conflict.get("summary") or "(no summary)"
         super().__init__(
-            f"Synapse freeze-write active on conflict {cid}: {summary}. "
-            f"Resolve the conflict in synapse or retry with "
-            f"`respect_synapse_freeze=False`.",
+            f"Memo write policy blocked conflict {cid}: {summary}. "
+            "Resolve the conflict or retry with an explicit override reason.",
         )
         self.conflict = dict(conflict)

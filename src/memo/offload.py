@@ -6,8 +6,7 @@ tier is EXCLUDED from auto-recall, so offloaded blobs never pollute the
 recall hook) and dedupes by sha256 via `state_dir/offload/index.json`.
 `synopsize()` is no-LLM by design (OpenViking-style): JSON key sampling, CSV
 headers, code symbols, else the compress-context rules. The drill-down is the
-existing `memo_get(id)`. The interception/canvas layer belongs in synapse —
-memo keeps cognition off its surface and only ships the handle primitive.
+existing `memo_get(id)`; all storage and resolution remain inside Memo.
 """
 
 from __future__ import annotations

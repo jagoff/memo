@@ -1,10 +1,8 @@
-"""`memo install-mcp` — register the memo MCP server into any agent.
+"""`memo install-mcp` — register the Memo MCP server into any agent.
 
-Thin wrapper over the shared ``consciousness_contracts.agent_install`` contract
-(the same one memflow uses), so memo is installable into Codex, Claude Code,
-Claude Desktop, Windsurf, Gemini, Cursor, opencode, Devin — and any future agent
-via ``--config-path``. MCP-only and idempotent; for the heavier skill+plugin+MCP
-flow use ``memo install-slash``.
+Memo owns the installer contracts for Codex, Claude Code, Claude Desktop,
+Windsurf, Gemini, Cursor, opencode, Devin, and generic JSON configs. MCP-only
+and idempotent; for the heavier skill+plugin+MCP flow use ``memo install-slash``.
 
 The server command is the resolved ISOLATED runtime (`_resolved_memo_mcp`), never
 a project `.venv` — a mixed runtime is the usual cause of "works in CLI, broken
@@ -124,16 +122,7 @@ def _resolve_isolated_memo_mcp() -> Path | None:
 
 
 def _build_server() -> Any:
-    """Construct an AgentMcpServer-compatible value.
-
-    `consciousness_contracts` is a local/dev integration package. The public
-    `mlx-memo` install path must not require it just to print or write an MCP
-    config, so fall back to the tiny dataclass shape the installer needs.
-    """
-    try:
-        from consciousness_contracts import AgentMcpServer
-    except ImportError:  # pragma: no cover - depends on optional local package
-        AgentMcpServer = _AgentMcpServer
+    """Construct Memo's native MCP server descriptor."""
     memo_mcp = _resolve_isolated_memo_mcp()
     if memo_mcp is None:
         raise click.ClickException(
@@ -141,21 +130,21 @@ def _build_server() -> Any:
             "`pipx install mlx-memo` or `uv tool install mlx-memo` (a project .venv "
             "must not be written into agent configs)."
         )
-    return AgentMcpServer(name="memo", command=str(memo_mcp), env=_mcp_server_env())
+    return _AgentMcpServer(name="memo", command=str(memo_mcp), env=_mcp_server_env())
 
 
 def _generic_preset(config_path: str, json_key: str = "mcpServers") -> _GenericPreset:
     return _GenericPreset(config_path=config_path, json_key=json_key)
 
 
-def _fallback_register_agent_mcp(
+def _register_agent_mcp(
     agent: str,
     server: Any,
     *,
     write: bool = False,
     preset: _GenericPreset | None = None,
 ) -> dict[str, Any]:
-    """Minimal installer used when consciousness_contracts is absent."""
+    """Install one native Memo MCP descriptor for an agent."""
     try:
         if agent == "generic":
             if preset is None:
@@ -287,8 +276,8 @@ def _report(result: dict[str, Any]) -> None:
     "--profile",
     default="",
     type=click.Choice(["", "core", "slim", "default"], case_sensitive=False),
-    help="MCP surface profile. 'core'/'slim' expose 35 tools (~3.1k tokens); "
-    "'default' exposes all 143 tools (~16k tokens). "
+    help="MCP surface profile. 'core'/'slim' expose 50 tools (~4.6k tokens); "
+    "'default' exposes all 158 tools (~18k tokens). "
     "Constrained clients (codex, opencode) default to 'core' automatically.",
 )
 def install_mcp(
@@ -301,16 +290,7 @@ def install_mcp(
     profile: str,
 ) -> None:
     """Register the memo MCP server into one or more agents."""
-    try:
-        from consciousness_contracts import (
-            SUPPORTED_AGENTS,
-            generic_preset,
-            register_agent_mcp,
-        )
-    except ImportError:
-        SUPPORTED_AGENTS = _FALLBACK_SUPPORTED_AGENTS
-        generic_preset = _generic_preset
-        register_agent_mcp = _fallback_register_agent_mcp
+    supported_agents = _FALLBACK_SUPPORTED_AGENTS
 
     server = _build_server()
 
@@ -318,18 +298,18 @@ def install_mcp(
     click.echo(f"memo MCP → {server.command}{'' if write else '  (dry-run)'}{profile_note}")
 
     if config_path:
-        preset = generic_preset(config_path=config_path, json_key=json_key)
+        preset = _generic_preset(config_path=config_path, json_key=json_key)
         if profile and profile != "default":
             gen_env = dict(server.env)
             gen_env["MEMO_MCP_PROFILE"] = profile
             gen_server = dataclasses.replace(server, env=gen_env)
         else:
             gen_server = server
-        _report(register_agent_mcp("generic", gen_server, write=write, preset=preset))
+        _report(_register_agent_mcp("generic", gen_server, write=write, preset=preset))
     else:
         selected = list(agents) or ["all"]
         if "all" in selected:
-            selected = list(dict.fromkeys((*SUPPORTED_AGENTS, *AGENT_PRESETS)))
+            selected = list(dict.fromkeys((*supported_agents, *AGENT_PRESETS)))
         if only_present:
             kept = [a for a in selected if _agent_present(a)]
             for a in selected:
@@ -347,9 +327,9 @@ def install_mcp(
             if agent in AGENT_PRESETS:
                 _report(install_from_preset(AGENT_PRESETS[agent], agent_server, write=write))
             elif agent == "devin-desktop":
-                _report(_fallback_register_agent_mcp(agent, agent_server, write=write))
+                _report(_register_agent_mcp(agent, agent_server, write=write))
             else:
-                _report(register_agent_mcp(agent, agent_server, write=write))
+                _report(_register_agent_mcp(agent, agent_server, write=write))
 
     if with_mandate:
         click.echo("mandate (consult memo first):")

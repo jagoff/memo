@@ -7,7 +7,6 @@ root group in cli.py via `cli.add_command(repo_group)`.
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from collections.abc import Callable
@@ -19,6 +18,7 @@ from rich.table import Table
 
 from memo.cli_common import console
 from memo.config import Config
+from memo.trace import ambient_trace as _ambient_trace
 from memo.util import stable_hash, utc_now_iso
 
 
@@ -35,7 +35,7 @@ def _repo_index_operational_receipt(out: dict[str, Any]) -> dict[str, Any]:
         "status": status,
         "uri": f"memo://repo-index/{receipt_id}",
         "generated_at": utc_now_iso(),
-        "trace_id": os.environ.get("SYNAPSE_TRACE_ID", "").strip(),
+        "trace_id": _ambient_trace(),
         "repo": {
             "id": out.get("repo_id") or "",
             "name": name,

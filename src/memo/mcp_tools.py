@@ -1,9 +1,9 @@
 """Declarative MCP tool registry for memo.
 
-Ports the ToolSpec/Param pattern from memflow so new tools can be added
-as compact declarative specs instead of boilerplate FastMCP server_*.py
-files. Existing server_*.py modules stay unchanged — this module is the
-home for *new* tools going forward and a migration target for the old ones.
+Uses a ToolSpec/Param pattern so new tools can be added as compact declarative
+specs instead of boilerplate FastMCP server_*.py files. Existing server_*.py
+modules stay unchanged — this module is the home for *new* tools going forward
+and a migration target for the old ones.
 
 Usage
 -----
@@ -36,7 +36,7 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Infrastructure (adapted from memflow/mcp_tools.py)
+# Declarative tool infrastructure
 # ---------------------------------------------------------------------------
 
 

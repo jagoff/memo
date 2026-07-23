@@ -14,6 +14,26 @@ from memo.server_annotations import (
     annotated_tool,
 )
 
+_PROTECTED_MCP_EXTRA = {
+    "federation",
+    "learning",
+    "outcome_stats",
+    "owner_principal",
+    "principals",
+    "priority",
+    "trust_tier",
+    "visibility",
+    "write_policy",
+}
+
+
+def _safe_mcp_extra(extra: dict[str, Any] | None) -> dict[str, Any]:
+    """Drop authority-controlled metadata from caller-supplied MCP extras."""
+    safe_extra = dict(extra or {})
+    for key in _PROTECTED_MCP_EXTRA:
+        safe_extra.pop(key, None)
+    return safe_extra
+
 
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **WRITE)
@@ -25,7 +45,6 @@ def register(server: Any, memory: Memory) -> None:
         auto_derive: bool = False,
         extract: bool | None = None,
         extra: dict[str, Any] | None = None,
-        respect_synapse_freeze: bool | None = None,
         scope: str | None = None,
     ) -> dict[str, Any]:
         """Persist `content` to memo.
@@ -54,6 +73,7 @@ def register(server: Any, memory: Memory) -> None:
                 "message": f"scope must be 'project' or 'global', got {scope!r}",
             }
         auto_project = scope != "global"
+        safe_extra = _safe_mcp_extra(extra)
 
         if extract is None:
             extract = flag_bool("MEMO_SAVE_EXTRACT")
@@ -78,8 +98,7 @@ def register(server: Any, memory: Memory) -> None:
                 tags=tags,
                 auto_derive=auto_derive,
                 auto_project=auto_project,
-                extra=extra,
-                respect_synapse_freeze=respect_synapse_freeze,
+                extra=safe_extra,
             )
         except WriteRefused as exc:
             return {

@@ -121,8 +121,9 @@ def test_direct_save_redacts_before_any_persistence(
     receipts: list[tuple[str, dict[str, Any]]] = []
 
     monkeypatch.setattr(
-        "memo.receipts.emit_receipt",
-        lambda _op, *, text, meta, **_kwargs: receipts.append((text, meta)),
+        mem_with_stub.operational,
+        "receipt",
+        lambda operation, **kwargs: receipts.append((operation, kwargs)),
     )
     record = mem_with_stub.save(
         content=f"public {token} <private>{private_canary}</private> tail",
@@ -441,7 +442,8 @@ def test_receipt_failure_does_not_turn_committed_save_into_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "memo.receipts.emit_receipt",
+        mem_with_stub.operational,
+        "receipt",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("receipt unavailable")),
     )
 

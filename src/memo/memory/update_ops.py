@@ -14,6 +14,13 @@ from typing import Any
 
 import frontmatter
 
+from memo.contracts import (
+    LEGACY_PROVENANCE_KEYS,
+    PROVENANCE_KEYS,
+    ActorIdentity,
+    TrustTier,
+    normalize_provenance,
+)
 from memo.errors import IdentityConflictError, StorageError
 from memo.identity import (
     canonical_topic_key,
@@ -32,6 +39,7 @@ from memo.memory.record import (
 )
 from memo.tiers import VerificationState
 from memo.util import sha256_short as _sha256_short
+from memo.write_policy import actor_for_existing_record
 
 _log = logging.getLogger(__name__)
 
@@ -46,6 +54,15 @@ class _PreparedUpdateEmbedding:
 
 class _RetryPreparedUpdate(RuntimeError):
     """The optimistic update view changed before the commit lock was acquired."""
+
+
+@dataclass(frozen=True)
+class _UpdateIdentity:
+    """Canonical identity fields validated before an update is persisted."""
+
+    namespace: str
+    normalized_title: str
+    normalized_content_hash: str
 
 
 def _resolve_updated_body(
@@ -75,6 +92,42 @@ def _resolve_updated_body(
     return content if content is not None else old_body
 
 
+def _normalized_update_extra(
+    extra: dict[str, Any] | None,
+    existing_extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Collapse legacy provenance keys into the native nested contract."""
+    normalized = dict(extra) if extra is not None else dict(existing_extra or {})
+    provenance = normalize_provenance(normalized)
+    for key in PROVENANCE_KEYS | LEGACY_PROVENANCE_KEYS:
+        normalized.pop(key, None)
+    if provenance:
+        normalized["provenance"] = provenance
+    return normalized
+
+
+def _policy_actor_for_update(
+    actor: ActorIdentity | None,
+    *,
+    semantic_change: bool,
+    existing_extra: dict[str, Any] | None,
+    new_extra: dict[str, Any],
+) -> ActorIdentity:
+    """Select update authority and enforce the default agent trust ceiling."""
+    if actor is not None:
+        return actor
+    if not semantic_change:
+        return actor_for_existing_record(existing_extra)
+
+    if new_extra.get("trust_tier") in {
+        TrustTier.HUMAN.value,
+        TrustTier.TOOL_OBSERVED.value,
+        TrustTier.AGENT_VERIFIED.value,
+    }:
+        new_extra["trust_tier"] = TrustTier.AGENT_INFERRED.value
+    return ActorIdentity(actor_id="memo-update", actor_kind="agent")
+
+
 class _UpdateOpsMixin(_MemoryBase):
     # -- update -------------------------------------------------------------
 
@@ -89,6 +142,7 @@ class _UpdateOpsMixin(_MemoryBase):
         replace: tuple[str, str] | None = None,
         append: str | None = None,
         extra: dict[str, Any] | None = None,
+        actor: ActorIdentity | None = None,
     ) -> MemoryRecord | None:
         """Patch a record with model work outside the serialized commit section."""
         if is_derived_chunk_id(id_):
@@ -121,6 +175,7 @@ class _UpdateOpsMixin(_MemoryBase):
                         replace=replace,
                         append=append,
                         extra=extra,
+                        actor=actor,
                         _prepared_embedding=prepared,
                     )
                 if updated is not None and prepared is not None:
@@ -220,6 +275,7 @@ class _UpdateOpsMixin(_MemoryBase):
         replace: tuple[str, str] | None = None,
         append: str | None = None,
         extra: dict[str, Any] | None = None,
+        actor: ActorIdentity | None = None,
         _prepared_embedding: _PreparedUpdateEmbedding | None = None,
         _defer_embed: bool = False,
     ) -> MemoryRecord | None:
@@ -253,7 +309,7 @@ class _UpdateOpsMixin(_MemoryBase):
         new_title = (title.strip() if title else r["title"]) or r["title"]
         new_type = type_ or r["type"]
         new_tags = _normalise_tags(tags) if tags is not None else r["tags"]
-        new_extra = extra if extra is not None else dict(r.get("extra") or {})
+        new_extra = _normalized_update_extra(extra, r.get("extra"))
         now_iso = _now_iso()
 
         # Body resolution: provided > on-disk > empty.
@@ -289,55 +345,43 @@ class _UpdateOpsMixin(_MemoryBase):
         new_extra = sanitized.extra
         topic_key = sanitized.topic_key
         normalized_hash = sanitized.normalized_hash
+        semantic_change = bool(
+            new_body != old_body
+            or new_title != r["title"]
+            or new_type != r["type"]
+            or new_tags != r["tags"]
+        )
+        policy_actor = _policy_actor_for_update(
+            actor,
+            semantic_change=semantic_change,
+            existing_extra=r.get("extra"),
+            new_extra=new_extra,
+        )
+        decision = self.write_policy.preflight(
+            title=new_title,
+            content=new_body,
+            tags=new_tags,
+            extra=new_extra,
+            actor=policy_actor,
+        )
+        self.write_policy.enforce(decision)
+        new_extra["write_policy"] = decision.to_dict()
+        new_extra["visibility"] = decision.visibility.value
+        new_extra["trust_tier"] = decision.trust_tier.value
+        new_extra["owner_principal"] = self.cfg.device_id
         new_body_hash = _sha256_short(new_body)
-        new_namespace = namespace_for_index(new_tags, path=str(r["path"]))
-        if new_namespace is None:
-            raise IdentityConflictError(
-                kind="ambiguous_namespace",
-                incoming={"record_id": id_, "namespace": None},
-            )
-        canonical_topic = canonical_topic_key(topic_key)
-        new_normalized_title = normalized_title(new_title)
-        new_normalized_content_hash = normalized_content_hash(new_body)
-
-        if canonical_topic is not None:
-            topic_conflicts = [
-                row
-                for row in self.store.find_active_by_topic_identity(new_namespace, canonical_topic)
-                if str(row.get("id")) != id_
-            ]
-            if topic_conflicts:
-                raise IdentityConflictError(
-                    kind="update_topic_identity_conflict",
-                    incoming={
-                        "record_id": id_,
-                        "namespace": new_namespace,
-                        "topic_key": canonical_topic,
-                    },
-                    conflicts=topic_conflicts,
-                )
-
-        exact_conflicts = [
-            row
-            for row in self.store.find_active_by_exact_identity(
-                new_namespace,
-                new_type,
-                new_normalized_title,
-                new_normalized_content_hash,
-            )
-            if str(row.get("id")) != id_
-        ]
-        if exact_conflicts:
-            raise IdentityConflictError(
-                kind="update_exact_identity_conflict",
-                incoming={
-                    "record_id": id_,
-                    "namespace": new_namespace,
-                    "type": new_type,
-                    "normalized_title": new_normalized_title,
-                },
-                conflicts=exact_conflicts,
-            )
+        identity = self._validate_update_identity(
+            id_=id_,
+            path=str(r["path"]),
+            title=new_title,
+            type_=new_type,
+            tags=new_tags,
+            body=new_body,
+            topic_key=topic_key,
+        )
+        new_namespace = identity.namespace
+        new_normalized_title = identity.normalized_title
+        new_normalized_content_hash = identity.normalized_content_hash
 
         body_changed = new_body_hash != r["body_hash"]
         title_changed = new_title != r["title"]
@@ -540,8 +584,8 @@ class _UpdateOpsMixin(_MemoryBase):
         # timestamp-bump carries no semantic change worth logging.
         if delta:
             delta["updated"] = (r.get("updated"), now_iso)
-        # Track provenance churn so a re-route (e.g. Synapse re-issues a
-        # different trace_id on the same memory) shows up in history.
+        # Track provenance churn so a new trace/actor on the same memory shows
+        # up in history.
         old_prov = _extract_provenance(r.get("extra") or {})
         new_prov = _extract_provenance(new_extra)
         if old_prov != new_prov:
@@ -575,22 +619,87 @@ class _UpdateOpsMixin(_MemoryBase):
             invalid_at=r.get("invalid_at"),
         )
         if delta:
-            from memo.receipts import emit_receipt
-
-            emit_receipt(
-                "update",
-                text=f"Memo updated memory {id_[:8]}: {', '.join(sorted(delta.keys()))}",
-                meta={
-                    "id": id_,
-                    "type": new_type,
-                    "title": new_title,
-                    "delta_keys": ",".join(sorted(delta.keys())),
-                },
-            )
-            # M2b: also emit to the unified trinity ledger.
-            self._emit_ledger("update", updated_rec, new_prov)
+            with suppress(Exception):
+                self.operational.receipt(
+                    "update",
+                    subject_uri=f"memo://memoria/{id_}",
+                    trace_id=str(new_prov.get("trace_id") or ""),
+                    actor_id=str(new_prov.get("actor_id") or "memo"),
+                    metadata={
+                        "id": id_,
+                        "type": new_type,
+                        "title": new_title,
+                        "delta_keys": sorted(delta),
+                    },
+                )
         self._write_gen += 1
         return updated_rec
+
+    def _validate_update_identity(
+        self,
+        *,
+        id_: str,
+        path: str,
+        title: str,
+        type_: str,
+        tags: builtins.list[str],
+        body: str,
+        topic_key: str | None,
+    ) -> _UpdateIdentity:
+        """Reject topic/exact collisions and return canonical index fields."""
+        namespace = namespace_for_index(tags, path=path)
+        if namespace is None:
+            raise IdentityConflictError(
+                kind="ambiguous_namespace",
+                incoming={"record_id": id_, "namespace": None},
+            )
+
+        canonical_topic = canonical_topic_key(topic_key)
+        if canonical_topic is not None:
+            topic_conflicts = [
+                row
+                for row in self.store.find_active_by_topic_identity(namespace, canonical_topic)
+                if str(row.get("id")) != id_
+            ]
+            if topic_conflicts:
+                raise IdentityConflictError(
+                    kind="update_topic_identity_conflict",
+                    incoming={
+                        "record_id": id_,
+                        "namespace": namespace,
+                        "topic_key": canonical_topic,
+                    },
+                    conflicts=topic_conflicts,
+                )
+
+        canonical_title = normalized_title(title)
+        content_hash = normalized_content_hash(body)
+        exact_conflicts = [
+            row
+            for row in self.store.find_active_by_exact_identity(
+                namespace,
+                type_,
+                canonical_title,
+                content_hash,
+            )
+            if str(row.get("id")) != id_
+        ]
+        if exact_conflicts:
+            raise IdentityConflictError(
+                kind="update_exact_identity_conflict",
+                incoming={
+                    "record_id": id_,
+                    "namespace": namespace,
+                    "type": type_,
+                    "normalized_title": canonical_title,
+                },
+                conflicts=exact_conflicts,
+            )
+        return _UpdateIdentity(
+            namespace=namespace,
+            normalized_title=canonical_title,
+            normalized_content_hash=content_hash,
+        )
 
     # -- last saved ----------------------------------------------------------
 

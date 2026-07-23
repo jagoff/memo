@@ -353,7 +353,7 @@ def detect_gaps(
                 grounded_turns.add((sid, turn))
 
     # Gaps answer "what couldn't memo answer for YOU": scope to ambient recall
-    # (your prompts) AND to real working sessions. An eval harness (synapse)
+    # (your prompts) AND to real working sessions. An automated eval harness
     # spawns throwaway single-turn claude-code sessions that fire a generic
     # corpus question (TCP vs UDP, git rebase…) through the same ambient hook, so
     # the via filter alone can't exclude them — filter_real_sessions drops the

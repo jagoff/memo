@@ -1,7 +1,7 @@
 """Maintenance + provenance operations for `Memory`.
 
 `_MaintainOpsMixin` holds the corpus-wide maintenance surface (reindex, lint,
-gc, entity extraction), provenance lookups, and the synapse freeze-write guard.
+gc, entity extraction), and provenance lookups.
 Replay resolution moved to replay_ops.py; consolidation + synthesis to
 consolidate_ops.py.
 """
@@ -33,8 +33,6 @@ from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _EXTRACT_ENTITIES_SYSTEM_PROMPT,
     _VALID_TYPES,
-    WriteRefused,
-    _build_freeze_query,
     _derive_title,
     _extract_provenance,
     _log,
@@ -79,68 +77,6 @@ def _path_has_symlink_component(memory_root: Path, relative_parts: tuple[str, ..
 
 
 class _MaintainOpsMixin(_MemoryBase):
-    def _enforce_synapse_freeze(
-        self,
-        *,
-        title: str | None,
-        content: str,
-        tags: builtins.list[str] | None,
-        trace_id: str,
-    ) -> None:
-        """Query synapse for blocking RealityConflicts; raise on hit.
-
-        Derives a query from the most signal-dense fields available
-        (title, first non-empty tags, first content line). Best-effort:
-        if synapse is not on PATH, returns without raising — the
-        opt-in nature already implies "best information available".
-        """
-        # Deferred import: keeps memo's hard deps free of synapse.
-        from memo import synapse_client
-
-        if not synapse_client.is_available():
-            return
-        query = _build_freeze_query(title=title, content=content, tags=tags)
-        if not query:
-            return
-        # Fail-closed only when the env knob is explicitly set: an unreachable
-        # synapse then refuses the write instead of silently disarming the
-        # freeze gate. Without the knob (or when freeze was enabled only via the
-        # per-save kwarg) we stay permissive — synapse outages mustn't block
-        # memo's standalone writes. A missing binary is handled above and is
-        # always permissive regardless of this flag.
-        from memo.flags import flag_bool
-
-        fail_closed = flag_bool("MEMO_RESPECT_SYNAPSE_FREEZE")
-        try:
-            conflicts = synapse_client.list_conflicts(
-                query,
-                trace_id=trace_id,
-                strict=fail_closed,
-            )
-        except synapse_client.SynapseUnavailable as exc:
-            if fail_closed:
-                raise WriteRefused(
-                    {
-                        "conflict_id": "synapse-unreachable",
-                        "summary": (
-                            f"Synapse freeze-check could not complete ({exc}); "
-                            f"refusing under MEMO_RESPECT_SYNAPSE_FREEZE=1"
-                        ),
-                        "freeze_write": True,
-                        "lifecycle_state": "unknown",
-                        "severity": "unknown",
-                        "synapse_unreachable": True,
-                    }
-                ) from exc
-            _log.debug("synapse freeze-check unavailable (permissive): %s", exc)
-            return
-        except Exception as exc:  # pragma: no cover - subprocess noise
-            _log.debug("synapse freeze-check failed: %s", exc)
-            return
-        blocked, conflict = synapse_client.has_blocking_freeze(conflicts)
-        if blocked and conflict is not None:
-            raise WriteRefused(conflict)
-
     # -- provenance ---------------------------------------------------------
 
     def provenance(self, id_: str) -> dict[str, Any] | None:
@@ -155,7 +91,7 @@ class _MaintainOpsMixin(_MemoryBase):
 
             {
               "id": "<full id>",
-              "current": {synapse_trace_id, synapse_route_reason, ...},
+              "current": {trace_id, actor_id, route_reason, ...},
               "events": [
                 {"ts", "op", "title", "type", "provenance": {...}},
                 ...
@@ -768,15 +704,10 @@ class _MaintainOpsMixin(_MemoryBase):
             "facts": facts,
         }
         if reindexed or added:
-            from memo.receipts import emit_receipt
-
-            emit_receipt(
+            self.operational.receipt(
                 "reindex",
-                text=(
-                    f"Memo reindex: checked={checked} reindexed={reindexed} "
-                    f"added={added} skipped={skipped} force={force}"
-                ),
-                meta={
+                subject_uri="memo://maintenance/reindex",
+                metadata={
                     "checked": checked,
                     "reindexed": reindexed,
                     "added": added,

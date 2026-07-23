@@ -204,24 +204,18 @@ def briefing(*, compact: bool) -> None:
         if debug:
             print(f"# memo briefing: install seed failed: {exc}", file=_sys.stderr)
 
-    # ── 1b. Unified consciousness (Synapse) ───────────────────────────────
-    # Pulls present_state (memflow handoffs/focus) + reality_conflicts from
-    # `synapse packet`. No-op when synapse is not installed or unreachable —
-    # the rest of the briefing is unaffected (graceful, opt-in boundary).
-    if not flag_bool("MEMO_BRIEFING_SYNAPSE_DISABLE"):
-        try:
-            from memo.briefing import synapse_briefing_lines
+    # ── 1b. Memo-native operational continuity ─────────────────────────────
+    try:
+        from memo.briefing import operational_briefing_lines
 
-            try:
-                cur_cwd_str = _os.getcwd()
-            except Exception:
-                cur_cwd_str = ""
-            syn_lines = synapse_briefing_lines(cur_cwd_str)
-            if syn_lines:
-                lines.extend(syn_lines)
-        except Exception as exc:
-            if debug:
-                print(f"# memo briefing: synapse lookup failed: {exc}", file=_sys.stderr)
+        try:
+            cur_cwd_str = _os.getcwd()
+        except Exception:
+            cur_cwd_str = ""
+        lines.extend(operational_briefing_lines(mem, cur_cwd_str))
+    except Exception as exc:
+        if debug:
+            print(f"# memo briefing: operational lookup failed: {exc}", file=_sys.stderr)
 
     # ── 1c. Dream digest (last nightly run — shown once per receipt) ──────
     if flag_bool("MEMO_BRIEFING_DREAM_DIGEST"):

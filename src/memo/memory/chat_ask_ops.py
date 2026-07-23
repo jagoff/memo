@@ -30,7 +30,7 @@ class _ChatAskOpsMixin(_MemoryBase):
     ) -> dict[str, Any]:
         """Chat-shaped RAG envelope owned by Memo.
 
-        Synapse may provide federation context and Memflow-backed history, but
+        Callers may provide signed federation context and conversation history;
         retrieval, citations, and synthesis stay inside Memo.
         """
         started = time.perf_counter()
@@ -302,12 +302,9 @@ class _ChatAskOpsMixin(_MemoryBase):
                 metadata["path"] = source.get("path")
             if source.get("repo_name"):
                 metadata["repo_name"] = source.get("repo_name")
-            # Provenance trail — surfaced so the consumer can trace which agent
-            # session / route produced the memory that fed this answer.
-            for prov_key in ("synapse_trace_id", "synapse_agent_id"):
-                val = source.get(prov_key)
-                if val:
-                    metadata[prov_key] = val
+            provenance = source.get("provenance")
+            if isinstance(provenance, dict) and provenance:
+                metadata["provenance"] = provenance
             citations.append(
                 {
                     "n": index,

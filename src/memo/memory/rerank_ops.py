@@ -320,7 +320,7 @@ class _RerankOpsMixin(_MemoryBase):
         Mirrors the ``memo rerank`` CLI but reuses THIS instance's cached
         reranker (`self._reranker`), so a long-lived server (memo-mcp HTTP
         daemon) pays the Qwen3-Reranker load only once. This is the warm
-        equivalent of the per-process CLI used by Synapse's `memo_ce` rerank.
+        equivalent of the per-process ``memo rerank`` invocation.
 
         Each hit is scored on ``"{title}\\n\\n{snippet|body}"`` (truncated to
         ``body_chars``); returns the list reordered with a ``rerank_score``

@@ -189,7 +189,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 15 tools) | core/slim (stable core) | full/default (all tools).",
+        "MCP surface profile: agent (default, 30 tools) | core/slim (stable core) | full/default (all tools).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(
@@ -249,34 +249,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "cli",
         "CLI surface profile: default/full expose every command; core/slim hide advanced and experimental commands.",
     ),
-    # synapse / memflow integration
-    _spec(
-        "MEMO_RESPECT_SYNAPSE_FREEZE",
-        "bool",
-        False,
-        "synapse",
-        "Honor a Synapse write-freeze signal.",
-    ),
-    _spec(
-        "MEMO_SYNAPSE_EXECUTABLE", "str", "", "synapse", "Override path to the synapse executable."
-    ),
-    _spec(
-        "MEMO_SYNAPSE_CLIENT_TIMEOUT",
-        "float",
-        None,
-        "synapse",
-        "Synapse client request timeout (s).",
-    ),
-    _spec("MEMO_MEMFLOW_BIN", "str", "", "synapse", "Override path to the memflow binary."),
-    _spec("MEMO_EMIT_RECEIPTS", "bool", False, "synapse", "Emit operational receipts for Synapse."),
-    _spec(
-        "MEMO_EMIT_LEDGER",
-        "bool",
-        True,
-        "synapse",
-        "Emit consciousness-ledger entries.",
-        opt_out=True,
-    ),
     # cache tier (opt-in: memo as a bounded cache fronting an authoritative backing store)
     _spec(
         "MEMO_CACHE_MODE",
@@ -312,9 +284,9 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_CACHE_BACKEND",
         "str",
-        "memflow",
+        "vault",
         "cache",
-        "Authoritative backing store the cache fronts: memflow (flow_* shared consciousness) | none. Only consulted when MEMO_CACHE_MODE != off.",
+        "Memo-native backing store the cache fronts: vault | none. Only consulted when MEMO_CACHE_MODE != off.",
     ),
     # misc behavior
     _spec(
@@ -552,7 +524,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "",
         "roi",
-        "Identity of the calling layer (synapse / memflow / devin / devin-desktop "
+        "Identity of the calling layer (codex / claude-code / devin / devin-desktop "
         "/ opencode …) used to attribute memo consults in `memo usefulness` when a "
         "read does not pass an explicit source. Set it in that tool's CLI/MCP "
         "environment; a bare developer consult leaves it empty and is not counted.",
@@ -655,7 +627,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "roi",
         "Estimated model tokens saved per PRODUCTIVE memo consult (a search that "
         "returned >=1 hit) by a non-Claude-Code agent (codex/opencode/devin/"
-        "synapse/memflow/...). These agents read memo over MCP/CLI/socket, so we "
+        "other agents). These agents read memo over MCP/CLI/socket, so we "
         "log the consult but never see their answer — we can't ground it like a "
         "Claude Code turn. Priced BELOW MEMO_ROI_TOKENS_PER_GROUNDED (350) because "
         "the signal is weaker: memo returned relevant memory, use is unverified.",

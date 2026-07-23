@@ -9,8 +9,27 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-07-23
+
 ### Added
 
+- A self-contained operational-memory kernel: Memo-owned versioned contracts,
+  trace propagation, append-only hash-chained operation journal, conflict-aware
+  write policy, attention queue, focus state, handoffs, and crash recovery.
+- `EvidencePack`, a bounded retrieval result with source identifiers, evidence
+  URIs, coverage, freshness, and an explicit abstention result when the corpus
+  cannot support an answer.
+- Outcome-driven learning. Agents can record task success, partial success, or
+  failure against the memories they used; repeated evidence updates utility and
+  priority, and can promote memories into procedures or failure patterns.
+- Deny-by-default federation with per-memory `visible_to` ACLs, signed and
+  recipient-bound bundles, tamper detection, idempotent import, provenance, and
+  complete causal-journal transfer for owner backups.
+- `memo definitive check` and `memo definitive benchmark`, plus a dedicated CI
+  lane that proves the package has no retired runtime imports or sibling-repo
+  dependency.
+- A one-way compatibility migration for legacy trace, cache, provenance, and
+  operational metadata. Markdown remains authoritative throughout migration.
 - Namespaced memory identity (`project:<slug>`, `_global`, `_unscoped`) with
   deterministic create/corroborate/revise outcomes, additive `action` and
   `index_pending` save fields, schema-v5 diagnostics, and read-only
@@ -35,12 +54,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Changed
 
+- Memo now owns its complete runtime contract and operational state. Core
+  behavior no longer delegates to Synapse, Memflow, or private
+  `consciousness-contracts` packages.
+- Lifecycle promotion and demotion now consume durable task outcomes and persist
+  their priority changes instead of producing advisory-only recommendations.
+- Unified briefing, cache selection, tracing, provenance, CLI surfaces, and MCP
+  tools use Memo-native schemas. Legacy field names are accepted only at the
+  read-time migration boundary.
 - The contradiction scanner and legacy CLI now write/project the canonical
   relation ledger. `contradictions.db` is an import-only compatibility source;
   no new path dual-writes it.
 - Verification decay now moves only explicitly scheduled, due `VERIFIED`
   records to `STALE`; stale records remain stale until review or invalidation.
-- MCP profile inventories are now 15 tools for `agent`, 35 for `core`, and 143
+- MCP profile inventories are now 30 tools for `agent`, 50 for `core`, and 158
   for `full`, including always-on write-queue diagnostics.
 - Canonical relation candidate generation and judged-relation annotations are
   now on by default after passing the fixed 12-case policy corpus and measured
@@ -58,12 +85,17 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Removed
 
+- Runtime modules and adapters for Synapse, Memflow cache delegation,
+  consciousness ledgers, external receipts, and cross-dedup orchestration.
 - Dead fixed-age verification flags `MEMO_VERIFICATION_STALE_DAYS` and
   `MEMO_VERIFICATION_UNVERIFY_DAYS`; record-specific `review_after` owns
   freshness policy.
 
 ### Security
 
+- Federation excludes secrets and unapproved metadata, rejects unsafe bundle
+  sizes and device identifiers, verifies HMAC signatures before import, and
+  rejects divergent foreign journal chains.
 - All memory save, update, reindex, capture, and ingest persistence paths now
   enforce known-secret masking and `<private>` stripping at the final storage
   boundary. Entropy masking remains opt-in; legacy redaction flags now control

@@ -18,29 +18,8 @@ the missing pieces needed for a triage workflow:
   cutoff so the triage UI can foreground them.
 
 The store is kept in its own sqlite file (mirrors `history.db` /
-`graph.db`) to avoid WAL contention with the hot vec reader.
-
-Consciousness-stack integration
--------------------------------
-
-Memo does **not** push contradictions into Synapse's `RealityConflict`
-ledger. The direction is **pull**, not push:
-
-* Synapse's `conflict_sync.project_memo_contradictions()` (see
-  `synapse/src/synapse/conflict_sync.py`) calls
-  `MemoBackend.contradict_list()`, which shells out to
-  `memo contradict list --json --status open` and projects each row
-  into a `RealityConflict` for the Reality Workbench.
-* Synapse has no `conflicts register` verb today — there is no
-  externally-writable surface to push to. Adding one belongs on the
-  Synapse side, not here.
-* The opposite direction is GC4: `Memory.save()` queries Synapse's
-  freeze-write protocol via `memo.synapse_client` and refuses writes
-  while a `RealityConflict` is open. See
-  `src/memo/synapse_client.py`.
-
-If you find yourself adding a `_register_with_synapse()` here, stop:
-the loop is already closed.
+`graph.db`) to avoid WAL contention with the hot vec reader. New anomaly
+events are appended to Memo's own operational journal.
 """
 
 from __future__ import annotations
@@ -56,24 +35,12 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from memo.flags import flag_bool
 from memo.temporal import Contradiction, TemporalAnalyzer
 
 _log = logging.getLogger(__name__)
-
-try:
-    from consciousness_contracts import (
-        Anomaly,
-        ConsciousnessEvent,
-        LedgerWriter,
-        generate_anomaly_id,
-    )
-
-    _HAS_CONFLICT_CONTRACTS = True
-except ImportError:
-    _HAS_CONFLICT_CONTRACTS = False
 
 VALID_STATUSES = {
     "open",  # pending triage
@@ -817,6 +784,7 @@ class ContradictionScanner:
                             contr.relationship,
                             contr.confidence,
                             "open",
+                            operational=getattr(self.memory, "operational", None),
                         )
                 else:
                     evolutions += 1
@@ -854,66 +822,44 @@ def emit_anomaly(
     relationship: str,
     confidence: float,
     status: str,
+    *,
+    operational: Any | None = None,
 ) -> str | None:
-    """Emit a shared-contract anomaly event for cross-system visibility.
-
-    Memo still does not push contradictions into Synapse's conflict store.
-    Synapse pulls open contradiction pairs from memo. This function writes a
-    best-effort `consciousness.anomaly.v1` event to the shared ledger so
-    Memflow/Synapse can observe the detection without creating a second
-    writable conflict channel.
-
-    Args:
-        memory_id_a: First memory in the contradiction pair.
-        memory_id_b: Second memory in the contradiction pair.
-        relationship: Relationship type (contradiction, evolution, etc).
-        confidence: Confidence score (0-1).
-        status: Current status (open, fused, kept_newer, etc.).
-
-    Returns:
-        The anomaly_id that was emitted, or None if consciousness-contracts unavailable.
-    """
-    if not _HAS_CONFLICT_CONTRACTS:
-        return None
-
-    anomaly_id = generate_anomaly_id(
-        "semantic_contradiction",
-        f"memo:{memory_id_a}:{memory_id_b}",
+    """Append a native anomaly event and return its deterministic id."""
+    anomaly_id = (
+        "anomaly-"
+        + uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"memo:semantic_contradiction:{memory_id_a}:{memory_id_b}",
+        ).hex[:24]
     )
-    state: Literal["detected", "resolved"] = "detected" if status == "open" else "resolved"
-    severity: Literal["low", "medium", "high"] = (
-        "high" if confidence >= 0.9 else "medium" if confidence >= 0.75 else "low"
-    )
-    ts = datetime.now(UTC).isoformat()
-    anomaly = Anomaly(
-        anomaly_id=anomaly_id,
-        kind="semantic_contradiction",
-        state=state,
-        summary=(f"memo {relationship} between memories {memory_id_a[:12]} and {memory_id_b[:12]}"),
-        detected_at=ts,
-        source_backend="memo",
-        evidence_uris=(
-            f"memo://memoria/{memory_id_a}",
-            f"memo://memoria/{memory_id_b}",
-        ),
-        severity=severity,
-        metadata={
-            "memory_id_a": memory_id_a,
-            "memory_id_b": memory_id_b,
-            "relationship": relationship,
-            "confidence": confidence,
-            "status": status,
-        },
-    )
-    event = ConsciousnessEvent(
-        event_id=f"evt-{uuid.uuid4().hex}",
-        ts=ts,
-        source="memo",
-        op="anomaly_raised",
-        subject_uri=f"memo://anomaly/{anomaly_id}",
-        payload=anomaly.to_dict(),
-    )
-    LedgerWriter().emit(event)
+    state = "detected" if status == "open" else "resolved"
+    severity = "high" if confidence >= 0.9 else "medium" if confidence >= 0.75 else "low"
+    if operational is not None:
+        operational.ledger.append(
+            "anomaly.record",
+            subject_uri=f"memo://anomaly/{anomaly_id}",
+            payload={
+                "anomaly_id": anomaly_id,
+                "kind": "semantic_contradiction",
+                "state": state,
+                "summary": (
+                    f"memo {relationship} between memories "
+                    f"{memory_id_a[:12]} and {memory_id_b[:12]}"
+                ),
+                "evidence_uris": [
+                    f"memo://memoria/{memory_id_a}",
+                    f"memo://memoria/{memory_id_b}",
+                ],
+                "severity": severity,
+                "memory_id_a": memory_id_a,
+                "memory_id_b": memory_id_b,
+                "relationship": relationship,
+                "confidence": confidence,
+                "status": status,
+                "created_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
+            },
+        )
     return anomaly_id
 
 

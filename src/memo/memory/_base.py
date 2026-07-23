@@ -10,6 +10,7 @@ ellipsis-body stubs are never executed.
 
 from __future__ import annotations
 
+import builtins
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -25,6 +26,8 @@ class _MemoryBase:
     history: Any
     graph: Any
     fact_edges: Any
+    operational: Any
+    write_policy: Any
     _chat: Any
     _cache: Any
     _reranker: Any
@@ -53,12 +56,14 @@ class _MemoryBase:
     dashboard: Any
     import_export: Any
     collaborative: Any
+    federation: Any
 
     # -- methods provided by sibling mixins / the facade -------------------
     # Ellipsis-body stubs so a mixin that calls a method owned by another
     # mixin type-checks standalone; the real impl wins via MRO.
     def save(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def search(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def list(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def get(self, id_: str) -> MemoryRecord | None: ...  # type: ignore[empty-body]
     def supersede(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _set_validity_metadata(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
@@ -76,7 +81,7 @@ class _MemoryBase:
         *,
         title: str | None = None,
         type_: str | None = None,
-        tags: list[str] | None = None,
+        tags: builtins.list[str] | None = None,
         content: str | None = None,
         replace: tuple[str, str] | None = None,
         append: str | None = None,
@@ -100,7 +105,7 @@ class _MemoryBase:
     def _apply_retrieval_boost(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_verification_decay(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _apply_source_feedback(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
-    def _apply_write_policy(self, *a: Any, **k: Any) -> Any: ...
+    def _apply_cache_write_policy(self, *a: Any, **k: Any) -> Any: ...
     def _build_ask_context(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _build_rel_path(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _cache_backend(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
@@ -110,9 +115,7 @@ class _MemoryBase:
     def _compose_for_embed(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _derive_metadata(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _embed_cached(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
-    def _emit_ledger(self, *a: Any, **k: Any) -> Any: ...
     def _emit_save_receipt(self, *a: Any, **k: Any) -> Any: ...
-    def _enforce_synapse_freeze(self, *a: Any, **k: Any) -> Any: ...
     def _ensure_chat(self, *a: Any, **k: Any) -> ChatBackend: ...  # type: ignore[empty-body]
     def _ensure_reranker(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _generate_contextual_summary(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]

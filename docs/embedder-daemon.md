@@ -1,10 +1,10 @@
 # Embedder daemon (shared MLX sidecar)
 
 `memo recall-daemon` is more than a recall server. It also doubles as a
-**shared MLX embedder sidecar**: any peer process — `synapse`'s federator,
-`memflow`'s daemon, another `memo` CLI invocation — can reuse the one warm
-MLX model loaded in the daemon's RAM (~2GB for Qwen3-Embedding-0.6B +
-reranker) instead of paying its own cold start (~2s) and memory cost.
+**shared MLX embedder sidecar**: any local memo worker or CLI invocation can
+reuse the one warm MLX model loaded in the daemon's RAM (~2GB for
+Qwen3-Embedding-0.6B + reranker) instead of paying its own cold start (~2s)
+and memory cost.
 
 This document covers the socket protocol, lifecycle, observability surface,
 and the env knobs that tune all three.
@@ -84,8 +84,8 @@ requests, unknown ops, and handler exceptions.
 The daemon also persists this snapshot to
 `state_dir/embed_daemon_stats.json` every
 `MEMO_EMBEDDER_STATS_INTERVAL_S` seconds (default `60`). Peers that
-cannot or do not want to open the socket — `synapse_doctor`, a static
-health dashboard — can `cat` that file instead.
+cannot or do not want to open the socket — for example, a static health
+dashboard — can `cat` that file instead.
 
 CLI surface:
 

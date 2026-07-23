@@ -33,6 +33,26 @@ def _walk_cli_commands(cmd: Command, path: tuple[str, ...] = ()) -> Iterator[tup
 
 CLI_COMMAND_PATHS = tuple(_walk_cli_commands(cli))
 
+OPERATIONAL_TOOL_NAMES = frozenset(
+    {
+        "memo_attention_ack",
+        "memo_attention_add",
+        "memo_conflict_open",
+        "memo_conflict_resolve",
+        "memo_evidence_pack",
+        "memo_federation_preview",
+        "memo_focus_clear",
+        "memo_focus_set",
+        "memo_handoff_consume",
+        "memo_handoff_create",
+        "memo_journal_verify",
+        "memo_operational_state",
+        "memo_outcome_record",
+        "memo_procedure_candidates",
+        "memo_procedure_promote",
+    }
+)
+
 
 @pytest.mark.parametrize("command_path", CLI_COMMAND_PATHS, ids=lambda p: " ".join(p))
 def test_cli_command_help_smoke(command_path: tuple[str, ...], tmp_path: Path) -> None:
@@ -105,15 +125,15 @@ def test_mcp_full_profile_registers_every_decorated_server_tool(
     registered = _mcp_tool_names(tmp_path, monkeypatch, "full")
 
     assert expected <= registered
-    assert len(registered) == 143
+    assert len(registered) == 158
 
 
 @pytest.mark.parametrize(
     ("profile", "expected_count"),
     [
-        ("agent", 15),
-        ("core", 35),
-        ("full", 143),
+        ("agent", 30),
+        ("core", 50),
+        ("full", 158),
     ],
 )
 def test_mcp_profile_tool_counts(
@@ -124,3 +144,4 @@ def test_mcp_profile_tool_counts(
     assert len(names) == expected_count
     assert "memo_version" in names
     assert "memo_graph" in names
+    assert names >= OPERATIONAL_TOOL_NAMES

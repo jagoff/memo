@@ -5,7 +5,7 @@ under `memories/` and signal under `signal/`). Git is the single source of
 truth and transport between Macs; sync runs at session boundaries (pull on
 SessionStart, push on Stop), not second-by-second.
 
-Design (decoupled from memflow — its git_sync is not importable here):
+Design (self-contained; the sync implementation lives entirely in memo):
 
   push = export-signal → git add -A → commit (if dirty) → push
   pull = fetch → pre-merge remote signal from the git object into the DB

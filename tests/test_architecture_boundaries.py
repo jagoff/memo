@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -77,50 +76,20 @@ def _module_imports(module: str) -> set[str]:
     return _memo_imports(single)
 
 
-def test_brain_like_cli_groups_are_not_public() -> None:
-    """Memo exposes corpus primitives; Synapse owns orchestration surfaces."""
-    forbidden = {"agent", "cognitive", "federation", "lifecycle", "suggest"}
-
-    assert forbidden.isdisjoint(cli.commands)
+def test_operational_surfaces_are_memo_owned() -> None:
+    """Continuity and evidence are first-class Memo surfaces."""
+    assert {"operational", "evidence"}.issubset(cli.commands)
 
 
-def test_brain_like_mcp_tools_are_not_registered() -> None:
-    # MCP tools live across server.py + server_*.py (registered via @server.tool()
-    # def memo_*) and mcp_tools.py (ToolSpec name="memo_*"). Scan all of them so the
-    # guard keeps biting after the monolith split + the memory_*->memo_* rename.
-    memo_dir = REPO_ROOT / "src" / "memo"
-    sources = [
-        memo_dir / "server.py",
-        memo_dir / "mcp_tools.py",
-        *sorted(memo_dir.glob("server_*.py")),
-    ]
-    forbidden = ("agent", "cognitive", "federation", "lifecycle", "suggest")
-
-    for path in sources:
-        if not path.exists():
-            continue
-        text = path.read_text(encoding="utf-8")
-        for prefix in forbidden:
-            esc = re.escape(prefix)
-            # Cover BOTH tool prefixes (memo_* and the session-pattern mem_*)
-            # so a mem_cognitive_* tool cannot evade the guard by prefix.
-            # mem_suggest_topic_key is exempt: a pure string-formatting helper
-            # (type->family + kebab-case), no LLM/retrieval/orchestration.
-            for match in re.finditer(rf"\bdef (?:memo|mem)_({esc}\w*)", text):
-                assert f"mem_{match.group(1)}" == "mem_suggest_topic_key", (
-                    f"brain-like MCP tool {match.group(0)[4:]}* defined in {path.name}"
-                )
-            assert re.search(rf'name="(?:memo|mem)_{esc}', text) is None, (
-                f"brain-like MCP tool (memo|mem)_{prefix}* registered in {path.name}"
-            )
-
-
-def test_repo_index_does_not_write_memflow_receipts() -> None:
-    source = (REPO_ROOT / "src" / "memo" / "cli.py").read_text(encoding="utf-8")
-
-    assert "memflow_receipt" not in source
-    assert "MEMO_MEMFLOW" not in source
-    assert "--no-memflow-receipt" not in source
+def test_runtime_does_not_import_retired_memory_packages() -> None:
+    retired = {"synapse", "memflow", "consciousness_contracts"}
+    violations: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        imports = _memo_imports(path)
+        external = retired & imports
+        if external:
+            violations.append(f"{path.relative_to(REPO_ROOT)}: {sorted(external)}")
+    assert violations == []
 
 
 def test_supported_windsurf_project_files_are_ignored() -> None:
@@ -191,6 +160,7 @@ LAZY_SUBSYSTEMS = [
     "dashboard",
     "import_export",
     "collaborative",
+    "federation",
 ]
 
 
@@ -232,6 +202,7 @@ def test_optional_memory_capabilities_live_in_registry(mock_memory) -> None:
         "backup",
         "collaborative",
         "dashboard",
+        "federation",
         "import_export",
         "lifecycle",
         "query_composer",

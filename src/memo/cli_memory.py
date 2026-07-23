@@ -230,8 +230,8 @@ def _move_restore_target_aside(path: Path) -> Path | None:
     multiple=True,
     metavar="KEY=VALUE",
     help="Repeatable. Adds an entry to the `extra` metadata bag persisted "
-    "to frontmatter + meta.extra_json. Synapse uses this to attach "
-    "provenance (`--meta synapse_trace_id=...`, `--meta synapse_agent_id=...`).",
+    "to frontmatter + meta.extra_json. Use native nested provenance through "
+    "the API for trace_id, actor_id, route_reason, and evidence_uris.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a panel.")
 def save(
@@ -445,6 +445,8 @@ def update(
         content = sys.stdin.read()
 
     mem = _get_memory(Config.from_env())
+    from memo.contracts import ActorIdentity
+
     rec = _resolved(
         lambda: mem.update(
             id_,
@@ -452,6 +454,7 @@ def update(
             type_=type_,
             tags=list(tags) if tags else None,
             content=content,
+            actor=ActorIdentity(actor_id="memo-cli", actor_kind="human"),
         )
     )
     if rec is None:
@@ -482,12 +485,20 @@ def rename(title: str, id_: str | None, as_json: bool) -> None:
     """
 
     mem = _get_memory(Config.from_env())
+    from memo.contracts import ActorIdentity
+
     if id_ is None:
         id_ = mem.last_saved_id()
         if id_ is None:
             console.print("[red]no recent save found[/red] — pass an ID explicitly")
             sys.exit(1)
-    rec = _resolved(lambda: mem.update(id_, title=title))
+    rec = _resolved(
+        lambda: mem.update(
+            id_,
+            title=title,
+            actor=ActorIdentity(actor_id="memo-cli", actor_kind="human"),
+        )
+    )
     if rec is None:
         console.print(f"[red]not found:[/red] {id_}")
         sys.exit(1)
@@ -563,7 +574,14 @@ def delete(id_: str, yes: bool) -> None:
         click.confirm(
             f"Delete memory {id_!r}? This removes the .md and the index entry.", abort=True
         )
-    ok = _resolved(lambda: mem.delete(id_))
+    from memo.contracts import ActorIdentity
+
+    ok = _resolved(
+        lambda: mem.delete(
+            id_,
+            actor=ActorIdentity(actor_id="memo-cli", actor_kind="human"),
+        )
+    )
     console.print(f"[{'green' if ok else 'red'}]{'✓ deleted' if ok else 'not found'}[/]: {id_}")
     if not ok:
         sys.exit(1)
@@ -602,7 +620,17 @@ def fix(id_: str, title: str | None, type_: str | None, body: str | None) -> Non
     """Correct a captured memory's title/type/body (thin wrapper over `update`)."""
 
     mem = _get_memory(Config.from_env())
-    rec = _resolved(lambda: mem.update(id_, title=title, type_=type_, content=body))
+    from memo.contracts import ActorIdentity
+
+    rec = _resolved(
+        lambda: mem.update(
+            id_,
+            title=title,
+            type_=type_,
+            content=body,
+            actor=ActorIdentity(actor_id="memo-cli", actor_kind="human"),
+        )
+    )
     if rec is None:
         console.print(f"[red]not found:[/red] {id_}")
         sys.exit(1)
@@ -696,7 +724,7 @@ def ocr_image(image_path: str, as_json: bool) -> None:
 def provenance(id_: str, as_json: bool) -> None:
     """Provenance trail for one memory.
 
-    Returns the current synapse_*/agent_* keys plus every save/update
+    Returns the current native provenance keys plus every save/update
     event carrying its own provenance snapshot. Useful to audit which
     agent / trace_id / route_reason produced each version of a memory.
     """

@@ -380,11 +380,11 @@ def test_forget_preserves_other_extra_keys(mock_memory):
     rec = mock_memory.save(
         content="zephyrine protocol notes",
         title="Zephyrine",
-        extra={"synapse_trace_id": "trace-123"},
+        extra={"provenance": {"trace_id": "trace-123"}},
     )
     out = mock_memory.forget(rec.id, reason="obsolete")
     assert out is not None
-    assert out.extra.get("synapse_trace_id") == "trace-123"
+    assert out.extra.get("provenance", {}).get("trace_id") == "trace-123"
     assert out.extra.get(IS_FORGOTTEN_KEY) is True
 
 

@@ -422,7 +422,7 @@ def test_repo_cli_index_search_and_get(tmp_path: Path, monkeypatch):
         "MEMO_EMBEDDER_DIMS": "4",
         "MEMO_EMBEDDER_MODEL": "stub",
         "MEMO_RERANKER_ENABLED": "0",
-        "SYNAPSE_TRACE_ID": "synapse://trace/repo-index",
+        "MEMO_TRACE_ID": "memo://trace/repo-index",
     }
     runner = CliRunner()
 
@@ -463,7 +463,7 @@ def test_repo_cli_index_json_emits_backend_agnostic_operational_receipt(
         "MEMO_EMBEDDER_DIMS": "4",
         "MEMO_EMBEDDER_MODEL": "stub",
         "MEMO_RERANKER_ENABLED": "0",
-        "SYNAPSE_TRACE_ID": "synapse://trace/repo-index",
+        "MEMO_TRACE_ID": "memo://trace/repo-index",
     }
 
     result = CliRunner().invoke(
@@ -479,7 +479,7 @@ def test_repo_cli_index_json_emits_backend_agnostic_operational_receipt(
     assert payload["operational_receipt"]["source"] == "memo"
     assert payload["operational_receipt"]["operation"] == "repo_index"
     assert payload["operational_receipt"]["uri"].startswith("memo://repo-index/sample/")
-    assert payload["operational_receipt"]["trace_id"] == "synapse://trace/repo-index"
+    assert payload["operational_receipt"]["trace_id"] == "memo://trace/repo-index"
     assert payload["operational_receipt"]["content_hash"]
     assert "memflow_receipt" not in payload
 

@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="mlx-memo"
 OLD_APP_NAME="memo-mcp"
 PYPI_SPEC="mlx-memo"
-DEFAULT_VERSION="3.12.1"
+DEFAULT_VERSION="4.0.0"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13
 
@@ -181,36 +181,6 @@ ensure_default_dirs() {
   mkdir -p "${MEMO_STATE_DIR:-$HOME/.local/share/memo}"
 }
 
-# consciousness-contracts is a sibling repo, not on PyPI — a `pipx install
-# git+...memo.git` cannot pull it. memo runs fine without it (shared embed cache
-# + URI parsing fall back), but `install-mcp` and the shared cache need it.
-# Inject best-effort from a local checkout; never fail the install if it's absent.
-inject_contracts() {
-  local cc="${MEMO_CONTRACTS_PATH:-$HOME/repos/consciousness-contracts}"
-  if [[ ! -f "$cc/pyproject.toml" ]]; then
-    say "consciousness-contracts not found at $cc — skipping (memo runs with fallbacks; set MEMO_CONTRACTS_PATH to enable)"
-    return 0
-  fi
-  if [[ "$USE_UV" == "1" ]]; then
-    local uv_venv="$HOME/.local/share/uv/tools/$APP_NAME"
-    if spin "injecting consciousness-contracts (enables install-mcp + shared cache)" \
-      "$UV_BIN" pip install --python "$uv_venv" -e "$cc"; then
-      ok "consciousness-contracts injected"
-    else
-      warn "consciousness-contracts inject failed (non-fatal; memo runs with fallbacks)."
-      warn "Re-run manually: uv pip install --python ~/.local/share/uv/tools/$APP_NAME -e $cc"
-    fi
-  else
-    if spin "injecting consciousness-contracts (enables install-mcp + shared cache)" \
-      run_pipx inject "$APP_NAME" -e "$cc"; then
-      ok "consciousness-contracts injected"
-    else
-      warn "consciousness-contracts inject failed (non-fatal; memo runs with fallbacks)."
-      warn "Re-run manually: pipx inject $APP_NAME -e $cc"
-    fi
-  fi
-}
-
 resolve_memo_bin() {
   if command -v memo >/dev/null 2>&1; then
     command -v memo
@@ -369,8 +339,6 @@ main() {
   memo_bin="$(resolve_memo_bin)" || die "memo was installed but no memo binary was found in PATH or ~/.local/bin"
   ok "installed: $("$memo_bin" --version)"
 
-  phase "Linking consciousness-contracts"
-  inject_contracts
   ensure_default_dirs
 
   phase "MLX models (required for retrieval)"
@@ -475,7 +443,7 @@ main() {
 
   phase "Shared corpus"
   # Cross-Mac corpus: clone the git-synced memo-sync repo and point this
-  # install at it (opt-in, mirrors memflow's MEMFLOW_DATA_REMOTE cutover).
+  # install at it when explicitly requested.
   # Idempotent — re-running reuses the existing clone.
   if [[ -n "${MEMO_SYNC_REMOTE:-}" ]]; then
     local sync_dest="${MEMO_SYNC_DEST:-$HOME/repos/memo-sync}"

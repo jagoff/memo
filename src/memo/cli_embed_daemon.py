@@ -19,8 +19,8 @@ from memo.cli_common import console
 def embed_daemon_group() -> None:
     """Inspect the recall daemon's shared embedder sidecar.
 
-    The recall daemon doubles as a shared MLX embedder so peers
-    (synapse, memflow, other memo CLIs) can reuse one warm model.
+    The recall daemon doubles as a shared MLX embedder so local memo
+    workers and other memo CLI invocations can reuse one warm model.
     These commands surface its metrics without opening the socket
     by hand. See `memo.embedder_client` for the in-process client.
     """

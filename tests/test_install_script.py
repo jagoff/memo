@@ -35,6 +35,14 @@ def _installer_env(tmp_path: Path, fake_bin: Path, log: Path) -> dict[str, str]:
     }
 
 
+def test_installer_has_no_sibling_runtime_injection() -> None:
+    installer = (ROOT / "install.sh").read_text(encoding="utf-8").casefold()
+
+    assert "consciousness-contracts" not in installer
+    assert "memflow" not in installer
+    assert "synapse" not in installer
+
+
 def test_failed_uv_install_preserves_existing_tool_and_uses_release_pin(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()

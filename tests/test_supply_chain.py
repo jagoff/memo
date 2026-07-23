@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from memo.cli import cli
+from memo.surface import mcp_profile_token_cost
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -150,14 +151,15 @@ def test_macos_model_cache_survives_tooling_only_project_changes() -> None:
     assert "macos-hf-${{ runner.os }}-" in workflow
 
 
-def test_contract_ci_has_public_gate_and_clearly_optional_private_integration() -> None:
+def test_ci_enforces_runtime_independence_and_definitive_memory_gate() -> None:
     workflow = (WORKFLOWS / "test.yml").read_text(encoding="utf-8")
 
-    assert "contract-stub-compatibility:" in workflow
-    assert "tests/test_contract_stub_compatibility.py" in workflow
-    assert "private-contract-integration:" in workflow
-    assert "CONTRACTS_TOKEN" in workflow
-    assert "optional private integration" in workflow.lower()
+    assert "runtime-independence:" in workflow
+    assert "tests/test_independence.py" in workflow
+    assert "memo definitive benchmark" in workflow
+    assert "private-contract" not in workflow
+    assert "CONTRACTS_TOKEN" not in workflow
+    assert "consciousness-contracts" not in workflow
 
 
 def test_security_policy_matches_current_release_and_opt_in_surfaces() -> None:
@@ -184,6 +186,11 @@ def test_readme_surface_counts_and_top_level_command_inventory_are_exact() -> No
     documented = set(re.findall(r"`([a-z][a-z0-9-]*)`", block))
 
     assert documented == set(cli.commands)
-    assert "| `full` / `default` | 143 |" in readme
-    assert "versus **143 tools / ~16k tokens**" in readme
-    assert "default MCP surface is 15 tools, not 143" in readme
+    agent_count, agent_tokens, _ = mcp_profile_token_cost("agent")
+    core_count, core_tokens, _ = mcp_profile_token_cost("core")
+    full_count, full_tokens, _ = mcp_profile_token_cost("full")
+    assert f"| `agent` (default) | {agent_count} | {agent_tokens} |" in readme
+    assert f"| `core` / `slim` | {core_count} | {core_tokens} |" in readme
+    assert f"| `full` / `default` | {full_count} | {full_tokens} |" in readme
+    assert f"versus **{full_count} tools / {full_tokens} tokens**" in readme
+    assert f"default MCP surface is {agent_count} tools, not {full_count}" in readme

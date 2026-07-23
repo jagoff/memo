@@ -9,16 +9,19 @@ The stable core is:
 
 - durable memory CRUD and retrieval
 - ambient recall / briefing / recall-daemon
+- native contracts, tracing, write policy, and the causal operation journal
+- bounded EvidencePack generation with explicit abstention
+- operational continuity, outcome feedback, and procedure promotion
+- signed, ACL-scoped federation bundles
 - reindex / doctor / runtime health
 - history, diff, and `as-of` time-machine flows
 
 Use this file as the boundary marker for corpus-level experiments and
 faster-moving advanced features.
 
-Memo no longer ships autonomous-agent or cognitive-state modules. Those
-experiments crossed the product boundary: Synapse owns orchestration and
-front-door policy, while Memo owns local semantic storage, retrieval, replay,
-and backend-agnostic receipts.
+Memo does not depend on a sibling orchestrator, external memory daemon, or
+private contract package. Agent cognition remains outside the product boundary;
+Memo itself owns the complete durable-memory and operational-continuity runtime.
 
 ## multimodal.py
 
@@ -71,9 +74,10 @@ Preference learning (tracking which hits the user follows up on) is stubbed.
 ## lifecycle.py
 
 Memory lifecycle management. Archives inactive memories to a subdirectory,
-promotes frequently-accessed ones, and expires debug or temporary memories
-according to configurable policies. Access tracking hooks are not yet
-integrated with the core save/search paths.
+expires debug or temporary memories according to configurable policies, and
+contains advanced archive policy controls. Outcome-backed promotion and
+demotion, access tracking, and persisted priority updates are stable core
+behavior; only the broader automatic archival policy remains experimental.
 
 ## navigation.py
 
@@ -99,7 +103,8 @@ engine uses the helper LLM; confidence scoring is heuristic.
 Multi-device sync and automated backup. Computes a content-addressed diff
 of two vaults, pushes/pulls changed memories, resolves conflicts, and
 produces compressed backups. No transport or conflict-resolution strategy
-is finalised.
+is finalised. This is separate from the stable federation bundle protocol,
+which performs bounded, signed, ACL-scoped exchange without automatic merge.
 
 ## versioning.py
 

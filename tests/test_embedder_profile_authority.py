@@ -1,71 +1,57 @@
-"""M4: memo is the authoritative source of the embedder profile.
-
-These tests pin the wire shape returned by:
-1. The new MCP tool ``memo_get_embedder_profile`` — used by synapse and
-   memflow at startup to verify compatibility.
-2. ``_profile_status_report`` — extended to include a ``typed_profile``
-   field that contracts-aware consumers can pluck.
-
-If contracts is installed, the typed profile must roundtrip through
-``EmbedderProfile.from_dict``.
-"""
+"""Memo is the authoritative source of its native embedder profile."""
 
 from __future__ import annotations
 
-import pytest
+import hashlib
+import json
 
 from memo.cli_diag import _profile_status_report, _typed_embedder_profile
 from memo.config import Config
 from memo.embedder_select import active_embedder_identity
 
-cc = pytest.importorskip("consciousness_contracts")
+
+def _fingerprint(profile: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
-def test_typed_embedder_profile_returns_contract_shape(tmp_cfg: Config) -> None:
+def test_typed_embedder_profile_returns_native_shape(tmp_cfg: Config) -> None:
     typed = _typed_embedder_profile(tmp_cfg)
-    assert typed is not None
-    assert typed["schema"] == "consciousness.embedder_profile.v1"
-    expected_model = active_embedder_identity(tmp_cfg)
-    assert typed["model_id"] == expected_model
+    assert typed["schema"] == "memo.embedder_profile.v1"
+    assert typed["model_id"] == active_embedder_identity(tmp_cfg)
     assert typed["dims"] == int(tmp_cfg.embedder_dims)
     assert typed["normalization"] == "l2"
     assert typed["provider"] == "memo"
 
-    restored = cc.EmbedderProfile.from_dict(typed)
-    assert restored.model_id == expected_model
-    assert restored.dims == int(tmp_cfg.embedder_dims)
-
 
 def test_profile_status_report_includes_typed_profile(tmp_cfg: Config) -> None:
     report = _profile_status_report(tmp_cfg, include_db=False)
-    assert "typed_profile" in report
+    assert report["typed_profile"]["schema"] == "memo.embedder_profile.v1"
     assert report["typed_profile"]["dims"] == int(tmp_cfg.embedder_dims)
 
 
-def test_compatibility_check_detects_dim_drift(tmp_cfg: Config) -> None:
-    """The fingerprint method makes silent dim mismatch impossible."""
-    typed = _typed_embedder_profile(tmp_cfg)
-    assert typed is not None
-    p_memo = cc.EmbedderProfile.from_dict(typed)
-    p_other = cc.EmbedderProfile(model_id=p_memo.model_id, dims=p_memo.dims + 1)
-    assert not p_memo.is_compatible_with(p_other)
-    assert p_memo.fingerprint() != p_other.fingerprint()
+def test_profile_fingerprint_detects_dim_drift(tmp_cfg: Config) -> None:
+    profile = _typed_embedder_profile(tmp_cfg)
+    drifted = {**profile, "dims": profile["dims"] + 1}
+    assert _fingerprint(profile) != _fingerprint(drifted)
 
 
-def test_mcp_tool_exposes_typed_profile(tmp_cfg: Config) -> None:
-    """memo_get_embedder_profile must be registered and return the contract shape."""
+def test_mcp_tool_exposes_native_profile(tmp_cfg: Config) -> None:
     import asyncio
 
     from memo.memory import Memory
     from memo.server import build_server
 
     mem = Memory(tmp_cfg)
-    server = build_server(memory=mem)
-    tool = asyncio.run(server.get_tool("memo_get_embedder_profile"))
-    assert tool is not None, "memo_get_embedder_profile not registered"
-
-    payload = tool.fn()
-    assert payload["schema"] == "consciousness.embedder_profile.v1"
-    assert payload["model_id"] == active_embedder_identity(tmp_cfg)
-    assert payload["dims"] == int(tmp_cfg.embedder_dims)
-    assert payload["provider"] == "memo"
+    try:
+        server = build_server(memory=mem)
+        tool = asyncio.run(server.get_tool("memo_get_embedder_profile"))
+        assert tool is not None
+        payload = tool.fn()
+        assert payload["schema"] == "memo.embedder_profile.v1"
+        assert payload["model_id"] == active_embedder_identity(tmp_cfg)
+        assert payload["dims"] == int(tmp_cfg.embedder_dims)
+        assert payload["provider"] == "memo"
+    finally:
+        mem.close()

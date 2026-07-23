@@ -1,4 +1,4 @@
-"""Shared embedder interface for the memo / memflow / rag ecosystem.
+"""Shared embedder interface for Memo and local retrieval backends.
 
 All concrete embedders (MLX in-process, socket-client daemon, sentence-transformers)
 can implement this base so retrieval pipelines accept any backend without coupling

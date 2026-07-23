@@ -745,8 +745,8 @@ def render_active_memory(snapshot: dict[str, Any]) -> list[str]:
 def render_continuity(rows: list[dict[str, Any]], cwd: str) -> str:
     """Render "what was I working on?" for the latest session in `cwd`.
 
-    Native-to-memo parity with memflow's flow_continuity, built on memo's own
-    session snapshots (cwd / branch / running_summary / open-loop prompt_trail).
+    Memo-native continuity built on memo's own session snapshots (cwd / branch /
+    running_summary / open-loop prompt_trail).
     Pure: takes the session rows + cwd, returns markdown. Returns a short
     "no prior session" line when none match.
     """

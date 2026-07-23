@@ -54,8 +54,10 @@ def test_consult_breakdown_groups_and_flags_silent(tmp_path: Path) -> None:
     names = {c["consumer"] for c in b["consumers"]}
     assert "claude-code" in names
     assert "synapse" in names
-    # memflow never consulted → surfaced as a silent gap, not hidden.
-    assert "memflow" in b["silent"]
+    # Memo's configured Codex integration never consulted → surfaced as a
+    # silent gap. Retired sibling runtimes are not required consumers.
+    assert "codex" in b["silent"]
+    assert "memflow" not in b["silent"]
     assert "synapse" not in b["silent"]
 
     cc = next(c for c in b["consumers"] if c["consumer"] == "claude-code")

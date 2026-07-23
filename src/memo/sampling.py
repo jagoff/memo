@@ -1,6 +1,6 @@
 """Per-request client-sampling state for synthesis tools.
 
-Mirrors the ``_trace.py`` pattern: MCP tools that synthesize set a
+Mirrors the ``trace.py`` pattern: MCP tools that synthesize set a
 ``SamplingState`` in a contextvar; ``SamplingChat`` (returned by
 ``Memory._ensure_chat()`` when ``MEMO_SAMPLING_SYNTH_ENABLED`` is on) reads
 the state at every ``.chat()`` call and routes synthesis to the client's

@@ -9,7 +9,7 @@ from memo.cli import cli
 
 
 def test_backend_native_capabilities_cli_json(monkeypatch) -> None:
-    monkeypatch.setenv("SYNAPSE_TRACE_ID", "synapse://trace/test")
+    monkeypatch.setenv("MEMO_TRACE_ID", "memo://trace/test")
 
     result = CliRunner().invoke(
         cli,
@@ -23,13 +23,13 @@ def test_backend_native_capabilities_cli_json(monkeypatch) -> None:
     payload = json.loads(result.output)
 
     assert result.exit_code == 0
-    assert payload["schema"] == "synapse.backend_native.v1"
-    assert payload["protocol_version"] == "backend_native.v1"
+    assert payload["schema"] == "memo.backend.v1"
+    assert payload["protocol_version"] == "memo.backend.v1"
     assert payload["backend"] == "memo"
     assert payload["capabilities"]["replay_resolve"] is True
     assert payload["capabilities"]["memory_replay"] is True
     assert payload["capabilities"]["operational_replay"] is True
-    assert payload["trace_id"] == "synapse://trace/test"
+    assert payload["trace_id"] == "memo://trace/test"
     assert payload["model_profile"]["schema"] == "memo.profile_status.v1"
     assert payload["model_profile"]["active"]["embedder_dims"] == 1024
 
@@ -39,17 +39,17 @@ def test_backend_native_replay_resolves_memoria(mock_memory) -> None:
 
     payload = mock_memory.backend_native_replay_resolve(
         f"memo://memoria/{rec.id[:8]}",
-        trace_id="synapse://trace/replay",
+        trace_id="memo://trace/replay",
         backend_version="test",
     )
 
-    assert payload["schema"] == "synapse.backend_native.v1"
-    assert payload["protocol_version"] == "backend_native.v1"
+    assert payload["schema"] == "memo.backend.v1"
+    assert payload["protocol_version"] == "memo.backend.v1"
     assert payload["backend"] == "memo"
     assert payload["uri"] == f"memo://memoria/{rec.id[:8]}"
     assert payload["status"] == "found"
     assert payload["resolution_mode"] == "backend_native"
-    assert payload["trace_id"] == "synapse://trace/replay"
+    assert payload["trace_id"] == "memo://trace/replay"
     assert payload["content_hash"]
 
 
@@ -156,7 +156,7 @@ def test_backend_native_replay_missing_repo_index_commit(mock_memory) -> None:
 
 
 def test_backend_native_replay_rejects_foreign_uri(mock_memory) -> None:
-    payload = mock_memory.backend_native_replay_resolve("memflow://kernel/current-focus")
+    payload = mock_memory.backend_native_replay_resolve("foreign://kernel/current-focus")
 
     assert payload["status"] == "unsupported"
     assert payload["backend"] == "memo"

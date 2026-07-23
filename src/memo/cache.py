@@ -1,12 +1,12 @@
-"""Cache-tier mode — memo as a bounded, evictable cache fronting an
-authoritative backing store.
+"""Cache-tier mode — Memo as a bounded, evictable cache fronting a native
+archive.
 
 memo's default identity is a **durable** semantic memory: the local vault is
 the source of truth and nothing is ever evicted automatically (see CLAUDE.md
 "Source of truth — role & contract"). This module implements the OPT-IN
 inversion of that contract: when `MEMO_CACHE_MODE != off`, the local store
 becomes a *derived cache* in front of an authoritative backing store
-(`MEMO_CACHE_BACKEND`, e.g. Memflow). That introduces four behaviours memo
+(`MEMO_CACHE_BACKEND=vault`). That introduces four behaviours Memo
 otherwise lacks:
 
   - capacity bound + eviction (this module)
@@ -54,7 +54,7 @@ class CachePolicy:
     max_entries: int = 0  # 0 = unbounded (durable behavior)
     eviction: str = "lru"
     ttl_days: int = 0  # 0 = no freshness window
-    backend: str = "memflow"
+    backend: str = "vault"
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> CachePolicy:
@@ -75,7 +75,7 @@ class CachePolicy:
             ttl_days=max(
                 0, 0 if (_ctd := flag_int("MEMO_CACHE_TTL_DAYS", env=env)) is None else _ctd
             ),
-            backend=(flag_str("MEMO_CACHE_BACKEND", env=env) or "memflow").strip().lower(),
+            backend=(flag_str("MEMO_CACHE_BACKEND", env=env) or "vault").strip().lower(),
         )
 
     @property
@@ -97,9 +97,7 @@ class CachePolicy:
 
 
 class CacheBackend(Protocol):
-    """The authoritative store the cache fronts. Implemented in `sync.py`
-    (Memflow client / remote vault) and injected into `CacheManager` +
-    `Memory`. Kept as a Protocol so this module has no backend dependency."""
+    """The authoritative store the cache fronts."""
 
     def push(self, record: Any) -> bool:
         """Persist a memory to the backing store. Returns True on success."""
@@ -151,7 +149,10 @@ class CacheManager:
         if not self._backend_loaded:
             from memo.cache_backend import make_backend
 
-            self.backend = make_backend(self.policy.backend)
+            self.backend = make_backend(
+                self.policy.backend,
+                root=self.memory.cfg.state_dir / "cache-vault",
+            )
             self._backend_loaded = True
         return self.backend
 

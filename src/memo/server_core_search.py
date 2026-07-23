@@ -66,30 +66,19 @@ def register(server: Any, memory: Memory) -> None:
         retrieval components.
         """
         cfg = memory.cfg
-        try:
-            from consciousness_contracts import EmbedderProfile
-
-            profile = EmbedderProfile(
-                model_id=memory.store.embedder_model,
-                dims=int(cfg.embedder_dims),
-                normalization="l2",
-                provider="memo",
-            )
-            return profile.to_dict()
-        except ImportError:
-            return {
-                "schema": "consciousness.embedder_profile.v1",
-                "model_id": memory.store.embedder_model,
-                "dims": int(cfg.embedder_dims),
-                "normalization": "l2",
-                "max_seq_len": None,
-                "quantization": None,
-                "provider": "memo",
-            }
+        return {
+            "schema": "memo.embedder_profile.v1",
+            "model_id": memory.store.embedder_model,
+            "dims": int(cfg.embedder_dims),
+            "normalization": "l2",
+            "max_seq_len": None,
+            "quantization": None,
+            "provider": "memo",
+        }
 
     @annotated_tool(server, **READ_ONLY)
     def memo_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
-        """Load a compact startup briefing from memo and optional Synapse state.
+        """Load a compact startup briefing from Memo's durable and operational state.
 
         Read-only. Call before deciding or answering so prior durable facts can
         ground the task. Pass `cwd` to bias project context and `source` to
@@ -98,21 +87,17 @@ def register(server: Any, memory: Memory) -> None:
         from memo.briefing import (
             compact_text,
             memo_native_briefing_lines,
-            synapse_briefing_lines,
+            operational_briefing_lines,
         )
         from memo.flags import flag_int
 
         t0 = now_ms()
-        # memo's OWN durable corpus FIRST — so an MCP-only agent gets grounded
-        # even on a single Mac where synapse is unreachable (previously this
-        # tool returned nothing but synapse's borrow → empty briefing offline).
         loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
         loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
         raw_lines: list[str] = memo_native_briefing_lines(
             memory, loops_n=loops_n, loops_days=loops_days
         )
-        # Synapse unified state is additive/optional.
-        raw_lines.extend(synapse_briefing_lines(cwd))
+        raw_lines.extend(operational_briefing_lines(memory, cwd))
         markdown = compact_text("\n".join(raw_lines), max_chars=900)
         lines = markdown.splitlines() if markdown else []
         log_consult(

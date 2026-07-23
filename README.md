@@ -34,11 +34,35 @@
 - Uses **hybrid search** (vector embeddings + full-text search)
 - Stores memories as **plain Markdown** (version-controllable, human-readable)
 - Syncs **across machines** via serverless git
+- Shares selected memories through **signed, ACL-scoped federation bundles**
 - Detects & resolves **contradictions** automatically
 - Builds a **knowledge graph** (entities + relations) you can query and reason over
+- Learns which memories and procedures actually lead to successful outcomes
 - Time-travels to any date (audit trail)
 
-No Ollama, no Qdrant, no cloud APIs, no keys.
+Normal local operation needs no Ollama, Qdrant, cloud API, or API key. Optional
+federation uses a local signing key that you control.
+
+### Memo 4: one independent memory runtime
+
+Memo owns the full memory loop: durable Markdown records, retrieval, causal
+operations, continuity, evidence, outcome feedback, lifecycle, and selective
+exchange. It has no runtime dependency on Synapse, Memflow, sibling
+repositories, or private contract packages.
+
+- Every operational mutation enters a tamper-evident, hash-chained journal.
+- `memo evidence "<question>"` returns a bounded `EvidencePack` or explicitly
+  abstains when support is insufficient.
+- `memo operational outcome record` connects task results to the memories used;
+  repeated evidence can promote reusable procedures and failure patterns.
+- `memo federation` exports only records visible to the named recipient and
+  verifies signed bundles before importing them.
+- `memo definitive check` audits those guarantees; `memo definitive benchmark`
+  gates journal throughput.
+
+Existing vaults remain Markdown-compatible. Legacy operational metadata is
+translated one way into Memo-native contracts; it is never required at runtime.
+See [Memo 4 independence and migration](docs/memo-4-independence.md).
 
 ### Measured results
 
@@ -79,7 +103,7 @@ exact flags and boundaries.
 ## Install — one step
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | bash
 ```
 
 The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, Devin Desktop, OpenCode).
@@ -109,7 +133,7 @@ First install downloads ~8 GB of MLX models (5–15 min); later installs hit the
 **Migrating from another Mac?** Install first, then restore your corpus:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 ```
 
@@ -138,7 +162,7 @@ memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 
 memo is built to **spend fewer tokens, not more**.
 
-- **~90% smaller MCP surface.** The default `agent` profile exposes **15 tools / ~1.5k schema tokens**, versus **143 tools / ~16k tokens** for the full surface — that overhead is paid *every session, in every client*. memo trims it to almost nothing.
+- **~80% smaller MCP surface.** The default `agent` profile exposes **30 tools / ~3k schema tokens**, versus **158 tools / ~18k tokens** for the full surface — that overhead is paid *every session, in every client*. memo keeps the default focused while including evidence, continuity, and outcome learning.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -163,7 +187,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
 - **Exact transcript lookup (opt-in).** `memo verbatim search` can find the precise wording of past local transcript turns through a private, lexical-only FTS5 index. It never enters ambient recall.
-- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 15 tools, not 143.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 30 tools, not 158.
 
 ## Requirements
 
@@ -179,7 +203,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 memo installs itself if you hand the repo (or just the install line) to an AI agent:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | bash
 memo doctor --strict-runtime     # verify runtime is healthy
 ```
 
@@ -418,7 +442,7 @@ memo runs four background daemons:
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
-### All 129 top-level CLI commands
+### All 133 top-level CLI commands
 
 <details>
 <summary>Click to expand</summary>
@@ -429,23 +453,23 @@ memo runs four background daemons:
 
 **Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes` `chronicle`
 
-**Maintenance:** `reindex` `maintain` `review` `dream` `consolidate` `synthesize` `dedupe` `cross-dedup` `retier` `contradict` `invalidate` `temporal` `compress-context`
+**Maintenance:** `reindex` `maintain` `review` `dream` `consolidate` `synthesize` `dedupe` `retier` `contradict` `invalidate` `temporal` `compress-context`
 
-**Analysis & Quality:** `health` `stats` `doctor` `lint` `drift` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile` `confidence` `graduation` `hype`
+**Analysis & Quality:** `health` `stats` `doctor` `lint` `drift` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile` `confidence` `graduation` `hype` `definitive` `evidence`
 
 **Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version` `related`
 
 **Advanced Search:** `embed` `rerank` `contextual` `retrieve` `context-pack` `chat` `chat-ask` `repo`
 
-**Import / Export / Sync:** `import` `export` `backup` `restore` `sync` `ingest`
+**Import / Export / Sync:** `import` `export` `backup` `restore` `sync` `ingest` `federation`
 
 **Visualization:** `tui` `dashboard` `map` `logs` `hook-log`
 
-**Setup & Config:** `init` `setup` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `update` `upgrade` `self-update` `watch` `release` `onboard`
+**Setup & Config:** `init` `setup` `config` `install-mcp` `install-watcher` `uninstall-watcher` `install-slash` `install-statusline` `install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner` `migrate` `migrate-vault` `migrate-independence` `update` `upgrade` `self-update` `watch` `release` `onboard`
 
 **Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon` `idle-daemon`
 
-**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `drift` `sleep-cycle` `ocr-image` `provenance` `secret` `verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate` `fix` `undo`
+**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `drift` `sleep-cycle` `operational` `ocr-image` `provenance` `secret` `verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate` `fix` `undo`
 
 </details>
 
@@ -453,9 +477,9 @@ memo runs four background daemons:
 
 | Profile | Tools | Schema tokens | Use when |
 |---|---|---|---|
-| `agent` (default) | 15 | ~1.5k | Standard agent work — max token economy |
-| `core` / `slim` | 35 | ~3.1k | Constrained clients (Codex, OpenCode), admin-lite |
-| `full` / `default` | 143 | ~16k | Power users, debugging |
+| `agent` (default) | 30 | ~3k | Standard agent work — evidence, continuity, learning |
+| `core` / `slim` | 50 | ~4.6k | Constrained clients (Codex, OpenCode), admin-lite |
+| `full` / `default` | 158 | ~18k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
@@ -524,4 +548,4 @@ own. Full detail: [PRIVACY.md](PRIVACY.md).
 
 ## License & provenance
 
-MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https://github.com/jagoff/mem-vault) (storage layout + frontmatter schema); the MLX backend pieces are ported from [`obsidian-rag`](https://github.com/jagoff/rag-obsidian). memo is one of three sovereign systems in a wider stack ([Memflow](https://github.com/jagoff/memflow), Synapse) — the integration is opt-in everywhere; single-Mac users see zero behaviour change.
+MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https://github.com/jagoff/mem-vault) (storage layout + frontmatter schema); the MLX backend pieces are ported from [`obsidian-rag`](https://github.com/jagoff/rag-obsidian). Memo is a standalone system: runtime, state, trust, recovery, and federation are all owned within this repository.
