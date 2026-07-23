@@ -125,9 +125,7 @@ def resolve_isolated_memo_mcp() -> Path | None:
     return None
 
 
-def detected_agents(
-    *, which: Callable[[str], str | None] | None = None
-) -> tuple[str, ...]:
+def detected_agents(*, which: Callable[[str], str | None] | None = None) -> tuple[str, ...]:
     resolver = which or shutil.which
     return tuple(slug for slug, adapter in AGENT_REGISTRY.items() if resolver(adapter.binary))
 
@@ -173,8 +171,7 @@ def build_setup_plan(
         mcp_argv = tuple(str(value) for value in _mcp_add_command(slug, runtime, env))
         instruction_path = root / adapter.instruction_file
         instruction_present = bool(
-            instruction_path.is_file()
-            and _MARKER in instruction_path.read_text(encoding="utf-8")
+            instruction_path.is_file() and _MARKER in instruction_path.read_text(encoding="utf-8")
         )
         actions.append(
             SetupAction(

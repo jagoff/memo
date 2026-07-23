@@ -87,9 +87,7 @@ def test_invalidate_is_canonical_and_hides_current_recall(mock_memory) -> None:
 
     invalidated = mock_memory.invalidate(record.id, reason="removed upstream")
     current = mock_memory.search("obsolete turquoise setting", limit=10)
-    historical = mock_memory.search(
-        "obsolete turquoise setting", limit=10, as_of=record.created
-    )
+    historical = mock_memory.search("obsolete turquoise setting", limit=10, as_of=record.created)
 
     assert invalidated.invalid_at is not None
     assert record.id not in {row.id for row in current}

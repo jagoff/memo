@@ -45,9 +45,7 @@ def test_hostname_nonempty_and_label_includes_it(
     assert ident.label == ident.hostname
 
 
-def test_session_id_from_env_in_label(
-    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_session_id_from_env_in_label(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_session_env(monkeypatch)
     monkeypatch.setenv("MEMO_SESSION_ID", "abcdef0123456789")
     ident = current(tmp_cfg)
@@ -88,9 +86,7 @@ def test_content_normalization_preserves_internal_whitespace() -> None:
         ([], True, UNSCOPED_NAMESPACE),
     ],
 )
-def test_namespace_for_write(
-    tags: list[str], auto_project: bool, expected: str
-) -> None:
+def test_namespace_for_write(tags: list[str], auto_project: bool, expected: str) -> None:
     assert namespace_for_write(tags, auto_project=auto_project) == expected
 
 

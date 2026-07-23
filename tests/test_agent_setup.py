@@ -54,9 +54,7 @@ def test_setup_preserves_unknown_text_backs_up_and_is_idempotent(
     assert "keep-me" in body
     assert body.count("<!-- memo-mandate -->") == 1
     assert first["results"][0]["instruction"] == "written"
-    assert Path(first["results"][0]["backup"]).read_text(encoding="utf-8").startswith(
-        "# Existing"
-    )
+    assert Path(first["results"][0]["backup"]).read_text(encoding="utf-8").startswith("# Existing")
     assert second["results"][0]["instruction"] == "already present (skip)"
     assert len(list(tmp_path.glob("AGENTS.md.memo-backup-*"))) == 1
     assert len(calls) == 4
@@ -81,18 +79,16 @@ def test_external_failure_has_exact_remediation_and_does_not_write(
     assert not (tmp_path / "AGENTS.md").exists()
 
 
-def test_instruction_failure_rolls_back_external_registration(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_instruction_failure_rolls_back_external_registration(monkeypatch, tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     monkeypatch.setattr(registry.shutil, "which", lambda _name: "/usr/bin/codex")
     plan = registry.build_setup_plan(["codex"], cwd=tmp_path, memo_mcp=runtime)
     calls: list[tuple[str, ...]] = []
-    monkeypatch.setattr(registry, "_write_mandate", lambda *_a, **_k: (_ for _ in ()).throw(OSError("ro")))
-
-    receipt = registry.apply_setup_plan(
-        plan, runner=lambda argv, _best_effort: calls.append(argv)
+    monkeypatch.setattr(
+        registry, "_write_mandate", lambda *_a, **_k: (_ for _ in ()).throw(OSError("ro"))
     )
+
+    receipt = registry.apply_setup_plan(plan, runner=lambda argv, _best_effort: calls.append(argv))
 
     assert receipt["results"][0]["status"] == "rolled-back"
     assert calls[-1] == ("codex", "mcp", "remove", "memo")

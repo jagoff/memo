@@ -937,9 +937,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             return {}
         return dict(row)
 
-    def find_active_by_topic_identity(
-        self, namespace: str, topic_key: str
-    ) -> list[dict[str, Any]]:
+    def find_active_by_topic_identity(self, namespace: str, topic_key: str) -> list[dict[str, Any]]:
         if not self._has_identity_cols or not namespace or not topic_key:
             return []
         rows = self._conn.execute(
@@ -1130,8 +1128,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         ).fetchone()[0]
         status = str(capability["value"]) if capability else "unavailable"
         return {
-            "ok": not any((topic_groups, exact_groups, ambiguous, legacy))
-            and status == "enabled",
+            "ok": not any((topic_groups, exact_groups, ambiguous, legacy)) and status == "enabled",
             "identity_constraint": status,
             "multiple_project_tag_rows": int(ambiguous),
             "topic_collision_groups": int(topic_groups),
@@ -1215,9 +1212,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 identity_row = cx.execute(
                     "SELECT path, topic_key, normalized_hash FROM meta WHERE id = ?", (id_,)
                 ).fetchone()
-                existing_body = cx.execute(
-                    "SELECT body FROM fts WHERE id = ?", (id_,)
-                ).fetchone()
+                existing_body = cx.execute("SELECT body FROM fts WHERE id = ?", (id_,)).fetchone()
                 if identity_row is not None:
                     current_topic_key = identity_row["topic_key"]
                     current_normalized_hash = identity_row["normalized_hash"]

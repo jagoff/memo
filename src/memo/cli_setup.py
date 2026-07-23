@@ -44,7 +44,9 @@ def setup_cmd(agent: str, detect: bool, dry_run: bool, as_json: bool) -> None:
             marker = "✓" if result["ok"] else "✗"
             click.echo(f"  {marker} {action.agent}: {result['status']}")
             click.echo(f"    MCP: {_format_command(action.mcp_command)}")
-            click.echo(f"    instructions: {action.instruction_path} ({result.get('instruction', '-')})")
+            click.echo(
+                f"    instructions: {action.instruction_path} ({result.get('instruction', '-')})"
+            )
             if result.get("backup"):
                 click.echo(f"    backup: {result['backup']}")
             if result.get("error"):

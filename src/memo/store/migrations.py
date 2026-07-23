@@ -291,12 +291,8 @@ class _MigrationsMixin(_StoreBase):
                     "provenance_json": (
                         "ALTER TABLE memory_relations ADD COLUMN provenance_json TEXT"
                     ),
-                    "migration_key": (
-                        "ALTER TABLE memory_relations ADD COLUMN migration_key TEXT"
-                    ),
-                    "migrated_from": (
-                        "ALTER TABLE memory_relations ADD COLUMN migrated_from TEXT"
-                    ),
+                    "migration_key": ("ALTER TABLE memory_relations ADD COLUMN migration_key TEXT"),
+                    "migrated_from": ("ALTER TABLE memory_relations ADD COLUMN migrated_from TEXT"),
                     "created_at": "ALTER TABLE memory_relations ADD COLUMN created_at TEXT",
                     "updated_at": "ALTER TABLE memory_relations ADD COLUMN updated_at TEXT",
                 }
@@ -394,8 +390,7 @@ class _MigrationsMixin(_StoreBase):
                     "CREATE INDEX IF NOT EXISTS idx_rel_target ON memory_relations(target_id)"
                 )
                 cx.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_rel_status "
-                    "ON memory_relations(judgment_status)"
+                    "CREATE INDEX IF NOT EXISTS idx_rel_status ON memory_relations(judgment_status)"
                 )
                 cx.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_pair_unique "

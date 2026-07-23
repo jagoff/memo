@@ -137,9 +137,7 @@ def test_foundation_modules_import_no_other_memo_module(module: str) -> None:
     imports.discard(module)
     imports -= PURE_LEAF_MODULES  # depending on a pure-stdlib leaf can't cycle
     imports -= FOUNDATION_ALLOWED_IMPORTS.get(module, set())
-    assert imports == set(), (
-        f"{module}.py imports undeclared memo modules: {sorted(imports)}"
-    )
+    assert imports == set(), f"{module}.py imports undeclared memo modules: {sorted(imports)}"
 
 
 def test_store_never_imports_memory() -> None:

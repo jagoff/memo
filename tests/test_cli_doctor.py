@@ -134,9 +134,7 @@ def test_trust_preflight_reports_blocked_ambiguous_and_exact_groups(mem_with_stu
 def test_trust_preflight_reports_legacy_schema_unavailable(tmp_cfg):
     with sqlite3.connect(tmp_cfg.db_path) as connection:
         connection.execute("CREATE TABLE meta (id TEXT PRIMARY KEY, path TEXT, tags TEXT)")
-        connection.execute(
-            "INSERT INTO meta(id, path, tags) VALUES ('legacy', 'legacy.md', '[]')"
-        )
+        connection.execute("INSERT INTO meta(id, path, tags) VALUES ('legacy', 'legacy.md', '[]')")
         connection.execute("PRAGMA user_version=4")
 
     report = trust_preflight(tmp_cfg)

@@ -550,16 +550,16 @@ class CanonicalContradictionAdapter:
         return records[:limit]
 
     def list_all(self, status: str | None = None, limit: int = 200) -> list[PairRecord]:
-        rows = self._compatible_rows(
-            self.memory.store.list_relations(limit=max(limit * 3, limit))
-        )
+        rows = self._compatible_rows(self.memory.store.list_relations(limit=max(limit * 3, limit)))
         records = [self._record(row) for row in rows]
         if status:
             records = [record for record in records if record.status == status]
         return records[:limit]
 
     def get(self, pair_id: int) -> PairRecord | None:
-        return next((record for record in self.list_all(limit=1000) if record.pair_id == pair_id), None)
+        return next(
+            (record for record in self.list_all(limit=1000) if record.pair_id == pair_id), None
+        )
 
     def _row_for_pair_id(self, pair_id: int) -> dict[str, Any] | None:
         return next(
@@ -590,9 +590,7 @@ class CanonicalContradictionAdapter:
             second = self.memory.get(str(row["target_id"]))
             if first is not None and second is not None:
                 older, newer = (
-                    (first, second)
-                    if first.updated <= second.updated
-                    else (second, first)
+                    (first, second) if first.updated <= second.updated else (second, first)
                 )
                 source, target = (newer, older) if status == "kept_newer" else (older, newer)
                 row = self.memory.store.reorient_pending_relation(

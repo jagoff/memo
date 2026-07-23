@@ -82,9 +82,8 @@ def evaluate(path: Path) -> RelationEvalResult:
     precision = tp / predicted if predicted else 1.0
     noise = fp / predicted if predicted else 0.0
     thresholds = payload.get("thresholds") or {}
-    passed = (
-        recall >= float(thresholds.get("recall_min", 1.0))
-        and noise <= float(thresholds.get("noise_max", 0.0))
+    passed = recall >= float(thresholds.get("recall_min", 1.0)) and noise <= float(
+        thresholds.get("noise_max", 0.0)
     )
     return RelationEvalResult(
         cases=len(cases),

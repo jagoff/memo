@@ -602,20 +602,16 @@ class _WriteOpsMixin(_MemoryBase):
             else:
                 identity_candidate_exists = bool(
                     self.store.find_active_by_exact_identity(
-                    namespace,
-                    type_,
-                    identity_title,
-                    identity_content_hash,
-                )
+                        namespace,
+                        type_,
+                        identity_title,
+                        identity_content_hash,
+                    )
                 )
         except Exception as exc:
             _log.debug("save: optimistic identity lookup skipped: %s", exc)
 
-        if (
-            flag_bool("MEMO_SAVE_DEDUP_CHECK")
-            and not defer_embed
-            and not identity_candidate_exists
-        ):
+        if flag_bool("MEMO_SAVE_DEDUP_CHECK") and not defer_embed and not identity_candidate_exists:
             try:
                 _existing_sample = self.store.list_recent(limit=1)
                 if _existing_sample:
@@ -654,9 +650,7 @@ class _WriteOpsMixin(_MemoryBase):
                                         or (
                                             candidate_identity.get("normalized_title")
                                             == identity_title
-                                            and candidate_identity.get(
-                                                "normalized_content_hash"
-                                            )
+                                            and candidate_identity.get("normalized_content_hash")
                                             == identity_content_hash
                                         )
                                     )
@@ -740,8 +734,7 @@ class _WriteOpsMixin(_MemoryBase):
         prepared_topic_revision: _PreparedUpdateEmbedding | None = None
         if (
             len(optimistic_topic_matches) == 1
-            and optimistic_topic_matches[0].get("normalized_content_hash")
-            != identity_content_hash
+            and optimistic_topic_matches[0].get("normalized_content_hash") != identity_content_hash
         ):
             revision_text = self._compose_for_embed(title, content)
             prepared_topic_revision = _PreparedUpdateEmbedding(

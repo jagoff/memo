@@ -53,8 +53,7 @@ def _read_identity_diagnostics(db_path: Path) -> dict[str, Any]:
             if not _table_exists(connection, "meta"):
                 return report
             columns = {
-                str(row["name"])
-                for row in connection.execute("PRAGMA table_info(meta)").fetchall()
+                str(row["name"]) for row in connection.execute("PRAGMA table_info(meta)").fetchall()
             }
             active = _active_clause(columns)
             # ``active`` is selected from two internal SQL literals based only
@@ -89,9 +88,7 @@ def _read_identity_diagnostics(db_path: Path) -> dict[str, Any]:
             report["identity_constraint"] = status
 
             active_and = (
-                "AND (deleted_at IS NULL OR deleted_at = '')"
-                if "deleted_at" in columns
-                else ""
+                "AND (deleted_at IS NULL OR deleted_at = '')" if "deleted_at" in columns else ""
             )
             report["topic_collision_groups"] = int(
                 connection.execute(
@@ -112,8 +109,7 @@ def _read_identity_diagnostics(db_path: Path) -> dict[str, Any]:
             report["legacy_identity_rows"] = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM meta WHERE (namespace IS NULL "  # noqa: S608
-                    "OR normalized_title IS NULL OR normalized_content_hash IS NULL) "
-                    + active_and
+                    "OR normalized_title IS NULL OR normalized_content_hash IS NULL) " + active_and
                 ).fetchone()[0]
             )
 
