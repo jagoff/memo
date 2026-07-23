@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "3.11.0"
+version = "3.12.1"
 description = "Local-first semantic memory for AI agents — MLX (Apple Silicon) or CPU sentence-transformers (Linux/Ubuntu) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"

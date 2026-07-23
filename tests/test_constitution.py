@@ -168,20 +168,44 @@ def test_resync_no_opted_in_files_returns_empty(tmp_path: Path) -> None:
     assert resync_rules_in_repo([R1], cwd=tmp_path) == []
 
 
-# --- gather_rules delegates to the shared motor ------------------------------
+# --- gather_rules: graduated motor + directive-shape filter ------------------
 
 
-def test_gather_rules_delegates_to_dream_profile_motor(monkeypatch) -> None:
+def test_looks_like_rule_detects_directives_not_task_logs() -> None:
+    assert ct._looks_like_rule("Never use `git add -A`")
+    assert ct._looks_like_rule("preferí httpx sobre requests")
+    assert not ct._looks_like_rule("bump version 2.10.0")
+    assert not ct._looks_like_rule("pushed to master confirmed")
+
+
+def test_is_rule_memory_by_type_and_shape() -> None:
+    assert ct._is_rule_memory("feedback", "commit without asking")  # directive by type
+    assert ct._is_rule_memory("preference", "delta for diffs")  # directive by type
+    assert ct._is_rule_memory("decision", "Never `git add -A`")  # shaped decision
+    assert not ct._is_rule_memory("decision", "bump version 2.10.0")  # log-shaped decision
+    assert not ct._is_rule_memory("note", "checked pr status")  # episodic type
+
+
+def test_gather_rules_filters_task_logs_and_passes_knobs(monkeypatch) -> None:
     called: dict[str, object] = {}
+    R_PREF = ("f00d0001aa", "delta para diffs")
+    R_LOG = ("10900002bb", "pusheado a master confirmado")
 
     def fake_gather(mem, cfg, *, k, min_used):
-        called["k"] = k
-        called["min_used"] = min_used
-        return [R1, R2]
+        called["k"], called["min_used"] = k, min_used
+        return [R1, R2, R_PREF, R_LOG]  # R1 directive decision, R2 declarative decision
 
+    types = {
+        "abcd1234ef": "decision",  # R1 "Never git add -A" → kept (directive)
+        "beef5678aa": "decision",  # R2 "int8 … default" → dropped (no marker)
+        "f00d0001aa": "preference",  # kept by type
+        "10900002bb": "note",  # task-log type → dropped
+    }
+    fake_mem = SimpleNamespace(get=lambda rid: SimpleNamespace(id=rid, type=types.get(rid)))
     monkeypatch.setattr("memo.dream_profile._gather_rules", fake_gather)
-    out = ct.gather_rules(object(), object(), k=4, min_used=0.6)
-    assert out == [R1, R2]
+
+    ids = [rid for rid, _ in ct.gather_rules(fake_mem, object(), k=4, min_used=0.6)]
+    assert ids == ["abcd1234ef", "f00d0001aa"]
     assert called == {"k": 4, "min_used": 0.6}
 
 
@@ -257,7 +281,9 @@ def test_mandate_sync_pass_refreshes_registered_repos(monkeypatch, tmp_path: Pat
     ct.register_repo(state, tmp_path / "gone")
 
     cfg = SimpleNamespace(state_dir=state)
-    res = ct.run_mandate_sync_pass(cfg, object())
+    # gather_rules filters by memory type → mem.get must return rule-typed records
+    fake_mem = SimpleNamespace(get=lambda rid: SimpleNamespace(id=rid, type="decision"))
+    res = ct.run_mandate_sync_pass(cfg, fake_mem)
 
     assert res["status"] == "done"
     assert len(res["synced"]) == 1  # only the live repo
@@ -268,5 +294,6 @@ def test_mandate_sync_pass_refreshes_registered_repos(monkeypatch, tmp_path: Pat
 
 def test_mandate_sync_pass_noop_when_no_repos(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("memo.dream_profile._gather_rules", lambda mem, cfg, *, k, min_used: [R1])
-    res = ct.run_mandate_sync_pass(SimpleNamespace(state_dir=tmp_path / "state"), object())
+    fake_mem = SimpleNamespace(get=lambda rid: SimpleNamespace(id=rid, type="decision"))
+    res = ct.run_mandate_sync_pass(SimpleNamespace(state_dir=tmp_path / "state"), fake_mem)
     assert res["status"] == "noop" and res["synced"] == []

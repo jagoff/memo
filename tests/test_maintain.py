@@ -602,3 +602,121 @@ def test_supersede_invalidate_failure_is_not_recorded_as_superseded(tmp_path: Pa
     assert receipt["superseded"] == []
     assert any("supersede: invalidate failed for aaaa1111" in e for e in receipt["errors"])
     mem.contradict_store.resolve.assert_not_called()
+
+
+def test_supersede_hard_delete_calls_delete(tmp_path: Path):
+    """`--hard-delete` takes the destructive branch: the dominated side is
+    deleted (not invalidated) and recorded with action='delete'."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from memo.belief import ARCHIVE
+
+    mem = MagicMock()
+    mem.lifecycle.enforce_forget_ttl.return_value = []
+    mem.temporal.detect_stale_memories.return_value = []
+    mem.contradict_store.list_open.return_value = [
+        SimpleNamespace(
+            pair_id="p1",
+            memory_id_a="aaaa1111",
+            memory_id_b="bbbb2222",
+            relationship="contradicts",
+            confidence=0.95,
+        )
+    ]
+    updated = {
+        "aaaa1111": "2026-01-01T00:00:00+00:00",
+        "bbbb2222": "2026-01-02T00:00:00+00:00",
+    }
+    mem.get.side_effect = lambda i: SimpleNamespace(
+        updated=updated[i], valid_at=updated[i], created=updated[i]
+    )
+    mem.delete.return_value = True
+
+    decision = SimpleNamespace(
+        action=ARCHIVE,
+        dominated_id="aaaa1111",
+        dominant_id="bbbb2222",
+        reason="test",
+        support_dominated=0,
+    )
+
+    env = {**_env(tmp_path), "MEMO_OUTCOME_RANKING_ENABLED": "0", "MEMO_CROSSREF_INDEX": "0"}
+    with (
+        patch("memo.cli_maintain._get_memory", return_value=mem),
+        patch("memo.cli_maintain.supersede_decision", return_value=decision),
+    ):
+        result = CliRunner().invoke(
+            cli,
+            [
+                "maintain",
+                "--hard-delete",
+                "--skip-consolidate",
+                "--skip-stale",
+                "--skip-synthesize",
+                "--json",
+            ],
+            env=env,
+        )
+
+    assert result.exit_code == 0, result.output
+    receipt = json.loads(result.output)
+    mem.delete.assert_called_once_with("aaaa1111")
+    mem.lifecycle.invalidate_in_place.assert_not_called()
+    assert receipt["superseded"] and receipt["superseded"][0]["action"] == "delete"
+
+
+def test_undo_targets_skips_superseded_without_older():
+    """A superseded entry that isn't a dict, or carries no `older`, is skipped —
+    never dereferenced."""
+    from memo.cli_maintain import _undo_targets
+
+    receipt = {
+        "superseded": [
+            "not-a-dict",
+            {"action": "archive"},  # no `older`
+            {"older": "", "action": "invalidate"},  # falsy `older`
+        ],
+        "merged": [],
+        "archived_stale": [],
+        "dead_archived": [],
+        "forgotten": [],
+    }
+    archived, forgotten, invalidated = _undo_targets(receipt)
+    assert archived == [] and forgotten == [] and invalidated == []
+
+
+def test_reopen_invalidated_skips_missing_record(mock_memory):
+    """A loser whose record is gone is reported missing, never reopened."""
+    from memo.cli_maintain import _reopen_invalidated
+
+    reopened, missing = _reopen_invalidated(mock_memory, ["deadbeef" * 4], dry_run=False)
+    assert reopened == [] and missing == ["deadbeef" * 4]
+
+
+def test_reopen_invalidated_frontmatter_failure_is_non_fatal(mem_with_stub, monkeypatch):
+    """A failed markdown reopen still reopens the index row and is swallowed —
+    the loser returns to recall even if the disk mirror can't be written."""
+    import frontmatter
+
+    from memo.cli_maintain import _reopen_invalidated
+
+    loser = mem_with_stub.save(
+        content="prod db is postgres", title="A", type_="fact", valid_at="2020-06-01T00:00:00"
+    )
+    winner = mem_with_stub.save(
+        content="prod db is mysql", title="B", type_="fact", valid_at="2020-07-01T00:00:00"
+    )
+    mem_with_stub.lifecycle.invalidate_in_place(
+        loser_id=loser.id, winner_id=winner.id, invalid_at=winner.valid_at
+    )
+
+    def boom(*a, **k):
+        raise RuntimeError("yaml dump failed")
+
+    monkeypatch.setattr(frontmatter, "dumps", boom)
+
+    reopened, missing = _reopen_invalidated(mem_with_stub, [loser.id], dry_run=False)
+    assert reopened == [loser.id] and missing == []
+    # Index reopened despite the markdown mirror failing.
+    assert mem_with_stub.get(loser.id).invalid_at is None
