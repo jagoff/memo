@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import click
 
@@ -58,6 +58,18 @@ def _save_cache(cfg: Config, cache: dict) -> None:
     p.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_baseline(cfg: Config) -> dict:
+    """Load the machine-local recall gate baseline, if one exists."""
+    p = _baseline_path(cfg)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 @click.group(name="eval")
 def eval_group() -> None:
     """Measure recall quality against the live corpus."""
@@ -65,6 +77,96 @@ def eval_group() -> None:
 
 
 eval_group.add_command(bench_group)
+
+
+@eval_group.command(name="memory")
+@click.option("--k", type=click.IntRange(min=1, max=50), default=5, show_default=True)
+@click.option(
+    "--labels",
+    "labels_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("eval/regression_labels.json"),
+    show_default=True,
+)
+@click.option(
+    "--profile",
+    "eval_profile",
+    type=click.Choice(["quick", "pre-push", "default", "matrix"]),
+    default="quick",
+    show_default=True,
+)
+@click.option("--max-prompts", type=click.IntRange(min=1), default=None)
+@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--gate", is_flag=True, help="Compare precision/noise with the saved recall baseline."
+)
+def eval_memory_cmd(
+    k: int,
+    labels_path: Path,
+    eval_profile: str,
+    max_prompts: int | None,
+    as_json: bool,
+    gate: bool,
+) -> None:
+    """Run the memory-quality suite (retrieval, staleness, evidence and latency)."""
+    try:
+        labels = eval_recall.load_labels(labels_path)
+        labels = eval_recall.limit_label_set(labels, max_prompts)
+        configs = eval_recall.profile_configs(cast(eval_recall.EvalProfile, eval_profile))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    mem = _get_memory(Config.from_env())
+    try:
+        rows = eval_recall.evaluate(mem, k=k, labels=labels, configs=configs)
+    finally:
+        mem.close()
+    payload: dict[str, Any] = {
+        "schema": "memo.eval.memory.v1",
+        "k": k,
+        "profile": eval_profile,
+        "labels_fingerprint": labels.fingerprint(),
+        "metrics": [
+            {
+                "config": row.config,
+                "precision_at_k": row.precision_at_k,
+                "recall_at_k": row.recall_at_k,
+                "ndcg_at_k": row.ndcg_at_k,
+                "mrr": row.mrr,
+                "noise_at_k": row.noise_at_k,
+                "stale_at_k": row.stale_at_k,
+                "canonical_hit_at_k": row.canonical_hit_at_k,
+                "latency_ms_p50": row.latency_ms_p50,
+                "graph_recall_gain": row.graph_recall_gain,
+                "graph_noise_rate": row.graph_noise_rate,
+                "graph_explanation_coverage": row.graph_explanation_coverage,
+            }
+            for row in rows
+        ],
+    }
+    if gate:
+        baseline = _load_baseline(Config.from_env())
+        result = eval_recall.check_gate(rows, baseline, labels_fingerprint=labels.fingerprint())
+        payload["gate"] = {
+            "passed": result.passed,
+            "message": result.message,
+            "baseline_precision_at_k": result.baseline_precision,
+            "baseline_noise_at_k": result.baseline_noise,
+        }
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        console.print(f"memory eval · {len(labels.prompts)} prompts · k={k}")
+        for metric in payload["metrics"]:
+            console.print(
+                f"  {metric['config']}: prec={metric['precision_at_k']:.3f} "
+                f"recall={metric['recall_at_k']:.3f} noise={metric['noise_at_k']:.3f} "
+                f"stale={metric['stale_at_k']:.3f} p50={metric['latency_ms_p50']:.1f}ms"
+            )
+        if "gate" in payload:
+            console.print(payload["gate"]["message"])
+    if gate and not payload["gate"]["passed"]:
+        raise click.exceptions.Exit(1)
 
 
 @eval_group.command(name="relations")

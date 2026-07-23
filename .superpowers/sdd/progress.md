@@ -168,3 +168,71 @@
 - [ ] Task 9: Operate the first 24 hours and approved contingencies
 - [ ] Task 10: Run the Spanish wave and day-three review
 - [ ] Task 11: Close D5/D7 measurement and publish the postmortem
+
+---
+
+# memo Proactive Engine — v1
+
+**Plan:** docs/superpowers/plans/2026-07-21-memo-proactive-engine.md
+**Start:** 2026-07-21 · **Branch:** feat/proactive-engine · **Base:** 82f11db0
+
+## Tasks
+- [ ] Task 1: Flag registry
+- [ ] Task 2: Nudge model
+- [ ] Task 3: ProactiveStore
+- [ ] Task 4: Arbiter
+- [ ] Task 5: Reliability detector
+- [ ] Task 6: Continuity detector
+- [ ] Task 7: Surfaces
+- [ ] Task 8: Engine + push_gate
+- [ ] Task 9: memo digest CLI + feedback
+- [ ] Task 10: Acted-detection
+- [ ] Task 11: Dream integration
+- [ ] Task 12: Briefing/statusline/hook wiring
+- [ ] Task 13: dream_flags gate + empty-corpus contract
+Task 1: complete (commit c6d5d216, review clean; dream_flags gate pulled forward → Task 13 reduces to empty-corpus test)
+Task 2: complete (commit 27dbfa92, review clean — spec PASS, quality approved)
+Task 3: complete (commit 6392e378, review clean — multiplier clamp + TTL/snooze/dismiss verified)
+Task 4: complete (commit 7a3be4ce, review clean — score/route/urgent-gating verified)
+NOTE for Task 11: build Memory.superseded_pairs() there — scan inactive/*.md for extra.superseded_by frontmatter (bounded, dream-only, not recall path). Task 5 detector is interface-driven and works once wired.
+Task 5: complete (commit 32a39636, review clean — detector spec ✅; superseded_pairs() accessor deferred to Task 11)
+Task 6: complete (commit b81c38d2, review clean — detector + real open_loops thin wrapper verified)
+COLLISION FIX (commit fb20c033): absorbed legacy src/memo/proactive.py -> proactive/suggester.py + re-export in __init__ (module/package name clash shadowed ProactiveSuggester). OLD test_proactive.py 11 pass, NEW suites 12 pass. FLAG for user veto at final review (rename-vs-absorb).
+Task 7: complete (commit 329333fe, review clean — pure surface renderers, spec ✅)
+Task 8: complete (commit 3d6e1285, review clean — push_gate + compute_routed; 5 flag defaults verified exact)
+Task 9: complete (commit 9161f980, review clean — digest+dismiss/snooze; NOTE: `ignored` outcome deferred to v1.1 — needs last-shown primitive)
+NOTE for Task 12/final: reliability detector action="memo review <id>" but NO `memo review` command exists. Either create it, or repoint the action to an existing command (memo get / memo invalidate). Acted-detection helper (Task 10) matches whatever action string is set.
+Task 10: complete (commit bbe9dd23, review clean — acted helper; wiring deferred, no memo review cmd exists)
+Task 10.5 BRANCH-FIX (commit 0b497949): fixed 2 regressions from my branch — test_prompt_overrides path (proactive.py→proactive/suggester.py, from collision-fix) + README CLI inventory (added digest, 125→126, from Task 9). Both suites green.
+Task 11: complete (commit 3328fdea, review clean — superseded_pairs scan inactive/*.md + dream pass flag-gated; failure→receipt[errors])
+Task 12: complete (commit ff93bd4a, review clean — briefing+Stop-urgent wired flag-gated+guarded; statusline badge DEFERRED to v1.1 (bash statusline needs snapshot-file); action repointed memo review→memo get. Full suite 4881 pass 0 fail)
+Task 13: complete (commits bd2fecbe empty-corpus test + 09929f59 quality baseline ratchet; all 6 CI gates PASS — pytest/ruff/format/mypy/quality_gate/config-validate). ALL 13 TASKS DONE.
+FINAL REVIEW (opus, whole-branch 16 commits): READY TO MERGE default-OFF, 0 Critical, 4 Important pre-graduation + 5 Minor.
+FINAL FIX (commit 37b7a30c): I1 acted wired into `memo get`; I2 urgent on raw score + 30d feedback window; I3 except Exception; I4 lazy suggester re-export; M1/M2/M3 done. Full suite 4890 pass 0 fail, all gates green. PROACTIVE ENGINE v1 DONE.
+
+RELEASE v3.9.0 SHIPPED: PR#54 merged abcc724e + tag v3.9.0 pushed (dispara auto-update). Contiene #50 int8 + #52 int8-fix + #51 proactive v1 + #53 v2 detectors. Traps release: mcpb bundles no auto-rebuild (memo release mcpb), SECURITY.md 3.8.x→3.9.x. Follow-up: formula Homebrew URL post-PyPI. SESIÓN COMPLETA.
+
+---
+
+# Testing System Hardening
+
+**Plan:** docs/superpowers/plans/2026-07-22-testing-system-hardening.md
+**Start:** 2026-07-22 · **Branch:** master (shared checkout, user-approved explicit-path staging) · **Base:** b6919a5a
+
+## Tasks
+- [ ] Task 1: Testing dependencies, markers, and generated-artifact boundaries
+- [ ] Task 2: Opt-in resource-hygiene pytest plugin
+- [ ] Task 3: Clean current resource owners and broad-exception baseline
+- [ ] Task 4: Stateful Hypothesis model for VecStore
+- [ ] Task 5: Branch-aware aggregate and changed-lines coverage gates
+- [ ] Task 6: Scheduled randomized and repeated stability workflow
+- [ ] Task 7: Scoped scheduled mutation testing
+- [ ] Task 8: End-to-end verification and ratchet documentation
+Task 1: complete (commits b6919a5a..c2bd0ae2, review clean — dependency extras, strict markers, ignores, and universal lock verified)
+Task 2: complete (commits 120e5958..4ecd695b, review clean after socket-matcher fix — opt-in leak detector and pytester isolation verified)
+Task 3: complete (commits 738d1fbc..c89966cd, review approved — 85 serial resource tests green; Minor for final review: housekeeping fixture insert closes without explicit commit)
+Task 4: complete (commits 66ab8af6..cf4f8354, review clean after three oracle fixes — 100×75 extended profile green)
+Task 5: complete (commit d2951663, review approved — branch total 48,614/64,750=75.0795%, floor 74, PR diff gate 90%; Minor for final: workflow contract uses broad substrings)
+Task 6: complete (commit 1b5fc898, review clean — 148 tests selected, bounded 60-test run green, scheduled/manual replayable workflow approved)
+Task 7: complete (commits 6e10e76a..4d305c60, review clean after six gate fixes — 49 contracts + 126 baseline tests green; mutmut 3.6 schema/status propagation verified)
+Task 7.5: complete (commits 4d305c60..2f9172c8, final review zero findings — scoring/replay/housekeeping baseline integrated; atomic vacuum race + malformed timestamps resolved)

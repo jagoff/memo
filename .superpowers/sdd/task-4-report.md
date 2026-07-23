@@ -1,21 +1,6 @@
-# Task 4 Report: Baseline Audit Report
+### Task 4 report: Arbiter (score + budget + urgent gating)
 
-Status: DONE
-
-Commit:
-- `895aff2` docs: record memo improvement baseline
-
-Files changed:
-- `docs/superpowers/reports/2026-07-09-memo-deep-improvement-baseline.md`
-- `.superpowers/sdd/task-4-report.md`
-
-Checks:
-- `rg -n 'TB''D|TO''DO|FIX''ME|place''holder|\\?\\?' docs/superpowers/reports/2026-07-09-memo-deep-improvement-baseline.md`
-  - Result: no output.
-
-Concerns:
-- `.superpowers/sdd/task-4-report.md` was written after the required baseline commit so the report can include the commit SHA.
-- Pre-existing unrelated local modifications were left untouched:
-  - `.superpowers/sdd/progress.md`
-  - `.superpowers/sdd/task-1-brief.md`
-  - `.superpowers/sdd/task-2-brief.md`
+STATUS: DONE
+Commit: 7a3be4ce
+Tests: `pytest tests/test_proactive_arbiter.py -v` — 3 passed (urgent-only-reliability-over-threshold-and-can-push, no-push-when-cannot-push, floored-multiplier-keeps-reliability-visible); ruff check + ruff format --check + mypy clean on both files.
+Concerns: brief's Step-1 test snippet imports `score` alongside `route` but never calls it directly, which trips ruff F401 (unused import) — a global constraint of this task. Dropped the unused `score` import from the test file (lint-only change; all assertions/values kept verbatim). No other deviations from the brief.

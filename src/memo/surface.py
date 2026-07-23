@@ -83,6 +83,7 @@ AGENT_MCP_TOOLS: frozenset[str] = (
             # the advanced gate and never removed.
             "memo_idle_capture",
             "memo_pop_notification",
+            "memo_profile",
             "memo_start_session",
             "memo_save_text",
             "memo_version",
@@ -109,6 +110,7 @@ CORE_MCP_TOOLS: frozenset[str] = (
             "memo_lint",
             "memo_list",
             "memo_provenance",
+            "memo_profile",
             "memo_record_diff",
             "memo_reindex",
             "memo_rename",
@@ -168,9 +170,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("30", "~3k"),
-    "core": ("50", "~4.6k"),
-    "slim": ("50", "~4.6k"),
+    "agent": ("31", "~3.1k"),
+    "core": ("51", "~4.7k"),
+    "slim": ("51", "~4.7k"),
 }
 
 
@@ -179,5 +181,5 @@ def mcp_profile_token_cost(profile: str | None = None) -> tuple[str, str, bool]:
     (or the active profile when ``None``). ``is_reduced`` is False only for the
     full/default surface — the costly one doctor warns about."""
     resolved = profile if profile is not None else mcp_profile()
-    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("158", "~18k"))
+    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("159", "~18k"))
     return count, cost, resolved in _PROFILE_TOKEN_COST

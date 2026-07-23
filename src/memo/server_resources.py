@@ -7,6 +7,19 @@ from memo.memory import AmbiguousIdError, Memory
 
 
 def register(server: Any, memory: Memory) -> None:
+    @server.resource("memo://profile/{scope}")
+    def _resource_profile(scope: str) -> str:
+        """Expose the bounded profile as a subscribable MCP resource."""
+        from memo.memory_profile import build_memory_profile
+
+        try:
+            payload = build_memory_profile(memory, scope=scope)
+        except ValueError as exc:
+            return f"# Invalid profile scope\n\n{exc}\n"
+        import json
+
+        return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
     @server.resource("memo://recent")
     def _resource_recent() -> str:
         recs = memory.list(limit=20)

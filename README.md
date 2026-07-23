@@ -162,7 +162,7 @@ memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 
 memo is built to **spend fewer tokens, not more**.
 
-- **~80% smaller MCP surface.** The default `agent` profile exposes **30 tools / ~3k schema tokens**, versus **158 tools / ~18k tokens** for the full surface — that overhead is paid *every session, in every client*. memo keeps the default focused while including evidence, continuity, and outcome learning.
+- **~80% smaller MCP surface.** The default `agent` profile exposes **31 tools / ~3.1k schema tokens**, versus **159 tools / ~18k tokens** for the full surface — that overhead is paid *every session, in every client*. memo keeps the default focused while including evidence, continuity, and outcome learning.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -187,7 +187,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
 - **Exact transcript lookup (opt-in).** `memo verbatim search` can find the precise wording of past local transcript turns through a private, lexical-only FTS5 index. It never enters ambient recall.
-- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 30 tools, not 158.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 31 tools, not 159.
 
 ## Requirements
 
@@ -403,6 +403,7 @@ memo health                                         # grounded rate, ROI, useful
 memo eval recall --labels eval/regression_labels.json --k 5
 memo eval recall --gate                             # exit non-zero if precision drops
 memo eval recall --update-baseline                  # snapshot current best
+memo eval memory --labels eval/regression_labels.json # quality suite: recall, staleness, graph and latency
 ```
 
 Wire `--gate` into a pre-commit hook to catch retrieval regressions before they ship. Recall eval also reports graph diagnostics (`graph_recall_gain`, `graph_noise_rate`, `graph_explanation_coverage`, `hub_noise_rate`, `latency_ms_graph`) when graph attribution is present, but the hard gate remains precision/noise. `memo feedback` records per-source 👍/👎 votes that teach the retriever which memories to surface (or hide) for similar queries.
@@ -477,9 +478,9 @@ memo runs four background daemons:
 
 | Profile | Tools | Schema tokens | Use when |
 |---|---|---|---|
-| `agent` (default) | 30 | ~3k | Standard agent work — evidence, continuity, learning |
-| `core` / `slim` | 50 | ~4.6k | Constrained clients (Codex, OpenCode), admin-lite |
-| `full` / `default` | 158 | ~18k | Power users, debugging |
+| `agent` (default) | 31 | ~3.1k | Standard agent work — evidence, continuity, profile, learning |
+| `core` / `slim` | 51 | ~4.7k | Constrained clients (Codex, OpenCode), admin-lite |
+| `full` / `default` | 159 | ~18k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.
 
