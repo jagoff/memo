@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from unittest.mock import MagicMock
 
 import pytest
+from click.testing import CliRunner
 
+from memo import cli_review
 from memo.memory.lifecycle_ops import review_interval_days
 from memo.tiers import VerificationState
 
@@ -92,3 +95,60 @@ def test_invalidate_is_canonical_and_hides_current_recall(mock_memory) -> None:
     assert invalidated.invalid_at is not None
     assert record.id not in {row.id for row in current}
     assert record.id in {row.id for row in historical}
+
+
+def test_review_due_cli_supports_json_empty_and_conflict_rows(monkeypatch) -> None:
+    memory = MagicMock()
+    monkeypatch.setattr(cli_review.Config, "from_env", classmethod(lambda _cls: object()))
+    monkeypatch.setattr(cli_review, "get_memory", lambda _cfg: memory)
+    runner = CliRunner()
+
+    memory.list_due_reviews.return_value = []
+    empty = runner.invoke(cli_review.review_group, ["due"])
+    serialized = runner.invoke(
+        cli_review.review_group,
+        ["due", "--project", "memo", "--limit", "7", "--json"],
+    )
+    memory.list_due_reviews.return_value = [
+        {
+            "id": "1234567890",
+            "type": "decision",
+            "title": "Review retention",
+            "review_after": None,
+            "open_conflict": 1,
+        }
+    ]
+    populated = runner.invoke(cli_review.review_group, ["due"])
+
+    assert empty.exit_code == 0
+    assert "No reviews due." in empty.output
+    assert serialized.exit_code == 0
+    assert serialized.output.strip() == "[]"
+    memory.list_due_reviews.assert_any_call(project="memo", limit=7)
+    assert populated.exit_code == 0
+    assert "12345678" in populated.output
+    assert "due=now conflict" in populated.output
+
+
+def test_review_mark_cli_supports_json_and_human_output(monkeypatch) -> None:
+    memory = MagicMock()
+    record = MagicMock()
+    record.id = "abcdef123456"
+    record.review_after = None
+    record.to_dict.return_value = {"id": record.id, "review_after": None}
+    memory.mark_reviewed.return_value = record
+    monkeypatch.setattr(cli_review.Config, "from_env", classmethod(lambda _cls: object()))
+    monkeypatch.setattr(cli_review, "get_memory", lambda _cfg: memory)
+    runner = CliRunner()
+
+    serialized = runner.invoke(
+        cli_review.review_group,
+        ["mark", record.id, "--evidence", "ticket-9", "--actor", "qa", "--json"],
+    )
+    human = runner.invoke(cli_review.review_group, ["mark", record.id])
+
+    assert serialized.exit_code == 0
+    assert '"id": "abcdef123456"' in serialized.output
+    memory.mark_reviewed.assert_any_call(record.id, evidence="ticket-9", actor="qa")
+    assert human.exit_code == 0
+    assert "Reviewed abcdef12; next=unscheduled" in human.output

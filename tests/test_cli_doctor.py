@@ -8,6 +8,29 @@ from memo.memory import Memory
 from memo.trust_preflight import trust_preflight
 
 
+def _agent_report(*, ok: bool) -> dict:
+    return {
+        "ok": ok,
+        "checks": {
+            "detected": True,
+            "mcp_configured": ok,
+            "mcp_runtime_current": ok,
+            "runtime_isolated": True,
+            "runtime_pair": True,
+            "runtime_version": "3.12.1",
+            "runtime_version_match": ok,
+            "runtime_smoke": ok,
+            "storage_writable": True,
+            "profile": "core",
+            "profile_current": ok,
+            "protocol_mode": "compact",
+            "protocol_current": ok,
+            "instruction_marker": True,
+            "instruction_writable": True,
+        },
+    }
+
+
 def test_doctor_off_hint_points_at_sync_setup(tmp_path):
     from memo.cli import cli
 
@@ -20,6 +43,55 @@ def test_doctor_off_hint_points_at_sync_setup(tmp_path):
     r = CliRunner().invoke(cli, ["doctor"], env=env)
     # data_dir is not a git clone here → the OFF branch fires
     assert "memo sync setup" in r.output
+
+
+def test_doctor_json_combines_agent_health(monkeypatch):
+    from memo.cli import cli
+
+    monkeypatch.setattr("memo.cli_doctor.Config.from_env", classmethod(lambda _cls: MagicMock()))
+    monkeypatch.setattr(
+        "memo.cli_doctor._doctor_report",
+        lambda *_args, **_kwargs: {"ok": True, "runtime": {}},
+    )
+    monkeypatch.setattr(
+        "memo.runtime.agent_registry.verify_agent",
+        lambda _agent: _agent_report(ok=False),
+    )
+
+    result = CliRunner().invoke(cli, ["doctor", "--agent", "codex", "--json"])
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 1
+    assert payload["ok"] is False
+    assert payload["agent_setup"][0]["checks"]["profile"] == "core"
+
+
+def test_doctor_text_agent_failure_shows_repair(monkeypatch, tmp_path):
+    from memo.cli import cli
+
+    data_dir = tmp_path / "memorias"
+    state_dir = tmp_path / "state"
+    data_dir.mkdir()
+    state_dir.mkdir()
+    monkeypatch.setattr(
+        "memo.runtime.agent_registry.verify_agent",
+        lambda _agent: _agent_report(ok=False),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["doctor", "--agent", "codex"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(data_dir),
+            "MEMO_STATE_DIR": str(state_dir),
+        },
+    )
+
+    assert result.exit_code == 1
+    assert "agent:codex" in result.output
+    assert "version-match=" in result.output
+    assert "repair with `memo setup codex`" in result.output
 
 
 def test_gc_report_closes_memory_after_scan():
@@ -72,6 +144,13 @@ def test_trust_preflight_detects_privacy_findings_without_disclosure(
     assert payload["trust"]["secret_pattern_files"] == 1
     assert token not in serialized
     assert private_canary not in serialized
+
+    text_result = CliRunner().invoke(cli, ["doctor", "--db"])
+    assert text_result.exit_code == 1
+    assert "trust: identity=" in text_result.output
+    assert "review the vault, then run `memo reindex --rebuild`" in text_result.output
+    assert token not in text_result.output
+    assert private_canary not in text_result.output
 
 
 def test_trust_preflight_reports_blocked_ambiguous_and_exact_groups(mem_with_stub: Memory):

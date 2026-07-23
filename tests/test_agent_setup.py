@@ -4,9 +4,12 @@ import subprocess
 from importlib.metadata import version
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
+from memo import cli_setup as cli_setup_module
 from memo.cli_setup import setup_cmd
+from memo.config import Config
 from memo.runtime import agent_registry as registry
 
 
@@ -120,6 +123,66 @@ def test_setup_cli_json_dry_run(monkeypatch, tmp_path: Path) -> None:
     assert '"dry_run": true' in result.output
 
 
+def test_setup_cli_human_plan_reports_no_detected_agents(monkeypatch, tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    monkeypatch.setattr(registry, "resolve_isolated_memo_mcp", lambda: runtime)
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: None)
+
+    with CliRunner().isolated_filesystem(temp_dir=tmp_path):
+        result = CliRunner().invoke(setup_cmd, ["all", "--detect", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert f"memo plan → {runtime}" in result.output
+    assert "no detected agents selected" in result.output
+
+
+def test_setup_cli_human_failure_prints_receipt_details(monkeypatch, tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    monkeypatch.setattr(registry, "resolve_isolated_memo_mcp", lambda: runtime)
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "/usr/bin/codex")
+    monkeypatch.setattr(
+        cli_setup_module,
+        "apply_setup_plan",
+        lambda _plan, *, dry_run: {
+            "ok": False,
+            "dry_run": dry_run,
+            "results": [
+                {
+                    "ok": False,
+                    "status": "partial",
+                    "instruction": "unchanged",
+                    "backup": "/tmp/AGENTS.md.bak",
+                    "error": "registration failed",
+                    "remediation": "run codex mcp add",
+                }
+            ],
+        },
+    )
+
+    with CliRunner().isolated_filesystem(temp_dir=tmp_path):
+        result = CliRunner().invoke(setup_cmd, ["codex"])
+
+    assert result.exit_code == 1
+    assert "✗ codex: partial" in result.output
+    assert "MCP: codex mcp add memo" in result.output
+    assert "backup: /tmp/AGENTS.md.bak" in result.output
+    assert "error: registration failed" in result.output
+    assert "remediation: run codex mcp add" in result.output
+    assert registry.AGENT_REGISTRY["codex"].restart_guidance in result.output
+
+
+def test_setup_cli_wraps_setup_errors(monkeypatch) -> None:
+    def fail(*_args, **_kwargs):
+        raise registry.SetupError("runtime unavailable")
+
+    monkeypatch.setattr(cli_setup_module, "build_setup_plan", fail)
+
+    result = CliRunner().invoke(setup_cmd, ["codex"])
+
+    assert result.exit_code == 1
+    assert "Error: runtime unavailable" in result.output
+
+
 def test_agent_doctor_verifies_runtime_profile_protocol_and_isolated_smoke(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -157,3 +220,68 @@ def test_agent_doctor_verifies_runtime_profile_protocol_and_isolated_smoke(
     assert report["checks"]["runtime_version_match"] is True
     assert report["checks"]["runtime_smoke"] is True
     assert report["checks"]["storage_writable"] is True
+
+
+def test_verify_agent_reports_probe_and_storage_failures(monkeypatch, tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    registry._write_mandate(tmp_path / "AGENTS.md", dry_run=False)
+    original_read_text = Path.read_text
+
+    def unreadable_instruction(path: Path, *args, **kwargs):
+        if path.name == "AGENTS.md":
+            raise OSError("permission denied")
+        return original_read_text(path, *args, **kwargs)
+
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired("memo probe", 10)
+
+    def invalid_config(_cls):
+        raise RuntimeError("invalid storage")
+
+    monkeypatch.setattr(Path, "read_text", unreadable_instruction)
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "/usr/bin/codex")
+    monkeypatch.setattr(registry.subprocess, "run", timeout)
+    monkeypatch.setattr(Config, "from_env", classmethod(invalid_config))
+
+    report = registry.verify_agent("codex", cwd=tmp_path, memo_mcp=runtime)
+
+    assert report["ok"] is False
+    assert report["checks"]["instruction_marker"] is False
+    assert report["checks"]["mcp_configured"] is False
+    assert report["checks"]["runtime_smoke"] is False
+    assert report["checks"]["storage_writable"] is False
+    assert "memo probe" in report["config_detail"]
+
+
+def test_isolated_runtime_smoke_reports_command_failure(monkeypatch, tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path).with_name("memo")
+    monkeypatch.setattr(
+        registry.subprocess,
+        "run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv, returncode=2, stdout="", stderr="broken runtime"
+        ),
+    )
+
+    smoke_ok, version_ok, detail = registry._isolated_runtime_smoke(
+        runtime, expected_version=version("mlx-memo")
+    )
+
+    assert smoke_ok is False
+    assert version_ok is False
+    assert "broken runtime" in detail
+
+
+def test_resolve_isolated_runtime_uses_path_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(Path, "is_file", lambda _path: False)
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "/usr/local/bin/memo-mcp")
+
+    assert registry.resolve_isolated_memo_mcp() == Path("/usr/local/bin/memo-mcp")
+
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "/repo/.venv/bin/memo-mcp")
+    assert registry.resolve_isolated_memo_mcp() is None
+
+
+def test_verify_agent_rejects_unknown_agent() -> None:
+    with pytest.raises(registry.SetupError, match="unsupported setup agent"):
+        registry.verify_agent("unknown")
