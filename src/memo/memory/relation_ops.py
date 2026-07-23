@@ -55,6 +55,7 @@ class _RelationOpsMixin(_MemoryBase):
             f"{record.title}\n{record.body[:600]}",
             limit=max(12, limit * 4),
             disable_reranker=True,
+            _track_usage=False,
         )
         candidates: list[dict[str, Any]] = []
         for hit in hits:

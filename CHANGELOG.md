@@ -23,7 +23,7 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   evidence, policy schedules, `memo review due|mark`, and MCP review,
   invalidation, and supersession tools. Review timing is separate from truth
   validity and never auto-invalidates a memory.
-- Optional bounded FIFO coordination for mutating MCP calls, including typed
+- Bounded FIFO coordination for mutating MCP calls, including typed
   retryable saturation, cancellation semantics, safe error translation, and
   queue/wait/rejection diagnostics via `memo_write_queue_status`.
 - Declarative Codex and Claude Code adoption through `memo setup`, including
@@ -42,6 +42,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   records to `STALE`; stale records remain stale until review or invalidation.
 - MCP profile inventories are now 15 tools for `agent`, 35 for `core`, and 143
   for `full`, including always-on write-queue diagnostics.
+- Canonical relation candidate generation and judged-relation annotations are
+  now on by default after passing the fixed 12-case policy corpus and measured
+  save-latency gate. Both remain independently reversible with their
+  `MEMO_RELATION_*_ENABLED=0` opt-outs.
+- Mutating MCP calls now use the process-local FIFO coordinator by default with
+  capacity 32. `MEMO_MCP_WRITE_QUEUE_SIZE=0` restores direct dispatch; the
+  data-directory lock remains the cross-process authority.
+- Internal post-save candidate searches no longer record user access or
+  co-recall signals, preventing derived maintenance work from contaminating
+  usage telemetry.
 
 ### Removed
 

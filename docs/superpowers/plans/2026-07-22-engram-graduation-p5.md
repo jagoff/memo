@@ -1,5 +1,8 @@
 # Engram Learnings — P5 Graduation and Cleanup Plan
 
+**Status:** completed on 2026-07-22; relation candidates and annotations
+graduated to default-on dogfooding on 2026-07-23 after explicit approval.
+
 **Goal:** Graduate only measured behavior, prove compatibility parity, and
 remove duplicated legacy ownership without a flag-day migration.
 

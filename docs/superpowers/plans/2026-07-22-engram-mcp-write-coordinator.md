@@ -1,5 +1,8 @@
 # Engram Learnings — MCP Write Coordinator Plan
 
+**Status:** completed on 2026-07-22; capacity 32 graduated to the default on
+2026-07-23 after the measured load gate and explicit approval.
+
 **Goal:** Add bounded, observable process-local backpressure to every mutating
 MCP call while preserving the data-directory lock as cross-process authority.
 

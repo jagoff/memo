@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from memo.errors import QueueFullError, StorageError
+from memo.flags import flag_int
+from memo.server import build_server
 from memo.server_write_coordinator import (
     McpWriteCoordinator,
     make_write_coordinator_middleware,
@@ -136,7 +138,9 @@ async def test_middleware_bypasses_read_only_and_coordinates_writes():
 
 @pytest.mark.asyncio
 async def test_load_is_strict_fifo_and_leaves_no_pending_jobs():
-    coordinator = McpWriteCoordinator(32)
+    capacity = flag_int("MEMO_MCP_WRITE_QUEUE_SIZE") or 0
+    assert capacity == 32
+    coordinator = McpWriteCoordinator(capacity)
     order: list[int] = []
 
     async def mutation(index: int) -> int:
@@ -150,8 +154,37 @@ async def test_load_is_strict_fifo_and_leaves_no_pending_jobs():
     ]
     assert await asyncio.gather(*tasks) == list(range(32))
     snapshot = coordinator.snapshot()
+    assert snapshot["enabled"] is True
+    assert snapshot["capacity"] == 32
     assert order == list(range(32))
     assert snapshot["completed"] == 32
     assert snapshot["rejected"] == 0
     assert snapshot["queue_depth"] == 0
     await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_default_server_coordinates_a_real_mutating_tool(mock_memory):
+    from fastmcp import Client
+
+    server = build_server(mock_memory)
+    async with Client(server) as client:
+        before = (await client.call_tool("memo_write_queue_status", {})).data
+        saved = (
+            await client.call_tool(
+                "memo_save",
+                {
+                    "content": "default MCP coordinator integration proof",
+                    "title": "coordinator proof",
+                    "type": "note",
+                },
+            )
+        ).data
+        after = (await client.call_tool("memo_write_queue_status", {})).data
+
+    assert before["enabled"] is True
+    assert before["capacity"] == 32
+    assert saved["action"] == "created"
+    assert after["submitted"] == before["submitted"] + 1
+    assert after["completed"] == before["completed"] + 1
+    assert after["failed"] == 0

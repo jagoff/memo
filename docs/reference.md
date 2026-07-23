@@ -334,6 +334,19 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 | `core` / `slim` | 35 | CRUD, search, embeddings, history, sessions, lint, and lightweight graph/offload. |
 | `full` / `default` | 143 | Every advanced domain module and compatibility tool. |
 
+Mutating MCP calls pass through a bounded process-local FIFO by default
+(`MEMO_MCP_WRITE_QUEUE_SIZE=32`); read-only calls bypass it. The
+`memo_write_queue_status` tool reports capacity, depth, completions, failures,
+rejections, and wait time on every profile. Set the capacity to `0` to opt out.
+
+Canonical relation candidates and judged-relation annotations are also active
+by default. Eligible saves produce at most three pending, namespace-safe
+candidates without an LLM; only judged rows appear in normal retrieval
+metadata. Use the full profile's `mem_relation_reviews`, `mem_judge`, and
+`mem_compare` tools to review them. The independent
+`MEMO_RELATION_CANDIDATES_ENABLED=0` and
+`MEMO_RELATION_ANNOTATIONS_ENABLED=0` flags remain rollback controls.
+
 The default `agent` profile exposes exactly:
 
 `memo_ask`, `memo_context`, `memo_get`, `memo_graph`, `memo_idle_capture`,

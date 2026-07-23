@@ -30,9 +30,10 @@ def test_every_dark_flag_has_a_gate():
     )
 
 
-def test_no_stale_gates():
-    stale = sorted(set(df.GATES) - set(REGISTRY))
-    assert not stale, f"GATES entries for flags no longer in the registry: {stale}"
+def test_no_graduated_or_stale_gates():
+    dark = {s.name for s in df.dark_flags()}
+    stale = sorted(set(df.GATES) - dark)
+    assert not stale, f"GATES entries for flags that are no longer dark: {stale}"
 
 
 def test_gate_reasons_are_documented():

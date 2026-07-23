@@ -256,7 +256,18 @@ memo contradict triage                # resolve interactively: fuse / newer-wins
 memo review due                       # explicit freshness obligations; never auto-invalidates
 ```
 
-The LLM classifies each candidate pair. Results persist as canonical relations in the main rebuildable index; legacy `contradictions.db` data is imported once and remains readable during the compatibility window.
+Eligible decision, preference, policy, configuration, and architecture saves
+now generate up to three namespace-safe relation candidates by default, without
+an LLM call. Judged relations are attached to normal search/ask results; pending
+candidates stay confined to review surfaces. The full MCP profile exposes
+`mem_relation_reviews`, `mem_judge`, and `mem_compare`. Set
+`MEMO_RELATION_CANDIDATES_ENABLED=0` or
+`MEMO_RELATION_ANNOTATIONS_ENABLED=0` to opt out independently.
+
+The LLM-backed corpus scanner can classify additional candidate pairs. Results
+persist as canonical relations in the main rebuildable index; legacy
+`contradictions.db` data is imported once and remains readable during the
+compatibility window.
 
 ### 🔮 Synthesis & autonomous maintenance
 

@@ -47,20 +47,19 @@ decision saves per arm:
 | relation candidates OFF | 5.319 ms | 5.724 ms |
 | relation candidates ON | 13.702 ms | 14.520 ms |
 
-The measured p50 increment was **8.384 ms**. Candidate generation remains
-default-off because the offline gate faithfully measures policy/namespace
-noise but not human judgment quality. Annotation graduation is coupled to that
-product judgment. Both are registered report-only and can be explicitly
-dogfooded without weakening always-on correctness invariants.
+The measured p50 increment was **8.384 ms**. At the initial 2026-07-22
+completion point, candidate generation and annotations remained report-only
+pending explicit product approval. On 2026-07-23 the user approved dogfooding
+all three graduated capabilities. Both relation flags are now default-on, have
+independent opt-outs, and no longer appear in the dark-flag or graduation
+registries.
 
 ### MCP coordinator characterization
 
 The 32-job FIFO run completed 32/32 with zero failures, rejections, or pending
 jobs. Mean queue wait was 19.995 ms and maximum wait was 39.833 ms for synthetic
-1 ms mutations. Capacity remains default `0` (disabled) until production write
-arrival/latency telemetry justifies changing a global default; the full
-implementation and diagnostics are available through
-`MEMO_MCP_WRITE_QUEUE_SIZE`.
+1 ms mutations. Following explicit approval on 2026-07-23, capacity 32 became
+the default. Capacity `0` remains the immediate rollback control.
 
 ### Retrieval regression
 
@@ -89,7 +88,6 @@ recommended no ranking change.
 - Existing install commands remain compatibility surfaces. Registry ownership
   is used for first-class agent metadata; broader adapters stay in their old
   paths until their parity window is measured.
-- Relation candidate/annotation and coordinator defaults are intentionally not
-  auto-flipped by an evaluator that cannot measure their human-facing quality
-  or production contention. This is the planned graduation outcome, not an
-  incomplete implementation.
+- Relation candidate/annotation and coordinator defaults were activated only
+  after explicit product approval. Each retains a zero/false rollback control,
+  while correctness invariants and canonical storage remain always on.

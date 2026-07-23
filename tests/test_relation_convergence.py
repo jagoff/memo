@@ -110,7 +110,8 @@ def test_v5_database_without_relation_table_migrates(tmp_path):
     migrated.close()
 
 
-def test_legacy_contradictions_import_once_and_project_from_canonical(mock_memory):
+def test_legacy_contradictions_import_once_and_project_from_canonical(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_RELATION_CANDIDATES_ENABLED", "0")
     first = mock_memory.save(content="old backend choice", title="old choice")
     second = mock_memory.save(content="new backend choice", title="new choice")
     legacy = ContradictionStore(mock_memory.cfg.contradictions_db)

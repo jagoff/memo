@@ -195,28 +195,31 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_MCP_WRITE_QUEUE_SIZE",
         "int",
-        0,
+        32,
         "mcp",
-        "Bounded process-local FIFO for mutating MCP calls. 0 disables it; "
-        "the data-directory lock remains cross-process authority.",
+        "Bounded process-local FIFO for mutating MCP calls. Default 32; set 0 "
+        "to disable it. The data-directory lock remains cross-process authority.",
         min_val=0,
         max_val=1024,
     ),
     _spec(
         "MEMO_RELATION_CANDIDATES_ENABLED",
         "bool",
-        False,
+        True,
         "relations",
         "Generate at most three canonical relation candidates after eligible saves. "
-        "Default off until the fixed-corpus graduation gate passes.",
+        "Default on after the fixed-corpus and save-latency gates passed; set 0 "
+        "to opt out.",
+        opt_out=True,
     ),
     _spec(
         "MEMO_RELATION_ANNOTATIONS_ENABLED",
         "bool",
-        False,
+        True,
         "relations",
         "Attach judged canonical relations to normal retrieval results. "
-        "Pending candidates are never attached.",
+        "Pending candidates are never attached. Default on; set 0 to opt out.",
+        opt_out=True,
     ),
     _spec(
         "MEMO_RESOURCE_BODY_CHARS",

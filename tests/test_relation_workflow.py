@@ -26,7 +26,6 @@ def test_post_save_candidates_are_capped_namespace_safe_and_llm_free(
         tags=["project:beta"],
     )
     hits = [replace(record, score=0.9 - index * 0.01) for index, record in enumerate([*alpha, beta])]
-    monkeypatch.setenv("MEMO_RELATION_CANDIDATES_ENABLED", "1")
     monkeypatch.setattr(mock_memory, "search", lambda *_a, **_k: hits)
     monkeypatch.setattr(
         mock_memory,
@@ -47,7 +46,6 @@ def test_post_save_candidates_are_capped_namespace_safe_and_llm_free(
 
 
 def test_post_save_candidate_failure_never_fails_canonical_save(mock_memory, monkeypatch) -> None:
-    monkeypatch.setenv("MEMO_RELATION_CANDIDATES_ENABLED", "1")
     monkeypatch.setattr(
         mock_memory,
         "detect_relation_candidates",
@@ -71,7 +69,6 @@ def test_judged_relation_annotation_excludes_pending(mock_memory, monkeypatch) -
     third = mock_memory.save(content="choice three", title="three", type_="decision")
     mock_memory.compare_memories(first.id, second.id, "compatible", reason="same scope")
     mock_memory.store.create_relation_candidate(source_id=first.id, target_id=third.id)
-    monkeypatch.setenv("MEMO_RELATION_ANNOTATIONS_ENABLED", "1")
 
     annotated = mock_memory.annotate_relations([first])[0]
     relations = annotated.extra["memory_relations"]
@@ -130,3 +127,42 @@ def test_failed_supersede_judgment_restores_validity(mock_memory, monkeypatch) -
 
     restored = mock_memory.get(old.id)
     assert restored is not None and restored.invalid_at is None
+
+
+def test_relation_candidate_search_does_not_record_user_usage(mock_memory, monkeypatch) -> None:
+    mock_memory.save(
+        content="the original internal search policy",
+        title="original policy",
+        type_="decision",
+    )
+    monkeypatch.setattr(
+        mock_memory,
+        "_record_access",
+        lambda _ids: (_ for _ in ()).throw(
+            AssertionError("internal candidate search recorded user access")
+        ),
+    )
+
+    saved = mock_memory.save(
+        content="the revised internal search policy",
+        title="revised policy",
+        type_="decision",
+    )
+
+    assert saved.relation_detection == "ok"
+
+
+def test_relation_capabilities_support_explicit_opt_out(mock_memory, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_RELATION_CANDIDATES_ENABLED", "0")
+    saved = mock_memory.save(
+        content="opted-out relation candidate generation",
+        title="candidate opt-out",
+        type_="decision",
+    )
+    assert saved.relation_detection == "disabled"
+
+    other = mock_memory.save(content="annotation peer", title="peer", type_="note")
+    mock_memory.compare_memories(saved.id, other.id, "related", reason="opt-out proof")
+    monkeypatch.setenv("MEMO_RELATION_ANNOTATIONS_ENABLED", "0")
+    annotated = mock_memory.annotate_relations([saved])[0]
+    assert "memory_relations" not in annotated.extra
