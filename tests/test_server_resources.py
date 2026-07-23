@@ -41,3 +41,15 @@ def test_memory_resource_body_chars_env_respects_zero(monkeypatch) -> None:
     assert "---\n\n…" in rendered
     assert "abcdef" not in rendered
     assert "preview only" in rendered
+
+
+def test_profile_and_recent_resources() -> None:
+    server = _FakeServer()
+    memory = SimpleNamespace(
+        list=lambda limit: [],
+        get=lambda id: None,
+        cfg=SimpleNamespace(memory_dir="/tmp"),
+    )
+    register(server, memory)
+    assert "no memories yet" in server.resources["memo://recent"]()
+    assert "Not found" in server.resources["memo://memory/{id}"]("missing")

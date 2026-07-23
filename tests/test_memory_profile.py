@@ -27,6 +27,73 @@ class _Memory:
         return [_Record()]
 
 
+def test_profile_helpers_and_empty_branches(tmp_path, monkeypatch):
+    from memo.memory_profile import _confidence, _freshness
+
+    assert _confidence(SimpleNamespace(extra={"confidence": "bad"})) == 0.7
+    assert (
+        _confidence(SimpleNamespace(extra={}, verification_state=SimpleNamespace(value="stale")))
+        == 0.5
+    )
+    assert _freshness("") is None
+    assert _freshness("not-a-date") == "not-a-date"
+    monkeypatch.setattr("memo.briefing.profile_lines", lambda cfg, cwd=None: ["x" * 500])
+
+    class _Empty(_Memory):
+        def list(self, **kwargs):
+            return []
+
+    payload = build_memory_profile(_Empty(tmp_path), scope="agent", limit=0, budget_chars=256)
+    assert payload["active"] == []
+    assert payload["omissions"] == ["stable profile truncated to the requested budget"]
+
+
+def test_profile_rejects_unknown_scope(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError, match="scope"):
+        build_memory_profile(_Memory(tmp_path), scope="invalid")
+
+
+def test_profile_handles_domain_error(tmp_path, monkeypatch):
+    from memo.errors import MemoError
+
+    class _Broken(_Memory):
+        def list(self, **kwargs):
+            raise MemoError("unavailable")
+
+    monkeypatch.setattr("memo.briefing.profile_lines", lambda cfg, cwd=None: [])
+    payload = build_memory_profile(_Broken(tmp_path))
+    assert payload["available"] is False
+    assert payload["omissions"]
+
+
+def test_profile_cli_json_and_text(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from memo.cli_profile import profile_group
+
+    memory = _Memory(tmp_path)
+    memory.close = lambda: None
+    monkeypatch.setattr("memo.cli_common.get_memory", lambda cfg: memory)
+    monkeypatch.setattr(
+        "memo.memory_profile.build_memory_profile",
+        lambda *a, **k: {
+            "available": True,
+            "stable": [],
+            "active": [{"id_short": "aaaa", "type": "note", "title": "A"}],
+        },
+    )
+    runner = CliRunner()
+    env = {"MEMO_DATA_DIR": str(tmp_path), "MEMO_STATE_DIR": str(tmp_path / "state")}
+    result = runner.invoke(profile_group, ["memory", "--json"], env=env)
+    assert result.exit_code == 0, result.output
+    assert '"available": true' in result.output
+    result = runner.invoke(profile_group, ["memory"], env=env)
+    assert result.exit_code == 0, result.output
+    assert "memory profile" in result.output
+
+
 def test_profile_is_bounded_and_evidence_aware(tmp_path, monkeypatch):
     monkeypatch.setattr("memo.briefing.profile_lines", lambda cfg, cwd=None: ["Stable preference"])
     payload = build_memory_profile(_Memory(tmp_path), scope="project", limit=1)

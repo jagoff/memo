@@ -1,9 +1,56 @@
 import json
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 
 from memo import eval_recall
 from memo.cli_eval import eval_group
+
+
+def test_eval_memory_json_and_text(tmp_path, monkeypatch):
+    labels = SimpleNamespace(
+        prompts=[SimpleNamespace(text="where is memo")],
+        fingerprint=lambda: "labels",
+    )
+    row = SimpleNamespace(
+        config="A",
+        precision_at_k=1.0,
+        recall_at_k=1.0,
+        ndcg_at_k=1.0,
+        mrr=1.0,
+        noise_at_k=0.0,
+        stale_at_k=0.0,
+        canonical_hit_at_k=1.0,
+        latency_ms_p50=1.0,
+        graph_recall_gain=0.0,
+        graph_noise_rate=0.0,
+        graph_explanation_coverage=1.0,
+    )
+
+    class _Memory:
+        def close(self):
+            pass
+
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: _Memory())
+    monkeypatch.setattr("memo.eval_recall.load_labels", lambda path: labels)
+    monkeypatch.setattr("memo.eval_recall.limit_label_set", lambda value, maximum: value)
+    monkeypatch.setattr("memo.eval_recall.profile_configs", lambda profile: ["A"])
+    monkeypatch.setattr("memo.eval_recall.evaluate", lambda *a, **k: [row])
+    from click.testing import CliRunner
+
+    runner = CliRunner()
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text("{}")
+    result = runner.invoke(
+        eval_group,
+        ["memory", "--labels", str(labels_path), "--json"],
+        env={"MEMO_DATA_DIR": str(tmp_path), "MEMO_STATE_DIR": str(tmp_path / "state")},
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["schema"] == "memo.eval.memory.v1"
+    result = runner.invoke(eval_group, ["memory", "--labels", str(labels_path)])
+    assert result.exit_code == 0, result.output
+    assert "memory eval" in result.output
 
 
 def test_eval_baseline_writes_snapshot(tmp_path, monkeypatch):
