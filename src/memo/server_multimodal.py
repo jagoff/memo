@@ -1,4 +1,11 @@
-"""MCP tools — OCR domain. Registered by build_server() via register(server, memory). Hosts memo_ocr_image (used by Synapse as a chat-time OCR fallback). The former memo_multimodal_* tools were placeholder hash-embedding stubs, removed 2026-07 — VLM captions + whisper transcripts through the normal text index are the cross-modal path."""
+"""MCP tools — OCR domain.
+
+Registered by ``build_server()`` via ``register(server, memory)``. Hosts
+``memo_ocr_image`` as an on-demand OCR fallback. The former
+``memo_multimodal_*`` tools were placeholder hash-embedding stubs, removed
+2026-07 — VLM captions and Whisper transcripts through the normal text index
+are the cross-modal path.
+"""
 
 from __future__ import annotations
 
@@ -17,9 +24,9 @@ def register(server: FastMCP, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Run Apple Vision OCR on an image and return extracted text.
 
-        Cached by SHA256 in `<state_dir>/ocr_cache`. Used by Synapse as a
-        chat-time fallback for screenshots that have not been picked up
-        by the indexer yet. Returns empty `text` if Vision is unavailable
+        Cached by SHA256 in `<state_dir>/ocr_cache`. Intended as an on-demand
+        fallback for screenshots that have not been picked up by the indexer
+        yet. Returns empty `text` if Vision is unavailable
         (non-macOS or missing PyObjC) or the file is missing.
 
         Args:

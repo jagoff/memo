@@ -1,10 +1,9 @@
 """Shared-embedder client — socket-first, in-process fallback.
 
 The recall daemon at `recall_server.py` keeps a single warm MLX embedder
-in RAM (~2GB for Qwen3-Embedding-0.6B + reranker). Any peer process —
-synapse's federator, memflow's daemon, another memo CLI — can reuse
-that warm instance instead of loading its own copy. This module is the
-client side of that contract.
+in RAM (~2GB for Qwen3-Embedding-0.6B + reranker). Any Memo CLI, MCP
+worker, or local agent process can reuse that warm instance instead of
+loading its own copy. This module is the client side of that contract.
 
 Two public functions mirror the `MLXEmbedder` surface so callers can
 drop this in wherever they would have instantiated `MLXEmbedder()`:

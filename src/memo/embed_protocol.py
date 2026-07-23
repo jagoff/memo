@@ -1,13 +1,8 @@
-"""Shared embedder wire protocol — the frozen contract between the recall
-daemon and every client (memo, memflow, synapse).
+"""Memo embedder wire protocol between the recall daemon and local clients.
 
 This module is the single normative spec for the AF_UNIX, newline-delimited
 JSON framing used by ``recall_server.py``. It is **stdlib-only** and imports
-no project code, so it can be vendored byte-identically into peer repos
-(memflow keeps a copy at ``memflow/embed_protocol.py``) without creating a
-cross-package dependency — memflow must not import memo (enforced by its
-``test_architecture_boundaries``). The two copies are kept in lock-step by a
-contract test in each repo (``test_embed_protocol_contract.py``).
+no heavy project code.
 
 Wire contract
 -------------
@@ -41,10 +36,7 @@ Two send helpers share one socket round-trip:
   embed clients use.
 
 Both return ``None`` on any failure (missing socket, refused, timeout, runaway
-response) so callers transparently fall back (to keyword retrieval in memflow,
-to in-process MLX in memo). Socket resolution is per-repo policy and is NOT
-frozen here: memo passes a ``Config``-derived path; memflow uses the env-based
-:func:`default_socket_path`.
+response) so callers transparently fall back to in-process embedding.
 """
 
 from __future__ import annotations
@@ -98,26 +90,13 @@ def _socket_path_for_state_dir(state_dir: Path, name: str = "recall") -> Path:
 
 
 def default_socket_path() -> Path:
-    """Resolve the recall socket from the environment (no project imports).
-
-    Priority: ``MEMFLOW_EMBED_SOCKET`` (explicit) → ``MEMO_STATE_DIR``/recall.sock
-    → memo's default state dir (``~/.local/share/memo/recall.sock``).
-
-    This is the env-only resolution memflow uses. memo resolves its state dir
-    through ``Config`` instead and passes the path explicitly to the send
-    helpers, so it does not call this.
-    """
-    import os
-
-    explicit = os.environ.get("MEMFLOW_EMBED_SOCKET", "").strip()
-    if explicit:
-        return Path(explicit).expanduser()
+    """Resolve Memo's recall socket through its native configuration."""
     try:
         from memo.config import Config
 
         state_dir = Config.from_env().state_dir
     except Exception:
-        state_dir = Path(os.environ.get("MEMO_STATE_DIR", "").strip() or "~/.local/share/memo")
+        state_dir = Path("~/.local/share/memo")
     return _socket_path_for_state_dir(state_dir.expanduser())
 
 

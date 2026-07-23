@@ -131,7 +131,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         )
 
     def _search(self, req: dict[str, Any]) -> str:
-        """Warm structured search for programmatic readers (memflow bridge).
+        """Warm structured search for programmatic readers.
 
         Same hybrid retrieval as ``memo search`` but served from the hot daemon
         (~0.7s vs ~9s cold CLI) and emitting ``{"results": [...]}``. Attributes
@@ -153,7 +153,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         if _we is not None:
             _we.wait(timeout=timeout_s)
         # priority=0: only the interactive `recall` op (5s hook budget) outranks
-        # the queue — the memflow bridge degrades gracefully on a bail.
+        # the queue — programmatic readers degrade gracefully on a bail.
         if not self.server._priority_lock.acquire(priority=0, timeout=timeout_s, label="search"):
             return json.dumps({"error": "search: timeout acquiring lock", "results": []})
         try:
@@ -378,7 +378,7 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     _we = getattr(self.server, "_warm_event", None)
                     if _we is not None:
                         _we.wait(timeout=_embed_timeout_s)
-                    # priority=0: embed_query callers (save dedup, memflow vec
+                    # priority=0: embed_query callers (save dedup, vector
                     # indexing, dream/eval passes) are not latency-bound — see
                     # MEMO_EMBED_LOCK_TIMEOUT_MS. At priority=1 a burst of these
                     # queued AT recall's priority with a 60s timeout, so an

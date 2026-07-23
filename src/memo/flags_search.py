@@ -347,7 +347,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "ask/chat only: after round-1 retrieval, ONE LLM sufficiency check may "
         "emit 1-3 refined queries for a single capped round-2 (at most k added "
         "hits, id-deduped). Never runs in the 5s recall hook. Default off — "
-        "flip only after the eval gate + synapse eval-chat measure a win.",
+        "flip only after the retrieval and answer-quality eval gates measure a win.",
     ),
     _spec(
         "MEMO_SEARCH_ADAPTIVE_LEXICAL_WEIGHT",

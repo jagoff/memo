@@ -22,7 +22,12 @@ from typing import Any, cast
 
 import frontmatter
 
-from memo._trace import current_trace
+from memo.contracts import (
+    LEGACY_PROVENANCE_KEYS,
+    PROVENANCE_KEYS,
+    ActorIdentity,
+    normalize_provenance,
+)
 from memo.errors import IdentityConflictError, StorageError
 from memo.fact_extraction import upsert_declared_fact_edges
 from memo.flags import flag_bool
@@ -52,6 +57,7 @@ from memo.memory.update_ops import _PreparedUpdateEmbedding, _RetryPreparedUpdat
 from memo.prompt_overrides import resolve_prompt
 from memo.save_gate import resolve_gate
 from memo.tiers import REFERENCE_TYPES
+from memo.trace import ambient_trace
 from memo.util import sha256_short as _sha256_short
 
 
@@ -311,12 +317,14 @@ class _WriteOpsMixin(_MemoryBase):
         cwd: str | None = None,
         created: str | None = None,
         defer_embed: bool = False,
-        respect_synapse_freeze: bool | None = None,
-        skip_memflow_receipt: bool = False,
+        enforce_write_policy: bool = True,
+        allow_conflict_override: bool = False,
+        override_reason: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
         valid_at: str | None = None,
         invalid_at: str | None = None,
+        actor: ActorIdentity | None = None,
     ) -> MemoryRecord:
         """Persist a memory, then run bounded post-commit relation detection."""
         record = self._save_core(
@@ -331,15 +339,48 @@ class _WriteOpsMixin(_MemoryBase):
             cwd=cwd,
             created=created,
             defer_embed=defer_embed,
-            respect_synapse_freeze=respect_synapse_freeze,
-            skip_memflow_receipt=skip_memflow_receipt,
+            enforce_write_policy=enforce_write_policy,
+            allow_conflict_override=allow_conflict_override,
+            override_reason=override_reason,
             topic_key=topic_key,
             normalized_hash=normalized_hash,
             valid_at=valid_at,
             invalid_at=invalid_at,
+            actor=actor,
         )
         record = self.ensure_review_schedule(record)
         return self.attach_post_save_relations(record)
+
+    def _enforce_native_write_policy(
+        self,
+        *,
+        enabled: bool,
+        title: str,
+        content: str,
+        tags: list[str],
+        extra: dict[str, Any] | None,
+        allow_conflict_override: bool,
+        override_reason: str,
+        actor: ActorIdentity | None,
+    ) -> dict[str, Any] | None:
+        if not enabled:
+            return extra
+        decision = self.write_policy.preflight(
+            title=title,
+            content=content,
+            tags=tags,
+            extra=extra,
+            actor=actor,
+            allow_conflict_override=allow_conflict_override,
+            override_reason=override_reason,
+        )
+        self.write_policy.enforce(decision)
+        updated = dict(extra or {})
+        updated["write_policy"] = decision.to_dict()
+        updated["visibility"] = decision.visibility.value
+        updated["trust_tier"] = decision.trust_tier.value
+        updated["owner_principal"] = self.cfg.device_id
+        return updated
 
     def _save_core(
         self,
@@ -355,12 +396,14 @@ class _WriteOpsMixin(_MemoryBase):
         cwd: str | None = None,
         created: str | None = None,
         defer_embed: bool = False,
-        respect_synapse_freeze: bool | None = None,
-        skip_memflow_receipt: bool = False,
+        enforce_write_policy: bool = True,
+        allow_conflict_override: bool = False,
+        override_reason: str = "",
         topic_key: str | None = None,
         normalized_hash: str | None = None,
         valid_at: str | None = None,
         invalid_at: str | None = None,
+        actor: ActorIdentity | None = None,
     ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
@@ -385,13 +428,10 @@ class _WriteOpsMixin(_MemoryBase):
         - `defer_embed`: when True, write markdown + metadata + BM25
           index only. Semantic search won't see the record until
           `memo reindex` runs with the embedder available.
-        - `respect_synapse_freeze`: when True, query synapse's
-          `RealityConflict` ledger before commit and raise
-          `WriteRefused` if a blocking freeze-write covers this
-          memory's topic. Defaults to the env knob
-          `MEMO_RESPECT_SYNAPSE_FREEZE=1` (opt-in). Only fires when
-          `extra` carries a `synapse_trace_id` — anonymous saves
-          bypass the check.
+        - `enforce_write_policy`: when True (default), evaluate Memo's local,
+          deterministic conflict/visibility/trust policy before commit.
+        - `allow_conflict_override`: permit a frozen topic only when accompanied
+          by a non-empty `override_reason`; the decision is persisted.
         - `valid_at`/`invalid_at`: optional ISO8601 world-validity interval
           (distinct from `created`/`updated` learned-time). Pure pass-through
           here — persisted to the row when supplied, else left None. Default
@@ -401,17 +441,17 @@ class _WriteOpsMixin(_MemoryBase):
         if not content or not content.strip():
             raise ValueError("`content` must be non-empty")
 
-        # Auto-attach the synapse trace id when the caller did not carry an
-        # explicit one in `extra`. Two transports feed it: the warm-daemon MCP
-        # path sets the trace contextvar (from the `x-synapse-trace-id` header,
-        # via the server middleware); the subprocess path sets `SYNAPSE_TRACE_ID`
-        # in the env. Prefer the contextvar (per-request, precise) and fall back
-        # to env (covers direct `memo save` CLI invocations). Lets provenance
-        # walks link memo writes back to the synapse session that spawned them.
-        ambient_trace = current_trace() or os.environ.get("SYNAPSE_TRACE_ID", "").strip()
-        if ambient_trace and (extra is None or not extra.get("synapse_trace_id")):
-            extra = dict(extra or {})
-            extra["synapse_trace_id"] = ambient_trace
+        # Canonicalise transport provenance at the boundary. Legacy flat keys
+        # are accepted for one-way import but are never persisted by new writes.
+        extra = dict(extra or {})
+        provenance = normalize_provenance(extra)
+        request_trace = ambient_trace()
+        if request_trace:
+            provenance.setdefault("trace_id", request_trace)
+        for key in PROVENANCE_KEYS | LEGACY_PROVENANCE_KEYS:
+            extra.pop(key, None)
+        if provenance:
+            extra["provenance"] = provenance
 
         # Final persistence boundary: pattern redaction and <private> stripping
         # are correctness invariants, independent of the optional early capture
@@ -435,19 +475,6 @@ class _WriteOpsMixin(_MemoryBase):
         normalized_hash = sanitized.normalized_hash
         extra = sanitized.extra
 
-        # Freeze-write protocol: opt-in pre-write check against synapse.
-        # Only fires when (a) the caller asked (kwarg or env), (b) the
-        # save carries provenance (otherwise we have no agent context
-        # to reason about), and (c) synapse is on PATH.
-        if respect_synapse_freeze is None:
-            respect_synapse_freeze = flag_bool("MEMO_RESPECT_SYNAPSE_FREEZE")
-        if respect_synapse_freeze and extra and extra.get("synapse_trace_id"):
-            self._enforce_synapse_freeze(
-                title=title,
-                content=content,
-                tags=tags,
-                trace_id=str(extra.get("synapse_trace_id") or ""),
-            )
         if type is not None:
             _log.warning("save: `type=` is deprecated, use `type_=`")
             if type_ != "note" and type_ != type:
@@ -560,6 +587,17 @@ class _WriteOpsMixin(_MemoryBase):
         topic_key = sanitized.topic_key
         normalized_hash = sanitized.normalized_hash
         extra = sanitized.extra
+
+        extra = self._enforce_native_write_policy(
+            enabled=enforce_write_policy,
+            title=title,
+            content=content,
+            tags=norm_tags,
+            extra=extra,
+            allow_conflict_override=allow_conflict_override,
+            override_reason=override_reason,
+            actor=actor,
+        )
 
         now_iso = _now_iso()
         created_iso = created or now_iso
@@ -947,7 +985,6 @@ class _WriteOpsMixin(_MemoryBase):
                 body_hash=body_hash,
                 content=content,
                 extra_for_store=extra_for_store,
-                skip_memflow_receipt=skip_memflow_receipt,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
                 expected_disk_text=written_disk_text,
@@ -998,7 +1035,6 @@ class _WriteOpsMixin(_MemoryBase):
             self._emit_save_receipt(
                 deferred_rec,
                 deferred=True,
-                disabled=skip_memflow_receipt,
             )
             self._presence_bump_save()
             return deferred_rec
@@ -1125,7 +1161,6 @@ class _WriteOpsMixin(_MemoryBase):
                 body_hash=body_hash,
                 content=content,
                 extra_for_store=extra_for_store,
-                skip_memflow_receipt=skip_memflow_receipt,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
                 expected_disk_text=written_disk_text,
@@ -1166,11 +1201,11 @@ class _WriteOpsMixin(_MemoryBase):
             )
             self._write_gen += 1
             return self.get(record_id) or rec
-        self._emit_save_receipt(rec, deferred=False, disabled=skip_memflow_receipt)
+        self._emit_save_receipt(rec, deferred=False)
         # Cache-tier: write policy (push/dirty) then capacity bound. Both
         # no-op unless MEMO_CACHE_MODE is on. Guarded so a backend hiccup
         # never fails the save itself.
-        self._apply_write_policy(rec)
+        self._apply_cache_write_policy(rec)
         if self.cache.policy.enabled and self.cache.policy.max_entries > 0:
             try:
                 self.cache.evict_if_needed()
@@ -1207,7 +1242,6 @@ class _WriteOpsMixin(_MemoryBase):
         body_hash: str,
         content: str,
         extra_for_store: dict[str, Any],
-        skip_memflow_receipt: bool,
         topic_key: str | None = None,
         normalized_hash: str | None = None,
         expected_disk_text: str | None = None,
@@ -1337,7 +1371,7 @@ class _WriteOpsMixin(_MemoryBase):
             action="created",
             index_pending=True,
         )
-        self._emit_save_receipt(rec, deferred=True, disabled=skip_memflow_receipt)
+        self._emit_save_receipt(rec, deferred=True)
         self._write_gen += 1
         return rec
 
@@ -1346,65 +1380,28 @@ class _WriteOpsMixin(_MemoryBase):
         rec: MemoryRecord,
         *,
         deferred: bool,
-        disabled: bool,
     ) -> None:
-        """Fire-and-forget memflow receipt for a successful save.
-
-        No-op unless `MEMO_EMIT_RECEIPTS=1`; never raises. `disabled`
-        is the synapse-originated opt-out (synapse keeps its own ledger).
-        """
-        from memo.receipts import emit_receipt
-
+        """Append a native, hash-chained receipt for a successful save."""
         prov = _extract_provenance(rec.extra or {})
         try:
-            emit_receipt(
+            self.operational.receipt(
                 "save",
-                text=f"Memo saved memory {rec.id[:8]} ({rec.type}): {rec.title}",
-                meta={
+                subject_uri=f"memo://memoria/{rec.id}",
+                trace_id=str(prov.get("trace_id") or ""),
+                actor_id=str(prov.get("actor_id") or "memo"),
+                metadata={
                     "id": rec.id,
                     "type": rec.type,
-                    "tags": ",".join(rec.tags),
+                    "title": rec.title,
+                    "tags": list(rec.tags),
                     "path": rec.path,
                     "deferred": deferred,
-                    "synapse_trace_id": prov.get("synapse_trace_id", ""),
-                    "synapse_route_reason": prov.get("synapse_route_reason", ""),
-                    "synapse_agent_id": prov.get("synapse_agent_id", ""),
                 },
-                disabled=disabled,
             )
         except Exception as exc:
-            _log.warning("save receipt deferred for %s: %s", rec.id[:8], exc)
-        # M2b: also emit to the unified trinity ledger (best-effort,
-        # independent of the memflow receipt path).
-        with contextlib.suppress(Exception):
-            self._emit_ledger("save", rec, prov, deferred=deferred)
+            _log.warning("native save receipt failed for %s: %s", rec.id[:8], exc)
 
-    def _emit_ledger(
-        self,
-        op: str,
-        rec: MemoryRecord,
-        prov: dict[str, Any] | None = None,
-        *,
-        deferred: bool = False,
-    ) -> None:
-        """Fire-and-forget ConsciousnessEvent for the unified ledger (M2)."""
-        from memo.consciousness_ledger import emit_event
-
-        emit_event(
-            op,
-            subject_uri=f"memo://memoria/{rec.id}",
-            trace_id=(prov or {}).get("synapse_trace_id", "") or "",
-            actor=(prov or {}).get("synapse_agent_id") or "memo",
-            payload={
-                "id": rec.id,
-                "type": rec.type,
-                "title": rec.title or "",
-                "tags": list(rec.tags or []),
-                "deferred": deferred,
-            },
-        )
-
-    def _apply_write_policy(self, rec: MemoryRecord) -> None:
+    def _apply_cache_write_policy(self, rec: MemoryRecord) -> None:
         """Honor MEMO_CACHE_MODE on a fresh save:
 
         - write_through: push to the backing store now; if the push fails,

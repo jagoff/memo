@@ -49,23 +49,11 @@ if [ -z "$_NEXT" ]; then
     printf 'memo: shim: %s: not found in PATH\\n' "$_AGENT" >&2
     exit 127
 fi
-_NEXT_IS_MEMFLOW_SHIM=0
-if [[ "$_NEXT" == */.memflow/bin/"$_AGENT" ]]; then
-    _NEXT_IS_MEMFLOW_SHIM=1
-fi
-_MEMFLOW_BANNER_DEFAULT=1
-if [ "$_AGENT" = "codex" ]; then
-    _MEMFLOW_BANNER_DEFAULT=0
-fi
-_NEXT_MEMFLOW_BANNER_ENABLED=0
-if [ "$_NEXT_IS_MEMFLOW_SHIM" = "1" ] && [ "${MEMFLOW_STARTUP_BANNER:-$_MEMFLOW_BANNER_DEFAULT}" != "0" ]; then
-    _NEXT_MEMFLOW_BANNER_ENABLED=1
-fi
 _MEMO="$(command -v memo 2>/dev/null || true)"
 if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ "${MEMO_STARTUP_BANNER_SHOWN:-0}" != "1" ]; then
     MEMO_STARTUP_BANNER_SHOWN=1
     export MEMO_STARTUP_BANNER_SHOWN
-    if [ "$_NEXT_MEMFLOW_BANNER_ENABLED" != "1" ] && [ -t 2 ]; then
+    if [ -t 2 ]; then
         "$_MEMO" startup-banner --agent "$_AGENT" || true
     fi
 fi
@@ -131,14 +119,13 @@ def install_path_snippet(
     existing = rc_path.read_text(encoding="utf-8") if rc_path.is_file() else ""
     path_present = _PATH_MARKER in existing
     path_line = f'export PATH="{bin_dir}:$PATH"  {_PATH_MARKER}'
-    path_needs_upgrade = (
-        (not path_present)
-        or path_line not in existing
-        or (
-            ".memflow/bin" in existing
-            and existing.rfind(path_line) < existing.rfind(".memflow/bin")
-        )
+    path_needs_upgrade = (not path_present) or path_line not in existing
+    marker_end = existing.rfind(_PATH_MARKER)
+    retired_wrapper_after_memo = any(
+        existing.find(retired, marker_end + len(_PATH_MARKER)) >= 0
+        for retired in (".memflow/bin", ".synapse/bin")
     )
+    path_needs_upgrade = path_needs_upgrade or retired_wrapper_after_memo
     tty_present = _TTY_MARKER in existing
     # Detect v1 snippet (no file write) and upgrade it in-place.
     tty_needs_upgrade = tty_present and _TTY_SNIPPET_V1 in existing and "agent_tty" not in existing

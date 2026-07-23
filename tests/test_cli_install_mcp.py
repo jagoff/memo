@@ -171,10 +171,7 @@ def _captured_servers(monkeypatch, tmp_path: Path, cli_args: list[str]) -> list[
             "argv": ["memo", "mcp", "add", "memo", "--", str(server.command)],
         }
 
-    # Patch at the import site inside install_mcp (it imports inside the function).
-    cc = pytest.importorskip("consciousness_contracts")
-
-    monkeypatch.setattr(cc, "register_agent_mcp", fake_register)
+    monkeypatch.setattr(cli_install_mcp, "_register_agent_mcp", fake_register)
 
     res = CliRunner().invoke(cli, ["install-mcp", *cli_args])
     assert res.exit_code == 0, res.output

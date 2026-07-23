@@ -1,12 +1,9 @@
-"""memo resume — cross-agent session discovery + native resume.
+"""Memo-owned cross-agent session discovery and native resume.
 
-Ported from synapse's resume package (Forma B): memo gains parity with
-``synapse resume`` (discover recent/active sessions across codex, claude,
-devin, gemini, opencode and resume them natively) while keeping its
-individuality — memo's own recall-grounded session snapshots
-(``state_dir/sessions/*.json``) are a first-class provider here, and there is
-**zero** memflow/synapse coupling (the cross-machine/checkpoint federation
-stays in synapse).
+Discovers recent/active sessions across codex, claude, devin, gemini, and
+opencode while treating Memo's recall-grounded session snapshots
+(``state_dir/sessions/*.json``) as a first-class provider. Cross-machine
+memory exchange is handled by Memo's signed federation bundles.
 """
 
 from __future__ import annotations

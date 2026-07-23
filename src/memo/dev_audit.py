@@ -114,6 +114,9 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     # stable StorageError domain contract, preserving the original cause.
     ("memory/write_ops.py", "_WriteOpsMixin._recover_topic_reservation_locked", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._apply_write_policy", 1),
+    # Cache eviction is post-commit housekeeping. A backend failure is logged
+    # but cannot invalidate the Markdown/sqlite write that already succeeded.
+    ("memory/write_ops.py", "_WriteOpsMixin._apply_cache_write_policy", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._absorb_into_existing", 1),
     ("memory/write_ops.py", "_WriteOpsMixin._read_body", 1),
     ("recall_logic.py", "_session_context", 1),

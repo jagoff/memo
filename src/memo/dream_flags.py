@@ -131,7 +131,6 @@ GATES: dict[str, GateSpec] = dict(
             "manual",
             "ops: auto-refresh mandate rule blocks in opted-in repos; gate = user judgement",
         ),
-        _g("MEMO_SYNC_MEMFLOW_ENABLED", "manual", "memflow integration; op decision"),
         _g("MEMO_CRUSHER_ENABLED", "manual", "ingest token economy; gate = memo eval tokens"),
         _g("MEMO_VLM_CAPTION_ENABLED", "manual", "ingest-time VLM cost; gate = ingest quality"),
         _g("MEMO_UPDATE_CHECK_ENABLED", "manual", "ops/update policy; human-only"),
@@ -147,7 +146,7 @@ GATES: dict[str, GateSpec] = dict(
             "MEMO_SAMPLING_SYNTH_ENABLED",
             "manual",
             "MCP client-sampling for synthesis; not recall-measurable — quality "
-            "gates in synapse eval-chat, human flips via config",
+            "gates in memo's synthesis evals, human flips via config",
         ),
         # --- manual (meta): flags gating nightly passes themselves ------------
         _g("MEMO_DREAM_TUNE_ENABLED", "manual", "meta: gates the tuner pass; op cost decision"),

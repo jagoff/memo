@@ -87,14 +87,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "Disable the SessionStart briefing panel.",
     ),
     _spec("MEMO_BRIEFING_DEBUG", "bool", False, "briefing", "Verbose briefing diagnostics."),
-    _spec(
-        "MEMO_BRIEFING_SYNAPSE_DISABLE",
-        "bool",
-        False,
-        "briefing",
-        "Skip the Synapse section of the briefing.",
-        opt_out=True,
-    ),
     _spec("MEMO_BRIEFING_LOOPS_N", "int", 5, "briefing", "Open-loop items shown in the briefing."),
     _spec(
         "MEMO_BRIEFING_LOOPS_DAYS", "int", 7, "briefing", "Look-back window (days) for open loops."

@@ -93,7 +93,7 @@ def _chart(rows: list[tuple[str, int, int]], color: str, title: str) -> Panel:
 
 def _by_client_panel(s: dict) -> Panel | None:
     """All-time savings attributed to each agent that reads memo — Claude Code
-    (grounded) plus every other LLM (codex/opencode/devin/synapse/memflow/...)
+    (grounded) plus every other LLM (codex/opencode/devin/other agents)
     measured by its productive consults."""
     bc = s.get("by_client", {}).get("historic", {})
     if not bc:

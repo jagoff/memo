@@ -111,8 +111,8 @@ def query_terms(query: str) -> list[str]:
     the stopword check, so accented and unaccented spellings of a stopword
     (``cómo`` / ``como``) are both dropped.
 
-    Order preserved, no dedup. Matches ``federator._query_significant_terms``
-    behavior so Synapse and Memo agree on what's "significant".
+    Order preserved, no dedup. Matches memo's internal query-term selection
+    behavior so every retrieval path agrees on what's "significant".
     """
     if not query:
         return []

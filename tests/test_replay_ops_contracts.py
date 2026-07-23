@@ -1,16 +1,14 @@
-"""Backend-native replay contracts for optional and dependency-free URI paths."""
+"""Memo-native backend replay contracts."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-import memo.memory.replay_ops as replay_ops
 from memo.errors import AmbiguousIdError
 from memo.memory.record import MemoryRecord
-from memo.memory.replay_ops import _ReplayOpsMixin
+from memo.memory.replay_ops import _parse_replay_uri, _ReplayOpsMixin
 
 
 class _Harness(_ReplayOpsMixin):
@@ -30,7 +28,7 @@ def _record(id_: str = "a" * 32) -> MemoryRecord:
     )
 
 
-def _source(**overrides) -> dict:
+def _source(**overrides: str) -> dict[str, str]:
     source = {
         "id": "repo-1",
         "name": "memo",
@@ -44,83 +42,47 @@ def _source(**overrides) -> dict:
     return source
 
 
-def _parts(resource_type: str, resource_id: str = "", subpath: str = "") -> SimpleNamespace:
-    return SimpleNamespace(
-        resource_type=resource_type,
-        resource_id=resource_id,
-        subpath=subpath,
-    )
-
-
 @pytest.fixture
-def helper_harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
-    monkeypatch.setattr(replay_ops, "_HAS_URI_HELPERS", True)
-    monkeypatch.setattr(
-        replay_ops,
-        "is_memo_uri",
-        lambda uri: uri.startswith("memo://"),
-        raising=False,
-    )
-    harness = _Harness()
-    harness.get = MagicMock(return_value=None)  # type: ignore[method-assign]
-    harness.store = MagicMock()
-    harness.store.get_repo_source.return_value = None
-    harness.store.repo_counts.return_value = {
+def harness() -> _Harness:
+    instance = _Harness()
+    instance.get = MagicMock(return_value=None)  # type: ignore[method-assign]
+    instance.store = MagicMock()
+    instance.store.get_repo_source.return_value = None
+    instance.store.repo_counts.return_value = {
         "files": 1,
         "lines": 20,
         "chunks": 2,
         "embedded_chunks": 2,
     }
-    return harness
+    return instance
 
 
-def test_shared_uri_helpers_reject_foreign_and_malformed_uris(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
+def test_native_uri_parser_preserves_repo_url_subpath() -> None:
+    parts = _parse_replay_uri("memo://repo/https://example.test/org/memo.git")
+
+    assert parts is not None
+    assert parts.resource_type == "repo"
+    assert parts.resource_id == "https:"
+    assert parts.subpath == "/example.test/org/memo.git"
+
+
+def test_native_uri_parser_rejects_foreign_uri_and_reports_unknown_type(
+    harness: _Harness,
 ) -> None:
-    parser = MagicMock(return_value=None)
-    monkeypatch.setattr(replay_ops, "parse_uri", parser, raising=False)
-
-    foreign = helper_harness.backend_native_replay_resolve("memflow://kernel/focus")
-    malformed = helper_harness.backend_native_replay_resolve("memo://bad")
+    foreign = harness.backend_native_replay_resolve("https://example.test/not-memo")
+    unknown = harness.backend_native_replay_resolve("memo://episode/one")
 
     assert foreign["status"] == "unsupported"
-    assert malformed["status"] == "missing"
-    parser.assert_called_once_with("memo://bad")
+    assert "only replays" in foreign["detail"]
+    assert unknown["status"] == "unsupported"
+    assert "episode" in unknown["detail"]
 
 
-@pytest.mark.parametrize("error_type", [TypeError, ValueError])
-def test_shared_uri_parser_failure_is_returned_as_missing_payload(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-    error_type: type[Exception],
-) -> None:
-    def _raise(_uri: str):
-        raise error_type("invalid percent escape")
-
-    monkeypatch.setattr(replay_ops, "parse_uri", _raise, raising=False)
-
-    payload = helper_harness.backend_native_replay_resolve("memo://bad/%ZZ")
-
-    assert payload["status"] == "missing"
-    assert payload["content_hash"] == ""
-    assert payload["resolution_mode"] == "backend_native"
-
-
-def test_shared_uri_helpers_resolve_memory_with_complete_envelope(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_native_replay_resolves_memory_with_complete_envelope(harness: _Harness) -> None:
     record = _record()
-    helper_harness.get.return_value = record
-    monkeypatch.setattr(
-        replay_ops,
-        "parse_uri",
-        lambda _uri: _parts("memoria", record.id[:8]),
-        raising=False,
-    )
+    harness.get.return_value = record
 
-    payload = helper_harness.backend_native_replay_resolve(
+    payload = harness.backend_native_replay_resolve(
         f"memo://memoria/{record.id[:8]}",
         trace_id="trace-1",
         backend_version="4.0.0",
@@ -131,99 +93,62 @@ def test_shared_uri_helpers_resolve_memory_with_complete_envelope(
     assert payload["content_hash"]
     assert payload["trace_id"] == "trace-1"
     assert payload["backend_version"] == "4.0.0"
+    harness.get.assert_called_once_with(record.id[:8])
 
 
 @pytest.mark.parametrize(
-    ("parts", "expected_detail"),
+    ("uri", "expected_detail"),
     [
-        (_parts("memoria"), "did not include an id"),
-        (_parts("repo"), "did not include a repo"),
-        (_parts("repo-index"), "must include"),
+        ("memo://memoria/", "did not include an id"),
+        ("memo://repo/", "did not include a repo"),
+        ("memo://repo-index/memo", "must include"),
     ],
 )
-def test_shared_uri_helpers_validate_required_identifiers(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-    parts: SimpleNamespace,
+def test_native_replay_validates_required_identifiers(
+    harness: _Harness,
+    uri: str,
     expected_detail: str,
 ) -> None:
-    monkeypatch.setattr(replay_ops, "parse_uri", lambda _uri: parts, raising=False)
-
-    payload = helper_harness.backend_native_replay_resolve("memo://incomplete")
+    payload = harness.backend_native_replay_resolve(uri)
 
     assert payload["status"] == "missing"
     assert expected_detail in payload["detail"]
+    harness.store.get_repo_source.assert_not_called()
 
 
-def test_shared_uri_helpers_report_ambiguous_memory_prefix(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    helper_harness.get.side_effect = AmbiguousIdError("abcd", ["abcd-1", "abcd-2"])
-    monkeypatch.setattr(
-        replay_ops,
-        "parse_uri",
-        lambda _uri: _parts("memoria", "abcd"),
-        raising=False,
-    )
+def test_native_replay_reports_missing_and_ambiguous_memory(harness: _Harness) -> None:
+    missing = harness.backend_native_replay_resolve("memo://memoria/abcd")
+    harness.get.side_effect = AmbiguousIdError("abcd", ["abcd-1", "abcd-2"])
+    ambiguous = harness.backend_native_replay_resolve("memo://memoria/abcd")
 
-    payload = helper_harness.backend_native_replay_resolve("memo://memoria/abcd")
-
-    assert payload["status"] == "error"
-    assert "2 matches" in payload["detail"]
+    assert missing["status"] == "missing"
+    assert ambiguous["status"] == "error"
+    assert "2 matches" in ambiguous["detail"]
 
 
-def test_shared_uri_helpers_resolve_repo_index_from_parser_subpath(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    helper_harness.store.get_repo_source.return_value = _source()
-    monkeypatch.setattr(
-        replay_ops,
-        "parse_uri",
-        lambda _uri: _parts("repo-index", subpath="memo/abcdef12"),
-        raising=False,
-    )
+def test_native_replay_resolves_repo_index(harness: _Harness) -> None:
+    harness.store.get_repo_source.return_value = _source()
 
-    payload = helper_harness.backend_native_replay_resolve("memo://repo-index/memo/abcdef12")
+    payload = harness.backend_native_replay_resolve("memo://repo-index/memo/abcdef12")
 
     assert payload["status"] == "found"
     assert payload["target"]["semantic_status"] == "semantic_ready"
     assert payload["target"]["counts"]["pending_chunks"] == 0
-    helper_harness.store.get_repo_source.assert_called_once_with("memo")
+    harness.store.get_repo_source.assert_called_once_with("memo")
 
 
-def test_shared_uri_helpers_require_repo_index_commit_before_store_query(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        replay_ops,
-        "parse_uri",
-        lambda _uri: _parts("repo-index", resource_id="memo", subpath=""),
-        raising=False,
-    )
+def test_native_replay_accepts_unknown_repo_index_commit(harness: _Harness) -> None:
+    harness.store.get_repo_source.return_value = _source(commit_sha="")
 
-    payload = helper_harness.backend_native_replay_resolve("memo://repo-index/memo")
+    payload = harness.backend_native_replay_resolve("memo://repo-index/memo/unknown")
 
-    assert payload["status"] == "missing"
-    assert "<repo-name>/<commit-prefix>" in payload["detail"]
-    helper_harness.store.get_repo_source.assert_not_called()
+    assert payload["status"] == "found"
 
 
-def test_shared_uri_helpers_return_commit_mismatch_with_current_target(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    helper_harness.store.get_repo_source.return_value = _source()
-    monkeypatch.setattr(
-        replay_ops,
-        "parse_uri",
-        lambda _uri: _parts("repo-index", "memo", "deadbeef"),
-        raising=False,
-    )
+def test_native_replay_returns_commit_mismatch_with_current_target(harness: _Harness) -> None:
+    harness.store.get_repo_source.return_value = _source()
 
-    payload = helper_harness.backend_native_replay_resolve("memo://repo-index/memo/deadbeef")
+    payload = harness.backend_native_replay_resolve("memo://repo-index/memo/deadbeef")
 
     assert payload["status"] == "missing"
     assert payload["target"] == {
@@ -232,74 +157,25 @@ def test_shared_uri_helpers_return_commit_mismatch_with_current_target(
         "name": "memo",
         "commit_sha": "abcdef1234567890",
     }
+    assert "replay URI" in payload["detail"]
 
 
-def test_shared_uri_helpers_resolve_repo_and_reject_unknown_resource(
-    helper_harness: _Harness,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    helper_harness.store.get_repo_source.return_value = _source()
-    monkeypatch.setattr(
-        replay_ops,
-        "parse_uri",
-        lambda _uri: _parts("repo", "repo-1"),
-        raising=False,
-    )
-    found = helper_harness.backend_native_replay_resolve("memo://repo/repo-1")
+def test_native_replay_reports_missing_repo_source(harness: _Harness) -> None:
+    payload = harness.backend_native_replay_resolve("memo://repo/missing")
 
-    monkeypatch.setattr(
-        replay_ops,
-        "parse_uri",
-        lambda _uri: _parts("episode", "one"),
-        raising=False,
-    )
-    unsupported = helper_harness.backend_native_replay_resolve("memo://episode/one")
-
-    assert found["status"] == "found"
-    assert found["target"]["name"] == "memo"
-    assert unsupported["status"] == "unsupported"
-    assert "episode" in unsupported["detail"]
+    assert payload["status"] == "missing"
+    assert "repo source was not found" in payload["detail"]
 
 
-@pytest.mark.parametrize(
-    ("uri", "expected"),
-    [
-        ("memo://memoria/", "did not include an id"),
-        ("memo://repo-index/memo", "must include"),
-        ("memo://repo/", "did not include a repo"),
-        ("https://example.test/not-memo", "only replays"),
-    ],
-)
-def test_manual_uri_fallback_validates_malformed_inputs(
-    monkeypatch: pytest.MonkeyPatch,
-    uri: str,
-    expected: str,
-) -> None:
-    monkeypatch.setattr(replay_ops, "_HAS_URI_HELPERS", False)
-    harness = _Harness()
-    harness.store = MagicMock()
-    harness.get = MagicMock(return_value=None)  # type: ignore[method-assign]
+def test_native_replay_resolves_repo_by_full_url(harness: _Harness) -> None:
+    source = _source()
+    harness.store.get_repo_source.return_value = source
 
-    payload = harness.backend_native_replay_resolve(uri)
+    payload = harness.backend_native_replay_resolve("memo://repo/https://example.test/memo.git")
 
-    assert payload["status"] in {"missing", "unsupported"}
-    assert expected in payload["detail"]
-
-
-def test_manual_uri_fallback_reports_ambiguous_memory(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(replay_ops, "_HAS_URI_HELPERS", False)
-    harness = _Harness()
-    harness.store = MagicMock()
-    harness.get = MagicMock(  # type: ignore[method-assign]
-        side_effect=AmbiguousIdError("abcd", ["abcd-1", "abcd-2"])
-    )
-
-    payload = harness.backend_native_replay_resolve("memo://memoria/abcd")
-
-    assert payload["status"] == "error"
-    assert "ambiguous memory id prefix" in payload["detail"]
+    assert payload["status"] == "found"
+    assert payload["target"]["name"] == "memo"
+    harness.store.get_repo_source.assert_called_once_with(source["url"])
 
 
 def test_repo_payload_without_id_does_not_query_counts() -> None:
@@ -319,19 +195,15 @@ def test_repo_payload_without_id_does_not_query_counts() -> None:
     }
 
 
-def test_repo_payload_never_reports_negative_pending_chunks() -> None:
-    """Defensive replay output remains coherent if derived counts drift."""
-
-    harness = _Harness()
-    harness.store = MagicMock()
+def test_repo_payload_clamps_negative_pending_chunks(harness: _Harness) -> None:
     harness.store.repo_counts.return_value = {
         "files": 1,
-        "lines": 2,
-        "chunks": 1,
-        "embedded_chunks": 2,
+        "lines": 20,
+        "chunks": 2,
+        "embedded_chunks": 3,
     }
 
     payload = harness._repo_replay_payload(_source())
 
-    assert payload["counts"]["pending_chunks"] == 0
     assert payload["semantic_status"] == "semantic_ready"
+    assert payload["counts"]["pending_chunks"] == 0

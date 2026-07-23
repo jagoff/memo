@@ -213,8 +213,8 @@ def test_verdict_marks_expected_consumers_silent(tmp_path: Path) -> None:
     v = verdict(tmp_path)
     by_name = {p["name"]: p["reads"] for p in v["per_consumer"]}
     assert by_name["claude-code"] is True
-    assert by_name["memflow"] is False
-    assert "memflow" in v["silent"]
+    assert by_name["codex"] is False
+    assert "codex" in v["silent"]
 
 
 def test_verdict_includes_on_demand_readers(tmp_path: Path) -> None:

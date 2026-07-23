@@ -27,7 +27,7 @@ sqlite state, and CLI should move together as one subsystem.
 ```bash
 # One-line installer (uv/pipx under the hood, pins the matching release,
 # and configures Claude Code + Codex + OpenCode + Devin Desktop when available)
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | bash
 # or install the latest published PyPI release explicitly
 pipx install mlx-memo
 # or
@@ -59,22 +59,22 @@ memo --version
 
 ```bash
 # Install the latest published PyPI release instead of GitHub master.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
 
 # Pin a published PyPI version.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | MEMO_VERSION=0.6.0 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | MEMO_VERSION=0.6.0 bash
 
 # Install from an explicit pipx spec (local checkout, git ref, wheel, etc.).
 MEMO_INSTALL_SPEC=/path/to/memo ./install.sh
 
 # Skip agent-client configuration during install.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
 
 # Force-skip the MLX model download (models load lazily on first use).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
 
 # Force-yes the MLX model download (skip the interactive confirmation).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
 ```
 
 **Model download** is part of memo's structure (embedder + reranker + chat
@@ -115,7 +115,7 @@ the corpus. On **Linux / Ubuntu**, use the CPU-index install command in
 [ubuntu.md](ubuntu.md).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v3.12.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.0/install.sh | bash
 memo doctor --strict-runtime
 memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
 ```
@@ -191,10 +191,11 @@ Released wheels include the Claude/Codex/Devin agent assets, so a normal
 checkout, pass `--repo /path/to/memo` to test uncommitted plugin changes.
 
 Tools surface inside the agent as `mcp__memo__memo_*`. Agent installs default to
-a 15-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
-`search`, `unified_briefing`, `version`, and session/capture notification
-helpers) so administrative schemas don't consume model context — set
-`MEMO_MCP_PROFILE=core`/`slim` (35 tools) or `full`/`default` (143 tools) only
+a 30-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
+`search`, `unified_briefing`, `version`, session/capture notifications, and
+Memo-native evidence, operational-continuity, and outcome-learning helpers) so
+administrative schemas don't consume model context — set
+`MEMO_MCP_PROFILE=core`/`slim` (50 tools) or `full`/`default` (158 tools) only
 for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
@@ -330,9 +331,9 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 
 | Profile | Tool count | Use |
 |---|---:|---|
-| `agent` (default) | 15 | Minimal always-on agent surface; optimized for schema-token cost. |
-| `core` / `slim` | 35 | CRUD, search, embeddings, history, sessions, lint, and lightweight graph/offload. |
-| `full` / `default` | 143 | Every advanced domain module and compatibility tool. |
+| `agent` (default) | 30 | Essential memory, evidence, continuity, and outcome-learning surface. |
+| `core` / `slim` | 50 | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
+| `full` / `default` | 158 | Every advanced domain module and diagnostic tool. |
 
 Mutating MCP calls pass through a bounded process-local FIFO by default
 (`MEMO_MCP_WRITE_QUEUE_SIZE=32`); read-only calls bypass it. The
@@ -1046,20 +1047,19 @@ federation, and orchestration belong outside memo's surface.
 The current inventory of broader corpus/workflow experiments lives in
 [`src/memo/experimental_index.md`](../src/memo/experimental_index.md).
 
-### Consciousness-stack integration
+### Self-contained agent memory
 
-memo is one of three sovereign systems: **Synapse** (federator), **[Memflow](https://github.com/jagoff/memflow)**
-(cross-Mac operational continuity), and memo (semantic corpus). Integration is
-opt-in everywhere — single-Mac users without Synapse or Memflow see zero
-behaviour change.
+Memo owns the complete stable path: durable corpus, retrieval, bounded
+EvidencePacks, operational continuity, conflict/write policy, outcome learning,
+and signed federation. None of these surfaces imports or launches another
+memory product or a private contract package.
 
-| Surface | Doc | Default | Opt-in knob |
-|---|---|---|---|
-| Synapse adapter — `MemoSynapseBackend`, provenance, freeze-write | [synapse-adapter.md](synapse-adapter.md) | OFF | `MEMO_RESPECT_SYNAPSE_FREEZE=1` |
-| Embedder daemon — shared MLX sidecar protocol | [embedder-daemon.md](embedder-daemon.md) | ON via `SessionStart` | — |
-| Contradict loop — synapse pulls via `memo contradict list --json` | [contradict-loop.md](contradict-loop.md) | ON (synapse-side) | — |
-| Receipts — operational breadcrumbs to memflow | [receipts.md](receipts.md) | OFF | `MEMO_EMIT_RECEIPTS=1` |
-| Briefing — synapse `present_state` in the session panel | [briefing.md](briefing.md) | ON when `synapse` is on PATH | `MEMO_BRIEFING_SYNAPSE_DISABLE=1` |
+| Surface | Doc | Default |
+|---|---|---|
+| Native focus, handoffs, attention, and briefing | [briefing.md](briefing.md) | ON |
+| Native contradiction and conflict lifecycle | [contradict-loop.md](contradict-loop.md) | ON |
+| Independence model and legacy migration | [memo-4-independence.md](memo-4-independence.md) | ON |
+| Embedder daemon — Memo-owned MLX sidecar protocol | [embedder-daemon.md](embedder-daemon.md) | ON via `SessionStart` |
 
 ## Information flow diagram
 

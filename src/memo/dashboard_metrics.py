@@ -44,8 +44,6 @@ VERDICT_MIN_MEASUREMENT_COVERAGE = 0.05
 # for tools the user invokes explicitly rather than tools that run continuously.
 EXPECTED_CONSUMERS = (
     "claude-code",
-    "synapse",
-    "memflow",
     "codex",
 )
 
@@ -448,10 +446,10 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
 
 
 # Rows produced by the auto-firing recall-hook (the user's ambient recall),
-# as opposed to an explicit tool/agent search (synapse `cli:search`, `mcp:*`).
+# as opposed to an explicit tool/agent search (`cli:search`, `mcp:*`).
 # The "does memo work as YOUR memory?" story — funnel, gaps, verdict volume — scopes
-# to these so an agent's eval traffic (e.g. synapse hammering memo with a generic
-# eval corpus) can't distort the picture. The "who uses memo?" panel still
+# to these so an agent's eval traffic (for example, a generic corpus probe)
+# can't distort the picture. The "who uses memo?" panel still
 # counts every reader via consult_breakdown.
 _AMBIENT_VIA = frozenset({"daemon", "subprocess", "bail", "daemon_error"})
 
@@ -462,11 +460,10 @@ def is_ambient_recall(row: dict[str, Any]) -> bool:
 
 def filter_real_sessions(state_dir, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep rows from real working sessions, dropping throwaway single-turn
-    sessions an eval harness spawns. synapse's eval fires a generic corpus
-    question (TCP vs UDP, git rebase…) into a fresh claude-code session that
-    fires once (turn_count == 1) and vanishes; those arrive through the ambient
-    recall-hook, so `is_ambient_recall` alone can't tell them from your own
-    prompts.
+    sessions an eval harness spawns. Evaluation can fire a generic corpus
+    question (TCP vs UDP, git rebase…) into a fresh client session that fires
+    once (turn_count == 1) and vanishes; those arrive through the ambient recall
+    hook, so `is_ambient_recall` alone can't tell them from your own prompts.
 
     A session is "real" if it has ≥ 2 turns — judged by the durable session
     snapshot's turn_count, OR (when no snapshot exists) by contributing ≥ 2 rows

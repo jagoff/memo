@@ -84,6 +84,12 @@ def _collaborative(memory: Any) -> Any:
     return CollaborativeManager(graph, filter_)
 
 
+def _federation(memory: Any) -> Any:
+    from memo.federation import FederationManager
+
+    return FederationManager(memory)
+
+
 OPTIONAL_CAPABILITIES: dict[str, CapabilityFactory] = {
     "analytics": _analytics,
     "backup": _backup,
@@ -91,6 +97,7 @@ OPTIONAL_CAPABILITIES: dict[str, CapabilityFactory] = {
     "contextual": _contextual,
     "crossref": _crossref,
     "dashboard": _dashboard,
+    "federation": _federation,
     "import_export": _import_export,
     "lifecycle": _lifecycle,
     "link_suggester": _link_suggester,

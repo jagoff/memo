@@ -1,21 +1,4 @@
-"""Synapse-aware briefing section composer.
-
-`memo briefing` (SessionStart hook) and the `memo_unified_briefing`
-MCP tool both want to surface unified state from synapse — handoffs +
-attention queue + open conflicts — alongside memo's own local sections.
-
-This module owns the "borrow from synapse" half. It is intentionally
-small + side-effect-free:
-
-* `synapse_briefing_lines(cwd)` returns a list of markdown lines (may
-  be empty if synapse is unreachable or returned a degenerate packet).
-* All shell-outs go through `memo.synapse_client.get_packet`, which
-  already swallows subprocess errors.
-
-Memo never imports synapse and the briefing degrades gracefully when
-synapse is absent — keeps the single-Mac path zero-regression per the
-plan's "graceful, opt-in" boundary.
-"""
+"""Memo-native startup briefing composition."""
 
 from __future__ import annotations
 
@@ -24,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from memo import synapse_client
+from memo.errors import MemoError
 
 _log = logging.getLogger(__name__)
 _MAX_ITEMS = 3
@@ -43,83 +26,63 @@ def compact_text(text: str, *, max_chars: int = 480) -> str:
     return compact[: max_chars - 1].rstrip() + "…"
 
 
-def synapse_briefing_lines(
-    cwd: str | None = None,
-    *,
-    k: int = 5,
-) -> list[str]:
-    """Return markdown lines summarising synapse's unified consciousness.
-
-    Empty list when synapse is unavailable or returns nothing useful.
-    Sections (each only present if the packet had data for it):
-
-    * `### Current state (Synapse)` — top present_state items
-      (memflow focus / handoffs / current work).
-    * `### Open conflicts` — top reality_conflicts.
-    * `_Synapse: ready · trace=<short>_` — health footer.
-    """
-    if not synapse_client.is_available():
-        return []
-    query = (cwd or "").strip() or "current focus"
-    packet = synapse_client.get_packet(query, k=k)
-    if not packet:
+def operational_briefing_lines(mem: Any, cwd: str | None = None) -> list[str]:
+    """Render focus, handoffs, attention, and conflicts from Memo's journal."""
+    try:
+        project = Path(cwd).resolve().name if cwd else None
+        state = mem.operational.state(project=project)
+    except (MemoError, OSError, ValueError, TypeError, AttributeError):
         return []
 
     lines: list[str] = []
-    present_lines = _present_state_section(packet.get("present_state"))
-    conflict_lines = _conflicts_section(packet.get("reality_conflicts"))
-    if not present_lines and not conflict_lines:
-        return []
-
-    lines.extend(present_lines)
-    lines.extend(conflict_lines)
-
-    status = str(packet.get("status") or "?").strip() or "?"
-    trace = str(packet.get("trace_id") or "")
-    trace_short = trace.rsplit("/", 1)[-1][:12] if trace else "—"
-    lines.append("")
-    lines.append(f"_Synapse: {status} · trace={trace_short}_")
-    lines.append("")
-    return lines
-
-
-def _present_state_section(rows: Any) -> list[str]:
-    items = _coerce_rows(rows)[:_MAX_ITEMS]
-    if not items:
-        return []
-    out: list[str] = ["### Current state (Synapse)", ""]
-    for i, item in enumerate(items, 1):
-        source = str(item.get("source") or "?")
-        title = str(item.get("title") or "—").strip() or "—"
-        snippet = _clip(item.get("snippet") or "")
-        out.append(f"{i}. **[{source}]** {title}")
-        if snippet:
-            out.append(f"   > {snippet}")
-    out.append("")
-    return out
-
-
-def _conflicts_section(rows: Any) -> list[str]:
-    items = _coerce_rows(rows)
-    open_items = [
-        r
-        for r in items
-        if str(r.get("lifecycle_state") or "detected").lower() in ("detected", "acknowledged")
+    focus = list(state.get("focus", {}).values())[:_MAX_ITEMS]
+    handoffs = [row for row in state.get("handoffs", {}).values() if not row.get("consumed_at")][
+        :_MAX_ITEMS
+    ]
+    attention = [
+        row for row in state.get("attention", {}).values() if not row.get("acknowledged_at")
     ][:_MAX_ITEMS]
-    if not open_items:
-        return []
-    out: list[str] = ["### Open conflicts", ""]
-    for i, c in enumerate(open_items, 1):
-        cid = str(c.get("conflict_id") or "?")
-        summary = str(c.get("summary") or c.get("title") or "—").strip()
-        severity = str(c.get("severity") or "?")
-        state = str(c.get("lifecycle_state") or "detected").lower()
-        freeze = " ❄️" if c.get("freeze_write") else ""
-        out.append(
-            f"{i}. `{cid[:12]}` · {state} · sev={severity}{freeze} — {_clip(summary, limit=140)}"
-        )
-    out.append("")
-    return out
+    conflicts = [
+        row
+        for row in state.get("conflicts", {}).values()
+        if row.get("lifecycle_state") not in {"resolved", "archived"}
+    ][:_MAX_ITEMS]
+
+    if focus or handoffs:
+        lines.extend(["### Operational continuity", ""])
+        for row in focus:
+            lines.append(
+                f"- **Focus · {row.get('project') or 'global'}:** {_clip(row.get('summary') or '')}"
+            )
+        for row in handoffs:
+            target = row.get("to_actor") or "next agent"
+            lines.append(
+                f"- **Handoff → {target}:** {_clip(row.get('summary') or '')} "
+                f"`{str(row.get('id') or '')[:18]}`"
+            )
+        lines.append("")
+    if attention:
+        lines.extend(["### Attention", ""])
+        for row in attention:
+            lines.append(
+                f"- **{row.get('severity') or 'medium'}:** "
+                f"{_clip(row.get('summary') or '')} "
+                f"`{str(row.get('id') or '')[:18]}`"
+            )
+        lines.append("")
+    if conflicts:
+        lines.extend(["### Open conflicts", ""])
+        for row in conflicts:
+            freeze = " · write frozen" if row.get("freeze_write") else ""
+            lines.append(
+                f"- `{str(row.get('id') or '')[:18]}`{freeze} — "
+                f"{_clip(row.get('summary') or row.get('topic') or '', limit=140)}"
+            )
+        lines.append("")
+    if lines:
+        head = str(state.get("last_event_hash") or "")[:12] or "empty"
+        lines.extend([f"_Memo journal: observed local head={head}_", ""])
+    return lines
 
 
 def entity_graph_lines(mem: Any, *, top: int = 5, max_scan: int = 40) -> list[str]:
@@ -400,7 +363,7 @@ def memo_native_briefing_lines(
     loops_days: int = 7,
     memory_of_day: bool = True,
 ) -> list[str]:
-    """memo's OWN durable-corpus briefing sections (no synapse dependency).
+    """Memo's durable-corpus briefing sections.
 
     Returns markdown lines for:
     * `### Open loops (last N days)` — recently-updated non-reference memories.
@@ -408,9 +371,9 @@ def memo_native_briefing_lines(
       revisited, so the corpus gets surfaced over time.
 
     Shared by the `memo briefing` CLI (SessionStart hook) and the
-    `memo_unified_briefing` MCP tool so an MCP-only agent (opencode / Devin /
-    Codex) gets grounded even when synapse is unreachable. Best-effort: any
-    failure yields fewer lines, never raises.
+    `memo_unified_briefing` MCP tool so every MCP-only agent gets grounded
+    directly from Memo. Best-effort: any failure yields fewer lines, never
+    raises.
     """
     import contextlib
     import hashlib
@@ -534,12 +497,6 @@ def memo_native_briefing_lines(
     return lines
 
 
-def _coerce_rows(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [r for r in value if isinstance(r, dict)]
-
-
 def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
     text = str(text or "").strip().replace("\n", " ")
     if len(text) <= limit:
@@ -552,8 +509,8 @@ __all__ = [
     "dream_digest_lines",
     "install_seed_lines",
     "memo_native_briefing_lines",
+    "operational_briefing_lines",
     "proactive_lines",
     "profile_lines",
-    "synapse_briefing_lines",
     "temporal_fact_lines",
 ]

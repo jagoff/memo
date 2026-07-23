@@ -1,39 +1,39 @@
-"""Backend-native replay resolution for `Memory`.
-
-`_ReplayOpsMixin` resolves `memo://` / `memflow://` replay URIs back to their
-source payloads (memory, repo-index chunk, repo). Extracted from
-maintain_ops.py (god-module decomposition); composed into `Memory` in facade.py.
-"""
+"""Memo-native replay resolution for `Memory`."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
-
-try:
-    from consciousness_contracts.uri import is_memo_uri, parse_uri
-
-    _HAS_URI_HELPERS = True
-except ImportError:
-    _HAS_URI_HELPERS = False
 
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     MEMO_BACKEND_NAME,
+    MEMO_BACKEND_NATIVE_SCHEMA,
     NATIVE_BACKEND_PROTOCOL_VERSION,
-    SYNAPSE_BACKEND_NATIVE_SCHEMA,
     AmbiguousIdError,
 )
 from memo.util import stable_hash as _stable_content_hash
 from memo.util import utc_now_iso as _utc_now_iso
 
 
-def _parse_replay_uri(uri: str) -> Any | None:
-    """Normalize dependency parser failures to the replay missing sentinel."""
+@dataclass(frozen=True)
+class _ReplayUri:
+    resource_type: str
+    resource_id: str
+    subpath: str
 
-    try:
-        return parse_uri(uri)
-    except (TypeError, ValueError):
+
+def _parse_replay_uri(uri: str) -> _ReplayUri | None:
+    if not isinstance(uri, str) or not uri.startswith("memo://"):
         return None
+    rest = uri[len("memo://") :].strip("/")
+    if not rest:
+        return _ReplayUri("", "", "")
+    resource_type, separator, path = rest.partition("/")
+    if not separator:
+        return _ReplayUri(resource_type, "", "")
+    resource_id, _, subpath = path.partition("/")
+    return _ReplayUri(resource_type, resource_id, subpath)
 
 
 class _ReplayOpsMixin(_MemoryBase):
@@ -44,7 +44,7 @@ class _ReplayOpsMixin(_MemoryBase):
         trace_id: str = "",
         backend_version: str = "",
     ) -> dict[str, Any]:
-        """Resolve Synapse backend_native.v1 evidence without mutating Memo."""
+        """Resolve a Memo evidence URI without mutating storage."""
 
         def payload(
             status: str,
@@ -54,7 +54,7 @@ class _ReplayOpsMixin(_MemoryBase):
             target: dict[str, Any] | None = None,
         ) -> dict[str, Any]:
             out: dict[str, Any] = {
-                "schema": SYNAPSE_BACKEND_NATIVE_SCHEMA,
+                "schema": MEMO_BACKEND_NATIVE_SCHEMA,
                 "protocol_version": NATIVE_BACKEND_PROTOCOL_VERSION,
                 "backend": MEMO_BACKEND_NAME,
                 "uri": uri,
@@ -70,183 +70,84 @@ class _ReplayOpsMixin(_MemoryBase):
                 out["target"] = target
             return out
 
-        # Use shared URI helpers if available
-        if _HAS_URI_HELPERS:
-            if not is_memo_uri(uri):
-                return payload(
-                    "unsupported",
-                    "Memo backend-native only replays memo://memoria/<id>, "
-                    "memo://repo/<id|name|url>, and memo://repo-index/<name>/<commit> evidence.",
-                )
-            parts = _parse_replay_uri(uri)
-            if parts is None:
-                return payload("missing", "Invalid URI format.")
-
-            resource_type = parts.resource_type
-            resource_id = parts.resource_id or ""
-            subpath = parts.subpath or ""
-
-            if resource_type == "memoria":
-                if not resource_id:
-                    return payload("missing", "memo://memoria URI did not include an id.")
-                try:
-                    rec = self.get(resource_id)
-                except AmbiguousIdError as exc:
-                    return payload(
-                        "error",
-                        f"ambiguous memory id prefix {exc.prefix!r}: {len(exc.matches)} matches",
-                    )
-                if rec is None:
-                    return payload("missing", "Memo memory was not found.")
-                return payload(
-                    "found",
-                    f"resolved memory: {rec.id}",
-                    content_hash=_stable_content_hash(rec.to_dict()),
-                    target={"kind": "memoria", "id": rec.id, "path": rec.path},
-                )
-
-            elif resource_type == "repo-index":
-                # parse_uri splits memo://repo-index/<name>/<commit> as:
-                # resource_id=<name>, subpath=<commit>
-                repo_name = resource_id or (
-                    subpath.split("/", 1)[0] if subpath and "/" in subpath else ""
-                )
-                commit_prefix = (
-                    subpath
-                    if resource_id
-                    else (subpath.split("/", 1)[1] if subpath and "/" in subpath else "")
-                )
-                if not repo_name or not commit_prefix:
-                    return payload(
-                        "missing", "memo://repo-index URI must include <repo-name>/<commit-prefix>."
-                    )
-                source = self.store.get_repo_source(repo_name)
-                if source is None:
-                    return payload("missing", "Memo repo source was not found.")
-                commit = str(source.get("commit_sha") or "")
-                if (
-                    commit_prefix
-                    and commit_prefix != "unknown"
-                    and not commit.startswith(commit_prefix)
-                ):
-                    return payload(
-                        "missing",
-                        "Memo repo source exists but commit did not match the receipt URI.",
-                        target={
-                            "kind": "repo_index",
-                            "repo_id": source.get("id") or "",
-                            "name": source.get("name") or repo_name,
-                            "commit_sha": commit,
-                        },
-                    )
-                resolved = self._repo_replay_payload(source)
-                return payload(
-                    "found",
-                    f"resolved repo index: {source.get('name')}@{commit[:12]}",
-                    content_hash=_stable_content_hash(resolved),
-                    target=resolved,
-                )
-
-            elif resource_type == "repo":
-                if not resource_id:
-                    return payload("missing", "memo://repo URI did not include a repo id/name/url.")
-                source = self.store.get_repo_source(resource_id)
-                if source is None:
-                    return payload("missing", "Memo repo source was not found.")
-                resolved = self._repo_replay_payload(source)
-                return payload(
-                    "found",
-                    f"resolved repo: {source.get('name')}",
-                    content_hash=_stable_content_hash(resolved),
-                    target=resolved,
-                )
-
-            else:
-                return payload(
-                    "unsupported",
-                    f"Unsupported memo:// resource type: {resource_type}",
-                )
-        else:
-            # Fallback to manual parsing
-            memoria_prefix = "memo://memoria/"
-            repo_index_prefix = "memo://repo-index/"
-            repo_prefix = "memo://repo/"
-
-            if uri.startswith(memoria_prefix):
-                memory_id = uri[len(memoria_prefix) :].strip()
-                if not memory_id:
-                    return payload("missing", "memo://memoria URI did not include an id.")
-                try:
-                    rec = self.get(memory_id)
-                except AmbiguousIdError as exc:
-                    return payload(
-                        "error",
-                        f"ambiguous memory id prefix {exc.prefix!r}: {len(exc.matches)} matches",
-                    )
-                if rec is None:
-                    return payload("missing", "Memo memory was not found.")
-                return payload(
-                    "found",
-                    f"resolved memory: {rec.id}",
-                    content_hash=_stable_content_hash(rec.to_dict()),
-                    target={"kind": "memoria", "id": rec.id, "path": rec.path},
-                )
-
-            if uri.startswith(repo_index_prefix):
-                rest = uri[len(repo_index_prefix) :].strip("/")
-                if not rest or "/" not in rest:
-                    return payload(
-                        "missing",
-                        "memo://repo-index URI must include <repo-name>/<commit-prefix>.",
-                    )
-                repo_name, commit_prefix = rest.split("/", 1)
-                source = self.store.get_repo_source(repo_name)
-                if source is None:
-                    return payload("missing", "Memo repo source was not found.")
-                commit = str(source.get("commit_sha") or "")
-                if (
-                    commit_prefix
-                    and commit_prefix != "unknown"
-                    and not commit.startswith(commit_prefix)
-                ):
-                    return payload(
-                        "missing",
-                        "Memo repo source exists but commit did not match the receipt URI.",
-                        target={
-                            "kind": "repo_index",
-                            "repo_id": source.get("id") or "",
-                            "name": source.get("name") or repo_name,
-                            "commit_sha": commit,
-                        },
-                    )
-                resolved = self._repo_replay_payload(source)
-                return payload(
-                    "found",
-                    f"resolved repo index: {source.get('name')}@{commit[:12]}",
-                    content_hash=_stable_content_hash(resolved),
-                    target=resolved,
-                )
-
-            if uri.startswith(repo_prefix):
-                repo_key = uri[len(repo_prefix) :].strip()
-                if not repo_key:
-                    return payload("missing", "memo://repo URI did not include a repo id/name/url.")
-                source = self.store.get_repo_source(repo_key)
-                if source is None:
-                    return payload("missing", "Memo repo source was not found.")
-                resolved = self._repo_replay_payload(source)
-                return payload(
-                    "found",
-                    f"resolved repo: {source.get('name')}",
-                    content_hash=_stable_content_hash(resolved),
-                    target=resolved,
-                )
-
+        parts = _parse_replay_uri(uri)
+        if parts is None:
             return payload(
                 "unsupported",
                 "Memo backend-native only replays memo://memoria/<id>, "
                 "memo://repo/<id|name|url>, and memo://repo-index/<name>/<commit> evidence.",
             )
+
+        resource_type = parts.resource_type
+        resource_id = parts.resource_id
+        subpath = parts.subpath
+
+        if resource_type == "memoria":
+            if not resource_id:
+                return payload("missing", "memo://memoria URI did not include an id.")
+            try:
+                rec = self.get(resource_id)
+            except AmbiguousIdError as exc:
+                return payload(
+                    "error",
+                    f"ambiguous memory id prefix {exc.prefix!r}: {len(exc.matches)} matches",
+                )
+            if rec is None:
+                return payload("missing", "Memo memory was not found.")
+            return payload(
+                "found",
+                f"resolved memory: {rec.id}",
+                content_hash=_stable_content_hash(rec.to_dict()),
+                target={"kind": "memoria", "id": rec.id, "path": rec.path},
+            )
+
+        if resource_type == "repo-index":
+            if not resource_id or not subpath:
+                return payload(
+                    "missing", "memo://repo-index URI must include <repo-name>/<commit-prefix>."
+                )
+            source = self.store.get_repo_source(resource_id)
+            if source is None:
+                return payload("missing", "Memo repo source was not found.")
+            commit = str(source.get("commit_sha") or "")
+            if subpath != "unknown" and not commit.startswith(subpath):
+                return payload(
+                    "missing",
+                    "Memo repo source exists but commit did not match the replay URI.",
+                    target={
+                        "kind": "repo_index",
+                        "repo_id": source.get("id") or "",
+                        "name": source.get("name") or resource_id,
+                        "commit_sha": commit,
+                    },
+                )
+            resolved = self._repo_replay_payload(source)
+            return payload(
+                "found",
+                f"resolved repo index: {source.get('name')}@{commit[:12]}",
+                content_hash=_stable_content_hash(resolved),
+                target=resolved,
+            )
+
+        if resource_type == "repo":
+            repo_key = resource_id + (f"/{subpath}" if subpath else "")
+            if not repo_key:
+                return payload("missing", "memo://repo URI did not include a repo id/name/url.")
+            source = self.store.get_repo_source(repo_key)
+            if source is None:
+                return payload("missing", "Memo repo source was not found.")
+            resolved = self._repo_replay_payload(source)
+            return payload(
+                "found",
+                f"resolved repo: {source.get('name')}",
+                content_hash=_stable_content_hash(resolved),
+                target=resolved,
+            )
+
+        return payload(
+            "unsupported",
+            f"Unsupported memo:// resource type: {resource_type or '<empty>'}",
+        )
 
     def _repo_replay_payload(self, source: dict[str, Any]) -> dict[str, Any]:
         repo_id = str(source.get("id") or "")

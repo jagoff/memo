@@ -7,7 +7,6 @@ be a circular import. cli.py and every cli_*.py group import from here.
 
 from __future__ import annotations
 
-import os
 import sys
 from typing import Any
 
@@ -55,10 +54,8 @@ def log_cli_consult(
 ) -> None:
     """Attribute a CLI read (search / ask / chat-ask / recall) to a consumer.
 
-    Mirrors the MCP server's ``log_consult`` for the subprocess path: trinity
-    layers (synapse, memflow, …) shell out to the ``memo`` CLI, so without this
-    their consults never reach the recall ring buffer and they show up as
-    "silent" in ``memo usefulness`` even though they DO read memo.
+    Mirrors the MCP server's ``log_consult`` for subprocess callers so their
+    consults reach the recall ring buffer and attribution reports.
 
     Logs ONLY when a source is provided — via ``--source`` or the ``MEMO_SOURCE``
     env var. A bare interactive ``memo search`` by the developer carries no
@@ -120,7 +117,9 @@ def _parse_as_of_date(s: str) -> str:
 
 
 def _backend_native_trace_id(trace_id: str = "") -> str:
-    return (trace_id or os.environ.get("SYNAPSE_TRACE_ID", "")).strip()
+    from memo.trace import ambient_trace
+
+    return (trace_id or ambient_trace()).strip()
 
 
 def _memo_backend_version() -> str:

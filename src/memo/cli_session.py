@@ -21,9 +21,9 @@ from memo.flags import flag_bool, flag_int
 def continuity_cmd(limit: int) -> None:
     """What was I working on? — resume the latest session for this directory.
 
-    Native-to-memo parity with memflow's flow_continuity, rendered from memo's
-    own session snapshots (cwd / branch / running summary / open loops). Reads
-    only; the data is captured by the Stop-hook checkpoint.
+    Memo-native continuity rendered from memo's own session snapshots (cwd /
+    branch / running summary / open loops). Reads only; the data is captured by
+    the Stop-hook checkpoint.
     """
     import os
     from pathlib import Path

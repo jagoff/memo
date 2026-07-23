@@ -216,13 +216,14 @@ def test_reusable_linux_smoke_cannot_cancel_sibling_release_gates() -> None:
     assert config["concurrency"]["cancel-in-progress"] is True
 
 
-def test_private_contract_secret_job_never_runs_for_pull_requests() -> None:
+def test_runtime_independence_replaces_private_contract_ci() -> None:
     workflow = (WORKFLOWS / "test.yml").read_text(encoding="utf-8")
 
-    assert (
-        "  private-contract-integration:\n"
-        "    if: github.event_name == 'push' && github.ref == 'refs/heads/master'\n"
-    ) in workflow
+    assert "  runtime-independence:\n" in workflow
+    assert "tests/test_independence.py" in workflow
+    assert "memo definitive benchmark" in workflow
+    assert "private-contract-integration" not in workflow
+    assert "CONTRACTS_TOKEN" not in workflow
 
 
 def test_docker_publish_requires_a_versioned_tag_from_master() -> None:

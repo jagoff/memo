@@ -90,10 +90,9 @@ jobs:
           MEMO_VEC_QUANTIZE: int8
         run: .venv/bin/python -m pytest -m "not slow and not float32_precision" -n auto --timeout=120
 
-  contract-stub-compatibility:
-    # Public, always-on interface gate. The stub only models the contract API
-    # memo consumes and forces every optional integration import down its live
-    # branch without exposing the private implementation repository.
+  runtime-independence:
+    # Memo's core must stay installable and executable without sibling repos,
+    # private packages, or external memory daemons.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -106,50 +105,13 @@ jobs:
       - name: Install uv
         run: pip install uv==0.11.21
       - name: Install package + dev dependencies
-        run: uv sync --frozen --extra dev --python 3.13
-      - name: Exercise public contract interface
-        run: .venv/bin/python -m pytest tests/test_contract_stub_compatibility.py
-
-  private-contract-integration:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    # The default `test` job mirrors a CLEAN install: consciousness_contracts is
-    # absent, so every contract import takes its fallback branch and the
-    # INTEGRATION path (cache / uri / ledger / run_json / EmbedderProfile) is
-    # never exercised. That blind spot is the launchd-fleet crash class — a
-    # runtime that *does* have the contract but wires it wrong.
-    #
-    # consciousness-contracts is a PRIVATE sibling repo, so a public-repo CI
-    # can't read it with the default GITHUB_TOKEN. This job is therefore an
-    # optional private integration until a `CONTRACTS_TOKEN` secret (a
-    # fine-grained PAT with read access to jagoff/consciousness-contracts) is
-    # set; the public contract-stub-compatibility gate above always runs.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        with:
-          persist-credentials: false
-      - name: Set up Python 3.13
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
-        with:
-          python-version: "3.13"
-      - name: Install uv
-        run: pip install uv==0.11.21
-      - name: Install package + dev deps + consciousness_contracts
-        id: install
-        env:
-          CONTRACTS_TOKEN: ${{ secrets.CONTRACTS_TOKEN }}
-        run: |
-          if [ -z "$CONTRACTS_TOKEN" ]; then
-            echo "::notice::CONTRACTS_TOKEN not set — skipping optional private integration."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-          uv sync --frozen --extra dev --extra cpu --python 3.13
-          uv pip install "consciousness-contracts @ git+https://x-access-token:${CONTRACTS_TOKEN}@github.com/jagoff/consciousness-contracts.git"
-      - name: Verify contract API + run suite with integration path live
-        if: steps.install.outputs.enabled == 'true'
-        run: |
-          # The contract API surface memo depends on must import cleanly.
-          .venv/bin/python -c "from consciousness_contracts import EmbedderProfile, run_json, ConsciousnessEvent, LedgerWriter, BackendError; print('consciousness_contracts API ok')"
-          .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120
+        run: uv sync --frozen --extra dev --extra cpu --python 3.13
+      - name: Prove runtime independence
+        run: >-
+          .venv/bin/python -m pytest
+          tests/test_independence.py
+          tests/test_operational_memory.py
+          tests/test_definitive_memory.py
+          tests/test_definitive_gate.py
+      - name: Gate causal-journal throughput
+        run: .venv/bin/memo definitive benchmark --events 100 --minimum-eps 1000

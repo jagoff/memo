@@ -59,6 +59,7 @@ from memo import server_lifecycle as _srv_lifecycle
 from memo import server_links as _srv_links
 from memo import server_multimodal as _srv_multimodal
 from memo import server_offload as _srv_offload
+from memo import server_operational as _srv_operational
 from memo import server_query as _srv_query
 from memo import server_reflect as _srv_reflect
 from memo import server_related as _srv_related
@@ -70,21 +71,15 @@ from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
 from memo import server_verbatim as _srv_verbatim
 from memo import server_version as _srv_version
-from memo._trace import TRACE_HEADER, trace_scope
 from memo.config import Config
 from memo.memory import Memory
+from memo.trace import TRACE_HEADER, trace_scope
 
 _log = logging.getLogger(__name__)
 
 
 def _make_trace_middleware() -> Any:
-    """Bridge the synapse trace header into the shared trace contextvar.
-
-    Synapse forwards its ``synapse://trace/<id>`` two ways: the
-    ``SYNAPSE_TRACE_ID`` env var (subprocess path) and the
-    ``x-synapse-trace-id`` HTTP header (warm-daemon path). The env var is read
-    in `write_ops`; this middleware covers the header path so a warm-daemon
-    write stamps the same trace id and the ledger trails stitch into one span.
+    """Bridge Memo's HTTP trace header into the shared trace contextvar.
 
     Returns ``None`` when FastMCP middleware isn't available so `build_server`
     can skip wiring it without failing.
@@ -270,8 +265,7 @@ def _build_server(
         lifespan=lifespan,
     )
 
-    # Stitch the synapse trace header into the shared trace contextvar so
-    # warm-daemon writes carry the same trace id as the subprocess path.
+    # Stitch Memo's trace header into the per-request context variable.
     _trace_mw = _make_trace_middleware()
     if _trace_mw is not None:
         server.add_middleware(_trace_mw)
@@ -282,7 +276,7 @@ def _build_server(
     # Stable and advanced domain tool modules register their @server.tool()
     # closures here. Presence on the MCP surface does not by itself mean a
     # feature is part of memo's stable core contract; see experimental_index.md.
-    # Skip when MEMO_MCP_SLIM=1 — reduces 143 tools to the 35-tool core surface
+    # Skip when MEMO_MCP_SLIM=1 — reduces 158 tools to the 50-tool core surface
     # for local/constrained LLMs where tool-definition tokens are expensive.
     from memo.surface import mcp_include_advanced_tools
 
@@ -341,6 +335,7 @@ def _build_server(
     _srv_core_search.register(server, memory)
     _srv_core_history.register(server, memory)
     _srv_idle_capture.register(server, memory)
+    _srv_operational.register(server, memory)
     _srv_resources.register(server, memory)
 
     from memo.surface import mcp_tools_to_remove

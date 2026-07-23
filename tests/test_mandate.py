@@ -1,4 +1,4 @@
-"""P4 cross-client inevitability: mandate writer + expanded silent-gap set."""
+"""Cross-client mandate writer and Memo-owned silent-gap set."""
 
 from __future__ import annotations
 
@@ -16,14 +16,14 @@ from memo.cli_mandate import (
 
 def test_expected_consumers_covers_non_hook_clients() -> None:
     # Only always-on daemons/hooks belong in EXPECTED_CONSUMERS — they are
-    # flagged "silent" when absent. claude-code (recall-hook) + synapse/memflow
-    # (always-on services) + codex qualify.
-    for c in ("claude-code", "synapse", "memflow", "codex"):
+    # flagged "silent" when absent. Memo's recall hook and Codex integration
+    # qualify without requiring a sibling memory runtime.
+    for c in ("claude-code", "codex"):
         assert c in dashboard.EXPECTED_CONSUMERS
     # On-demand tools the user invokes explicitly (not continuous daemons) must
     # NOT be flagged silent when idle: devin/opencode/devin-desktop appear as
     # readers if/when they query, but absence isn't a gap.
-    for c in ("devin", "opencode", "devin-desktop"):
+    for c in ("devin", "opencode", "devin-desktop", "synapse", "memflow"):
         assert c not in dashboard.EXPECTED_CONSUMERS
 
 

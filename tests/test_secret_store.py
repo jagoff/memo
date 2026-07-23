@@ -1,15 +1,18 @@
 """Tests for secret storage (flags, encryption, key custody, detection)."""
 
+import hashlib
 import os
 import secrets
 import stat
 
 import pytest
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from memo.flags import REGISTRY
 from memo.secret_store import (
     SecretKeyError,
+    _derive_legacy_secret_key,
     decrypt_secret,
     derive_secret_key,
     detect_secrets_heuristic,
@@ -75,6 +78,28 @@ def test_key_derivation_deterministic(tmp_path):
     key1 = derive_secret_key(state_dir=tmp_path)
     key2 = derive_secret_key(state_dir=tmp_path)
     assert key1 == key2
+
+
+def test_legacy_key_derivation_preserves_historical_device_algorithm(monkeypatch):
+    monkeypatch.setattr("memo.secret_store.platform.node", lambda: "legacy-node")
+    monkeypatch.setattr("memo.secret_store.socket.gethostname", lambda: "legacy-host")
+    monkeypatch.setattr(
+        "memo.secret_store._load_or_create_machine_salt",
+        lambda: "legacy-salt",
+    )
+    device_id = hashlib.sha256(b"legacy-node").hexdigest()[:16]
+    expected = hashlib.pbkdf2_hmac(
+        "sha256",
+        f"legacy-host:{device_id}:legacy-salt".encode(),
+        b"memo_secret_v1",
+        iterations=100000,
+        dklen=32,
+    )
+    nonce = b"0" * 12
+    ciphertext = AESGCM(expected).encrypt(nonce, b"legacy-value", None)
+
+    assert _derive_legacy_secret_key() == expected
+    assert AESGCM(_derive_legacy_secret_key()).decrypt(nonce, ciphertext, None) == b"legacy-value"
 
 
 def test_different_values_different_ciphertexts(tmp_path):

@@ -12,7 +12,7 @@ statusline self-heal (`cli_statusline.py`):
 
 - `wire_recall_hook()` idempotently installs a memo-owned ``UserPromptSubmit``
   hook in ``~/.claude/settings.json``, **coexisting** with foreign hooks
-  (caveman, memflow, supacode) rather than replacing them. The command uses the
+  rather than replacing them. The command uses the
   **absolute** path to the ``memo`` binary of the running runtime, so a
   GUI-launched agent with a minimal PATH (no ``~/.local/bin``) still finds it.
 - `selfheal_recall_hook()` re-asserts the wiring on every memo-mcp start (gated

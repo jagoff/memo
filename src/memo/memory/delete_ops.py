@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
+from memo.contracts import ActorIdentity
 from memo.flags import flag_bool
 from memo.lifecycle import (
     FORGET_AFTER_KEY,
@@ -69,14 +70,19 @@ class _DeleteOpsMixin(_MemoryBase):
 
     # -- delete -------------------------------------------------------------
 
-    def delete(self, id_: str) -> bool:
+    def delete(self, id_: str, *, actor: ActorIdentity | None = None) -> bool:
         """Serialize delete with save/update filesystem-index transitions."""
         if is_derived_chunk_id(id_):
             raise ValueError("derived chunk records are read-only; update the parent memory")
         with self._data_dir_write_lock():
-            return self._delete_locked(id_)
+            return self._delete_locked(id_, actor=actor)
 
-    def _delete_locked(self, id_: str) -> bool:
+    def _delete_locked(
+        self,
+        id_: str,
+        *,
+        actor: ActorIdentity | None = None,
+    ) -> bool:
         """Remove from disk + store. Returns True if anything was deleted.
 
         Authority contract (markdown is the source of truth): the canonical
@@ -92,6 +98,18 @@ class _DeleteOpsMixin(_MemoryBase):
         r = self.store.get(id_)
         if not r:
             return False
+        decision = self.write_policy.preflight(
+            title=str(r["title"]),
+            content=self._read_body(str(r["path"])),
+            tags=list(r.get("tags") or ()),
+            extra=dict(r.get("extra") or {}),
+            actor=actor
+            or ActorIdentity(
+                actor_id="memo-delete",
+                actor_kind="agent",
+            ),
+        )
+        self.write_policy.enforce(decision)
 
         # Validate the untrusted store path before mutating any derived state.
         # Otherwise a traversal row could both escape the vault and leave the
@@ -233,42 +251,22 @@ class _DeleteOpsMixin(_MemoryBase):
             with contextlib.suppress(Exception):
                 self._contradict_store.drop_for_memoria(id_)
 
-        # Step 6: emit receipts/events (non-critical, suppress errors)
-        # Optional receipt delivery crosses an integration boundary. No
-        # integration failure may reverse an authoritative completed delete.
+        # Step 6: append a native receipt. A journal failure cannot reverse an
+        # authoritative completed delete.
         with contextlib.suppress(Exception):
-            from memo.receipts import emit_receipt
-
-            emit_receipt(
-                "delete",
-                text=f"Memo deleted memory {id_[:8]} ({r['type']}): {r['title']}",
-                meta={
-                    "id": id_,
-                    "type": r["type"],
-                    "title": r["title"],
-                    "path": r["path"],
-                },
-            )
-
-        try:
-            from memo.consciousness_ledger import emit_event
-
-            emit_event(
+            provenance = _extract_provenance(r.get("extra") or {})
+            self.operational.receipt(
                 "delete",
                 subject_uri=f"memo://memoria/{id_}",
-                trace_id=(_extract_provenance(r.get("extra") or {}) or {}).get(
-                    "synapse_trace_id", ""
-                ),
-                actor="memo",
-                payload={
+                trace_id=str(provenance.get("trace_id") or ""),
+                actor_id=str(provenance.get("actor_id") or "memo"),
+                metadata={
                     "id": id_,
                     "type": r["type"],
                     "title": r["title"],
                     "path": r["path"],
                 },
             )
-        except Exception:  # noqa: S110
-            pass  # non-critical: file deletion is the authoritative step
 
         # Drop crossref rows for the deleted memory (flag-gated, best-effort).
         from memo.flags import flag_bool as _flag_bool

@@ -3,9 +3,10 @@
 memo is only worth keeping if the system reads it. This command turns the
 consult ring buffer (`recall.log`, written by the Claude Code recall-hook AND
 by every instrumented MCP tool — see `server._log_consult`) into a per-consumer
-report: how often each layer (Claude Code / synapse / memflow / agents) consults
-memo, its hit rate, and — the part that answers "do the others actually use it?" —
-which expected consumers are **silent** (zero consults).
+report: how often each configured client (Claude Code, Codex, or another
+attributed agent) consults memo, its hit rate, and — the part that answers "do
+the others actually use it?" — which expected consumers are **silent** (zero
+consults).
 
 Pure read over existing telemetry; no hot-path cost. The aggregation lives in
 `dashboard.consult_breakdown` / `dashboard.recall_health`; this module only

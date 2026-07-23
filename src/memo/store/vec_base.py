@@ -4,7 +4,7 @@ memo's VecStore and rag's SqliteVecCollection both wrap sqlite-vec but expose
 different API surfaces. VecStoreBase documents the minimal shared contract so:
 - rag's SqliteVecCollection can inherit and align with memo's optimised
   implementation (thread-local connections, WAL config).
-- Search pipelines (synapse, memflow) can type-hint VecStoreBase without
+- Search pipelines and integrations can type-hint VecStoreBase without
   coupling to memo internals.
 - New backends (cloud vec DB, DuckDB-vec) only need to implement this interface.
 

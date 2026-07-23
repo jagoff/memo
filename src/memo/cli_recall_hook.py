@@ -333,9 +333,8 @@ def recall_hook() -> None:
     # (project tiers, preference/graph/mmr/synthesis knobs included).
     knobs = knobs_from_flags(cwd=payload_cwd)
 
-    # Session-mode adjustments (subprocess-only: MEMFLOW_SESSION_MODE is a
-    # per-session env var the long-lived daemon process cannot see).
-    _session_mode = os.environ.get("MEMFLOW_SESSION_MODE", "").strip().lower()
+    # Optional per-session ranking preset.
+    _session_mode = (flag_str("MEMO_RECALL_SESSION_MODE") or "").strip().lower()
     knobs = apply_session_mode(knobs, _session_mode)
 
     _bc = flag_int("MEMO_RECALL_BODY_CHARS")

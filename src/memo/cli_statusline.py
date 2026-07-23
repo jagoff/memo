@@ -7,7 +7,7 @@ line, with the version derived from the installed dist-info dir (no python
 launch — fast enough to run every prompt).
 
 Chain-aware (the systemic guarantee): if a *foreign* ``statusLine`` already
-exists (caveman, memflow, a hand-rolled one), memo does **not** skip — it
+exists (another plugin or a hand-rolled one), memo does **not** skip — it
 **wraps** that command so the inner statusline still renders and ``[Memo
 <version>]`` is prepended. This makes the badge appear on ANY machine,
 coexisting with whatever was there, instead of silently never wiring. ``--force``

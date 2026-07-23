@@ -112,7 +112,7 @@ def _default_search_json_body_chars() -> int:
 @click.option(
     "--source",
     default=None,
-    help="Identify the calling layer (synapse / memflow / …) so the consult is "
+    help="Identify the calling client so the consult is "
     "attributed in `memo usefulness`. Falls back to the MEMO_SOURCE env var.",
 )
 def search(
@@ -454,8 +454,8 @@ def embed_cmd(text: str | None, batch_json) -> None:
       single: {"vector": [...], "dim": int, "model": "..."}
       batch:  {"vectors": [[...], ...], "dim": int, "model": "..."}
 
-    Synapse consumes this as its unified embed RPC (replaces a separate
-    Ollama embedder so query/document vectors share memo's space).
+    This native RPC lets every client share Memo's exact query/document
+    embedding space.
     """
 
     if batch_json is not None and text:
@@ -513,7 +513,7 @@ def embed_cmd(text: str | None, batch_json) -> None:
     "--context-json",
     type=click.File("r"),
     default=None,
-    help="Caller-supplied federation context (e.g. Synapse packet) for richer synthesis.",
+    help="Caller-supplied federation context (for example a verified Memo bundle).",
 )
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
@@ -650,11 +650,11 @@ def recall(
     body_chars: int | None,
     source: str | None,
 ) -> None:
-    """Hybrid recall for programmatic callers (synapse / memflow bridge).
+    """Hybrid recall for programmatic callers.
 
-    Same retrieval as ``memo search`` but emits ``{"results": [...]}`` — the
-    shape the memflow memo-bridge parses — and attributes the consult so the
-    layer stops showing as silent in ``memo usefulness``.
+    Same retrieval as ``memo search`` but emits ``{"results": [...]}`` and
+    attributes the consult so the client stops showing as silent in
+    ``memo usefulness``.
     """
     import time
 
@@ -668,7 +668,7 @@ def recall(
     results = []
     for h in hits:
         d = h.to_dict()
-        d["kind"] = d.get("type")  # memflow reads `kind`; memo stores `type`
+        d["kind"] = d.get("type")  # transport alias; Memo stores `type`
         results.append(d)
     results = _compact_hit_dicts(results, body_chars)
     log_cli_consult(cfg, verb="recall", query=query, hits=results, t0_ms=t0, source=source)
@@ -725,8 +725,8 @@ def rerank_cmd(
     stdout with a new ``rerank_score`` field per hit. Original fields
     are preserved verbatim.
 
-    Designed for Synapse to delegate rerank to memo's already-cached
-    Qwen3-Reranker without loading the model in a second process.
+    Lets any client reuse Memo's already-cached Qwen3-Reranker without
+    loading the model in a second process.
     """
     import sys
 

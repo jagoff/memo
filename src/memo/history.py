@@ -128,9 +128,9 @@ class HistoryStore:
         type_: str,
         provenance: dict[str, Any] | None = None,
     ) -> None:
-        # `provenance` is an optional bag of synapse_* / agent_* keys
-        # (trace_id, route_reason, write_policy_schema, agent_id,
-        # agent_signature, write_target). Stored as a {"_provenance": {...}}
+        # `provenance` is an optional bag of native trace / actor keys
+        # (trace_id, route_reason, policy_version, actor_id,
+        # actor_signature, write_target). Stored as a {"_provenance": {...}}
         # envelope inside `delta_json` so the events schema stays unchanged
         # and `list_recent` exposes it transparently.
         delta_json = None

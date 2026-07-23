@@ -6,8 +6,6 @@ so they run anywhere — no Apple Silicon needed.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from memo.config import Config
@@ -290,7 +288,7 @@ def test_scan_without_persistence_only_reports_matches(mem_with_stub_embed, monk
     emitted: list[tuple[str, str, str, float, str]] = []
     monkeypatch.setattr(
         "memo.contradict.emit_anomaly",
-        lambda *args: emitted.append(args) or "anom-test",
+        lambda *args, **_kwargs: emitted.append(args) or "anom-test",
     )
 
     result = mem.contradict_scanner.scan_corpus(
@@ -327,7 +325,7 @@ def test_scan_emits_anomaly_for_new_contradiction(mem_with_stub_embed, monkeypat
     emitted: list[tuple[str, str, str, float, str]] = []
     monkeypatch.setattr(
         "memo.contradict.emit_anomaly",
-        lambda *args: emitted.append(args) or "anom-test",
+        lambda *args, **_kwargs: emitted.append(args) or "anom-test",
     )
 
     mem.contradict_scanner.scan_corpus(
@@ -530,9 +528,10 @@ def test_pair_record_dataclass():
     assert rec.status == "open"
 
 
-def test_emit_anomaly_writes_contract_ledger_event(tmp_path, monkeypatch):
-    pytest.importorskip("consciousness_contracts")
-    monkeypatch.setenv("CONSCIOUSNESS_LEDGER_ROOT", str(tmp_path / "ledger"))
+def test_emit_anomaly_writes_native_ledger_event(tmp_path):
+    from memo.operational import OperationalStore
+
+    operational = OperationalStore(tmp_path, device_id="device-test")
 
     anomaly_id = emit_anomaly(
         "aaa",
@@ -540,20 +539,19 @@ def test_emit_anomaly_writes_contract_ledger_event(tmp_path, monkeypatch):
         "contradiction",
         0.91,
         "open",
+        operational=operational,
     )
 
     assert anomaly_id is not None
-    paths = list((tmp_path / "ledger").glob("*.jsonl"))
-    assert len(paths) == 1
-    event = json.loads(paths[0].read_text().splitlines()[0])
-    assert event["schema"] == "consciousness.event.v1"
-    assert event["source"] == "memo"
-    assert event["op"] == "anomaly_raised"
+    events = list(operational.ledger.iter_events())
+    assert len(events) == 1
+    event = events[0].to_dict()
+    assert event["schema"] == "memo.event.v1"
+    assert event["op"] == "anomaly.record"
     assert event["subject_uri"] == f"memo://anomaly/{anomaly_id}"
     payload = event["payload"]
-    assert payload["schema"] == "consciousness.anomaly.v1"
     assert payload["anomaly_id"] == anomaly_id
     assert payload["kind"] == "semantic_contradiction"
     assert payload["state"] == "detected"
-    assert payload["metadata"]["relationship"] == "contradiction"
-    assert payload["metadata"]["confidence"] == 0.91
+    assert payload["relationship"] == "contradiction"
+    assert payload["confidence"] == 0.91

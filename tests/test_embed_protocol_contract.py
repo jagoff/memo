@@ -122,7 +122,6 @@ def test_default_socket_path_uses_short_path_for_deep_state_dir(
     deep = tmp_path
     for n in range(12):
         deep = deep / f"very-long-directory-name-{n:02d}"
-    monkeypatch.delenv("MEMFLOW_EMBED_SOCKET", raising=False)
     monkeypatch.setenv("MEMO_STATE_DIR", str(deep))
 
     sock = ep.default_socket_path()

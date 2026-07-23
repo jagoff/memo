@@ -1,4 +1,4 @@
-"""`memo backend-native` command group — Synapse backend-native capabilities.
+"""`memo backend-native` command group — Memo protocol capabilities.
 
 Extracted from cli.py (3a god-module decomposition). Registered onto the
 root group in cli.py via `cli.add_command(backend_native_group)`.
@@ -17,18 +17,18 @@ from memo.config import Config
 
 @click.group(name="backend-native")
 def backend_native_group() -> None:
-    """Expose Synapse backend_native.v1 endpoints."""
+    """Expose Memo's stable native protocol."""
 
 
 @backend_native_group.command(name="capabilities")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--trace-id", default="")
 def backend_native_capabilities(as_json: bool, trace_id: str) -> None:
-    from memo.memory import NATIVE_BACKEND_PROTOCOL_VERSION, SYNAPSE_BACKEND_NATIVE_SCHEMA
+    from memo.memory import MEMO_BACKEND_NATIVE_SCHEMA, NATIVE_BACKEND_PROTOCOL_VERSION
 
     cfg = Config.from_env()
     payload = {
-        "schema": SYNAPSE_BACKEND_NATIVE_SCHEMA,
+        "schema": MEMO_BACKEND_NATIVE_SCHEMA,
         "protocol_version": NATIVE_BACKEND_PROTOCOL_VERSION,
         "backend": "memo",
         "supported": True,

@@ -37,7 +37,7 @@ def test_doctor_reports_silent_consumers(tmp_path: Path) -> None:
     assert report["verdict"] == "degraded"
     silent = [i for i in report["adoption"] if i["id"] == "silent_consumers"]
     assert silent
-    assert "memflow" in silent[0]["evidence"]["silent"]
+    assert "claude-code" in silent[0]["evidence"]["silent"]
     assert any("source" in a["command"] for a in report["actions"])
 
 

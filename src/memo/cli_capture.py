@@ -411,7 +411,7 @@ def _resume_federated(
     all_cwd: bool,
     as_json: bool,
 ) -> None:
-    """Cross-agent federated resume — parity with `synapse resume`.
+    """Cross-agent federated resume owned by Memo.
 
     Discovers recent/active sessions across codex/claude/devin/gemini/opencode
     native stores (plus memo's own snapshots), merges by (agent, session_id).
@@ -487,7 +487,7 @@ def _resume_federated(
             console.print(f"[dim]{notice}[/dim]")
         return
 
-    # Interactive TTY: the selectable arrow-key picker — what `synapse resume` is.
+    # Interactive TTY: the selectable arrow-key session picker.
     if interactive:
         # Default to the cwd filter, but if nothing matches the current dir fall
         # back to All so the picker never opens empty while sessions exist.
@@ -552,7 +552,7 @@ def _resume_federated(
     type=click.Choice(["memo", "all", "claude", "codex", "devin", "gemini", "opencode"]),
     default=None,
     help="`all` (or a specific agent) runs the cross-agent federated picker — "
-    "parity with `synapse resume`, scanning codex/claude/devin/gemini/opencode "
+    "scanning codex/claude/devin/gemini/opencode "
     "native stores. `memo` forces memo's own snapshots only. Unset: the human "
     "picker federates (`all`); `--json` stays memo-only for the shell wrapper.",
 )
@@ -574,7 +574,7 @@ def resume(
 ) -> None:
     """Recent sessions to resume — picker for the SessionStart flow.
 
-    Bare `memo resume` federates across agents (parity with `synapse resume`):
+    Bare `memo resume` federates across agents:
     it discovers and natively resumes codex/claude/devin/gemini/opencode
     sessions for the current cwd, with memo's own snapshots merged in as a
     first-class provider. `--all-cwd` widens beyond the current directory.
@@ -583,11 +583,11 @@ def resume(
     `~/.local/share/memo/sessions/` (auto-written by the Stop hook, LRU-capped),
     shown as the rich project/branch/turns table — pass SESSION_ID (full or
     unique prefix ≥4 chars) to inspect one. The machine `--json` path defaults
-    to this memo-only list so the shell wrapper / synapse keep their contract.
+    to this memo-only list so shell wrappers keep their stable contract.
     """
     # `--agent` unset: the human picker federates (what you want when you type
     # `memo resume`); the `--json` path stays memo-only so the SessionStart shell
-    # wrapper and synapse's MemoResumeProvider keep their list contract.
+    # wrapper and other programmatic clients keep their list contract.
     if agent is None:
         agent = "memo" if as_json else "all"
     if agent != "memo":

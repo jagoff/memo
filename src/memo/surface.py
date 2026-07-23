@@ -45,61 +45,87 @@ CORE_CLI_COMMANDS: frozenset[str] = frozenset(
 _CORE_PROFILES = {"core", "slim"}
 _FULL_PROFILES = {"default", "full"}
 
-AGENT_MCP_TOOLS: frozenset[str] = frozenset(
+_OPERATIONAL_MCP_TOOLS: frozenset[str] = frozenset(
     {
-        "memo_ask",
-        "memo_context",
-        "memo_get",
-        "memo_graph",
-        # Context-economy primitive registered always-on and never removed —
-        # present on every surface profile (incl. the minimal agent one).
-        "memo_offload",
-        "memo_rename",
-        "memo_save",
-        "memo_search",
-        "memo_unified_briefing",
-        # Session/notification plumbing registered by _srv_idle_capture outside
-        # the advanced gate and never removed.
-        "memo_idle_capture",
-        "memo_pop_notification",
-        "memo_start_session",
-        "memo_save_text",
-        "memo_version",
-        "memo_write_queue_status",
+        "memo_attention_ack",
+        "memo_attention_add",
+        "memo_conflict_open",
+        "memo_conflict_resolve",
+        "memo_evidence_pack",
+        "memo_federation_preview",
+        "memo_focus_clear",
+        "memo_focus_set",
+        "memo_handoff_consume",
+        "memo_handoff_create",
+        "memo_journal_verify",
+        "memo_operational_state",
+        "memo_outcome_record",
+        "memo_procedure_candidates",
+        "memo_procedure_promote",
     }
 )
 
-CORE_MCP_TOOLS: frozenset[str] = frozenset(
-    {
-        "memo_ask",
-        "memo_chat_ask",
-        "memo_consolidate",
-        "memo_context",
-        "memo_delete",
-        "memo_embed_batch",
-        "memo_embed_query",
-        "memo_forget",
-        "memo_get",
-        "memo_get_embedder_profile",
-        "memo_history",
-        "memo_lint",
-        "memo_list",
-        "memo_provenance",
-        "memo_record_diff",
-        "memo_reindex",
-        "memo_rename",
-        "memo_rerank",
-        "memo_save",
-        "memo_search",
-        "memo_search_trace",
-        "memo_session_get",
-        "memo_session_list",
-        "memo_stats",
-        "memo_unforget",
-        "memo_unified_briefing",
-        "memo_update",
-        "memo_write_queue_status",
-    }
+AGENT_MCP_TOOLS: frozenset[str] = (
+    frozenset(
+        {
+            "memo_ask",
+            "memo_context",
+            "memo_get",
+            "memo_graph",
+            # Context-economy primitive registered always-on and never removed —
+            # present on every surface profile (incl. the minimal agent one).
+            "memo_offload",
+            "memo_rename",
+            "memo_save",
+            "memo_search",
+            "memo_unified_briefing",
+            # Session/notification plumbing registered by _srv_idle_capture outside
+            # the advanced gate and never removed.
+            "memo_idle_capture",
+            "memo_pop_notification",
+            "memo_start_session",
+            "memo_save_text",
+            "memo_version",
+            "memo_write_queue_status",
+        }
+    )
+    | _OPERATIONAL_MCP_TOOLS
+)
+
+CORE_MCP_TOOLS: frozenset[str] = (
+    frozenset(
+        {
+            "memo_ask",
+            "memo_chat_ask",
+            "memo_consolidate",
+            "memo_context",
+            "memo_delete",
+            "memo_embed_batch",
+            "memo_embed_query",
+            "memo_forget",
+            "memo_get",
+            "memo_get_embedder_profile",
+            "memo_history",
+            "memo_lint",
+            "memo_list",
+            "memo_provenance",
+            "memo_record_diff",
+            "memo_reindex",
+            "memo_rename",
+            "memo_rerank",
+            "memo_save",
+            "memo_search",
+            "memo_search_trace",
+            "memo_session_get",
+            "memo_session_list",
+            "memo_stats",
+            "memo_unforget",
+            "memo_unified_briefing",
+            "memo_update",
+            "memo_write_queue_status",
+        }
+    )
+    | _OPERATIONAL_MCP_TOOLS
 )
 
 
@@ -125,7 +151,7 @@ def mcp_include_advanced_tools() -> bool:
 
 
 def mcp_profile() -> str:
-    """Resolve the MCP surface profile, defaulting agent clients to 15 tools."""
+    """Resolve the MCP surface profile, defaulting agent clients to 30 tools."""
     profile = _profile("MEMO_MCP_PROFILE", default="agent", strict=True)
     if flags.flag_bool("MEMO_MCP_SLIM"):
         return "core"
@@ -142,9 +168,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("15", "~1.5k"),
-    "core": ("35", "~3.1k"),
-    "slim": ("35", "~3.1k"),
+    "agent": ("30", "~3k"),
+    "core": ("50", "~4.6k"),
+    "slim": ("50", "~4.6k"),
 }
 
 
@@ -153,5 +179,5 @@ def mcp_profile_token_cost(profile: str | None = None) -> tuple[str, str, bool]:
     (or the active profile when ``None``). ``is_reduced`` is False only for the
     full/default surface — the costly one doctor warns about."""
     resolved = profile if profile is not None else mcp_profile()
-    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("143", "~16k"))
+    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("158", "~18k"))
     return count, cost, resolved in _PROFILE_TOKEN_COST

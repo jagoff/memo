@@ -165,8 +165,8 @@ def import_whatsapp(
     `<vault>/<SYSTEM_DIR>/Whatsapp`, override via --notes-dir or
     $MEMO_WHATSAPP_NOTES_DIR), transcript grouped by date, and — unless
     --no-index — runs `memo ingest <notes_dir> --name whatsapp` so the notes
-    are searchable by `memo search`/`ask` and the synapse :8765 chat. Indexing
-    targets the notes dir directly, so it works even when the dir lives under
+    are searchable by `memo search`/`ask` and memo's MCP tools. Indexing targets
+    the notes dir directly, so it works even when the dir lives under
     `<SYSTEM_DIR>/AI/` (which the generic vault ingest excludes). Notes are
     regenerated in full each run (idempotent). Scope is opt-in.
 

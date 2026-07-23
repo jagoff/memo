@@ -1,429 +1,74 @@
-"""Tests for the synapse-aware unified briefing composer.
-
-Covers:
-
-- `synapse_briefing_lines()` returns `[]` when synapse is not on PATH.
-- When `synapse_client.get_packet` returns a real packet, the composer
-  surfaces present_state + reality_conflicts + a health footer.
-- Only `detected`/`acknowledged` conflicts surface; `resolved` and
-  `archived` are filtered out.
-- Item count is capped (top-3 each).
-- Snippets are clipped to keep the briefing tight.
-- `memo_unified_briefing` MCP tool returns the structured payload.
-- The CLI briefing command swallows synapse errors and falls back to
-  the local-only sections (no regression when synapse is absent).
-"""
+"""Unified briefing tests for Memo's native operational state."""
 
 from __future__ import annotations
 
-import json
-from typing import Any
+import asyncio
 
-from click.testing import CliRunner
-
-import memo.briefing as briefing_mod
-import memo.cli_briefing as cli_briefing_mod
-import memo.synapse_client as synapse_client
+from memo.briefing import compact_text, operational_briefing_lines
+from memo.memory import Memory
+from memo.server import build_server
 
 
-def _packet_fixture() -> dict[str, Any]:
-    return {
-        "schema": "synapse.consciousness_packet.v2",
-        "trace_id": "synapse://trace/abc123def456",
-        "status": "ready",
-        "present_state": [
-            {
-                "source": "memflow",
-                "title": "Current focus: Memo GC5 briefing unification",
-                "snippet": "Wiring synapse packet into memo briefing without breaking single-Mac path.",
-            },
-            {
-                "source": "memflow",
-                "title": "Pending handoff from MacBook Air",
-                "snippet": "Astor terapia: revisar borrador del informe TO.",
-            },
-            {
-                "source": "memflow",
-                "title": "Item 3",
-                "snippet": "three",
-            },
-            {
-                "source": "memflow",
-                "title": "Item 4 should be dropped",
-                "snippet": "four",
-            },
-        ],
-        "reality_conflicts": [
-            {
-                "conflict_id": "C-open-1",
-                "lifecycle_state": "detected",
-                "severity": "high",
-                "freeze_write": True,
-                "summary": "Memo dice X pero Memflow dice ¬X sobre la decisión de auth.",
-            },
-            {
-                "conflict_id": "C-ack-2",
-                "lifecycle_state": "acknowledged",
-                "severity": "medium",
-                "freeze_write": False,
-                "summary": "Estado intermedio para revisión humana.",
-            },
-            {
-                "conflict_id": "C-resolved-3",
-                "lifecycle_state": "resolved",
-                "severity": "low",
-                "freeze_write": False,
-                "summary": "Ya cerrado — no debería aparecer.",
-            },
-            {
-                "conflict_id": "C-archived-4",
-                "lifecycle_state": "archived",
-                "freeze_write": True,
-                "summary": "Archivado — no debería aparecer.",
-            },
-        ],
-    }
-
-
-# -- happy path -----------------------------------------------------------
-
-
-def test_returns_empty_when_synapse_unavailable(monkeypatch):
-    monkeypatch.setattr(synapse_client, "is_available", lambda: False)
-    assert briefing_mod.synapse_briefing_lines("/tmp/wherever") == []
-
-
-def test_returns_empty_when_packet_is_none(monkeypatch):
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: None)
-    assert briefing_mod.synapse_briefing_lines("/tmp/wherever") == []
-
-
-def test_returns_empty_when_packet_has_no_sections(monkeypatch):
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    monkeypatch.setattr(
-        synapse_client,
-        "get_packet",
-        lambda *a, **kw: {"status": "ready", "present_state": [], "reality_conflicts": []},
-    )
-    assert briefing_mod.synapse_briefing_lines("/tmp") == []
-
-
-def test_renders_present_state_section(monkeypatch):
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: _packet_fixture())
-    out = briefing_mod.synapse_briefing_lines("/tmp")
-    md = "\n".join(out)
-    assert "### Current state (Synapse)" in md
-    assert "Current focus: Memo GC5 briefing unification" in md
-    assert "Pending handoff from MacBook Air" in md
-    # Item 4 must be dropped (top-3 cap).
-    assert "Item 4" not in md
-
-
-def test_renders_conflicts_filtering_resolved_and_archived(monkeypatch):
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: _packet_fixture())
-    out = briefing_mod.synapse_briefing_lines("/tmp")
-    md = "\n".join(out)
-    assert "### Open conflicts" in md
-    assert "C-open-1" in md
-    assert "C-ack-2" in md
-    assert "C-resolved-3" not in md
-    assert "C-archived-4" not in md
-    # Freeze flag visible for the freeze_write conflict.
-    assert "❄️" in md
-
-
-def test_health_footer_carries_status_and_trace_short(monkeypatch):
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: _packet_fixture())
-    out = briefing_mod.synapse_briefing_lines("/tmp")
-    last_real = next(line for line in reversed(out) if line.strip())
-    assert last_real.startswith("_Synapse:")
-    assert "ready" in last_real
-    # Trace short form drops the prefix and clips to 12 chars.
-    assert "abc123def456" in last_real
-
-
-def test_snippet_is_clipped(monkeypatch):
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    long_snippet = "x" * 500
-    packet = {
-        "status": "ready",
-        "trace_id": "t/short",
-        "present_state": [
-            {"source": "memflow", "title": "Long item", "snippet": long_snippet},
-        ],
-        "reality_conflicts": [],
-    }
-    monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: packet)
-    out = briefing_mod.synapse_briefing_lines("/tmp")
-    snippet_line = next(line for line in out if line.lstrip().startswith("> "))
-    body = snippet_line.lstrip()[2:]
-    assert len(body) <= 161  # cap + ellipsis
-    assert body.endswith("…")
-
-
-def test_non_dict_rows_are_ignored(monkeypatch):
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    monkeypatch.setattr(
-        synapse_client,
-        "get_packet",
-        lambda *a, **kw: {
-            "status": "partial",
-            "trace_id": "t/x",
-            "present_state": ["not-a-dict", 42, {"title": "ok"}],
-            "reality_conflicts": [{"lifecycle_state": "detected", "summary": "hi"}, None],
-        },
-    )
-    out = briefing_mod.synapse_briefing_lines("/tmp")
-    md = "\n".join(out)
-    assert "ok" in md
-    # The non-dict junk must not have produced any extra markdown lines.
-    assert "not-a-dict" not in md
-
-
-def test_legacy_conflict_without_state_treated_as_detected(monkeypatch):
-    """Memflow-projected conflicts may omit `lifecycle_state` — show them."""
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    monkeypatch.setattr(
-        synapse_client,
-        "get_packet",
-        lambda *a, **kw: {
-            "status": "ready",
-            "trace_id": "t/y",
-            "present_state": [],
-            "reality_conflicts": [{"conflict_id": "C-legacy", "summary": "no state set"}],
-        },
-    )
-    out = briefing_mod.synapse_briefing_lines("/tmp")
-    md = "\n".join(out)
-    assert "C-legacy" in md
-
-
-# -- MCP tool -------------------------------------------------------------
-
-
-def test_mcp_unified_briefing_returns_payload(tmp_cfg, monkeypatch):
-    import asyncio
-
-    from memo.memory import Memory
-    from memo.server import build_server
-
+def test_operational_briefing_is_empty_without_state(tmp_cfg) -> None:
     mem = Memory(tmp_cfg)
-    monkeypatch.setattr(synapse_client, "is_available", lambda: True)
-    monkeypatch.setattr(synapse_client, "get_packet", lambda *a, **kw: _packet_fixture())
-
-    server = build_server(memory=mem)
-    fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
-    out = fn(cwd="/tmp/sample")
-    assert out["available"] is True
-    assert "Open conflicts" in out["markdown"]
-    assert isinstance(out["lines"], list)
-    assert len(out["lines"]) > 0
-    # Cap raised to 900 so memo-native sections + synapse borrow both fit.
-    assert len(out["markdown"]) <= 900
+    try:
+        assert operational_briefing_lines(mem) == []
+    finally:
+        mem.close()
 
 
-def test_mcp_unified_briefing_empty_when_synapse_missing(tmp_cfg, monkeypatch):
-    import asyncio
-
-    from memo.memory import Memory
-    from memo.server import build_server
-
+def test_operational_briefing_renders_native_continuity(tmp_cfg) -> None:
     mem = Memory(tmp_cfg)
-    monkeypatch.setattr(synapse_client, "is_available", lambda: False)
+    try:
+        mem.operational.set_focus(project="memo", summary="Finish the native memory runtime")
+        mem.operational.create_handoff(
+            project="memo",
+            summary="Run the complete verification matrix",
+            from_actor="codex",
+            to_actor="next-agent",
+        )
+        mem.operational.add_attention(
+            project="memo",
+            summary="Review federation ACLs",
+            severity="high",
+        )
+        mem.operational.open_conflict(
+            topic="storage-authority",
+            summary="Two candidate values need an explicit decision",
+            freeze_write=True,
+        )
 
-    server = build_server(memory=mem)
-    fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
-    out = fn()
-    # Empty corpus AND no synapse → nothing to surface.
-    assert out == {"available": False, "markdown": "", "lines": [], "notification": ""}
-
-
-def test_mcp_unified_briefing_surfaces_memo_corpus_without_synapse(tmp_cfg, monkeypatch):
-    """#8: an MCP-only agent on a single Mac (synapse unreachable) must still
-    get memo's own durable corpus, not an empty briefing."""
-    import asyncio
-
-    from memo.config import Config
-    from memo.memory import Memory
-    from memo.server import build_server
-
-    def _stub_embed(self, inputs):
-        return [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
-
-    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
-    monkeypatch.setattr(synapse_client, "is_available", lambda: False)
-
-    cfg = Config(
-        data_dir=tmp_cfg.data_dir,
-        vault_path=tmp_cfg.vault_path,
-        state_dir=tmp_cfg.state_dir,
-        embedder_dims=4,
-    )
-    mem = Memory(cfg)
-    mem.save(
-        content="decidí usar el reranker 0.6B por latencia", title="Reranker pick", type_="decision"
-    )
-
-    server = build_server(memory=mem)
-    fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
-    out = fn()
-    # Synapse absent, but the corpus has a memory → briefing is non-empty and
-    # surfaces memo's own section (open loops), not synapse content.
-    assert out["available"] is True
-    assert "Open loops" in out["markdown"]
-    assert "Synapse" not in out["markdown"]
+        markdown = "\n".join(operational_briefing_lines(mem))
+        assert "Operational continuity" in markdown
+        assert "Finish the native memory runtime" in markdown
+        assert "Run the complete verification matrix" in markdown
+        assert "Review federation ACLs" in markdown
+        assert "Open conflicts" in markdown
+        assert "write frozen" in markdown
+        assert "Memo journal: observed local head=" in markdown
+    finally:
+        mem.close()
 
 
-def test_cli_briefing_emits_active_memory_block(tmp_cfg, monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli_briefing_mod.Config, "from_env", lambda: tmp_cfg)
-    monkeypatch.setattr(
-        "memo.session.list_sessions",
-        lambda *a, **kw: [
-            {
-                "cwd": str(tmp_path),
-                "session_id": "sid-1234",
-                "updated": "2026-06-18T10:00:00+00:00",
-                "summary": "ordenando la memoria activa",
-                "running_summary": "Se está consolidando el bloque de memoria activa.",
-                "project": "memo",
-                "branch": "master",
-                "turn_count": 3,
-                "modified_files": ["src/memo/session.py"],
-                "last_assistant_tail": "Quedó integrada en briefing y continuidad.",
-                "prompt_trail": ["primer loop", "segundo loop"],
-            }
-        ],
-    )
+def test_mcp_unified_briefing_returns_native_operational_state(tmp_cfg) -> None:
+    mem = Memory(tmp_cfg)
+    try:
+        mem.operational.set_focus(project="memo", summary="Ship Memo 4")
+        server = build_server(memory=mem)
+        fn = asyncio.run(server.get_tool("memo_unified_briefing")).fn
 
-    class _FakeStore:
-        def list_recent(self, *a, **kw):
-            return []
+        out = fn(cwd=str(tmp_cfg.data_dir / "memo"))
 
-    class _FakeMemory:
-        def __init__(self, cfg):
-            self.store = _FakeStore()
-
-    monkeypatch.setattr("memo.memory.Memory", _FakeMemory)
-    monkeypatch.setattr(briefing_mod, "synapse_briefing_lines", lambda cwd: [])
-
-    result = CliRunner().invoke(cli_briefing_mod.briefing)
-    assert result.exit_code == 0
-    payload = json.loads(result.output)
-    md = payload["hookSpecificOutput"]["additionalContext"]
-    assert "Active memory" in md
-    assert "Last session in this project" in md
-    assert "Quedó integrada" in md
-    assert "Open loops (session)" in md
-
-
-def test_cli_compact_briefing_caps_context_and_skips_synapse(tmp_cfg, monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli_briefing_mod.Config, "from_env", lambda: tmp_cfg)
-    monkeypatch.setattr(
-        "memo.session.list_sessions",
-        lambda *a, **kw: [
-            {
-                "cwd": str(tmp_path),
-                "session_id": "sid-compact",
-                "updated": "2026-06-18T10:00:00+00:00",
-                "summary": "resumen " + ("muy largo " * 80),
-                "running_summary": "estado " + ("detallado " * 80),
-                "project": "memo",
-                "branch": "master",
-                "turn_count": 12,
-            }
-        ],
-    )
-
-    class _FakeStore:
-        def list_recent(self, *a, **kw):
-            raise AssertionError("compact briefing must not scan open loops")
-
-    class _FakeMemory:
-        def __init__(self, cfg):
-            self.store = _FakeStore()
-
-    monkeypatch.setattr("memo.memory.Memory", _FakeMemory)
-    monkeypatch.setattr(
-        briefing_mod,
-        "synapse_briefing_lines",
-        lambda cwd: (_ for _ in ()).throw(AssertionError("compact briefing must skip Synapse")),
-    )
-
-    result = CliRunner().invoke(cli_briefing_mod.briefing, ["--compact"])
-
-    assert result.exit_code == 0
-    payload = json.loads(result.output)
-    md = payload["hookSpecificOutput"]["additionalContext"]
-    assert len(md) <= 480
-    assert "sid-compact" in md
-    assert "Memory of the day" not in md
+        assert out["available"] is True
+        assert "Ship Memo 4" in out["markdown"]
+        assert isinstance(out["lines"], list)
+        assert out["notification"] == ""
+    finally:
+        mem.close()
 
 
 def test_compact_text_preserves_limit_and_ellipsis() -> None:
-    compact = briefing_mod.compact_text("alpha\n\n" + ("beta " * 200), max_chars=80)
+    compact = compact_text("alpha\n\n" + ("beta " * 200), max_chars=80)
     assert len(compact) <= 80
     assert compact.endswith("…")
     assert "\n\n" not in compact
-
-
-# -- get_packet wrapper ---------------------------------------------------
-
-
-def test_get_packet_returns_none_when_subprocess_fails(monkeypatch):
-    monkeypatch.setattr(synapse_client, "_executable", lambda: "/does/not/exist")
-
-    class _FakeProc:
-        returncode = 1
-        stdout = ""
-        stderr = "boom"
-
-    def _raise(*_a: Any, **_kw: Any):
-        raise FileNotFoundError("nope")
-
-    monkeypatch.setattr(synapse_client.subprocess, "run", _raise)
-    assert synapse_client.get_packet("q") is None
-
-
-def test_get_packet_returns_none_on_non_zero_exit(monkeypatch):
-    monkeypatch.setattr(synapse_client, "_executable", lambda: "/fake/synapse")
-
-    class _Proc:
-        returncode = 2
-        stdout = ""
-        stderr = "fail"
-
-    monkeypatch.setattr(synapse_client.subprocess, "run", lambda *a, **kw: _Proc())
-    assert synapse_client.get_packet("q") is None
-
-
-def test_get_packet_returns_none_on_bad_json(monkeypatch):
-    monkeypatch.setattr(synapse_client, "_executable", lambda: "/fake/synapse")
-
-    class _Proc:
-        returncode = 0
-        stdout = "{not-json"
-        stderr = ""
-
-    monkeypatch.setattr(synapse_client.subprocess, "run", lambda *a, **kw: _Proc())
-    assert synapse_client.get_packet("q") is None
-
-
-def test_get_packet_round_trips_dict(monkeypatch):
-    monkeypatch.setattr(synapse_client, "_executable", lambda: "/fake/synapse")
-
-    payload = {"schema": "v2", "status": "ready", "present_state": []}
-
-    class _Proc:
-        returncode = 0
-        stdout = '{"schema": "v2", "status": "ready", "present_state": []}'
-        stderr = ""
-
-    monkeypatch.setattr(synapse_client.subprocess, "run", lambda *a, **kw: _Proc())
-    out = synapse_client.get_packet("q")
-    assert out == payload

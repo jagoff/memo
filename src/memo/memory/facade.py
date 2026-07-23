@@ -32,9 +32,11 @@ from memo.memory.capabilities import OPTIONAL_CAPABILITIES
 from memo.memory.chat_ask_ops import _ChatAskOpsMixin
 from memo.memory.consolidate_ops import _ConsolidateOpsMixin
 from memo.memory.delete_ops import _DeleteOpsMixin
+from memo.memory.evidence_ops import _EvidenceOpsMixin
 from memo.memory.graph_ops import _GraphOpsMixin
 from memo.memory.lifecycle_ops import _LifecycleOpsMixin
 from memo.memory.maintain_ops import _MaintainOpsMixin
+from memo.memory.outcome_feedback_ops import _OutcomeFeedbackOpsMixin
 from memo.memory.record import _compose_for_embed
 from memo.memory.relation_ops import _RelationOpsMixin
 from memo.memory.replay_ops import _ReplayOpsMixin
@@ -61,6 +63,8 @@ class Memory(
     _GraphOpsMixin,
     _SearchOpsMixin,
     _SearchScoringMixin,
+    _EvidenceOpsMixin,
+    _OutcomeFeedbackOpsMixin,
     _AskOpsMixin,
     _ChatAskOpsMixin,
     _RerankOpsMixin,
@@ -167,6 +171,14 @@ class Memory(
         from memo.history import HistoryStore as _HS
 
         self.history = _HS(cfg.history_db, device_id=cfg.device_id)
+        # Native operational continuity and write policy.  These are lightweight
+        # (journal paths + lazy snapshot reads), always available, and replace
+        # the historical cross-runtime boundary.
+        from memo.operational import OperationalStore as _OperationalStore
+        from memo.write_policy import WritePolicyEngine as _WritePolicyEngine
+
+        self.operational = _OperationalStore(cfg.state_dir, device_id=cfg.device_id)
+        self.write_policy = _WritePolicyEngine(self.operational)
         # Helper LLM is lazy — only constructed when a helper-backed path
         # is requested. Users who don't opt in pay nothing.
         self._chat: MLXChat | None = None
@@ -452,6 +464,11 @@ class Memory(
     def collaborative(self) -> Any:
         """Lazy accessor for CollaborativeManager."""
         return self.capability("collaborative")
+
+    @property
+    def federation(self) -> Any:
+        """Lazy accessor for signed, ACL-aware federation bundles."""
+        return self.capability("federation")
 
     @property
     def project(self) -> str:

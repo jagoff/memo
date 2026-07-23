@@ -14,7 +14,7 @@ import time
 from datetime import UTC, datetime
 
 from memo.config import Config
-from memo.flags import flag_bool, flag_int
+from memo.flags import flag_int
 from memo.memory import Memory
 
 _log = logging.getLogger(__name__)
@@ -60,9 +60,8 @@ def run_sleep_cycle(debug: bool = False) -> None:
                 )
 
             try:
-                # 0. Eager Synthesis: Ingest active/recent memflow sessions
-                if flag_bool("MEMO_SYNC_MEMFLOW_ENABLED"):
-                    _ingest_memflow_sessions(mem, cfg, debug=debug)
+                # 0. Reflect recent Memo-native session snapshots.
+                _reflect_recent_sessions(mem, cfg, debug=debug)
 
                 # 1. Synthesis: Generate emergent insights from clusters.
                 # Use dry_run=False to actually save the synthesis notes.
@@ -92,7 +91,7 @@ def run_sleep_cycle(debug: bool = False) -> None:
     mem.close()
 
 
-def _ingest_memflow_sessions(mem: Memory, cfg: Config, debug: bool = False) -> None:
+def _reflect_recent_sessions(mem: Memory, cfg: Config, debug: bool = False) -> None:
     """Run reflection on recent unreflected memo sessions."""
     from memo.session import list_sessions
 

@@ -54,6 +54,7 @@ from memo.crossref import CrossReferenceIndex, LinkSuggester  # noqa: F401
 from memo.embedder import MLXEmbedder, assert_valid_embedding  # noqa: F401
 from memo.errors import (  # noqa: F401
     AmbiguousIdError,
+    FederationError,
     IdentityConflictError,
     MemoError,
     NotFoundError,
@@ -61,6 +62,7 @@ from memo.errors import (  # noqa: F401
     ValidationError,
     WriteRefused,
 )
+from memo.federation import FederationManager  # noqa: F401
 from memo.graph import GraphStore  # noqa: F401
 from memo.import_export import ImportExportManager  # noqa: F401
 from memo.lifecycle import (  # noqa: F401
@@ -87,11 +89,10 @@ from memo.memory.record import (  # noqa: F401
     _SLUG_WS,
     _VALID_TYPES,
     MEMO_BACKEND_NAME,
+    MEMO_BACKEND_NATIVE_SCHEMA,
     NATIVE_BACKEND_PROTOCOL_VERSION,
-    SYNAPSE_BACKEND_NATIVE_SCHEMA,
     MemoryRecord,
     _apply_decay,
-    _build_freeze_query,
     _compose_for_embed,
     _derive_title,
     _extract_provenance,

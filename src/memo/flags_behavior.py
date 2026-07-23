@@ -422,13 +422,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "Seconds of idle time (no recall/search activity) before a sleep cycle pass is eligible to start.",
     ),
     _spec(
-        "MEMO_SYNC_MEMFLOW_ENABLED",
-        "bool",
-        False,
-        "maintain",
-        "Eager Synthesis: automatically ingest .memflow session data during the sleep cycle.",
-    ),
-    _spec(
         "MEMO_DREAM_EDGE_VERIFY_ENABLED",
         "bool",
         False,
