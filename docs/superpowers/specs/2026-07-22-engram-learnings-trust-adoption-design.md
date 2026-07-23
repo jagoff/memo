@@ -1,7 +1,7 @@
 # memo — Engram learnings for trust and adoption
 
 **Date:** 2026-07-22
-**Status:** architecture approved; ready for user review
+**Status:** approved by Fer; ready for implementation planning
 **Decision owner:** Fer
 **Priority:** A — trust/correctness, then B — adoption/simplicity
 **Engram baseline:** `763a6ba432713725d6ce82a2416eec6cbd9ec94e`
