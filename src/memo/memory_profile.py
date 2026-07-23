@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from memo.errors import MemoError
+
 SCHEMA = "memo.profile.v1"
 
 
@@ -79,7 +81,7 @@ def build_memory_profile(
     active: list[dict[str, Any]] = []
     try:
         records = memory.list(limit=limit, include_forgotten=False)
-    except Exception:
+    except MemoError:
         records = []
     for record in records[:limit]:
         active.append(
