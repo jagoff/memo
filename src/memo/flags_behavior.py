@@ -446,10 +446,9 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "privacy",
-        "Mask secrets (AWS/GitHub/OpenAI/Anthropic/Slack/GCP keys, PEM private-key "
-        "blocks) to ****last4 before persisting capture/ingest content, tagging the "
-        "memory _redacted. Pattern tier only — near-zero false positives. Default on "
-        "(security fix); set 0 to store raw text.",
+        "Enable the early capture/ingest secret-masking pass. The final persistence "
+        "boundary always masks known provider keys and PEM private-key blocks and "
+        "adds _redacted; setting 0 only disables the earlier defense-in-depth pass.",
     ),
     _spec(
         "MEMO_REDACT_ENTROPY",
@@ -464,9 +463,9 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "privacy",
-        "Strip <private>...</private> spans from transcript text before capture "
-        "extraction or mine-history ever see it. An unclosed <private> drops to "
-        "end-of-text (fail-closed). Set 0 to disable.",
+        "Strip <private>...</private> spans before capture extraction or mine-history "
+        "sees them. Setting 0 disables that early pass only; final memory persistence "
+        "still strips private spans fail-closed.",
     ),
     _spec(
         "MEMO_SAVE_NORMALIZE_DATES",

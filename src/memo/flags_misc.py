@@ -811,9 +811,9 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "store",
-        "Enable exact deduplication via normalized hash (session pattern). "
-        "When on, save auto-generates a normalized_hash from (title, type, project) "
-        "and skips duplicate entries with identical content.",
+        "Compatibility setting for legacy session-pattern normalized_hash generation. "
+        "Exact namespaced corroboration is a storage correctness invariant and remains "
+        "enabled regardless of this value.",
     ),
     _spec(
         "MEMO_SOFT_DELETE",

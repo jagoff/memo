@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from memo.redact import redact_secrets, scan_secrets, strip_private_spans
+import pytest
+
+from memo.errors import ValidationError
+from memo.redact import (
+    redact_secrets,
+    sanitize_memory_input,
+    sanitize_persisted_text,
+    scan_secrets,
+    strip_private_spans,
+)
 
 
 def test_redacts_aws_access_key():
@@ -92,3 +101,55 @@ def test_privacy_flags_registered_with_defaults(monkeypatch):
     assert flag_bool("MEMO_REDACT_SECRETS") is True
     assert flag_bool("MEMO_REDACT_ENTROPY") is False
     assert flag_bool("MEMO_PRIVATE_MARKERS") is True
+
+
+def test_persistence_sanitizer_covers_nested_record_fields() -> None:
+    token = "ghp_" + "a" * 32 + "WXYZ"
+    result = sanitize_memory_input(
+        content=f"public <private>never store</private> {token}",
+        title=f"title {token}",
+        tags=[f"tag-{token}"],
+        topic_key=f"topic-{token}",
+        normalized_hash=f"legacy-{token}",
+        extra={f"key-{token}": {"items": [token, 7, True]}},
+    )
+    serialized = repr(result)
+    assert token not in serialized
+    assert "never store" not in serialized
+    assert result.changed is True
+    assert result.tags.count("_redacted") == 1
+
+
+def test_persistence_sanitizer_rejects_empty_or_colliding_metadata_keys() -> None:
+    with pytest.raises(ValidationError, match="empty key"):
+        sanitize_memory_input(content="safe", extra={"<private>x</private>": 1})
+
+    token_a = "ghp_" + "a" * 32 + "WXYZ"
+    token_b = "ghp_" + "b" * 32 + "WXYZ"
+    with pytest.raises(ValidationError, match="colliding keys"):
+        sanitize_memory_input(content="safe", extra={token_a: 1, token_b: 2})
+
+
+def test_persistence_sanitizer_rejects_private_only_content_and_topic() -> None:
+    with pytest.raises(ValidationError, match="content is empty"):
+        sanitize_memory_input(content="<private>all private</private>")
+    with pytest.raises(ValidationError, match="topic_key is empty"):
+        sanitize_memory_input(content="safe", topic_key="<private>x</private>")
+
+
+def test_persistence_sanitizer_preserves_benign_hashes_and_scalars() -> None:
+    sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    result = sanitize_memory_input(
+        content=f"commit {sha}",
+        extra={"sha": sha, "count": 2, "enabled": False},
+        entropy=True,
+    )
+    assert sha in result.content
+    assert result.extra == {"sha": sha, "count": 2, "enabled": False}
+    assert result.changed is False
+
+
+def test_sanitize_persisted_text_reports_private_span() -> None:
+    result = sanitize_persisted_text("keep <private>drop</private>")
+    assert result.text == "keep"
+    assert result.found == ("private-span",)

@@ -104,7 +104,7 @@ def test_namespace_for_write_rejects_ambiguous_tags(tags: list[str]) -> None:
 def test_namespace_for_index_preserves_historical_ambiguity() -> None:
     assert namespace_for_index([], path="_global/2026/x.md") == GLOBAL_NAMESPACE
     assert namespace_for_index([], path="_unscoped/2026/x.md") == UNSCOPED_NAMESPACE
-    assert namespace_for_index([], path="2026/x.md") == UNSCOPED_NAMESPACE
+    assert namespace_for_index([], path="2026/x.md") == GLOBAL_NAMESPACE
     assert namespace_for_index(["project:Memo"], path="x.md") == "project:memo"
     assert namespace_for_index(["project:a", "project:b"], path="x.md") is None
 

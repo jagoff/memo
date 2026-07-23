@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- Namespaced memory identity (`project:<slug>`, `_global`, `_unscoped`) with
+  deterministic create/corroborate/revise outcomes, additive `action` and
+  `index_pending` save fields, schema-v5 diagnostics, and read-only
+  `memo doctor --db` trust preflight.
+
+### Security
+
+- All memory save, update, reindex, capture, and ingest persistence paths now
+  enforce known-secret masking and `<private>` stripping at the final storage
+  boundary. Entropy masking remains opt-in; legacy redaction flags now control
+  only earlier defense-in-depth passes.
+
 ## [3.11.0] - 2026-07-21
 
 ### Added

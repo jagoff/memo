@@ -61,6 +61,20 @@ class _MemoryBase:
     def search(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def get(self, id_: str) -> MemoryRecord | None: ...  # type: ignore[empty-body]
     def update(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _update_locked(
+        self,
+        id_: str,
+        *,
+        title: str | None = None,
+        type_: str | None = None,
+        tags: list[str] | None = None,
+        content: str | None = None,
+        replace: tuple[str, str] | None = None,
+        append: str | None = None,
+        extra: dict[str, Any] | None = None,
+        _prepared_embedding: Any = None,
+        _defer_embed: bool = False,
+    ) -> MemoryRecord | None: ...  # type: ignore[empty-body]
     def resolve_id(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def ask(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def ask_stream(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]

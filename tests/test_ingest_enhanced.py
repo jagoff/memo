@@ -706,7 +706,7 @@ def test_ingest_masks_secrets_and_tags_redacted(tmp_path: Path, runner_env):
     assert tok in (vault / "creds.md").read_text(encoding="utf-8")
 
 
-def test_ingest_redaction_can_be_disabled(tmp_path: Path, runner_env):
+def test_ingest_final_redaction_cannot_be_disabled(tmp_path: Path, runner_env):
     tok = "ghp_" + "b" * 32 + "QRST"
     vault = _build_vault(tmp_path / "vault", {"n.md": f"# N\n\ntoken {tok} here."})
     env = {**runner_env, "MEMO_REDACT_SECRETS": "0"}
@@ -725,8 +725,9 @@ def test_ingest_redaction_can_be_disabled(tmp_path: Path, runner_env):
     )
     assert result.exit_code == 0, result.output
     rows = _all_rows(_open_store(env))
-    assert tok in (rows[0]["body"] or "")
-    assert "_redacted" not in rows[0]["tags"]
+    assert tok not in (rows[0]["body"] or "")
+    assert "****QRST" in rows[0]["body"]
+    assert "_redacted" in rows[0]["tags"]
 
 
 def test_ingest_redaction_rerun_is_idempotent(tmp_path: Path, runner_env):

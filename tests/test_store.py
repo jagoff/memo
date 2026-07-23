@@ -969,6 +969,9 @@ def test_tantivy_meta_lookup_tolerates_missing_deleted_at(store: VecStore):
     # Pre-migration schema (deleted_at ALTER was skipped): searches must not
     # raise. The tombstone marker vanishes with the column, so `gone`
     # legitimately reappears.
+    # v5's active-topic uniqueness predicate references deleted_at. Remove that
+    # capability index to emulate the pre-migration schema this test targets.
+    store._conn.execute("DROP INDEX IF EXISTS idx_meta_active_topic_unique")
     store._conn.execute("ALTER TABLE meta DROP COLUMN deleted_at")
     assert [r["id"] for r in store.search_bm25("q")] == ["keep", "gone"]
     assert [r["id"] for r in store.search_fuzzy("q")] == ["keep", "gone"]

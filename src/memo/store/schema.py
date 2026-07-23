@@ -30,6 +30,19 @@ CREATE TABLE IF NOT EXISTS meta (
     updated     TEXT NOT NULL,
     body_hash   TEXT NOT NULL,
     extra_json  TEXT,
+    topic_key   TEXT,
+    normalized_hash TEXT,
+    session_id  TEXT,
+    revision_count INTEGER DEFAULT 1,
+    duplicate_count INTEGER DEFAULT 0,
+    last_seen_at TEXT,
+    deleted_at  TEXT,
+    review_after TEXT,
+    verification_state TEXT DEFAULT 'unverified',
+    verified_at INTEGER,
+    namespace   TEXT,
+    normalized_title TEXT,
+    normalized_content_hash TEXT,
     valid_at    TEXT,
     invalid_at  TEXT
 );
@@ -391,6 +404,11 @@ class _SchemaMixin(_StoreBase):
         # per-write PRAGMA table_info(meta). `cols` reflects the post-migration
         # column set (updated as the ALTERs above succeed).
         self._has_pattern_cols = "topic_key" in cols and "normalized_hash" in cols
+        self._has_identity_cols = {
+            "namespace",
+            "normalized_title",
+            "normalized_content_hash",
+        }.issubset(cols)
 
         # Inline migration (C1): corroboration counter on memory_health.
         # CREATE IF NOT EXISTS skips existing tables, so pre-existing DBs
@@ -474,6 +492,10 @@ class _SchemaMixin(_StoreBase):
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_rel_status ON memory_relations(judgment_status)"
         )
+        # user_version=5 means the additive columns exist. The independently
+        # stamped capability says whether historical topic conflicts allow the
+        # partial active-row uniqueness constraint to be installed.
+        self.reconcile_identity_constraint()
 
     # Secondary B-tree indices on `meta` that older DBs predate. Kept out of
     # the `_schema_ready()`-gated DDL block (which only runs on fresh DBs) so a

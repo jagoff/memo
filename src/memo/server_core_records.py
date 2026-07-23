@@ -4,6 +4,7 @@ from typing import Any
 
 from fastmcp import Context
 
+from memo.errors import IdentityConflictError
 from memo.memory import AmbiguousIdError, Memory
 from memo.server_annotations import (
     DESTRUCTIVE,
@@ -35,6 +36,8 @@ def register(server: Any, memory: Memory) -> None:
         propagate to every fact. Returns an extraction summary
         (`status`, `saved` ids, `saved_titles`, counts) rather than a single
         record. If nothing extractable is found, the blob is saved verbatim.
+        Normal saves add `action` (`created`, `corroborated`, or `revised`) and
+        `index_pending` so callers can distinguish evidence from a new record.
 
         `scope` controls the auto `project:<repo>` tag for THIS call only:
         `"global"` skips it (the memory lands untagged → the global recall
@@ -82,6 +85,16 @@ def register(server: Any, memory: Memory) -> None:
             return {
                 "status": "refused",
                 "conflict": exc.conflict,
+                "message": str(exc),
+            }
+        except IdentityConflictError as exc:
+            return {
+                "status": "conflict",
+                "error": "identity_conflict",
+                "kind": exc.kind,
+                "conflicting_ids": [
+                    str(item.get("id")) for item in exc.conflicts if item.get("id")
+                ],
                 "message": str(exc),
             }
         return rec.to_dict()
@@ -150,6 +163,15 @@ def register(server: Any, memory: Memory) -> None:
             )
         except AmbiguousIdError as exc:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        except IdentityConflictError as exc:
+            return {
+                "error": "identity_conflict",
+                "kind": exc.kind,
+                "conflicting_ids": [
+                    str(item.get("id")) for item in exc.conflicts if item.get("id")
+                ],
+                "message": str(exc),
+            }
         except ValueError as exc:
             return {"error": "edit_failed", "message": str(exc)}
         return rec.to_dict() if rec else None

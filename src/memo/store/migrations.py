@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 
 from ._base import _StoreBase
 
 _log = logging.getLogger(__name__)
 
-_CURRENT_USER_VERSION = 4
+_CURRENT_USER_VERSION = 5
 
 
 class _MigrationsMixin(_StoreBase):
@@ -30,6 +31,8 @@ class _MigrationsMixin(_StoreBase):
     #   4 — verification state tracking columns (verification_state, verified_at)
     #       added for explicit verification state (UNVERIFIED/VERIFIED/STALE)
     #       and temporal decay weighting in rerank.
+    #   5 — rebuildable canonical identity columns (namespace,
+    #       normalized_title, normalized_content_hash).
 
     def get_user_version(self) -> int:
         """Return the on-disk schema version (0 by default)."""
@@ -114,3 +117,63 @@ class _MigrationsMixin(_StoreBase):
                             cx.execute(ddl)
                 self.set_user_version(4)
             _log.info("migrated to v4: verification state tracking columns")
+            current = 4
+
+        # v4 → v5: additive, derived identity metadata. Markdown remains
+        # untouched; indexed FTS text is used only to seed rebuildable fields.
+        if current < 5:
+            from memo.identity import (
+                canonical_topic_key,
+                namespace_for_index,
+                normalized_content_hash,
+                normalized_title,
+            )
+            from memo.redact import sanitize_persisted_text
+
+            with self._tx() as cx:
+                cols = {row["name"] for row in cx.execute("PRAGMA table_info(meta)").fetchall()}
+                new_cols = {
+                    "namespace": "ALTER TABLE meta ADD COLUMN namespace TEXT",
+                    "normalized_title": "ALTER TABLE meta ADD COLUMN normalized_title TEXT",
+                    "normalized_content_hash": (
+                        "ALTER TABLE meta ADD COLUMN normalized_content_hash TEXT"
+                    ),
+                }
+                for col, ddl in new_cols.items():
+                    if col not in cols:
+                        cx.execute(ddl)
+
+                rows = cx.execute(
+                    "SELECT m.id, m.path, m.title, m.tags, m.topic_key, "
+                    "COALESCE(f.body, '') AS body "
+                    "FROM meta m LEFT JOIN fts f ON f.id = m.id"
+                ).fetchall()
+                for row in rows:
+                    try:
+                        raw_tags = json.loads(row["tags"] or "[]")
+                    except (TypeError, ValueError):
+                        raw_tags = []
+                    tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
+                    safe_title = sanitize_persisted_text(str(row["title"] or "")).text
+                    safe_body = sanitize_persisted_text(str(row["body"] or "")).text
+                    cx.execute(
+                        "UPDATE meta SET namespace = ?, topic_key = ?, "
+                        "normalized_title = ?, normalized_content_hash = ? WHERE id = ?",
+                        (
+                            namespace_for_index(tags, path=str(row["path"] or "")),
+                            canonical_topic_key(row["topic_key"]),
+                            normalized_title(safe_title),
+                            normalized_content_hash(safe_body),
+                            row["id"],
+                        ),
+                    )
+                cx.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_meta_topic_identity "
+                    "ON meta(namespace, topic_key)"
+                )
+                cx.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_meta_exact_identity "
+                    "ON meta(namespace, type, normalized_title, normalized_content_hash)"
+                )
+                self.set_user_version(5)
+            _log.info("migrated to v5: canonical memory identity metadata")

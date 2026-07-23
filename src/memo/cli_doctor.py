@@ -288,6 +288,25 @@ def doctor(
                 console.print(f"[yellow]![/yellow] db:{db['label']} missing: {db['path']}")
             if not db["ok"]:
                 ok = False
+        from memo.trust_preflight import trust_preflight
+
+        trust = trust_preflight(cfg)
+        marker = "[green]✓[/green]" if trust["ok"] else "[yellow]![/yellow]"
+        console.print(
+            f"{marker} trust: identity={trust['identity_constraint']} "
+            f"topic_collisions={trust['topic_collision_groups']} "
+            f"exact_duplicates={trust['exact_duplicate_groups']} "
+            f"ambiguous_projects={trust['multiple_project_tag_rows']} "
+            f"legacy_rows={trust['legacy_identity_rows']} "
+            f"secret_files={trust['secret_pattern_files']} "
+            f"private_files={trust['private_marker_files']}"
+        )
+        if not trust["ok"]:
+            console.print(
+                "  [dim]review the vault, then run `memo reindex --rebuild`; "
+                "doctor never rewrites or merges trust findings[/dim]"
+            )
+            ok = False
 
     if do_gc:
         report = _gc_report(cfg, fix=fix)

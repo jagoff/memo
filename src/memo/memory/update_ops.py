@@ -9,10 +9,18 @@ from __future__ import annotations
 import builtins
 import logging
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 import frontmatter
 
+from memo.errors import IdentityConflictError, StorageError
+from memo.identity import (
+    canonical_topic_key,
+    namespace_for_index,
+    normalized_content_hash,
+    normalized_title,
+)
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _VALID_TYPES,
@@ -25,6 +33,18 @@ from memo.memory.record import (
 from memo.util import sha256_short as _sha256_short
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _PreparedUpdateEmbedding:
+    """Model result computed before entering the authority write lock."""
+
+    text: str
+    vector: list[float]
+
+
+class _RetryPreparedUpdate(RuntimeError):
+    """The optimistic update view changed before the commit lock was acquired."""
 
 
 def _resolve_updated_body(
@@ -69,11 +89,17 @@ class _UpdateOpsMixin(_MemoryBase):
         append: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> MemoryRecord | None:
-        """Patch a record while serializing its full read-modify-write cycle."""
+        """Patch a record with model work outside the serialized commit section."""
         if is_derived_chunk_id(id_):
             raise ValueError("derived chunk records are read-only; update the parent memory")
-        with self._data_dir_write_lock():
-            return self._update_locked(
+
+        # Optimistically derive and embed the prospective record without the
+        # cross-process lock. The commit path rebuilds the prospective view
+        # from current state and accepts the vector only when its exact input
+        # still matches. A concurrent edit therefore causes a bounded retry,
+        # never a stale vector or a model call inside the authority lock.
+        for _attempt in range(4):
+            prepared = self._prepare_update_embedding(
                 id_,
                 title=title,
                 type_=type_,
@@ -83,6 +109,104 @@ class _UpdateOpsMixin(_MemoryBase):
                 append=append,
                 extra=extra,
             )
+            try:
+                with self._data_dir_write_lock():
+                    updated = self._update_locked(
+                        id_,
+                        title=title,
+                        type_=type_,
+                        tags=tags,
+                        content=content,
+                        replace=replace,
+                        append=append,
+                        extra=extra,
+                        _prepared_embedding=prepared,
+                    )
+                if updated is not None and prepared is not None:
+                    # Chunk vectors are derived, potentially expensive model
+                    # work. Keep them outside the authority lock; failures are
+                    # already best-effort and the next reindex heals them.
+                    self.maybe_emit_chunks(
+                        parent_id=updated.id,
+                        parent_rel=updated.path,
+                        title=updated.title,
+                        body=updated.body,
+                        tags=updated.tags,
+                        created=updated.created,
+                        updated=updated.updated,
+                    )
+                return updated
+            except _RetryPreparedUpdate:
+                continue
+        raise StorageError("update could not stabilize after concurrent edits")
+
+    def _prepare_update_embedding(
+        self,
+        id_: str,
+        *,
+        title: str | None = None,
+        type_: str | None = None,
+        tags: builtins.list[str] | None = None,
+        content: str | None = None,
+        replace: tuple[str, str] | None = None,
+        append: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> _PreparedUpdateEmbedding | None:
+        """Compute a prospective update vector without acquiring the write lock.
+
+        The commit path repeats validation, sanitation, and identity checks.
+        This helper is only an optimization/scheduling step; it is never the
+        authority for deciding what gets persisted.
+        """
+        resolved = self.resolve_id(id_)
+        if resolved is None:
+            return None
+        row = self.store.get(resolved)
+        if row is None:
+            return None
+        topic_key, normalized_hash = self.store.get_dedup_keys(resolved)
+        if type_ is not None and type_ not in _VALID_TYPES:
+            raise ValueError(f"`type_={type_!r}` not in valid set {sorted(_VALID_TYPES)}")
+        if sum(value is not None for value in (content, replace, append)) > 1:
+            raise ValueError("update: pass at most one of content=, replace=, append=")
+
+        new_title = (title.strip() if title else row["title"]) or row["title"]
+        new_tags = _normalise_tags(tags) if tags is not None else row["tags"]
+        new_extra = extra if extra is not None else dict(row.get("extra") or {})
+        old_body = self._read_body(row["path"])
+        new_body = _resolve_updated_body(
+            old_body,
+            resolved,
+            content=content,
+            replace=replace,
+            append=append,
+        )[: self.cfg.max_content_chars]
+
+        from memo.flags import flag_bool
+        from memo.redact import sanitize_memory_input
+
+        sanitized = sanitize_memory_input(
+            content=new_body,
+            title=new_title,
+            tags=new_tags,
+            topic_key=topic_key,
+            normalized_hash=normalized_hash,
+            extra=new_extra,
+            entropy=flag_bool("MEMO_REDACT_ENTROPY"),
+        )
+        new_body = sanitized.content
+        new_title = sanitized.title or "untitled"
+        new_body_hash = _sha256_short(new_body)
+        embed_pending = bool(sanitized.extra.get("_memo_embed_pending"))
+        embedding_required = new_body_hash != row["body_hash"] or (
+            new_title != row["title"] and not embed_pending
+        )
+        if not embedding_required:
+            return None
+
+        text = self._compose_for_embed(new_title, new_body)
+        vector = self._embed_cached(text, ctx=f"update id={resolved[:8]}")
+        return _PreparedUpdateEmbedding(text=text, vector=vector)
 
     def _update_locked(
         self,
@@ -95,6 +219,8 @@ class _UpdateOpsMixin(_MemoryBase):
         replace: tuple[str, str] | None = None,
         append: str | None = None,
         extra: dict[str, Any] | None = None,
+        _prepared_embedding: _PreparedUpdateEmbedding | None = None,
+        _defer_embed: bool = False,
     ) -> MemoryRecord | None:
         """Patch one or more fields on an existing record.
 
@@ -139,7 +265,81 @@ class _UpdateOpsMixin(_MemoryBase):
             append=append,
         )
         new_body = new_body[: self.cfg.max_content_chars]
+
+        # Sanitize the COMPLETE prospective record, not just explicitly passed
+        # fields. That also scrubs a legacy secret when a metadata-only edit
+        # rewrites old Markdown. Pattern/private protection is always on;
+        # entropy remains the opt-in tier.
+        from memo.flags import flag_bool
+        from memo.redact import sanitize_memory_input, sanitize_persisted_text
+
+        sanitized = sanitize_memory_input(
+            content=new_body,
+            title=new_title,
+            tags=new_tags,
+            topic_key=topic_key,
+            normalized_hash=normalized_hash,
+            extra=new_extra,
+            entropy=flag_bool("MEMO_REDACT_ENTROPY"),
+        )
+        new_body = sanitized.content
+        new_title = sanitized.title or "untitled"
+        new_tags = _normalise_tags(sanitized.tags)
+        new_extra = sanitized.extra
+        topic_key = sanitized.topic_key
+        normalized_hash = sanitized.normalized_hash
         new_body_hash = _sha256_short(new_body)
+        new_namespace = namespace_for_index(new_tags, path=str(r["path"]))
+        if new_namespace is None:
+            raise IdentityConflictError(
+                kind="ambiguous_namespace",
+                incoming={"record_id": id_, "namespace": None},
+            )
+        canonical_topic = canonical_topic_key(topic_key)
+        new_normalized_title = normalized_title(new_title)
+        new_normalized_content_hash = normalized_content_hash(new_body)
+
+        if canonical_topic is not None:
+            topic_conflicts = [
+                row
+                for row in self.store.find_active_by_topic_identity(
+                    new_namespace, canonical_topic
+                )
+                if str(row.get("id")) != id_
+            ]
+            if topic_conflicts:
+                raise IdentityConflictError(
+                    kind="update_topic_identity_conflict",
+                    incoming={
+                        "record_id": id_,
+                        "namespace": new_namespace,
+                        "topic_key": canonical_topic,
+                    },
+                    conflicts=topic_conflicts,
+                )
+
+        exact_conflicts = [
+            row
+            for row in self.store.find_active_by_exact_identity(
+                new_namespace,
+                new_type,
+                new_normalized_title,
+                new_normalized_content_hash,
+            )
+            if str(row.get("id")) != id_
+        ]
+        if exact_conflicts:
+            raise IdentityConflictError(
+                kind="update_exact_identity_conflict",
+                incoming={
+                    "record_id": id_,
+                    "namespace": new_namespace,
+                    "type": new_type,
+                    "normalized_title": new_normalized_title,
+                },
+                conflicts=exact_conflicts,
+            )
+
         body_changed = new_body_hash != r["body_hash"]
         title_changed = new_title != r["title"]
         embed_pending = bool(new_extra.get("_memo_embed_pending"))
@@ -149,21 +349,29 @@ class _UpdateOpsMixin(_MemoryBase):
         # pending marker keeps the eventual reindex responsible for composing
         # the vector from the corrected title and body.
         embedding_required = body_changed or (title_changed and not embed_pending)
+        vector_write_required = embedding_required and not _defer_embed
+        if embedding_required and _defer_embed:
+            new_extra["_memo_embed_pending"] = True
 
-        # Snapshot the prior record BEFORE mutating so `memo version
-        # history/diff/rollback` have data. Gated on a real edit so pure
-        # extra/provenance bumps (e.g. the cache dirty-bit) don't spam version
-        # rows. Best-effort: a versioning failure must never break the update.
-        if body_changed or title_changed or new_type != r["type"] or new_tags != r["tags"]:
-            with suppress(Exception):
-                self.versioning.track_update(
-                    id_,
-                    r["title"],
-                    r["type"],
-                    r["tags"],
-                    old_body,
-                    reason="pre-update snapshot",
-                )
+        semantic_edit = bool(
+            body_changed or title_changed or new_type != r["type"] or new_tags != r["tags"]
+        )
+        prior_snapshot = (
+            sanitize_persisted_text(
+                str(r["title"]), entropy=flag_bool("MEMO_REDACT_ENTROPY")
+            ).text
+            or "untitled",
+            str(r["type"]),
+            [
+                sanitize_persisted_text(
+                    str(tag), entropy=flag_bool("MEMO_REDACT_ENTROPY")
+                ).text
+                for tag in r["tags"]
+            ],
+            sanitize_persisted_text(
+                old_body, entropy=flag_bool("MEMO_REDACT_ENTROPY")
+            ).text,
+        )
 
         source_path = self._resolve_existing(r["path"])
         source_markdown = source_path.read_bytes() if source_path.exists() else None
@@ -178,14 +386,15 @@ class _UpdateOpsMixin(_MemoryBase):
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Re-embed when the body OR title changed — both are part of the
-        # embed input now (see `_compose_for_embed`). Pure retag/type
-        # changes still skip the embedder. Embed BEFORE touching the file
-        # so a failure doesn't leave file and store diverged.
-        if embedding_required:
-            embedding = self._embed_cached(
-                self._compose_for_embed(new_title, new_body),
-                ctx=f"update id={id_[:8]}",
-            )
+        # embed input now (see `_compose_for_embed`). Pure retag/type changes
+        # still skip it. The vector MUST have been computed before entering
+        # the authority lock. Revalidate its exact input here; a mismatch means
+        # the optimistic view raced with another writer and the caller retries.
+        if vector_write_required:
+            embed_text = self._compose_for_embed(new_title, new_body)
+            if _prepared_embedding is None or _prepared_embedding.text != embed_text:
+                raise _RetryPreparedUpdate
+            embedding = _prepared_embedding.vector
             # A successful embedding discharges a prior defer/failure marker.
             # Keeping it would make later metadata edits believe the vector is
             # still absent and could suppress a required title re-embed.
@@ -208,10 +417,14 @@ class _UpdateOpsMixin(_MemoryBase):
             post["topic_key"] = topic_key
         if normalized_hash is not None:
             post["normalized_hash"] = normalized_hash
+        if r.get("valid_at") is not None:
+            post["valid_at"] = r["valid_at"]
+        if r.get("invalid_at") is not None:
+            post["invalid_at"] = r["invalid_at"]
         self._atomic_write_text(str(r["path"]), frontmatter.dumps(post))
 
         try:
-            if embedding_required:
+            if vector_write_required:
                 self.store.upsert(
                     id_=id_,
                     path=r["path"],
@@ -226,6 +439,31 @@ class _UpdateOpsMixin(_MemoryBase):
                     body_text=new_body,
                     topic_key=topic_key,
                     normalized_hash=normalized_hash,
+                    namespace=new_namespace,
+                    normalized_title=new_normalized_title,
+                    normalized_content_hash=new_normalized_content_hash,
+                    valid_at=r.get("valid_at"),
+                    invalid_at=r.get("invalid_at"),
+                )
+            elif embedding_required:
+                self.store.upsert_text_only(
+                    id_=id_,
+                    path=r["path"],
+                    title=new_title,
+                    type_=new_type,
+                    tags=new_tags,
+                    created=r["created"],
+                    updated=now_iso,
+                    body_hash=new_body_hash,
+                    extra=new_extra,
+                    body_text=new_body,
+                    topic_key=topic_key,
+                    normalized_hash=normalized_hash,
+                    namespace=new_namespace,
+                    normalized_title=new_normalized_title,
+                    normalized_content_hash=new_normalized_content_hash,
+                    valid_at=r.get("valid_at"),
+                    invalid_at=r.get("invalid_at"),
                 )
             else:
                 self.store.update_meta(
@@ -235,6 +473,9 @@ class _UpdateOpsMixin(_MemoryBase):
                     tags=new_tags,
                     updated=now_iso,
                     extra=new_extra,
+                    namespace=new_namespace,
+                    normalized_title=new_normalized_title,
+                    normalized_content_hash=new_normalized_content_hash,
                 )
         except Exception:
             if previous_target_markdown is None:
@@ -245,6 +486,20 @@ class _UpdateOpsMixin(_MemoryBase):
                     previous_target_markdown.decode("utf-8"),
                 )
             raise
+
+        # Version history is derivative state. Record the sanitized prior view
+        # only after Markdown and SQLite both committed, so rejected/rolled-back
+        # updates leave no phantom version behind.
+        if semantic_edit:
+            with suppress(Exception):
+                self.versioning.track_update(
+                    id_,
+                    prior_snapshot[0],
+                    prior_snapshot[1],
+                    prior_snapshot[2],
+                    prior_snapshot[3],
+                    reason="pre-update snapshot",
+                )
 
         # Legacy vault-layout migration: `_resolve_existing` may have read the
         # body from `vault_path / rel` (pre-migrate row) while the rewrite
@@ -263,19 +518,6 @@ class _UpdateOpsMixin(_MemoryBase):
                     source_path,
                     exc,
                 )
-
-        if embedding_required:
-            # Body/title changed → refresh derived chunk rows in step
-            # (metadata-only edits skip, same as the skipped re-embed).
-            self.maybe_emit_chunks(
-                parent_id=id_,
-                parent_rel=str(r["path"]),
-                title=new_title,
-                body=new_body,
-                tags=new_tags,
-                created=r["created"],
-                updated=now_iso,
-            )
 
         # Crossref edges (flag-gated): body edits can add/remove typed links.
         if body_changed:
@@ -310,13 +552,14 @@ class _UpdateOpsMixin(_MemoryBase):
         if old_prov != new_prov:
             delta["_provenance"] = (old_prov, new_prov)
         if delta:
-            self.history.log_update(
-                ts=now_iso,
-                record_id=id_,
-                title=new_title,
-                type_=new_type,
-                delta=delta,
-            )
+            with suppress(Exception):
+                self.history.log_update(
+                    ts=now_iso,
+                    record_id=id_,
+                    title=new_title,
+                    type_=new_type,
+                    delta=delta,
+                )
 
         updated_rec = MemoryRecord(
             id=id_,
@@ -328,6 +571,8 @@ class _UpdateOpsMixin(_MemoryBase):
             updated=now_iso,
             body=new_body,
             extra=new_extra,
+            valid_at=r.get("valid_at"),
+            invalid_at=r.get("invalid_at"),
         )
         if delta:
             from memo.receipts import emit_receipt

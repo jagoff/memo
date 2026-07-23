@@ -316,13 +316,16 @@ def save(
     if as_json:
         click.echo(json.dumps(rec.to_dict(), ensure_ascii=False, indent=2))
         return
+    action = rec.action or "saved"
+    pending = "\n[yellow]index pending:[/yellow] run `memo reindex`" if rec.index_pending else ""
     console.print(
         Panel.fit(
             f"[bold]{rec.title}[/bold]\n"
             f"[dim]id:[/dim] {rec.id}\n"
             f"[dim]path:[/dim] {rec.path}\n"
-            f"[dim]type:[/dim] {rec.type}  [dim]tags:[/dim] {', '.join(rec.tags) or '—'}",
-            title="✓ saved",
+            f"[dim]type:[/dim] {rec.type}  [dim]tags:[/dim] {', '.join(rec.tags) or '—'}"
+            f"{pending}",
+            title=f"✓ {action}",
             border_style="green",
         )
     )

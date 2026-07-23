@@ -159,8 +159,8 @@ def namespace_for_index(tags: Sequence[str], *, path: str) -> str | None:
     """Derive namespace for an existing Markdown/index row.
 
     Historical rows with incompatible/invalid project tags remain ambiguous
-    (``None``). Untagged legacy paths are unscoped unless their first path
-    component explicitly identifies the global/unscoped bucket.
+    (``None``). Explicit global/unscoped buckets retain their meaning; older
+    untagged flat paths retain the historical global namespace.
     """
     slugs, invalid = _project_slugs(tags)
     if invalid or len(slugs) > 1:
@@ -172,7 +172,9 @@ def namespace_for_index(tags: Sequence[str], *, path: str) -> str | None:
         return GLOBAL_NAMESPACE
     if first == UNSCOPED_NAMESPACE:
         return UNSCOPED_NAMESPACE
-    return UNSCOPED_NAMESPACE
+    # Before explicit unscoped buckets existed, every untagged flat record was
+    # treated as global. Preserve that historical meaning on rebuild.
+    return GLOBAL_NAMESPACE
 
 
 def bucket_for_namespace(namespace: str) -> str:

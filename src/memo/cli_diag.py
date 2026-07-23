@@ -546,6 +546,11 @@ def _doctor_report(
         imports.append(_json_import_check("sentence_transformers", check_sentence_transformers))
     daemon = _recall_daemon_health(cfg)
     db_report = _db_health_report(cfg) if check_db else []
+    trust_report: dict[str, Any] | None = None
+    if check_db:
+        from memo.trust_preflight import trust_preflight
+
+        trust_report = trust_preflight(cfg)
     gc_report: dict[str, Any] | None = None
     if do_gc:
         gc_report = _gc_report(cfg, fix=fix)
@@ -555,6 +560,7 @@ def _doctor_report(
         and all(item["ok"] for item in imports)
         and (not strict_runtime or not runtime["warnings"])
         and all(item.get("ok", True) for item in db_report)
+        and (trust_report is None or bool(trust_report["ok"]))
     )
     return {
         "schema": "memo.doctor.v1",
@@ -565,6 +571,7 @@ def _doctor_report(
         "imports": imports,
         "models": _model_cache_report(cfg),
         "db": db_report,
+        "trust": trust_report,
         "gc": gc_report,
         "recall_daemon": daemon,
         "freshness": _freshness,

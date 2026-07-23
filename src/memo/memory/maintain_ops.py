@@ -21,6 +21,12 @@ from memo.embedder import assert_valid_embedding
 from memo.errors import StorageError
 from memo.fact_extraction import fact_edges_from_metadata, upsert_declared_fact_edges
 from memo.flags import flag_bool, flag_int
+from memo.identity import (
+    canonical_topic_key,
+    namespace_for_index,
+    normalized_content_hash,
+    normalized_title,
+)
 from memo.lifecycle import FORGET_AFTER_KEY, FORGET_REASON_KEY
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -39,6 +45,7 @@ from memo.memory.record import (
 )
 from memo.project import LIFECYCLE_ARCHIVE_DIRS
 from memo.prompt_overrides import resolve_prompt
+from memo.redact import sanitize_memory_input
 from memo.tiers import VerificationState
 from memo.util import sha256_full as _sha256_full
 from memo.util import sha256_short as _sha256_short
@@ -350,12 +357,10 @@ class _MaintainOpsMixin(_MemoryBase):
             canonical_paths_by_id[md_id] = md_path
             canonical_parent_count += 1
             body = post.content or ""
-            new_hash = _sha256_short(body)
             existing = None if rebuild_rows is not None else self.store.get(md_id)
             prior = existing if existing is not None else self.store.get(md_id)
-            prior_topic_key, prior_normalized_hash = self.store.get_dedup_keys(md_id)
-            topic_key = meta.get("topic_key", prior_topic_key)
-            normalized_hash = meta.get("normalized_hash", prior_normalized_hash)
+            topic_key = meta.get("topic_key")
+            normalized_hash = meta.get("normalized_hash")
             # Path relative to memory_dir — paths in the store no longer
             # carry the legacy `<vault>/<memory_subdir>/...` prefix.
             rel = str(rel_path)
@@ -380,6 +385,8 @@ class _MaintainOpsMixin(_MemoryBase):
             created = meta.get("created") or _now_iso()
             updated = meta.get("updated") or created
             extra = meta.get("extra") or {}
+            if not isinstance(extra, dict):
+                extra = {}
             # Obsidian-friendly: accept `forget_after` / `forget_reason` as
             # TOP-LEVEL frontmatter keys (what a user naturally types in their
             # editor), folding them into the extra bag the lifecycle layer
@@ -387,6 +394,32 @@ class _MaintainOpsMixin(_MemoryBase):
             for _fk in (FORGET_AFTER_KEY, FORGET_REASON_KEY):
                 if _fk in meta and _fk not in extra:
                     extra = {**extra, _fk: meta[_fk]}
+
+            # Markdown remains untouched, but every derived representation is
+            # sanitized before hashing, embedding, FTS, or metadata indexing.
+            sanitized = sanitize_memory_input(
+                content=body,
+                title=title,
+                tags=tags,
+                topic_key=str(topic_key) if topic_key is not None else None,
+                normalized_hash=(
+                    str(normalized_hash) if normalized_hash is not None else None
+                ),
+                extra=extra,
+                entropy=flag_bool("MEMO_REDACT_ENTROPY"),
+                allow_empty_content=True,
+            )
+            body = sanitized.content
+            title = sanitized.title or "untitled"
+            tags = _normalise_tags(sanitized.tags)
+            topic_key = sanitized.topic_key
+            normalized_hash = sanitized.normalized_hash
+            extra = sanitized.extra
+            new_hash = _sha256_short(body)
+            identity_namespace = namespace_for_index(tags, path=rel)
+            identity_topic_key = canonical_topic_key(topic_key)
+            identity_title = normalized_title(title)
+            identity_content_hash = normalized_content_hash(body)
 
             # Extract verified_at timestamp (can be None)
             verified_at = meta.get("verified_at")
@@ -471,6 +504,9 @@ class _MaintainOpsMixin(_MemoryBase):
                         body_text=body,
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
+                        namespace=identity_namespace,
+                        normalized_title=identity_title,
+                        normalized_content_hash=identity_content_hash,
                         verification_state=verification_state,
                         verified_at=verified_at,
                         valid_at=valid_at,
@@ -560,6 +596,9 @@ class _MaintainOpsMixin(_MemoryBase):
                         body_text=body,
                         topic_key=topic_key,
                         normalized_hash=normalized_hash,
+                        namespace=identity_namespace,
+                        normalized_title=identity_title,
+                        normalized_content_hash=identity_content_hash,
                     )
                     self.store.update_verification(
                         id_=md_id,
@@ -588,6 +627,11 @@ class _MaintainOpsMixin(_MemoryBase):
                     type_ != existing["type"]
                     or tags != existing["tags"]
                     or extra != (existing.get("extra") or {})
+                    or identity_namespace != existing.get("namespace")
+                    or identity_topic_key != existing.get("topic_key")
+                    or identity_title != existing.get("normalized_title")
+                    or identity_content_hash != existing.get("normalized_content_hash")
+                    or normalized_hash != existing.get("normalized_hash")
                 )
                 if meta_changed:
                     self.store.update_meta(
@@ -597,6 +641,10 @@ class _MaintainOpsMixin(_MemoryBase):
                         tags=tags,
                         updated=_now_iso(),
                         extra=extra if extra else None,
+                        namespace=identity_namespace,
+                        normalized_title=identity_title,
+                        normalized_content_hash=identity_content_hash,
+                        dedup_keys=(identity_topic_key, normalized_hash),
                     )
                 self.store.update_verification(
                     id_=md_id,
