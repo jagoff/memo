@@ -112,6 +112,12 @@ def test_bucket_for_namespace_keeps_archive_names_safe() -> None:
     assert bucket_for_namespace(UNSCOPED_NAMESPACE) == UNSCOPED_NAMESPACE
 
 
+@pytest.mark.parametrize("namespace", ["memo", "project:"])
+def test_bucket_for_namespace_rejects_invalid_namespaces(namespace: str) -> None:
+    with pytest.raises(ValueError):
+        bucket_for_namespace(namespace)
+
+
 def test_identity_keys_are_composed_from_one_policy() -> None:
     keys = identity_keys(
         title=" Plan ",

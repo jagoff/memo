@@ -5,7 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from memo import dashboard
-from memo.cli_mandate import _MARKER, MANDATE_TEXT, _write_mandate, write_mandates_for_clients
+from memo.cli_mandate import (
+    _END_MARKER,
+    _MARKER,
+    MANDATE_TEXT,
+    _write_mandate,
+    write_mandates_for_clients,
+)
 
 
 def test_expected_consumers_covers_non_hook_clients() -> None:
@@ -37,6 +43,15 @@ def test_write_mandate_appends_to_existing(tmp_path: Path) -> None:
     body = target.read_text(encoding="utf-8")
     assert "Existing project rules" in body  # preserved
     assert _MARKER in body
+
+
+def test_write_mandate_closes_legacy_opening_marker(tmp_path: Path) -> None:
+    target = tmp_path / "AGENTS.md"
+    legacy = f"# Existing project rules\n\n{_MARKER}\nlegacy memo instructions\n"
+    target.write_text(legacy, encoding="utf-8")
+
+    assert _write_mandate(target, dry_run=False) == "written"
+    assert target.read_text(encoding="utf-8") == legacy.rstrip() + f"\n{_END_MARKER}\n"
 
 
 def test_write_mandate_nested_path(tmp_path: Path) -> None:
