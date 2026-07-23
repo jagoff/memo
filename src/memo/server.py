@@ -60,6 +60,7 @@ from memo import server_links as _srv_links
 from memo import server_multimodal as _srv_multimodal
 from memo import server_offload as _srv_offload
 from memo import server_operational as _srv_operational
+from memo import server_profile as _srv_profile
 from memo import server_query as _srv_query
 from memo import server_reflect as _srv_reflect
 from memo import server_related as _srv_related
@@ -337,6 +338,7 @@ def _build_server(
     _srv_idle_capture.register(server, memory)
     _srv_operational.register(server, memory)
     _srv_resources.register(server, memory)
+    _srv_profile.register(server, memory)
 
     from memo.surface import mcp_tools_to_remove
 

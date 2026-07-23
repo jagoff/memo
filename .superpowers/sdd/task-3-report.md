@@ -1,38 +1,38 @@
-# Task 3 Report: Eval Recall Profile Source Of Truth
+# Task 3 Report — ProactiveStore (candidates/state/feedback + multipliers)
 
-Status: done
+**Status:** DONE
 
-Commit: this report is included in the `feat: name recall eval profiles` commit; exact SHA is listed in the final response.
+**Commit:** 6392e378 — "feat(proactive): ProactiveStore (candidates/state/feedback + multipliers)"
 
-Files changed:
-- `src/memo/eval_recall.py`
-- `src/memo/cli_eval.py`
-- `tests/test_eval_recall.py`
-- `.superpowers/sdd/task-3-report.md`
+## Summary
 
-Local operational update:
-- Updated `.git/hooks/pre-push` locally to run `memo eval recall --labels eval/regression_labels.json --k 5 --force --gate --profile pre-push`.
-- The hook remains machine-local and was not staged for commit.
+Implemented `src/memo/proactive/store.py` (`ProactiveStore`) exactly per the brief:
+sqlite sidecar (`sqlite3.connect`, own DDL) with `put_candidates`, `active_candidates`,
+`dismiss`, `snooze_kind`, `record_feedback`, `kind_multipliers`, `last_push_at`,
+`mark_pushed`, `pushes_today`. Consumes the committed `Nudge` dataclass from Task 2
+(`src/memo/proactive/nudge.py`) — interface matched exactly, no changes needed there.
 
-Implementation:
-- Added `EvalProfile = Literal["quick", "default", "pre-push", "matrix", "expensive"]`.
-- Added `profile_configs()` as the source of truth for named recall eval profiles.
-- Added `--profile` to `memo eval recall`.
-- Preserved config selection order: explicit `--config`, then `--profile`, then existing `select_configs(None, quick=quick)` behavior.
+## TDD flow
 
-Tests:
-- Failing-first check:
-  `uv run --no-sync pytest tests/test_eval_recall.py::test_profile_configs_name_eval_roles tests/test_eval_recall.py::test_cli_eval_recall_profile_pre_push_selects_named_subset -q`
-  failed as expected before implementation because `profile_configs` and `--profile` did not exist.
-- Focused tests:
-  `uv run --no-sync pytest tests/test_eval_recall.py::test_cli_eval_recall_help_lists_options tests/test_eval_recall.py::test_profile_configs_name_eval_roles tests/test_eval_recall.py::test_cli_eval_recall_profile_pre_push_selects_named_subset -q`
-  passed: 3 passed.
-- Quick eval smoke:
-  `uv run --no-sync memo eval recall --labels eval/regression_labels.json --k 5 --force --quick --max-prompts 1`
-  passed; ran 1 config x 1 prompt.
-- Ruff:
-  `uv run --no-sync ruff check src/memo/eval_recall.py src/memo/cli_eval.py tests/test_eval_recall.py`
-  passed.
+1. Wrote `tests/test_proactive_store.py` (2 tests, verbatim from brief) — ran, confirmed
+   `ModuleNotFoundError: No module named 'memo.proactive.store'` (RED).
+2. Implemented `src/memo/proactive/store.py` verbatim from the brief.
+3. Re-ran — both tests PASS (GREEN).
 
-Concerns:
-- Pre-existing unrelated dirty files remain in the worktree: `.superpowers/sdd/progress.md`, `.superpowers/sdd/task-1-brief.md`, `.superpowers/sdd/task-2-brief.md`.
+## Verification
+
+- `uv run --no-sync pytest tests/test_proactive_store.py -v` -> 2 passed
+- `uv run --no-sync ruff check src/memo/proactive/store.py tests/test_proactive_store.py` -> All checks passed
+- `uv run --no-sync ruff format --check src/memo/proactive/store.py tests/test_proactive_store.py` -> 2 files already formatted
+- `uv run --no-sync mypy src/memo/proactive/store.py` -> Success: no issues found in 1 source file
+- `uv run --no-sync python scripts/quality_gate.py` -> quality gate passed: 164 complexity budgets, 160 exception budgets (no regression; every function in store.py is well under C901=10)
+
+## Concerns
+
+- None functionally — the brief matched reality exactly.
+- Note: this file previously held an unrelated report ("Eval Recall Profile Source Of
+  Truth" from a different task sequence reusing the `task-3-report.md` name) — overwritten
+  per this task's explicit instruction to report here.
+- Left untouched: pre-existing uncommitted modifications to `.superpowers/sdd/progress.md`,
+  `task-1-brief.md`, `task-1-report.md`, `task-2-brief.md`, `task-2-report.md` (from a
+  concurrent session in this shared working tree) — staged/committed only my two files.

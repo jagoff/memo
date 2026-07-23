@@ -20,6 +20,38 @@ def profile_group() -> None:
     """Inspect active model profile, embedding dims, and repair guidance."""
 
 
+@profile_group.command(name="memory")
+@click.option(
+    "--scope",
+    type=click.Choice(["current", "user", "project", "agent"]),
+    default="current",
+    show_default=True,
+)
+@click.option("--limit", type=click.IntRange(min=0, max=50), default=8, show_default=True)
+@click.option("--budget-chars", type=click.IntRange(min=256, max=12000), default=4000)
+@click.option("--json", "as_json", is_flag=True)
+def memory_profile(scope: str, limit: int, budget_chars: int, as_json: bool) -> None:
+    """Show the stable/active memory profile used by agents."""
+    from memo.cli_common import get_memory
+    from memo.memory_profile import build_memory_profile
+
+    mem = get_memory(Config.from_env())
+    try:
+        payload = build_memory_profile(
+            mem, scope=scope, limit=limit, budget_chars=budget_chars
+        )
+    finally:
+        mem.close()
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    marker = "✓" if payload["available"] else "-"
+    console.print(f"{marker} memory profile ({scope})")
+    console.print(f"  stable: {len(payload['stable'])} · active: {len(payload['active'])}")
+    for item in payload["active"]:
+        console.print(f"  - [{item['id_short']}] {item['type']}: {item['title']}")
+
+
 @profile_group.command(name="status")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--no-db", "no_db", is_flag=True, help="Skip read-only DB dimension checks.")

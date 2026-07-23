@@ -14,4 +14,4 @@ GH_REPO = "jagoff/memo"
 # Replace <KV_ID> with the id printed by `wrangler kv namespace create MEMO_TEL`.
 [[kv_namespaces]]
 binding = "MEMO_TEL"
-id = "<KV_ID>"
+id = "035b418a002b4615969ad85e292dbe95"
