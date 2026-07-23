@@ -16,14 +16,22 @@ import re
 import tempfile
 import uuid
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import frontmatter
 
 from memo._trace import current_trace
+from memo.errors import IdentityConflictError, StorageError
 from memo.fact_extraction import upsert_declared_fact_edges
 from memo.flags import flag_bool
+from memo.identity import (
+    bucket_for_namespace,
+    canonical_topic_key,
+    identity_keys,
+    namespace_for_index,
+)
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
     _DERIVE_SYSTEM_PROMPT,
@@ -40,6 +48,7 @@ from memo.memory.record import (
     is_reference_noise,
     markdown_body,
 )
+from memo.memory.update_ops import _PreparedUpdateEmbedding, _RetryPreparedUpdate
 from memo.prompt_overrides import resolve_prompt
 from memo.save_gate import resolve_gate
 from memo.tiers import REFERENCE_TYPES
@@ -309,6 +318,50 @@ class _WriteOpsMixin(_MemoryBase):
         valid_at: str | None = None,
         invalid_at: str | None = None,
     ) -> MemoryRecord:
+        """Persist a memory, then run bounded post-commit relation detection."""
+        record = self._save_core(
+            content=content,
+            title=title,
+            type_=type_,
+            type=type,
+            tags=tags,
+            extra=extra,
+            auto_derive=auto_derive,
+            auto_project=auto_project,
+            cwd=cwd,
+            created=created,
+            defer_embed=defer_embed,
+            respect_synapse_freeze=respect_synapse_freeze,
+            skip_memflow_receipt=skip_memflow_receipt,
+            topic_key=topic_key,
+            normalized_hash=normalized_hash,
+            valid_at=valid_at,
+            invalid_at=invalid_at,
+        )
+        record = self.ensure_review_schedule(record)
+        return self.attach_post_save_relations(record)
+
+    def _save_core(
+        self,
+        *,
+        content: str,
+        title: str | None = None,
+        type_: str = "note",
+        type: str | None = None,
+        tags: list[str] | None = None,
+        extra: dict[str, Any] | None = None,
+        auto_derive: bool = False,
+        auto_project: bool = True,
+        cwd: str | None = None,
+        created: str | None = None,
+        defer_embed: bool = False,
+        respect_synapse_freeze: bool | None = None,
+        skip_memflow_receipt: bool = False,
+        topic_key: str | None = None,
+        normalized_hash: str | None = None,
+        valid_at: str | None = None,
+        invalid_at: str | None = None,
+    ) -> MemoryRecord:
         """Persist a memory to disk + index.
 
         - `content`: free-form markdown body (no frontmatter; we add it).
@@ -359,6 +412,28 @@ class _WriteOpsMixin(_MemoryBase):
         if ambient_trace and (extra is None or not extra.get("synapse_trace_id")):
             extra = dict(extra or {})
             extra["synapse_trace_id"] = ambient_trace
+
+        # Final persistence boundary: pattern redaction and <private> stripping
+        # are correctness invariants, independent of the optional early capture
+        # and ingest passes. Do this before any LLM, freeze check, hashing,
+        # embedding, history, receipt, or log can observe caller-controlled text.
+        from memo.redact import sanitize_memory_input
+
+        sanitized = sanitize_memory_input(
+            content=content,
+            title=title,
+            tags=tags,
+            topic_key=topic_key,
+            normalized_hash=normalized_hash,
+            extra=extra,
+            entropy=flag_bool("MEMO_REDACT_ENTROPY"),
+        )
+        content = sanitized.content
+        title = sanitized.title
+        tags = sanitized.tags
+        topic_key = sanitized.topic_key
+        normalized_hash = sanitized.normalized_hash
+        extra = sanitized.extra
 
         # Freeze-write protocol: opt-in pre-write check against synapse.
         # Only fires when (a) the caller asked (kwarg or env), (b) the
@@ -411,7 +486,11 @@ class _WriteOpsMixin(_MemoryBase):
             # date keeps re-processing stable. Besides annotating the content
             # inline, grounding returns the resolved absolute date when the text
             # anchors a single unambiguous day.
-            _observed_at = created or _dt.datetime.now(_dt.UTC).isoformat()
+            # Relative words are user-local calendar concepts.  At the UTC
+            # day boundary, anchoring an ordinary interactive save to UTC can
+            # turn local "ayer" into local "hoy".  Explicit import timestamps
+            # remain authoritative; otherwise use the host's local date/time.
+            _observed_at = created or _dt.datetime.now().astimezone().isoformat()
             content, _grounded_valid_at = ground_relative_dates(content, _observed_at)
             # Grounded date fills `valid_at` only when the caller passed none:
             # explicit > grounded > created-default (the None case falls through
@@ -462,6 +541,26 @@ class _WriteOpsMixin(_MemoryBase):
             except Exception as exc:
                 _log.warning("auto-project tag failed (cwd=%s): %s", cwd, exc)
 
+        # Auto-derivation and date grounding are allowed to transform fields
+        # after the initial pre-LLM privacy pass. Re-run the complete sanitizer
+        # before identity, embedding, or persistence so generated metadata has
+        # the same mandatory boundary as direct caller input.
+        sanitized = sanitize_memory_input(
+            content=content,
+            title=title,
+            tags=norm_tags,
+            topic_key=topic_key,
+            normalized_hash=normalized_hash,
+            extra=extra,
+            entropy=flag_bool("MEMO_REDACT_ENTROPY"),
+        )
+        content = sanitized.content
+        title = sanitized.title or _derive_title(content).strip() or "untitled"
+        norm_tags = _normalise_tags(sanitized.tags)
+        topic_key = sanitized.topic_key
+        normalized_hash = sanitized.normalized_hash
+        extra = sanitized.extra
+
         now_iso = _now_iso()
         created_iso = created or now_iso
         # Truncate content for embedding (vec store doesn't truncate;
@@ -475,12 +574,48 @@ class _WriteOpsMixin(_MemoryBase):
             )
         content = content[: self.cfg.max_content_chars]
 
+        identity = identity_keys(
+            title=title,
+            content=content,
+            tags=norm_tags,
+            topic_key=topic_key,
+            auto_project=auto_project,
+        )
+        namespace = identity.namespace
+        topic_key = identity.topic_key
+        identity_title = identity.normalized_title
+        identity_content_hash = identity.normalized_content_hash
+
         # Near-duplicate check: quick vec search before committing. Best-effort
         # — never blocks the save. Gated on MEMO_SAVE_DEDUP_CHECK (default on).
         # Skipped on an empty corpus (no embed cost, no duplicates possible).
         from memo.flags import flag_float
 
-        if flag_bool("MEMO_SAVE_DEDUP_CHECK") and not defer_embed:
+        identity_candidate_exists = False
+        optimistic_topic_matches: list[dict[str, Any]] = []
+        try:
+            if topic_key is not None:
+                optimistic_topic_matches = self.store.find_active_by_topic_identity(
+                    namespace, topic_key
+                )
+                identity_candidate_exists = bool(optimistic_topic_matches)
+            else:
+                identity_candidate_exists = bool(
+                    self.store.find_active_by_exact_identity(
+                    namespace,
+                    type_,
+                    identity_title,
+                    identity_content_hash,
+                )
+                )
+        except Exception as exc:
+            _log.debug("save: optimistic identity lookup skipped: %s", exc)
+
+        if (
+            flag_bool("MEMO_SAVE_DEDUP_CHECK")
+            and not defer_embed
+            and not identity_candidate_exists
+        ):
             try:
                 _existing_sample = self.store.list_recent(limit=1)
                 if _existing_sample:
@@ -505,7 +640,28 @@ class _WriteOpsMixin(_MemoryBase):
                             # Corroboration (C1): the existing record was just
                             # re-asserted by an independent save. Count it —
                             # this signal used to be discarded with the warning.
+                            defer_to_identity = False
                             if _dh.get("id"):
+                                candidate_identity = self.store.get_identity_keys(_dh["id"])
+                                defer_to_identity = bool(
+                                    candidate_identity
+                                    and candidate_identity.get("namespace") == namespace
+                                    and (
+                                        (
+                                            topic_key is not None
+                                            and candidate_identity.get("topic_key") == topic_key
+                                        )
+                                        or (
+                                            candidate_identity.get("normalized_title")
+                                            == identity_title
+                                            and candidate_identity.get(
+                                                "normalized_content_hash"
+                                            )
+                                            == identity_content_hash
+                                        )
+                                    )
+                                )
+                            if _dh.get("id") and not defer_to_identity:
                                 bump_support_if_enabled(self.store, [_dh["id"]])
                             # C3: absorb-on-recurrence (flag-gated, default off).
                             # Never in derived-save scope — dream/consolidation
@@ -543,24 +699,20 @@ class _WriteOpsMixin(_MemoryBase):
         # Topic key upsert (session pattern): the lookup runs INSIDE
         # _save_path_lock (below), alongside the path reuse it feeds — see the
         # comment on the lock for why holding it across the SELECT matters.
-        use_existing_id: str | None = None
-        existing_path: str | None = None
         reservation_error: Exception | None = None
 
         body_hash = _sha256_short(content)
 
-        # Generate normalized_hash for exact deduplication (session pattern)
-        # Use user-provided if given, otherwise auto-generate
+        # Legacy session-pattern identity. Keep generating it for compatibility,
+        # but correctness dedupe uses normalized_content_hash above and cannot
+        # be disabled by MEMO_DEDUP_EXACT.
         if normalized_hash is None:
-            from memo.flags import flag_bool as _flag_bool
+            try:
+                from memo.server_session_patterns import _normalize_hash as _pattern_hash
 
-            if _flag_bool("MEMO_DEDUP_EXACT"):
-                try:
-                    from memo.server_session_patterns import _normalize_hash as _pattern_hash
-
-                    normalized_hash = _pattern_hash(title or "", type_, "project")
-                except Exception:
-                    _log.debug("pattern hash generation failed")
+                normalized_hash = _pattern_hash(title or "", type_, "project")
+            except Exception:
+                _log.debug("pattern hash generation failed")
 
         extra_for_store = dict(extra or {})
         graph_extractor = "explicit" if extra_for_store.get("entities") else "regex"
@@ -581,6 +733,25 @@ class _WriteOpsMixin(_MemoryBase):
             except Exception as exc:
                 _log.debug("entity extraction failed during save: %s", exc)
 
+        # A same-topic content revision reuses update's versioned commit path.
+        # Compute its vector from the optimistic candidate before taking the
+        # authority lock; _update_locked re-derives the full prospective record
+        # and accepts this result only when the exact embed input still matches.
+        prepared_topic_revision: _PreparedUpdateEmbedding | None = None
+        if (
+            len(optimistic_topic_matches) == 1
+            and optimistic_topic_matches[0].get("normalized_content_hash")
+            != identity_content_hash
+        ):
+            revision_text = self._compose_for_embed(title, content)
+            prepared_topic_revision = _PreparedUpdateEmbedding(
+                text=revision_text,
+                vector=self._embed_cached(
+                    revision_text,
+                    ctx=f"save revision id={str(optimistic_topic_matches[0]['id'])[:8]}",
+                ),
+            )
+
         # Allocate a unique path and create the .md atomically under a lock:
         # `meta.path` is UNIQUE, so two concurrent same-title+date saves probing
         # the same free path would have the loser overwrite the winner's file
@@ -592,62 +763,113 @@ class _WriteOpsMixin(_MemoryBase):
         # id/path) is consumed by the file write below, so holding the lock
         # across the SELECT closes the TOCTOU vs a concurrent delete.
         with self._data_dir_write_lock():
-            # If topic_key provided, check for an existing record with the same
-            # topic_key and reuse its id/path (update instead of create).
-            if topic_key:
+            topic_matches = (
+                self.store.find_active_by_topic_identity(namespace, topic_key)
+                if topic_key is not None
+                else []
+            )
+            if topic_key is not None and not topic_matches:
+                topic_matches = self._recover_topic_reservation_locked(
+                    namespace=namespace,
+                    topic_key=topic_key,
+                )
+            if len(topic_matches) > 1:
+                raise IdentityConflictError(
+                    kind="ambiguous_topic",
+                    incoming={"namespace": namespace, "topic_key": topic_key},
+                    conflicts=topic_matches,
+                )
+            if topic_matches:
+                existing = topic_matches[0]
+                existing_id = str(existing["id"])
+                if existing.get("normalized_content_hash") == identity_content_hash:
+                    return self._corroborate_record_locked(existing_id, seen_at=now_iso)
                 try:
-                    existing = self.store.find_by_topic_key(topic_key)
-                    if existing is not None and existing["id"]:
-                        use_existing_id = existing["id"]
-                        existing_path = existing["path"]
-                        _, existing_normalized_hash = self.store.get_dedup_keys(use_existing_id)
-                        if normalized_hash is None:
-                            normalized_hash = existing_normalized_hash
-                        # Preserve original creation date when caller didn't supply one
-                        if not created and existing["created"]:
-                            created_iso = existing["created"]
-                        _log.info(
-                            "topic_key upsert: updating existing %s (path=%s)",
-                            use_existing_id[:8],
-                            existing_path,
-                        )
-                        # Corroboration (C1): a repeated save with the same
-                        # topic_key is a re-assertion of the same fact.
-                        bump_support_if_enabled(self.store, [use_existing_id])
+                    revised = self._update_locked(
+                        existing_id,
+                        title=title,
+                        type_=type_,
+                        tags=norm_tags,
+                        content=content,
+                        extra=extra_for_store,
+                        _prepared_embedding=prepared_topic_revision,
+                        _defer_embed=defer_embed,
+                    )
+                except _RetryPreparedUpdate as exc:
+                    raise StorageError(
+                        "topic revision raced with another writer; retry the save"
+                    ) from exc
+                if revised is None:
+                    raise StorageError(f"topic revision target disappeared: {existing_id[:8]}")
+                try:
+                    self.store.revise_identity(existing_id, seen_at=now_iso)
                 except Exception as exc:
-                    _log.debug("topic_key lookup failed: %s", exc)
+                    # The versioned content commit is already canonical. Signal
+                    # accounting is derivative and must not turn that success
+                    # into a misleading failed save response.
+                    _log.warning(
+                        "identity revision signal deferred for %s: %s",
+                        existing_id[:8],
+                        exc,
+                    )
+                self._presence_bump_save()
+                return replace(
+                    revised,
+                    action="revised",
+                    index_pending=not self.store.has_vector(existing_id),
+                )
 
-                # A prior save may have reached Markdown while SQLite was
-                # unavailable. Recover that canonical reservation from disk so
-                # retrying the same topic cannot create a second memory.
-                if use_existing_id is None:
-                    for candidate in sorted(self.cfg.memory_dir.rglob("*.md")):
-                        try:
-                            if candidate.is_symlink():
-                                continue
-                            candidate_post = frontmatter.loads(
-                                candidate.read_text(encoding="utf-8")
-                            )
-                            candidate_id = str(candidate_post.metadata.get("id") or "")
-                            if (
-                                candidate_post.metadata.get("topic_key") != topic_key
-                                or re.fullmatch(r"[0-9a-f]{32}", candidate_id) is None
-                            ):
-                                continue
-                            candidate_rel = str(candidate.relative_to(self.cfg.memory_dir))
-                            self._safe_path_under(self.cfg.memory_dir, candidate_rel)
-                            use_existing_id = candidate_id
-                            existing_path = candidate_rel
-                            if not created and candidate_post.metadata.get("created"):
-                                created_iso = str(candidate_post.metadata["created"])
-                            if normalized_hash is None:
-                                disk_hash = candidate_post.metadata.get("normalized_hash")
-                                normalized_hash = str(disk_hash) if disk_hash else None
-                            break
-                        except (OSError, ValueError):
-                            continue
+            exact_matches = self.store.find_active_by_exact_identity(
+                namespace,
+                type_,
+                identity_title,
+                identity_content_hash,
+            )
+            if len(exact_matches) > 1:
+                raise IdentityConflictError(
+                    kind="ambiguous_exact_identity",
+                    incoming={
+                        "namespace": namespace,
+                        "type": type_,
+                        "normalized_title": identity_title,
+                        "normalized_content_hash": identity_content_hash,
+                    },
+                    conflicts=exact_matches,
+                )
+            if exact_matches:
+                existing = exact_matches[0]
+                existing_id = str(existing["id"])
+                existing_topic = canonical_topic_key(existing.get("topic_key"))
+                if topic_key is not None and existing_topic not in (None, topic_key):
+                    raise IdentityConflictError(
+                        kind="exact_identity_topic_mismatch",
+                        incoming={"namespace": namespace, "topic_key": topic_key},
+                        conflicts=[existing],
+                    )
+                if topic_key is not None and existing_topic is None:
+                    attached = self._attach_topic_identity_locked(
+                        existing_id,
+                        namespace=namespace,
+                        topic_key=topic_key,
+                        seen_at=now_iso,
+                    )
+                    try:
+                        self.store.corroborate_identity(existing_id, seen_at=now_iso)
+                    except Exception as exc:
+                        _log.warning(
+                            "topic attachment corroboration deferred for %s: %s",
+                            existing_id[:8],
+                            exc,
+                        )
+                    self._presence_bump_save()
+                    return replace(
+                        attached,
+                        action="revised",
+                        index_pending=not self.store.has_vector(existing_id),
+                    )
+                return self._corroborate_record_locked(existing_id, seen_at=now_iso)
 
-            record_id = use_existing_id or uuid.uuid4().hex
+            record_id = uuid.uuid4().hex
 
             # Default the world-validity start to learned-time (`created`) when
             # the caller passed no explicit `valid_at`; an explicit value always
@@ -680,38 +902,41 @@ class _WriteOpsMixin(_MemoryBase):
             if normalized_hash is not None:
                 post["normalized_hash"] = normalized_hash
 
-            # For topic key upserts, reuse the existing path instead of creating a new one
-            rel_path = (
-                existing_path if existing_path else self._build_rel_path(title, now_iso, norm_tags)
+            rel_path = self._build_rel_path(
+                title,
+                now_iso,
+                norm_tags,
+                namespace=namespace,
             )
             abs_path = self._safe_path_under(self.cfg.memory_dir, rel_path)
             written_disk_text = frontmatter.dumps(post)
             self._atomic_write_text(rel_path, written_disk_text)
 
-            # Publish every topic-key write text-only before releasing the
-            # shared lock. This both reserves a new canonical id and makes an
-            # existing-topic update coherent immediately: Markdown + FTS point
-            # to the new body and the old vector is removed while embedding.
-            if topic_key:
-                try:
-                    self.store.upsert_text_only(
-                        id_=record_id,
-                        path=rel_path,
-                        title=title,
-                        type_=type_,
-                        tags=norm_tags,
-                        created=created_iso,
-                        updated=now_iso,
-                        body_hash=body_hash,
-                        extra=extra_for_store,
-                        body_text=content,
-                        topic_key=topic_key,
-                        normalized_hash=normalized_hash,
-                        valid_at=valid_at,
-                        invalid_at=invalid_at,
-                    )
-                except Exception as exc:
-                    reservation_error = exc
+            # Reserve EVERY identity before releasing the lock. This makes
+            # unkeyed exact saves as race-safe as topic writes while keeping the
+            # expensive embedding outside the cross-process critical section.
+            try:
+                self.store.upsert_text_only(
+                    id_=record_id,
+                    path=rel_path,
+                    title=title,
+                    type_=type_,
+                    tags=norm_tags,
+                    created=created_iso,
+                    updated=now_iso,
+                    body_hash=body_hash,
+                    extra=extra_for_store,
+                    body_text=content,
+                    topic_key=topic_key,
+                    normalized_hash=normalized_hash,
+                    namespace=namespace,
+                    normalized_title=identity_title,
+                    normalized_content_hash=identity_content_hash,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
+                )
+            except Exception as exc:
+                reservation_error = exc
 
         if reservation_error is not None:
             self._presence_bump_save()
@@ -739,53 +964,6 @@ class _WriteOpsMixin(_MemoryBase):
             )
 
         if defer_embed:
-            if not topic_key:
-                try:
-                    self.store.upsert_text_only(
-                        id_=record_id,
-                        path=rel_path,
-                        title=title,
-                        type_=type_,
-                        tags=norm_tags,
-                        created=created_iso,
-                        updated=now_iso,
-                        body_hash=body_hash,
-                        extra=extra_for_store,
-                        body_text=content,
-                        topic_key=topic_key,
-                        normalized_hash=normalized_hash,
-                        valid_at=valid_at,
-                        invalid_at=invalid_at,
-                    )
-                except Exception as exc:
-                    # The .md is already on disk (embed-pending). A failed
-                    # text-only reservation must route through the SAME
-                    # recovery the topic_key path uses — stamp
-                    # `_memo_embed_pending`, best-effort text-only index, log
-                    # history + receipt — so the save is never silently lost.
-                    self._presence_bump_save()
-                    return self._save_index_pending(
-                        exc=exc,
-                        record_id=record_id,
-                        rel_path=rel_path,
-                        abs_path=abs_path,
-                        post=post,
-                        title=title,
-                        type_=type_,
-                        norm_tags=norm_tags,
-                        created_iso=created_iso,
-                        now_iso=now_iso,
-                        body_hash=body_hash,
-                        content=content,
-                        extra_for_store=extra_for_store,
-                        skip_memflow_receipt=skip_memflow_receipt,
-                        topic_key=topic_key,
-                        normalized_hash=normalized_hash,
-                        expected_disk_text=written_disk_text,
-                        graph_extractor=graph_extractor,
-                        valid_at=valid_at,
-                        invalid_at=invalid_at,
-                    )
             self._record_graph_entities_from_extra(
                 record_id=record_id,
                 created_iso=created_iso,
@@ -801,13 +979,14 @@ class _WriteOpsMixin(_MemoryBase):
                 updated=now_iso,
                 extra=extra_for_store,
             )
-            self.history.log_save(
-                ts=now_iso,
-                record_id=record_id,
-                title=title,
-                type_=type_,
-                provenance=_extract_provenance(extra_for_store),
-            )
+            with contextlib.suppress(Exception):
+                self.history.log_save(
+                    ts=now_iso,
+                    record_id=record_id,
+                    title=title,
+                    type_=type_,
+                    provenance=_extract_provenance(extra_for_store),
+                )
             deferred_rec = MemoryRecord(
                 id=record_id,
                 path=rel_path,
@@ -820,6 +999,8 @@ class _WriteOpsMixin(_MemoryBase):
                 extra=extra_for_store,
                 valid_at=valid_at,
                 invalid_at=invalid_at,
+                action="created",
+                index_pending=True,
             )
             self._emit_save_receipt(
                 deferred_rec,
@@ -867,6 +1048,9 @@ class _WriteOpsMixin(_MemoryBase):
                 body_text=content,
                 topic_key=topic_key,
                 normalized_hash=normalized_hash,
+                namespace=namespace,
+                normalized_title=identity_title,
+                normalized_content_hash=identity_content_hash,
                 valid_at=valid_at,
                 invalid_at=invalid_at,
             )
@@ -958,13 +1142,14 @@ class _WriteOpsMixin(_MemoryBase):
             )
 
         if not topic_write_superseded:
-            self.history.log_save(
-                ts=now_iso,
-                record_id=record_id,
-                title=title,
-                type_=type_,
-                provenance=_extract_provenance(extra_for_store),
-            )
+            with contextlib.suppress(Exception):
+                self.history.log_save(
+                    ts=now_iso,
+                    record_id=record_id,
+                    title=title,
+                    type_=type_,
+                    provenance=_extract_provenance(extra_for_store),
+                )
 
         rec = MemoryRecord(
             id=record_id,
@@ -978,6 +1163,8 @@ class _WriteOpsMixin(_MemoryBase):
             extra=extra_for_store,
             valid_at=valid_at,
             invalid_at=invalid_at,
+            action="created",
+            index_pending=False,
         )
         if topic_write_superseded:
             _log.info(
@@ -1110,6 +1297,8 @@ class _WriteOpsMixin(_MemoryBase):
                 extra=extra_for_store,
                 valid_at=valid_at,
                 invalid_at=invalid_at,
+                action="created",
+                index_pending=True,
             )
             self._write_gen += 1
             return rec
@@ -1132,7 +1321,7 @@ class _WriteOpsMixin(_MemoryBase):
                 updated=now_iso,
                 extra=extra_for_store,
             )
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(Exception), contextlib.suppress(Exception):
             self.history.log_save(
                 ts=now_iso,
                 record_id=record_id,
@@ -1152,6 +1341,8 @@ class _WriteOpsMixin(_MemoryBase):
             extra=extra_for_store,
             valid_at=valid_at,
             invalid_at=invalid_at,
+            action="created",
+            index_pending=True,
         )
         self._emit_save_receipt(rec, deferred=True, disabled=skip_memflow_receipt)
         self._write_gen += 1
@@ -1172,24 +1363,28 @@ class _WriteOpsMixin(_MemoryBase):
         from memo.receipts import emit_receipt
 
         prov = _extract_provenance(rec.extra or {})
-        emit_receipt(
-            "save",
-            text=f"Memo saved memory {rec.id[:8]} ({rec.type}): {rec.title}",
-            meta={
-                "id": rec.id,
-                "type": rec.type,
-                "tags": ",".join(rec.tags),
-                "path": rec.path,
-                "deferred": deferred,
-                "synapse_trace_id": prov.get("synapse_trace_id", ""),
-                "synapse_route_reason": prov.get("synapse_route_reason", ""),
-                "synapse_agent_id": prov.get("synapse_agent_id", ""),
-            },
-            disabled=disabled,
-        )
+        try:
+            emit_receipt(
+                "save",
+                text=f"Memo saved memory {rec.id[:8]} ({rec.type}): {rec.title}",
+                meta={
+                    "id": rec.id,
+                    "type": rec.type,
+                    "tags": ",".join(rec.tags),
+                    "path": rec.path,
+                    "deferred": deferred,
+                    "synapse_trace_id": prov.get("synapse_trace_id", ""),
+                    "synapse_route_reason": prov.get("synapse_route_reason", ""),
+                    "synapse_agent_id": prov.get("synapse_agent_id", ""),
+                },
+                disabled=disabled,
+            )
+        except Exception as exc:
+            _log.warning("save receipt deferred for %s: %s", rec.id[:8], exc)
         # M2b: also emit to the unified trinity ledger (best-effort,
         # independent of the memflow receipt path).
-        self._emit_ledger("save", rec, prov, deferred=deferred)
+        with contextlib.suppress(Exception):
+            self._emit_ledger("save", rec, prov, deferred=deferred)
 
     def _emit_ledger(
         self,
@@ -1242,6 +1437,198 @@ class _WriteOpsMixin(_MemoryBase):
                 self._mark_dirty(rec.id)
         except Exception as exc:
             _log.warning("cache write policy skipped for %s: %s", rec.id[:8], exc)
+
+    def _corroborate_record_locked(self, record_id: str, *, seen_at: str) -> MemoryRecord:
+        """Strengthen one canonical record without rewriting content/history."""
+        self.store.corroborate_identity(record_id, seen_at=seen_at)
+        rec = self.get(record_id)
+        if rec is None:
+            raise StorageError(f"corroboration target disappeared: {record_id[:8]}")
+        self._presence_bump_save()
+        self._write_gen += 1
+        return replace(
+            rec,
+            action="corroborated",
+            index_pending=not self.store.has_vector(record_id),
+        )
+
+    def _attach_topic_identity_locked(
+        self,
+        record_id: str,
+        *,
+        namespace: str,
+        topic_key: str,
+        seen_at: str,
+    ) -> MemoryRecord:
+        """Version the first topic-key attachment without changing content."""
+        rec = self.get(record_id)
+        if rec is None:
+            raise StorageError(f"topic attachment target disappeared: {record_id[:8]}")
+        path = self._safe_path_under(self.cfg.memory_dir, rec.path)
+        previous = path.read_bytes()
+        post = frontmatter.loads(previous.decode("utf-8"))
+        old_topic = post.metadata.get("topic_key")
+        if old_topic not in (None, ""):
+            if canonical_topic_key(str(old_topic)) != topic_key:
+                raise IdentityConflictError(
+                    kind="exact_identity_topic_mismatch",
+                    incoming={"namespace": namespace, "topic_key": topic_key},
+                    conflicts=[{"id": record_id, "topic_key": old_topic}],
+                )
+            return rec
+
+        post["topic_key"] = topic_key
+        post["updated"] = seen_at
+        self._atomic_write_text(rec.path, frontmatter.dumps(post))
+        try:
+            attached = self.store.attach_topic_identity(
+                record_id,
+                namespace=namespace,
+                topic_key=topic_key,
+                seen_at=seen_at,
+            )
+            if not attached:
+                raise IdentityConflictError(
+                    kind="topic_attachment_race",
+                    incoming={"namespace": namespace, "topic_key": topic_key},
+                    conflicts=[{"id": record_id}],
+                )
+        except Exception:
+            self._atomic_write_text(rec.path, previous.decode("utf-8"))
+            raise
+        with contextlib.suppress(Exception):
+            self.versioning.track_update(
+                record_id,
+                rec.title,
+                rec.type,
+                rec.tags,
+                rec.body,
+                reason="pre-topic-identity snapshot",
+            )
+        with contextlib.suppress(Exception):
+            self.history.log_update(
+                ts=seen_at,
+                record_id=record_id,
+                title=rec.title,
+                type_=rec.type,
+                delta={"topic_key": (None, topic_key), "updated": (rec.updated, seen_at)},
+            )
+        self._write_gen += 1
+        return replace(rec, updated=seen_at)
+
+    def _recover_topic_reservation_locked(
+        self, *, namespace: str, topic_key: str
+    ) -> list[dict[str, Any]]:
+        """Rebuild a disk-only topic reservation after an index failure."""
+        from memo.redact import sanitize_memory_input
+
+        candidates: list[tuple[Path, frontmatter.Post, list[str]]] = []
+        for candidate in sorted(self.cfg.memory_dir.rglob("*.md")):
+            try:
+                if candidate.is_symlink():
+                    continue
+                candidate_post = frontmatter.loads(candidate.read_text(encoding="utf-8"))
+                candidate_id = str(candidate_post.metadata.get("id") or "")
+                rel = str(candidate.relative_to(self.cfg.memory_dir))
+                raw_tags_obj = candidate_post.metadata.get("tags") or []
+                if isinstance(raw_tags_obj, str):
+                    raw_tags = [raw_tags_obj]
+                elif isinstance(raw_tags_obj, list):
+                    raw_tags = [str(tag) for tag in raw_tags_obj]
+                else:
+                    raw_tags = []
+                candidate_tags = _normalise_tags(raw_tags)
+                raw_topic = candidate_post.metadata.get("topic_key")
+                candidate_topic = (
+                    canonical_topic_key(str(raw_topic)) if raw_topic is not None else None
+                )
+                if (
+                    re.fullmatch(r"[0-9a-f]{32}", candidate_id) is None
+                    or candidate_topic != topic_key
+                    or namespace_for_index(candidate_tags, path=rel) != namespace
+                ):
+                    continue
+                candidates.append((candidate, candidate_post, candidate_tags))
+            except (OSError, ValueError, TypeError):
+                continue
+        if len(candidates) > 1:
+            return [
+                {
+                    "id": str(post.metadata.get("id") or ""),
+                    "path": str(path.relative_to(self.cfg.memory_dir)),
+                    "namespace": namespace,
+                    "topic_key": topic_key,
+                }
+                for path, post, _ in candidates
+            ]
+        if not candidates:
+            return []
+
+        candidate, post, candidate_tags = candidates[0]
+        rel = str(candidate.relative_to(self.cfg.memory_dir))
+        candidate_id = str(post.metadata["id"])
+        title = str(post.metadata.get("title") or _derive_title(post.content or "") or "untitled")
+        type_ = str(post.metadata.get("type") or "note")
+        if type_ not in _VALID_TYPES:
+            type_ = "note"
+        extra = post.metadata.get("extra")
+        sanitized = sanitize_memory_input(
+            content=post.content or "",
+            title=title,
+            tags=candidate_tags,
+            topic_key=topic_key,
+            normalized_hash=(
+                str(post.metadata["normalized_hash"])
+                if post.metadata.get("normalized_hash") is not None
+                else None
+            ),
+            extra=extra if isinstance(extra, dict) else {},
+            entropy=flag_bool("MEMO_REDACT_ENTROPY"),
+            allow_empty_content=True,
+        )
+        recovered_identity = identity_keys(
+            title=sanitized.title or "untitled",
+            content=sanitized.content,
+            tags=sanitized.tags,
+            topic_key=topic_key,
+            auto_project=namespace != "_global",
+        )
+        try:
+            self.store.upsert_text_only(
+                id_=candidate_id,
+                path=rel,
+                title=sanitized.title or "untitled",
+                type_=type_,
+                tags=_normalise_tags(sanitized.tags),
+                created=str(post.metadata.get("created") or _now_iso()),
+                updated=str(post.metadata.get("updated") or _now_iso()),
+                body_hash=_sha256_short(sanitized.content),
+                extra=sanitized.extra,
+                body_text=sanitized.content,
+                topic_key=topic_key,
+                normalized_hash=sanitized.normalized_hash,
+                namespace=namespace,
+                normalized_title=recovered_identity.normalized_title,
+                normalized_content_hash=recovered_identity.normalized_content_hash,
+                valid_at=(
+                    str(post.metadata["valid_at"])
+                    if post.metadata.get("valid_at") is not None
+                    else None
+                ),
+                invalid_at=(
+                    str(post.metadata["invalid_at"])
+                    if post.metadata.get("invalid_at") is not None
+                    else None
+                ),
+            )
+        except Exception as exc:
+            raise StorageError(
+                f"failed to recover topic reservation for {candidate_id[:8]}"
+            ) from exc
+        return cast(
+            list[dict[str, Any]],
+            self.store.find_active_by_topic_identity(namespace, topic_key),
+        )
 
     def _absorb_into_existing(
         self, existing_id: str, new_title: str, new_content: str
@@ -1302,17 +1689,31 @@ class _WriteOpsMixin(_MemoryBase):
 
     # -- internals ----------------------------------------------------------
 
-    def _build_rel_path(self, title: str, now_iso: str, tags: list[str] | None = None) -> str:
+    def _build_rel_path(
+        self,
+        title: str,
+        now_iso: str,
+        tags: list[str] | None = None,
+        *,
+        namespace: str | None = None,
+    ) -> str:
         date = now_iso.split("T", 1)[0]
         slug = _slugify(title)[:80] or "untitled"
         # Per-project bucket folder, derived from the project: tag. The sqlite
         # index globs recursively, so this is on-disk organization only — search
         # stays global. Gated; flat and foldered layouts coexist.
         prefix = ""
-        if flag_bool("MEMO_STORE_BY_PROJECT"):
-            from memo.project import project_bucket
+        if namespace == "_unscoped":
+            # Flat legacy untagged files mean global. An explicit folder is the
+            # only rebuildable distinction for new auto-project misses.
+            prefix = "_unscoped/"
+        elif flag_bool("MEMO_STORE_BY_PROJECT"):
+            if namespace is not None:
+                prefix = f"{bucket_for_namespace(namespace)}/"
+            else:
+                from memo.project import project_bucket
 
-            prefix = f"{project_bucket(tags or [])}/"
+                prefix = f"{project_bucket(tags or [])}/"
         # POSIX path joins. Path is relative to `cfg.memory_dir`.
         base = f"{prefix}{date}-{slug}"
         candidate = f"{base}.md"

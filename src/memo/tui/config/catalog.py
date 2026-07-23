@@ -350,6 +350,7 @@ GROUP_TO_DOMAIN: dict[str, str] = {
     "outcome": "Recall",
     "privacy": "Capture",
     "recall": "Recall",
+    "relations": "Search",
     "repo": "Search",
     "retrieval": "Search",
     "roi": "Recall",

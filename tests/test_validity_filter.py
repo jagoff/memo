@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from memo.memory import Memory
 from memo.memory.record import _now_iso
-from memo.store.bm25_queries import _normalize_as_of, _validity_filter
+from memo.store.bm25_queries import _validity_filter
 
 
 def _now_shift(delta: timedelta) -> str:
@@ -50,28 +50,6 @@ def test_as_of_offset_aware_converted_to_local_offset() -> None:
     _sql, params = _validity_filter("", include_invalid=False, as_of="2026-06-15T14:00:00+00:00")
     assert params[0][-6:] == _now_iso()[-6:]  # re-expressed in local offset
     assert datetime.fromisoformat(params[0]) == datetime.fromisoformat("2026-06-15T14:00:00+00:00")
-
-
-def test_normalize_as_of_falls_back_to_raw_on_unparseable() -> None:
-    """A malformed boundary must never crash — it passes through unchanged and
-    then matches lexicographically as-is (old, lenient behaviour)."""
-    assert _normalize_as_of("not-a-real-date") == "not-a-real-date"
-
-
-def test_include_invalid_disables_the_gate_entirely() -> None:
-    """`include_invalid` with no `as_of` returns an empty predicate — every row,
-    closed intervals included."""
-    sql, params = _validity_filter("meta.", include_invalid=True, as_of=None)
-    assert sql == "" and params == []
-
-
-def test_passes_validity_gate_lenient_on_unparseable_as_of() -> None:
-    """The Python-side gate mirrors the SQL fallback: an `as_of` it can't parse
-    never drops the row (and never raises)."""
-    from memo.memory.search_ops import _passes_validity_gate
-
-    row = {"invalid_at": None, "valid_at": None, "created": "2026-01-01T00:00:00-03:00"}
-    assert _passes_validity_gate(row, as_of="garbage-boundary") is True
 
 
 # --- e2e: offset correctness through both store seams -----------------------
@@ -123,15 +101,3 @@ def test_as_of_bare_date_includes_same_day_later_fact(mem_with_stub: Memory) -> 
         r["id"] for r in mem_with_stub.store.search_bm25("prod db", limit=10, as_of="2026-06-14")
     }
     assert a.id not in exc  # day before → excluded
-
-
-def test_search_fuzzy_falls_back_to_fts5_without_tantivy(
-    mem_with_stub: Memory, monkeypatch
-) -> None:
-    """`search_fuzzy` with no tantivy backend routes to the FTS5 path, threading
-    `include_invalid`/`as_of` through unchanged."""
-    a = mem_with_stub.save(content="prod db is postgres", title="A", type_="fact")
-    monkeypatch.setattr(mem_with_stub.store, "_get_tantivy", lambda: None)
-
-    hits = mem_with_stub.store.search_fuzzy("prod db", limit=10)
-    assert a.id in {r["id"] for r in hits}

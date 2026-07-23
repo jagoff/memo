@@ -69,6 +69,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "Git repo URL to check tags / install from (empty → the memo default).",
     ),
     _spec(
+        "MEMO_UPDATE_ENDPOINT",
+        "str",
+        "",
+        "update",
+        "HTTP endpoint for the update check. When set (and update checks are "
+        "on), memo resolves the latest tag via GET <endpoint>?id=&v=&os= — a "
+        "functional version check that also emits an anonymous deduped "
+        "active-install heartbeat (id = sha256(device_id)[:16]; raw id never "
+        "sent). Empty (default) → git ls-remote only, no heartbeat. Falls back "
+        "to git on any HTTP failure.",
+    ),
+    _spec(
         "MEMO_STATUSLINE_SELFHEAL",
         "bool",
         False,
@@ -177,8 +189,37 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 14 tools) | core/slim (stable core) | full/default (all tools).",
+        "MCP surface profile: agent (default, 15 tools) | core/slim (stable core) | full/default (all tools).",
         choices=("agent", "core", "slim", "full", "default"),
+    ),
+    _spec(
+        "MEMO_MCP_WRITE_QUEUE_SIZE",
+        "int",
+        32,
+        "mcp",
+        "Bounded process-local FIFO for mutating MCP calls. Default 32; set 0 "
+        "to disable it. The data-directory lock remains cross-process authority.",
+        min_val=0,
+        max_val=1024,
+    ),
+    _spec(
+        "MEMO_RELATION_CANDIDATES_ENABLED",
+        "bool",
+        True,
+        "relations",
+        "Generate at most three canonical relation candidates after eligible saves. "
+        "Default on after the fixed-corpus and save-latency gates passed; set 0 "
+        "to opt out.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_RELATION_ANNOTATIONS_ENABLED",
+        "bool",
+        True,
+        "relations",
+        "Attach judged canonical relations to normal retrieval results. "
+        "Pending candidates are never attached. Default on; set 0 to opt out.",
+        opt_out=True,
     ),
     _spec(
         "MEMO_RESOURCE_BODY_CHARS",
@@ -799,9 +840,9 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         True,
         "store",
-        "Enable exact deduplication via normalized hash (session pattern). "
-        "When on, save auto-generates a normalized_hash from (title, type, project) "
-        "and skips duplicate entries with identical content.",
+        "Compatibility setting for legacy session-pattern normalized_hash generation. "
+        "Exact namespaced corroboration is a storage correctness invariant and remains "
+        "enabled regardless of this value.",
     ),
     _spec(
         "MEMO_SOFT_DELETE",
@@ -1496,29 +1537,11 @@ SPECS: tuple[FlagSpec, ...] = (
         False,
         "misc",
         "Master switch for the verification-state lifecycle (UNVERIFIED/VERIFIED/"
-        "STALE). When ON: (1) `memo maintain` ages VERIFIED→STALE→UNVERIFIED by "
-        "`verified_at` (see MEMO_VERIFICATION_STALE_DAYS / _UNVERIFY_DAYS), and "
+        "STALE). When ON: (1) `memo maintain` marks VERIFIED memories STALE when "
+        "their explicit `review_after` date is due, and "
         "(2) live recall multiplies each hit's score by its state decay factor "
         "(VERIFIED≈1.0, STALE 0.7, UNVERIFIED 0.8) so fresh facts outrank stale "
         "ones. No-op for an all-UNVERIFIED corpus (uniform penalty). Default OFF.",
-    ),
-    _spec(
-        "MEMO_VERIFICATION_STALE_DAYS",
-        "int",
-        30,
-        "misc",
-        "Days after `verified_at` before a VERIFIED memory ages to STALE in "
-        "`memo maintain` (requires MEMO_VERIFICATION_STATE_TRACKING).",
-        min_val=1,
-    ),
-    _spec(
-        "MEMO_VERIFICATION_UNVERIFY_DAYS",
-        "int",
-        60,
-        "misc",
-        "Days after `verified_at` before a STALE memory ages to UNVERIFIED in "
-        "`memo maintain` (requires MEMO_VERIFICATION_STATE_TRACKING).",
-        min_val=1,
     ),
     # secret storage (encrypted credentials)
     _spec(

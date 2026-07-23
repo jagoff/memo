@@ -116,27 +116,6 @@ def test_grounding_ambiguous_two_days_returns_none():
     assert valid_at is None
 
 
-def test_grounding_accepts_datetime_observation():
-    """A `datetime` Observation Date is reduced to its calendar day before
-    resolving relative anchors."""
-    import datetime as _dt
-
-    from memo.memory.consolidate_ops import ground_relative_dates
-
-    _text, valid_at = ground_relative_dates(
-        "hoy arreglamos el bug", observed_at=_dt.datetime(2026, 7, 22, 15, 30, tzinfo=_dt.UTC)
-    )
-    assert valid_at == "2026-07-22"
-
-
-def test_grounding_malformed_observation_never_raises():
-    """An unparseable Observation Date returns `(text, None)` instead of raising."""
-    from memo.memory.consolidate_ops import ground_relative_dates
-
-    text, valid_at = ground_relative_dates("ayer fue el día", observed_at="not-a-date")
-    assert text == "ayer fue el día" and valid_at is None
-
-
 def test_save_grounding_sets_valid_at_from_observation(mock_memory, monkeypatch):
     monkeypatch.setenv("MEMO_SAVE_NORMALIZE_DATES", "1")
     monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "4")

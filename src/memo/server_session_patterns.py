@@ -20,6 +20,7 @@ import os
 import pathlib
 from typing import Any
 
+from memo.errors import NotFoundError
 from memo.identity import _session_id
 from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
@@ -414,7 +415,7 @@ def register(server: Any, memory: Any) -> None:
 
     @annotated_tool(server, **WRITE)
     def mem_judge(
-        relation_id: int,
+        relation_id: str,
         relation: str,
         reason: str | None = None,
         confidence: float = 1.0,
@@ -432,30 +433,27 @@ def register(server: Any, memory: Any) -> None:
 
         Returns the judged relation.
         """
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-
-        if relation not in _VALID_RELATIONS:
-            return {"error": f"invalid relation, must be one of {_VALID_RELATIONS}"}
-        confidence = max(0.0, min(1.0, confidence))
-
-        _ensure_session_table(memory)
-
-        with memory.store._tx() as cx:
-            cur = cx.execute(
-                """
-                UPDATE memory_relations
-                SET judgment_status = 'judged', relation = ?, reason = ?, confidence = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (relation, reason, confidence, now, relation_id),
+        try:
+            row = memory.judge_relation(
+                relation_id,
+                relation,
+                reason=reason,
+                confidence=confidence,
+                actor="mcp",
+                actor_kind="agent",
             )
-            updated = cur.rowcount > 0
-
+        except NotFoundError:
+            return {
+                "relation_id": relation_id,
+                "relation": relation,
+                "status": "not_found",
+                "updated": False,
+            }
         return {
-            "relation_id": relation_id,
-            "relation": relation,
-            "status": "judged" if updated else "not_found",
-            "updated": updated,
+            "relation_id": row["id"],
+            "relation": row["relation"],
+            "status": row["judgment_status"],
+            "updated": True,
         }
 
     @annotated_tool(server, **WRITE)
@@ -480,40 +478,21 @@ def register(server: Any, memory: Any) -> None:
 
         Returns the created relation sync_id.
         """
-        import uuid
+        row = memory.compare_memories(
+            memory_id_a,
+            memory_id_b,
+            relation,
+            reason=reasoning,
+            confidence=confidence,
+            actor="mcp",
+        )
+        return {"sync_id": row["id"], "status": row["judgment_status"]}
 
-        if relation not in _VALID_RELATIONS:
-            return {"error": f"invalid relation, must be one of {_VALID_RELATIONS}"}
-
-        if relation == "not_conflict":
-            return {"sync_id": "", "status": "no-op"}
-
-        sync_id = f"rel-{uuid.uuid4().hex[:12]}"
-        now = datetime.datetime.now(datetime.UTC).isoformat()
-        session_id = _session_id()
-
-        _ensure_session_table(memory)
-
-        with memory.store._tx() as cx:
-            cx.execute(
-                """
-                INSERT INTO memory_relations
-                (sync_id, source_id, target_id, relation, judgment_status, reason, confidence, session_id, created_at)
-                VALUES (?, ?, ?, ?, 'judged', ?, ?, ?, ?)
-                """,
-                (
-                    sync_id,
-                    memory_id_a,
-                    memory_id_b,
-                    relation,
-                    reasoning,
-                    confidence,
-                    session_id,
-                    now,
-                ),
-            )
-
-        return {"sync_id": sync_id, "status": "created"}
+    @annotated_tool(server, **READ_ONLY)
+    def mem_relation_reviews(limit: int = 50) -> dict[str, Any]:
+        """List pending relation candidates for explicit agent/human judgment."""
+        rows = memory.list_relation_reviews(limit=max(1, min(limit, 200)))
+        return {"pending": rows, "count": len(rows)}
 
     @annotated_tool(server, **READ_ONLY)
     def mem_suggest_topic_key(

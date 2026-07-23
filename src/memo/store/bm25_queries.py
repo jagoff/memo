@@ -26,7 +26,7 @@ _TYPE_FILTER_CANDIDATE_MULT = 20
 
 _META_SELECT_COLUMNS = (
     "id, path, title, type, tags, created, updated, body_hash, extra_json, "
-    "verification_state, verified_at, valid_at, invalid_at"
+    "review_after, verification_state, verified_at, valid_at, invalid_at"
 )
 
 

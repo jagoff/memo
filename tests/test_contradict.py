@@ -236,6 +236,9 @@ def _stage_classify_pair(monkeypatch, verdict: Contradiction | None):
 
 
 def test_scan_persists_contradiction_pairs(mem_with_stub_embed, monkeypatch):
+    # This test owns the scanner's insert path. Automatic relation candidates
+    # are covered separately and would pre-create the same open pair on save.
+    monkeypatch.setenv("MEMO_RELATION_CANDIDATES_ENABLED", "0")
     mem = mem_with_stub_embed
     mem.save(content="alpha original — uso Ollama local", title="Stack A", type_="decision")
     mem.save(content="alpha actualizado — migré a MLX", title="Stack B", type_="decision")

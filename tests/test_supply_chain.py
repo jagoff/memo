@@ -184,6 +184,6 @@ def test_readme_surface_counts_and_top_level_command_inventory_are_exact() -> No
     documented = set(re.findall(r"`([a-z][a-z0-9-]*)`", block))
 
     assert documented == set(cli.commands)
-    assert "| `full` / `default` | 137 |" in readme
-    assert "versus **137 tools / ~15k tokens**" in readme
-    assert "default MCP surface is 14 tools, not 137" in readme
+    assert "| `full` / `default` | 143 |" in readme
+    assert "versus **143 tools / ~16k tokens**" in readme
+    assert "default MCP surface is 15 tools, not 143" in readme

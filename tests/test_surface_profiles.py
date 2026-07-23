@@ -146,13 +146,13 @@ def test_mcp_full_profile_keeps_advanced_tools(tmp_path, monkeypatch) -> None:
         mem.close()
 
 
-def test_agent_tools_definition_is_14_and_excludes_idle_from_removal(monkeypatch) -> None:
+def test_agent_tools_definition_is_15_and_excludes_idle_from_removal(monkeypatch) -> None:
     monkeypatch.setenv("MEMO_MCP_PROFILE", "agent")
     monkeypatch.delenv("MEMO_MCP_SLIM", raising=False)
     from memo.surface import AGENT_MCP_TOOLS, mcp_tools_to_remove
 
     removed = mcp_tools_to_remove()
-    assert len(AGENT_MCP_TOOLS) == 14
+    assert len(AGENT_MCP_TOOLS) == 15
     for name in (
         "memo_idle_capture",
         "memo_pop_notification",
@@ -168,8 +168,8 @@ def test_token_cost_recognizes_agent() -> None:
     from memo.surface import mcp_profile_token_cost
 
     count, cost, reduced = mcp_profile_token_cost("agent")
-    assert count == "14"
-    assert cost == "~1.4k"
+    assert count == "15"
+    assert cost == "~1.5k"
     assert reduced is True
 
 
@@ -178,8 +178,8 @@ def test_token_cost_core_and_slim_are_reduced() -> None:
 
     for profile in ("core", "slim"):
         count, cost, reduced = mcp_profile_token_cost(profile)
-        assert count == "34"
-        assert cost == "~3.0k"
+        assert count == "35"
+        assert cost == "~3.1k"
         assert reduced is True
 
 
@@ -188,8 +188,8 @@ def test_token_cost_full_is_not_reduced() -> None:
 
     for profile in ("full", "default"):
         count, cost, reduced = mcp_profile_token_cost(profile)
-        assert count == "131"
-        assert cost == "~15k"
+        assert count == "143"
+        assert cost == "~16k"
         assert reduced is False
 
 
@@ -199,6 +199,6 @@ def test_token_cost_active_default_resolves_to_agent(monkeypatch) -> None:
     from memo.surface import mcp_profile_token_cost
 
     count, cost, reduced = mcp_profile_token_cost()
-    assert count == "14"
-    assert cost == "~1.4k"
+    assert count == "15"
+    assert cost == "~1.5k"
     assert reduced is True

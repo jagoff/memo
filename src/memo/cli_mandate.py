@@ -14,12 +14,14 @@ in the current repo (AGENTS.md, .cursor/rules/memo.md). Safe, idempotent
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable
 from pathlib import Path
 
 import click
 
 _MARKER = "<!-- memo-mandate -->"
+_END_MARKER = "<!-- /memo-mandate -->"
 
 MANDATE_TEXT = f"""{_MARKER}
 ## Memory-first (memo)
@@ -38,11 +40,13 @@ consult memo FIRST:
   instead of silently working around it — `memo_feedback_flag(kind="outdated")`
   to retire it, or `kind="wrong"` (with `superseded_by` when a replacement
   exists). Both archive reversibly, never hard-delete.
+{_END_MARKER}
 """
 
 # Project-local instruction file each client reads (relative to cwd).
 _CLIENT_FILES: dict[str, str] = {
     "codex": "AGENTS.md",
+    "claude-code": "CLAUDE.md",
     "devin": "AGENTS.md",
     "devin-desktop": "AGENTS.md",
     "opencode": "AGENTS.md",
@@ -90,14 +94,22 @@ def _write_mandate(target: Path, *, dry_run: bool) -> str:
     if target.is_file():
         existing = target.read_text(encoding="utf-8")
         if _MARKER in existing:
-            return "already present (skip)"
-        new = existing.rstrip() + "\n\n" + MANDATE_TEXT
+            if _END_MARKER in existing:
+                return "already present (skip)"
+            # Older memo mandates had only an opening marker. Preserve their
+            # exact text and add the closing boundary so future tooling can
+            # verify the managed protocol without guessing where it ends.
+            new = existing.rstrip() + f"\n{_END_MARKER}\n"
+        else:
+            new = existing.rstrip() + "\n\n" + MANDATE_TEXT
     else:
         new = MANDATE_TEXT
     if dry_run:
         return "would write"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(new, encoding="utf-8")
+    tmp = target.with_name(f".{target.name}.memo-tmp")
+    tmp.write_text(new, encoding="utf-8")
+    os.replace(tmp, target)
     return "written"
 
 
@@ -109,6 +121,7 @@ def _write_mandate(target: Path, *, dry_run: bool) -> str:
         [
             "all",
             "codex",
+            "claude-code",
             "devin",
             "devin-desktop",
             "opencode",

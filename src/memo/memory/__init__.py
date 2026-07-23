@@ -54,6 +54,7 @@ from memo.crossref import CrossReferenceIndex, LinkSuggester  # noqa: F401
 from memo.embedder import MLXEmbedder, assert_valid_embedding  # noqa: F401
 from memo.errors import (  # noqa: F401
     AmbiguousIdError,
+    IdentityConflictError,
     MemoError,
     NotFoundError,
     StorageError,
@@ -118,4 +119,10 @@ from memo.util import stable_hash as _stable_content_hash  # noqa: F401
 from memo.util import utc_now_iso as _utc_now_iso  # noqa: F401
 from memo.versioning import VersionManager  # noqa: F401
 
-__all__ = ["AmbiguousIdError", "Memory", "MemoryRecord", "WriteRefused"]
+__all__ = [
+    "AmbiguousIdError",
+    "IdentityConflictError",
+    "Memory",
+    "MemoryRecord",
+    "WriteRefused",
+]

@@ -104,6 +104,99 @@ def test_tag_provenance_rejects_tag_outside_master(monkeypatch):
     assert au.tag_is_on_remote_master("https://example/repo.git", "v1.2.3") is False
 
 
+class _FakeResp:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> _FakeResp:
+        return self
+
+    def __exit__(self, *a) -> None:
+        return None
+
+
+def test_anon_id_is_hashed_stable_and_not_raw(tmp_cfg):
+    raw = str(tmp_cfg.device_id)
+    anon = au._anon_id(tmp_cfg)
+    assert anon and anon != raw  # hashed, not the raw id
+    assert len(anon) == 16 and all(c in "0123456789abcdef" for c in anon)
+    assert au._anon_id(tmp_cfg) == anon  # stable across calls
+    import hashlib
+
+    assert anon == hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def test_latest_tag_via_endpoint_parses_and_sends_anon_params(monkeypatch):
+    seen: dict[str, str] = {}
+
+    def fake_urlopen(req, *a, **k):
+        seen["url"] = req.full_url
+        return _FakeResp(json.dumps({"latest": "v3.2.1"}).encode())
+
+    monkeypatch.setattr(au.urllib.request, "urlopen", fake_urlopen)
+    tag = au.latest_tag_via_endpoint(
+        "https://tel.example/v1/latest",
+        anon_id="deadbeefdeadbeef",
+        version="3.0.0",
+        os_name="Darwin",
+    )
+    assert tag == "v3.2.1"
+    assert "id=deadbeefdeadbeef" in seen["url"]
+    assert "v=3.0.0" in seen["url"]
+    assert "os=Darwin" in seen["url"]
+
+
+def test_latest_tag_via_endpoint_rejects_non_semver_and_failures(monkeypatch):
+    monkeypatch.setattr(
+        au.urllib.request,
+        "urlopen",
+        lambda *a, **k: _FakeResp(json.dumps({"latest": "not-a-version"}).encode()),
+    )
+    assert (
+        au.latest_tag_via_endpoint("https://x/y", anon_id="a", version="1.0.0", os_name="Linux")
+        is None
+    )
+
+    def boom(*a, **k):
+        raise OSError("network down")
+
+    monkeypatch.setattr(au.urllib.request, "urlopen", boom)
+    assert (
+        au.latest_tag_via_endpoint("https://x/y", anon_id="a", version="1.0.0", os_name="Linux")
+        is None
+    )
+
+
+def test_resolve_latest_tag_uses_git_when_endpoint_unset(tmp_cfg, monkeypatch):
+    monkeypatch.delenv("MEMO_UPDATE_ENDPOINT", raising=False)
+    monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v1.4.0")
+    monkeypatch.setattr(
+        au,
+        "latest_tag_via_endpoint",
+        lambda *a, **k: pytest.fail("endpoint must not be called when unset"),
+    )
+    assert au.resolve_latest_tag(tmp_cfg, "https://example/repo.git") == "v1.4.0"
+
+
+def test_resolve_latest_tag_prefers_endpoint_then_falls_back_to_git(tmp_cfg, monkeypatch):
+    monkeypatch.setenv("MEMO_UPDATE_ENDPOINT", "https://tel.example/v1/latest")
+
+    # endpoint reachable → its tag wins, git not consulted
+    monkeypatch.setattr(au, "latest_tag_via_endpoint", lambda *a, **k: "v9.9.9")
+    monkeypatch.setattr(
+        au, "latest_remote_tag", lambda *a, **k: pytest.fail("git probe should be skipped")
+    )
+    assert au.resolve_latest_tag(tmp_cfg, "https://example/repo.git") == "v9.9.9"
+
+    # endpoint fails → git fallback
+    monkeypatch.setattr(au, "latest_tag_via_endpoint", lambda *a, **k: None)
+    monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v1.0.0")
+    assert au.resolve_latest_tag(tmp_cfg, "https://example/repo.git") == "v1.0.0"
+
+
 def test_throttle_first_check_then_blocked(tmp_cfg):
     assert au._should_check(tmp_cfg, 3600, now=1000.0) is True
     au._record_check(tmp_cfg, now=1000.0)

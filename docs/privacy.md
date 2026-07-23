@@ -12,6 +12,12 @@ All four startup behaviors default to `0`/false:
   a local update notification.
 - `MEMO_AUTO_UPDATE=1` permits that check and may install a newer tagged memo
   release in the background for the next startup.
+- `MEMO_UPDATE_ENDPOINT=<url>` (empty by default) routes the tag check above
+  through an HTTP endpoint instead of `git ls-remote`. It sends three anonymous
+  fields — `id=sha256(device_id)[:16]` (hashed on-device, raw id never sent),
+  `v` (version), `os` (OS name) — letting the operator count active installs. No
+  memory content, paths, or IP. Only fires when a tag check is already enabled;
+  unset → no such request. Falls back to `git ls-remote` on any HTTP failure.
 - `MEMO_STATUSLINE_SELFHEAL=1` permits memo to repair its statusline entry in
   local Claude settings.
 - `MEMO_HOOK_SELFHEAL=1` permits memo to repair its local recall-hook entries.
@@ -46,6 +52,38 @@ or markdown and memo's git sync excludes legacy `secrets/` markers. The local
 master key and ciphertext database are permission-restricted, but a process
 running as your OS user can still request plaintext; protect access to your
 account and use `memo secret get/export` only when disclosure is intended.
+
+## Mandatory memory persistence boundary
+
+Every normal memory write and update strips `<private>...</private>` spans and
+masks known AWS, GitHub, OpenAI, Anthropic, Slack, GCP, and PEM private-key
+patterns before title derivation, identity hashing, embedding, Markdown,
+SQLite/FTS, history, receipts, or logs. Reindex applies the same sanitizer to
+the derived searchable representation without rewriting hand-edited Markdown.
+Long high-entropy token detection remains opt-in with
+`MEMO_REDACT_ENTROPY=1` because it has a higher false-positive rate; pure hex
+hashes and IDs are exempt.
+
+`MEMO_REDACT_SECRETS=0` and `MEMO_PRIVATE_MARKERS=0` now disable only the early
+capture/ingest preprocessing passes. They cannot disable the final persistence
+boundary. Known-pattern masking is defense in depth, not recognition of every
+form of sensitive prose; use `<private>` markers for prose that must not become
+memory.
+
+Memory identity is namespaced as `project:<slug>`, `_global` for explicit
+global saves, or `_unscoped` when project detection was requested but produced
+no project. Repeated exact evidence corroborates one canonical record; a
+same-topic changed body versions that record. Save responses add ephemeral
+`action` and `index_pending` fields. The legacy `normalized_hash` remains
+unchanged for compatibility, while schema v5 derives a separate normalized
+content hash in the rebuildable SQLite index. Migration never rewrites
+Markdown; `memo reindex --rebuild` repairs derived state while preserving user
+signals.
+
+`memo doctor --db` reports identity collisions, legacy/ambiguous rows, and
+Markdown files containing known secret patterns or private markers. It returns
+counts only, never excerpts or matched values, and performs no repair or merge.
+Relation/review/installer preflight is intentionally outside this phase.
 
 ## Optional verbatim transcript index
 

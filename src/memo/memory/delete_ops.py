@@ -223,6 +223,11 @@ class _DeleteOpsMixin(_MemoryBase):
         except Exception as exc:
             _log.warning("delete(%s): graph edge cleanup failed — %s", id_[:8], exc)
 
+        # Canonical relation rows are audit signals: retain them and mark their
+        # missing endpoint instead of deleting the judgment history.
+        with contextlib.suppress(Exception):
+            self.store.orphan_relations_for(id_)
+
         # Step 5: drop contradiction pairs (non-critical, suppress errors)
         if self._contradict_store is not None:
             with contextlib.suppress(Exception):

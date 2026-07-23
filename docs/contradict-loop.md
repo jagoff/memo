@@ -2,7 +2,8 @@
 
 `memo contradict` maintains a persistent radar over the corpus — pairs
 of memories that the LLM verdict marks as `contradiction` or
-`evolution`, lifecycle-tracked in a sidecar SQLite DB. The triage
+`evolution`, lifecycle-tracked in the canonical `memory_relations` ledger in
+the main rebuildable index. The triage
 walker turns them into resolutions (fuse / keep newer / dismiss / etc.).
 
 This document covers the lifecycle, the CLI, and **what the loop with
@@ -20,9 +21,13 @@ memo contradict reopen <pair-id>                              # re-queue
 ```
 
 Pair lifecycle: `open → fused | kept_newer | kept_older | evolved | dismissed`.
-Resolutions are written to the same `contradictions.db` sidecar so the
+The legacy statuses project onto canonical relation judgments, so the
 same pair never re-litigates after a final verdict (`upsert_open()`
 skips already-resolved rows).
+
+Existing `contradictions.db` rows are imported once with deterministic
+migration keys and provenance. The sidecar remains read-only during the
+compatibility window; new scans and resolutions never dual-write it.
 
 Scanning is LLM-driven: every promising neighbor pair (vec cosine ≥
 `--sim-floor`, `--min-days-apart` apart) gets classified by the helper
@@ -52,8 +57,8 @@ Each row memo returns is projected into a `RealityConflict` with
 `source_backend="memo"`, `source_uri="memo://contradiction/<pair-id>"`,
 and EvidenceRefs for both memories.
 
-That projection runs *every time synapse builds a packet*. Memo just
-has to keep `contradictions.db` fresh — the rest is synapse's job.
+That projection runs *every time synapse builds a packet*. Memo keeps the
+canonical relation ledger fresh — the rest is synapse's job.
 
 ## How the other direction works (freeze)
 

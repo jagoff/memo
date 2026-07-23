@@ -892,14 +892,12 @@ def _redact_secrets_for_index(body: str, tags: list[str]) -> tuple[str, list[str
     the source of truth; the index is derived, and redaction is deterministic
     so reindex/re-ingest reproduce the same masked rows. Returns the (possibly
     masked) body and a NEW tags list with `_redacted` appended on a hit.
-    No-op unless MEMO_REDACT_SECRETS (default on)."""
+    Pattern/private sanitization is a final persistence invariant; the legacy
+    early-redaction flag cannot disable this boundary."""
     from memo.flags import flag_bool
+    from memo.redact import sanitize_persisted_text
 
-    if not flag_bool("MEMO_REDACT_SECRETS"):
-        return body, tags
-    from memo.redact import redact_secrets
-
-    res = redact_secrets(body, entropy=flag_bool("MEMO_REDACT_ENTROPY"))
+    res = sanitize_persisted_text(body, entropy=flag_bool("MEMO_REDACT_ENTROPY"))
     if not res.found:
         return body, tags
     out_tags = list(tags)

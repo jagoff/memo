@@ -107,6 +107,7 @@ from memo.cli_release import release_group
 from memo.cli_repo import repo_group
 from memo.cli_retier import retier_cmd
 from memo.cli_retrieve import retrieve_cmd
+from memo.cli_review import review_group
 from memo.cli_roi import roi as roi_cmd
 from memo.cli_runtime import (
     init_cmd,
@@ -133,6 +134,7 @@ from memo.cli_search import (
 )
 from memo.cli_secret import secret as secret_group
 from memo.cli_session import continuity_cmd, session_group
+from memo.cli_setup import setup_cmd
 from memo.cli_stats import stats
 from memo.cli_statusline import install_statusline
 from memo.cli_sync import sync_group
@@ -413,6 +415,7 @@ cli.add_command(migrate_vault, name="migrate")  # alias
 cli.add_command(mcp_command)
 cli.add_command(install_slash)
 cli.add_command(install_mcp)
+cli.add_command(setup_cmd)
 cli.add_command(install_statusline)
 cli.add_command(install_recall_hook)
 cli.add_command(self_update)  # primary name: "update"
@@ -494,6 +497,7 @@ cli.add_command(contextual_group)
 cli.add_command(links_group)
 cli.add_command(version_group)
 cli.add_command(release_group)
+cli.add_command(review_group)
 cli.add_command(query_group)
 cli.add_command(backup_group)
 cli.add_command(sync_group)

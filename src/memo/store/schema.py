@@ -30,6 +30,19 @@ CREATE TABLE IF NOT EXISTS meta (
     updated     TEXT NOT NULL,
     body_hash   TEXT NOT NULL,
     extra_json  TEXT,
+    topic_key   TEXT,
+    normalized_hash TEXT,
+    session_id  TEXT,
+    revision_count INTEGER DEFAULT 1,
+    duplicate_count INTEGER DEFAULT 0,
+    last_seen_at TEXT,
+    deleted_at  TEXT,
+    review_after TEXT,
+    verification_state TEXT DEFAULT 'unverified',
+    verified_at INTEGER,
+    namespace   TEXT,
+    normalized_title TEXT,
+    normalized_content_hash TEXT,
     valid_at    TEXT,
     invalid_at  TEXT
 );
@@ -391,6 +404,11 @@ class _SchemaMixin(_StoreBase):
         # per-write PRAGMA table_info(meta). `cols` reflects the post-migration
         # column set (updated as the ALTERs above succeed).
         self._has_pattern_cols = "topic_key" in cols and "normalized_hash" in cols
+        self._has_identity_cols = {
+            "namespace",
+            "normalized_title",
+            "normalized_content_hash",
+        }.issubset(cols)
 
         # Inline migration (C1): corroboration counter on memory_health.
         # CREATE IF NOT EXISTS skips existing tables, so pre-existing DBs
@@ -434,12 +452,12 @@ class _SchemaMixin(_StoreBase):
         if "valid_at" not in mcols:
             try:
                 self._conn.execute("ALTER TABLE meta ADD COLUMN valid_at TEXT")
-            except Exception as e:  # pragma: no cover - defensive: sqlite ALTER failure
+            except Exception as e:
                 _log.debug("schema migration meta.valid_at failed: %s", e)
         if "invalid_at" not in mcols:
             try:
                 self._conn.execute("ALTER TABLE meta ADD COLUMN invalid_at TEXT")
-            except Exception as e:  # pragma: no cover - defensive: sqlite ALTER failure
+            except Exception as e:
                 _log.debug("schema migration meta.invalid_at failed: %s", e)
         # Partial index keeps the default-recall "currently valid" filter cheap.
         try:
@@ -447,7 +465,7 @@ class _SchemaMixin(_StoreBase):
                 "CREATE INDEX IF NOT EXISTS idx_meta_invalid_at "
                 "ON meta(invalid_at) WHERE invalid_at IS NOT NULL"
             )
-        except Exception as e:  # pragma: no cover - defensive: sqlite CREATE INDEX failure
+        except Exception as e:
             _log.debug("schema migration idx_meta_invalid_at failed: %s", e)
 
         # Ensure sessions table exists (session pattern)
@@ -460,10 +478,27 @@ class _SchemaMixin(_StoreBase):
         # Ensure memory_relations table exists (session pattern)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS memory_relations ("
-            "id TEXT PRIMARY KEY, sync_id TEXT, source_id TEXT NOT NULL, target_id TEXT NOT NULL, "
-            "relation TEXT, judgment_status TEXT DEFAULT 'pending', reason TEXT, "
-            "confidence REAL, session_id TEXT, created_at TEXT, updated_at TEXT)"
+            "id TEXT PRIMARY KEY, pair_key TEXT, sync_id TEXT, source_id TEXT NOT NULL, "
+            "target_id TEXT NOT NULL, relation TEXT, judgment_status TEXT DEFAULT 'pending', "
+            "reason TEXT, confidence REAL, session_id TEXT, actor TEXT, actor_kind TEXT, "
+            "model TEXT, provenance_json TEXT, migration_key TEXT, migrated_from TEXT, "
+            "created_at TEXT, updated_at TEXT)"
         )
+        relation_cols = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(memory_relations)")
+        }
+        relation_additions = {
+            "pair_key": "ALTER TABLE memory_relations ADD COLUMN pair_key TEXT",
+            "actor": "ALTER TABLE memory_relations ADD COLUMN actor TEXT",
+            "actor_kind": "ALTER TABLE memory_relations ADD COLUMN actor_kind TEXT",
+            "model": "ALTER TABLE memory_relations ADD COLUMN model TEXT",
+            "provenance_json": "ALTER TABLE memory_relations ADD COLUMN provenance_json TEXT",
+            "migration_key": "ALTER TABLE memory_relations ADD COLUMN migration_key TEXT",
+            "migrated_from": "ALTER TABLE memory_relations ADD COLUMN migrated_from TEXT",
+        }
+        for column, ddl in relation_additions.items():
+            if column not in relation_cols:
+                self._conn.execute(ddl)
         # Ensure indexes for relations
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_rel_source ON memory_relations(source_id)"
@@ -474,6 +509,27 @@ class _SchemaMixin(_StoreBase):
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_rel_status ON memory_relations(judgment_status)"
         )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_pair_unique "
+            "ON memory_relations(pair_key) WHERE pair_key IS NOT NULL"
+        )
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_rel_migration_unique "
+            "ON memory_relations(migration_key) WHERE migration_key IS NOT NULL"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS memory_reviews ("
+            "id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, reviewed_at TEXT NOT NULL, "
+            "evidence TEXT, actor TEXT, next_review_after TEXT)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_reviews_memory "
+            "ON memory_reviews(memory_id, reviewed_at)"
+        )
+        # user_version=8 covers canonical relation identity types and review evidence.
+        # The independently stamped capability says whether historical topic
+        # conflicts allow the partial active-row uniqueness constraint.
+        self.reconcile_identity_constraint()
 
     # Secondary B-tree indices on `meta` that older DBs predate. Kept out of
     # the `_schema_ready()`-gated DDL block (which only runs on fresh DBs) so a

@@ -28,6 +28,51 @@ class ValidationError(MemoError, ValueError):
     """Caller-supplied input failed validation before any side effect."""
 
 
+class IdentityConflictError(ValidationError):
+    """A requested write would make durable identity ambiguous.
+
+    Structured attributes let CLI/MCP callers render a safe response without
+    parsing exception text. The message deliberately contains no memory body.
+    """
+
+    def __init__(
+        self,
+        *,
+        kind: str,
+        incoming: dict[str, Any] | None = None,
+        conflicts: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    ) -> None:
+        self.kind = kind
+        self.incoming = dict(incoming or {})
+        self.conflicts = tuple(dict(item) for item in conflicts)
+        ids = [str(item.get("id", ""))[:8] for item in self.conflicts if item.get("id")]
+        suffix = f" ({', '.join(ids)})" if ids else ""
+        super().__init__(f"memory identity conflict: {kind}{suffix}")
+
+
+class RelationConflictError(ValidationError):
+    """A relation already has an incompatible durable judgment."""
+
+    def __init__(self, relation_id: str, existing: str, requested: str) -> None:
+        self.relation_id = relation_id
+        self.existing = existing
+        self.requested = requested
+        super().__init__(
+            f"relation {relation_id} is already judged as {existing!r}; "
+            f"cannot replace it with {requested!r}"
+        )
+
+
+class QueueFullError(MemoError, RuntimeError):
+    """A bounded process-local coordinator rejected work before mutation."""
+
+    retryable = True
+
+
+class SetupError(MemoError, RuntimeError):
+    """Declarative agent setup could not complete safely."""
+
+
 class StorageError(MemoError, RuntimeError):
     """A storage-layer operation (sqlite / filesystem) failed. Wraps the
     low-level error with operation context so callers don't see bare

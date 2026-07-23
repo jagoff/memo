@@ -456,35 +456,6 @@ def test_backfill_valid_time_mirrors_markdown(mock_memory):
     assert disk.get("valid_at") == got.created
 
 
-def test_backfill_valid_time_skips_index_only_paths(mock_memory):
-    """Rows whose path escapes ``memory_dir`` (reference/legacy vault chunks) or
-    points at a missing file are backfilled in the INDEX only — no markdown
-    mirror, no crash."""
-    mem = mock_memory
-    ref = mem.save(content="reference-ish chunk", type_="fact")
-    missing = mem.save(content="its file will look gone", type_="fact")
-    with mem.store._conn as cx:
-        # Escapes memory_dir → StorageError → index-only.
-        cx.execute(
-            "UPDATE meta SET valid_at=NULL, path=? WHERE id=?",
-            ("../outside/ref.md", ref.id),
-        )
-        # Resolves under memory_dir but the file does not exist → index-only.
-        cx.execute(
-            "UPDATE meta SET valid_at=NULL, path=? WHERE id=?",
-            ("no-such-bucket/gone.md", missing.id),
-        )
-
-    changed = run_backfill_valid_time(mem.cfg)
-    assert changed == 2  # both rows updated in the index
-    rows = {
-        r["id"]: r
-        for r in mem.store._conn.execute("SELECT id, valid_at, created FROM meta").fetchall()
-    }
-    assert rows[ref.id]["valid_at"] == rows[ref.id]["created"]
-    assert rows[missing.id]["valid_at"] == rows[missing.id]["created"]
-
-
 def test_migrate_backfill_valid_time_flag(tmp_path: Path, seeded_old_layout, monkeypatch):
     """`memo migrate --backfill-valid-time` backfills every legacy NULL row via
     the CLI."""

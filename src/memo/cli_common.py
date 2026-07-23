@@ -17,8 +17,12 @@ from rich.console import Console
 from memo.config import Config
 
 # One process-wide rich Console shared by every command for consistent output.
-# force_terminal=False ensures tests/non-TTY get plain text, not ANSI escape codes.
-console = Console(force_terminal=False)
+# Auto-detect the terminal (the Rich default): a real TTY gets colour + live
+# spinners/progress bars; tests, pipes, and launchd (non-TTY stdout) get plain
+# text. NOTE: force_terminal=False is NOT "auto" — Rich short-circuits
+# is_terminal to the forced value, so it would kill colour AND the dream
+# progress spinner in real terminals too.
+console = Console()
 
 
 def get_memory(cfg: Config) -> Any:
