@@ -49,6 +49,16 @@ def test_update_command_is_channel_aware(monkeypatch) -> None:
     assert cli_banner._update_command() == "memo update"
 
 
+def test_update_command_falls_back_to_memo_update_on_error(monkeypatch) -> None:
+    from memo import cli_banner
+
+    def boom() -> bool:
+        raise RuntimeError("detect blew up")
+
+    monkeypatch.setattr("memo.runtime.detect.is_homebrew_install", boom)
+    assert cli_banner._update_command() == "memo update"
+
+
 def test_startup_banner_offer_uses_brew_on_homebrew(tmp_cfg, monkeypatch) -> None:
     from memo import cli_banner
 
