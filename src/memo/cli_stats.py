@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -19,13 +20,49 @@ _log = logging.getLogger(__name__)
 
 
 @click.command(name="stats")
-def stats() -> None:
+@click.option("--json", "as_json", is_flag=True, help="Emit a stable JSON stats report.")
+def stats(as_json: bool) -> None:
     """Comprehensive stats: utility, recall quality, consumers, tokens saved."""
     mem = Memory(Config.from_env())
     try:
         cfg = mem.cfg
         state_dir = cfg.state_dir
         embedder_identity = mem.store.embedder_model
+
+        if as_json:
+            report: dict[str, object] = {
+                "schema": "memo.stats.v1",
+                "corpus": {"total": mem.store.count(), "data_dir": str(cfg.data_dir)},
+                "models": {
+                    "profile": cfg.model_profile,
+                    "embedder": embedder_identity,
+                    "llm": cfg.llm_model,
+                },
+            }
+            try:
+                from memo.dashboard import read_usage_log
+
+                report["utility"] = {
+                    "tokens_saved": sum(
+                        int(e.get("tokens_est", 0))
+                        for e in read_context_cost_log(state_dir, limit=2000)
+                    ),
+                    "memories_used": len(
+                        {e.get("id") for e in read_usage_log(state_dir, limit=2000) if e.get("id")}
+                    ),
+                }
+            except Exception as exc:
+                report["utility_error"] = str(exc)
+            try:
+                report["recall"] = recall_health(state_dir)
+            except Exception as exc:
+                report["recall_error"] = str(exc)
+            try:
+                report["consumers"] = consult_breakdown(state_dir)
+            except Exception as exc:
+                report["consumers_error"] = str(exc)
+            click.echo(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+            return
 
         console.print(
             f"\n[bold cyan]memo stats — {datetime.now(UTC).strftime('%H:%M:%S')}[/bold cyan]"

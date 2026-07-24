@@ -162,7 +162,7 @@ memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 
 memo is built to **spend fewer tokens, not more**.
 
-- **~80% smaller MCP surface.** The default `agent` profile exposes **31 tools / ~3.1k schema tokens**, versus **159 tools / ~18k tokens** for the full surface — that overhead is paid *every session, in every client*. memo keeps the default focused while including evidence, continuity, and outcome learning.
+- **~80% smaller MCP surface.** The default `agent` profile exposes **38 tools / ~3.8k schema tokens**, versus **159 tools / ~18k tokens** for the full surface — that overhead is paid *every session, in every client*. memo keeps the default focused while including evidence, continuity, lifecycle, and outcome learning.
 - **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
 
 On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
@@ -187,7 +187,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 - **Time-machine / audit.** "What did we know about this bug last month?" Rewind the corpus to any date and see the state of knowledge at that point.
 - **Instant project onboarding.** A cold agent gets the project's durable decisions, facts, and preferences up front via the session-start briefing.
 - **Exact transcript lookup (opt-in).** `memo verbatim search` can find the precise wording of past local transcript turns through a private, lexical-only FTS5 index. It never enters ambient recall.
-- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 31 tools, not 159.
+- **Fewer tokens, not more.** Instead of re-deriving what you solved last week, recall injects the answer on a tight budget — and the default MCP surface is 38 tools, not 159.
 
 ## Requirements
 
@@ -480,6 +480,8 @@ memo runs four background daemons:
 |---|---|---|---|
 | `agent` (default) | 31 | ~3.1k | Standard agent work — evidence, continuity, profile, learning |
 | `core` / `slim` | 51 | ~4.7k | Constrained clients (Codex, OpenCode), admin-lite |
+| `agent` (default) | 38 | ~3.8k | Essential memory, lifecycle, evidence |
+| `core` / `slim` | 55 | ~5.0k | CRUD, history, sessions, lint |
 | `full` / `default` | 159 | ~18k | Power users, debugging |
 
 Set via `MEMO_MCP_PROFILE=full` or in each client's MCP env config.

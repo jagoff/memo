@@ -21,13 +21,20 @@ def register(server: Any, memory: Memory) -> None:
     ) -> dict[str, Any]:
         """Return bounded stable and active memory with evidence metadata."""
         t0 = now_ms()
-        payload = build_memory_profile(
-            memory,
-            scope=scope,
-            limit=limit,
-            budget_chars=budget_chars,
-            cwd=cwd,
-        )
+        try:
+            payload = build_memory_profile(
+                memory,
+                scope=scope,
+                limit=limit,
+                budget_chars=budget_chars,
+                cwd=cwd,
+            )
+        except ValueError as exc:
+            return {
+                "schema": "memo.error.v1",
+                "error": {"code": "invalid_scope", "message": str(exc)},
+                "scope": scope,
+            }
         hits = [
             item
             for section in ("stable", "active")

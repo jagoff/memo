@@ -422,6 +422,39 @@ class _SearchOpsMixin(_MemoryBase):
                 k=rrf_k,
                 weights=rrf_weights,
             )
+            # Vector search always returns nearest neighbours, even for
+            # nonsense queries. Keep vector-only hits only when they clear a
+            # calibrated similarity floor; lexical/fact evidence corroborates
+            # a result and therefore bypasses the floor.
+            min_vec_score = flag_float("MEMO_HYBRID_MIN_VEC_SCORE")
+            # Short keyword-like prompts benefit from semantic fallback (and
+            # usually have an exact lexical signal); abstention targets the
+            # multi-token, open-ended/nonsense queries that create false hits.
+            if min_vec_score is not None and min_vec_score > 0 and len(query.split()) >= 3:
+                lexical_ids = {
+                    str(hit.get("id"))
+                    for hit in (*bm_hits, *exact_hits, *fact_hits)
+                    if hit.get("id")
+                }
+                vec_scores = {
+                    str(hit.get("id")): float(hit.get("score") or 0.0)
+                    for hit in vec_hits
+                    if hit.get("id")
+                }
+                before_abstention = len(rows)
+                rows = [
+                    row
+                    for row in rows
+                    if str(row.get("id")) in lexical_ids
+                    or vec_scores.get(str(row.get("id")), 0.0) >= min_vec_score
+                ]
+                _add_trace(
+                    "abstention",
+                    input_count=before_abstention,
+                    output_count=len(rows),
+                    dropped_count=before_abstention - len(rows),
+                    min_vec_score=min_vec_score,
+                )
             _add_trace(
                 "candidate_generation",
                 mode="hybrid",

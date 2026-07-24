@@ -195,7 +195,7 @@ a 30-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`
 `search`, `unified_briefing`, `version`, session/capture notifications, and
 Memo-native evidence, operational-continuity, and outcome-learning helpers) so
 administrative schemas don't consume model context — set
-`MEMO_MCP_PROFILE=core`/`slim` (51 tools) or `full`/`default` (159 tools) only
+`MEMO_MCP_PROFILE=core`/`slim` (55 tools) or `full`/`default` (159 tools) only
 for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
@@ -331,8 +331,8 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 
 | Profile | Tool count | Use |
 |---|---:|---|
-| `agent` (default) | 31 | Essential memory, evidence, continuity, profile, and outcome-learning surface. |
-| `core` / `slim` | 51 | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
+| `agent` (default) | 38 | Essential memory, evidence, continuity, lifecycle, and outcome-learning surface. |
+| `core` / `slim` | 55 | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
 | `full` / `default` | 159 | Every advanced domain module and diagnostic tool. |
 
 Mutating MCP calls pass through a bounded process-local FIFO by default
