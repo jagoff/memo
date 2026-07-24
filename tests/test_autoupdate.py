@@ -301,6 +301,21 @@ def _enable_newer_update(monkeypatch) -> None:
     monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
 
 
+def test_maybe_auto_update_offers_but_does_not_spawn_on_homebrew(tmp_cfg, monkeypatch):
+    # Homebrew is user-managed: auto-update writes the notify (the banner then
+    # offers `brew upgrade mlx-memo`) but must NOT run brew unattended.
+    _enable_newer_update(monkeypatch)
+    monkeypatch.setattr("memo.runtime.detect.is_homebrew_install", lambda: True)
+    monkeypatch.setattr(
+        au.subprocess,
+        "Popen",
+        lambda *a, **k: pytest.fail("homebrew auto-update must not spawn a background install"),
+    )
+
+    assert au.maybe_auto_update(tmp_cfg) is False
+    assert (tmp_cfg.state_dir / au._NOTIFY_FILE).read_text().strip() == "v999.0.0"
+
+
 def test_maybe_auto_update_deduplicates_while_child_is_active(tmp_cfg, monkeypatch):
     _enable_newer_update(monkeypatch)
     proc = _FakeUpdateProc(4242)

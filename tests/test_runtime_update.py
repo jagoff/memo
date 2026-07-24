@@ -102,6 +102,32 @@ def test_self_update_proceeds_for_isolated_install(monkeypatch):
     assert any("tool" in c and "install" in c for c in calls), calls
 
 
+def test_detect_install_method_homebrew(monkeypatch):
+    """A Cellar interpreter resolves to the homebrew channel, not uv/pipx."""
+    import sys
+
+    monkeypatch.setattr(sys, "executable", "/opt/homebrew/Cellar/mlx-memo/4.1.0/libexec/bin/python")
+    assert upd._detect_install_method() == "homebrew"
+
+
+def test_self_update_uses_brew_for_homebrew_install(monkeypatch):
+    """`memo update` on a Homebrew install runs `brew upgrade`, not a git-tag /
+    PyPI install over the Cellar."""
+    monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
+    monkeypatch.setattr(upd, "_detect_install_method", lambda: "homebrew")
+    monkeypatch.setattr(upd, "_find_brew", lambda: "/opt/homebrew/bin/brew")
+    monkeypatch.setattr(upd, "_finish_successful_update", lambda: None)
+    monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
+
+    calls: list = []
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: calls.append(a[0]) or _Rc(0))
+
+    result = CliRunner().invoke(cli, ["update"])
+
+    assert result.exit_code == 0, result.output
+    assert ["/opt/homebrew/bin/brew", "upgrade", "mlx-memo"] in calls, calls
+
+
 def test_codex_plugin_update_notification_uses_notify_protocol(tmp_path, monkeypatch):
     tty = tmp_path / "tty"
     tty.touch()

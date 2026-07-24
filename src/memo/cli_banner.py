@@ -32,7 +32,7 @@ def startup_banner_cmd(agent: str) -> None:
 
     sync_str = _fast_sync_state()
     update_tag = _pending_update_tag()
-    update_str = f" | ⬆ {update_tag} available — run: memo update" if update_tag else ""
+    update_str = f" | ⬆ {update_tag} available — run: {_update_command()}" if update_tag else ""
     memo_line = f"[Memo {version}] | sync {sync_str}{update_str}"
     label = f"─── memo / {agent} " if agent else "─── memo "
     width = max(len(memo_line) + 2, len(label) + 4, 44)
@@ -118,6 +118,21 @@ def _pending_update_tag() -> str | None:
         return pending_update_tag(Config.from_env())
     except Exception:
         return None
+
+
+def _update_command() -> str:
+    """The update command for the current install channel.
+
+    Homebrew is user-managed, so we offer `brew upgrade mlx-memo`; every other
+    channel (pipx / uv tool / PyPI) updates through `memo update`.
+    """
+    try:
+        from memo.runtime.detect import is_homebrew_install
+
+        homebrew = is_homebrew_install()
+    except Exception:
+        homebrew = False
+    return "brew upgrade mlx-memo" if homebrew else "memo update"
 
 
 def _fast_sync_state() -> str:

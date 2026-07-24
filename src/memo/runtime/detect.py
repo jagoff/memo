@@ -75,6 +75,21 @@ def _install_mode(root: Path | None) -> str:
     return "unknown"
 
 
+def is_homebrew_install() -> bool:
+    """True if the running interpreter is a Homebrew (Cellar) install.
+
+    Fast, no subprocess — the update path and banner use it to pick the channel
+    the corresponds (`brew upgrade` vs `memo update`). Mirrors the Cellar/opt
+    markers `_install_mode` classifies as ``homebrew``.
+    """
+    exe = sys.executable or ""
+    return (
+        "/Cellar/" in exe
+        or exe.startswith("/opt/homebrew/")
+        or exe.startswith("/usr/local/Cellar/")
+    )
+
+
 def _runtime_install_report(cwd: Path | None = None) -> dict[str, Any]:
     cwd = _safe_resolve(cwd or Path.cwd())
     memo_cmd, memo_resolved = _resolve_command("memo", prefer_invoked=True)

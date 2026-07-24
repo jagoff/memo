@@ -54,6 +54,17 @@ def _find_uv() -> str | None:
     return None
 
 
+def _find_brew() -> str | None:
+    """Return path to the brew binary, checking PATH then common locations."""
+    found = shutil.which("brew")
+    if found:
+        return found
+    for candidate in [Path("/opt/homebrew/bin/brew"), Path("/usr/local/bin/brew")]:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _read_pipx_venv_metadata() -> dict | None:
     """Read mlx-memo's pipx metadata directly from the venv JSON (no pipx binary needed)."""
     meta_path = Path.home() / ".local/pipx/venvs/mlx-memo/pipx_metadata.json"
@@ -126,11 +137,13 @@ def _version_ge(a: str, b: str) -> bool:
 
 
 def _detect_install_method() -> str | None:
-    """``"pipx"`` / ``"uv"`` / None — how mlx-memo's isolated runtime was installed.
+    """``"pipx"`` / ``"uv"`` / ``"homebrew"`` / None — how mlx-memo was installed.
 
     Checks ``sys.executable`` first — if the running Python lives inside the uv
     tool venv, return "uv" immediately.  This prevents a stale pipx venv (left
-    over from a migration) from shadowing a live uv-managed install.
+    over from a migration) from shadowing a live uv-managed install. A Homebrew
+    (Cellar) interpreter is its own channel: ``brew upgrade`` owns updates, so
+    the git-tag / PyPI install paths must not run over it.
     """
     uv_tool_prefix = Path.home() / ".local" / "share" / "uv" / "tools" / "mlx-memo"
     try:
@@ -138,6 +151,11 @@ def _detect_install_method() -> str | None:
             return "uv"
     except (TypeError, ValueError):
         pass
+
+    from memo.runtime.detect import is_homebrew_install
+
+    if is_homebrew_install():
+        return "homebrew"
 
     uv = _find_uv()
     if uv:
@@ -279,6 +297,38 @@ def _prewarm_after_update() -> None:
         console.print("[yellow]prewarm timed out (300s); skipping model warmup.[/yellow]")
 
 
+def _run_brew_upgrade() -> None:
+    """Upgrade the Homebrew formula. `brew upgrade` auto-refreshes the tap first."""
+    brew = _find_brew()
+    if brew is None:
+        raise click.ClickException(
+            "Homebrew install detected but `brew` is not on PATH; "
+            "run `brew upgrade mlx-memo` manually."
+        )
+    console.print("[dim]Upgrading via Homebrew (brew upgrade mlx-memo)…[/dim]")
+    try:
+        proc = subprocess.run([brew, "upgrade", "mlx-memo"], check=False, timeout=1800)
+    except subprocess.TimeoutExpired as exc:
+        raise click.ClickException("brew upgrade timed out (1800s).") from exc
+    if proc.returncode != 0:
+        raise click.ClickException("brew upgrade failed.")
+
+
+def _homebrew_self_update(to_tag: str | None) -> None:
+    """Update a Homebrew install via `brew upgrade`, honoring the to-tag latch."""
+    try:
+        _run_brew_upgrade()
+    except Exception:
+        if to_tag:
+            _clear_failed_update_latch(to_tag)
+        raise
+    if to_tag:
+        _mark_successful_update_latch(to_tag)
+    _finish_successful_update()
+    console.print("[green]✓[/green] upgraded via Homebrew. Pre-warming MLX models…")
+    _prewarm_after_update()
+
+
 @click.command(name="update")
 @click.argument("stray", required=False, metavar="")
 @click.option("--check", is_flag=True, help="Check for a newer version without installing.")
@@ -322,6 +372,13 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
             console.print("[dim]Run [bold]memo update[/bold] to install.[/dim]")
         else:
             console.print("[green]memo is up to date.[/green]")
+        return
+
+    # Homebrew is a user-managed channel: `brew upgrade` (not a git-tag / PyPI
+    # install over the Cellar) owns updates. Covers both an explicit `memo
+    # update` and the auto-update worker's `--to-tag` invocation.
+    if _detect_install_method() == "homebrew":
+        _homebrew_self_update(to_tag)
         return
 
     # Git-tag path: reinstall the isolated runtime straight from the tagged ref.

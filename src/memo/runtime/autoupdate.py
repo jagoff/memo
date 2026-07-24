@@ -716,6 +716,16 @@ def maybe_auto_update(cfg: Config | None = None) -> bool:
             _clear_notify(cfg)
             return False
 
+        # Homebrew is a user-managed channel: `brew upgrade` owns updates, so we
+        # OFFER (write the notify → the banner shows `brew upgrade mlx-memo`)
+        # rather than run brew unattended in the background. The pipx/uv/PyPI
+        # channels below still self-install.
+        from memo.runtime.detect import is_homebrew_install
+
+        if is_homebrew_install():
+            _write_notify(cfg, tag)
+            return False
+
         with _SPAWN_LOCK, _spawn_file_lock(cfg):
             # Inspection, stale cleanup, acquisition, spawn and transition
             # are one cross-process critical section. A concurrent cleanup

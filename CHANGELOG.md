@@ -22,6 +22,11 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 - Privacy policy and README reworded from "offline by default" to "local-first,
   offline by default with auto-update as the one default-on outbound call",
   documenting the opt-out.
+- Update offer is now channel-aware. Homebrew installs are detected as their own
+  channel: the banner offers `brew upgrade mlx-memo` and `memo update` runs
+  `brew upgrade` instead of failing over the Cellar; background auto-update on
+  Homebrew offers (notifies) rather than running brew unattended. pipx / uv tool
+  / PyPI continue to self-install via `memo update`.
 
 ## [4.0.1] - 2026-07-24
 
