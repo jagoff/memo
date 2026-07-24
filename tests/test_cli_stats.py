@@ -44,3 +44,38 @@ def test_stats_closes_memory(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     mock_memory.close.assert_called_once_with()
+
+
+def test_stats_json_emits_stable_report(tmp_path: Path) -> None:
+    runner = CliRunner()
+    env = {
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+    }
+    cfg = MagicMock(
+        state_dir=tmp_path / "state",
+        data_dir=tmp_path / "data",
+        model_profile="balanced",
+        llm_model="org/llm",
+    )
+    mock_memory = MagicMock(cfg=cfg)
+    mock_memory.store.count.return_value = 3
+    mock_memory.store.embedder_model = "org/embedder"
+    with (
+        patch("memo.cli_stats.Config.from_env", return_value=cfg),
+        patch("memo.cli_stats.Memory", return_value=mock_memory),
+        patch("memo.cli_stats.read_context_cost_log", return_value=[{"tokens_est": 12}]),
+        patch("memo.dashboard.read_usage_log", return_value=[{"id": "mem-1"}]),
+        patch("memo.cli_stats.recall_health", return_value={"fired": 0}),
+        patch("memo.cli_stats.consult_breakdown", return_value={"consumers": []}),
+    ):
+        result = runner.invoke(cli, ["stats", "--json"], env=env)
+
+    assert result.exit_code == 0, result.output
+    assert '"schema": "memo.stats.v1"' in result.output
+    assert '"total": 3' in result.output
+    assert '"tokens_saved": 12' in result.output
+    mock_memory.close.assert_called_once_with()
