@@ -122,3 +122,21 @@ def test_profile_mcp_tool_logs_and_returns_payload(tmp_path, monkeypatch):
     payload = tools["memo_profile"](scope="current", limit=1, source="test")
     assert payload["schema"] == "memo.profile.v1"
     assert payload["active"][0]["id_short"] == "aaaaaaaa"
+
+
+def test_profile_mcp_tool_returns_structured_invalid_scope(tmp_path):
+    memory = _Memory(tmp_path)
+    tools = {}
+
+    class _Server:
+        def tool(self, **kwargs):
+            def decorate(fn):
+                tools[fn.__name__] = fn
+                return fn
+
+            return decorate
+
+    register(_Server(), memory)
+    payload = tools["memo_profile"](scope="not-a-scope")
+    assert payload["schema"] == "memo.error.v1"
+    assert payload["error"]["code"] == "invalid_scope"

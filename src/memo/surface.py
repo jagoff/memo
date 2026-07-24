@@ -70,8 +70,14 @@ AGENT_MCP_TOOLS: frozenset[str] = (
         {
             "memo_ask",
             "memo_context",
+            "memo_delete",
             "memo_get",
             "memo_graph",
+            "memo_history",
+            "memo_invalidate",
+            "memo_mark_reviewed",
+            "memo_review_due",
+            "memo_supersede",
             # Context-economy primitive registered always-on and never removed —
             # present on every surface profile (incl. the minimal agent one).
             "memo_offload",
@@ -79,6 +85,7 @@ AGENT_MCP_TOOLS: frozenset[str] = (
             "memo_save",
             "memo_search",
             "memo_unified_briefing",
+            "memo_update",
             # Session/notification plumbing registered by _srv_idle_capture outside
             # the advanced gate and never removed.
             "memo_idle_capture",
@@ -107,7 +114,9 @@ CORE_MCP_TOOLS: frozenset[str] = (
             "memo_get",
             "memo_get_embedder_profile",
             "memo_history",
+            "memo_invalidate",
             "memo_lint",
+            "memo_mark_reviewed",
             "memo_list",
             "memo_provenance",
             "memo_profile",
@@ -121,6 +130,8 @@ CORE_MCP_TOOLS: frozenset[str] = (
             "memo_session_get",
             "memo_session_list",
             "memo_stats",
+            "memo_review_due",
+            "memo_supersede",
             "memo_unforget",
             "memo_unified_briefing",
             "memo_update",
@@ -170,9 +181,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("31", "~3.1k"),
-    "core": ("51", "~4.7k"),
-    "slim": ("51", "~4.7k"),
+    "agent": ("38", "~3.8k"),
+    "core": ("55", "~5.0k"),
+    "slim": ("55", "~5.0k"),
 }
 
 

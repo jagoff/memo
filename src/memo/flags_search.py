@@ -312,6 +312,17 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
     ),
     _spec(
+        "MEMO_HYBRID_MIN_VEC_SCORE",
+        "float",
+        0.35,
+        "search",
+        "Minimum semantic similarity for hybrid-only candidates. Lexical evidence "
+        "always keeps a result; lower-scoring vector-only matches are abstained "
+        "to prevent false positives.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
         "MEMO_HYDE_ENABLED",
         "bool",
         False,

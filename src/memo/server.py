@@ -297,7 +297,6 @@ def _build_server(
         _srv_context_pack.register(server, memory)
         _srv_contextual.register(server, memory)
         _srv_links.register(server, memory)
-        _srv_lifecycle.register(server, memory)
         _srv_version.register(server, memory)
         _srv_query.register(server, memory)
         _srv_backup.register(server, memory)
@@ -339,6 +338,9 @@ def _build_server(
     _srv_operational.register(server, memory)
     _srv_resources.register(server, memory)
     _srv_profile.register(server, memory)
+    # Truth-validity lifecycle is part of the stable CRUD contract and must be
+    # available to the default agent profile, not only the advanced surface.
+    _srv_lifecycle.register(server, memory)
 
     from memo.surface import mcp_tools_to_remove
 

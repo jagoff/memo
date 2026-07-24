@@ -554,12 +554,18 @@ def _doctor_report(
         and all(item.get("ok", True) for item in db_report)
         and (trust_report is None or bool(trust_report["ok"]))
     )
+    warnings: list[str] = []
+    warnings.extend(str(item) for item in runtime.get("warnings", []))
+    profile = _profile_status_report(cfg, include_db=check_db)
+    warnings.extend(str(item) for item in profile.get("overrides", []))
     return {
         "schema": "memo.doctor.v1",
         "ok": ok,
+        "status": "error" if not ok else ("warning" if warnings else "ok"),
+        "warnings": warnings,
         "runtime": runtime,
         "storage": {"data_dir": data_dir, "vault_path": vault_path},
-        "profile": _profile_status_report(cfg, include_db=check_db),
+        "profile": profile,
         "imports": imports,
         "models": _model_cache_report(cfg),
         "db": db_report,
