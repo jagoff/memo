@@ -1091,3 +1091,37 @@ def test_vec_migration_snapshot_inside_tx(tmp_path: Path):
     ids = {r["id"] for r in store._conn.execute("SELECT id FROM vec").fetchall()}
     assert ids == {"m1", "m2"}, "concurrent commit lost during vec migration"
     store.close()
+
+
+def test_tx_translates_lock_contention_to_storage_error(store: VecStore) -> None:
+    """A concurrent writer holding the write lock makes `_tx()` raise a typed
+    StorageError (a MemoError), not a raw sqlite3.OperationalError. This is what
+    lets the MCP write coordinator report the real cause instead of the opaque
+    'coordinated MCP write failed safely'. Regression for the vault/multi-session
+    lock-contention path that unit tests (single-process) never exercised."""
+    from memo.errors import MemoError, StorageError
+
+    store._conn.execute("PRAGMA busy_timeout = 100")
+    holder = sqlite3.connect(str(store.db_path), timeout=0.1)
+    holder.execute("PRAGMA busy_timeout = 100")
+    holder.execute("BEGIN IMMEDIATE")  # hold the write lock, never commit
+    try:
+        with pytest.raises(StorageError) as excinfo:
+            with store._tx() as cx:
+                cx.execute("UPDATE meta SET updated = updated WHERE 1 = 0")
+        assert isinstance(excinfo.value, MemoError)
+        assert "locked" in str(excinfo.value).lower()
+        assert isinstance(excinfo.value.__cause__, sqlite3.OperationalError)
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+def test_tx_preserves_non_lock_operational_error(store: VecStore) -> None:
+    """Schema-class sqlite errors (e.g. `no such table`) keep propagating as a
+    raw sqlite3.OperationalError so their existing `except OperationalError`
+    handlers still catch them — only lock errors are translated."""
+    with pytest.raises(sqlite3.OperationalError) as excinfo:
+        with store._tx() as cx:
+            cx.execute("SELECT * FROM definitely_no_such_table")
+    assert "no such table" in str(excinfo.value).lower()

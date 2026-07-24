@@ -9,6 +9,24 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.0.1] - 2026-07-24
+
+### Fixed
+
+- MCP write tools no longer surface database lock contention as the opaque
+  `coordinated MCP write failed safely`. `VecStore._tx()` now translates a
+  lock-class `sqlite3.OperationalError` (a concurrent writer — another agent
+  session, or an external tool syncing the DB inside an Obsidian vault — holding
+  the write lock) into a typed, retryable `StorageError`, so the write
+  coordinator reports the real cause and retry semantics. `save()` keeps its
+  graceful `_memo_embed_pending` fallback; all other write tools (`update`,
+  `delete`, `supersede`, `focus`, `attention`, `outcome`, `handoff`, …) now fail
+  with an actionable message instead of the generic wrapper. Non-lock
+  `OperationalError`s (e.g. `no such column`) still propagate unchanged.
+- The write coordinator now logs the original traceback via `_log.exception`
+  before masking an unexpected exception, so a swallowed root cause is no longer
+  unrecoverable from the server stderr / MCP logs.
+
 ## [4.0.0] - 2026-07-23
 
 ### Added

@@ -6,10 +6,24 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 
+from ..errors import StorageError
 from ..sqlite_compat import import_sqlite_vec
 from ._base import _StoreBase
 
 _log = logging.getLogger(__name__)
+
+# Message SQLite raises when a write cannot acquire the lock within
+# busy_timeout — a concurrent writer (another agent session, or an external
+# tool syncing the DB inside a vault) holds it. ``sqlite3`` reports both
+# SQLITE_BUSY and SQLITE_LOCKED with these strings.
+_LOCK_MARKERS = ("database is locked", "database is busy")
+_LOCK_MSG = "memo write blocked: the database is locked by a concurrent writer; retry the call"
+
+
+def _is_lock_error(exc: sqlite3.OperationalError) -> bool:
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _LOCK_MARKERS)
+
 
 # vec0 accepts either a JSON array (text, must be parsed) or a packed
 # float32 blob. Blobs skip JSON encode on write and JSON parse on every
@@ -119,10 +133,25 @@ class _ConnectionMixin(_StoreBase):
         # concurrent reader on the same connection doesn't observe a
         # half-written record. SQLite WAL mode lets readers continue
         # against the snapshot during the write.
-        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as exc:
+            # Lock not acquired within busy_timeout. Surface a typed,
+            # actionable StorageError instead of a raw sqlite error so callers
+            # — notably the MCP write coordinator — report the real cause and
+            # retry semantics rather than the opaque "write failed safely".
+            # Non-lock errors keep propagating unchanged for their own handlers.
+            if _is_lock_error(exc):
+                raise StorageError(_LOCK_MSG) from exc
+            raise
         try:
             yield self._conn
             self._conn.commit()
+        except sqlite3.OperationalError as exc:
+            self._conn.rollback()
+            if _is_lock_error(exc):
+                raise StorageError(_LOCK_MSG) from exc
+            raise
         except Exception:
             self._conn.rollback()
             raise
