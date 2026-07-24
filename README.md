@@ -75,14 +75,17 @@ Numbers from real command output on the author's live corpus (~4,900 memories, m
 | Live recall hit rate (~1,230 hook fires, log window ~31 days) | 99% (97% strong) | `memo stats` |
 | Tokens saved — estimated usage ledger, all-time | 1.21M (constants disclosed) | `memo tokens` |
 
-### Offline by default
+### Local-first, offline by default
 
-Normal `memo-mcp` startup makes no outbound network request and does not rewrite
-Claude or Codex configuration. Release checks, automatic updates, statusline
-self-healing, and hook self-healing are all explicit opt-ins. Commands such as
-update and cross-machine sync, plus requested model or benchmark downloads, may
-use the network. See the [privacy and network policy](docs/privacy.md) for the
-exact flags and boundaries.
+Every memory operation is offline by default and sends nothing to a hosted
+service. The one default-on exception is **auto-update**: `memo-mcp` startup
+makes a throttled `git ls-remote` tag probe (no memory content, paths, identity,
+or IP) and installs a newer tagged release in the background so memo keeps itself
+current. Set `MEMO_AUTO_UPDATE=0` to opt out and keep startup fully offline.
+Statusline and hook self-healing remain explicit opt-ins, and startup does not
+rewrite Claude or Codex configuration. Commands such as update and cross-machine
+sync, plus requested model or benchmark downloads, may use the network. See the
+[privacy and network policy](docs/privacy.md) for the exact flags and boundaries.
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
@@ -103,7 +106,7 @@ exact flags and boundaries.
 ## Install — one step
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.1.0/install.sh | bash
 ```
 
 The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, Devin Desktop, OpenCode).
@@ -133,7 +136,7 @@ First install downloads ~8 GB of MLX models (5–15 min); later installs hit the
 **Migrating from another Mac?** Install first, then restore your corpus:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.1.0/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 ```
 
@@ -203,7 +206,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 memo installs itself if you hand the repo (or just the install line) to an AI agent:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.0.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.1.0/install.sh | bash
 memo doctor --strict-runtime     # verify runtime is healthy
 ```
 

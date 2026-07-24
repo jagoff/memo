@@ -39,6 +39,39 @@ def test_startup_banner_reports_memo_version_and_agent(tmp_cfg) -> None:
     assert "opencode" in result.output
 
 
+def test_update_command_is_channel_aware(monkeypatch) -> None:
+    from memo import cli_banner
+
+    monkeypatch.setattr("memo.runtime.detect.is_homebrew_install", lambda: True)
+    assert cli_banner._update_command() == "brew upgrade mlx-memo"
+
+    monkeypatch.setattr("memo.runtime.detect.is_homebrew_install", lambda: False)
+    assert cli_banner._update_command() == "memo update"
+
+
+def test_update_command_falls_back_to_memo_update_on_error(monkeypatch) -> None:
+    from memo import cli_banner
+
+    def boom() -> bool:
+        raise RuntimeError("detect blew up")
+
+    monkeypatch.setattr("memo.runtime.detect.is_homebrew_install", boom)
+    assert cli_banner._update_command() == "memo update"
+
+
+def test_startup_banner_offer_uses_brew_on_homebrew(tmp_cfg, monkeypatch) -> None:
+    from memo import cli_banner
+
+    monkeypatch.setattr(cli_banner, "_pending_update_tag", lambda: "v9.9.9")
+    monkeypatch.setattr("memo.runtime.detect.is_homebrew_install", lambda: True)
+
+    result = CliRunner().invoke(cli, ["startup-banner", "--agent", "codex"], env=_env(tmp_cfg))
+
+    assert result.exit_code == 0, result.output
+    assert "v9.9.9 available" in result.output
+    assert "brew upgrade mlx-memo" in result.output
+
+
 def test_install_shims_writes_executable_self_contained_script(tmp_cfg, tmp_path) -> None:
     bin_dir = tmp_path / "bin"
     result = CliRunner().invoke(

@@ -204,7 +204,9 @@ def test_throttle_first_check_then_blocked(tmp_cfg):
     assert au._should_check(tmp_cfg, 3600, now=1000.0 + 4000) is True  # past window
 
 
-def test_runtime_network_and_selfheal_flags_are_disabled_by_default(monkeypatch):
+def test_runtime_flag_defaults(monkeypatch):
+    # memo v4.1.0+: MEMO_AUTO_UPDATE defaults ON (memo keeps itself current);
+    # the check/self-heal flags stay opt-in (default off).
     from memo.flags import flag_bool
 
     names = (
@@ -216,15 +218,35 @@ def test_runtime_network_and_selfheal_flags_are_disabled_by_default(monkeypatch)
     for name in names:
         monkeypatch.delenv(name, raising=False)
 
-    assert {name: flag_bool(name) for name in names} == {name: False for name in names}
+    assert {name: flag_bool(name) for name in names} == {
+        "MEMO_UPDATE_CHECK_ENABLED": False,
+        "MEMO_AUTO_UPDATE": True,
+        "MEMO_STATUSLINE_SELFHEAL": False,
+        "MEMO_HOOK_SELFHEAL": False,
+    }
 
 
-def test_maybe_auto_update_disabled_by_default(tmp_cfg, monkeypatch):
+def test_maybe_auto_update_enabled_by_default(tmp_cfg, monkeypatch):
+    # memo v4.1.0+: MEMO_AUTO_UPDATE defaults ON. With no explicit env var (the
+    # conftest hermetic pin removed), a memo-mcp start checks for a newer tag and
+    # spawns the background updater. The isolated MEMO_CONFIG_DIR means no
+    # markdown config leaks in, so this exercises the real built-in default.
     monkeypatch.delenv("MEMO_AUTO_UPDATE", raising=False)
+    monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v999.0.0")
+    monkeypatch.setattr(au, "tag_is_on_remote_master", lambda *a, **k: True)
+    monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
+    monkeypatch.setattr(au.subprocess, "Popen", lambda *a, **k: _FakeUpdateProc(4242))
+
+    assert au.maybe_auto_update(tmp_cfg) is True
+
+
+def test_maybe_auto_update_respects_explicit_optout(tmp_cfg, monkeypatch):
+    # Setting =0 keeps startup fully offline: no tag check, no spawn.
+    monkeypatch.setenv("MEMO_AUTO_UPDATE", "0")
     monkeypatch.setattr(
         au,
         "latest_remote_tag",
-        lambda *a, **k: pytest.fail("disabled auto-update must not access the network"),
+        lambda *a, **k: pytest.fail("opted-out auto-update must not access the network"),
     )
 
     assert au.maybe_auto_update(tmp_cfg) is False
@@ -277,6 +299,21 @@ def _enable_newer_update(monkeypatch) -> None:
     monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v999.0.0")
     monkeypatch.setattr(au, "tag_is_on_remote_master", lambda *a, **k: True)
     monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
+
+
+def test_maybe_auto_update_offers_but_does_not_spawn_on_homebrew(tmp_cfg, monkeypatch):
+    # Homebrew is user-managed: auto-update writes the notify (the banner then
+    # offers `brew upgrade mlx-memo`) but must NOT run brew unattended.
+    _enable_newer_update(monkeypatch)
+    monkeypatch.setattr("memo.runtime.detect.is_homebrew_install", lambda: True)
+    monkeypatch.setattr(
+        au.subprocess,
+        "Popen",
+        lambda *a, **k: pytest.fail("homebrew auto-update must not spawn a background install"),
+    )
+
+    assert au.maybe_auto_update(tmp_cfg) is False
+    assert (tmp_cfg.state_dir / au._NOTIFY_FILE).read_text().strip() == "v999.0.0"
 
 
 def test_maybe_auto_update_deduplicates_while_child_is_active(tmp_cfg, monkeypatch):

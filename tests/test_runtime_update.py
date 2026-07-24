@@ -15,6 +15,8 @@ import json
 import os
 import subprocess
 
+import click
+import pytest
 from click import unstyle
 from click.testing import CliRunner
 
@@ -100,6 +102,138 @@ def test_self_update_proceeds_for_isolated_install(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert any("tool" in c and "install" in c for c in calls), calls
+
+
+def test_detect_install_method_homebrew(monkeypatch):
+    """A Cellar interpreter resolves to the homebrew channel, not uv/pipx."""
+    import sys
+
+    monkeypatch.setattr(sys, "executable", "/opt/homebrew/Cellar/mlx-memo/4.1.0/libexec/bin/python")
+    assert upd._detect_install_method() == "homebrew"
+
+
+def test_self_update_uses_brew_for_homebrew_install(monkeypatch):
+    """`memo update` on a Homebrew install runs `brew upgrade`, not a git-tag /
+    PyPI install over the Cellar."""
+    monkeypatch.setattr(upd, "_running_install_is_editable", lambda: False)
+    monkeypatch.setattr(upd, "_detect_install_method", lambda: "homebrew")
+    monkeypatch.setattr(upd, "_find_brew", lambda: "/opt/homebrew/bin/brew")
+    monkeypatch.setattr(upd, "_finish_successful_update", lambda: None)
+    monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
+
+    calls: list = []
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: calls.append(a[0]) or _Rc(0))
+
+    result = CliRunner().invoke(cli, ["update"])
+
+    assert result.exit_code == 0, result.output
+    assert ["/opt/homebrew/bin/brew", "upgrade", "mlx-memo"] in calls, calls
+
+
+def test_find_brew_uses_path_then_none(monkeypatch):
+    monkeypatch.setattr(upd.shutil, "which", lambda name: "/opt/homebrew/bin/brew")
+    assert upd._find_brew() == "/opt/homebrew/bin/brew"
+
+    # not on PATH and no known location present → None (force the candidate
+    # probe false so the result is deterministic on a dev Mac that has brew)
+    monkeypatch.setattr(upd.shutil, "which", lambda name: None)
+    monkeypatch.setattr(upd.Path, "is_file", lambda self: False)
+    assert upd._find_brew() is None
+
+
+def test_find_brew_returns_known_location(monkeypatch):
+    monkeypatch.setattr(upd.shutil, "which", lambda name: None)
+    monkeypatch.setattr(upd.Path, "is_file", lambda self: str(self) == "/opt/homebrew/bin/brew")
+    assert upd._find_brew() == "/opt/homebrew/bin/brew"
+
+
+def test_is_homebrew_install_detects_channels(monkeypatch):
+    import sys
+
+    from memo.runtime import detect
+
+    for path in (
+        "/opt/homebrew/Cellar/mlx-memo/4.1.0/libexec/bin/python",
+        "/opt/homebrew/bin/python",
+        "/usr/local/Cellar/mlx-memo/4.1.0/libexec/bin/python",
+    ):
+        monkeypatch.setattr(sys, "executable", path)
+        assert detect.is_homebrew_install() is True
+
+    monkeypatch.setattr(sys, "executable", "/Users/x/.local/share/uv/tools/mlx-memo/bin/python")
+    assert detect.is_homebrew_install() is False
+
+
+def test_homebrew_self_update_without_tag_reraises_and_skips_latch(monkeypatch):
+    def boom() -> None:
+        raise click.ClickException("brew upgrade failed.")
+
+    monkeypatch.setattr(upd, "_run_brew_upgrade", boom)
+    cleared: list = []
+    monkeypatch.setattr(upd, "_clear_failed_update_latch", lambda tag: cleared.append(tag))
+
+    with pytest.raises(click.ClickException):
+        upd._homebrew_self_update(None)
+
+    assert cleared == []  # no to_tag → nothing to clear
+
+
+def test_run_brew_upgrade_raises_when_brew_missing(monkeypatch):
+    monkeypatch.setattr(upd, "_find_brew", lambda: None)
+    with pytest.raises(click.ClickException, match="brew"):
+        upd._run_brew_upgrade()
+
+
+def test_run_brew_upgrade_raises_on_nonzero_exit(monkeypatch):
+    monkeypatch.setattr(upd, "_find_brew", lambda: "/opt/homebrew/bin/brew")
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: _Rc(1))
+    with pytest.raises(click.ClickException, match="brew upgrade failed"):
+        upd._run_brew_upgrade()
+
+
+def test_run_brew_upgrade_raises_on_timeout(monkeypatch):
+    monkeypatch.setattr(upd, "_find_brew", lambda: "/opt/homebrew/bin/brew")
+
+    def _timeout(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="brew", timeout=1800)
+
+    monkeypatch.setattr(upd.subprocess, "run", _timeout)
+    with pytest.raises(click.ClickException, match="timed out"):
+        upd._run_brew_upgrade()
+
+
+def test_run_brew_upgrade_invokes_brew(monkeypatch):
+    monkeypatch.setattr(upd, "_find_brew", lambda: "/opt/homebrew/bin/brew")
+    calls: list = []
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: calls.append(a[0]) or _Rc(0))
+    upd._run_brew_upgrade()
+    assert calls == [["/opt/homebrew/bin/brew", "upgrade", "mlx-memo"]]
+
+
+def test_homebrew_self_update_marks_latch_on_success(monkeypatch):
+    monkeypatch.setattr(upd, "_run_brew_upgrade", lambda: None)
+    monkeypatch.setattr(upd, "_finish_successful_update", lambda: None)
+    monkeypatch.setattr(upd, "_prewarm_after_update", lambda: None)
+    marked: list = []
+    monkeypatch.setattr(upd, "_mark_successful_update_latch", lambda tag: marked.append(tag))
+
+    upd._homebrew_self_update("v9.9.9")
+
+    assert marked == ["v9.9.9"]
+
+
+def test_homebrew_self_update_clears_latch_on_failure(monkeypatch):
+    def boom() -> None:
+        raise click.ClickException("brew upgrade failed.")
+
+    monkeypatch.setattr(upd, "_run_brew_upgrade", boom)
+    cleared: list = []
+    monkeypatch.setattr(upd, "_clear_failed_update_latch", lambda tag: cleared.append(tag))
+
+    with pytest.raises(click.ClickException):
+        upd._homebrew_self_update("v9.9.9")
+
+    assert cleared == ["v9.9.9"]
 
 
 def test_codex_plugin_update_notification_uses_notify_protocol(tmp_path, monkeypatch):

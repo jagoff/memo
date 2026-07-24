@@ -9,6 +9,25 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-07-24
+
+### Changed
+
+- **Auto-update is now ON by default** (`MEMO_AUTO_UPDATE`, previously opt-in).
+  Every install now keeps itself current: on `memo-mcp` start memo makes a
+  throttled `git ls-remote` tag probe and installs a newer tagged release in the
+  background for the next start. The probe sends no memory content, paths,
+  identity, or IP — only the git tag check. Memory operations remain fully
+  offline. Set `MEMO_AUTO_UPDATE=0` to opt out and keep startup fully offline.
+- Privacy policy and README reworded from "offline by default" to "local-first,
+  offline by default with auto-update as the one default-on outbound call",
+  documenting the opt-out.
+- Update offer is now channel-aware. Homebrew installs are detected as their own
+  channel: the banner offers `brew upgrade mlx-memo` and `memo update` runs
+  `brew upgrade` instead of failing over the Cellar; background auto-update on
+  Homebrew offers (notifies) rather than running brew unattended. pipx / uv tool
+  / PyPI continue to self-install via `memo update`.
+
 ## [4.0.1] - 2026-07-24
 
 ### Fixed
