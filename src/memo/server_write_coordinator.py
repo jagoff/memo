@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from memo.errors import MemoError, QueueFullError, StorageError
+
+_log = logging.getLogger("memo.server")
 
 
 @dataclass
@@ -94,6 +97,7 @@ class McpWriteCoordinator:
                         job.future.set_exception(exc)
                 except Exception:
                     self._failed += 1
+                    _log.exception("coordinated MCP write failed")
                     if not job.future.done():
                         job.future.set_exception(
                             StorageError("coordinated MCP write failed safely")
