@@ -478,8 +478,8 @@ memo runs four background daemons:
 
 | Profile | Tools | Schema tokens | Use when |
 |---|---|---|---|
-| `agent` (default) | 31 | ~3.1k | Standard agent work — evidence, continuity, profile, learning |
-| `core` / `slim` | 51 | ~4.7k | Constrained clients (Codex, OpenCode), admin-lite |
+| `agent` (default) | 38 | ~3.8k | Standard agent work — lifecycle, evidence, continuity, profile, learning |
+| `core` / `slim` | 55 | ~5.0k | Constrained clients (Codex, OpenCode), admin-lite |
 | `agent` (default) | 38 | ~3.8k | Essential memory, lifecycle, evidence |
 | `core` / `slim` | 55 | ~5.0k | CRUD, history, sessions, lint |
 | `full` / `default` | 159 | ~18k | Power users, debugging |
