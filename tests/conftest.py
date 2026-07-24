@@ -112,6 +112,14 @@ os.environ["MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON"] = "0"
 os.environ["MEMO_SUPPORT_CONFIDENCE_LIFT"] = "0"
 os.environ["MEMO_SUPERSEDE_SUPPORT_GATE"] = "0"
 
+# Auto-update (memo v4.1.0+) graduated to a default-ON behavior: a real
+# memo-mcp start now does a throttled `git ls-remote` and may self-install.
+# Hard-set off so `pytest` never touches the network (and an activated dev
+# machine's `update.auto_update=on` markdown config can't leak in). Tests that
+# exercise the updater opt back in via `monkeypatch.setenv("MEMO_AUTO_UPDATE", …)`
+# or `monkeypatch.delenv(...)` to assert the real default.
+os.environ["MEMO_AUTO_UPDATE"] = "0"
+
 # Trust & belief-revision program flags (memo v3.0.0+). A machine running the
 # *activated* trust program exports these via ~/.claude/settings.json `env` (and
 # the launchd fleet), and Claude Code passes them down to a `pytest` subprocess —

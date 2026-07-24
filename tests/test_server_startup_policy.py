@@ -21,16 +21,21 @@ class _RecordingThread:
 
 
 def _clear_policy_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    # MEMO_AUTO_UPDATE defaults ON (memo v4.1.0+); force it off so these wiring
+    # tests have a deterministic all-disabled baseline. The default-ON behavior
+    # is asserted separately by test_auto_update_runs_by_default.
     for name in (
         "MEMO_UPDATE_CHECK_ENABLED",
-        "MEMO_AUTO_UPDATE",
         "MEMO_STATUSLINE_SELFHEAL",
         "MEMO_HOOK_SELFHEAL",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MEMO_AUTO_UPDATE", "0")
 
 
-def test_background_tasks_are_silent_by_default(tmp_cfg, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_background_tasks_silent_when_all_disabled(
+    tmp_cfg, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _clear_policy_flags(monkeypatch)
     _RecordingThread.names = []
     monkeypatch.setattr(threading, "Thread", _RecordingThread)
@@ -39,6 +44,26 @@ def test_background_tasks_are_silent_by_default(tmp_cfg, monkeypatch: pytest.Mon
 
     assert started == ()
     assert _RecordingThread.names == []
+
+
+def test_auto_update_runs_by_default(tmp_cfg, monkeypatch: pytest.MonkeyPatch) -> None:
+    # With no policy flag set at all, memo v4.1.0+ runs the tag check + the
+    # background updater by default (the self-heal tasks stay opt-in). The
+    # isolated MEMO_CONFIG_DIR means no markdown config leaks into the default.
+    for name in (
+        "MEMO_UPDATE_CHECK_ENABLED",
+        "MEMO_AUTO_UPDATE",
+        "MEMO_STATUSLINE_SELFHEAL",
+        "MEMO_HOOK_SELFHEAL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    _RecordingThread.names = []
+    monkeypatch.setattr(threading, "Thread", _RecordingThread)
+
+    started = server._start_background_tasks(tmp_cfg)
+
+    assert started == ("memo-update-check", "memo-auto-update")
+    assert tuple(_RecordingThread.names) == ("memo-update-check", "memo-auto-update")
 
 
 @pytest.mark.parametrize(
