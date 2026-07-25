@@ -12,7 +12,9 @@ from __future__ import annotations
 from memo import capture_core
 
 
-def _candidate(type_, body="Switched the reranker from the cross-encoder to a head-slice scorer; 12% better."):
+def _candidate(
+    type_, body="Switched the reranker from the cross-encoder to a head-slice scorer; 12% better."
+):
     def _f(*_a, **_k):
         return [
             {
