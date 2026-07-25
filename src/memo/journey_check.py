@@ -31,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 # ── Result vocabulary ────────────────────────────────────────────────────────
 PASS = "pass"  # noqa: S105 — status label, not a credential
@@ -138,8 +139,12 @@ class JourneyContext:
         self.mlx = _mlx_available()
         self.mem: Any | None = None
         self.seeded: dict[str, Any] = {}
-        self._prev_via_daemon = os.environ.get("MEMO_EMBEDDER_VIA_DAEMON")
-        os.environ["MEMO_EMBEDDER_VIA_DAEMON"] = "0"
+        # Force in-process embedding (so a warm socket at the real state_dir can't
+        # be consulted for the tmp store) via a managed set/restore. patch.dict
+        # snapshots the prior value and restores it on close() — no raw os.environ
+        # read of a behavior flag (facade.py owns the three-way daemon decision).
+        self._via_daemon_patch = mock.patch.dict(os.environ, {"MEMO_EMBEDDER_VIA_DAEMON": "0"})
+        self._via_daemon_patch.start()
 
         from memo.config import Config
 
@@ -186,10 +191,8 @@ class JourneyContext:
         if self.mem is not None:
             with contextlib.suppress(Exception):
                 self.mem.close()
-        if self._prev_via_daemon is None:
-            os.environ.pop("MEMO_EMBEDDER_VIA_DAEMON", None)
-        else:
-            os.environ["MEMO_EMBEDDER_VIA_DAEMON"] = self._prev_via_daemon
+        with contextlib.suppress(RuntimeError):
+            self._via_daemon_patch.stop()
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     def __enter__(self) -> JourneyContext:

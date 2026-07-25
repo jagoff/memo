@@ -71,11 +71,11 @@ from memo.cli_hype import hype_group
 from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
-from memo.cli_journey import journey_check
 from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_install_mcp import install_mcp
 from memo.cli_interject import ask_group, interject_group
 from memo.cli_invalidate import invalidate_cmd
+from memo.cli_journey import journey_check
 from memo.cli_links import links_group
 from memo.cli_maint_daemon import maint_daemon_group
 from memo.cli_maintain import maintain_cmd
