@@ -473,14 +473,14 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_UNMATCHED_TERM_GATE",
         "bool",
-        False,
+        True,
         "recall",
         "Honest-empty gate (cipher-style): when the top recall score is under "
         "MEMO_RECALL_UNMATCHED_GATE_MAX_SCORE AND no distinctive prompt term "
         "(>=4 chars, non-stopword) appears in any candidate, inject nothing — "
         "an honest empty beats weak noise, and the zero-hit turn feeds "
         "`memo gaps`. Strong semantic (paraphrase) matches are never gated. "
-        "Default off; eval-gated.",
+        "Default ON (opt out with =0); eval-gated (no recall regression).",
     ),
     _spec(
         "MEMO_RECALL_UNMATCHED_GATE_MAX_SCORE",
@@ -495,9 +495,10 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_INTRA_DEDUP",
         "bool",
-        False,
+        True,
         "recall",
-        "Collapse near-duplicate hits within a single injection (lexical Jaccard).",
+        "Collapse near-duplicate hits within a single injection (lexical Jaccard). "
+        "Default ON (opt out with =0); eval-gated (no recall regression).",
     ),
     _spec(
         "MEMO_RECALL_INTRA_DEDUP_THRESHOLD",

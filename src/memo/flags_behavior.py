@@ -463,13 +463,13 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_SAVE_NORMALIZE_DATES",
         "bool",
-        False,
+        True,
         "behavior",
         "Annotate relative date expressions in saved content with absolute ISO "
         "dates ('ayer' -> 'ayer (2026-07-02)') using the ES+EN patterns of "
         "_normalize_relative_dates. Anchored to the `created` override when the "
         "caller back-dates (imports); durable tiers only — reference chunks are "
-        "never rewritten. Default off.",
+        "never rewritten. Default ON (opt out with =0).",
     ),
     _spec(
         "MEMO_GROUNDING_ASK_MIN",

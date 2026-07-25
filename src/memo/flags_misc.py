@@ -1051,10 +1051,10 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_DREAM_FLAG_GRADUATION_ENABLED",
         "bool",
-        False,
+        True,
         "misc",
         "Enable the nightly dark-feature (flag) graduation pass inside `memo dream run`. "
-        "OFF by default. Every default-off *_ENABLED flag has a declared gate in "
+        "Default ON (opt out with =0). Every default-off *_ENABLED flag has a declared gate in "
         "dream_flags.GATES; recall-gated flags get an ON/OFF A/B against the mined+curated "
         "labels and graduate to ON via the tuned overlay after "
         "MEMO_FLAG_GRADUATION_WIN_NIGHTS consecutive wins (latency + curated gates). "
@@ -1337,10 +1337,10 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_DREAM_VALIDITY_EXTRACT_ENABLED",
         "bool",
-        False,
+        True,
         "misc",
-        "Enable the nightly validity-extract pass in `memo dream run`. OFF by "
-        "default. For recent durable facts/decisions whose TEXT explicitly states "
+        "Enable the nightly validity-extract pass in `memo dream run`. Default ON "
+        "(opt out with =0). For recent durable facts/decisions whose TEXT explicitly states "
         "a validity window ('contract runs through Q3 2026', 'valid until Dec', "
         "'as of March we use X'), an MLX LLM extracts a structured valid_at/"
         "invalid_at and writes it via store.update_validity + a frontmatter "
@@ -1430,12 +1430,12 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_DREAM_GRADUATION_ENABLED",
         "bool",
-        False,
+        True,
         "misc",
         "Enable the nightly quarantine-graduation pass in `memo dream run`: "
         "'_uncertain' auto-captures proven by grounding (used in an answer) or "
         "by corroboration (support_count) get the tag removed and re-enter "
-        "auto-recall. Reversible via memo version rollback. Default off.",
+        "auto-recall. Reversible via memo version rollback. Default ON (opt out with =0).",
     ),
     _spec(
         "MEMO_DREAM_GRADUATION_MIN_SUPPORT",
@@ -1449,11 +1449,11 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_CROSSREF_INDEX",
         "bool",
-        False,
+        True,
         "links",
         "Index [[wikilinks]] and typed '- relation [[target]]' edges into the "
         "crossref backlinks table at save/update/delete/reindex, enabling "
-        "cascade-aware supersede/delete warnings. Default off.",
+        "cascade-aware supersede/delete warnings. Default ON (opt out with =0).",
     ),
     # chronicle dream pass (nightly human-engineering diary write)
     _spec(
@@ -1509,14 +1509,14 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_VERIFICATION_STATE_TRACKING",
         "bool",
-        False,
+        True,
         "misc",
         "Master switch for the verification-state lifecycle (UNVERIFIED/VERIFIED/"
         "STALE). When ON: (1) `memo maintain` marks VERIFIED memories STALE when "
         "their explicit `review_after` date is due, and "
         "(2) live recall multiplies each hit's score by its state decay factor "
         "(VERIFIED≈1.0, STALE 0.7, UNVERIFIED 0.8) so fresh facts outrank stale "
-        "ones. No-op for an all-UNVERIFIED corpus (uniform penalty). Default OFF.",
+        "ones. No-op for an all-UNVERIFIED corpus (uniform penalty). Default ON (opt out with =0).",
     ),
     # secret storage (encrypted credentials)
     _spec(

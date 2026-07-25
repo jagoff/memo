@@ -18,12 +18,16 @@ from memo.cli_dream_passes import _run_validity_extract
 # --- completeness gate (RED first) -------------------------------------------
 
 
-def test_validity_extract_flag_declares_a_gate():
-    """The dark flag MUST declare a graduation gate — CI-enforced by
-    test_dream_flags.test_every_dark_flag_has_a_gate."""
-    from memo.dream_flags import GATES
+def test_validity_extract_graduated_to_default_on():
+    """Graduated to default-ON in v4.3.0: no longer a dark flag, so it neither
+    appears in dark_flags() nor needs (or carries) a graduation gate in GATES."""
+    from memo.dream_flags import GATES, dark_flags
+    from memo.flags import REGISTRY
 
-    assert "MEMO_DREAM_VALIDITY_EXTRACT_ENABLED" in GATES
+    assert REGISTRY["MEMO_DREAM_VALIDITY_EXTRACT_ENABLED"].default is True
+    dark = {s.name for s in dark_flags()}
+    assert "MEMO_DREAM_VALIDITY_EXTRACT_ENABLED" not in dark
+    assert "MEMO_DREAM_VALIDITY_EXTRACT_ENABLED" not in GATES
 
 
 # --- the pass (stubbed analyzer; no MLX) -------------------------------------

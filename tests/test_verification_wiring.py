@@ -100,7 +100,7 @@ def test_search_applies_decay_when_flag_on(mock_memory: Memory, monkeypatch):
 
 
 def test_search_skips_decay_when_flag_off(mock_memory: Memory, monkeypatch):
-    monkeypatch.delenv("MEMO_VERIFICATION_STATE_TRACKING", raising=False)
+    monkeypatch.setenv("MEMO_VERIFICATION_STATE_TRACKING", "0")
     mock_memory.save(
         content="verification decay wiring probe token beta", title="probe2", type_="fact"
     )
