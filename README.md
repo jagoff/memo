@@ -140,6 +140,25 @@ sync, plus requested model or benchmark downloads, may use the network. See the
 
 </div>
 
+## Why it pays for itself — in tokens
+
+memo is built to **spend fewer tokens, not more**.
+
+- **~80% smaller MCP surface.** The default `agent` profile exposes **38 tools / ~3.8k schema tokens**, versus **159 tools / ~18k tokens** for the full surface — that overhead is paid *every session, in every client*. memo keeps the default focused while including evidence, continuity, lifecycle, and outcome learning.
+- **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
+
+On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
+
+`memo tokens` tracks the savings in real-time:
+
+<img src="docs/tokens-screenshot.png" alt="memo tokens — showing 673k tokens saved all-time across 1924 memories used" width="760" />
+
+| Technique | How to enable | Typical saving |
+|---|---|---|
+| Compact recall format | `export MEMO_RECALL_FORMAT=compact` | ~65% per injection |
+| Trivial prompt gate | On by default | ~25% fewer injections |
+| Context file compression | `memo compress-context CLAUDE.md` | 30–40% smaller context |
+
 ## What makes memo different
 
 | Capability | memo | mem0 | letta | cognee | engram | basic-memory | cipher |
@@ -160,25 +179,6 @@ sync, plus requested model or benchmark downloads, may use the network. See the
 | Session timeline (context before/after) | ✅ | ❌ | ❌ | ❌ | ✅ | ⚠️ | ⚠️ |
 
 <sub>✅ first-class · ⚠️ partial, config-gated, or add-on · ❌ absent. Verified mid-2026 against each project's docs/repo: [mem0](https://github.com/mem0ai/mem0), [letta](https://github.com/letta-ai/letta) (formerly MemGPT), [cognee](https://github.com/topoteretes/cognee), [engram](https://github.com/Gentleman-Programming/engram), [basic-memory](https://github.com/basicmachines-co/basic-memory), [cipher](https://github.com/campfirein/cipher). Closest comparators: **basic-memory** (local-first + Obsidian + MCP — memo's exact thesis) and **cipher** (memory layer for coding agents).</sub>
-
-## Why it pays for itself — in tokens
-
-memo is built to **spend fewer tokens, not more**.
-
-- **~80% smaller MCP surface.** The default `agent` profile exposes **38 tools / ~3.8k schema tokens**, versus **159 tools / ~18k tokens** for the full surface — that overhead is paid *every session, in every client*. memo keeps the default focused while including evidence, continuity, lifecycle, and outcome learning.
-- **Recall injects the answer instead of re-deriving it.** Ambient recall surfaces the top memory *before* the agent answers, on a tight **~160-token budget**. The agent stops re-explaining what it already figured out last week.
-
-On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoided** per session. The number is corpus-specific; it grows as memo learns more.
-
-`memo tokens` tracks the savings in real-time:
-
-<img src="docs/tokens-screenshot.png" alt="memo tokens — showing 673k tokens saved all-time across 1924 memories used" width="760" />
-
-| Technique | How to enable | Typical saving |
-|---|---|---|
-| Compact recall format | `export MEMO_RECALL_FORMAT=compact` | ~65% per injection |
-| Trivial prompt gate | On by default | ~25% fewer injections |
-| Context file compression | `memo compress-context CLAUDE.md` | 30–40% smaller context |
 
 ## Use cases
 
