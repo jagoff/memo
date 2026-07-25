@@ -152,6 +152,28 @@ for _trust_flag in (
 # `vec_quant=` is unaffected (its own default is independent of this env var).
 os.environ.setdefault("MEMO_VEC_QUANTIZE", "off")
 
+# memo v4.3.0 graduated eight recommended flags from default-OFF to default-ON:
+# the recall honest-empty gate + intra-injection dedup, verification-state decay,
+# the crossref backlink index, save-time date normalization, and three nightly
+# dream passes (validity extraction, quarantine graduation, flag graduation).
+# Existing tests assert each flag's PRIOR default (an unset recall gate, no
+# crossref rows, un-normalized bodies, a skipped dream pass), so hard-set them off
+# — overriding both the new built-in default and an activated dev machine's
+# markdown config — to keep `pytest` hermetic. Tests that exercise a flag opt back
+# in via `monkeypatch.setenv(<flag>, "1")`; off-path tests must set "0" explicitly
+# (a bare `delenv` now exposes the ON default rather than the OFF one).
+for _default_on_flag in (
+    "MEMO_RECALL_UNMATCHED_TERM_GATE",
+    "MEMO_RECALL_INTRA_DEDUP",
+    "MEMO_VERIFICATION_STATE_TRACKING",
+    "MEMO_CROSSREF_INDEX",
+    "MEMO_SAVE_NORMALIZE_DATES",
+    "MEMO_DREAM_VALIDITY_EXTRACT_ENABLED",
+    "MEMO_DREAM_GRADUATION_ENABLED",
+    "MEMO_DREAM_FLAG_GRADUATION_ENABLED",
+):
+    os.environ[_default_on_flag] = "0"
+
 
 @pytest.fixture
 def mem_with_stub(tmp_cfg: Config, monkeypatch):

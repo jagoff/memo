@@ -56,7 +56,7 @@ def test_dedup_collapse_runs_pre_topk_when_flag_on(mem: Memory, monkeypatch):
     _base_env(monkeypatch)
     monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "1")
     monkeypatch.setenv("MEMO_RECALL_INTRA_DEDUP_THRESHOLD", "0.5")
-    monkeypatch.delenv("MEMO_RECALL_INTRA_DEDUP", raising=False)
+    monkeypatch.setenv("MEMO_RECALL_INTRA_DEDUP", "0")
     monkeypatch.setenv("MEMO_RECALL_TOP_K", "5")
 
     mem.save(
@@ -93,7 +93,7 @@ def test_dedup_collapse_skipped_when_flag_off(mem: Memory, monkeypatch):
     so the off-path must be requested explicitly.)"""
     _base_env(monkeypatch)
     monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
-    monkeypatch.delenv("MEMO_RECALL_INTRA_DEDUP", raising=False)
+    monkeypatch.setenv("MEMO_RECALL_INTRA_DEDUP", "0")
 
     mem.save(
         content="el cutover memflow a mac-work fue ok",

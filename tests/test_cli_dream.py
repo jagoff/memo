@@ -55,7 +55,7 @@ def test_dream_run_invokes_validity_pass_when_flag_on(mock_memory, monkeypatch):
 
 
 def test_dream_run_skips_validity_pass_when_flag_off(mock_memory, monkeypatch):
-    monkeypatch.delenv("MEMO_DREAM_VALIDITY_EXTRACT_ENABLED", raising=False)
+    monkeypatch.setenv("MEMO_DREAM_VALIDITY_EXTRACT_ENABLED", "0")
 
     called: list[bool] = []
     monkeypatch.setattr(

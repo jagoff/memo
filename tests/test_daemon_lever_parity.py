@@ -143,7 +143,7 @@ def test_intra_dedup_skipped_when_flag_off(mem: Memory, monkeypatch):
     (default ON since v3.0.0) call the shared collapse_near_dups, so isolating the
     INTRA_DEDUP off-path requires disabling the collapse lever too."""
     _base_env(monkeypatch)
-    monkeypatch.delenv("MEMO_RECALL_INTRA_DEDUP", raising=False)
+    monkeypatch.setenv("MEMO_RECALL_INTRA_DEDUP", "0")
     monkeypatch.setenv("MEMO_RECALL_DEDUP_COLLAPSE", "0")
 
     mem.save(
@@ -166,7 +166,7 @@ def test_intra_dedup_skipped_when_flag_off(mem: Memory, monkeypatch):
     monkeypatch.setattr("memo.recall_logic.collapse_near_dups", _spy)
 
     _recall_logic("deploy cutover mac-work", None, mem, mem.cfg)
-    assert not calls, "collapse_near_dups must NOT be called when MEMO_RECALL_INTRA_DEDUP is unset"
+    assert not calls, "collapse_near_dups must NOT be called when MEMO_RECALL_INTRA_DEDUP=0"
 
 
 # ---------------------------------------------------------------------------

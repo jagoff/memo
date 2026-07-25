@@ -23,8 +23,8 @@ receipt and ``memo dream graduate-flags --status`` — flip it with a real gate
 or delete the code path. Deletion stays human.
 
 Distinct from ``dream_graduate.py`` (quarantined-MEMORY graduation): this
-module graduates FEATURE FLAGS. OFF by default
-(``MEMO_DREAM_FLAG_GRADUATION_ENABLED``).
+module graduates FEATURE FLAGS. Default ON as of v4.3.0
+(``MEMO_DREAM_FLAG_GRADUATION_ENABLED``; opt out with =0).
 """
 
 from __future__ import annotations
@@ -192,17 +192,12 @@ GATES: dict[str, GateSpec] = dict(
         _g(
             "MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED", "manual", "meta: gates episode consolidation"
         ),
-        _g(
-            "MEMO_DREAM_VALIDITY_EXTRACT_ENABLED",
-            "manual",
-            "meta: gates the LLM validity-window extraction pass (bi-temporal "
-            "valid_at/invalid_at); not a recall A/B knob",
-        ),
         _g("MEMO_DREAM_PROFILE_ENABLED", "manual", "meta: gates profile distillation"),
         _g("MEMO_DREAM_RETAG_GLOBAL_ENABLED", "manual", "meta: gates the retag pass"),
-        _g("MEMO_DREAM_GRADUATION_ENABLED", "manual", "meta: gates quarantine graduation"),
         _g("MEMO_DREAM_CHRONICLE_ENABLED", "manual", "meta: gates the chronicle diary pass"),
-        _g("MEMO_DREAM_FLAG_GRADUATION_ENABLED", "manual", "meta: gates this pass itself"),
+        # MEMO_DREAM_VALIDITY_EXTRACT_ENABLED / MEMO_DREAM_GRADUATION_ENABLED /
+        # MEMO_DREAM_FLAG_GRADUATION_ENABLED graduated to default-ON in v4.3.0 —
+        # no longer dark flags, so they carry no gate (test_no_graduated_or_stale_gates).
     )
 )
 

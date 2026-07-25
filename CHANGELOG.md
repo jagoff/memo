@@ -9,6 +9,38 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-07-24
+
+### Changed
+
+- **Eight recommended flag defaults flipped from OFF to ON** — features that
+  earned their keep are now the product default; each opts out with `=0` (env
+  var) or `memo config set <key> false`. The two recall-path flips were gated on
+  `memo eval recall` (precision@5 and noise@5 unchanged vs OFF — no regression);
+  the other six flip unconditionally.
+  - `MEMO_RECALL_UNMATCHED_TERM_GATE` — honest-empty recall gate: suppresses weak
+    unmatched-term noise so a zero-hit turn stays empty (and feeds `memo gaps`)
+    instead of injecting distractors. Paraphrase/semantic matches are never gated.
+  - `MEMO_RECALL_INTRA_DEDUP` — collapses near-duplicate hits within a single
+    recall injection (lexical Jaccard), so an injection doesn't repeat itself.
+  - `MEMO_VERIFICATION_STATE_TRACKING` — verification-state lifecycle: `memo
+    maintain` marks due VERIFIED memories STALE, and recall applies a state-decay
+    factor so fresh facts outrank stale ones (no-op on an all-UNVERIFIED corpus).
+  - `MEMO_CROSSREF_INDEX` — indexes `[[wikilinks]]` and typed relation edges into
+    the crossref backlinks table on save/update/delete/reindex, enabling
+    cascade-aware supersede/delete warnings.
+  - `MEMO_SAVE_NORMALIZE_DATES` — annotates relative date expressions in durable
+    saves with absolute ISO dates (`ayer` → `ayer (2026-07-02)`, ES+EN).
+  - `MEMO_DREAM_VALIDITY_EXTRACT_ENABLED` — nightly dream pass that extracts
+    explicit bi-temporal `valid_at`/`invalid_at` windows stated verbatim in a
+    note's text (never hallucinated).
+  - `MEMO_DREAM_GRADUATION_ENABLED` — nightly dream pass that graduates
+    `_uncertain` auto-captures proven by grounding or corroboration back into
+    auto-recall (reversible via `memo version` rollback).
+  - `MEMO_DREAM_FLAG_GRADUATION_ENABLED` — nightly dark-feature graduation pass:
+    A/B-measures remaining default-off `*_ENABLED` flags and graduates winners via
+    the tuned overlay (reversible on regression).
+
 ## [4.2.0] - 2026-07-24
 
 ### Added
