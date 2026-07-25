@@ -8,6 +8,7 @@ agent work.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -158,6 +159,16 @@ def _detected_anomaly_conflict(
             "kind": "semantic_contradiction",
             "severity": payload.get("severity"),
             "confidence": payload.get("confidence"),
+            # Structured subject-memory ids so matching and delete-time GC never
+            # have to parse them back out of the prose summary/topic.
+            "memory_ids": [
+                mid
+                for mid in (
+                    str(payload.get("memory_id_a") or ""),
+                    str(payload.get("memory_id_b") or ""),
+                )
+                if mid
+            ],
         },
     }
 
@@ -186,6 +197,48 @@ _PROJECTION_HANDLERS: dict[str, ProjectionHandler] = {
     "outcome.record": _apply_outcome_record,
     "anomaly.record": _apply_anomaly_record,
 }
+
+
+_MEMORIA_URI_RE = re.compile(r"memo://(?:memoria|memory)/([0-9a-fA-F]{8,})")
+
+
+def _conflict_member_ids(row: dict[str, Any]) -> list[str]:
+    """Subject-memory ids of a conflict, or ``[]`` for topic-scoped conflicts.
+
+    Semantic-contradiction anomalies carry the two conflicting memory ids in
+    ``metadata.memory_ids`` (older records only in their ``memo://memoria/``
+    evidence uris). Manually-opened topic conflicts carry none.
+    """
+    meta = row.get("metadata") or {}
+    ids = [str(m).strip() for m in (meta.get("memory_ids") or ()) if str(m).strip()]
+    if ids:
+        return ids
+    out: list[str] = []
+    for uri in row.get("evidence_uris") or ():
+        match = _MEMORIA_URI_RE.search(str(uri))
+        if match:
+            out.append(match.group(1))
+    return out
+
+
+def _conflict_matches_query(row: dict[str, Any], query_cf: str) -> bool:
+    """Whether a write whose topic is ``query_cf`` is subject to ``row``.
+
+    Id-scoped (semantic-contradiction) conflicts match ONLY when the query
+    references one of their subject memory ids — never their prose ``summary``,
+    so common words like "memo"/"contradiction"/"between" no longer freeze
+    unrelated writes. Topic-scoped (manually-opened) conflicts keep matching
+    on their ``topic`` (not the prose summary).
+    """
+    member_ids = _conflict_member_ids(row)
+    if member_ids:
+        return any(mid.casefold() in query_cf for mid in member_ids)
+    topic_cf = str(row.get("topic", "")).casefold()
+    if not topic_cf:
+        return False
+    if query_cf in topic_cf or topic_cf in query_cf:
+        return True
+    return any(token in topic_cf for token in query_cf.split() if len(token) >= 3)
 
 
 class OperationalStore:
@@ -449,6 +502,45 @@ class OperationalStore:
             )
             return True
 
+    def gc_conflicts_for_memory(
+        self,
+        memory_id: str,
+        *,
+        reason: str = "subject memory deleted",
+    ) -> int:
+        """Auto-resolve active conflicts whose subject memories include
+        ``memory_id``.
+
+        Called on delete so a detected contradiction never orphans into a
+        permanent ``freeze_write`` block once one of the two memories it was
+        about is gone. Unlike :meth:`resolve_conflict` this is a system-level
+        cleanup and does not require human authority. Returns the count
+        resolved.
+        """
+        mid = str(memory_id).strip().casefold()
+        if not mid:
+            return 0
+        with authority_write_lock(self.state_dir / "operational-transactions"):
+            conflicts = self._read_snapshot()["conflicts"]
+            targets = [
+                cid
+                for cid, row in conflicts.items()
+                if row.get("lifecycle_state") not in {"resolved", "archived"}
+                and any(m.casefold() == mid for m in _conflict_member_ids(row))
+            ]
+            for cid in targets:
+                self._commit(
+                    "conflict.resolve",
+                    {
+                        "id": cid,
+                        "resolved_at": utc_now_iso(),
+                        "resolution": reason,
+                    },
+                    subject_uri=f"memo://conflict/{cid}",
+                    actor=ActorIdentity(actor_id="memo-gc", actor_kind="system"),
+                )
+            return len(targets)
+
     def record_outcome(
         self,
         *,
@@ -540,16 +632,7 @@ class OperationalStore:
             if row.get("lifecycle_state") not in {"resolved", "archived"}
         ]
         if query_cf:
-            rows = [
-                row
-                for row in rows
-                if query_cf in f"{row.get('topic', '')} {row.get('summary', '')}".casefold()
-                or any(
-                    token in f"{row.get('topic', '')} {row.get('summary', '')}".casefold()
-                    for token in query_cf.split()
-                    if len(token) >= 3
-                )
-            ]
+            rows = [row for row in rows if _conflict_matches_query(row, query_cf)]
         rows.sort(
             key=lambda row: (bool(row.get("freeze_write")), str(row.get("created_at") or "")),
             reverse=True,
