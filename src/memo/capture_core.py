@@ -92,7 +92,7 @@ EXTRACT:
 - Discoveries / non-obvious facts ("X turns out to require Y")
 - Commands / config that worked ("to do X, run Y") — type "procedure"
 - Recurring mistakes with the wrong and the right way ("doing X breaks Y; do Z instead") — type "failure_pattern"
-- State changes as ONE insight: when the turn shows a switch ("switched from X to Y", "moved off X", "now using Y instead of X"), record it as one memory that names both the old and new state — never two separate facts.
+- State changes as ONE insight: when the turn shows a switch ("switched from X to Y", "moved off X", "now using Y instead of X"), record it as one memory that names both the old and new state — never two separate facts. Type it "decision" or "fact" (never "state").
 
 DO NOT extract:
 - Mid-process status updates ("checking…", "looking at…", "let me…")
@@ -975,6 +975,7 @@ def _extract_and_save(
     default None keeps all callers unchanged. Returns counts; every
     per-candidate failure is absorbed (logged only in debug).
     """
+    from memo.memory.record import _VALID_TYPES
     from memo.prompt_overrides import prompt_version
 
     _extract_prompt_version = prompt_version(
@@ -1065,6 +1066,22 @@ def _extract_and_save(
     uncertain = 0
     retyped = 0
     for cand in insights:
+        # Coerce an out-of-vocabulary / mis-cased type from the helper LLM to a
+        # valid one BEFORE save. A hallucinated type (e.g. "state", which the
+        # extract prompt's state-change guidance invites) would otherwise raise
+        # inside mem.save() and silently drop a mined insight (save_failures++).
+        # Logged so systematic mistyping stays visible.
+        _cand_type = str(cand.get("type") or "note").strip().lower()
+        if _cand_type not in _VALID_TYPES:
+            if debug:
+                print(
+                    f"# memo capture: coerce type {cand.get('type')!r}→'note' "
+                    f"for '{cand.get('title')}'",
+                    file=sys.stderr,
+                )
+            _cand_type = "note"
+        if _cand_type != cand.get("type"):
+            cand = {**cand, "type": _cand_type}
         # Quality gate: skip low-specificity memories before hitting the
         # embedder or disk. Threshold controlled by MEMO_CAPTURE_MIN_WORDS.
         body_for_quality = f"{cand['title']}\n\n{cand['body']}"
