@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-07-24
+
+### Fixed
+
+- config_md: `memo config set` no longer clobbers other flag groups that share a
+  config file (misc/behavior in advanced-config.md). The write path now parses
+  every `[group]` section in the target file, updates only the affected key, and
+  rewrites all sibling sections intact instead of overwriting the file with a
+  single group.
+
 ## [4.3.0] - 2026-07-24
 
 ### Changed

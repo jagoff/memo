@@ -318,6 +318,31 @@ def test_set_and_unset_value_rewrite_domain_block(tmp_path: Path) -> None:
     assert "MEMO_RECALL_TOP_K" not in config_md.flag_values({"MEMO_CONFIG_DIR": str(home)})
 
 
+def test_set_value_preserves_sibling_groups_sharing_a_file(tmp_path: Path) -> None:
+    home = tmp_path / "memo-home"
+    cfg = home / "config"
+    cfg.mkdir(parents=True)
+    env = {"MEMO_CONFIG_DIR": str(home)}
+    # A pre-existing key in the misc group already lives in advanced-config.md.
+    (cfg / "advanced-config.md").write_text(
+        '# Advanced config\n\n```toml\n[misc]\nocr_enabled = "on"\n```\n',
+        encoding="utf-8",
+    )
+
+    # misc and behavior are distinct groups that both map to advanced-config.md.
+    # Writing one must not clobber the other, nor the pre-existing key.
+    config_md.set_value("misc.prompt_cache", "on", env)
+    config_md.set_value("behavior.save_normalize_dates", "on", env)
+
+    values = config_md.flag_values(env)
+    assert values["MEMO_OCR_ENABLED"] == "on"  # pre-existing key survived
+    assert values["MEMO_PROMPT_CACHE"] == "on"  # first group written
+    assert values["MEMO_SAVE_NORMALIZE_DATES"] == "on"  # second group written
+
+    text = (cfg / "advanced-config.md").read_text(encoding="utf-8")
+    assert "[misc]" in text and "[behavior]" in text
+
+
 def test_runtime_only_key_is_rejected_in_markdown(tmp_path: Path) -> None:
     home = tmp_path / "memo-home"
     cfg = home / "config"
