@@ -71,6 +71,7 @@ from memo.cli_hype import hype_group
 from memo.cli_idle_daemon import idle_daemon_group
 from memo.cli_import import import_group
 from memo.cli_ingest import ingest
+from memo.cli_journey import journey_check
 from memo.cli_ingest_daemon import ingest_daemon_group
 from memo.cli_install_mcp import install_mcp
 from memo.cli_interject import ask_group, interject_group
@@ -377,6 +378,7 @@ cli.add_command(interject_group)
 cli.add_command(ask_group)
 cli.add_command(related)
 cli.add_command(eval_group)
+cli.add_command(journey_check)
 cli.add_command(debug_recall_cmd)
 cli.add_command(dream_cmd)
 cli.add_command(chronicle_cmd)

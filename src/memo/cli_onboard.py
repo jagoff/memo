@@ -18,6 +18,7 @@ from memo.cli_common import console
 from memo.config import Config
 from memo.flags import flag_bool, flag_int
 from memo.project import GLOBAL_BUCKET
+from memo.runtime.daemon import _warm_embedder
 from memo.runtime.shims import install_shims_cmd
 
 _FM_TITLE_RE = re.compile(r"^title:\s*(.+)$", re.MULTILINE)
@@ -116,6 +117,17 @@ def onboard(ctx: click.Context, yes: bool, days: int | None, dry_run: bool, as_j
         summary["hook"] = _step_hook()
         console.print(f"[green]✓[/green] hook: {summary['hook'].get('action')}")
         ctx.invoke(install_shims_cmd)
+
+    # Warm the embedder + stamp .prewarm_ts so the FIRST recall runs vec, not the
+    # cold-start bm25 fallback. On a fresh install a bm25 hit scores under the
+    # vec-calibrated min_sim floor, so without this the first save is invisible to
+    # the first recall. Lifecycle-only (no threshold change); best-effort.
+    if not dry_run:
+        # Embedder only — the reranker isn't needed for first recall and its model
+        # may be uncached on a fresh install (which would stall the wizard).
+        _warm_embedder(cfg, warm_reranker=False)
+        summary["prewarm"] = {"action": "warmed"}
+        console.print("[green]✓[/green] prewarm: embedder warmed (first recall runs vec)")
 
     # 2/4 — transcript backfill (Day-0 corpus from history already on disk)
     window = (
