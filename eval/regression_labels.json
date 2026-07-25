@@ -251,6 +251,24 @@
       "_note": "Guard reversal-signal probe (Task 6): prompt reads like reversing the decision 'Exact BM25 leg and confident-RRF skip added to hybrid search. rerank_input_k def' (132f48e4b24e477f8724a4c606a904af), which lowered rerank_input_k default 30→5. Tests 'revert'/'instead' reversal signals against a decision with a numeric parameter change."
     },
     {
+      "text": "let's cut a release now — bump the version across all files and tag it",
+      "relevant": false,
+      "expect_ids": [],
+      "expect_avoid_ids": [
+        "de5df482"
+      ],
+      "_note": "Negative-recall ⛔ AVOID coverage probe (release = high-risk context). A release/version-bump prompt MUST surface the failure_pattern 'version drift detected in release check' (de5df48277c3450997f1ae4eb87ad706 — Wrong: bumped 3.2.0→3.3.0 but some files still show 3.2.0; Right: update all files before tagging) in the ⛔ channel (type=failure_pattern vec pass, MEMO_NEGATIVE_RECALL_MIN_SIM floor, capped at MEMO_NEGATIVE_RECALL_K). relevant=false + empty expect_ids so it NEVER perturbs precision@K / noise@K — it scores avoid@k (coverage) only. Ranks #1 in a live vec search over failure_pattern. Gate: seed with `--update-baseline` (persist full_gate_metrics), then a change that stops surfacing this ⛔ drops avoid@k and check_gate fails."
+    },
+    {
+      "text": "force reinstall memo with uv tool install to fix the stale version",
+      "relevant": false,
+      "expect_ids": [],
+      "expect_avoid_ids": [
+        "8f5fa2e2"
+      ],
+      "_note": "Negative-recall ⛔ AVOID coverage probe (reinstall/runtime = high-risk context). A force-reinstall prompt MUST surface the failure_pattern 'mcp version stale after tool update' (8f5fa2e2a50a...) in the ⛔ channel. relevant=false + empty expect_ids so precision@K / noise@K stay unchanged; scores avoid@k (coverage) only. Ranks #1 in a live vec search over failure_pattern."
+    },
+    {
       "text": "what was the production database before we migrated",
       "relevant": false,
       "expect_ids": [],

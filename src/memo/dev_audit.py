@@ -52,6 +52,11 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
 # First sprint only classifies high-risk target files. These stable lexical
 # identifiers are a baseline inventory, not blanket approval for future sites.
 BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
+    # Negative Recall ⛔ pass: the anti-memory retrieval + block render are
+    # fail-open — any store/embed/format error degrades to no ⛔ block and must
+    # never break the recall payload or blow the 5s hook budget.
+    ("recall_logic.py", "_negative_recall_hits", 1),
+    ("recall_logic.py", "_negative_recall_block", 1),
     ("cli_recall_hook.py", "recall_hook", 1),
     ("cli_recall_hook.py", "recall_hook._bail", 1),
     ("cli_recall_hook.py", "recall_hook", 2),

@@ -12,6 +12,11 @@ from memo.errors import MemoError
 _log = logging.getLogger(__name__)
 _MAX_ITEMS = 3
 _SNIPPET_CHARS = 160
+# El Briefing surfaces at most this many failure_pattern anti-memories in the
+# ⛔ section. Deliberately a fixed briefing cap, distinct from the hot-path
+# recall-hook ``MEMO_NEGATIVE_RECALL_K`` (default 2) — the briefing is a
+# once-per-session orientation, not a per-prompt pass.
+_NEGATIVE_RECALL_MAX_ITEMS = 3
 
 
 def compact_text(text: str, *, max_chars: int = 480) -> str:
@@ -147,6 +152,68 @@ def temporal_fact_lines(mem: Any, *, limit: int = 5) -> list[str]:
         return []
     lines.append("")
     return lines
+
+
+def _project_first(records: list[Any], *, cwd: str | None) -> list[Any]:
+    """Stable partition putting current-project records first.
+
+    Preserves the incoming recency order within each partition, so the result
+    reads as "this project's pitfalls, then the rest". Best-effort: an
+    unresolvable project (no git toplevel, no ``MEMO_PROJECT_TAG`` pin) or a
+    project with no matching records leaves the order untouched.
+    """
+    from memo.project import current_project_tag
+
+    # current_project_tag is self-safe (catches its own git OSError → None).
+    tag = current_project_tag(cwd)
+    if not tag:
+        return list(records)
+    in_proj = [r for r in records if tag in (getattr(r, "tags", None) or [])]
+    if not in_proj:
+        return list(records)
+    others = [r for r in records if tag not in (getattr(r, "tags", None) or [])]
+    return in_proj + others
+
+
+def negative_recall_lines(
+    mem: Any, *, limit: int = _NEGATIVE_RECALL_MAX_ITEMS, cwd: str | None = None
+) -> list[str]:
+    """``### ⛔ Known pitfalls`` — surface stored ``failure_pattern`` anti-memories.
+
+    A plain, MLX-free DB read: the most recent ``failure_pattern`` memories
+    (``mem.list`` orders by ``updated`` DESC and excludes soft-forgotten rows),
+    biased to the current project when it can be resolved, rendered through the
+    shared :func:`memo.negative_recall.format_avoid_block` so El Briefing and the
+    recall hook emit an identical ⛔ block. Off-cognition — surfaces the stored
+    Pattern/Wrong/Right fact, never a suggestion.
+
+    Size-capped by ``limit`` (item count) and by ``format_avoid_block``'s
+    per-field truncation. Gated by ``MEMO_NEGATIVE_RECALL_ENABLED`` (default
+    off). Returns an empty list when disabled, when the corpus holds no
+    failure_patterns, or when the read fails — a pitfalls section is
+    orientation, never a briefing blocker.
+    """
+    from memo.flags import flag_bool
+    from memo.negative_recall import FAILURE_PATTERN_TYPE, format_avoid_block
+
+    if not flag_bool("MEMO_NEGATIVE_RECALL_ENABLED"):
+        return []
+    cap = max(0, limit)
+    if cap == 0:
+        return []
+    try:
+        # Over-fetch a small pool so project-preference has candidates to
+        # reorder before the cap; the read stays a single indexed query.
+        pool = mem.list(type_=FAILURE_PATTERN_TYPE, limit=max(cap * 4, cap))
+    except Exception as exc:
+        _log.debug("briefing: negative-recall list failed: %s", exc)
+        return []
+    if not pool:
+        return []
+    # `hits` is non-empty here (pool non-empty, cap ≥ 1), so `format_avoid_block`
+    # always renders a non-empty block — no empty-block guard needed.
+    hits = _project_first(pool, cwd=cwd)[:cap]
+    return ["### ⛔ Known pitfalls", "", format_avoid_block(hits), ""]
 
 
 def install_seed_lines(state_dir: Path, *, max_age_days: int = 7) -> list[str]:
@@ -403,6 +470,12 @@ def memo_native_briefing_lines(
         with contextlib.suppress(Exception):
             lines.extend(proactive_lines(mem))
 
+    # ── Negative recall: stored failure_pattern anti-memories (⛔, dark by default) ─
+    # Off-cognition — surfaces the stored Wrong/Right fact, never a suggestion.
+    if flag_bool("MEMO_NEGATIVE_RECALL_ENABLED"):
+        with contextlib.suppress(Exception):
+            lines.extend(negative_recall_lines(mem))
+
     # Judged relation truth only; pending candidates belong to review surfaces.
     with contextlib.suppress(Exception):
         judged = [
@@ -509,6 +582,7 @@ __all__ = [
     "dream_digest_lines",
     "install_seed_lines",
     "memo_native_briefing_lines",
+    "negative_recall_lines",
     "operational_briefing_lines",
     "proactive_lines",
     "profile_lines",

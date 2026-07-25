@@ -33,6 +33,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from memo.negative_recall import FAILURE_PATTERN_TYPE
 from memo.quality import classify_quality, is_canonical_memory
 
 
@@ -82,6 +83,12 @@ class Prompt:
     # fact resurfaces as it stood at that time). None = default now-gate.
     # Schema-additive on memo.eval_recall.labels.v1.
     as_of: str | None = None
+    # Ids of failure_pattern anti-memories the ⛔ AVOID channel MUST surface for
+    # this (typically high-risk) prompt — the POSITIVE avoidance signal. A hit in
+    # the dedicated type=failure_pattern ⛔ pass counts toward avoid@k (coverage).
+    # Complements `avoid_ids` (ids that must stay OUT of normal recall — leakage).
+    # Schema-additive on memo.eval_recall.labels.v1.
+    expect_avoid_ids: list[str] = field(default_factory=list)
 
 
 # Alias so tests/code can import `Label` as the per-prompt record type.
@@ -104,6 +111,7 @@ def _label_from_dict(d: dict) -> Label:
         project=str(d["project"]) if d.get("project") else None,
         avoid_ids=[str(x) for x in (d.get("avoid_ids") or [])],
         as_of=str(d["as_of"]) if d.get("as_of") else None,
+        expect_avoid_ids=[str(x) for x in (d.get("expect_avoid_ids") or [])],
     )
 
 
@@ -130,6 +138,7 @@ class LabelSet:
                         p.project,
                         sorted(p.avoid_ids),
                         p.as_of,
+                        sorted(p.expect_avoid_ids),
                     )
                     for p in self.prompts
                 ],
@@ -459,6 +468,11 @@ class Row:
     precision_at_k: float = 0.0
     noise_at_k: float = 0.0
     assoc_precision_at_k: float = 0.0  # fraction of expect_associative_ids the associative engine surfaces from the top-K seeds
+    # Negative-recall ⛔ avoidance metrics (first-class, alongside precision/noise):
+    avoid_at_k: float = 0.0  # coverage: fraction of expect_avoid_ids the failure_pattern ⛔ pass surfaced (higher better)
+    avoid_leak_at_k: float = (
+        0.0  # leakage: fraction of avoid_ids that surfaced in normal top-K (lower better)
+    )
     # Ranked metrics averaged over prompts that carry expect_ids (0.0 when none do).
     recall_at_k: float = 0.0
     ndcg_at_k: float = 0.0
@@ -601,6 +615,52 @@ def _project_tag_for(project: str | None) -> str | None:
 ProgressCallback = Callable[[Cfg, int, int], None]
 
 
+def _avoid_metrics(
+    mem: Any, prompt: Prompt, top: list[Any], query: str
+) -> tuple[int, int, int, int]:
+    """Per-prompt negative-recall avoidance counts.
+
+    Returns ``(cover_hits, cover_total, leak_hits, leak_total)``:
+
+    * **Leakage** — how many of this prompt's known-bad ``avoid_ids`` leaked into
+      the NORMAL top-K (lower is better). A first-class cleanliness signal,
+      distinct from noise@k (which also folds avoid_ids into its rate).
+    * **Coverage** — how many of the failure_pattern anti-memories the ⛔ AVOID
+      channel MUST surface (``expect_avoid_ids``) it actually did, via a
+      dedicated high-precision type=failure_pattern vec pass — faithful to the
+      live ⛔ channel (a separate kNN over anti-memories, gated by the ⛔ min_sim
+      floor and capped at neg_k), decoupled from whatever the normal-recall
+      exclude set does with failure_pattern.
+
+    The ⛔ params are read UNCONDITIONALLY: the eval measures the ⛔ channel's
+    retrieval quality regardless of the runtime ``MEMO_NEGATIVE_RECALL_ENABLED``
+    gate (which only governs live injection). K/floor fall back to their FlagSpec
+    defaults (2 / 0.6). The ⛔ pass only runs for prompts that carry
+    ``expect_avoid_ids``, so ⛔-label-free runs stay byte-identical.
+    """
+    from memo.flags import flag_float, flag_int
+
+    leak_total = len(prompt.avoid_ids)
+    leak_hits = sum(
+        1 for aid in prompt.avoid_ids if any(_id_matches(getattr(h, "id", ""), [aid]) for h in top)
+    )
+    cover_hits = 0
+    cover_total = len(prompt.expect_avoid_ids)
+    if cover_total:
+        neg_k = max(1, flag_int("MEMO_NEGATIVE_RECALL_K") or 2)
+        neg_floor = flag_float("MEMO_NEGATIVE_RECALL_MIN_SIM") or 0.6
+        neg_hits = _search_for_eval(
+            mem, query, trace=[], limit=neg_k * 4, mode="vec", type_=FAILURE_PATTERN_TYPE
+        )
+        neg_top = [h for h in neg_hits if (getattr(h, "score", 0.0) or 0.0) >= neg_floor][:neg_k]
+        cover_hits = sum(
+            1
+            for eid in prompt.expect_avoid_ids
+            if any(_id_matches(getattr(h, "id", ""), [eid]) for h in neg_top)
+        )
+    return cover_hits, cover_total, leak_hits, leak_total
+
+
 def _run_config_inner(
     mem: Any,
     cfg: Cfg,
@@ -615,6 +675,10 @@ def _run_config_inner(
     noise_hits = 0
     assoc_hits = 0
     assoc_total = 0
+    avoid_cover_hits = 0
+    avoid_cover_total = 0
+    avoid_leak_hits = 0
+    avoid_leak_total = 0
     rk_sum = 0.0
     ndcg_sum = 0.0
     mrr_sum = 0.0
@@ -669,7 +733,13 @@ def _run_config_inner(
     from memo.flags import flag_bool, flag_float, flag_int
     from memo.tiers import REFERENCE_TYPES
 
-    exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
+    _excl: set[str] = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else set()
+    # Mirror production: when Negative Recall is on, failure_pattern anti-memories
+    # are excluded from the normal section (the hook does this via
+    # _recall_excluded_types); the ⛔ coverage pass below measures them separately.
+    if flag_bool("MEMO_NEGATIVE_RECALL_ENABLED"):
+        _excl.add(FAILURE_PATTERN_TYPE)
+    exclude_types = _excl or None
     exclude_tags = uncertain_exclusion()
     for index, prompt in enumerate(labels.prompts, start=1):
         if progress is not None:
@@ -766,6 +836,12 @@ def _run_config_inner(
         if scored:
             prec_total += k
             prec_hits += sum(1 for h in top if _is_relevant(h, prompt, labels))
+        # Negative-recall avoid@k (leakage + ⛔ coverage) — see _avoid_metrics.
+        _cover_h, _cover_t, _leak_h, _leak_t = _avoid_metrics(mem, prompt, top, query)
+        avoid_cover_hits += _cover_h
+        avoid_cover_total += _cover_t
+        avoid_leak_hits += _leak_h
+        avoid_leak_total += _leak_t
         if prompt.expect_associative_ids:
             assoc_total += len(prompt.expect_associative_ids)
             seed_ids = [getattr(h, "id", "") for h in top if getattr(h, "id", "")]
@@ -806,6 +882,8 @@ def _run_config_inner(
         precision_at_k=round(prec_hits / prec_total, 3) if prec_total else 0.0,
         noise_at_k=round(noise_hits / (n_prompts * k), 3) if (n_prompts * k) else 0.0,
         assoc_precision_at_k=round(assoc_hits / assoc_total, 3) if assoc_total else 0.0,
+        avoid_at_k=round(avoid_cover_hits / avoid_cover_total, 3) if avoid_cover_total else 0.0,
+        avoid_leak_at_k=(round(avoid_leak_hits / avoid_leak_total, 3) if avoid_leak_total else 0.0),
         recall_at_k=round(rk_sum / ranked_total, 3) if ranked_total else 0.0,
         ndcg_at_k=round(ndcg_sum / ranked_total, 3) if ranked_total else 0.0,
         mrr=round(mrr_sum / ranked_total, 3) if ranked_total else 0.0,
@@ -983,6 +1061,17 @@ def rows_to_table(rows: list[Row], k: int) -> str:
                 f"{r.graph_explanation_coverage:>9} {r.hub_noise_rate:>9} "
                 f"{r.latency_ms_graph:>9}"
             )
+    if any(r.avoid_at_k or r.avoid_leak_at_k for r in rows):
+        lines.append("")
+        lines.append(f"{'config':<18} {'avoid@k':>8} {'leak@k':>8}")
+        lines.append("-" * 36)
+        for r in rows:
+            lines.append(f"{r.config:<18} {r.avoid_at_k:>8} {r.avoid_leak_at_k:>8}")
+        lines.append(
+            "⛔ avoid@k: fraction of expect_avoid_ids surfaced in the failure_pattern "
+            "pass (higher better). leak@k: fraction of avoid_ids leaking into normal "
+            "top-K (lower better)."
+        )
     return "\n".join(lines)
 
 
@@ -1079,6 +1168,31 @@ def gate_metrics(rows: list[Row]) -> dict[str, Any]:
     }
 
 
+def avoid_gate_metrics(rows: list[Row]) -> dict[str, Any]:
+    """The negative-recall avoidance pair the gate tracks — from the best config.
+
+    ``avoid_at_k`` is ⛔ coverage (fraction of expect_avoid_ids the
+    failure_pattern ⛔ pass surfaced — higher is better); ``avoid_leak_at_k`` is
+    the fraction of known-bad avoid_ids that leaked into normal recall (lower is
+    better). Kept SEPARATE from :func:`gate_metrics` so the existing
+    precision/noise baseline dict contract is untouched — the gate composes both.
+    """
+    b = best_row(rows)
+    return {"avoid_at_k": b.avoid_at_k, "avoid_leak_at_k": b.avoid_leak_at_k}
+
+
+def full_gate_metrics(rows: list[Row]) -> dict[str, Any]:
+    """``gate_metrics`` ∪ ``avoid_gate_metrics`` — the complete baseline payload.
+
+    ``memo eval recall --update-baseline`` should persist THIS (not bare
+    ``gate_metrics``) so :func:`check_gate` enforces the ⛔ coverage / leakage
+    floors alongside precision/noise. Backward compatible: a baseline written by
+    the old ``gate_metrics`` simply lacks the avoid keys and ``check_gate`` falls
+    back to non-enforcing defaults for them (coverage floor 0.0, leak ceiling 1.0).
+    """
+    return {**gate_metrics(rows), **avoid_gate_metrics(rows)}
+
+
 def check_gate(
     rows: list[Row],
     baseline: dict[str, Any],
@@ -1089,12 +1203,21 @@ def check_gate(
     """Compare the current best config against a saved baseline.
 
     The gate FAILS if precision@K dropped below, or noise@K rose above, the
-    baseline (beyond `tol`). `tol` absorbs float noise; widen it to allow a
-    small accepted drift.
+    baseline (beyond `tol`). It ALSO fails if the negative-recall ⛔ coverage
+    (avoid@k) dropped, or avoid-id leakage (avoid_leak@k) rose, vs the baseline —
+    but only when the baseline records those keys (a baseline seeded before
+    avoid@k existed carries neither, so the ⛔ checks stay vacuous until a fresh
+    --update-baseline that persists `full_gate_metrics`). `tol` absorbs float
+    noise; widen it to allow a small accepted drift.
     """
     m = gate_metrics(rows)
+    am = avoid_gate_metrics(rows)
     bp = float(baseline.get("precision_at_k", 0.0))
     bn = float(baseline.get("noise_at_k", 1.0))
+    # Non-enforcing defaults for a legacy baseline: coverage floor 0.0 (any
+    # coverage clears it), leak ceiling 1.0 (any leak rate clears it).
+    b_avoid = float(baseline.get("avoid_at_k", 0.0))
+    b_leak = float(baseline.get("avoid_leak_at_k", 1.0))
     baseline_fingerprint = str(baseline.get("labels_fingerprint") or "")
     if labels_fingerprint and baseline_fingerprint and labels_fingerprint != baseline_fingerprint:
         message = (
@@ -1105,7 +1228,9 @@ def check_gate(
         return GateResult(False, message, m["precision_at_k"], m["noise_at_k"], bp, bn)
     prec_ok = m["precision_at_k"] >= bp - tol
     noise_ok = m["noise_at_k"] <= bn + tol
-    passed = prec_ok and noise_ok
+    avoid_ok = am["avoid_at_k"] >= b_avoid - tol
+    leak_ok = am["avoid_leak_at_k"] <= b_leak + tol
+    passed = prec_ok and noise_ok and avoid_ok and leak_ok
     if passed:
         message = (
             f"PASS — prec@k {m['precision_at_k']:.3f} >= {bp:.3f}, "
@@ -1117,6 +1242,10 @@ def check_gate(
             parts.append(f"precision@k {m['precision_at_k']:.3f} < baseline {bp:.3f}")
         if not noise_ok:
             parts.append(f"noise@k {m['noise_at_k']:.3f} > baseline {bn:.3f}")
+        if not avoid_ok:
+            parts.append(f"avoid@k {am['avoid_at_k']:.3f} < baseline {b_avoid:.3f}")
+        if not leak_ok:
+            parts.append(f"avoid_leak@k {am['avoid_leak_at_k']:.3f} > baseline {b_leak:.3f}")
         message = "FAIL — " + "; ".join(parts)
     return GateResult(passed, message, m["precision_at_k"], m["noise_at_k"], bp, bn)
 

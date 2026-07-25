@@ -15,8 +15,14 @@ signal into:
     (:func:`detect_gaps`);
   - DEAD-WEIGHT detection — memories surfaced often yet never grounded, for
     reversible archival by ``memo maintain`` (:func:`dead_weight`).
+  - NEGATIVE-RECALL reinforcement — the ⛔ closed loop: a ``failure_pattern``
+    anti-memory that was surfaced yet the mistake repeated (next-turn verdict
+    negative/correction) is STRENGTHENED so it surfaces more forcefully; one
+    that was surfaced and heeded gets a mild positive
+    (:func:`reconcile_negative_recall`).
 
-Pure reads over recall.log + grounding.log, plus a single roi write on reconcile.
+Pure reads over recall.log + grounding.log + verdict.log, plus roi/confidence
+writes on reconcile.
 """
 
 from __future__ import annotations
@@ -164,6 +170,134 @@ def reconcile_roi(
         "prior_mean": u["prior_mean"],
         "floor": floor,
         "cap": cap,
+    }
+
+
+# ── negative-recall reinforcement (the ⛔ closed loop) ────────────────────────
+#
+# How strongly a surfaced ``failure_pattern`` anti-memory's next-turn OUTCOME
+# moves its roi. A REPEAT — the ⛔ warning was surfaced yet the mistake happened
+# anyway (next-turn verdict ``negative``/``correction``) — is the strong signal:
+# the anti-memory must surface MORE forcefully. A HEED — surfaced and the next
+# turn was ``positive`` — is a mild positive. The mapping keeps every touched
+# anti-memory at or above the 1.0 neutral, so a useful failure_pattern is never
+# demoted below a never-surfaced one (unlike a normal memory, a warning that was
+# heeded is a SUCCESS, not dead weight).
+_NR_REPEAT_WEIGHT = 0.5
+_NR_HEED_WEIGHT = 0.15
+_NR_ROI_NEUTRAL = 1.0
+_NR_ROI_CAP = 1.5
+# Restore confidence on a recurring anti-memory that some other signal (a
+# contradiction, an OCR-quality stamp) demoted, so it can surface again. Applied
+# gradually and only while below cap, so repeated nightly runs converge on the
+# cap with no unbounded drift.
+_NR_CONF_LIFT = 0.2
+_NR_CONF_CAP = 1.0
+
+_NR_REPEAT_VERDICTS = frozenset({"negative", "correction"})
+
+
+def reconcile_negative_recall(
+    memory: Any,
+    *,
+    repeat_weight: float = _NR_REPEAT_WEIGHT,
+    heed_weight: float = _NR_HEED_WEIGHT,
+    roi_cap: float = _NR_ROI_CAP,
+) -> dict[str, Any]:
+    """Close the ⛔ negative-recall loop from next-turn verdicts.
+
+    A ``failure_pattern`` anti-memory that was surfaced (its id appears in a
+    next-turn verdict's ``recall_ids``) is reinforced by that turn's outcome:
+
+      - REPEAT (verdict ``negative``/``correction`` — the mistake happened
+        despite the ⛔ warning) STRENGTHENS it: roi climbs toward ``roi_cap`` so
+        it surfaces more forcefully, and a demoted confidence is restored.
+      - HEED (verdict ``positive`` — the warning was acted on) is a mild
+        positive: roi lifts slightly above the 1.0 neutral.
+
+    roi is written ABSOLUTELY from the full verdict.log (like
+    :func:`reconcile_roi`), so the pass is idempotent and — run AFTER
+    ``reconcile_roi`` — is the authoritative roi for anti-memories. This corrects
+    ``reconcile_roi``'s grounding-only view, which under-credits a memory that
+    was surfaced as a *warning* rather than cited in the answer (surfaced but
+    "never grounded" would otherwise read as dead weight and demote it).
+
+    Gated by ``MEMO_NEGATIVE_RECALL_REINFORCE_ENABLED`` (default off → no-op).
+    Ids that don't resolve to a stored ``failure_pattern`` are skipped safely.
+    """
+    from memo.dashboard import read_verdict_log
+    from memo.flags import flag_bool
+    from memo.negative_recall import FAILURE_PATTERN_TYPE
+
+    if not flag_bool("MEMO_NEGATIVE_RECALL_REINFORCE_ENABLED"):
+        return {"enabled": False, "strengthened": 0, "heeded": 0, "scored": 0}
+
+    p2id = _prefix_to_id(memory)
+    fp_cache: dict[str, bool] = {}
+
+    def _is_failure_pattern(fid: str) -> bool:
+        cached = fp_cache.get(fid)
+        if cached is None:
+            row = memory.store.get(fid)
+            cached = bool(row) and row.get("type") == FAILURE_PATTERN_TYPE
+            fp_cache[fid] = cached
+        return cached
+
+    # Distinct (session, turn) outcomes per failure_pattern id — deduped so a
+    # verdict row re-read on the next nightly run never inflates the count.
+    repeats: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    heeds: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    for v in read_verdict_log(memory.cfg.state_dir):
+        verdict = str(v.get("verdict") or "")
+        is_repeat = verdict in _NR_REPEAT_VERDICTS
+        if not (is_repeat or verdict == "positive"):
+            continue
+        sid, turn = v.get("session_id"), v.get("turn")
+        if not (sid and isinstance(turn, int)):
+            continue
+        bucket = repeats if is_repeat else heeds
+        for raw_id in v.get("recall_ids") or []:
+            fid = p2id.get((raw_id or "")[:8])
+            if fid is None or not _is_failure_pattern(fid):
+                continue  # unknown / non-failure_pattern id → safe skip
+            bucket[fid].add((str(sid), turn))
+
+    fp_ids = set(repeats) | set(heeds)
+    if not fp_ids:
+        return {"enabled": True, "strengthened": 0, "heeded": 0, "scored": 0}
+
+    span = max(0.0, roi_cap - _NR_ROI_NEUTRAL)
+    pairs: list[tuple[str, float]] = []
+    for fid in fp_ids:
+        signal = min(
+            1.0,
+            len(repeats.get(fid, ())) * repeat_weight + len(heeds.get(fid, ())) * heed_weight,
+        )
+        pairs.append((fid, _NR_ROI_NEUTRAL + signal * span))
+    memory.store.set_roi_batch(pairs, floor=_NR_ROI_NEUTRAL, cap=roi_cap)
+
+    # Restore confidence on actively-recurring anti-memories that a prior signal
+    # demoted — a gradual, only-raises lift toward the cap (never lowers a higher
+    # existing value), so it converges and leaves untouched memories alone.
+    repeat_ids = sorted(repeats)
+    restored = 0
+    if repeat_ids:
+        health = memory.store.get_health_batch(repeat_ids)
+        conf_pairs = [
+            (fid, min(_NR_CONF_CAP, health[fid]["confidence"] + _NR_CONF_LIFT))
+            for fid in repeat_ids
+            if fid in health and health[fid]["confidence"] < _NR_CONF_CAP
+        ]
+        if conf_pairs:
+            memory.store.set_confidence_batch(conf_pairs)
+            restored = len(conf_pairs)
+
+    return {
+        "enabled": True,
+        "strengthened": len(repeat_ids),
+        "heeded": len([fid for fid in heeds if fid not in repeats]),
+        "scored": len(pairs),
+        "confidence_restored": restored,
     }
 
 

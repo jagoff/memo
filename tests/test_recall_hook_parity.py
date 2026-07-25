@@ -399,3 +399,189 @@ def test_subprocess_uncertain_exclusion_flag_off(
 
     _run_hook("how did we decide the parity ranking approach", str(tmp_path))
     assert seen["exclude_tags"] is None
+
+
+# ---------------------------------------------------------------------------
+# Negative Recall (⛔ AVOID) parity — the subprocess fallback must mirror the
+# daemon (recall_logic): failure_pattern excluded from normal recall + the ⛔
+# block emitted. Without this the flag-on subprocess path still let
+# failure_patterns into normal recall and emitted no ⛔ block.
+# ---------------------------------------------------------------------------
+
+_FP_BODY = (
+    "Pattern: reverting embeddings to Ollama\n"
+    "Context: choosing the embedder backend\n"
+    "Wrong: switched embeddings back to Ollama for speed\n"
+    "Right: keep MLX embeddings; Ollama regressed retrieval"
+)
+
+
+def test_subprocess_excludes_failure_pattern_from_normal_when_enabled(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Flag on ⇒ the normal search receives failure_pattern in its exclude_types
+    (daemon parity: recall_logic._recall_excluded_types)."""
+    seen: dict[str, object] = {}
+
+    class _RecordingStub(_StubMemory):
+        def search(  # type: ignore[override]
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            exclude_types=None,
+            exclude_tags=None,
+            **kw,
+        ):
+            if kw.get("type_") == "failure_pattern":
+                return []
+            seen["exclude_types"] = exclude_types
+            return _make_pool()
+
+    _base_env(tmp_cfg, monkeypatch)  # bm25 ⇒ ⛔ pass skipped (can_embed False)
+    monkeypatch.setenv("MEMO_NEGATIVE_RECALL_ENABLED", "1")
+    monkeypatch.setattr("memo.memory.Memory", _RecordingStub)
+
+    _run_hook("how did we decide the parity ranking approach", str(tmp_path))
+    assert "failure_pattern" in (seen["exclude_types"] or set())
+
+
+def test_subprocess_does_not_exclude_failure_pattern_when_disabled(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+
+    class _RecordingStub(_StubMemory):
+        def search(  # type: ignore[override]
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            exclude_types=None,
+            exclude_tags=None,
+            **kw,
+        ):
+            seen["exclude_types"] = exclude_types
+            return _make_pool()
+
+    _base_env(tmp_cfg, monkeypatch)
+    monkeypatch.delenv("MEMO_NEGATIVE_RECALL_ENABLED", raising=False)
+    monkeypatch.setattr("memo.memory.Memory", _RecordingStub)
+
+    _run_hook("how did we decide the parity ranking approach", str(tmp_path))
+    assert "failure_pattern" not in (seen["exclude_types"] or set())
+
+
+class _AvoidOnlyStub(_StubMemory):
+    """Empty normal pool; the ⛔ (type=failure_pattern) pass returns one hit."""
+
+    _FP = _rec("f0f0f0f0f0f0f0f0", "reverting to ollama", "failure_pattern", 0.9, _FP_BODY)
+
+    def search(  # type: ignore[override]
+        self,
+        query,
+        limit=5,
+        mode="bm25",
+        recency=False,
+        exclude_types=None,
+        exclude_tags=None,
+        **kw,
+    ):
+        return [self._FP] if kw.get("type_") == "failure_pattern" else []
+
+
+def test_subprocess_emits_avoid_block_alone_when_normal_empty(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The ⛔ block fires on its own through the subprocess path (daemon parity:
+    _recall_logic returns _avoid_only_output when normal recall is empty)."""
+    from memo.negative_recall import AVOID_BLOCK_HEADER
+    from memo.recall_logic import RECALL_HEADER
+
+    _base_env(tmp_cfg, monkeypatch)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "vec")
+    monkeypatch.setenv("MEMO_RECALL_FORCE_MODE", "1")  # keep vec ⇒ can_embed True
+    monkeypatch.setenv("MEMO_NEGATIVE_RECALL_ENABLED", "1")
+    monkeypatch.setattr("memo.memory.Memory", _AvoidOnlyStub)
+
+    out = _run_hook("which embedder backend should we use", str(tmp_path))
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert AVOID_BLOCK_HEADER in ctx
+    assert "[f0f0f0f0]" in ctx
+    assert RECALL_HEADER not in ctx  # no normal "## Memory" section rode along
+
+
+def test_subprocess_no_avoid_block_when_feature_off(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from memo.negative_recall import AVOID_BLOCK_HEADER
+
+    _base_env(tmp_cfg, monkeypatch)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "vec")
+    monkeypatch.setenv("MEMO_RECALL_FORCE_MODE", "1")
+    monkeypatch.delenv("MEMO_NEGATIVE_RECALL_ENABLED", raising=False)
+    monkeypatch.setattr("memo.memory.Memory", _AvoidOnlyStub)
+
+    out = _run_hook("which embedder backend should we use", str(tmp_path))
+    assert out == {}  # feature off ⇒ no ⛔ block, empty normal ⇒ nothing surfaced
+    assert AVOID_BLOCK_HEADER not in json.dumps(out)
+
+
+class _AvoidPlusNormalStub(_StubMemory):
+    """One normal hit AND a ⛔ (failure_pattern) hit — exercises the prepend."""
+
+    _FP = _rec("f0f0f0f0f0f0f0f0", "reverting to ollama", "failure_pattern", 0.9, _FP_BODY)
+    _NORMAL = _rec("aaaa1111aaaa1111", "warm daemon note", "note", 0.82, _SHARED_TOKENS)
+
+    def search(  # type: ignore[override]
+        self,
+        query,
+        limit=5,
+        mode="bm25",
+        recency=False,
+        exclude_types=None,
+        exclude_tags=None,
+        **kw,
+    ):
+        return [self._FP] if kw.get("type_") == "failure_pattern" else [self._NORMAL]
+
+
+def test_subprocess_prepends_avoid_block_and_survives_session_dedup(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Turn 1: the ⛔ block is prepended ABOVE the normal ## Memory section.
+    Turn 2: the normal hit is deduped out this session, but the ⛔ that fired
+    still surfaces alone (daemon parity, the post-dedup empty branch)."""
+    from memo.negative_recall import AVOID_BLOCK_HEADER
+    from memo.recall_logic import RECALL_HEADER
+
+    _base_env(tmp_cfg, monkeypatch)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "vec")
+    monkeypatch.setenv("MEMO_RECALL_FORCE_MODE", "1")
+    monkeypatch.setenv("MEMO_NEGATIVE_RECALL_ENABLED", "1")
+    monkeypatch.setattr("memo.memory.Memory", _AvoidPlusNormalStub)
+
+    runner = CliRunner()
+    payload = json.dumps(
+        {
+            "prompt": "which embedder backend should we use",
+            "cwd": str(tmp_path),
+            "session_id": "s-avoid-dedup-001",
+        }
+    )
+
+    first = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert first.exit_code == 0, first.output
+    ctx1 = json.loads(first.output.strip())["hookSpecificOutput"]["additionalContext"]
+    # ⛔ block sits at the very top, above the normal recall section.
+    assert AVOID_BLOCK_HEADER in ctx1 and RECALL_HEADER in ctx1
+    assert ctx1.index(AVOID_BLOCK_HEADER) < ctx1.index(RECALL_HEADER)
+
+    second = runner.invoke(cli, ["recall-hook"], input=payload, catch_exceptions=False)
+    assert second.exit_code == 0, second.output
+    ctx2 = json.loads(second.output.strip())["hookSpecificOutput"]["additionalContext"]
+    # Normal hit already recalled → deduped out, but the ⛔ still fires alone.
+    assert AVOID_BLOCK_HEADER in ctx2
+    assert RECALL_HEADER not in ctx2

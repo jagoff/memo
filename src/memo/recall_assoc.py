@@ -45,6 +45,15 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
     try:
         from memo.lifecycle import IS_FORGOTTEN_KEY
 
+        # When Negative Recall is on, failure_pattern anti-memories are surfaced
+        # only in their own ⛔ AVOID block (and excluded from normal recall). The
+        # graph associate() walk excludes seed_ids but NOT by type, so a
+        # failure_pattern connected to a normal seed could resurface in the "🔗
+        # Also connected" tail — a duplicate of the ⛔ block. Drop it here.
+        from memo.negative_recall import FAILURE_PATTERN_TYPE
+
+        _drop_failure_patterns = flag_bool("MEMO_NEGATIVE_RECALL_ENABLED")
+
         seed_ids = [r.id for r in relevant]
         hops: int = 2 if (_h := flag_int("MEMO_ASSOCIATIVE_HOPS")) is None else _h
         limit: int = 2 if (_l := flag_int("MEMO_ASSOCIATIVE_LIMIT")) is None else _l
@@ -78,6 +87,8 @@ def build_nudge(memory: Any, relevant: list[Any]) -> list[Any]:
             rec = memory.get(h.id)
             if rec is None or (getattr(rec, "extra", None) or {}).get(IS_FORGOTTEN_KEY):
                 continue
+            if _drop_failure_patterns and getattr(rec, "type", None) == FAILURE_PATTERN_TYPE:
+                continue  # surfaced only in the ⛔ block — never in the assoc tail
             adj = h.activation * _recency_weight(getattr(rec, "updated", "") or "")
             scored.append((adj, NudgeItem(id=h.id, title=getattr(rec, "title", h.id), via=h.via)))
         scored.sort(key=lambda x: x[0], reverse=True)
