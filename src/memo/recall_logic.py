@@ -11,6 +11,11 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from memo.flags import flag_bool, flag_float, flag_int, flag_str
+from memo.negative_recall import (
+    FAILURE_PATTERN_TYPE,
+    format_avoid_block,
+    risky_context,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -1192,6 +1197,127 @@ def _resolve_daemon_fallback(
     return False, "bm25", replace(knobs, mode="bm25")
 
 
+# ── Negative Recall (⛔ AVOID) — the flag-gated retrieval + trigger wiring for
+# the ⛔ channel. The PURE helpers (parse/render/derive/risky_context) live in
+# memo.negative_recall; these functions add the store/flag/budget wiring that is
+# specific to the daemon recall path. All default OFF via
+# MEMO_NEGATIVE_RECALL_ENABLED, so with the feature off none of this runs.
+_NEGATIVE_RECALL_K_CAP = 6  # hard ceiling on the widened ⛔ K
+_NEGATIVE_RECALL_TRIGGER_K_BONUS = 2  # extra ⛔ slots on a maximally risky prompt
+_NEGATIVE_RECALL_TRIGGER_FLOOR_DROP = 0.15  # floor loosening on a max-risk prompt
+_NEGATIVE_RECALL_BUDGET_FLOOR = 120  # positive token budget below this ⇒ ⛔ yields first
+_NEGATIVE_RECALL_OVERFETCH = 3  # candidate multiplier before the min_sim floor
+
+
+def _widen_negative_params(neg_k: int, neg_min_sim: float, risk: float) -> tuple[int, float]:
+    """Trigger widening: a high-risk context (``risk`` in ``(0, 1]``) raises the
+    ⛔ K (within ``_NEGATIVE_RECALL_K_CAP``) and lowers the cosine floor, both
+    scaled by ``risk`` — so more, and slightly weaker, anti-memories surface in
+    exactly those release/delete/deploy moments. ``risk <= 0`` is an exact
+    no-op. Pure — no flags, no I/O."""
+    if risk <= 0:
+        return neg_k, neg_min_sim
+    widened_k = min(neg_k + round(risk * _NEGATIVE_RECALL_TRIGGER_K_BONUS), _NEGATIVE_RECALL_K_CAP)
+    widened_floor = max(0.0, neg_min_sim - risk * _NEGATIVE_RECALL_TRIGGER_FLOOR_DROP)
+    return widened_k, widened_floor
+
+
+def _negative_budget_ok(token_budget: int, *, risk: float) -> bool:
+    """The ⛔ pass yields FIRST under token pressure: a POSITIVE per-turn budget
+    below ``_NEGATIVE_RECALL_BUDGET_FLOOR`` skips it — unless a high-risk context
+    is detected (``risk > 0``), which overrides the yield (the warning matters
+    most in exactly those moments). ``token_budget <= 0`` means "unlimited" ⇒
+    always room. Pure."""
+    if token_budget <= 0 or token_budget >= _NEGATIVE_RECALL_BUDGET_FLOOR:
+        return True
+    return risk > 0
+
+
+def _negative_recall_hits(
+    mem: Any,
+    prompt: str,
+    *,
+    neg_k: int,
+    neg_min_sim: float,
+    exclude_tags: set[str] | None,
+) -> list[Any]:
+    """The ⛔ retrieval pass: a high-precision single-type vec kNN over
+    ``type=failure_pattern`` anti-memories that REUSES the query embedding the
+    main search already cached (``mem.search`` vec mode ⇒ ``embed_query`` LRU
+    cache hit — no second MLX forward). Over-fetches, applies the cosine
+    ``neg_min_sim`` floor, caps at ``neg_k``. Reranker disabled and usage
+    tracking off to stay hook-cheap. Never raises — ``[]`` on any failure."""
+    if neg_k <= 0:
+        return []
+    try:
+        hits = mem.search(
+            prompt,
+            limit=max(neg_k * _NEGATIVE_RECALL_OVERFETCH, neg_k),
+            type_=FAILURE_PATTERN_TYPE,
+            mode="vec",
+            recency=False,
+            disable_reranker=True,
+            exclude_tags=exclude_tags,
+            _track_usage=False,
+        )
+    except Exception as exc:
+        _logger.debug("negative recall pass failed: %s", exc)
+        return []
+    gated = [h for h in hits if (getattr(h, "score", None) or 0.0) >= neg_min_sim]
+    return gated[:neg_k]
+
+
+def _negative_recall_block(
+    mem: Any,
+    prompt: str,
+    *,
+    exclude_tags: set[str] | None,
+    token_budget: int,
+    can_embed: bool,
+) -> str:
+    """Compute the distinct ⛔ AVOID block for this turn (or ``""``).
+
+    Gated on ``MEMO_NEGATIVE_RECALL_ENABLED`` (OFF ⇒ ``""`` ⇒ zero behavior
+    change). Budget-gated (yields FIRST under token pressure, unless a high-risk
+    trigger fires). ``can_embed`` is ``False`` on cold-start / bm25 paths where a
+    vec query would cold-load MLX — the pass is skipped there to protect the 5s
+    budget. Reuses the cached query embedding; never raises."""
+    if not flag_bool("MEMO_NEGATIVE_RECALL_ENABLED") or not can_embed:
+        return ""
+    neg_k = flag_int("MEMO_NEGATIVE_RECALL_K") or 0
+    _floor = flag_float("MEMO_NEGATIVE_RECALL_MIN_SIM")
+    neg_min_sim = 0.6 if _floor is None else _floor
+    risk = risky_context(prompt) if flag_bool("MEMO_NEGATIVE_RECALL_TRIGGER_ENABLED") else 0.0
+    neg_k, neg_min_sim = _widen_negative_params(neg_k, neg_min_sim, risk)
+    if neg_k <= 0 or not _negative_budget_ok(token_budget, risk=risk):
+        return ""
+    hits = _negative_recall_hits(
+        mem, prompt, neg_k=neg_k, neg_min_sim=neg_min_sim, exclude_tags=exclude_tags
+    )
+    if not hits:
+        return ""
+    try:
+        return format_avoid_block(hits)
+    except Exception as exc:
+        _logger.debug("negative recall render failed: %s", exc)
+        return ""
+
+
+def _avoid_only_output(avoid_block: str) -> str:
+    """Hook-JSON carrying ONLY the ⛔ AVOID block — used when normal recall is
+    empty but an anti-memory still fired (an ⛔ can surface on its own). Same
+    envelope as the normal recall output so the hook consumer is unchanged."""
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": avoid_block,
+            }
+        },
+        ensure_ascii=False,
+    )
+
+
 def _recall_logic(
     prompt: str,
     cwd: str | None,
@@ -1393,6 +1519,22 @@ def _recall_logic(
                     file=sys.stderr,
                 )
 
+    # ── Negative Recall (⛔ AVOID): a preemptive, high-precision pass over
+    # type=failure_pattern anti-memories, EXCLUDED from the normal section above
+    # (see _recall_excluded_types) and rendered as a distinct block. Reuses the
+    # query embedding the main search already cached (no second MLX forward);
+    # budget-gated so it yields FIRST under token pressure. `can_embed` is False
+    # on the cold-start / bm25 fallback paths where a vec query would cold-load
+    # MLX. Default OFF ⇒ "" ⇒ no behavior change. An ⛔ can fire even when normal
+    # recall is empty, so this is computed before the empty-recall returns below.
+    _avoid_block = _negative_recall_block(
+        mem,
+        prompt,
+        exclude_tags=exclude_tags,
+        token_budget=token_budget,
+        can_embed=(not use_fallback and mode in ("vec", "hybrid")),
+    )
+
     pre_filter = qualifying
     qualifying = apply_injection_filters(qualifying)
     if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and unmatched_term_gate(prompt, qualifying):
@@ -1444,7 +1586,11 @@ def _recall_logic(
             _pg_bands = load_precision_bands(cfg.state_dir)
             if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
                 # Suppression of an EXISTING hit — "no record" would be false,
-                # so no empty marker here (mirrors the subprocess path).
+                # so no empty marker here (mirrors the subprocess path). An ⛔
+                # anti-memory is independent of the precision-gated normal hits,
+                # so it still surfaces on its own when one fired.
+                if _avoid_block:
+                    return _avoid_only_output(_avoid_block), None
                 return "{}", None
         except Exception as _pg_exc:
             _logger.debug("precision gate check failed: %s", _pg_exc)
@@ -1463,10 +1609,14 @@ def _recall_logic(
         kept = {h.id for h in qualifying}
         omitted.extend(h for h in pre_filter if h.id not in kept)
     if not relevant:
-        # Search ran, nothing qualified. In a real session (session_id present —
-        # UserPromptSubmit always sends one) emit the epistemic empty marker so
-        # "no record" is distinguishable from a silent bail; sessionless callers
-        # (tests, eval, debug) keep the bare "{}" contract.
+        # Search ran, nothing qualified. An ⛔ anti-memory can still fire on its
+        # own, so surface the AVOID block alone when one matched.
+        if _avoid_block:
+            return _avoid_only_output(_avoid_block), None
+        # In a real session (session_id present — UserPromptSubmit always sends
+        # one) emit the epistemic empty marker so "no record" is distinguishable
+        # from a silent bail; sessionless callers (tests, eval, debug) keep the
+        # bare "{}" contract.
         if session_id and (_empty := render_empty_recall_output()) is not None:
             return _empty, None
         return "{}", None
@@ -1486,6 +1636,10 @@ def _recall_logic(
         if _prev_recalled:
             relevant = [h for h in relevant if h.id not in _prev_recalled]
         if not relevant:
+            # Normal hits were all already recalled this session; an ⛔ that
+            # fired this turn is still worth surfacing on its own.
+            if _avoid_block:
+                return _avoid_only_output(_avoid_block), None
             return "{}", None
         if turn is not None:
             # Marking is deferred into the delivered-gated log closure below:
@@ -1594,6 +1748,11 @@ def _recall_logic(
         context = f"{_guard_banner}\n\n{context}"
         log_guard_fire(cfg.state_dir, prompt=prompt, ids=_guard_ids)
 
+    # ⛔ AVOID block sits at the very top — a distinct anti-memory warning above
+    # the normal recall. Prepended last so it wins the topmost position.
+    if _avoid_block:
+        context = f"{_avoid_block}\n\n{context}"
+
     output: dict[str, Any] = {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
@@ -1648,4 +1807,9 @@ def _recall_excluded_types() -> set[str]:
     excluded = {"secret"}
     if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE"):
         excluded.update(REFERENCE_TYPES)
+    if flag_bool("MEMO_NEGATIVE_RECALL_ENABLED"):
+        # Negative Recall surfaces failure_pattern anti-memories in their own ⛔
+        # AVOID block, so drop them from the normal section to avoid duplication.
+        # OFF ⇒ failure_patterns flow into normal recall exactly as today.
+        excluded.add(FAILURE_PATTERN_TYPE)
     return excluded

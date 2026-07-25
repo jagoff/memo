@@ -385,7 +385,10 @@ def eval_recall_cmd(
         }
 
     if update_baseline:
-        metrics = eval_recall.gate_metrics(rows)
+        # Persist the FULL metrics (precision/noise ∪ avoid@k / avoid_leak@k) so
+        # check_gate can enforce the ⛔ coverage/leakage floors — bare
+        # gate_metrics wrote neither, leaving those checks vacuously true forever.
+        metrics = eval_recall.full_gate_metrics(rows)
         payload = {**metrics, "k": k, "labels_fingerprint": labels.fingerprint()}
         bp = _baseline_path(cfg)
         bp.parent.mkdir(parents=True, exist_ok=True)

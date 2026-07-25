@@ -40,6 +40,7 @@ from memo.cli_dream_passes import (
     _run_floor_calibration,
     _run_graph_projection,
     _run_harvest_labels,
+    _run_negative_capture,
     _run_presynthesis,
     _run_prewarm_queries,
     _run_proactive_refresh,
@@ -638,6 +639,29 @@ def dream_run(
                 receipt["errors"].append(f"consolidate_episodes: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[consolidate] [yellow]warn[/yellow]")
 
+        # Negative-recall CAPTURE (avoid verdicts): graduate recalled memories
+        # the user corrected/rejected next-turn into failure_pattern anti-memories.
+        # Gated on MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED (the pass itself no-ops
+        # when off); the supersede-derived capture rides the contradict pass.
+        if flag_bool("MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED"):
+            progress.update(step, description="[avoid] graduating avoid verdicts...")
+            try:
+                receipt["negative_capture"] = _run_negative_capture(cfg, mem, dry_run=dry_run)
+                _nc = receipt["negative_capture"]
+                if _nc.get("status") == "error":
+                    receipt["errors"].append(f"negative_capture: {_nc.get('error')}")
+                for _nce in _nc.get("errors", []):
+                    receipt["errors"].append(f"negative_capture: {_nce}")
+                progress.update(
+                    step,
+                    description=(
+                        f"[avoid] [green]✓[/green]  {len(_nc.get('captured', []))} captured"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"negative_capture: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[avoid] [yellow]warn[/yellow]")
+
         # Bi-temporal validity extraction: LLM off the recall hot path (default
         # OFF). For recent facts/decisions whose TEXT explicitly states a
         # validity window, set valid_at/invalid_at — never hallucinated.
@@ -1004,6 +1028,11 @@ def dream_run(
                 receipt["competing"] = res.get("competing", [])
                 receipt["flagged_for_review"] = res.get("flagged_for_review", [])
                 receipt["confidence_penalized"] = res.get("confidence_penalized", 0)
+                # Negative-recall: anti-memories derived from supersede/reversal.
+                if res.get("negative_captured"):
+                    receipt["negative_captured"] = res["negative_captured"]
+                for _nce in res.get("negative_capture_errors", []):
+                    receipt["errors"].append(f"negative_capture: {_nce}")
                 progress.update(
                     step,
                     description=(

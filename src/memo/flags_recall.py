@@ -616,6 +616,71 @@ SPECS: tuple[FlagSpec, ...] = (
         "reusing the epistemic '?unverified' framing. Pure render-layer (no store "
         "read, no MLX on the hook path); ranking untouched. Default OFF.",
     ),
+    # ── Negative Recall — the ⛔ AVOID channel ────────────────────────────────
+    # A preemptive, high-precision pass over type=failure_pattern anti-memories,
+    # rendered as a distinct ⛔ AVOID block and excluded from normal recall. The
+    # pass REUSES the already-computed query embedding (LRU cache hit — no second
+    # MLX forward) and is budget-gated (first optional stage to skip). All OFF by
+    # default; the *_ENABLED flags declare their graduation gate in
+    # dream_flags.GATES (CI-enforced by tests/test_dream_flags.py).
+    _spec(
+        "MEMO_NEGATIVE_RECALL_ENABLED",
+        "bool",
+        False,
+        "recall",
+        "Master switch for Negative Recall: run the preemptive ⛔ pass over "
+        "type=failure_pattern anti-memories (reusing the cached query embedding), "
+        "exclude failure_pattern from normal recall (no duplication), and surface "
+        "the distinct ⛔ AVOID block in the recall hook + El Briefing. OFF ⇒ "
+        "failure_patterns flow into normal recall exactly as today.",
+    ),
+    _spec(
+        "MEMO_NEGATIVE_RECALL_K",
+        "int",
+        2,
+        "recall",
+        "Max ⛔ AVOID anti-memories injected per prompt.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_NEGATIVE_RECALL_MIN_SIM",
+        "float",
+        0.6,
+        "recall",
+        "Cosine similarity floor for a ⛔ hit — high-precision, above the normal "
+        "MEMO_RECALL_MIN_SIM (0.5) so only strongly-matching mistakes surface.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
+        "MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED",
+        "bool",
+        False,
+        "recall",
+        "Auto-derive failure_pattern anti-memories in the nightly dream passes: "
+        "from supersede/reversal decisions (superseded=Wrong, superseding=Right) "
+        "and from graduated avoid verdicts. Provenance recorded in extra. OFF by "
+        "default.",
+    ),
+    _spec(
+        "MEMO_NEGATIVE_RECALL_REINFORCE_ENABLED",
+        "bool",
+        False,
+        "recall",
+        "Close the loop in the dream ROI-reconcile pass: strengthen a "
+        "failure_pattern whose ⛔ was surfaced but the mistake repeated anyway "
+        "(confidence/ROI up), mild-positive when heeded. Off the 5s hook path. "
+        "OFF by default.",
+    ),
+    _spec(
+        "MEMO_NEGATIVE_RECALL_TRIGGER_ENABLED",
+        "bool",
+        False,
+        "recall",
+        "Raise the ⛔ pass recall (loosen the floor / raise K) in detected "
+        "high-risk contexts (release/delete/deploy/refactor/migrate) via a pure "
+        "O(len(prompt)) keyword scan — never re-embeds. OFF by default.",
+    ),
 )
 
 

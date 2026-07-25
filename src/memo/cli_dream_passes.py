@@ -26,7 +26,12 @@ from memo.dream_utils import (
     _older_id,
 )
 from memo.errors import MemoError
-from memo.outcome import dead_weight, reconcile_roi, reconcile_source_feedback
+from memo.outcome import (
+    dead_weight,
+    reconcile_negative_recall,
+    reconcile_roi,
+    reconcile_source_feedback,
+)
 from memo.tiers import EVICTION_PROTECTED_TYPES
 from memo.transcript_miner import mine_transcripts
 
@@ -620,6 +625,21 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                 continue
             assert decision.action == ARCHIVE
             if not dry_run:
+                # Negative-recall CAPTURE: derive the ⛔ anti-memory (Wrong =
+                # dominated, Right = dominant) BEFORE archiving so both records
+                # are still resolvable. Gated + best-effort (never raises) so a
+                # capture failure cannot abort the supersede loop.
+                from memo import negative_capture
+
+                _neg = negative_capture.capture_from_supersede(
+                    mem,
+                    superseded_id=decision.dominated_id,
+                    superseding_id=decision.dominant_id,
+                )
+                if _neg.get("captured_id"):
+                    result.setdefault("negative_captured", []).append(_neg["captured_id"])
+                if _neg.get("error"):
+                    result.setdefault("negative_capture_errors", []).append(_neg["error"])
                 ok = mem.lifecycle.archive_memory(decision.dominated_id)
                 if ok:
                     mem.contradict_store.resolve(
@@ -637,6 +657,21 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
         _log.warning("contradict pass failed: %s", exc)
 
     return result
+
+
+def _run_negative_capture(cfg: Config, mem: Memory, dry_run: bool = False) -> dict[str, Any]:
+    """Graduate recurrently-avoided recalled memories into ``failure_pattern``s.
+
+    Thin dream-pass wrapper around
+    :func:`memo.negative_capture.graduate_avoid_verdicts` (the supersede-derived
+    capture is inlined into ``_run_contradict``). Gated on
+    ``MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED``; never raises — failures are
+    surfaced in the returned summary (``status="error"`` / ``errors``), which
+    the caller folds into ``receipt["errors"]``.
+    """
+    from memo import negative_capture
+
+    return negative_capture.graduate_avoid_verdicts(cfg, mem, dry_run=dry_run)
 
 
 def _run_consolidate_dups(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
@@ -964,6 +999,7 @@ def _run_roi_reconcile(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
         "reconciled": 0,
         "dead_archived": [],
         "source_feedback_mined": 0,
+        "negative_reinforced": {},
     }
     try:
         result["reconciled"] = reconcile_roi(mem).get("updated", 0)
@@ -978,6 +1014,17 @@ def _run_roi_reconcile(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                 result["source_feedback_mined"] = fb
             except Exception as exc:
                 _log.warning("source_feedback mining failed: %s", exc)
+
+        # Close the ⛔ negative-recall loop: reinforce a failure_pattern whose
+        # warning was surfaced but the mistake repeated anyway (roi/confidence
+        # up), mild-positive when heeded. Runs AFTER reconcile_roi so it is the
+        # authoritative roi for anti-memories. Off the 5s hook path; folded into
+        # the receipt (mirror the source_feedback pattern).
+        if flag_bool("MEMO_NEGATIVE_RECALL_REINFORCE_ENABLED"):
+            try:
+                result["negative_reinforced"] = reconcile_negative_recall(mem)
+            except Exception as exc:
+                _log.warning("negative_recall reinforce failed: %s", exc)
 
         # Archive dead weight (surfaced but never grounded)
         min_surfaced = flag_int("MEMO_OUTCOME_DEAD_MIN_SURFACED") or 0

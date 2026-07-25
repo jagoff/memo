@@ -123,6 +123,30 @@ GATES: dict[str, GateSpec] = dict(
         ),
         _g("MEMO_GUARD_ENABLED", "manual", "UX banner; gate = user judgement on interjections"),
         _g("MEMO_INTERJECT_ENABLED", "manual", "UX banner; gate = user judgement"),
+        # --- Negative Recall (⛔ AVOID channel): measured by avoid@k in
+        #     `memo eval recall`, not by the recall gate's (precision@k,-noise@k)
+        #     _wins (surfacing failure_patterns excluded from normal recall does
+        #     not move precision@k on the curated set), so all four flip manually.
+        _g(
+            "MEMO_NEGATIVE_RECALL_ENABLED",
+            "manual",
+            "negative-recall ⛔ channel; gate = avoid@k in memo eval recall, human flips",
+        ),
+        _g(
+            "MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED",
+            "manual",
+            "ingest/capture quality; gate = human review of minted failure_patterns",
+        ),
+        _g(
+            "MEMO_NEGATIVE_RECALL_REINFORCE_ENABLED",
+            "manual",
+            "outcome-loop write (confidence/ROI on failure_patterns); gate = memo roi",
+        ),
+        _g(
+            "MEMO_NEGATIVE_RECALL_TRIGGER_ENABLED",
+            "manual",
+            "context-risk trigger; measurable via avoid@k on release/delete prompts, human flips",
+        ),
         _g("MEMO_GRAPH_REASON_ENABLED", "manual", "attribution metadata only, no ranking effect"),
         _g("MEMO_VERDICT_ENABLED", "manual", "next-turn reaction telemetry; no retrieval effect"),
         _g("MEMO_MAINT_SLEEP_CYCLE_ENABLED", "manual", "background maintenance; op cost decision"),

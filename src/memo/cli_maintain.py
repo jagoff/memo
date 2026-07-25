@@ -605,6 +605,23 @@ def maintain_cmd(
                 target = decision.dominated_id
                 action = "delete" if hard_delete else "invalidate"
                 if not dry_run:
+                    # Negative-recall CAPTURE (dream-pass parity, _run_contradict):
+                    # derive the ⛔ anti-memory (Wrong = dominated, Right =
+                    # dominant) BEFORE the archive/delete so both records are
+                    # still resolvable. Gated + best-effort (never raises), so a
+                    # capture failure cannot abort the supersede.
+                    if flag_bool("MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED"):
+                        from memo import negative_capture
+
+                        _neg = negative_capture.capture_from_supersede(
+                            mem,
+                            superseded_id=decision.dominated_id,
+                            superseding_id=decision.dominant_id,
+                        )
+                        if _neg.get("captured_id"):
+                            receipt.setdefault("negative_captured", []).append(_neg["captured_id"])
+                        if _neg.get("error"):
+                            receipt["errors"].append(f"negative_capture: {_neg['error']}")
                     if hard_delete:
                         ok = mem.delete(target)
                     else:

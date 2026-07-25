@@ -9,6 +9,41 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-07-24
+
+### Added
+
+- **Negative Recall — a preemptive ⛔ avoidance channel.** Memo now remembers
+  what *not* to do and surfaces it before you repeat it. A new
+  `type=failure_pattern` anti-memory tier is captured, retrieved, reinforced,
+  measured, and surfaced as a distinct ⛔ AVOID block — everything OFF by
+  default (six `MEMO_NEGATIVE_RECALL_*` flags), so behavior is unchanged until
+  opted in.
+  - **Capture** (`negative_capture.py`, `MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED`):
+    the nightly dream passes auto-derive anti-memories from supersede/reversal
+    decisions (the superseded side = the mistake) and from graduated *avoid*
+    verdicts, with provenance recorded in `extra`.
+  - **Retrieval** (`negative_recall.py`, `MEMO_NEGATIVE_RECALL_ENABLED`): a
+    bounded, high-precision pass over `failure_pattern` anti-memories that
+    **reuses the already-computed query embedding** (LRU cache hit — no second
+    MLX forward, budget-gated as the first stage to skip), excludes
+    `failure_pattern` from normal recall (no duplication), and injects at most
+    `MEMO_NEGATIVE_RECALL_K` (default 2) hits above a strict
+    `MEMO_NEGATIVE_RECALL_MIN_SIM` (default 0.6) cosine floor.
+  - **Reinforcement** (`MEMO_NEGATIVE_RECALL_REINFORCE_ENABLED`): the dream
+    ROI-reconcile pass strengthens an anti-memory whose ⛔ surfaced but the
+    mistake repeated anyway, and mildly rewards it when heeded — off the 5s hook
+    path.
+  - **Risky-context trigger** (`MEMO_NEGATIVE_RECALL_TRIGGER_ENABLED`): loosens
+    the floor / raises K in detected high-risk contexts
+    (release/delete/deploy/refactor/migrate) via a pure `O(len(prompt))` keyword
+    scan — never re-embeds.
+  - **Measurement**: an `avoid@k` gate in `memo eval recall` scores the ⛔
+    channel, and every `*_ENABLED` flag declares its graduation gate in
+    `dream_flags.GATES` (CI-enforced by `tests/test_dream_flags.py`).
+  - **Surfacing**: the ⛔ AVOID block renders in the recall hook and in El
+    Briefing, kept distinct from normal recall.
+
 ## [4.1.0] - 2026-07-24
 
 ### Changed

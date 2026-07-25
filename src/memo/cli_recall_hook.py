@@ -394,6 +394,13 @@ def recall_hook() -> None:
     from memo.tiers import REFERENCE_TYPES
 
     exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
+    # Negative Recall (daemon parity, recall_logic._recall_excluded_types): drop
+    # failure_pattern from normal recall so anti-memories surface only in the ⛔
+    # AVOID block below. OFF ⇒ they flow into normal recall exactly as today.
+    if flag_bool("MEMO_NEGATIVE_RECALL_ENABLED"):
+        from memo.negative_recall import FAILURE_PATTERN_TYPE
+
+        exclude_types = (exclude_types or set()) | {FAILURE_PATTERN_TYPE}
     # '_uncertain' quarantine (default on) — daemon parity (recall_logic).
     exclude_tags = uncertain_exclusion()
     # Budget guard for the fallback embed: a busy/warming daemon answers `ping`
@@ -494,6 +501,22 @@ def recall_hook() -> None:
                     f"# memo recall-hook: query expansion recovered {len(qualifying)} hits",
                     file=sys.stderr,
                 )
+
+    # Negative Recall (⛔ AVOID) — daemon parity (recall_logic). A preemptive,
+    # high-precision pass over type=failure_pattern anti-memories, rendered as a
+    # distinct block and excluded from the normal section above. Reuses the
+    # cached query embedding; budget-gated; can_embed is False on the bm25
+    # downgrade so it never cold-loads MLX. Default OFF ⇒ "". An ⛔ can fire even
+    # when normal recall is empty, so it is computed before the empty returns.
+    from memo.recall_logic import _avoid_only_output, _negative_recall_block
+
+    _avoid_block = _negative_recall_block(
+        mem,
+        prompt,
+        exclude_tags=exclude_tags,
+        token_budget=token_budget,
+        can_embed=(mode in ("vec", "hybrid")),
+    )
 
     pre_filter = qualifying
     qualifying = apply_injection_filters(qualifying)
@@ -619,6 +642,12 @@ def recall_hook() -> None:
 
     if not relevant:
         _stamp_metrics(0)
+        # An ⛔ anti-memory can fire even when normal recall is empty — surface it
+        # alone (daemon parity: recall_logic returns _avoid_only_output here).
+        if _avoid_block:
+            _close_memory()
+            print(_avoid_only_output(_avoid_block))
+            sys.exit(0)
         if not _search_ok:
             # No search ran successfully — absence of record is UNPROVEN, so
             # the epistemic marker must not fire. Silent `{}`, daemon parity.
@@ -660,6 +689,12 @@ def recall_hook() -> None:
         relevant = [h for h in relevant if h.id not in _prev_recalled]
     _stamp_metrics(len(relevant))
     if not relevant:
+        # Normal hits were all already recalled this session; an ⛔ that fired
+        # this turn is still worth surfacing on its own (daemon parity).
+        if _avoid_block:
+            _close_memory()
+            print(_avoid_only_output(_avoid_block))
+            sys.exit(0)
         _bail("all hits already recalled this session")
         return
 
@@ -743,6 +778,12 @@ def recall_hook() -> None:
 
         context = f"{_guard_banner}\n\n{context}"
         log_guard_fire(cfg.state_dir, prompt=prompt, ids=_guard_ids)
+
+    # ⛔ AVOID block sits at the very top — a distinct anti-memory warning above
+    # the normal recall. Prepended last so it wins the topmost position (daemon
+    # parity, recall_logic).
+    if _avoid_block:
+        context = f"{_avoid_block}\n\n{context}"
 
     output: dict[str, Any] = {
         "hookSpecificOutput": {
