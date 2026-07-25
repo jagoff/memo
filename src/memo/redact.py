@@ -56,8 +56,10 @@ _ENTROPY_CANDIDATE_RE = re.compile(r"\b[A-Za-z0-9+/_=-]{32,}\b")
 _HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
 _ENTROPY_MIN_BITS = 4.2
 
-_PRIVATE_SPAN_RE = re.compile(r"<private>.*?</private>", re.DOTALL | re.IGNORECASE)
-_PRIVATE_OPEN_RE = re.compile(r"<private>.*\Z", re.DOTALL | re.IGNORECASE)
+# Fixed-width literal markers only (no ``.*`` — linear, ReDoS-free). Span
+# logic lives in ``strip_private_spans`` as a linear scan over these matches.
+_PRIVATE_MARK_OPEN_RE = re.compile(r"<private>", re.IGNORECASE)
+_PRIVATE_MARK_CLOSE_RE = re.compile(r"</private>", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -155,11 +157,24 @@ def strip_private_spans(text: str) -> str:
     """Drop ``<private>…</private>`` spans; an unclosed ``<private>`` drops
     everything to end-of-text (fail-closed: better to lose a capture than
     leak private content into a persisted memory)."""
-    if not text or "<private>" not in text.lower():
+    if not text or _PRIVATE_MARK_OPEN_RE.search(text) is None:
         return text
-    out = _PRIVATE_SPAN_RE.sub("", text)
-    out = _PRIVATE_OPEN_RE.sub("", out)
-    return out.strip()
+    # Linear scan (indices into the original string — no lowercased copy, so
+    # no Unicode length-drift): keep text before each ``<private>``, skip to
+    # the next ``</private>``; an unclosed open drops everything to EOT.
+    parts: list[str] = []
+    i = 0
+    while True:
+        m_open = _PRIVATE_MARK_OPEN_RE.search(text, i)
+        if m_open is None:
+            parts.append(text[i:])
+            break
+        parts.append(text[i : m_open.start()])
+        m_close = _PRIVATE_MARK_CLOSE_RE.search(text, m_open.end())
+        if m_close is None:
+            break
+        i = m_close.end()
+    return "".join(parts).strip()
 
 
 def sanitize_persisted_text(text: str, *, entropy: bool = False) -> RedactionResult:

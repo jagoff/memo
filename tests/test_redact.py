@@ -92,6 +92,19 @@ def test_strip_private_spans_multiline_and_unclosed_drops_to_end():
     assert out == "public"
 
 
+def test_strip_private_spans_multiple_spans_removed():
+    out = strip_private_spans("a<private>x</private>b<private>y</private>c")
+    assert out == "abc"
+
+
+def test_strip_private_spans_many_unclosed_markers_is_linear():
+    # Pathological shape for the former ``<private>.*?</private>`` regex: many
+    # opens, no close. Linear scan drops from the first open to EOT and returns
+    # promptly (guards the py/polynomial-redos fix).
+    text = "keep " + "<private>" * 50_000 + "tail-no-close"
+    assert strip_private_spans(text) == "keep"
+
+
 def test_privacy_flags_registered_with_defaults(monkeypatch):
     from memo.flags import flag_bool
 
