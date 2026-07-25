@@ -106,7 +106,7 @@ sync, plus requested model or benchmark downloads, may use the network. See the
 ## Install — one step
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.3.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.0/install.sh | bash
 ```
 
 The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, Devin Desktop, OpenCode).
@@ -136,7 +136,7 @@ First install downloads ~8 GB of MLX models (5–15 min); later installs hit the
 **Migrating from another Mac?** Install first, then restore your corpus:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.3.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.0/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 ```
 
@@ -206,7 +206,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 memo installs itself if you hand the repo (or just the install line) to an AI agent:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.3.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.0/install.sh | bash
 memo doctor --strict-runtime     # verify runtime is healthy
 ```
 

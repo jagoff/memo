@@ -402,25 +402,53 @@ def _parse_raw_for_existing_key(path_key: str, raw_value: str) -> Any:
     return raw_value
 
 
-def _read_domain_table(path: Path, table: str) -> dict[str, Any]:
+def _read_file_tables(path: Path) -> dict[str, dict[str, Any]]:
+    """Parse every ``[table]`` in one domain file, preserving all groups.
+
+    A single domain file can hold more than one flag group (e.g. both
+    ``[misc]`` and ``[behavior]`` live in ``advanced-config.md``). Reading the
+    file directly — rather than a single prefix-filtered table — lets the write
+    path round-trip every sibling group instead of dropping it.
+    """
     if not path.is_file():
         return {}
-    values = load_values({"MEMO_CONFIG_DIR": str(path.parent.parent)})
-    prefix = f"{table}."
-    return {
-        key.removeprefix(prefix): value.value
-        for key, value in values.items()
-        if key.startswith(prefix)
-    }
+    tables: dict[str, dict[str, Any]] = {}
+    for block in _TOML_BLOCK_RE.findall(path.read_text(encoding="utf-8")):
+        try:
+            parsed = tomllib.loads(block)
+        except tomllib.TOMLDecodeError:
+            continue
+        for table, body in parsed.items():
+            if isinstance(body, Mapping):
+                tables.setdefault(table, {}).update(body)
+    return tables
+
+
+def _render_tables(tables: Mapping[str, Mapping[str, Any]], heading: str) -> str:
+    lines = [f"# {heading}", "", "```toml"]
+    for index, table in enumerate(sorted(tables)):
+        if index:
+            lines.append("")
+        lines.append(f"[{table}]")
+        for key in sorted(tables[table]):
+            lines.append(f"{key} = {_quote(tables[table][key])}")
+    lines.extend(["```", ""])
+    return "\n".join(lines)
+
+
+def _heading_for_file(path: Path) -> str:
+    return f"{path.stem.removesuffix('-config').replace('-', ' ').title()} config"
 
 
 def _write_domain_file(path: Path, table: str, values: dict[str, Any], heading: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"# {heading}", "", "```toml", f"[{table}]"]
-    for key in sorted(values):
-        lines.append(f"{key} = {_quote(values[key])}")
-    lines.extend(["```", ""])
-    path.write_text("\n".join(lines), encoding="utf-8")
+    path.write_text(_render_tables({table: values}, heading), encoding="utf-8")
+    _cache.clear()
+
+
+def _write_file_tables(path: Path, tables: Mapping[str, Mapping[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_render_tables(tables, _heading_for_file(path)), encoding="utf-8")
     _cache.clear()
 
 
@@ -481,9 +509,9 @@ def set_value(path_key: str, raw_value: str, env: Mapping[str, str] | None = Non
     filename = _domain_for_key(path_key)
     table, key = path_key.split(".", 1)
     path = config_dir(env) / filename
-    values = _read_domain_table(path, table)
-    values[key] = _parse_raw_for_existing_key(path_key, raw_value)
-    _write_domain_file(path, table, values, f"{table.title()} config")
+    tables = _read_file_tables(path)
+    tables.setdefault(table, {})[key] = _parse_raw_for_existing_key(path_key, raw_value)
+    _write_file_tables(path, tables)
     return path
 
 
@@ -495,7 +523,7 @@ def unset_value(path_key: str, env: Mapping[str, str] | None = None) -> Path:
     filename = _domain_for_key(path_key)
     table, key = path_key.split(".", 1)
     path = config_dir(env) / filename
-    values = _read_domain_table(path, table)
-    values.pop(key, None)
-    _write_domain_file(path, table, values, f"{table.title()} config")
+    tables = _read_file_tables(path)
+    tables.setdefault(table, {}).pop(key, None)
+    _write_file_tables(path, tables)
     return path
