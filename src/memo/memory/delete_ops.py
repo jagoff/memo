@@ -251,6 +251,12 @@ class _DeleteOpsMixin(_MemoryBase):
             with contextlib.suppress(Exception):
                 self._contradict_store.drop_for_memoria(id_)
 
+        # Step 5b: GC operational conflicts that reference this memory so a
+        # detected contradiction never orphans into a permanent freeze_write
+        # block once one of its subject memories is gone (non-critical).
+        with contextlib.suppress(Exception):
+            self.operational.gc_conflicts_for_memory(id_)
+
         # Step 6: append a native receipt. A journal failure cannot reverse an
         # authoritative completed delete.
         with contextlib.suppress(Exception):
