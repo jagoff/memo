@@ -420,6 +420,47 @@ def test_backup_manager_list_ignores_hidden_scratch_directories(backup_manager):
     assert backup_manager.list_backups() == []
 
 
+def test_backup_metadata_from_dict_aliases_legacy_key_and_drops_unknowns():
+    # Older backups wrote the count under the Spanish key `memoria_count`, and
+    # future backups may add fields this version does not know about. Reading
+    # either must not raise (regression: `backup list` crashed with TypeError).
+    meta = BackupMetadata.from_dict(
+        {
+            "timestamp": "2026-06-23T22:49:36+00:00",
+            "memoria_count": 1740,
+            "checksum": "abc",
+            "compressed_size": 10,
+            "original_size": 20,
+            "future_field": "ignored",
+        }
+    )
+    assert meta.memory_count == 1740
+    assert meta.checksum == "abc"
+
+
+def test_backup_manager_list_reads_legacy_memoria_count_directory(backup_manager):
+    legacy = backup_manager.backup_dir / "backup_2026-06-23T22-49-36.557354+00-00"
+    legacy.mkdir()
+    (legacy / "metadata.json").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-06-23T22:49:36.557354+00:00",
+                "memoria_count": 1740,
+                "checksum": "8dedf15f",
+                "compressed_size": 1069669816,
+                "original_size": 1069669816,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    backups = backup_manager.list_backups()
+
+    surfaced = [b for b in backups if b.name == legacy.name]
+    assert len(surfaced) == 1
+    assert surfaced[0].memory_count == 1740
+
+
 def test_backup_manager_restores_valid_compressed_archive(backup_manager):
     original = backup_manager.memory_dir / "compressed.md"
     original.write_text("compressed backup body", encoding="utf-8")
