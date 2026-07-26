@@ -280,7 +280,7 @@
     "src/memo/quality.py::classify_quality": 14,
     "src/memo/quality_compact.py::preview_quality_compaction": 15,
     "src/memo/recall_logic.py::_recall_logic": 54,
-    "src/memo/recall_logic.py::rank_hits": 16,
+    "src/memo/recall_logic.py::rank_hits": 17,
     "src/memo/recall_logic.py::render_recall_context": 25,
     "src/memo/recall_socket.py::handle": 20,
     "src/memo/repo_index.py::embed": 11,

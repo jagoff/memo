@@ -974,9 +974,17 @@ def rank_hits(
             _explain_stage(explain, raw, "altitude")
 
     def _passes(h: Any) -> bool:
-        gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
-        if gate is not None and gate < knobs.min_sim:
-            return False
+        # bm25-mode `h.score` is on the BM25 relevance scale, NOT cosine — applying
+        # the cosine-calibrated `min_sim` floor (0.5 fresh default) to it is a
+        # category error that gates out genuine matches (e.g. a cold-start
+        # vec->bm25 downgrade, where a hit's bm25 ~0.156 fails the floor its vec
+        # cosine ~0.87 would pass). Skip the cosine floor in bm25 mode; bm25 hits
+        # are already relevance-ranked and any match scores > 0. vec/hybrid keep
+        # the floor unchanged.
+        if knobs.mode != "bm25":
+            gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
+            if gate is not None and gate < knobs.min_sim:
+                return False
         return not (knobs.min_body_chars > 0 and len((h.body or "").strip()) < knobs.min_body_chars)
 
     if explain is None:
