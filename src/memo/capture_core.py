@@ -951,6 +951,29 @@ def _apply_claim_support(
     return verdict, uncertainty_delta
 
 
+def _coerce_cand_type(cand: dict[str, Any], *, debug: bool) -> dict[str, Any]:
+    """Coerce an out-of-vocabulary / mis-cased helper-LLM type to a valid one
+    BEFORE save. A hallucinated type (e.g. "state", which the extract prompt's
+    state-change guidance invites) would otherwise raise inside ``mem.save()`` and
+    silently drop a mined insight (save_failures++). Returns ``cand`` unchanged
+    when its type is already valid, else a copy with a corrected type. Logged in
+    debug so systematic mistyping stays visible."""
+    from memo.memory.record import _VALID_TYPES
+
+    cand_type = str(cand.get("type") or "note").strip().lower()
+    if cand_type not in _VALID_TYPES:
+        if debug:
+            print(
+                f"# memo capture: coerce type {cand.get('type')!r}→'note' "
+                f"for '{cand.get('title')}'",
+                file=sys.stderr,
+            )
+        cand_type = "note"
+    if cand_type != cand.get("type"):
+        return {**cand, "type": cand_type}
+    return cand
+
+
 def _extract_and_save(
     mem: Any,
     cfg: Any,
@@ -975,7 +998,6 @@ def _extract_and_save(
     default None keeps all callers unchanged. Returns counts; every
     per-candidate failure is absorbed (logged only in debug).
     """
-    from memo.memory.record import _VALID_TYPES
     from memo.prompt_overrides import prompt_version
 
     _extract_prompt_version = prompt_version(
@@ -1066,22 +1088,9 @@ def _extract_and_save(
     uncertain = 0
     retyped = 0
     for cand in insights:
-        # Coerce an out-of-vocabulary / mis-cased type from the helper LLM to a
-        # valid one BEFORE save. A hallucinated type (e.g. "state", which the
-        # extract prompt's state-change guidance invites) would otherwise raise
-        # inside mem.save() and silently drop a mined insight (save_failures++).
-        # Logged so systematic mistyping stays visible.
-        _cand_type = str(cand.get("type") or "note").strip().lower()
-        if _cand_type not in _VALID_TYPES:
-            if debug:
-                print(
-                    f"# memo capture: coerce type {cand.get('type')!r}→'note' "
-                    f"for '{cand.get('title')}'",
-                    file=sys.stderr,
-                )
-            _cand_type = "note"
-        if _cand_type != cand.get("type"):
-            cand = {**cand, "type": _cand_type}
+        # Coerce a hallucinated/mis-cased helper-LLM type to a valid one before
+        # save (see _coerce_cand_type) so a bad type can't silently drop the insight.
+        cand = _coerce_cand_type(cand, debug=debug)
         # Quality gate: skip low-specificity memories before hitting the
         # embedder or disk. Threshold controlled by MEMO_CAPTURE_MIN_WORDS.
         body_for_quality = f"{cand['title']}\n\n{cand['body']}"
