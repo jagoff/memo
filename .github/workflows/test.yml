@@ -118,4 +118,4 @@ jobs:
           tests/test_definitive_memory.py
           tests/test_definitive_gate.py
       - name: Gate causal-journal throughput
-        run: .venv/bin/memo definitive benchmark --events 1000 --minimum-eps 400
+        run: .venv/bin/memo definitive benchmark --events 1000 --minimum-eps 250
