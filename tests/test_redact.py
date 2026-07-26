@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from memo.errors import ValidationError
@@ -53,6 +55,30 @@ def test_pem_requires_joined_text_not_per_line():
     per_line = [f for line in pem.splitlines() for f in scan_secrets(line)]
     assert per_line == []  # per-line: invisible
     assert ("private-key", "****[private-key]") in scan_secrets(pem)  # joined: caught
+
+
+@pytest.mark.parametrize("label", ["RSA ", "EC ", "ENCRYPTED ", "OPENSSH ", ""])
+def test_redacts_private_key_block_across_label_forms(label):
+    """Every real PEM key-type label ("RSA ", "EC ", "ENCRYPTED ", "OPENSSH ",
+    plain) stays redacted under the bounded ``[A-Z ]{0,40}`` quantifier."""
+    pem = f"-----BEGIN {label}PRIVATE KEY-----\nabc\ndef\n-----END {label}PRIVATE KEY-----"
+    res = redact_secrets(f"key:\n{pem}\nend")
+    assert f"BEGIN {label}PRIVATE KEY" not in res.text
+    assert "****[private-key]" in res.text
+    assert "private-key" in res.found
+
+
+def test_pem_near_miss_without_close_marker_is_linear_and_unmatched():
+    # Pathological shape for the former unbounded ``[A-Z ]*``: a BEGIN marker
+    # followed by 10k uppercase chars that never complete ``PRIVATE KEY-----``.
+    # The bounded ``{0,40}`` quantifier makes matching linear — it returns
+    # promptly and leaves the fragment untouched (guards py/polynomial-redos).
+    fragment = "-----BEGIN " + "A" * 10_000
+    start = time.perf_counter()
+    res = redact_secrets(fragment)
+    assert time.perf_counter() - start < 1.0
+    assert res.text == fragment
+    assert res.found == ()
 
 
 def test_clean_text_untouched():
