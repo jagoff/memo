@@ -48,7 +48,7 @@ _TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 _PEM_RE = re.compile(
-    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+    r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----.*?-----END [A-Z ]{0,40}PRIVATE KEY-----",
     re.DOTALL,
 )
 
