@@ -80,6 +80,7 @@
     "src/memo/ingest_server.py": 1,
     "src/memo/integrations/wrap.py": 3,
     "src/memo/interject.py": 3,
+    "src/memo/journey_check.py": 3,
     "src/memo/lifecycle.py": 2,
     "src/memo/llm.py": 1,
     "src/memo/maint_server.py": 1,

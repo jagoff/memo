@@ -239,24 +239,51 @@ def prewarm(download_all: bool) -> None:
     Claude Code's prompt submission.
     """
     import sys as _sys
+
+    _warm_embedder(Config.from_env(), download_all=download_all)
+    _sys.exit(0)
+
+
+def _warm_embedder(cfg: Config, *, download_all: bool = False, warm_reranker: bool = True) -> None:
+    """Load the embedder (+ optional reranker) and stamp the ``.prewarm_ts`` warm
+    signal the recall hook reads. Shared by the ``prewarm`` command and
+    ``memo onboard``.
+
+    The stamp is what lets a fresh install's FIRST recall run vec instead of the
+    cold-start bm25 fallback: without it the recall hook downgrades to bm25, whose
+    relevance score falls under the vec-calibrated ``min_sim`` floor, so the very
+    first saved memory is invisible to the very first recall. The stamp is written
+    as soon as the EMBEDDER is warm — the recall hook's cold-start check is about
+    the embedder's disk cache, not the reranker, so a later reranker failure must
+    never suppress it. ``warm_reranker=False`` skips the reranker entirely (used by
+    ``memo onboard``, where a fresh install's reranker model may be uncached and
+    the reranker is irrelevant to the first-recall path). Best-effort — never
+    raises (a SessionStart hook crash must not block prompt submission)."""
+    import sys as _sys
     import time as _time
 
     from memo.flags import flag_bool
 
     if flag_bool("MEMO_RECALL_DISABLE"):
-        _sys.exit(0)
+        return
     try:
         from memo.embedder_select import make_embedder
 
-        cfg = Config.from_env()
         # make_embedder picks MLX (Apple Silicon) or the CPU backend (Linux),
         # so prewarm actually warms whichever embedder this host will use.
         emb = make_embedder(cfg)
         emb.embed(["warmup"])  # batch=1; forces the model load + first forward pass
-        # Reranker prewarm — same rationale as the embedder. Skipped
-        # when disabled to keep the SessionStart hook below its
-        # 30s budget on machines that opted out of rerank entirely.
-        if cfg.reranker_enabled:
+        # Write warm-signal so recall-hook knows disk cache is fresh. Written HERE
+        # (right after the embedder warm, before the reranker) so an uncached /
+        # failing reranker load can never suppress the signal — the recall hook
+        # reads only this file's mtime, and only the embedder gates recall.
+        cfg.state_dir.mkdir(parents=True, exist_ok=True)
+        warm_signal = cfg.state_dir / ".prewarm_ts"
+        warm_signal.write_text(str(_time.time()))
+        # Reranker prewarm — same rationale as the embedder. Skipped when disabled
+        # (or warm_reranker=False) to keep the SessionStart hook below its 30s
+        # budget on machines that opted out of rerank entirely.
+        if warm_reranker and cfg.reranker_enabled:
             from memo.reranker import MLXReranker
 
             r = MLXReranker(
@@ -264,11 +291,6 @@ def prewarm(download_all: bool) -> None:
                 revision=cfg.reranker_revision,
             )
             r.warmup()
-        # Write warm-signal so recall-hook knows disk cache is fresh.
-        # The file's mtime is the only datum read by recall-hook.
-        cfg.state_dir.mkdir(parents=True, exist_ok=True)
-        warm_signal = cfg.state_dir / ".prewarm_ts"
-        warm_signal.write_text(str(_time.time()))
         if download_all:
             # Pre-download the chat models so the first `memo ask` doesn't
             # stall. snapshot_download is a no-op when the model is already
@@ -288,4 +310,3 @@ def prewarm(download_all: bool) -> None:
     except Exception as exc:
         if flag_bool("MEMO_RECALL_DEBUG"):
             print(f"# memo prewarm failed: {exc}", file=_sys.stderr)
-    _sys.exit(0)

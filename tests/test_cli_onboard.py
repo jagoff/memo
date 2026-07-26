@@ -97,6 +97,13 @@ def _stub_shims(monkeypatch):
     monkeypatch.setattr("memo.cli_onboard.install_shims_cmd", _noop)
 
 
+def _stub_prewarm(monkeypatch):
+    """Neutralize the real embedder warm (loads MLX) — return the recorded calls."""
+    calls = []
+    monkeypatch.setattr("memo.cli_onboard._warm_embedder", lambda cfg, **kw: calls.append(cfg))
+    return calls
+
+
 def _fake_memories(tmp_path, n=3):
     data = tmp_path / "data"
     data.mkdir(parents=True, exist_ok=True)
@@ -121,6 +128,7 @@ def test_onboard_yes_runs_all_steps(tmp_path, monkeypatch):
     from memo.cli import cli
 
     _stub_shims(monkeypatch)
+    _stub_prewarm(monkeypatch)
     _fake_memories(tmp_path)
     monkeypatch.setattr(
         "memo.cli_hooks.wire_recall_hook",
@@ -158,6 +166,7 @@ def test_onboard_dry_run_does_not_wire_hook_or_shims(tmp_path, monkeypatch):
         shim_calls.append(1)
 
     monkeypatch.setattr("memo.cli_onboard.install_shims_cmd", _spy)
+    prewarm_calls = _stub_prewarm(monkeypatch)
     monkeypatch.setattr(
         "memo.transcript_miner.mine_transcripts",
         lambda root=None, **kw: {"status": "ok", "files_total": 0, "candidates": 0},
@@ -167,6 +176,7 @@ def test_onboard_dry_run_does_not_wire_hook_or_shims(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert hook_calls == []
     assert shim_calls == []
+    assert prewarm_calls == []  # dry-run never warms the embedder
     assert "dry-run, salteado" in result.output
 
 
@@ -205,6 +215,7 @@ def test_onboard_json_summary(tmp_path, monkeypatch):
     from memo.cli import cli
 
     _stub_shims(monkeypatch)
+    _stub_prewarm(monkeypatch)
     monkeypatch.setattr(
         "memo.cli_hooks.wire_recall_hook", lambda *a, **k: {"action": "added", "command": "x"}
     )
@@ -223,4 +234,47 @@ def test_onboard_json_summary(tmp_path, monkeypatch):
     payload = _json.loads(result.output[result.output.index("{") :])
     assert payload["hook"]["action"] == "added"
     assert payload["backfill"]["status"] == "ok"
+    assert payload["prewarm"]["action"] == "warmed"
     assert isinstance(payload["memories"], list)
+
+
+def test_onboard_yes_warms_embedder(tmp_path, monkeypatch):
+    """The Day-0 wizard warms the embedder so the first recall runs vec."""
+    from memo.cli import cli
+
+    _stub_shims(monkeypatch)
+    prewarm_calls = _stub_prewarm(monkeypatch)
+    monkeypatch.setattr(
+        "memo.cli_hooks.wire_recall_hook", lambda *a, **k: {"action": "added", "command": "x"}
+    )
+    monkeypatch.setattr(
+        "memo.transcript_miner.mine_transcripts",
+        lambda root=None, **kw: {"status": "ok", "files_total": 0, "candidates": 0},
+    )
+    result = CliRunner().invoke(cli, ["onboard", "--yes"], env=_env(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert len(prewarm_calls) == 1  # warmed exactly once
+    assert "prewarm" in result.output
+
+
+def test_warm_embedder_stamps_prewarm_ts(tmp_path, monkeypatch):
+    """_warm_embedder writes the .prewarm_ts warm signal the recall hook reads."""
+    from memo.config import Config
+    from memo.runtime.daemon import _warm_embedder
+
+    class _FakeEmb:
+        def embed(self, inputs):
+            return [[0.0] * 4 for _ in inputs]
+
+    monkeypatch.setattr("memo.embedder_select.make_embedder", lambda cfg, **kw: _FakeEmb())
+    state = tmp_path / "state"
+    state.mkdir()
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        vault_path=tmp_path / "vault",
+        state_dir=state,
+        reranker_enabled=False,
+    )
+    _warm_embedder(cfg)
+    assert (state / ".prewarm_ts").is_file()
+    assert float((state / ".prewarm_ts").read_text().strip()) > 0
