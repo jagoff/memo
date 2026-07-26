@@ -84,6 +84,20 @@ def _step_backfill(days: int, *, dry_run: bool) -> dict[str, Any]:
     return mine_transcripts(since_days=days, dry_run=dry_run)
 
 
+def _step_prewarm(cfg: Config, *, dry_run: bool) -> dict[str, Any]:
+    """Warm the embedder + stamp .prewarm_ts so the FIRST recall runs vec, not the
+    cold-start bm25 fallback. On a fresh install a bm25 hit scores under the
+    vec-calibrated min_sim floor, so without this the first save is invisible to
+    the first recall. Lifecycle-only (no threshold change); best-effort."""
+    if dry_run:
+        return {"action": "skipped_dry_run"}
+    # Embedder only — the reranker isn't needed for first recall and its model
+    # may be uncached on a fresh install (which would stall the wizard).
+    _warm_embedder(cfg, warm_reranker=False)
+    console.print("[green]✓[/green] prewarm: embedder warmed (first recall runs vec)")
+    return {"action": "warmed"}
+
+
 @click.command(name="onboard")
 @click.option("--yes", is_flag=True, help="Correr todos los pasos sin preguntar.")
 @click.option(
@@ -118,16 +132,8 @@ def onboard(ctx: click.Context, yes: bool, days: int | None, dry_run: bool, as_j
         console.print(f"[green]✓[/green] hook: {summary['hook'].get('action')}")
         ctx.invoke(install_shims_cmd)
 
-    # Warm the embedder + stamp .prewarm_ts so the FIRST recall runs vec, not the
-    # cold-start bm25 fallback. On a fresh install a bm25 hit scores under the
-    # vec-calibrated min_sim floor, so without this the first save is invisible to
-    # the first recall. Lifecycle-only (no threshold change); best-effort.
-    if not dry_run:
-        # Embedder only — the reranker isn't needed for first recall and its model
-        # may be uncached on a fresh install (which would stall the wizard).
-        _warm_embedder(cfg, warm_reranker=False)
-        summary["prewarm"] = {"action": "warmed"}
-        console.print("[green]✓[/green] prewarm: embedder warmed (first recall runs vec)")
+    # Warm the embedder so the FIRST recall runs vec (see _step_prewarm).
+    summary["prewarm"] = _step_prewarm(cfg, dry_run=dry_run)
 
     # 2/4 — transcript backfill (Day-0 corpus from history already on disk)
     window = (
