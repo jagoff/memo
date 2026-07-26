@@ -603,6 +603,21 @@ def undo(id_: str) -> None:
         sys.exit(1)
 
 
+def _rederived_title(old_title: str, old_body: str, new_body: str) -> str | None:
+    """Re-derive an auto-derived title when a `fix` replaces the body.
+
+    A memory whose title was auto-derived (title == first line of its body)
+    should keep tracking the body; otherwise search/recall show the stale title
+    after a body-only fix. Returns the new title when the old one was
+    auto-derived, else ``None`` so an explicit user-set title is preserved.
+    """
+    from memo.memory.record import _derive_title
+
+    if old_title.strip() == _derive_title(old_body).strip():
+        return _derive_title(new_body) or None
+    return None
+
+
 @click.command()
 @click.argument("id_")
 @click.option("--title", default=None, help="Corrected title.")
@@ -621,6 +636,12 @@ def fix(id_: str, title: str | None, type_: str | None, body: str | None) -> Non
 
     mem = _get_memory(Config.from_env())
     from memo.contracts import ActorIdentity
+
+    # Body-only fix: re-derive an auto-derived title so it doesn't go stale.
+    if body is not None and title is None:
+        existing = mem.get(id_)
+        if existing is not None:
+            title = _rederived_title(existing.title, existing.body, body)
 
     rec = _resolved(
         lambda: mem.update(
