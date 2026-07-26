@@ -17,7 +17,7 @@ import shutil
 import sqlite3
 import stat
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -56,6 +56,21 @@ class BackupMetadata:
     compressed_size: int
     original_size: int
     name: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BackupMetadata:
+        """Build from on-disk JSON, tolerating legacy keys and extra fields.
+
+        Older backups stored the memory count under the Spanish key
+        ``memoria_count``; alias it so those backups stay listable and
+        restorable. Unknown keys are dropped rather than raising, keeping
+        reads forward-compatible with newer metadata schemas.
+        """
+        payload = dict(data)
+        if "memoria_count" in payload and "memory_count" not in payload:
+            payload["memory_count"] = payload.pop("memoria_count")
+        known = {f.name for f in fields(cls)}
+        return cls(**{key: value for key, value in payload.items() if key in known})
 
 
 class BackupManager:
@@ -468,7 +483,7 @@ class BackupManager:
 
     def _read_directory_metadata(self, backup_path: Path) -> BackupMetadata:
         data = json.loads((backup_path / "metadata.json").read_text(encoding="utf-8"))
-        meta = BackupMetadata(**data)
+        meta = BackupMetadata.from_dict(data)
         meta.name = backup_path.name
         return meta
 
@@ -488,7 +503,7 @@ class BackupManager:
                         if extracted:
                             data = json.loads(extracted.read().decode("utf-8"))
                             data["compressed_size"] = archive.stat().st_size
-                            meta = BackupMetadata(**data)
+                            meta = BackupMetadata.from_dict(data)
                             meta.name = archive.name.removesuffix(".tar.gz")
                             return meta
         except Exception:  # noqa: S110
@@ -585,7 +600,9 @@ class BackupManager:
         if not metadata_path.is_file() or metadata_path.is_symlink():
             raise ValueError("Backup metadata is missing or unsafe")
         try:
-            metadata = BackupMetadata(**json.loads(metadata_path.read_text(encoding="utf-8")))
+            metadata = BackupMetadata.from_dict(
+                json.loads(metadata_path.read_text(encoding="utf-8"))
+            )
         except (json.JSONDecodeError, TypeError) as exc:
             raise ValueError(f"Backup metadata is invalid: {exc}") from exc
         restore_plan: list[tuple[Path, Path, bool]] = []
