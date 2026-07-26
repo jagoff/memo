@@ -11,7 +11,7 @@ import pytest
 
 from memo.config import Config
 from memo.contracts import AnswerStatus
-from memo.errors import FederationError, NotFoundError
+from memo.errors import FederationError, MemoError, NotFoundError
 from memo.memory import Memory
 from memo.operation_ledger import LedgerIntegrityError, OperationLedger
 
@@ -297,10 +297,32 @@ def test_promote_learning_rejects_unqualified_agent_claim(mem_with_stub) -> None
         auto_project=False,
     )
 
-    with pytest.raises(ValueError, match="lacks outcome evidence"):
+    # Must be a MemoError (not a bare ValueError) so the MCP write coordinator
+    # surfaces the reason instead of masking it as "write failed safely".
+    with pytest.raises(MemoError, match="lacks outcome evidence"):
         mem_with_stub.promote_learning(
             [source.id],
             title="Do not promote this",
+        )
+
+
+def test_promote_learning_rejects_unknown_kind(mem_with_stub) -> None:
+    # Validation must be a MemoError so the MCP coordinator surfaces the reason.
+    with pytest.raises(MemoError, match="kind must be"):
+        mem_with_stub.promote_learning(["whatever"], title="x", kind="bogus")
+
+
+def test_promote_learning_rejects_empty_source_ids(mem_with_stub) -> None:
+    with pytest.raises(MemoError, match="at least one source memory"):
+        mem_with_stub.promote_learning([], title="x")
+
+
+def test_record_task_outcome_rejects_empty_task_id(mem_with_stub) -> None:
+    with pytest.raises(MemoError, match="task_id cannot be empty"):
+        mem_with_stub.record_task_outcome(
+            task_id="   ",
+            status="success",
+            memory_ids=["anything"],
         )
 
 
