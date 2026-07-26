@@ -6,7 +6,7 @@ from typing import Any
 
 from memo.atomic_io import authority_write_lock
 from memo.contracts import TrustTier
-from memo.errors import NotFoundError
+from memo.errors import NotFoundError, ValidationError
 from memo.memory._base import _MemoryBase
 from memo.util import utc_now_iso
 
@@ -66,7 +66,7 @@ def _updated_outcome_extra(
 def _validated_task_id(task_id: str) -> str:
     normalized = task_id.strip()
     if not normalized:
-        raise ValueError("task_id cannot be empty")
+        raise ValidationError("task_id cannot be empty")
     return normalized
 
 
@@ -240,10 +240,10 @@ class _OutcomeFeedbackOpsMixin(_MemoryBase):
     ) -> Any:
         """Create a procedure or failure pattern grounded in source memories."""
         if kind not in _LEARNING_TYPES:
-            raise ValueError("kind must be procedure|failure_pattern")
+            raise ValidationError("kind must be procedure|failure_pattern")
         ids = list(dict.fromkeys(value.strip() for value in memory_ids if value.strip()))
         if not ids:
-            raise ValueError("at least one source memory is required")
+            raise ValidationError("at least one source memory is required")
         sources = []
         for memory_id in ids:
             record = self.get(memory_id)
@@ -262,7 +262,7 @@ class _OutcomeFeedbackOpsMixin(_MemoryBase):
                 else failures >= 2 and total > 0 and failures / total >= 0.5
             )
             if not qualifies:
-                raise ValueError(f"memory {record.id[:12]} lacks outcome evidence for {kind}")
+                raise ValidationError(f"memory {record.id[:12]} lacks outcome evidence for {kind}")
         body = (content or "").strip()
         if not body:
             parts = [f"## {record.title}\n\n{str(record.body or '').strip()}" for record in sources]
