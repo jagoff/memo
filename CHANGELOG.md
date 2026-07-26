@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.4.1] - 2026-07-26
+
+### Fixed
+
+- MCP: `promote_learning` / `record_task_outcome` validation errors are now
+  surfaced with their real message over the MCP write coordinator instead of
+  being masked as the generic "coordinated MCP write failed safely". The
+  input-validation raises migrated from bare `ValueError` to `ValidationError`
+  (a `MemoError` subclass), which the single-writer coordinator passes through
+  verbatim (#104).
+- `memo backup list` / restore no longer crash on backups whose metadata carries
+  the legacy `memoria_count` key: `BackupMetadata.from_dict` aliases it to
+  `memory_count` and drops unknown keys instead of raising `TypeError` (#105).
+
 ## [4.4.0] - 2026-07-24
 
 ### Fixed
