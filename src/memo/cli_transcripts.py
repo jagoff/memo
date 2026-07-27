@@ -201,7 +201,11 @@ def _read_full_transcript(transcript_path: Path) -> list[tuple[str, str]]:
         return []
     try:
         raw = transcript_path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # UnicodeDecodeError (a ValueError, not OSError) on a malformed-encoding
+        # transcript must degrade gracefully — otherwise `memo reflect --if-due`
+        # crashes before mark_reflected() and the session stays permanently
+        # un-reflectable on every future run.
         return []
 
     exchanges: list[tuple[str, str]] = []

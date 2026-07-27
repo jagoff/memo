@@ -295,6 +295,14 @@ def doctor(
             f"[yellow]![/yellow] github sync: {sync['ahead']} unpushed, "
             f"{sync['dirty_files']} uncommitted (auto-syncs in-session / on Stop)"
         )
+    elif sync.get("behind"):
+        # A machine stuck behind (e.g. a persistent `.md` rebase conflict that
+        # `sync_pull` aborts) must not read as healthy — without this branch
+        # doctor printed "up to date" while N remote commits stayed unpulled.
+        console.print(
+            f"[yellow]![/yellow] github sync: {sync['behind']} commit(s) behind remote "
+            "— run `memo sync pull` (a persistent rebase conflict needs manual resolution)"
+        )
     else:
         console.print(
             f"[green]✓[/green] github sync: up to date ({sync.get('remote') or 'no remote'})"

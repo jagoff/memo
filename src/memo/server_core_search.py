@@ -368,6 +368,15 @@ def register(server: Any, memory: Memory) -> None:
         retrieval; `source` attributes consult logging. With client sampling
         enabled, synthesis runs on the calling model (see `synthesizer` field).
         """
+        # Enforce the same size/shape bounds the HTTP /chat route applies, so the
+        # MCP surface can't be handed an unbounded question (e.g. echoed from a
+        # prompt-injected tool result) that runs synchronously against the
+        # in-process embedder/LLM with no cap.
+        from memo.server_chat import validate_chat_payload
+
+        question, k, type, _hist, _ctx = validate_chat_payload(
+            {"question": question, "k": k, "type": type}
+        )
         t0 = now_ms()
         res, synthesizer = await run_synth(
             memory,
@@ -412,6 +421,15 @@ def register(server: Any, memory: Memory) -> None:
         With client sampling enabled, synthesis runs on the calling model (see
         `synthesizer` field).
         """
+        # Enforce the same size/shape bounds the HTTP /chat route applies (32KB
+        # question, 128-item/512KB history, 256KB context, depth cap), so the MCP
+        # surface can't be handed an unbounded history/context payload running
+        # synchronously against the in-process embedder/LLM with no cap.
+        from memo.server_chat import validate_chat_payload
+
+        question, k, type, history, context = validate_chat_payload(
+            {"question": question, "k": k, "type": type, "history": history, "context": context}
+        )
         t0 = now_ms()
         merged_context = dict(context or {})
         if session_id and "session_id" not in merged_context:

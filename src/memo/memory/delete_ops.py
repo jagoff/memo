@@ -260,6 +260,15 @@ class _DeleteOpsMixin(_MemoryBase):
         with contextlib.suppress(Exception):
             self.operational.gc_conflicts_for_memory(id_)
 
+        # Step 5c: drop temporal fact edges sourced from this memory. Unlike the
+        # graph edges above, these are NOT recovered by a later `memo reindex`:
+        # incremental reindex only iterates .md files still on disk, and this
+        # memory's file is already gone — so orphaned fact rows would keep
+        # surfacing in the SessionStart briefing and the temporal CLI/MCP reads
+        # (which query fact_edges directly). Purge them here (non-critical).
+        with contextlib.suppress(Exception):
+            self.fact_edges.delete_for_source(id_)
+
         # Step 6: append a native receipt. A journal failure cannot reverse an
         # authoritative completed delete.
         with contextlib.suppress(Exception):

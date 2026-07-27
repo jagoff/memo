@@ -125,8 +125,20 @@ def _load_or_create_machine_salt() -> str:
 
     salt = secrets.token_hex(16)  # 32 hex chars = 128 bits
     salt_path.parent.mkdir(parents=True, exist_ok=True)
-    salt_path.write_text(salt, encoding="utf-8")
-    salt_path.chmod(0o600)
+    # Create at 0o600 atomically via O_CREAT|O_EXCL rather than write_text()+chmod:
+    # the latter leaves a TOCTOU window where the salt is world-readable at the
+    # process umask before chmod tightens it. This salt feeds the legacy KDF, so
+    # disclosure meaningfully weakens it. Mirrors _load_or_create_master_key.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(salt_path, flags, 0o600)
+    except FileExistsError:
+        # Lost the race to a concurrent creator — read the winner's value.
+        return salt_path.read_text(encoding="utf-8").strip()
+    try:
+        _write_all(fd, salt.encode("utf-8"))
+    finally:
+        os.close(fd)
     _log.debug("Created machine salt at %s", salt_path)
     return salt
 

@@ -42,6 +42,24 @@ from memo.temporal import Contradiction, TemporalAnalyzer
 
 _log = logging.getLogger(__name__)
 
+
+def _as_aware(ts: str) -> datetime:
+    """Parse an ISO timestamp into an aware UTC datetime for ordering.
+
+    `.updated` is written with a LOCAL UTC offset (`_now_iso` uses
+    `.astimezone()`), so a raw string compare inverts order across a DST
+    boundary in a positive-offset zone (e.g. Madrid CEST→CET makes the
+    actually-earlier instant sort as `"+02:00" > "+01:00"`), reorienting a
+    `supersedes` edge backwards. Compare instants, not strings. Unparseable or
+    empty timestamps sort oldest so they never win a `kept_newer` reorientation.
+    """
+    try:
+        dt = datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return datetime.min.replace(tzinfo=UTC)
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 VALID_STATUSES = {
     "open",  # pending triage
     "fused",  # merged into a new memory
@@ -557,7 +575,9 @@ class CanonicalContradictionAdapter:
             second = self.memory.get(str(row["target_id"]))
             if first is not None and second is not None:
                 older, newer = (
-                    (first, second) if first.updated <= second.updated else (second, first)
+                    (first, second)
+                    if _as_aware(first.updated) <= _as_aware(second.updated)
+                    else (second, first)
                 )
                 source, target = (newer, older) if status == "kept_newer" else (older, newer)
                 row = self.memory.store.reorient_pending_relation(

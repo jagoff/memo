@@ -210,7 +210,18 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
         max_val=1.0,
     ),
-    _spec("MEMO_RECALL_RERANK_INPUT_K", "int", 10, "recall", "Candidates fed to the reranker."),
+    _spec(
+        "MEMO_RECALL_RERANK_INPUT_K",
+        "int",
+        10,
+        "recall",
+        "Candidates fed to the reranker. Bounded 1-200 to match the pydantic "
+        "`rerank_input_k` field: the recall hook injects this via cfg.model_copy "
+        "(which skips validation), so an unbounded value would size a cold-start "
+        "cross-encoder pool past the 5s hook budget.",
+        min_val=1,
+        max_val=200,
+    ),
     _spec(
         "MEMO_RECALL_SKIP_SLASH",
         "bool",

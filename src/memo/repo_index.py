@@ -114,6 +114,11 @@ class RepoCorpus:
         _validate_clone_url(url)
 
         ref_name = (ref or "HEAD").strip() or "HEAD"
+        # A ref is passed positionally to `git checkout --detach`; a leading dash
+        # would be parsed as an option (argument injection), mirroring the url
+        # dash-guard in _validate_clone_url. Real git refs never start with "-".
+        if ref_name.startswith("-"):
+            raise ValueError(f"unsafe repo ref (leading dash): {ref!r}")
         repo_id = _stable_id("repo", url.strip(), ref_name)
         repo_name = _safe_repo_name(name or _derive_repo_name(url))
         if not repo_name:

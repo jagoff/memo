@@ -892,7 +892,8 @@ class _AskOpsMixin(_MemoryBase):
         # / `memo_chat_ask`), so `MEMO_ASK_SNIPPET_CHARS` (fallback 800) supplies
         # the deploy-wide default. An explicit int is honored verbatim.
         if snippet_chars is None:
-            snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
+            _snip = flag_int("MEMO_ASK_SNIPPET_CHARS")
+            snippet_chars = 800 if _snip is None else _snip
         if use_context_pack is None:
             use_context_pack = flag_bool("MEMO_CONTEXT_PACK")
         norm_question, sources, user_msg, hits = self._build_ask_context(
@@ -999,7 +1000,8 @@ class _AskOpsMixin(_MemoryBase):
         # / `memo_chat_ask`), so `MEMO_ASK_SNIPPET_CHARS` (fallback 800) supplies
         # the deploy-wide default. An explicit int is honored verbatim.
         if snippet_chars is None:
-            snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
+            _snip = flag_int("MEMO_ASK_SNIPPET_CHARS")
+            snippet_chars = 800 if _snip is None else _snip
         if use_context_pack is None:
             use_context_pack = flag_bool("MEMO_CONTEXT_PACK")
         _, sources, user_msg, hits = self._build_ask_context(

@@ -341,13 +341,20 @@ def validate(env: dict[str, str] | None = None) -> list[dict[str, str]]:
     # MEMO_MODEL_PROFILE is a plain str spec, so _coerce can't reject an invalid
     # profile — but Config.from_env() raises on one. Check the choices here so
     # `memo config validate` doesn't give a false green that later hard-crashes.
+    # Derive the valid set from config.MODEL_PROFILES (the same source
+    # Config.from_env() checks) rather than a hardcoded literal — otherwise this
+    # guard silently drifts from the real profiles, reintroducing the exact
+    # validate-green-then-crash gap it exists to close.
+    from memo.config import MODEL_PROFILES
+
     profile = src.get("MEMO_MODEL_PROFILE")
-    if profile and profile.strip().lower() not in {"light", "balanced", "quality"}:
+    if profile and profile.strip().lower() not in MODEL_PROFILES:
+        choices = ", ".join(sorted(MODEL_PROFILES))
         problems.append(
             {
                 "flag": "MEMO_MODEL_PROFILE",
                 "value": profile,
-                "error": "must be one of: light, balanced, quality (or empty)",
+                "error": f"must be one of: {choices} (or empty)",
             }
         )
     from memo.config_md import validate_markdown_config
