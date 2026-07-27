@@ -395,7 +395,7 @@ class _SchemaMixin(_StoreBase):
                     cols.add(col)
                     added = True
                 except Exception as e:
-                    _log.debug("schema migration col %r failed: %s", col, e)
+                    _log.warning("schema migration col %r failed: %s", col, e)
         version_row = self._conn.execute("PRAGMA user_version").fetchone()
         user_version = int(version_row[0]) if version_row else 0
         if added and user_version < 3:
@@ -423,7 +423,7 @@ class _SchemaMixin(_StoreBase):
                     "ALTER TABLE memory_health ADD COLUMN support_count INTEGER NOT NULL DEFAULT 0"
                 )
             except Exception as e:
-                _log.debug("schema migration memory_health.support_count failed: %s", e)
+                _log.warning("schema migration memory_health.support_count failed: %s", e)
 
         # Inline migration (V1): verification state tracking columns for state machine.
         # CREATE IF NOT EXISTS skips existing tables, so pre-existing DBs
@@ -436,12 +436,12 @@ class _SchemaMixin(_StoreBase):
                     "ALTER TABLE meta ADD COLUMN verification_state TEXT DEFAULT 'unverified'"
                 )
             except Exception as e:
-                _log.debug("schema migration meta.verification_state failed: %s", e)
+                _log.warning("schema migration meta.verification_state failed: %s", e)
         if "verified_at" not in mcols:
             try:
                 self._conn.execute("ALTER TABLE meta ADD COLUMN verified_at INTEGER")
             except Exception as e:
-                _log.debug("schema migration meta.verified_at failed: %s", e)
+                _log.warning("schema migration meta.verified_at failed: %s", e)
 
         # Inline migration (T1): record-level bi-temporal validity. valid_at =
         # world-validity start (defaults to created on save); invalid_at =
@@ -453,12 +453,12 @@ class _SchemaMixin(_StoreBase):
             try:
                 self._conn.execute("ALTER TABLE meta ADD COLUMN valid_at TEXT")
             except Exception as e:
-                _log.debug("schema migration meta.valid_at failed: %s", e)
+                _log.warning("schema migration meta.valid_at failed: %s", e)
         if "invalid_at" not in mcols:
             try:
                 self._conn.execute("ALTER TABLE meta ADD COLUMN invalid_at TEXT")
             except Exception as e:
-                _log.debug("schema migration meta.invalid_at failed: %s", e)
+                _log.warning("schema migration meta.invalid_at failed: %s", e)
         # Partial index keeps the default-recall "currently valid" filter cheap.
         try:
             self._conn.execute(
@@ -466,7 +466,7 @@ class _SchemaMixin(_StoreBase):
                 "ON meta(invalid_at) WHERE invalid_at IS NOT NULL"
             )
         except Exception as e:
-            _log.debug("schema migration idx_meta_invalid_at failed: %s", e)
+            _log.warning("schema migration idx_meta_invalid_at failed: %s", e)
 
         # Ensure sessions table exists (session pattern)
         self._conn.execute(

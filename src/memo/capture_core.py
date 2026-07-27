@@ -1248,6 +1248,11 @@ def _extract_and_save(
                             file=sys.stderr,
                         )
                 except Exception as _exc:  # never let a downgrade break capture
+                    _log.warning(
+                        "capture: claim downgrade skipped for '%s': %s",
+                        cand.get("title"),
+                        _exc,
+                    )
                     if debug:
                         print(f"# memo capture: claim downgrade skipped: {_exc}", file=sys.stderr)
             facts += len(

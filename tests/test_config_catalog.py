@@ -56,3 +56,19 @@ def test_model_profile_exposes_safe_choices() -> None:
     profile = catalog_by_key()["models.model_profile"]
 
     assert [choice.value for choice in profile.choices] == ["light", "balanced", "quality"]
+
+
+def test_config_owned_env_vars_have_no_bogus_flag_alias() -> None:
+    """MEMO_MODEL_PROFILE / MEMO_MEMORIES_IN_VAULT / MEMO_SINGLE_DB are bound to
+    their canonical Config path via FIELD_BINDINGS. They are ALSO FlagSpecs (so
+    config.py can read them via flag_bool), but ``path_to_env`` must not emit a
+    second ``misc.*`` alias — that alias resolves + validates for `config set`
+    yet writes a Markdown key the running Config never reads (silent divergence).
+    """
+    paths = path_to_env()
+    assert "misc.model_profile" not in paths
+    assert "misc.memories_in_vault" not in paths
+    assert "misc.single_db" not in paths
+    assert paths["models.model_profile"] == "MEMO_MODEL_PROFILE"
+    assert paths["storage.memories_in_vault"] == "MEMO_MEMORIES_IN_VAULT"
+    assert paths["storage.single_db"] == "MEMO_SINGLE_DB"

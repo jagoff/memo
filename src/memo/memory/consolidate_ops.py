@@ -313,21 +313,34 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 _cluster_dict.setdefault(rep, []).append(i)
             return list(_cluster_dict.values())
         except ImportError:
+            # Match the numpy path's BEST-match semantics: assign i to the
+            # single closest existing representative (argmax, first-on-tie),
+            # not merely the FIRST one over threshold. Assigning to the first
+            # match made clustering depend on whether numpy happened to be
+            # importable.
             clusters: builtins.list[builtins.list[int]] = []
             for i in range(len(items)):
-                joined = False
                 norm_i = sum(x * x for x in items[i]["emb"]) ** 0.5 or 1.0
+                best_cluster: builtins.list[int] | None = None
+                best_cosine: float | None = None
                 for cluster in clusters:
                     rep_item = items[cluster[0]]
                     norm_r = sum(x * x for x in rep_item["emb"]) ** 0.5 or 1.0
                     cosine = sum(
                         x * y for x, y in zip(items[i]["emb"], rep_item["emb"], strict=False)
                     ) / (norm_i * norm_r)
-                    if cosine >= threshold:
-                        cluster.append(i)
-                        joined = True
-                        break
-                if not joined:
+                    # Strict `>` keeps the earliest representative on a tie,
+                    # mirroring numpy's argmax.
+                    if best_cosine is None or cosine > best_cosine:
+                        best_cosine = cosine
+                        best_cluster = cluster
+                if (
+                    best_cluster is not None
+                    and best_cosine is not None
+                    and best_cosine >= threshold
+                ):
+                    best_cluster.append(i)
+                else:
                     clusters.append([i])
             return clusters
 

@@ -421,6 +421,46 @@ def test_recency_helpers():
     assert _recency_key(contact) == "2026-05-30"
 
 
+def test_recency_key_multiday_chunk_keeps_time_within_max_day_section():
+    """F3: a short (unsplit) multi-day chunk must pair max(day) with a clock
+    time from THAT day's section — not a later time bled in from an earlier day."""
+    from memo.memory import _recency_key
+
+    multiday = MemoryRecord(
+        id="d" * 32,
+        path="x/WhatsApp · Grecia.md",
+        title="WhatsApp · Grecia",
+        type="reference",
+        tags=["whatsapp", "chat"],
+        created="2026-06-05T00:00:00",
+        updated="2026-06-05T00:00:00",
+        # 06-03 carries a LATER clock time (23:58) than any 06-04 message.
+        body=(
+            "## 2026-06-03\n"
+            "- **yo** (23:58): buenas noches\n"
+            "## 2026-06-04\n"
+            "- **yo** (07:15): buen día\n"
+            "- **Grecia** (08:30): hola\n"
+        ),
+    )
+    # Must be 06-04's own tail time (08:30), NOT the fabricated "2026-06-04 23:58".
+    assert _recency_key(multiday) == "2026-06-04 08:30"
+
+    # Fallback: the date lives only in the title (no `## <day>` heading to anchor
+    # a time to), so the key stays day-only rather than borrowing a stray time.
+    title_dated = MemoryRecord(
+        id="e" * 32,
+        path="notes/meeting.md",
+        title="Meeting 2026-06-04",
+        type="note",
+        tags=["notes"],
+        created="2026-06-05T00:00:00",
+        updated="2026-06-05T00:00:00",
+        body="- discussed roadmap (14:00)\n",
+    )
+    assert _recency_key(title_dated) == "2026-06-04"
+
+
 def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
     mem_with_stub: Memory, monkeypatch
 ):

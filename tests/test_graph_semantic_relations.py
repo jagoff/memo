@@ -90,6 +90,27 @@ def test_drop_for_memoria_cascades_to_semantic_relations(tmp_path) -> None:
     assert graph.semantic_relations_for(source_id="a") == []
 
 
+def test_drop_for_memoria_cascades_to_target_semantic_relations(tmp_path) -> None:
+    # Symmetric to the source-side cascade: deleting the memory that is the
+    # TARGET of a relation must also drop the edge. Previously drop_for_memoria
+    # only deleted WHERE source_id = ?, leaving a dangling target-side row.
+    graph = GraphStore(tmp_path / "graph.db")
+    graph.upsert_semantic_relation(
+        source_kind="memory",
+        source_id="a",
+        target_kind="memory",
+        target_id="b",
+        relation="supersedes",
+        derived_from="test",
+    )
+    assert graph.semantic_relations_for(target_id="b") != []
+
+    graph.drop_for_memoria("b")
+
+    assert graph.semantic_relations_for(target_id="b") == []
+    assert graph.semantic_relations_for(source_id="a") == []
+
+
 def test_store_relations_and_delete_by_derived_from(tmp_path) -> None:
     graph = GraphStore(tmp_path / "graph.db")
     rel = extract_relations_batch(

@@ -405,6 +405,73 @@ def test_check_gate_fails_on_noise_rise():
     assert "noise@k" in res.message
 
 
+def test_full_gate_metrics_records_the_winning_config_name():
+    # F1: the persisted baseline must carry config identity so check_gate can
+    # pin the comparison to the same config across runs.
+    rows = _rows((0.4, 0.3), (0.9, 0.1))
+    assert eval_recall.full_gate_metrics(rows)["config"] == "cfg1"
+
+
+def test_check_gate_pins_to_baseline_config_and_catches_masked_regression():
+    # F1: the shipped config (cfgA) regressed, but a different config (cfgB)
+    # wins this run. Without config pinning best_row=cfgB (0.9) clears the 0.6
+    # baseline and MASKS cfgA's drop; pinning to the baseline's config catches it.
+    rows = [
+        eval_recall.Row(config="cfgA", precision_at_k=0.5, noise_at_k=0.1),
+        eval_recall.Row(config="cfgB", precision_at_k=0.9, noise_at_k=0.1),
+    ]
+    baseline = {"config": "cfgA", "precision_at_k": 0.6, "noise_at_k": 0.1}
+    res = eval_recall.check_gate(rows, baseline)
+    assert not res.passed
+    assert "precision@k" in res.message
+    assert "cfgA" in res.message  # gated (baseline) config surfaced
+    assert "cfgB" in res.message  # current winner surfaced too
+
+
+def test_check_gate_fails_loudly_when_pinned_config_absent_from_run():
+    # F1: the baseline pins a config this run did not evaluate — comparing a
+    # different config would be apples-to-oranges, so fail loudly.
+    rows = [eval_recall.Row(config="cfgB", precision_at_k=0.9, noise_at_k=0.0)]
+    baseline = {"config": "cfgA", "precision_at_k": 0.6, "noise_at_k": 0.1}
+    res = eval_recall.check_gate(rows, baseline)
+    assert not res.passed
+    assert "cfgA" in res.message
+    assert "not evaluated" in res.message
+
+
+def test_check_gate_pinned_config_passes_when_it_holds_even_if_another_wins():
+    rows = [
+        eval_recall.Row(config="cfgA", precision_at_k=0.6, noise_at_k=0.1),
+        eval_recall.Row(config="cfgB", precision_at_k=0.9, noise_at_k=0.0),
+    ]
+    baseline = {"config": "cfgA", "precision_at_k": 0.6, "noise_at_k": 0.1}
+    res = eval_recall.check_gate(rows, baseline)
+    assert res.passed
+    assert "cfgA" in res.message
+
+
+def test_check_gate_fails_on_k_mismatch():
+    # F2: a baseline seeded at k=3 must not be compared against a k=5 run
+    # (eval memory k=5 and eval recall k=3 share one baseline file).
+    rows = _rows((0.9, 0.0))
+    baseline = {"precision_at_k": 0.6, "noise_at_k": 0.1, "k": 3}
+    res = eval_recall.check_gate(rows, baseline, k=5)
+    assert not res.passed
+    assert "k mismatch" in res.message
+
+
+def test_check_gate_matching_k_does_not_block():
+    rows = _rows((0.9, 0.0))
+    baseline = {"precision_at_k": 0.6, "noise_at_k": 0.1, "k": 3}
+    assert eval_recall.check_gate(rows, baseline, k=3).passed
+
+
+def test_check_gate_legacy_baseline_without_k_is_unaffected_by_k():
+    # A legacy baseline that never recorded k: passing k must not spuriously fail.
+    rows = _rows((0.9, 0.0))
+    assert eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1}, k=5).passed
+
+
 # --- end-to-end (isolated, stubbed embedder) --------------------------------
 
 

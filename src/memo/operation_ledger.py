@@ -406,6 +406,23 @@ class OperationLedger:
         )
 
     def verify(self) -> dict[str, Any]:
+        """Re-derive every device chain and confirm the hash links + head match.
+
+        DETECTS accidental damage: a partial or interrupted write, a truncated /
+        reordered / dropped row, or a single mutated field — anything that leaves
+        an ``event_hash`` inconsistent with its ``previous_hash`` and content, or
+        a recorded head that disagrees with the final event. This is the class of
+        corruption a bug or a race can introduce.
+
+        Does NOT prove authenticity. The chain is UNANCHORED and local: an actor
+        with write access to ``self.root`` can forge the tail (recompute the
+        affected ``event_hash`` values and re-stamp the head) or rebuild the whole
+        chain from scratch, and this check will still report ``ok``. Tamper-
+        evidence against a coordinated same-actor rewrite requires an EXTERNAL
+        anchor (a co-signed or remotely-witnessed head), which this ledger does
+        not have. Read a passing ``verify()`` as "internally consistent", never as
+        "provably untampered".
+        """
         devices: dict[str, dict[str, Any]] = {}
         ok = True
         try:

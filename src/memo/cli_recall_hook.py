@@ -371,6 +371,17 @@ def recall_hook() -> None:
             "MEMO_RERANK_INPUT_K",
             str(10 if (_rik := flag_int("MEMO_RECALL_RERANK_INPUT_K")) is None else _rik),
         )
+        # search_ops reads cfg.rerank_input_k — a static pydantic field fixed
+        # once by Config.from_env() above, NOT re-read from env — so the env
+        # setdefault alone is a no-op on this path: Memory(cfg) below reuses the
+        # already-built cfg and the shrink never reaches the reranker, leaving
+        # the highest-latency subprocess fallback reranking the full pool (30)
+        # under the 5s budget. Reflect the resolved pool size onto cfg so the
+        # shrink actually takes effect. (setdefault keeps an explicit operator
+        # MEMO_RERANK_INPUT_K authoritative — and cfg already carries that same
+        # value, so no divergence.) The daemon path returns above, unchanged.
+        with contextlib.suppress(ValueError):
+            cfg = cfg.model_copy(update={"rerank_input_k": int(os.environ["MEMO_RERANK_INPUT_K"])})
 
     if knobs.mode in ("vec", "hybrid") and not flag_bool("MEMO_RECALL_FORCE_MODE"):
         # Cold-start downgrade — the subprocess equivalent of the daemon's
@@ -486,7 +497,12 @@ def recall_hook() -> None:
                     mem, days=_band_days, exclude_types=exclude_types, floor=_knobs.min_sim
                 ),
             )
-        return rank_hits(hits, _knobs, vec_cosine=_vc, preferences=_prefs)
+        # query=prompt (the original prompt, NOT query_text which may be the
+        # expanded context) matches every daemon-path rank_hits call
+        # (recall_logic._recall_logic): without it _is_broad_query(None) is
+        # always False, so altitude-boost's broad= gate never fires here →
+        # silent daemon/subprocess ranking divergence.
+        return rank_hits(hits, _knobs, vec_cosine=_vc, preferences=_prefs, query=prompt)
 
     qualifying = _rank(prompt)
 

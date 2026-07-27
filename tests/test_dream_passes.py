@@ -102,6 +102,63 @@ class TestRunContradict:
         assert mock_memory.get(a.id) is not None
         assert mock_memory.get(b.id) is not None
 
+    def test_contradict_archive_stamps_superseded_by_provenance(
+        self, mock_memory, monkeypatch
+    ) -> None:
+        """F2: the nightly auto-supersede must pass superseded_by=dominant so the
+        archived .md carries the winner id + close-date (portable provenance)."""
+        import frontmatter
+
+        # keep the supersede loop focused on the archive: no anti-memory minting,
+        # and stub the contradict-store resolve (its judge_relation->supersede
+        # path can't re-resolve the just-archived memory — a pre-existing quirk
+        # unrelated to the provenance stamp under test here).
+        monkeypatch.setattr("memo.negative_capture.capture_from_supersede", lambda *a, **k: {})
+        monkeypatch.setattr(mock_memory.contradict_store, "resolve", lambda *a, **k: None)
+
+        older = mock_memory.save(content="El puerto del dashboard es 8080", title="p-old")
+        newer = mock_memory.save(content="El puerto del dashboard es 8765", title="p-new")
+        mock_memory.contradict_store.upsert_open(
+            memory_id_a=older.id,
+            memory_id_b=newer.id,
+            relationship="contradiction",
+            confidence=0.95,
+            rationale="ports differ",
+        )
+
+        result = _run_contradict(mock_memory, dry_run=False)
+
+        assert result.get("superseded"), "expected the older side to be superseded"
+        assert result["superseded"][0]["older"] == older.id
+        assert mock_memory.get(older.id) is None  # archived
+        inactive = mock_memory.cfg.memory_dir / "inactive" / f"{older.id}.md"
+        assert inactive.is_file()
+        post = frontmatter.loads(inactive.read_text(encoding="utf-8"))
+        assert post["extra"]["superseded_by"] == newer.id
+
+    def test_contradict_archive_false_records_error_not_superseded(
+        self, mock_memory, monkeypatch
+    ) -> None:
+        """F3: archive_memory returns False (record/file already gone) — the id
+        must NOT be reported as superseded, and the failure lands in errors."""
+        monkeypatch.setattr("memo.negative_capture.capture_from_supersede", lambda *a, **k: {})
+        monkeypatch.setattr(mock_memory.lifecycle, "archive_memory", lambda *a, **k: False)
+
+        older = mock_memory.save(content="El release sale el lunes", title="r-old")
+        newer = mock_memory.save(content="El release sale el martes", title="r-new")
+        mock_memory.contradict_store.upsert_open(
+            memory_id_a=older.id,
+            memory_id_b=newer.id,
+            relationship="contradiction",
+            confidence=0.95,
+            rationale="dates differ",
+        )
+
+        result = _run_contradict(mock_memory, dry_run=False)
+
+        assert result["superseded"] == []  # not overstated
+        assert any("already gone" in e for e in result.get("errors", []))
+
     def test_run_contradict_nway_marks_all_competing(self, mock_memory, monkeypatch) -> None:
         """3+ mutually-contradicting memories (a connected component) all end competing."""
         monkeypatch.setenv("MEMO_BELIEF_COMPETING", "1")
@@ -259,6 +316,16 @@ class TestRunStale:
             with patch.object(mock_memory.lifecycle, "archive_memory") as mock_archive:
                 _run_stale(mock_memory, dry_run=True)
                 mock_archive.assert_not_called()
+
+    def test_stale_archive_false_records_error_not_archived(self, mock_memory: Memory) -> None:
+        """F3: archive_memory returns False (already gone) — the id must NOT be
+        recorded as archived; the failure lands in errors instead."""
+        mock_stale = [{"id": "gone", "days_since_update": 400}]
+        with patch.object(mock_memory.temporal, "detect_stale_memories", return_value=mock_stale):
+            with patch.object(mock_memory.lifecycle, "archive_memory", return_value=False):
+                result = _run_stale(mock_memory, dry_run=False)
+        assert result["archived"] == []
+        assert any("already gone" in e for e in result.get("errors", []))
 
 
 class TestRunSynthesis:

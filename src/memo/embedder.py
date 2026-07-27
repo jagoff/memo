@@ -48,18 +48,24 @@ class _SimpleLRU:
 
         self._d: OrderedDict[str, Any] = OrderedDict()
         self._cap = max(1, maxsize)
+        # get/put run in embed_query OUTSIDE gpu_guard; under the FastMCP HTTP
+        # threadpool concurrent memo_search/memo_ask share one embedder, so two
+        # threads racing move_to_end/popitem on the OrderedDict can KeyError.
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> Any:
-        if key not in self._d:
-            return None
-        self._d.move_to_end(key)
-        return self._d[key]
+        with self._lock:
+            if key not in self._d:
+                return None
+            self._d.move_to_end(key)
+            return self._d[key]
 
     def put(self, key: str, value: Any) -> None:
-        self._d[key] = value
-        self._d.move_to_end(key)
-        while len(self._d) > self._cap:
-            self._d.popitem(last=False)
+        with self._lock:
+            self._d[key] = value
+            self._d.move_to_end(key)
+            while len(self._d) > self._cap:
+                self._d.popitem(last=False)
 
 
 # EmbedderBase (memo.embed_base) is the shared interface; MLXEmbedder implements

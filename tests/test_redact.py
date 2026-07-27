@@ -192,3 +192,58 @@ def test_sanitize_persisted_text_reports_private_span() -> None:
     result = sanitize_persisted_text("keep <private>drop</private>")
     assert result.text == "keep"
     assert result.found == ("private-span",)
+
+
+def test_pem_many_begin_no_end_is_linear_and_unmatched():
+    # Pathological shape for the former lazy ``BEGIN.*?END`` regex: tens of
+    # thousands of complete BEGIN markers with NO matching END. The old regex
+    # rescanned to end-of-text from every unmatched BEGIN → O(k·n) (~86s on a
+    # 1.6MB input); the linear scan locates the first BEGIN, finds no END, stops
+    # promptly, and leaves the text untouched (guards py/polynomial-redos).
+    text = ("-----BEGIN RSA PRIVATE KEY-----\n" * 40_000) + "no end marker"
+    start = time.perf_counter()
+    res = redact_secrets(text)
+    assert time.perf_counter() - start < 1.0
+    assert res.text == text
+    assert res.found == ()
+    # scan_secrets shares the same linear scan — also fast, also finds nothing.
+    start = time.perf_counter()
+    assert scan_secrets(text) == []
+    assert time.perf_counter() - start < 1.0
+
+
+def test_redacts_multiple_pem_blocks_in_one_pass():
+    a = "-----BEGIN RSA PRIVATE KEY-----\naaa\n-----END RSA PRIVATE KEY-----"
+    b = "-----BEGIN EC PRIVATE KEY-----\nbbb\n-----END EC PRIVATE KEY-----"
+    res = redact_secrets(f"first\n{a}\nmiddle\n{b}\nlast")
+    assert "PRIVATE KEY" not in res.text
+    assert res.text == "first\n****[private-key]\nmiddle\n****[private-key]\nlast"
+    assert res.found == ("private-key",)
+    assert scan_secrets(f"{a}\n{b}") == [
+        ("private-key", "****[private-key]"),
+        ("private-key", "****[private-key]"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "kind, token",
+    [
+        ("stripe-key", "sk_live_" + "A" * 24),
+        ("stripe-key", "rk_live_" + "b" * 24),
+        ("npm-token", "npm_" + "c" * 36),
+        ("gitlab-pat", "glpat-" + "D" * 20),
+    ],
+)
+def test_redacts_new_provider_prefixes(kind, token):
+    res = redact_secrets(f"config has {token} embedded")
+    assert token not in res.text
+    assert "****" + token[-4:] in res.text
+    assert kind in res.found
+
+
+def test_stripe_underscore_prefix_not_confused_with_openai_dash_prefix():
+    # Stripe uses ``sk_live_`` (underscore); OpenAI uses ``sk-`` (dash). The two
+    # must classify distinctly and not double-count.
+    stripe = "sk_live_" + "E" * 24
+    res = redact_secrets(f"pay {stripe}")
+    assert res.found == ("stripe-key",)

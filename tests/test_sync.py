@@ -461,6 +461,28 @@ def test_backup_manager_list_reads_legacy_memoria_count_directory(backup_manager
     assert surfaced[0].memory_count == 1740
 
 
+def test_backup_manager_list_flags_corrupt_archive(backup_manager, caplog):
+    """F3: an unreadable/corrupt archive must surface as ``corrupted=True`` in
+    ``list_backups`` (and log a warning) instead of masquerading as a genuine
+    fresh near-empty backup — which is what the silent fabricated metadata did.
+    """
+    import logging
+
+    # A valid backup lists as NOT corrupted...
+    (backup_manager.memory_dir / "ok.md").write_text("ok body", encoding="utf-8")
+    backup_manager.create_backup(compress=True, name="good")
+    # ...and an archive whose metadata can't be read lists as corrupted.
+    bad = backup_manager.backup_dir / "corrupt-backup.tar.gz"
+    bad.write_bytes(b"this is not a valid gzip tarball")
+
+    with caplog.at_level(logging.WARNING, logger="memo.sync"):
+        backups = {b.name: b for b in backup_manager.list_backups()}
+
+    assert backups["good"].corrupted is False
+    assert backups["corrupt-backup"].corrupted is True
+    assert any("Unreadable backup archive metadata" in r.getMessage() for r in caplog.records)
+
+
 def test_backup_manager_restores_valid_compressed_archive(backup_manager):
     original = backup_manager.memory_dir / "compressed.md"
     original.write_text("compressed backup body", encoding="utf-8")

@@ -224,13 +224,16 @@ class _DeleteOpsMixin(_MemoryBase):
         except Exception as exc:
             _log.warning("delete(%s): derived chunk cleanup failed — %s", id_[:8], exc)
 
-        # Step 3: log history (audit trail of a *completed* delete)
-        self.history.log_delete(
-            ts=_now_iso(),
-            record_id=id_,
-            title=r["title"],
-            type_=r["type"],
-        )
+        # Step 3: log history (audit trail of a *completed* delete). Runs after
+        # the point of no return like Steps 4-7, so a history-sidecar failure
+        # must not make the already-completed delete report failure.
+        with contextlib.suppress(Exception):
+            self.history.log_delete(
+                ts=_now_iso(),
+                record_id=id_,
+                title=r["title"],
+                type_=r["type"],
+            )
 
         # Step 4: drop graph edges (derived; rebuildable via reindex). Runs
         # after the point of no return, so a graph-sidecar failure (e.g. a

@@ -15,6 +15,10 @@ from memo.crossref import CrossReferenceIndex
 from memo.graph import GraphStore
 from memo.history import HistoryStore
 from memo.store import VecStore
+from memo.store.episode_store import EpisodeStore
+from memo.store.fact_edge_store import FactEdgeStore
+from memo.store.hype_store import HypeStore
+from memo.store.turn_store import TurnStore
 from memo.versioning import VersionManager, VersionStore
 
 pytestmark = pytest.mark.resource_hygiene
@@ -91,12 +95,45 @@ def test_best_effort_destructors_suppress_shutdown_interrupts(cls) -> None:
     cls.__del__(obj)
 
 
-def test_vec_store_closes_worker_thread_connections(tmp_path: Path) -> None:
-    store = VecStore(tmp_path / "vec.db", dims=4)
+@pytest.mark.parametrize(
+    ("factory", "reader"),
+    [
+        pytest.param(
+            lambda tmp_path: VecStore(tmp_path / "vec.db", dims=4),
+            lambda store: store.count(),
+            id="VecStore",
+        ),
+        pytest.param(
+            lambda tmp_path: FactEdgeStore(tmp_path / "facts.db"),
+            lambda store: store.get("absent"),
+            id="FactEdgeStore",
+        ),
+        pytest.param(
+            lambda tmp_path: HypeStore(tmp_path / "hype.db", dims=4),
+            lambda store: store.stats(),
+            id="HypeStore",
+        ),
+        pytest.param(
+            lambda tmp_path: EpisodeStore(tmp_path / "episodes.db", dims=4),
+            lambda store: store.count(),
+            id="EpisodeStore",
+        ),
+        pytest.param(
+            lambda tmp_path: TurnStore(tmp_path / "verbatim.db"),
+            lambda store: store.stats(),
+            id="TurnStore",
+        ),
+    ],
+)
+def test_store_closes_worker_thread_connections(tmp_path: Path, factory, reader) -> None:
+    # Same deterministic-cleanup contract as VecStore: FactEdgeStore is shared
+    # across the FastMCP HTTP threadpool for the process lifetime, so a WeakSet
+    # holder set would let a worker connection vanish before close()/sweep runs.
+    store = factory(tmp_path)
 
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always", ResourceWarning)
-        threads = [threading.Thread(target=store.count) for _ in range(4)]
+        threads = [threading.Thread(target=reader, args=(store,)) for _ in range(4)]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -106,7 +143,7 @@ def test_vec_store_closes_worker_thread_connections(tmp_path: Path) -> None:
         # or the dead-owner sweep on a later thread's _connect prunes them.
         assert 2 <= len(store._conn_holders) <= 5  # main + last worker at minimum
         # A new thread's _connect sweeps the (now dead) workers' holders.
-        sweeper = threading.Thread(target=store.count)
+        sweeper = threading.Thread(target=reader, args=(store,))
         sweeper.start()
         sweeper.join()
         assert len(store._conn_holders) == 2  # main + sweeper; dead workers pruned

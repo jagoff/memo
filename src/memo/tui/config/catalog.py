@@ -525,9 +525,23 @@ def path_to_env() -> dict[str, str]:
     """
     from memo.flags import REGISTRY
 
+    # Config-owned env vars are bound to their canonical Config path via
+    # FIELD_BINDINGS (e.g. models.model_profile, storage.single_db). A few are
+    # ALSO declared as ordinary FlagSpecs so config.py can read them through
+    # flag_bool(). Skip those REGISTRY entries here — mirroring the
+    # ``bound_env_names`` filter ``_flag_specs`` already applies — so we do not
+    # emit a bogus second ``<group>.<name>`` alias path. Such an alias resolves
+    # + validates for ``memo config set`` yet writes a Markdown key that Config
+    # never reads back (Config keys on the FIELD_BINDING path), a silent
+    # divergence between the flag layer and the running Config.
+    bound_env_names = frozenset(binding.env_name for binding in FIELD_BINDINGS)
     paths = {binding.key: binding.env_name for binding in FIELD_BINDINGS}
     paths.update(
-        {_flag_path(env_name, flag.group): env_name for env_name, flag in REGISTRY.items()}
+        {
+            _flag_path(env_name, flag.group): env_name
+            for env_name, flag in REGISTRY.items()
+            if env_name not in bound_env_names
+        }
     )
     return paths
 

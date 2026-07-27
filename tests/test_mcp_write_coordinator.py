@@ -111,6 +111,23 @@ async def test_unexpected_worker_exception_is_safe_typed_error():
 
 
 @pytest.mark.asyncio
+async def test_memo_error_propagates_unmasked():
+    # v4.0.1 regression class: a MemoError (e.g. a translated sqlite-lock
+    # StorageError) raised inside the coordinated job must reach the caller
+    # UNMASKED — never rewrapped as the generic "failed safely" mask that the
+    # bare-Exception branch applies. Masking it hid retryable lock failures.
+    coordinator = McpWriteCoordinator(1)
+
+    async def locked():
+        raise StorageError("database is locked")
+
+    with pytest.raises(StorageError, match="database is locked") as exc:
+        await coordinator.submit(locked)
+    assert "failed safely" not in str(exc.value)
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
 async def test_middleware_bypasses_read_only_and_coordinates_writes():
     coordinator = McpWriteCoordinator(1)
 

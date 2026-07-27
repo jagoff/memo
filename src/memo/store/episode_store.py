@@ -17,13 +17,12 @@ from __future__ import annotations
 import json
 import re
 import threading
-import weakref
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
-from .connection import _ConnectionMixin
+from .connection import _ConnectionHolder, _ConnectionMixin
 
 serialize_float32 = import_sqlite_vec().serialize_float32
 
@@ -49,7 +48,12 @@ class EpisodeStore(_ConnectionMixin):
         self.dims = dims
         self.embedder_model = embedder_model
         self._local = threading.local()
-        self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
+        # Strong references (matching VecStore): CPython does not guarantee the
+        # order in which a terminating thread clears its ``threading.local``
+        # values and finalizes sqlite connections, so ``close()`` (or the
+        # dead-owner sweep in ``_connect``) is the single deterministic cleanup
+        # boundary. A WeakSet would let a holder vanish before either fires.
+        self._conn_holders: set[_ConnectionHolder] = set()
         self._conn_holders_lock = threading.Lock()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()

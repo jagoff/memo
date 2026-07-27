@@ -589,11 +589,6 @@ def _search_for_eval(
     return search(query, **kwargs)
 
 
-def _scored_prompts(labels: LabelSet) -> int:
-    """How many prompts contribute to precision (have a known answer)."""
-    return sum(1 for p in labels.prompts if p.relevant or p.expect_ids)
-
-
 def _project_tag_for(project: str | None) -> str | None:
     """Normalize a label's ``project`` field to the stored tag format.
 
@@ -1182,15 +1177,20 @@ def avoid_gate_metrics(rows: list[Row]) -> dict[str, Any]:
 
 
 def full_gate_metrics(rows: list[Row]) -> dict[str, Any]:
-    """``gate_metrics`` ∪ ``avoid_gate_metrics`` — the complete baseline payload.
+    """``gate_metrics`` ∪ ``avoid_gate_metrics`` (+ the winning ``config`` name).
 
     ``memo eval recall --update-baseline`` should persist THIS (not bare
     ``gate_metrics``) so :func:`check_gate` enforces the ⛔ coverage / leakage
-    floors alongside precision/noise. Backward compatible: a baseline written by
-    the old ``gate_metrics`` simply lacks the avoid keys and ``check_gate`` falls
-    back to non-enforcing defaults for them (coverage floor 0.0, leak ceiling 1.0).
+    floors alongside precision/noise. It also records the winning config's
+    **name** (``config``) so :func:`check_gate` can PIN the comparison to that
+    same config across runs — a regression in the shipped/default config is not
+    masked when a different config happens to win a later run. Backward
+    compatible: a baseline written by the old ``gate_metrics`` lacks the avoid
+    keys (⛔ checks fall back to non-enforcing defaults — coverage floor 0.0,
+    leak ceiling 1.0) and the ``config`` key (comparison falls back to the
+    current best config, as before).
     """
-    return {**gate_metrics(rows), **avoid_gate_metrics(rows)}
+    return {"config": best_row(rows).config, **gate_metrics(rows), **avoid_gate_metrics(rows)}
 
 
 def check_gate(
@@ -1199,8 +1199,9 @@ def check_gate(
     *,
     tol: float = 1e-9,
     labels_fingerprint: str | None = None,
+    k: int | None = None,
 ) -> GateResult:
-    """Compare the current best config against a saved baseline.
+    """Compare the current run against a saved baseline — on the SAME config.
 
     The gate FAILS if precision@K dropped below, or noise@K rose above, the
     baseline (beyond `tol`). It ALSO fails if the negative-recall ⛔ coverage
@@ -1209,15 +1210,37 @@ def check_gate(
     avoid@k existed carries neither, so the ⛔ checks stay vacuous until a fresh
     --update-baseline that persists `full_gate_metrics`). `tol` absorbs float
     noise; widen it to allow a small accepted drift.
+
+    Three identity guards run FIRST, because a mismatch makes the pass/fail
+    meaningless:
+
+    * **labels** — a changed ``labels_fingerprint`` fails fast.
+    * **k** — a baseline measured at a different top-K fails fast rather than
+      silently comparing (e.g.) precision@3 against precision@5. ``eval memory``
+      (k=5) and ``eval recall`` (k=3) share one baseline file, so this catches
+      the cross-k contamination. Only enforced when a ``k`` is supplied AND the
+      baseline recorded one.
+    * **config identity** — when the baseline records the winning ``config``, the
+      gate PINS the comparison to that same config in the current run, so a
+      regression in the shipped/default config can't be masked by a different
+      config winning this run. A pinned config absent from the current run fails
+      loudly. A legacy baseline (no ``config`` key) falls back to the current
+      best config, as before. The config the numbers describe is surfaced in the
+      message for both sides.
     """
-    m = gate_metrics(rows)
-    am = avoid_gate_metrics(rows)
+    if not rows:
+        return GateResult(False, "FAIL — no configs evaluated", 0.0, 1.0, 0.0, 1.0)
+
     bp = float(baseline.get("precision_at_k", 0.0))
     bn = float(baseline.get("noise_at_k", 1.0))
     # Non-enforcing defaults for a legacy baseline: coverage floor 0.0 (any
     # coverage clears it), leak ceiling 1.0 (any leak rate clears it).
     b_avoid = float(baseline.get("avoid_at_k", 0.0))
     b_leak = float(baseline.get("avoid_leak_at_k", 1.0))
+    baseline_config = str(baseline.get("config") or "")
+    current_best = best_row(rows)
+
+    # --- identity guards (fail fast, before any metric comparison) ---
     baseline_fingerprint = str(baseline.get("labels_fingerprint") or "")
     if labels_fingerprint and baseline_fingerprint and labels_fingerprint != baseline_fingerprint:
         message = (
@@ -1225,29 +1248,65 @@ def check_gate(
             f"({baseline_fingerprint} -> {labels_fingerprint}); verify the prior label set, "
             "then refresh the baseline with --update-baseline"
         )
-        return GateResult(False, message, m["precision_at_k"], m["noise_at_k"], bp, bn)
-    prec_ok = m["precision_at_k"] >= bp - tol
-    noise_ok = m["noise_at_k"] <= bn + tol
-    avoid_ok = am["avoid_at_k"] >= b_avoid - tol
-    leak_ok = am["avoid_leak_at_k"] <= b_leak + tol
+        return GateResult(
+            False, message, current_best.precision_at_k, current_best.noise_at_k, bp, bn
+        )
+
+    baseline_k = baseline.get("k")
+    if k is not None and baseline_k is not None and int(baseline_k) != int(k):
+        message = (
+            f"FAIL — k mismatch (baseline k={int(baseline_k)}, current k={int(k)}); "
+            "the baseline was measured at a different top-K — reseed it at this k "
+            "with --update-baseline, or run the gate at the baseline k"
+        )
+        return GateResult(
+            False, message, current_best.precision_at_k, current_best.noise_at_k, bp, bn
+        )
+
+    # Pin the comparison to the baseline's winning config when it recorded one;
+    # else (legacy baseline) fall back to the current best config.
+    if baseline_config:
+        gated = next((r for r in rows if r.config == baseline_config), None)
+        if gated is None:
+            ran = ", ".join(r.config for r in rows)
+            message = (
+                f"FAIL — gated config {baseline_config!r} not evaluated this run "
+                f"(ran: {ran}); the baseline pins a config this run did not measure — "
+                "select it, or refresh the baseline with --update-baseline"
+            )
+            return GateResult(
+                False, message, current_best.precision_at_k, current_best.noise_at_k, bp, bn
+            )
+    else:
+        gated = current_best
+
+    # The config the numbers below describe, on both sides of the comparison.
+    config_note = f"config {gated.config!r}"
+    if gated.config != current_best.config:
+        config_note += f" (pinned; {current_best.config!r} wins this run)"
+
+    prec_ok = gated.precision_at_k >= bp - tol
+    noise_ok = gated.noise_at_k <= bn + tol
+    avoid_ok = gated.avoid_at_k >= b_avoid - tol
+    leak_ok = gated.avoid_leak_at_k <= b_leak + tol
     passed = prec_ok and noise_ok and avoid_ok and leak_ok
     if passed:
         message = (
-            f"PASS — prec@k {m['precision_at_k']:.3f} >= {bp:.3f}, "
-            f"noise@k {m['noise_at_k']:.3f} <= {bn:.3f}"
+            f"PASS [{config_note}] — prec@k {gated.precision_at_k:.3f} >= {bp:.3f}, "
+            f"noise@k {gated.noise_at_k:.3f} <= {bn:.3f}"
         )
     else:
         parts = []
         if not prec_ok:
-            parts.append(f"precision@k {m['precision_at_k']:.3f} < baseline {bp:.3f}")
+            parts.append(f"precision@k {gated.precision_at_k:.3f} < baseline {bp:.3f}")
         if not noise_ok:
-            parts.append(f"noise@k {m['noise_at_k']:.3f} > baseline {bn:.3f}")
+            parts.append(f"noise@k {gated.noise_at_k:.3f} > baseline {bn:.3f}")
         if not avoid_ok:
-            parts.append(f"avoid@k {am['avoid_at_k']:.3f} < baseline {b_avoid:.3f}")
+            parts.append(f"avoid@k {gated.avoid_at_k:.3f} < baseline {b_avoid:.3f}")
         if not leak_ok:
-            parts.append(f"avoid_leak@k {am['avoid_leak_at_k']:.3f} > baseline {b_leak:.3f}")
-        message = "FAIL — " + "; ".join(parts)
-    return GateResult(passed, message, m["precision_at_k"], m["noise_at_k"], bp, bn)
+            parts.append(f"avoid_leak@k {gated.avoid_leak_at_k:.3f} > baseline {b_leak:.3f}")
+        message = f"FAIL [{config_note}] — " + "; ".join(parts)
+    return GateResult(passed, message, gated.precision_at_k, gated.noise_at_k, bp, bn)
 
 
 def fingerprint_corpus(mem: Any) -> str:

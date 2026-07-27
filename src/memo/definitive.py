@@ -60,7 +60,17 @@ def independence_audit(package_root: Path | None = None) -> dict[str, Any]:
 
 
 def definitive_check(memory: Any) -> dict[str, Any]:
-    """Check the non-negotiable invariants of an independent Memo runtime."""
+    """Check the non-negotiable invariants of an independent Memo runtime.
+
+    Scope caveat on ``journal_integrity``: it mirrors
+    :meth:`OperationLedger.verify`, which confirms the operation ledger's hash
+    chain is INTERNALLY CONSISTENT — no accidental corruption, partial edits, or
+    dropped/reordered rows from a bug or a race. It is NOT tamper-proof: the
+    chain is unanchored and local, so a coordinated same-actor rewrite
+    (recomputing every ``event_hash`` and re-stamping the head) is undetectable
+    here and would need an external anchor. A green ``journal_integrity`` means
+    "the journal is self-consistent", not "the journal was never rewritten".
+    """
     journal = memory.operational.ledger.verify()
     independence = independence_audit()
     contracts = {
@@ -78,6 +88,8 @@ def definitive_check(memory: Any) -> dict[str, Any]:
     }
     checks = {
         "independent_runtime": bool(independence["ok"]),
+        # Internal-consistency of the hash chain only — see definitive_check.__doc__
+        # / OperationLedger.verify: detects accidental damage, NOT a same-actor rewrite.
         "journal_integrity": bool(journal["ok"]),
         "markdown_authority": memory.cfg.memory_dir.is_dir(),
         "native_contracts": all(value.startswith("memo.") for value in contracts.values()),

@@ -387,8 +387,9 @@ class GraphStore:
     def drop_for_memoria(self, memory_id: str) -> int:
         """Called when a memory is deleted. Removes all entity_memory
         edges for it and decrements mention_count on each touched
-        entity, then cascades to drop any semantic_relations rows sourced
-        from this memory. Returns the number of entity_memory edges removed."""
+        entity, then cascades to drop any semantic_relations rows touching
+        this memory (as source OR target). Returns the number of
+        entity_memory edges removed."""
         with self._tx() as cx:
             old = [
                 r["entity_id"]
@@ -407,8 +408,10 @@ class GraphStore:
                     (eid,),
                 )
             self._mark_projection_dirty(cx)
-        # Separate tx (the lock is non-reentrant): drop orphaned semantic edges.
-        self.delete_semantic_relations_for_source(memory_id)
+        # Separate tx (the lock is non-reentrant): drop orphaned semantic edges
+        # in BOTH directions — source and target — so deleting a memory that was
+        # the TARGET of a relation leaves no dangling row.
+        self.delete_semantic_relations_for_memory(memory_id)
         return len(old)
 
     def canonicalize_existing(self) -> int:
@@ -780,6 +783,20 @@ class GraphStore:
                     "DELETE FROM semantic_relations WHERE source_id = ? AND derived_from = ?",
                     (source_id, derived_from),
                 )
+            return int(cur.rowcount or 0)
+
+    def delete_semantic_relations_for_memory(self, memory_id: str) -> int:
+        """Delete every semantic edge touching ``memory_id`` — as source OR
+        target. Used by the memory-deletion cascade (``drop_for_memoria``) so a
+        deleted memory leaves no dangling edge in either direction, mirroring
+        ``memory_relations``' ``orphan_relations_for``. Distinct from
+        ``delete_semantic_relations_for_source`` (source-scoped, ``derived_from``
+        aware) which the derived-relation refresh path uses."""
+        with self._tx() as cx:
+            cur = cx.execute(
+                "DELETE FROM semantic_relations WHERE source_id = ? OR target_id = ?",
+                (memory_id, memory_id),
+            )
             return int(cur.rowcount or 0)
 
     def delete_semantic_relations_by_derived_from(self, derived_from: str) -> int:

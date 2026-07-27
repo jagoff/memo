@@ -118,7 +118,6 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     # Recovery translates any sqlite/index implementation failure into the
     # stable StorageError domain contract, preserving the original cause.
     ("memory/write_ops.py", "_WriteOpsMixin._recover_topic_reservation_locked", 1),
-    ("memory/write_ops.py", "_WriteOpsMixin._apply_write_policy", 1),
     # Cache eviction is post-commit housekeeping. A backend failure is logged
     # but cannot invalidate the Markdown/sqlite write that already succeeded.
     ("memory/write_ops.py", "_WriteOpsMixin._apply_cache_write_policy", 1),
@@ -140,7 +139,6 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("recall_logic.py", "_recall_logic._log", 1),
     ("recall_logic.py", "_recall_logic", 6),
     ("recall_logic.py", "_recall_logic", 7),
-    ("recall_logic.py", "_recall_logic", 8),
     # MEMO_HIT_DOSSIER batched contradict-pairs lookup: fail-open, degrades to
     # an empty disputed_by map on any store/read error (never blocks recall).
     ("store/queries.py", "_QueriesMixin.upsert", 1),
@@ -153,7 +151,6 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("store/queries.py", "_QueriesMixin.delete", 1),
     ("store/queries.py", "_QueriesMixin.delete", 2),
     ("store/queries.py", "_QueriesMixin.delete", 3),
-    ("store/queries.py", "_QueriesMixin.hard_delete", 1),
 }
 
 

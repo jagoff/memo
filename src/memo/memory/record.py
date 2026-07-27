@@ -336,8 +336,19 @@ def _recency_key(rec: MemoryRecord) -> str:
     dates += _ISO_DATE_RE.findall(rec.body or "")
     if dates:
         day = max(dates)
-        times = _CLOCK_TIME_RE.findall(rec.body or "")
-        return f"{day} {max(times)}" if times else day
+        # Only clock times inside the max-day's `## <day>` section count: a
+        # short (unsplit) multi-day chunk (e.g. `## 2026-06-03 … ## 2026-06-04`)
+        # would otherwise pair `max(day)` with a `max(time)` scanned from a
+        # DIFFERENT day and fabricate a timestamp. Anchor on the last heading
+        # for that day and read times after it; fall back to day-only when the
+        # day has no associated `## ` heading (e.g. the date came from the title).
+        body = rec.body or ""
+        marker = body.rfind(f"## {day}")
+        if marker != -1:
+            times = _CLOCK_TIME_RE.findall(body[marker:])
+            if times:
+                return f"{day} {max(times)}"
+        return day
     return (rec.updated or rec.created or "")[:10]
 
 

@@ -7,12 +7,35 @@ isolation without constructing a full ``Memory`` instance for every branch.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 import pytest
 
 from memo.memory.record import MemoryRecord
 from memo.memory.search_scoring_ops import _SearchScoringMixin
+
+
+class _Pair:
+    """Minimal stand-in for contradict.PairRecord (only fields the penalty reads)."""
+
+    def __init__(self, a: str, b: str, relationship: str = "contradiction") -> None:
+        self.memory_id_a = a
+        self.memory_id_b = b
+        self.relationship = relationship
+
+
+def _contradict_harness(pair: _Pair) -> _Harness:
+    harness = _Harness()
+    harness.contradict_store = MagicMock()
+
+    def _pairs(_ids: list[str], status: str | None = None) -> list[_Pair]:
+        # The default (no status) fetch carries the contradiction pair; the
+        # follow-up status="evolved" fetch is empty here.
+        return [pair] if status is None else []
+
+    harness.contradict_store.pairs_for_ids.side_effect = _pairs
+    return harness
 
 
 class _Harness(_SearchScoringMixin):
@@ -278,3 +301,39 @@ def test_cache_read_through_stops_after_remaining_slots_are_filled() -> None:
         "one",
         "two",
     ]
+
+
+def test_contradict_penalty_demotes_truly_older_side_across_utc_offsets() -> None:
+    """F1: the older side must be chosen by UTC instant, not raw ISO-string order.
+
+    ``a`` sorts lexicographically BEFORE ``b`` yet is NEWER in real time:
+      a: 2026-06-04T23:30:00-05:00  ->  2026-06-05T04:30:00Z  (newer)
+      b: 2026-06-05T01:00:00+00:00  ->  2026-06-05T01:00:00Z  (older)
+    A raw ``a_ts < b_ts`` compare would demote ``a`` (the newer side) — the bug.
+    """
+    a = replace(_record("a" * 32, 0.5), updated="2026-06-04T23:30:00-05:00")
+    b = replace(_record("b" * 32, 0.5), updated="2026-06-05T01:00:00+00:00")
+    harness = _contradict_harness(_Pair("a" * 32, "b" * 32))
+
+    out = harness._apply_contradict_penalty([a, b])
+    scores = {r.id: r.score for r in out}
+
+    # The truly-older side (b, earlier UTC instant) is demoted; the newer (a) is not.
+    assert scores["b" * 32] == pytest.approx(0.2)  # 0.5 * 0.4 default penalty
+    assert scores["a" * 32] == pytest.approx(0.5)
+    assert [r.id for r in out] == ["a" * 32, "b" * 32]
+
+
+def test_contradict_penalty_honors_explicit_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F2: an explicitly configured 0 penalty must not be replaced by the 0.4 default."""
+    monkeypatch.setenv("MEMO_CONTRADICT_PENALTY", "0")
+    newer = replace(_record("a" * 32, 0.5), updated="2026-06-05T00:00:00+00:00")
+    older = replace(_record("b" * 32, 0.5), updated="2026-01-01T00:00:00+00:00")
+    harness = _contradict_harness(_Pair("a" * 32, "b" * 32))
+
+    out = harness._apply_contradict_penalty([newer, older])
+    scores = {r.id: r.score for r in out}
+
+    # Older side * 0.0 == 0.0 (explicit zero honored); with `or 0.4` it'd be 0.2.
+    assert scores["b" * 32] == pytest.approx(0.0)
+    assert scores["a" * 32] == pytest.approx(0.5)

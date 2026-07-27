@@ -29,7 +29,6 @@ from memo.server_annotations import READ_ONLY
 __all__ = [
     "Param",
     "ToolSpec",
-    "coerce_args",
     "register_all",
     "schema_from_spec",
 ]
@@ -119,44 +118,6 @@ def schema_from_spec(spec: ToolSpec) -> dict[str, Any]:
     if required:
         schema["required"] = required
     return schema
-
-
-def coerce_args(spec: ToolSpec, raw: dict[str, Any]) -> dict[str, Any]:
-    """Coerce a raw arguments dict into typed kwargs."""
-    kwargs: dict[str, Any] = {}
-    for param in spec.params:
-        if param.name not in raw or raw[param.name] is None:
-            if param.required:
-                raise ValueError(
-                    f"required parameter '{param.name}' missing or None for tool '{spec.name}'"
-                )
-            if param.default is not MISSING:
-                kwargs[param.name] = None if param.default is None else param.default
-            continue
-        kwargs[param.name] = _coerce_value(param, raw[param.name])
-    return kwargs
-
-
-def _coerce_value(param: Param, value: Any) -> Any:
-    if param.json_type == "string":
-        return str(value)
-    if param.json_type == "integer":
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return param.default if param.default is not MISSING else 0
-    if param.json_type == "number":
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return param.default if param.default is not MISSING else 0.0
-    if param.json_type == "boolean":
-        return bool(value)
-    if param.json_type == "array":
-        if isinstance(value, str):
-            return [value]
-        return list(value) if isinstance(value, (list, tuple)) else value
-    return value
 
 
 def _signature_from_spec(spec: ToolSpec) -> tuple[inspect.Signature, dict[str, Any]]:

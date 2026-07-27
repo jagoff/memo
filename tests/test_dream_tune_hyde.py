@@ -30,6 +30,29 @@ def test_hyde_pass_applies_when_on_wins(tmp_cfg, monkeypatch) -> None:
     assert doc["MEMO_HYDE_ENABLED"] is True
 
 
+def test_hyde_pass_records_pending_for_online_proof(tmp_cfg, monkeypatch) -> None:
+    """F4: an applied HyDE flip must join the online proof loop (record_pending),
+    so a later night re-measures it out-of-sample and auto-reverts a regression —
+    instead of short-circuiting `already_on` forever with no verification."""
+    from memo import dream_tune_online
+
+    monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _labels())
+    monkeypatch.setattr(dream_tune, "_curated_label_set", lambda sd: None)
+    monkeypatch.setattr(
+        dream_tune,
+        "measure_hyde",
+        lambda mem, labels, *, k, enabled: _metrics(0.4 if enabled else 0.2, 0.0, 50.0),
+    )
+    res = dream_tune.run_hyde_pass(tmp_cfg, mem=object())
+    assert res["status"] == "applied"
+
+    pending = dream_tune_online.read_pending(tmp_cfg.state_dir)
+    assert pending is not None, "HyDE apply must record a pending online experiment"
+    assert pending["knob"] == "MEMO_HYDE_ENABLED"
+    assert pending["floor_before"] is False and pending["floor_after"] is True
+    assert dream_tune_online.has_unresolved_pending(tmp_cfg.state_dir)
+
+
 def test_hyde_pass_noop_when_it_loses(tmp_cfg, monkeypatch) -> None:
     monkeypatch.setattr(dream_tune, "build_labels", lambda cfg, **k: _labels())
     monkeypatch.setattr(

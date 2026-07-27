@@ -56,6 +56,10 @@ class BackupMetadata:
     compressed_size: int
     original_size: int
     name: str = ""
+    # True when the archive's metadata.json could not be read (unreadable /
+    # corrupt archive). Distinguishes an unreadable backup from a genuine fresh
+    # near-empty one in `backup list`, which otherwise look identical.
+    corrupted: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> BackupMetadata:
@@ -506,10 +510,14 @@ class BackupManager:
                             meta = BackupMetadata.from_dict(data)
                             meta.name = archive.name.removesuffix(".tar.gz")
                             return meta
-        except Exception:  # noqa: S110
-            pass
+        except Exception as exc:
+            # An unreadable/corrupt archive must not masquerade as a real fresh
+            # near-empty backup: log it and flag the fabricated placeholder so
+            # `backup list` can show it's unreadable, not "new/small".
+            _log.warning("Unreadable backup archive metadata for %s: %s", archive.name, exc)
         meta = BackupMetadata(datetime.now(UTC).isoformat(), 0, "", archive.stat().st_size, 0)
         meta.name = archive.name.removesuffix(".tar.gz")
+        meta.corrupted = True
         return meta
 
     def restore_backup(
