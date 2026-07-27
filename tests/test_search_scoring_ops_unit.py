@@ -903,16 +903,8 @@ def test_declared_dispute_preserves_each_possible_older_side(
     older_id: str,
 ) -> None:
     monkeypatch.setenv("MEMO_DECLARE_DISPUTES", "1")
-    a_updated = (
-        "2025-01-01T00:00:00+00:00"
-        if older_id == "a"
-        else "2026-01-01T00:00:00+00:00"
-    )
-    b_updated = (
-        "2025-01-01T00:00:00+00:00"
-        if older_id == "b"
-        else "2026-01-01T00:00:00+00:00"
-    )
+    a_updated = "2025-01-01T00:00:00+00:00" if older_id == "a" else "2026-01-01T00:00:00+00:00"
+    b_updated = "2025-01-01T00:00:00+00:00" if older_id == "b" else "2026-01-01T00:00:00+00:00"
     a = replace(_record("a", 0.5), updated=a_updated)
     b = replace(_record("b", 0.4), updated=b_updated)
     harness = _Harness()

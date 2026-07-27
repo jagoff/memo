@@ -263,8 +263,7 @@ def checkpoint(
                 existing.get("summary")
                 if existing.get("summary") and not is_command_noise(existing.get("summary"))
                 else (
-                    (transcript_fields.get("last_user_msg") or "")[:_SUMMARY_FALLBACK_CHARS]
-                    or None
+                    (transcript_fields.get("last_user_msg") or "")[:_SUMMARY_FALLBACK_CHARS] or None
                 )
             ),
             "created": existing.get("created") or now,

@@ -39,8 +39,14 @@ def atomic_write_text(
     *,
     encoding: str = "utf-8",
     mode: int = 0o600,
+    durable: bool = True,
 ) -> None:
-    """Replace ``destination`` without following a predictable temp symlink."""
+    """Atomically replace ``destination`` without following a temp symlink.
+
+    ``durable=False`` keeps the atomic replace but skips the data ``fsync``.
+    Use it only for rebuildable caches whose authoritative source is already
+    durable.
+    """
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.parent.is_symlink() or destination.is_symlink():
@@ -57,7 +63,8 @@ def atomic_write_text(
             descriptor = -1
             handle.write(text)
             handle.flush()
-            os.fsync(handle.fileno())
+            if durable:
+                os.fsync(handle.fileno())
         os.chmod(temporary, mode)
         os.replace(temporary, destination)
     finally:

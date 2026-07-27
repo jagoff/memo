@@ -1473,8 +1473,7 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         rows = self._conn.execute(
             "SELECT id, path FROM meta "
             "WHERE (path = ? "
-            "OR json_extract(extra_json, '$.parent_path') = ?)"
-            + self._deleted_filter_sql(),
+            "OR json_extract(extra_json, '$.parent_path') = ?)" + self._deleted_filter_sql(),
             (store_path, store_path),
         ).fetchall()
         return [{"id": r["id"], "path": r["path"]} for r in rows]

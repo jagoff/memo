@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
+from memo.atomic_io import atomic_write_text
 from memo.contracts import ActorIdentity, AnswerStatus, normalize_provenance
 from memo.errors import WriteRefused
 from memo.independence_migration import migrate_independence
@@ -130,6 +132,35 @@ def test_operation_ledger_repairs_stale_head_and_rejects_unsafe_timestamps(tmp_p
             ts="../../escape",
         )
     assert not (tmp_path / "escape.jsonl").exists()
+
+
+def test_operation_ledger_fsyncs_authoritative_event_only(tmp_path, monkeypatch):
+    ledger = OperationLedger(tmp_path, device_id="device-a")
+    fsync_calls: list[int] = []
+
+    monkeypatch.setattr(os, "fsync", lambda descriptor: fsync_calls.append(descriptor))
+
+    ledger.append("focus.set", subject_uri="memo://focus/memo")
+
+    assert len(fsync_calls) == 1
+    assert ledger.verify()["ok"] is True
+
+
+def test_atomic_write_text_is_durable_by_default_and_can_write_rebuildable_cache(
+    tmp_path,
+    monkeypatch,
+):
+    fsync_calls: list[int] = []
+    monkeypatch.setattr(os, "fsync", lambda descriptor: fsync_calls.append(descriptor))
+
+    durable_path = tmp_path / "durable.json"
+    cache_path = tmp_path / "cache.json"
+    atomic_write_text(durable_path, "durable")
+    atomic_write_text(cache_path, "cache", durable=False)
+
+    assert len(fsync_calls) == 1
+    assert durable_path.read_text(encoding="utf-8") == "durable"
+    assert cache_path.read_text(encoding="utf-8") == "cache"
 
 
 def test_operation_ledger_detects_missing_or_malformed_segments(tmp_path):
