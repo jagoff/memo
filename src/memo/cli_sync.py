@@ -390,7 +390,7 @@ def sync_once_cmd(quiet: bool, as_json: bool) -> None:
     session end to flush this session's captures. The machine lock still ensures
     only one process does git at a time.
     """
-    from memo.sync_git import sync_once, sync_tier
+    from memo.sync_git import SyncGitError, sync_once, sync_tier
 
     cfg = Config.from_env()
     if sync_tier(cfg) != "remote":
@@ -401,6 +401,18 @@ def sync_once_cmd(quiet: bool, as_json: bool) -> None:
         return
     mem = _get_memory(cfg)
     out = sync_once(cfg, mem.store, mem)
+    # sync_once never raises on a failed git step — it returns *_error keys and
+    # stamps sync_pending. Without this check the Stop-hook `memo sync once
+    # --quiet` would report success (exit 0) even when the push/pull/commit
+    # failed, so cross-machine drift stays silent. Surface it exactly like
+    # `sync push`/`sync pull` do (raise, soft-fail under --quiet).
+    errors = [out[key] for key in ("commit_error", "pull_error", "push_error") if out.get(key)]
+    if errors:
+        msg = "; ".join(errors)
+        if quiet:
+            console.print(f"[dim]sync once failed: {msg}[/dim]")
+            return
+        raise SyncGitError(msg)
     if as_json:
         click.echo(json.dumps(out))
         return
@@ -475,10 +487,28 @@ def sync_auto(as_json: bool) -> None:
     did["pushed"] = bool(out.get("pushed"))
     if out.get("skipped"):
         did["skipped"] = out["skipped"]
-    if pull_due:
-        ts["last_pull"] = now
-    if push_due:
-        ts["last_push"] = now
+
+    # F1: sync_once never raises on a failed git step — surface *_error keys so
+    # this per-prompt trigger doesn't report clean success while drift persists.
+    # This is a best-effort async hook: log + note the error, never crash the
+    # prompt (unlike `sync once`, which raises).
+    errors = {key: out[key] for key in ("commit_error", "pull_error", "push_error") if out.get(key)}
+    if errors:
+        did["errors"] = errors
+        import logging
+
+        logging.getLogger("memo.sync").warning("sync auto: git step failed: %s", errors)
+        click.echo(f"sync auto: git step failed: {'; '.join(errors.values())}", err=True)
+
+    # F2: only advance the shared debounce timestamps when the attempt actually
+    # ran. A `skipped` result ("locked" / "lock open failed") means a sibling
+    # session held the flock and nothing synced — advancing would wrongly
+    # debounce as if we had, letting drift persist until the window re-opens.
+    if not out.get("skipped"):
+        if pull_due:
+            ts["last_pull"] = now
+        if push_due:
+            ts["last_push"] = now
 
     import contextlib
 

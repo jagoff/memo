@@ -45,6 +45,9 @@ def register(server: FastMCP, memory: Memory) -> None:
         Args:
             top_n: How many memories to return in each list (default 10).
         """
+        # Clamp the caller-supplied limit: a negative top_n binds into `LIMIT ?`
+        # as an unbounded fetch, so floor at 1 and cap at a sane maximum.
+        top_n = max(1, min(top_n, 100))
         store = memory.store
         conn = store.connection
 

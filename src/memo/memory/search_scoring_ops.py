@@ -13,6 +13,7 @@ from __future__ import annotations
 import builtins
 import sqlite3
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 from memo.flags import flag_bool, flag_float
@@ -22,6 +23,41 @@ from memo.memory.record import (
     _log,
     _state_decay_factor,
 )
+
+
+def _flag_or(value: float | None, default: float) -> float:
+    """Resolve a flag default without treating a configured 0 as missing.
+
+    ``flag_float(...) or default`` silently discards a legitimately configured
+    0.0 (these knobs have ``min_val=0``, so 0 is valid); the not-None check
+    honors an explicit zero.
+    """
+    return default if value is None else value
+
+
+def _older_id(a: str, a_ts: str, b: str, b_ts: str) -> str | None:
+    """Return the id of the older side of a pair by aware-datetime compare.
+
+    ``updated`` is LOCAL-offset ISO (``record._now_iso`` uses ``.astimezone()``),
+    so a raw lexicographic ``a_ts < b_ts`` inverts across differing UTC
+    offsets/DST and would demote the wrong (newer) side. Parse both and compare
+    timezone-aware instants instead (naive strings are assumed UTC). Returns
+    ``None`` when either timestamp is empty/unparseable so the caller can skip
+    the pair rather than guess which side is older. A tie picks ``b`` — matching
+    the prior ``a if a_ts < b_ts else b`` behavior when the two are equal.
+    """
+
+    def _parse(ts: str) -> datetime | None:
+        try:
+            dt = datetime.fromisoformat(ts)
+        except (ValueError, TypeError):
+            return None
+        return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+    a_dt, b_dt = _parse(a_ts), _parse(b_ts)
+    if a_dt is None or b_dt is None:
+        return None
+    return a if a_dt < b_dt else b
 
 
 class _SearchScoringMixin(_MemoryBase):
@@ -39,8 +75,10 @@ class _SearchScoringMixin(_MemoryBase):
         the temporal engine's already-detected 'evolved' verdicts into ranking
         instead of letting known-stale facts compete at full score.
         """
-        contradict_penalty = max(0.0, min(1.0, flag_float("MEMO_CONTRADICT_PENALTY") or 0.4))
-        evolution_penalty = max(0.0, min(1.0, flag_float("MEMO_EVOLUTION_PENALTY") or 0.7))
+        contradict_penalty = max(
+            0.0, min(1.0, _flag_or(flag_float("MEMO_CONTRADICT_PENALTY"), 0.4))
+        )
+        evolution_penalty = max(0.0, min(1.0, _flag_or(flag_float("MEMO_EVOLUTION_PENALTY"), 0.7)))
         ids = [r.id for r in results]
         try:
             pairs = self.contradict_store.pairs_for_ids(ids)
@@ -85,15 +123,15 @@ class _SearchScoringMixin(_MemoryBase):
                 # Only demote when BOTH sides carry a timestamp — otherwise we
                 # can't tell which is older and would risk sinking the newer one.
                 if a_ts and b_ts:
-                    target = a if a_ts < b_ts else b
-                    if target in declared:
-                        continue  # both sides surfaced → declare, don't hide
+                    target = _older_id(a, a_ts, b, b_ts)
+                    if target is None or target in declared:
+                        continue  # unparseable, or both sides surfaced → don't hide
                     _demote(target, contradict_penalty)
             elif "evolu" in rel and a in present and b in present and a_ts and b_ts:
                 # Only when BOTH sides surfaced can we safely demote the older.
-                target = a if a_ts < b_ts else b
-                if target in declared:
-                    continue  # both sides surfaced → declare, don't hide
+                target = _older_id(a, a_ts, b, b_ts)
+                if target is None or target in declared:
+                    continue  # unparseable, or both sides surfaced → don't hide
                 _demote(target, evolution_penalty)
         if not mult:
             return results
@@ -169,7 +207,7 @@ class _SearchScoringMixin(_MemoryBase):
             max_c = max(counts.values(), default=0)
             if max_c <= 0:
                 return results
-            weight = flag_float("MEMO_CO_RECALL_BOOST_WEIGHT") or 0.1
+            weight = _flag_or(flag_float("MEMO_CO_RECALL_BOOST_WEIGHT"), 0.1)
             boosted: list[MemoryRecord] = [anchor]
             for r in results[1:]:
                 c = counts.get(r.id, 0)

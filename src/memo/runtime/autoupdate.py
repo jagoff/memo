@@ -528,10 +528,14 @@ def _process_identity(pid: int) -> str | None:
 
     try:
         with open(f"/proc/{pid}/stat") as process_stat:
-            stat_fields = process_stat.read().split()
-        if len(stat_fields) > 21:
-            return f"proc:{stat_fields[21]}"
-    except OSError:
+            stat_line = process_stat.read()
+        # The comm field (2nd) is parenthesized and may itself contain spaces
+        # or ')', so a naive .split() shifts every later field. Parse the fields
+        # after comm's closing ')': starttime is stat field 22, i.e. index 19
+        # among the post-comm fields (which begin at field 3 / index 0).
+        post_comm = stat_line.rsplit(")", 1)[1].split()
+        return f"proc:{post_comm[19]}"
+    except (OSError, IndexError):
         pass
     try:
         result = subprocess.run(

@@ -751,8 +751,24 @@ def run_hyde_pass(
     if dry_run:
         res["status"] = "would_apply"
         return res
+    version_before = params_version(cfg.state_dir)
     params = {**_scalar_overlay(cfg.state_dir), _HYDE_FLAG: True}
     write_overlay(cfg.state_dir, params, {"set_by": "dream-hyde"})
+    # Join the online proof loop like every other tuned knob (min_sim / graph /
+    # boost): record the applied flip so a later night resolves it against its
+    # out-of-sample grounding cohort and auto-reverts if it regressed. Without
+    # this, HyDE was applied once and then short-circuited `already_on` forever
+    # with no ongoing verification. On revert `_restore_online_revert` sets the
+    # knob back to `value_before` (False → default OFF restored).
+    dream_tune_online.record_pending(
+        cfg.state_dir,
+        knob=_HYDE_FLAG,
+        value_before=False,
+        value_after=True,
+        offline_before=off,
+        offline_after=on,
+        version_before=version_before,
+    )
     res["status"] = "applied"
     return res
 

@@ -82,6 +82,48 @@ def test_simplelru_minimum_capacity_is_one():
     assert lru.get("b") == 2
 
 
+def test_simplelru_is_thread_safe_under_concurrent_get_put():
+    """get/put run in embed_query OUTSIDE gpu_guard; under the FastMCP HTTP
+    threadpool concurrent memo_search/memo_ask share one embedder. Without a
+    lock, a get whose key another thread evicts (popitem) between the
+    ``key not in self._d`` check and ``move_to_end`` KeyErrors. A tiny cap forces
+    constant eviction and a lowered thread-switch interval widens that window so
+    the race surfaces; with the lock the test always passes."""
+    import sys
+    import threading
+
+    lru = _SimpleLRU(4)  # tiny cap → nearly every put triggers popitem eviction
+    key_space = 32  # >> cap so gets straddle the LRU eviction boundary
+    n_threads = 8
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(n_threads)
+
+    def worker(base: int) -> None:
+        barrier.wait()  # release all threads together to maximise contention
+        try:
+            for i in range(4000):
+                lru.put(f"k{(base + i) % key_space}", i)
+                # get low-index keys that live near the LRU end — exactly the
+                # ones a concurrent put is about to popitem.
+                lru.get(f"k{i % key_space}")
+                lru.get(f"k{(i * 7) % key_space}")
+        except BaseException as exc:  # capture any race error, incl. KeyError
+            errors.append(exc)
+
+    _prev_switch = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # force frequent GIL handoffs mid-operation
+    try:
+        threads = [threading.Thread(target=worker, args=(b * 4,)) for b in range(n_threads)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(_prev_switch)
+
+    assert not errors, f"concurrent get/put raced: {errors!r}"
+
+
 # -- assert_valid_embedding ------------------------------------------------
 
 

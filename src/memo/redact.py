@@ -8,15 +8,16 @@ without touching the environment.
 Two tiers:
 
 - **Pattern tier** (near-zero false positives): provider-prefixed API keys
-  (AWS ``AKIA``/``ASIA``, GitHub ``ghp_``/``github_pat_``…, OpenAI ``sk-``,
-  Anthropic ``sk-ant-``, Slack ``xox*``, GCP ``AIza``) and PEM private-key
-  blocks. Matches are masked to ``****<last4>`` so a leaked key stays
-  identifiable without being usable.
+  (AWS ``AKIA``/``ASIA``, GitHub ``ghp_``/``github_pat_``…, GitLab ``glpat-``,
+  OpenAI ``sk-``, Anthropic ``sk-ant-``, Stripe ``sk_live_``/``rk_live_``,
+  npm ``npm_``, Slack ``xox*``, GCP ``AIza``) and PEM private-key blocks.
+  Matches are masked to ``****<last4>`` so a leaked key stays identifiable
+  without being usable.
 - **Entropy tier** (opt-in, false-positive-prone): long mixed-class tokens
   with Shannon entropy >= 4.2 bits/char. Pure-hex strings are ALWAYS exempt
   (git SHAs and memo ids are hex and pepper every corpus).
 
-``_PEM_RE`` needs the BEGIN and END markers in the SAME input string —
+PEM stripping needs the BEGIN and END markers in the SAME input string —
 callers with line-oriented input (e.g. the sync gate's staged diff) must
 join lines before scanning; token patterns are single-line so joining is
 always safe.
@@ -41,16 +42,21 @@ _TOKEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("github-token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,255}\b")),
     ("github-pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,255}\b")),
+    ("gitlab-pat", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b")),
     ("anthropic-key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
     ("openai-key", re.compile(r"\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b")),
+    ("stripe-key", re.compile(r"\b(?:sk|rk)_live_[0-9A-Za-z]{16,}\b")),
+    ("npm-token", re.compile(r"\bnpm_[A-Za-z0-9]{36}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
     ("gcp-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
 )
 
-_PEM_RE = re.compile(
-    r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----.*?-----END [A-Z ]{0,40}PRIVATE KEY-----",
-    re.DOTALL,
-)
+# BEGIN/END markers are bounded literal patterns (no ``.*`` — linear,
+# ReDoS-free). A lazy ``BEGIN.*?END`` regex rescans to end-of-text from every
+# unmatched BEGIN → O(k·n); ``_mask_pem_blocks`` locates one BEGIN then the
+# next END via an offset ``search``, scanning each char once (O(n)).
+_PEM_BEGIN_RE = re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----")
+_PEM_END_RE = re.compile(r"-----END [A-Z ]{0,40}PRIVATE KEY-----")
 
 _ENTROPY_CANDIDATE_RE = re.compile(r"\b[A-Za-z0-9+/_=-]{32,}\b")
 _HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
@@ -104,6 +110,38 @@ def _is_high_entropy(token: str) -> bool:
     return _shannon_bits_per_char(token) >= _ENTROPY_MIN_BITS
 
 
+def _mask_pem_blocks(text: str) -> tuple[str, int]:
+    """Mask every complete ``-----BEGIN … PRIVATE KEY-----`` … ``-----END …
+    PRIVATE KEY-----`` block to ``****[private-key]``; return the rewritten
+    text and how many blocks were masked (0 = untouched).
+
+    Linear scan over the original string (analogous to ``strip_private_spans``):
+    locate a BEGIN marker, then the next END marker at/after it, mask that span,
+    and resume past the END. An unclosed BEGIN (no following END) stops the scan
+    and leaves the tail intact — an incomplete block is not a full secret,
+    matching the former regex which required both markers.
+    """
+    if _PEM_BEGIN_RE.search(text) is None:
+        return text, 0
+    parts: list[str] = []
+    count = 0
+    i = 0
+    while True:
+        m_begin = _PEM_BEGIN_RE.search(text, i)
+        if m_begin is None:
+            parts.append(text[i:])
+            break
+        m_end = _PEM_END_RE.search(text, m_begin.end())
+        if m_end is None:
+            parts.append(text[i:])
+            break
+        parts.append(text[i : m_begin.start()])
+        parts.append("****[private-key]")
+        count += 1
+        i = m_end.end()
+    return "".join(parts), count
+
+
 def redact_secrets(text: str, *, entropy: bool = False) -> RedactionResult:
     """Mask every secret in `text` to ``****<last4>``; PEM blocks become
     ``****[private-key]``. Returns rewritten text + the kinds found."""
@@ -115,9 +153,9 @@ def redact_secrets(text: str, *, entropy: bool = False) -> RedactionResult:
         if pat.search(out):
             found.append(kind)
             out = pat.sub(lambda m: _mask(m.group(0)), out)
-    if _PEM_RE.search(out):
+    out, pem_count = _mask_pem_blocks(out)
+    if pem_count:
         found.append("private-key")
-        out = _PEM_RE.sub("****[private-key]", out)
     if entropy:
 
         def _sub(m: re.Match[str]) -> str:
@@ -143,7 +181,8 @@ def scan_secrets(text: str, *, entropy: bool = False) -> list[tuple[str, str]]:
     findings: list[tuple[str, str]] = []
     for kind, pat in _TOKEN_PATTERNS:
         findings.extend((kind, _mask(m.group(0))) for m in pat.finditer(text))
-    findings.extend(("private-key", "****[private-key]") for _ in _PEM_RE.finditer(text))
+    _, pem_count = _mask_pem_blocks(text)
+    findings.extend(("private-key", "****[private-key]") for _ in range(pem_count))
     if entropy:
         findings.extend(
             ("high-entropy", _mask(m.group(0)))

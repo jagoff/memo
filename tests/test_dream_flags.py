@@ -191,6 +191,28 @@ def test_regression_guard_reverts_graduated_flag(tmp_cfg, monkeypatch):
     assert entry["status"] == "reverted" and entry["streak"] == 0
 
 
+def test_regression_guard_defers_revert_while_pending(tmp_cfg, monkeypatch):
+    """F6: the post-graduation revert write must be gated like every other
+    overlay writer — a same-night tuner experiment is pending, so bumping
+    params_version now would orphan its cohort. Defer the revert instead."""
+    from memo import dream_tune_online
+
+    _mini_registry(monkeypatch)
+    _seed_graduated(tmp_cfg)
+    _stub_measure(monkeypatch, on=_metrics(0.2), off=_metrics(0.2))  # live ON regressed
+    # A tuner change is in flight this cycle.
+    dream_tune_online.write_pending(
+        tmp_cfg.state_dir, {"knob": "MEMO_RECALL_MIN_SIM", "version_after": "v1"}
+    )
+
+    res = df.run_flag_graduation_pass(tmp_cfg, mem=None, today=TODAY + timedelta(days=3))
+
+    assert res["flags"][_FLAG]["verdict"] == "deferred_pending"
+    # overlay untouched: the flag stays graduated (ON) this cycle
+    assert read_overlay(tmp_cfg.state_dir).get(_FLAG) is True
+    assert df.load_state(tmp_cfg.state_dir)["flags"][_FLAG]["status"] == "graduated"
+
+
 def test_overlay_rollback_unstrands_graduated_flag(tmp_cfg, monkeypatch):
     """Deleting tuned_params.json (the documented overlay rollback) leaves
     state saying 'graduated' with no overlay key: the flag resolves OFF live,

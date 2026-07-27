@@ -146,7 +146,12 @@ def eval_memory_cmd(
     }
     if gate:
         baseline = _load_baseline(Config.from_env())
-        result = eval_recall.check_gate(rows, baseline, labels_fingerprint=labels.fingerprint())
+        # Pass k so check_gate fails fast on a k mismatch — `eval memory` (k=5)
+        # and `eval recall` (k=3) share one recall_baseline.json, so a baseline
+        # seeded at a different top-K must not be compared silently.
+        result = eval_recall.check_gate(
+            rows, baseline, labels_fingerprint=labels.fingerprint(), k=k
+        )
         payload["gate"] = {
             "passed": result.passed,
             "message": result.message,
@@ -394,7 +399,8 @@ def eval_recall_cmd(
         bp.parent.mkdir(parents=True, exist_ok=True)
         bp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         console.print(
-            f"[green]✓[/green] baseline saved: prec@{k} {metrics['precision_at_k']} / "
+            f"[green]✓[/green] baseline saved: config {metrics['config']!r} · "
+            f"prec@{k} {metrics['precision_at_k']} / "
             f"noise@{k} {metrics['noise_at_k']} → {bp}"
         )
         return
@@ -414,6 +420,7 @@ def eval_recall_cmd(
             rows,
             baseline,
             labels_fingerprint=labels.fingerprint(),
+            k=k,
         )
         if as_json:
             click.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))

@@ -13,12 +13,11 @@ import json
 import re
 import sqlite3
 import threading
-import weakref
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .connection import _ConnectionMixin
+from .connection import _ConnectionHolder, _ConnectionMixin
 
 
 def _now_iso() -> str:
@@ -101,7 +100,13 @@ class FactEdgeStore(_ConnectionMixin):
     def __init__(self, db_path: Path | str) -> None:
         self.db_path = Path(db_path)
         self._local = threading.local()
-        self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
+        # Strong references (matching VecStore): CPython does not guarantee the
+        # order in which a terminating thread clears its ``threading.local``
+        # values and finalizes sqlite connections, so ``close()`` (or the
+        # dead-owner sweep in ``_connect``) is the single deterministic cleanup
+        # boundary. This store is shared across the FastMCP HTTP threadpool for
+        # the process lifetime — a WeakSet would let a holder vanish first.
+        self._conn_holders: set[_ConnectionHolder] = set()
         self._conn_holders_lock = threading.Lock()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()

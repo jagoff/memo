@@ -395,6 +395,59 @@ def test_vec_subprocess_search_merges_recency_band(
     apply_recency_band.assert_called_once_with([hit], [hit])
 
 
+@pytest.mark.parametrize(
+    ("input_k_env", "recall_input_k_env", "expected"),
+    [
+        (None, None, 10),  # default shrink to 10 on the hybrid subprocess path
+        (None, "15", 15),  # MEMO_RECALL_RERANK_INPUT_K picks the shrink value
+        ("25", None, 25),  # explicit operator MEMO_RERANK_INPUT_K stays authoritative
+    ],
+)
+def test_subprocess_hybrid_shrinks_rerank_input_k_on_cfg(
+    recall_env: Config,
+    monkeypatch: pytest.MonkeyPatch,
+    input_k_env: str | None,
+    recall_input_k_env: str | None,
+    expected: int,
+) -> None:
+    """The hybrid subprocess fallback must SHRINK the rerank pool so the
+    highest-latency path stays inside the 5s budget. search_ops reads
+    ``cfg.rerank_input_k`` (a static pydantic field fixed by Config.from_env,
+    not re-read from env), so mutating ``MEMO_RERANK_INPUT_K`` after cfg is
+    built is a no-op unless the resolved value is reflected onto the cfg that
+    ``Memory(cfg)`` receives. Capture the cfg the hook hands to Memory."""
+    captured: dict[str, int] = {}
+
+    class _CaptureCfgMemory:
+        def __init__(self, cfg: Config) -> None:
+            captured["rerank_input_k"] = cfg.rerank_input_k
+            # Stop the hook right after construction — _bail handles it (exit 0).
+            raise RuntimeError("captured cfg; halting recall")
+
+    # Busy daemon marker → subprocess fallback path (the highest-latency path).
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: '{"busy": true}')
+    monkeypatch.setattr("memo.memory.Memory", _CaptureCfgMemory)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "hybrid")
+    if input_k_env is None:
+        monkeypatch.delenv("MEMO_RERANK_INPUT_K", raising=False)
+    else:
+        monkeypatch.setenv("MEMO_RERANK_INPUT_K", input_k_env)
+    if recall_input_k_env is None:
+        monkeypatch.delenv("MEMO_RECALL_RERANK_INPUT_K", raising=False)
+    else:
+        monkeypatch.setenv("MEMO_RECALL_RERANK_INPUT_K", recall_input_k_env)
+
+    result = CliRunner().invoke(
+        cli,
+        ["recall-hook"],
+        input=json.dumps({"prompt": "a meaningful query exercising the hybrid rerank pool"}),
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["rerank_input_k"] == expected
+
+
 def test_unmatched_term_gate_suppresses_entire_subprocess_injection(
     recall_env: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:

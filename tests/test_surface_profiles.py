@@ -205,3 +205,30 @@ def test_token_cost_active_default_resolves_to_agent(monkeypatch) -> None:
     assert count == "38"
     assert cost == "~3.8k"
     assert reduced is True
+
+
+@pytest.mark.parametrize("profile", ["core", "full"])
+def test_token_cost_count_matches_real_server(tmp_path, monkeypatch, profile) -> None:
+    """The hand-maintained _PROFILE_TOKEN_COST tool counts must equal the real
+    build_server()+list_tools() count for that profile, so the advisory table
+    can't silently desync from the registered surface. (The `agent` count is
+    already cross-checked by test_mcp_agent_profile_is_default_and_exposes_core_tools.)
+    """
+    from memo.surface import mcp_profile_token_cost
+
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        vault_path=tmp_path / "vault",
+        embedder_dims=4,
+    )
+    monkeypatch.setenv("MEMO_MCP_PROFILE", profile)
+    monkeypatch.delenv("MEMO_MCP_SLIM", raising=False)
+    mem = Memory(cfg)
+    try:
+        tools = asyncio.run(build_server(memory=mem).list_tools())
+    finally:
+        mem.close()
+
+    count_label, _cost, _reduced = mcp_profile_token_cost(profile)
+    assert len(tools) == int(count_label)

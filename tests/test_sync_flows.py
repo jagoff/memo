@@ -305,3 +305,105 @@ def test_run_sync_setup_cancel_returns_none(tmp_path):
 
     cfg = Config(data_dir=tmp_path / "memorias", state_dir=tmp_path / "state", embedder_dims=4)
     assert cs._run_sync_setup(cfg, "3", None, gh_ok=False) is None
+
+
+# ---------------------------------------------------------------------------
+# sync once / sync auto — surface a failed git step (F1) + honest debounce (F2)
+# ---------------------------------------------------------------------------
+
+
+def _stub_remote(monkeypatch, once_result: dict) -> None:
+    """Force the `remote` tier and make sync_once return ``once_result`` without
+    building a real git clone or Memory (no MLX)."""
+    from types import SimpleNamespace
+
+    import memo.cli_sync as cs
+    import memo.sync_git as sg
+
+    monkeypatch.setattr(sg, "sync_tier", lambda cfg: "remote")
+    monkeypatch.setattr(sg, "sync_once", lambda *a, **k: once_result)
+    monkeypatch.setattr(cs, "_get_memory", lambda cfg: SimpleNamespace(store=None))
+
+
+def test_sync_once_surfaces_push_error(tmp_path: Path, monkeypatch) -> None:
+    """F1: `memo sync once` must not report clean success when sync_once returned
+    a push_error — the Stop-hook trigger otherwise hides cross-machine drift.
+
+    Without --quiet it surfaces (non-zero exit); with --quiet it soft-fails
+    (exit 0) but still says it failed, exactly like `sync push`/`sync pull`.
+    """
+    (tmp_path / "data").mkdir()
+    (tmp_path / "state").mkdir()
+    _stub_remote(
+        monkeypatch,
+        {"tier": "remote", "pulled": False, "pushed": False, "push_error": "remote hung up"},
+    )
+
+    r = CliRunner().invoke(cli, ["sync", "once"], env=_env(tmp_path))
+    assert r.exit_code != 0, f"clean success hid a push_error:\n{r.output}"
+    assert "remote hung up" in (str(r.exception) + r.output)
+
+    rq = CliRunner().invoke(cli, ["sync", "once", "--quiet"], env=_env(tmp_path))
+    assert rq.exit_code == 0, rq.output
+    assert "failed" in rq.output.lower()
+    assert "remote hung up" in rq.output
+
+
+def test_sync_auto_does_not_advance_ts_when_locked(tmp_path: Path, monkeypatch) -> None:
+    """F2: when sync_once returns skipped=locked (a sibling held the flock, so
+    nothing synced), the shared debounce timestamps must NOT advance — otherwise
+    we debounce as if we had synced and drift persists until the window reopens.
+    """
+    import json
+
+    (tmp_path / "data").mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    _stub_remote(monkeypatch, {"tier": "remote", "skipped": "locked"})
+
+    # No ts file → both pull and push are due → the attempt runs and returns locked.
+    r = CliRunner().invoke(cli, ["sync", "auto", "--json"], env=_env(tmp_path))
+    assert r.exit_code == 0, r.output
+    assert '"skipped": "locked"' in r.output
+
+    ts_file = state / ".sync_auto_ts"
+    ts = json.loads(ts_file.read_text(encoding="utf-8")) if ts_file.is_file() else {}
+    assert not ts.get("last_pull"), f"locked run wrongly advanced last_pull: {ts}"
+    assert not ts.get("last_push"), f"locked run wrongly advanced last_push: {ts}"
+
+
+def test_sync_auto_advances_ts_on_successful_run(tmp_path: Path, monkeypatch) -> None:
+    """F2 (positive): a run that actually synced advances the debounce timestamps,
+    so the guard isn't just an always-skip."""
+    import json
+
+    (tmp_path / "data").mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    _stub_remote(monkeypatch, {"tier": "remote", "pulled": True, "pushed": True})
+
+    r = CliRunner().invoke(cli, ["sync", "auto", "--json"], env=_env(tmp_path))
+    assert r.exit_code == 0, r.output
+
+    ts = json.loads((state / ".sync_auto_ts").read_text(encoding="utf-8"))
+    assert ts.get("last_pull"), ts
+    assert ts.get("last_push"), ts
+
+
+def test_sync_auto_surfaces_push_error_without_crashing(tmp_path: Path, monkeypatch) -> None:
+    """F1: the per-prompt trigger must NOT report clean success on a push_error,
+    but also must not crash the prompt hook (exit 0, error noted in JSON)."""
+    import json
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "state").mkdir()
+    _stub_remote(
+        monkeypatch,
+        {"tier": "remote", "pulled": False, "pushed": False, "push_error": "auth failed"},
+    )
+
+    r = CliRunner().invoke(cli, ["sync", "auto", "--json"], env=_env(tmp_path))
+    assert r.exit_code == 0, r.output  # best-effort hook never crashes the prompt
+    json_lines = [ln for ln in r.output.splitlines() if ln.strip().startswith("{")]
+    payload = json.loads(json_lines[-1])
+    assert payload.get("errors") == {"push_error": "auth failed"}

@@ -13,11 +13,10 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
-import weakref
 from pathlib import Path
 from typing import Any
 
-from .connection import _ConnectionMixin
+from .connection import _ConnectionHolder, _ConnectionMixin
 from .schema import _BM25_ES_STOPWORDS
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
@@ -30,7 +29,12 @@ class TurnStore(_ConnectionMixin):
     def __init__(self, db_path: Path | str) -> None:
         self.db_path = Path(db_path)
         self._local = threading.local()
-        self._conn_holders: weakref.WeakSet[object] = weakref.WeakSet()
+        # Strong references (matching VecStore): CPython does not guarantee the
+        # order in which a terminating thread clears its ``threading.local``
+        # values and finalizes sqlite connections, so ``close()`` (or the
+        # dead-owner sweep in ``_connect``) is the single deterministic cleanup
+        # boundary. A WeakSet would let a holder vanish before either fires.
+        self._conn_holders: set[_ConnectionHolder] = set()
         self._conn_holders_lock = threading.Lock()
         self.db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.db_path.parent.chmod(0o700)

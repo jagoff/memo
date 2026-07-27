@@ -154,6 +154,53 @@ def test_markdown_config_file_loads_storage_and_models(monkeypatch, tmp_path: Pa
     assert cfg.reranker_enabled is False
 
 
+def test_markdown_reranker_enabled_honored_on_non_apple_silicon(monkeypatch, tmp_path: Path):
+    """The non-Apple-Silicon hardware guard must NOT clobber a Markdown-persisted
+    `models.reranker_enabled = on`. Regression: the guard checked only env
+    presence, so an explicit Markdown opt-in was silently forced off."""
+    monkeypatch.setattr("memo.config.is_apple_silicon", lambda: False)
+    home = tmp_path / "memo-home"
+    cfg_dir = home / "config"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "models-config.md").write_text(
+        '```toml\n[models]\nreranker_enabled = "on"\n```\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "missing.toml"))
+    monkeypatch.delenv("MEMO_RERANKER_ENABLED", raising=False)
+    monkeypatch.delenv("MEMO_MODEL_PROFILE", raising=False)
+
+    cfg = Config.from_env()
+
+    assert cfg.reranker_enabled is True
+
+
+def test_non_apple_silicon_defaults_reranker_off_without_opt_in(monkeypatch, tmp_path: Path):
+    """With neither env nor Markdown asserting it, the guard still forces the
+    reranker off on non-Apple-Silicon hosts (the guard itself is preserved)."""
+    monkeypatch.setattr("memo.config.is_apple_silicon", lambda: False)
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "missing.toml"))
+    monkeypatch.delenv("MEMO_RERANKER_ENABLED", raising=False)
+    monkeypatch.delenv("MEMO_MODEL_PROFILE", raising=False)
+
+    cfg = Config.from_env()
+
+    assert cfg.reranker_enabled is False
+
+
+def test_env_reranker_enabled_honored_on_non_apple_silicon(monkeypatch, tmp_path: Path):
+    """An explicit env opt-in also survives the hardware guard."""
+    monkeypatch.setattr("memo.config.is_apple_silicon", lambda: False)
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "missing.toml"))
+    monkeypatch.setenv("MEMO_RERANKER_ENABLED", "1")
+    monkeypatch.delenv("MEMO_MODEL_PROFILE", raising=False)
+
+    cfg = Config.from_env()
+
+    assert cfg.reranker_enabled is True
+
+
 def test_markdown_model_specific_values_override_profile(monkeypatch, tmp_path: Path):
     home = tmp_path / "memo-home"
     cfg_dir = home / "config"
@@ -391,6 +438,49 @@ def test_single_db_from_env(monkeypatch, tmp_path: Path):
     cfg = Config.from_env()
     assert cfg.single_db is True
     assert cfg.history_db == cfg.db_path
+
+
+def test_overlay_single_db_reaches_config(monkeypatch, tmp_path: Path):
+    """`MEMO_SINGLE_DB` resolves through the 4-tier flag resolver, so a tuned
+    overlay value reaches Config even when the env var is unset. Regression: the
+    raw-env gate consulted flag_bool (hence the overlay) only when env was set."""
+    from memo import tuned_overlay as ov
+
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "missing.toml"))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "d"))
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.delenv("MEMO_SINGLE_DB", raising=False)
+    ov._state_dir_cache.clear()
+    ov.write_overlay(state, {"MEMO_SINGLE_DB": True}, {"set_by": "test"})
+    try:
+        assert Config.from_env().single_db is True
+    finally:
+        ov._state_dir_cache.clear()
+
+
+def test_markdown_misc_model_profile_does_not_diverge(monkeypatch, tmp_path: Path):
+    """A Config-owned env var must not also expose a bogus `misc.*` alias path.
+    `config set misc.model_profile` used to succeed + validate yet never reach
+    the running Config; it must now error as an unknown key, while the canonical
+    `models.model_profile` path still reaches Config."""
+    from memo import config_md
+
+    home = tmp_path / "memo-home"
+    (home / "config").mkdir(parents=True)
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(home))
+    monkeypatch.setenv("MEMO_CONFIG_FILE", str(tmp_path / "missing.toml"))
+    monkeypatch.delenv("MEMO_MODEL_PROFILE", raising=False)
+
+    config_md.invalidate_cache()
+    with pytest.raises((KeyError, ValueError)):
+        config_md.set_value("misc.model_profile", "quality")
+
+    config_md.invalidate_cache()
+    config_md.set_value("models.model_profile", "quality")
+    config_md.invalidate_cache()
+    assert Config.from_env().model_profile == "quality"
 
 
 def test_ensure_dirs_creates_vault_memory_dir(tmp_path: Path):

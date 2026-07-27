@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging as _logging
 import time
+from contextlib import ExitStack
 from typing import Any, cast
 
 import click
@@ -367,7 +368,18 @@ def dream_run(
     # Mark every save inside the pipeline as derived/batch so the interactive
     # near-duplicate nag stays quiet — these near-dups are what the same run's
     # consolidate pass merges. (`skipped_dup` in the receipt is the real signal.)
-    with derived_save_scope(), _make_progress() as progress:
+    #
+    # The whole pipeline body runs under one try/finally (via ExitStack, so the
+    # body keeps its indentation): a hard crash — Memory construction, the
+    # convergence guard, an un-guarded phase — must STILL fall through to the
+    # receipt write below. Otherwise `state_dir/dream/last.json` keeps showing
+    # the last good night and `memo dream status`/doctor report healthy while
+    # the 03:00 pipeline is silently dead.
+    mem: Any = None
+    _pipeline_stack = ExitStack()
+    try:
+        _pipeline_stack.enter_context(derived_save_scope())
+        progress = _pipeline_stack.enter_context(_make_progress())
         overall = progress.add_task("[bold cyan]pipeline[/bold cyan]", total=active_steps)
         step = progress.add_task("loading memory...", total=None)
 
@@ -1033,6 +1045,8 @@ def dream_run(
                     receipt["negative_captured"] = res["negative_captured"]
                 for _nce in res.get("negative_capture_errors", []):
                     receipt["errors"].append(f"negative_capture: {_nce}")
+                for _ae in res.get("errors", []):
+                    receipt["errors"].append(f"contradict: {_ae}")
                 progress.update(
                     step,
                     description=(
@@ -1076,6 +1090,8 @@ def dream_run(
                 res = _run_stale(mem, dry_run=dry_run)
                 if "error" in res:
                     receipt["errors"].append(f"stale: {res['error']}")
+                for _ae in res.get("errors", []):
+                    receipt["errors"].append(f"stale: {_ae}")
                 receipt["archived_stale"] = res.get("archived", [])
                 progress.update(
                     step,
@@ -1225,7 +1241,11 @@ def dream_run(
                 roi_floor = flag_float("MEMO_DREAM_PRUNE_FLOOR") or 0.15
                 min_age = 90 if (_ma := flag_int("MEMO_DREAM_PRUNE_MIN_AGE_DAYS")) is None else _ma
                 pruned = _run_prune_floor(
-                    mem, roi_floor=roi_floor, min_age_days=min_age, dry_run=False
+                    mem,
+                    roi_floor=roi_floor,
+                    min_age_days=min_age,
+                    dry_run=False,
+                    errors=receipt["errors"],
                 )
                 receipt["pruned_floor"] = pruned
                 progress.update(
@@ -1248,7 +1268,9 @@ def dream_run(
                 completed=0,
             )
             try:
-                evicted = _run_eviction(mem, max_count=_evict_max, dry_run=dry_run)
+                evicted = _run_eviction(
+                    mem, max_count=_evict_max, dry_run=dry_run, errors=receipt["errors"]
+                )
                 receipt["evicted"] = evicted
                 progress.update(
                     step,
@@ -1385,6 +1407,14 @@ def dream_run(
 
         # Mark step task complete so spinner stops
         progress.update(step, total=1, completed=1)
+    except Exception as exc:
+        # A crash before/around the per-pass guards must not vanish silently:
+        # record it and fall through to the receipt write so the failed night
+        # is visible to `memo dream status`/doctor.
+        receipt["errors"].append(f"pipeline: {type(exc).__name__}: {exc}")
+        _log.exception("dream pipeline crashed before completion")
+    finally:
+        _pipeline_stack.close()
 
     # Persist receipt + timestamp --------------------------------------------
     if not dry_run:
@@ -1393,7 +1423,12 @@ def dream_run(
             d.mkdir(parents=True, exist_ok=True)
             # Stamp the post-mutation corpus fingerprint so the next run can
             # detect "nothing changed" and converge (skip the heavy passes).
-            receipt["corpus_fp"] = _corpus_fingerprint(mem)
+            # Guarded so a fingerprint failure (or a crashed `mem`) can't block
+            # the receipt write itself.
+            try:
+                receipt["corpus_fp"] = _corpus_fingerprint(mem) if mem is not None else None
+            except Exception as exc:
+                receipt["errors"].append(f"corpus_fp: {type(exc).__name__}: {exc}")
             (d / "last.json").write_text(
                 json.dumps({"ts": time.time(), **receipt}, ensure_ascii=False, indent=2),
                 encoding="utf-8",

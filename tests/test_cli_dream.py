@@ -78,3 +78,37 @@ def test_dream_run_wraps_validity_pass_error_into_receipt(mock_memory, monkeypat
 
     receipt = _run(mock_memory)
     assert any("validity_extract" in e and "validity kaput" in e for e in receipt["errors"])
+
+
+def test_dream_run_persists_receipt_when_memory_load_crashes(monkeypatch, tmp_path):
+    """F1: a hard crash before the per-pass guards (here Memory construction)
+    must STILL persist a receipt carrying the error — otherwise
+    `dream status`/doctor keep showing the last good night while the pipeline
+    is silently dead."""
+    from memo.config import Config
+    from memo.dream_utils import _state_path
+
+    state = tmp_path / "state"
+    data = tmp_path / "data"
+    state.mkdir()
+    data.mkdir()
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(data))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+
+    def boom(_cfg):
+        raise RuntimeError("memory kaput")
+
+    monkeypatch.setattr("memo.cli_dream._get_memory", boom)
+
+    # NOT a dry-run: the receipt is only persisted on a real run.
+    res = CliRunner().invoke(dream_cmd, ["run", "--json", *_SKIPS])
+    assert res.exit_code == 0, res.output
+    receipt = json.loads(res.output[res.output.index("{") :])
+    assert any("pipeline" in e and "memory kaput" in e for e in receipt["errors"])
+
+    # Persisted to disk so status/doctor observe the failed night.
+    last = _state_path(Config.from_env()) / "last.json"
+    assert last.exists(), "a crashed pipeline must still write last.json"
+    persisted = json.loads(last.read_text(encoding="utf-8"))
+    assert any("memory kaput" in e for e in persisted["errors"])

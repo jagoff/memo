@@ -783,7 +783,8 @@ class _AskOpsMixin(_MemoryBase):
             from memo.flags import flag_int
             from memo.rag_cache import RagContextCache
 
-            cache = RagContextCache(ttl_s=float(flag_int("MEMO_RAG_CACHE_TTL_S") or 300))
+            ttl = flag_int("MEMO_RAG_CACHE_TTL_S")
+            cache = RagContextCache(ttl_s=float(300 if ttl is None else ttl))
             self._rag_cache = cache
         return cache
 
@@ -886,6 +887,15 @@ class _AskOpsMixin(_MemoryBase):
             return {"question": question, "answer": "", "sources": []}
         from memo.flags import flag_bool, flag_int
 
+        # NOTE (F4): the `== 800` sentinel can't be cleanly replaced by a
+        # `None` default here. The MCP tool (`memo_ask` in server_core_search.py)
+        # and CLI (`memo ask --snippet-chars`, cli_search.py) both bake in their
+        # own `800` default and pass it EXPLICITLY, so `MEMO_ASK_SNIPPET_CHARS`
+        # is intentionally allowed to act as the deploy-wide default whenever the
+        # effective value is still 800. Switching to a `None` sentinel here would
+        # silently disable that flag for those primary paths (they'd forward a
+        # literal 800, not None). A clean fix must thread the sentinel from those
+        # upstream layers first — out of scope for this change.
         if snippet_chars == 800:
             snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
         if use_context_pack is None:
@@ -989,6 +999,15 @@ class _AskOpsMixin(_MemoryBase):
             return
         from memo.flags import flag_bool, flag_int
 
+        # NOTE (F4): the `== 800` sentinel can't be cleanly replaced by a
+        # `None` default here. The MCP tool (`memo_ask` in server_core_search.py)
+        # and CLI (`memo ask --snippet-chars`, cli_search.py) both bake in their
+        # own `800` default and pass it EXPLICITLY, so `MEMO_ASK_SNIPPET_CHARS`
+        # is intentionally allowed to act as the deploy-wide default whenever the
+        # effective value is still 800. Switching to a `None` sentinel here would
+        # silently disable that flag for those primary paths (they'd forward a
+        # literal 800, not None). A clean fix must thread the sentinel from those
+        # upstream layers first — out of scope for this change.
         if snippet_chars == 800:
             snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
         if use_context_pack is None:

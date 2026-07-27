@@ -40,6 +40,13 @@ def test_broad_exception_policy_targets_are_classified() -> None:
     ]
     assert unclassified == []
 
+    # Reverse direction (allowlist ⊆ found): every allow-listed key must still
+    # resolve to a real `except Exception` site, so a refactored-away entry
+    # cannot linger as a stale broad-exception exemption.
+    found_keys = {(site.relpath, site.scope, site.ordinal) for site in found}
+    stale = sorted(BROAD_EXCEPTION_ALLOWED - found_keys)
+    assert stale == []
+
 
 def test_broad_exception_ratchet_exemptions_are_exact_and_present() -> None:
     expected = {

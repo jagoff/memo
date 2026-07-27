@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,42 @@ def _module_imports(module: str) -> set[str]:
 def test_operational_surfaces_are_memo_owned() -> None:
     """Continuity and evidence are first-class Memo surfaces."""
     assert {"operational", "evidence"}.issubset(cli.commands)
+
+
+def test_brain_like_mcp_tools_are_not_registered() -> None:
+    """Memo keeps cognition OFF its MCP surface: no agent/cognitive/suggest
+    verbs. MCP tools live across server.py + server_*.py (registered via
+    ``@server.tool() def memo_*``) and mcp_tools.py (``ToolSpec name="memo_*"``);
+    scan all of them so the guard keeps biting after the monolith split.
+
+    Scope is the reduced post-#85 banned set: ``federation``/``lifecycle`` are
+    now legitimate Memo-owned operational/evidence tools (e.g.
+    ``memo_federation_preview``) and are no longer forbidden.
+    """
+    sources = [
+        SRC / "server.py",
+        SRC / "mcp_tools.py",
+        *sorted(SRC.glob("server_*.py")),
+    ]
+    forbidden = ("agent", "cognitive", "suggest")
+
+    for path in sources:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for prefix in forbidden:
+            esc = re.escape(prefix)
+            # Cover BOTH tool prefixes (memo_* and the session-pattern mem_*)
+            # so a mem_cognitive_* tool cannot evade the guard by prefix.
+            # mem_suggest_topic_key is exempt: a pure string-formatting helper
+            # (type->family + kebab-case), no LLM/retrieval/orchestration.
+            for match in re.finditer(rf"\bdef (?:memo|mem)_({esc}\w*)", text):
+                assert f"mem_{match.group(1)}" == "mem_suggest_topic_key", (
+                    f"brain-like MCP tool {match.group(0)[4:]}* defined in {path.name}"
+                )
+            assert re.search(rf'name="(?:memo|mem)_{esc}', text) is None, (
+                f"brain-like MCP tool (memo|mem)_{prefix}* registered in {path.name}"
+            )
 
 
 def test_runtime_does_not_import_retired_memory_packages() -> None:

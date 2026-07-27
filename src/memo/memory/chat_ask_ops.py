@@ -36,6 +36,15 @@ class _ChatAskOpsMixin(_MemoryBase):
         started = time.perf_counter()
         clean_history = self._normalize_chat_history(history or [])
         clean_context = context or {}
+        # NOTE (F4): the `== 800` sentinel can't be cleanly replaced by the
+        # `None` default here. The MCP tool (`memo_chat_ask` in
+        # server_core_search.py) bakes in its own `800` default and passes it
+        # EXPLICITLY, so `MEMO_ASK_SNIPPET_CHARS` is intentionally allowed to act
+        # as the deploy-wide default whenever the effective value is still 800.
+        # Distinguishing "not passed" from "explicitly 800" at this level would
+        # silently disable that flag for the MCP path (it forwards a literal 800,
+        # never None). A clean fix must thread the sentinel from that upstream
+        # layer first — out of scope for this change.
         resolved_snippet_chars = 800 if snippet_chars is None else snippet_chars
         if resolved_snippet_chars == 800:
             from memo.flags import flag_int
@@ -128,6 +137,15 @@ class _ChatAskOpsMixin(_MemoryBase):
         started = time.perf_counter()
         clean_history = self._normalize_chat_history(history or [])
         clean_context = context or {}
+        # NOTE (F4): the `== 800` sentinel can't be cleanly replaced by the
+        # `None` default here. The MCP tool (`memo_chat_ask` in
+        # server_core_search.py) bakes in its own `800` default and passes it
+        # EXPLICITLY, so `MEMO_ASK_SNIPPET_CHARS` is intentionally allowed to act
+        # as the deploy-wide default whenever the effective value is still 800.
+        # Distinguishing "not passed" from "explicitly 800" at this level would
+        # silently disable that flag for the MCP path (it forwards a literal 800,
+        # never None). A clean fix must thread the sentinel from that upstream
+        # layer first — out of scope for this change.
         resolved_snippet_chars = 800 if snippet_chars is None else snippet_chars
         if resolved_snippet_chars == 800:
             from memo.flags import flag_int

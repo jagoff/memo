@@ -314,7 +314,7 @@ def _resolve_model_profile(
     _apply_selected_values(kwargs, md_values)
 
 
-def _apply_environment_values(kwargs: dict[str, Any]) -> None:
+def _apply_environment_values(kwargs: dict[str, Any], md_values: dict[str, Any]) -> None:
     """Apply registered environment overrides and platform-aware toggles."""
     env_values = {
         field: value
@@ -323,15 +323,33 @@ def _apply_environment_values(kwargs: dict[str, Any]) -> None:
     }
     _apply_selected_values(kwargs, env_values)
 
-    if not is_apple_silicon() and "MEMO_RERANKER_ENABLED" not in os.environ:
+    # Hardware guard: the cross-encoder reranker needs MLX (Apple Silicon), so
+    # default it OFF elsewhere. Honor an explicit opt-in from EITHER the env var
+    # OR persistent Markdown config (`models.reranker_enabled`, carried in
+    # md_values) — only force it off when the operator asserted nothing. Env
+    # presence alone was checked before, which silently clobbered a
+    # markdown-persisted `reranker_enabled = true` on non-Apple-Silicon hosts.
+    reranker_opt_in = "MEMO_RERANKER_ENABLED" in os.environ or "reranker_enabled" in md_values
+    if not is_apple_silicon() and not reranker_opt_in:
         kwargs["reranker_enabled"] = False
 
     from memo.flags import flag_bool
 
-    if os.environ.get("MEMO_MEMORIES_IN_VAULT"):
-        kwargs["memories_in_vault"] = flag_bool("MEMO_MEMORIES_IN_VAULT")
-    if os.environ.get("MEMO_SINGLE_DB"):
-        kwargs["single_db"] = flag_bool("MEMO_SINGLE_DB")
+    # Resolve through the 4-tier flag resolver (env > Markdown > overlay >
+    # default) so the tuned overlay is honored too — the old raw-env gate
+    # consulted flag_bool ONLY when the env was truthy, so an overlay value was
+    # ignored when the env was unset. Markdown field values are already applied
+    # via md_values above, and the legacy config.toml tier (which flag_bool does
+    # not read) is preserved by only overwriting when a flag tier actually
+    # asserts a value — an unset flag resolves to its False default and must not
+    # clobber a True supplied by config.toml.
+    for env_name, field in (
+        ("MEMO_MEMORIES_IN_VAULT", "memories_in_vault"),
+        ("MEMO_SINGLE_DB", "single_db"),
+    ):
+        resolved = flag_bool(env_name)
+        if resolved or env_name in os.environ or field in md_values:
+            kwargs[field] = resolved
 
 
 def _apply_repo_and_legacy_paths(
@@ -816,7 +834,7 @@ class Config(BaseModel):
         # embedder under the quality profile) are not lost. Env vars below
         # still win over both Markdown and profile defaults.
         # Step 3: env-var overrides.
-        _apply_environment_values(kwargs)
+        _apply_environment_values(kwargs, md_values)
 
         # Step 4: zero-config repo mode — detect if we're running from
         # a cloned memo repo (cwd contains memo's source). In that case,

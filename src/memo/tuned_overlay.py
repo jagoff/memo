@@ -29,6 +29,15 @@ _cache: dict[str, tuple[float, dict[str, str]]] = {}
 _SCALAR = (bool, int, float, str)
 
 
+def _expand_state_dir(v: str) -> str:
+    """Expand a state_dir string the same way ``Config._expand`` does
+    (``expandvars`` → ``expanduser`` → ``resolve``). Without this a ``~`` /
+    ``$VAR`` state_dir resolved to a DIFFERENT directory than Config's, so the
+    overlay tier was silently inert — every tuner/graduation write landed at a
+    path ``flag()`` never read back from."""
+    return str(Path(os.path.expandvars(v)).expanduser().resolve())
+
+
 def overlay_path(state_dir: Path) -> Path:
     return Path(state_dir) / _FILENAME
 
@@ -93,7 +102,7 @@ def _resolve_state_dir(src: Mapping[str, str]) -> str:
     plain CLI runs silently ignored every tuner/graduation result."""
     explicit = src.get("MEMO_STATE_DIR")
     if explicit:
-        return explicit
+        return _expand_state_dir(explicit)
     if src is not os.environ:
         # A custom env mapping (tests, callers pinning a hermetic env) opts
         # out of the machine-level fallback chain: without an explicit
@@ -120,7 +129,7 @@ def _resolve_state_dir_uncached(src: Mapping[str, str], explicit: str | None) ->
         storage_md = {}
     md_sd = storage_md.get("storage.state_dir")
     if md_sd:
-        return str(md_sd)
+        return _expand_state_dir(str(md_sd))
     # Legacy TOML `[storage]` section. Config.from_env folds it into the same
     # has_storage_config gate (via `_file_config_values`) and honors its
     # state_dir. Mirror both — otherwise a repo checkout carrying a legacy
@@ -138,7 +147,7 @@ def _resolve_state_dir_uncached(src: Mapping[str, str], explicit: str | None) ->
         toml_storage = {}
     toml_sd = toml_storage.get("state_dir")
     if toml_sd:
-        return str(toml_sd)
+        return _expand_state_dir(str(toml_sd))
     # Config.from_env: `has_legacy = "MEMO_VAULT_PATH" in os.environ or
     # os.environ.get("MEMO_MEMORY_SUBDIR")` — an EXPORTED-but-empty
     # MEMO_VAULT_PATH still counts (key presence, not truthiness). `src` is

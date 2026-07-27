@@ -143,6 +143,69 @@ def test_second_immediate_pass_captures_nothing_new(tmp_path: Path, monkeypatch)
     assert _watermark(state, sid)["exchange_count"] == 1
 
 
+def test_growing_last_exchange_is_recaptured_on_next_pass(tmp_path: Path, monkeypatch):
+    """A single exchange whose assistant turn GROWS across passes must have its
+    new tail mined on the second pass.
+
+    Regression: tracking only an exchange COUNT let the still-open last exchange
+    keep the same list index, so ``exchanges[start:]`` was empty forever and any
+    content appended to that turn was invisible to every later incremental pass
+    (lost entirely if the session never reached a clean Stop, only surfacing at
+    the Stop hook). The watermark now also tracks consumed assistant length, so
+    the grown tail — and ONLY the tail — is re-examined.
+    """
+    state = _setup_env(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    def _record(chat, model, user_text, assistant_text, **kwargs):
+        calls.append(assistant_text)
+        return []
+
+    monkeypatch.setattr("memo.capture.extract_insights", _record)
+
+    transcript = tmp_path / "t.jsonl"
+    sid = "sess-grow"
+
+    # Pass 1: one exchange, one assistant message.
+    _write_transcript(
+        transcript,
+        [
+            {"type": "user", "message": {"content": "qué arreglamos"}},
+            {"type": "assistant", "message": {"content": _assistant("ALPHAMARK")}},
+        ],
+    )
+    out1 = run_capture_incremental(transcript, sid)
+    assert out1["status"] == "ok"
+    assert len(calls) == 1
+    assert "ALPHAMARK" in calls[0]
+    assert _watermark(state, sid)["exchange_count"] == 1
+
+    # The SAME turn grows: a second assistant message with no intervening user
+    # turn, so _parse_exchanges keeps it as ONE exchange at the same index.
+    _write_transcript(
+        transcript,
+        [
+            {"type": "user", "message": {"content": "qué arreglamos"}},
+            {"type": "assistant", "message": {"content": _assistant("ALPHAMARK")}},
+            {"type": "assistant", "message": {"content": _assistant("BETAMARK")}},
+        ],
+    )
+    out2 = run_capture_incremental(transcript, sid)
+    # Previously this was "no_new" and the appended content was lost; now the
+    # grown tail is mined.
+    assert out2["status"] == "ok"
+    assert len(calls) == 2
+    # Only the NEW tail is fed to the extractor — the already-consumed content
+    # is never re-mined (idempotent).
+    assert "BETAMARK" in calls[1]
+    assert "ALPHAMARK" not in calls[1]
+
+    # A third pass with no further growth mines nothing (steady state).
+    out3 = run_capture_incremental(transcript, sid)
+    assert out3["status"] == "no_new"
+    assert len(calls) == 2
+
+
 def test_extraction_llm_failure_does_not_advance_watermark(tmp_path: Path, monkeypatch):
     """A TRANSIENT helper-LLM failure must not advance the watermark.
 

@@ -126,6 +126,30 @@ def test_overlay_values_custom_env_without_state_dir_is_empty():
     assert ov.overlay_values({}) == {}
 
 
+def test_overlay_resolves_tilde_state_dir(tmp_path: Path, monkeypatch):
+    """A `~` (or `$VAR`) state_dir must be expanded the same way Config._expand
+    does (expandvars → expanduser → resolve). Without this the overlay resolved
+    to a different directory than Config used and was silently inert — every
+    tuner/graduation write was lost."""
+    fake_home = tmp_path / "home"
+    (fake_home / "state").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(fake_home))  # POSIX ~ expands via $HOME
+    ov._state_dir_cache.clear()
+    ov.write_overlay(fake_home / "state", {"MEMO_RECALL_MIN_SIM": 0.63}, {})
+    vals = ov.overlay_values({"MEMO_STATE_DIR": "~/state"})
+    assert vals["MEMO_RECALL_MIN_SIM"] == "0.63"
+
+
+def test_overlay_resolves_envvar_state_dir(tmp_path: Path, monkeypatch):
+    """The `$VAR` half of the same expansion also reaches the overlay file."""
+    (tmp_path / "state").mkdir()
+    monkeypatch.setenv("MEMO_TEST_BASE", str(tmp_path))
+    ov._state_dir_cache.clear()
+    ov.write_overlay(tmp_path / "state", {"MEMO_RECALL_MIN_SIM": 0.64}, {})
+    vals = ov.overlay_values({"MEMO_STATE_DIR": "$MEMO_TEST_BASE/state"})
+    assert vals["MEMO_RECALL_MIN_SIM"] == "0.64"
+
+
 def test_overlay_values_missing_overlay_file_is_empty(tmp_path: Path):
     assert ov.overlay_values({"MEMO_STATE_DIR": str(tmp_path / "nowhere")}) == {}
 

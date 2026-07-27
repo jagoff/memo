@@ -40,3 +40,26 @@ def test_consolidate_ranks_candidate_clusters_by_utc_instant(mock_memory, monkey
 
     assert len(result) == 1
     assert result[0]["members"][0]["id"] == "b1"
+
+
+def test_greedy_cluster_pure_python_fallback_assigns_best_match(monkeypatch):
+    """F5: the numpy-less fallback must join the CLOSEST representative (argmax),
+    matching the numpy path — not merely the first representative over threshold."""
+    import sys
+
+    from memo.memory.consolidate_ops import _ConsolidateOpsMixin
+
+    # Force the pure-Python branch by making `import numpy` raise ImportError.
+    monkeypatch.setitem(sys.modules, "numpy", None)
+
+    # v2 (35°) is over threshold to BOTH v0 (0°, cos35≈0.819) and v1 (60°,
+    # cos25≈0.906) but is CLOSER to v1. First-match would wrongly join v0's
+    # cluster; best-match joins v1's.
+    items = [
+        {"emb": [1.0, 0.0]},  # 0°
+        {"emb": [0.5, 0.8660254]},  # 60° (cos to v0 = 0.5 < threshold → own cluster)
+        {"emb": [0.81915204, 0.57357644]},  # 35°
+    ]
+    clusters = _ConsolidateOpsMixin._greedy_cluster(items, threshold=0.78)
+
+    assert clusters == [[0], [1, 2]]

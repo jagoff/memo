@@ -420,6 +420,23 @@ def _watermark_start(watermark: dict[str, Any], total: int) -> int:
     return min(max(start, 0), total)
 
 
+def _watermark_last_len(watermark: dict[str, Any]) -> int | None:
+    """Consumed assistant length of the last exchange, or None when absent.
+
+    Written only by the growing-tail-aware path. A legacy/corrupt watermark
+    (field missing or non-numeric) returns None, which the caller reads as
+    'do not re-scan the boundary exchange' — preserving prior behavior for old
+    state and for a stale/out-of-range watermark that must not reprocess turns.
+    """
+    raw = watermark.get("last_assistant_len")
+    if raw is None:
+        return None
+    try:
+        return max(int(raw), 0)
+    except (TypeError, ValueError):
+        return None
+
+
 def run_capture_incremental(
     transcript_path: Path,
     session_id: str,
@@ -478,16 +495,39 @@ def run_capture_incremental(
         # Negative state resets to the beginning; state ahead of a truncated
         # transcript clamps to its current end.
         start = _watermark_start(wm, total)
+        # How much of the last-consumed exchange's assistant text we already
+        # examined. None (legacy/corrupt/stale watermark) → skip the growing-tail
+        # re-scan below and behave exactly as the pre-existing count-only path.
+        last_len = _watermark_last_len(wm)
 
         def _stamp() -> None:
             _save_watermark(
                 cfg.state_dir,
                 session_id,
-                {"session_id": session_id, "exchange_count": total, "updated": time.time()},
+                {
+                    "session_id": session_id,
+                    "exchange_count": total,
+                    # Length of the still-open last exchange we've now consumed,
+                    # so a later pass can detect and mine only its NEW tail.
+                    "last_assistant_len": len(exchanges[total - 1][1]) if total else 0,
+                    "updated": time.time(),
+                },
             )
             _clear_retry_backoff(cfg.state_dir, session_id)
 
-        new = exchanges[start:]
+        # A single exchange keeps the SAME list index while its assistant turn is
+        # still being written, so advancing an exchange COUNT alone blinds every
+        # later incremental pass to content appended to that turn (lost for good
+        # if the session never reaches a clean Stop). Re-scan the unconsumed tail
+        # of the still-open boundary exchange (index start-1) by length — the
+        # tail is examined exactly once, so no content is ever captured twice.
+        new: list[tuple[str, str]] = []
+        if last_len is not None and 0 < start <= total:
+            b_user, b_assistant = exchanges[start - 1]
+            tail = b_assistant[last_len:]
+            if tail.strip():
+                new.append((b_user, tail))
+        new.extend(exchanges[start:])
         if not new:
             _stamp()  # refresh `updated` so the throttle clock advances
             return {"status": "no_new", "exchange_count": total}

@@ -394,6 +394,17 @@ def run_flag_graduation_pass(
                 live = measure_flag(mem, labels, k=k, spec=gate, enabled=True, floor=floor)
                 res["flags"][name] = {"verdict": "guard", "live": live}
                 if _regressed(live, entry["baseline"]) and not dry_run:
+                    from memo import dream_tune_online
+
+                    # One overlay change per proof cycle: like every other overlay
+                    # writer, defer while a tuner experiment is pending or a revert
+                    # just happened this cycle — a revert write here would bump
+                    # params_version and orphan that same-night pending's cohort.
+                    if dream_tune_online.has_unresolved_pending(
+                        cfg.state_dir
+                    ) or dream_tune_online.in_revert_cooldown(cfg.state_dir):
+                        res["flags"][name]["verdict"] = "deferred_pending"
+                        continue
                     params = _scalar_overlay(cfg.state_dir)
                     params.pop(name, None)
                     for extra, _v in gate.extra_flags:

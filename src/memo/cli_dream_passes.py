@@ -133,25 +133,48 @@ def _run_prune_floor(
     roi_floor: float,
     min_age_days: int,
     dry_run: bool,
+    errors: list[str] | None = None,
 ) -> list[dict]:
     """Archive memories below roi_floor with zero access and age >= min_age_days.
 
-    Returns list of {id, roi_score, days_old} candidates (even in dry-run).
+    In dry-run, returns every {id, roi_score, days_old} candidate (would-archive).
+    In a real run, returns ONLY the candidates that actually archived —
+    ``archive_memory`` returns False (no exception) when the record/file is
+    already gone, and counting those as archived would overstate the receipt.
+    Each False/failed archive is appended (prefixed) to ``errors`` when given
+    (the caller passes ``receipt["errors"]``) and always logged.
     """
     candidates = mem.store.prune_floor_candidates(roi_floor=roi_floor, min_age_days=min_age_days)
-    if not dry_run:
-        for c in candidates:
-            try:
-                mem.lifecycle.archive_memory(c["id"])
-            except Exception as exc:
-                _log.warning("prune_floor: archive failed for %s: %s", c["id"], exc)
-    return candidates
+    if dry_run:
+        return candidates
+    archived: list[dict] = []
+    for c in candidates:
+        try:
+            if mem.lifecycle.archive_memory(c["id"]):
+                archived.append(c)
+            else:
+                msg = f"prune_floor: archive returned False for {c['id']} (already gone)"
+                _log.warning(msg)
+                if errors is not None:
+                    errors.append(msg)
+        except Exception as exc:
+            _log.warning("prune_floor: archive failed for %s: %s", c["id"], exc)
+            if errors is not None:
+                errors.append(f"prune_floor: archive failed for {c['id']}: {exc}")
+    return archived
 
 
-def _run_eviction(mem: Memory, max_count: int, dry_run: bool) -> list[dict]:
+def _run_eviction(
+    mem: Memory, max_count: int, dry_run: bool, errors: list[str] | None = None
+) -> list[dict]:
     """Archive LFU candidates until corpus size <= max_count.
 
-    Returns list of {id, access_count} archived (or would-archive in dry-run).
+    In dry-run, returns every {id, access_count} candidate (would-archive). In a
+    real run, returns ONLY the candidates that actually archived —
+    ``archive_memory`` returns False (no exception) when the record/file is
+    already gone, and counting those as archived would overstate the receipt.
+    Each False/failed archive is appended (prefixed) to ``errors`` when given
+    (the caller passes ``receipt["errors"]``) and always logged.
     """
     # No defensive except here: a DB error must propagate to the cli_dream
     # caller (which records it in receipt["errors"]), not read as "evicted: 0".
@@ -168,13 +191,23 @@ def _run_eviction(mem: Memory, max_count: int, dry_run: bool) -> list[dict]:
         limit=excess,
         exclude_types={"reference", "synthesis"} | EVICTION_PROTECTED_TYPES,
     )
-    if not dry_run:
-        for c in candidates:
-            try:
-                mem.lifecycle.archive_memory(c["id"])
-            except Exception as exc:
-                _log.warning("eviction: archive failed for %s: %s", c["id"], exc)
-    return [{"id": c["id"], "access_count": c.get("access_count", 0)} for c in candidates]
+    if dry_run:
+        return [{"id": c["id"], "access_count": c.get("access_count", 0)} for c in candidates]
+    archived: list[dict] = []
+    for c in candidates:
+        try:
+            if mem.lifecycle.archive_memory(c["id"]):
+                archived.append({"id": c["id"], "access_count": c.get("access_count", 0)})
+            else:
+                msg = f"eviction: archive returned False for {c['id']} (already gone)"
+                _log.warning(msg)
+                if errors is not None:
+                    errors.append(msg)
+        except Exception as exc:
+            _log.warning("eviction: archive failed for %s: %s", c["id"], exc)
+            if errors is not None:
+                errors.append(f"eviction: archive failed for {c['id']}: {exc}")
+    return archived
 
 
 def _run_compress(mem: Memory, threshold: int, dry_run: bool) -> list[dict]:
@@ -640,14 +673,31 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                     result.setdefault("negative_captured", []).append(_neg["captured_id"])
                 if _neg.get("error"):
                     result.setdefault("negative_capture_errors", []).append(_neg["error"])
-                ok = mem.lifecycle.archive_memory(decision.dominated_id)
-                if ok:
+                # Stamp supersede provenance (winner id + close-date) into the
+                # archived .md — portable, unlike the machine-local contradict
+                # sidecar. archive_memory returns False (no raise) when the
+                # record/file is already gone: only then record success + resolve
+                # the pair; otherwise surface the failure, never overstate it.
+                if mem.lifecycle.archive_memory(
+                    decision.dominated_id, superseded_by=decision.dominant_id
+                ):
                     mem.contradict_store.resolve(
                         pair.pair_id,
                         "kept_newer",
                         note=f"dream: archived {decision.dominated_id} — {decision.reason}",
                     )
-            result["superseded"].append({"pair_id": pair.pair_id, "older": decision.dominated_id})
+                    result["superseded"].append(
+                        {"pair_id": pair.pair_id, "older": decision.dominated_id}
+                    )
+                else:
+                    result.setdefault("errors", []).append(
+                        f"archive returned False for {decision.dominated_id} "
+                        f"(pair {pair.pair_id}, already gone)"
+                    )
+            else:
+                result["superseded"].append(
+                    {"pair_id": pair.pair_id, "older": decision.dominated_id}
+                )
 
         if contradicted_ids and not dry_run:
             mem.store.penalize_confidence_batch(contradicted_ids)
@@ -711,8 +761,13 @@ def _run_stale(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
             mid = item.get("id")
             if not mid:
                 continue
-            if not dry_run:
-                mem.lifecycle.archive_memory(mid)
+            # archive_memory returns False (no raise) when the record/file is
+            # already gone: don't count a no-op archive as archived.
+            if not dry_run and not mem.lifecycle.archive_memory(mid):
+                result.setdefault("errors", []).append(
+                    f"archive returned False for {mid} (already gone)"
+                )
+                continue
             result["archived"].append({"id": mid, "days": item.get("days_since_update")})
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
