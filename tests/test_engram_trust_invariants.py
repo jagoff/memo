@@ -12,32 +12,18 @@ from typing import Any
 import pytest
 
 from memo.config import Config
+from memo.embedder_select import resolve_backend
 from memo.errors import IdentityConflictError
 from memo.memory import Memory
 
 
 def _process_exact_save(
-    data_dir: str,
-    vault_path: str,
-    state_dir: str,
-    embedder_model: str,
-    embedder_revision: str | None,
-    embedder_dims: int,
+    config: dict[str, Any],
     barrier: Any,
     queue: Any,
 ) -> None:
     """Spawn-safe worker exercising the real cross-process authority lock."""
-    memory = Memory(
-        Config(
-            data_dir=Path(data_dir),
-            vault_path=Path(vault_path),
-            state_dir=Path(state_dir),
-            embedder_model=embedder_model,
-            embedder_revision=embedder_revision,
-            embedder_dims=embedder_dims,
-            reranker_enabled=False,
-        )
-    )
+    memory = Memory(Config.model_validate(config))
     try:
         barrier.wait(timeout=15)
         record = memory.save(
@@ -499,16 +485,17 @@ def test_process_exact_saves_create_one_file_and_n_minus_one_support(
     worker_count = 3
     barrier = ctx.Barrier(worker_count)
     queue = ctx.Queue()
+    # A spawned interpreter re-runs backend auto-detection. Preserve both the
+    # validated configuration and the parent's effective backend so a cached
+    # availability probe cannot change the vector-space identity in the child.
+    worker_config = tmp_cfg.model_copy(
+        update={"embedder_backend": resolve_backend(tmp_cfg)}
+    ).model_dump(mode="json")
     processes = [
         ctx.Process(
             target=_process_exact_save,
             args=(
-                str(tmp_cfg.data_dir),
-                str(tmp_cfg.vault_path),
-                str(tmp_cfg.state_dir),
-                tmp_cfg.embedder_model,
-                tmp_cfg.embedder_revision,
-                tmp_cfg.embedder_dims,
+                worker_config,
                 barrier,
                 queue,
             ),
