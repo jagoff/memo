@@ -319,6 +319,7 @@ def register(server: Any, memory: Any) -> None:
         Returns formatted context string with session summaries.
         """
         proj = project or _project_from_cwd()
+        limit = max(1, min(limit, 100))  # a negative LIMIT binds as unbounded in sqlite
 
         _ensure_session_table(memory)
 
@@ -370,6 +371,9 @@ def register(server: Any, memory: Any) -> None:
 
         Returns timeline with surrounding observations.
         """
+        # a negative LIMIT binds as unbounded in sqlite — clamp both windows
+        before = max(1, min(before, 100))
+        after = max(1, min(after, 100))
         # Get the target observation's session and time
         row = memory.store._conn.execute(
             "SELECT session_id, created FROM meta WHERE id = ?",
@@ -585,6 +589,7 @@ def register(server: Any, memory: Any) -> None:
         Returns list of observations needing review.
         """
         proj = project or _project_from_cwd()
+        limit = max(1, min(limit, 100))  # a negative LIMIT binds as unbounded in sqlite
         now = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
 
         _ensure_session_table(memory)

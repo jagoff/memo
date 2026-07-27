@@ -620,15 +620,28 @@ def check_live_wiring(ctx: JourneyContext) -> CheckResult:
 def _fresh_home_env(home: Path) -> dict[str, str]:
     """A Day-0 environment: no inherited MEMO_* config, a throwaway HOME, and
     fresh empty data/state/config dirs. Network + banner disabled."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("MEMO_")}
+    # Strip MEMO_* AND CLAUDE_* inherited config. A leaked CLAUDE_CONFIG_DIR is
+    # the dangerous one: the spawned `memo onboard` calls wire_recall_hook, whose
+    # _claude_dir() honors $CLAUDE_CONFIG_DIR *before* the HOME-derived path — so
+    # without stripping it the "isolated" subprocess would read-modify-write the
+    # developer's REAL settings.json, and the tmp-home cleanup would not revert it.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("MEMO_") and not k.startswith("CLAUDE_")
+    }
     data = home / "data"
     state = home / "state"
     config = home / "config"
-    for d in (data, state, config):
+    claude = home / ".claude"
+    for d in (data, state, config, claude):
         d.mkdir(parents=True, exist_ok=True)
     env.update(
         {
             "HOME": str(home),
+            # Pin Claude Code's config dir inside the sandbox so hook-wiring during
+            # `memo onboard` can never escape to the real install.
+            "CLAUDE_CONFIG_DIR": str(claude),
             "MEMO_NONINTERACTIVE": "1",
             "MEMO_DATA_DIR": str(data),
             "MEMO_STATE_DIR": str(state),

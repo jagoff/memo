@@ -268,7 +268,11 @@ def session_autosave(threshold_kb: int, cooldown: int) -> None:
             ["memo", "capture-stop"],
             stdin=_sp.PIPE,
             stdout=_sp.DEVNULL,
-            stderr=_sp.DEVNULL,
+            # inherit parent stderr (matches the idle-maintenance re-spawn below):
+            # DEVNULL here would black-hole capture_core's "always log" safety-net
+            # warnings, the only signal that a systematic autosave failure is
+            # silently losing every mined insight.
+            stderr=None,
             start_new_session=True,
             env=env,
             cwd=cwd,

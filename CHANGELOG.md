@@ -9,6 +9,58 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.4.4] - 2026-07-27
+
+A second full file-by-file production audit of the whole `src/memo/` tree
+(v4.4.3) surfaced one critical and several high/medium issues the v4.4.1–4.4.3
+remediation had missed. All fixes below; the full test suite stays green.
+
+### Security
+
+- Fixed a **critical** remote-code-execution vector in the git sync path —
+  the identical `ext::` / `fd::` remote-helper RCE that v4.4.2 closed for
+  `memo_repo_index` was still open in `memo sync clone` / `setup` / `bootstrap`,
+  which passed a caller-supplied URL to `git` with no protocol allow-list.
+  Sync URLs are now validated (scheme allow-list, leading-dash and `<scheme>::`
+  rejection) and every sync git call runs with `GIT_ALLOW_PROTOCOL` /
+  `GIT_TERMINAL_PROMPT` set. Added a regression test.
+- `memo_repo_index` now rejects a git `ref` with a leading dash (checkout
+  argument injection), mirroring the URL guard.
+- The per-machine secret salt is now created with `O_CREAT|O_EXCL` at `0600`
+  instead of `write_text()`+`chmod`, closing a world-readable TOCTOU window.
+- `memo_ask` / `memo_chat_ask` MCP tools now enforce the same size/shape bounds
+  (question/history/context caps) the HTTP `/chat` route applies; `memo_search`
+  and the session-pattern / synthesis MCP tools clamp their `limit` so an
+  unbounded value can no longer exhaust the shared DB or blow the latency budget.
+
+### Fixed
+
+- The nightly dream pipeline no longer aborts its remaining passes when the
+  curated graph-projection step raises an unexpected error class; the failure is
+  isolated to a receipt entry like every sibling pass.
+- `memo doctor` now reports a machine that is stuck *behind* the remote (a
+  persistent `.md` rebase conflict), and `sync_pull` stamps a reasoned pending
+  marker on conflict — previously doctor printed "up to date" while commits
+  stayed unpulled.
+- Hard `delete()` now purges a memory's temporal fact edges; orphaned facts no
+  longer resurface in the SessionStart briefing and temporal CLI/MCP reads.
+- `memo journey-check`'s isolated subprocess now strips `CLAUDE_*` env and pins
+  `CLAUDE_CONFIG_DIR` inside its sandbox, so hook-wiring during the spawned
+  `memo onboard` can never mutate the real `settings.json`.
+- Explicit contradiction resolution (`kept_newer` / `kept_older`) compares
+  timestamps as timezone-aware instants, fixing a `supersedes`-edge inversion
+  across a DST boundary in positive-UTC-offset zones.
+- The recall-hook `MEMO_RECALL_RERANK_INPUT_K` flag is bounded 1–200 (the hook
+  injects it via `model_copy`, which skips pydantic validation); the floor-
+  calibration dream pass now registers its overlay write with the online proof
+  loop so a live-grounding regression it causes is auto-reverted.
+- Robustness: `memo reflect` survives a malformed-encoding transcript;
+  session-resume JSONL parsers tolerate non-object lines; the eval baselines are
+  written atomically; the detached autosave inherits stderr so capture failures
+  are no longer black-holed; `memo config validate` derives the valid model
+  profiles from the config source of truth; `memo backup list` surfaces a
+  corrupt archive; `MEMO_ASK_SNIPPET_CHARS=0` is honored.
+
 ## [4.4.3] - 2026-07-27
 
 ### Fixed

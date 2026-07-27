@@ -38,6 +38,41 @@ if TYPE_CHECKING:
 
 _GIT_TIMEOUT = 120
 
+# Git's `ext::`/`fd::` remote helpers execute an arbitrary command as part of a
+# clone/fetch/push. GIT_ALLOW_PROTOCOL is an explicit allow-list — any protocol
+# not named here (notably ext/fd) is refused by git itself, while the transports
+# memo sync actually uses (`file` for local-path clones, ssh/https for remotes)
+# keep working. Mirrors repo_index_helpers._GIT_SAFE_ENV; the same RCE class was
+# closed there for `memo_repo_index` and applies identically to `memo sync
+# clone`/`setup`/`bootstrap`, which also take a caller-supplied URL.
+_GIT_SAFE_ENV = {
+    "GIT_ALLOW_PROTOCOL": "file:git:ssh:http:https:git+ssh",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+
+_ALLOWED_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
+
+
+def _validate_clone_url(url: str) -> None:
+    """Reject sync remote URLs that could reach git's arbitrary-command helpers.
+
+    ``memo sync clone``/``setup``/``bootstrap`` accept a user-supplied URL and
+    pass it to ``git clone``/``git remote``. Without this guard a URL like
+    ``ext::sh -c '<cmd>'`` (git's ``ext`` transport) executes ``<cmd>`` as the
+    local user. The only arbitrary-command vectors are the ``<scheme>::``
+    remote-helper syntax (``ext::``/``fd::``) and a leading ``-`` (option
+    injection); real network schemes, scp-like ``user@host:path``, and bare
+    local paths are safe. An allowed network scheme is matched first so an IPv6
+    literal host (``https://[::1]/x``) is not mistaken for the helper syntax.
+    """
+    u = url.strip()
+    if not u or u.startswith("-"):
+        raise SyncGitError(f"unsafe sync url (empty or leading dash): {url!r}")
+    if u.lower().startswith(_ALLOWED_URL_SCHEMES):
+        return
+    if "::" in u:
+        raise SyncGitError(f"unsafe sync url (remote-helper transport not allowed): {url!r}")
+
 
 class SyncGitError(MemoError):
     """Git sync failed (not a clean state, conflict needing manual resolution, etc.)."""
@@ -65,7 +100,12 @@ def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
             # `rebase --continue` after auto-resolving a signal conflict otherwise
             # tries to open an editor and dies with "Terminal is dumb, EDITOR unset",
             # which sync_once swallows → silent perpetual cross-Mac divergence.
-            env={**os.environ, "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true"},
+            env={
+                **os.environ,
+                "GIT_EDITOR": "true",
+                "GIT_SEQUENCE_EDITOR": "true",
+                **_GIT_SAFE_ENV,
+            },
         )
     except subprocess.TimeoutExpired as exc:
         # A hung git call must surface as the domain error every sync caller
@@ -132,14 +172,16 @@ def clone_bootstrap(url: str, dest: Path) -> dict:
     MEMO_DATA_DIR at. Does NOT mutate config or reindex — that is the caller's
     explicit next step (config touchpoints vary per machine).
     """
+    _validate_clone_url(url)
     if dest.exists() and any(dest.iterdir()):
         raise SyncGitError(f"{dest} already exists and is not empty")
     dest.parent.mkdir(parents=True, exist_ok=True)
     cp = subprocess.run(
-        ["git", "clone", url, str(dest)],
+        ["git", "clone", "--", url, str(dest)],
         capture_output=True,
         text=True,
         timeout=_GIT_TIMEOUT,
+        env={**os.environ, **_GIT_SAFE_ENV},
     )
     if cp.returncode != 0:
         raise SyncGitError(f"git clone failed: {cp.stderr.strip()}")
@@ -709,10 +751,14 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
             # a real memory conflict, or a failure with nothing to resolve
             # (don't loop forever): abort and surface for manual handling.
             _git(root, "rebase", "--abort", check=False)
-            raise SyncGitError(
-                "rebase conflict needs manual resolution: "
-                + (", ".join(non_signal) or rebase.stderr.strip())
-            )
+            detail = ", ".join(non_signal) or rebase.stderr.strip()
+            # Stamp a REASONED pending marker so the stuck-behind state is not
+            # silent: an async pull trigger swallows the raise, and without this
+            # `memo doctor`/`sync status` would keep showing "up to date" while N
+            # remote commits stay unpulled. A reason makes it survive the
+            # ahead==0 self-heal in sync_status (a pull conflict is a real hold).
+            _stamp_pending(cfg, branch, reason=f"pull rebase conflict: {detail}")
+            raise SyncGitError("rebase conflict needs manual resolution: " + detail)
         # only derived-data conflicts (signal/, embed_cache/) — take theirs
         for c in conflicts:
             _git(root, "checkout", "--theirs", "--", c, check=False)
@@ -832,6 +878,7 @@ def sync_init_home_byo(cfg: Config, url: str) -> dict:
     themselves and paste its URL. This git-inits the memories dir if needed,
     sets ``origin`` to ``url``, commits any existing memories, and pushes.
     """
+    _validate_clone_url(url)
     root_candidate = cfg.memory_dir.parent
     if not (root_candidate / ".git").exists():
         _git(root_candidate, "init", "-b", "main")

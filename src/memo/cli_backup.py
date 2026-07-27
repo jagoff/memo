@@ -212,12 +212,18 @@ def backup_list(as_json: bool) -> None:
     table.add_column("Name", style="cyan")
     table.add_column("Timestamp", style="yellow")
     table.add_column("Size", style="green")
+    table.add_column("Status")
 
     for b in backups[:20]:
+        # A corrupt archive gets a fabricated now() timestamp (so it sorts
+        # newest) — surface the flag so the human table doesn't present it as an
+        # ordinary, healthy, most-recent backup. The --json path already carries it.
+        corrupt = getattr(b, "corrupted", False)
         table.add_row(
             b.name if b.name else b.timestamp[:19],
             b.timestamp[:19],
             f"{b.compressed_size:,} bytes",
+            "[red]CORRUPT[/red]" if corrupt else "[green]ok[/green]",
         )
 
     console.print(table)

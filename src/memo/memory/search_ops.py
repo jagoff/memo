@@ -34,6 +34,11 @@ from memo.perf import timer
 from memo.store.bm25_queries import _normalize_as_of
 from memo.tiers import REFERENCE_TYPES, SENSITIVE_TYPES
 
+# Hard ceiling on an explicit search `limit`. Well above any real request
+# (default is single digits), it bounds the candidate-pool / rerank math so an
+# unbounded caller value cannot exhaust the shared DB or blow the latency budget.
+_MAX_SEARCH_LIMIT = 500
+
 if TYPE_CHECKING:
     from memo.store.hype_store import HypeStore
 
@@ -205,6 +210,13 @@ class _SearchOpsMixin(_MemoryBase):
         # a caller asks for that type or forgets to pass an exclusion set.
         exclude_types = set(exclude_types or ()) | set(SENSITIVE_TYPES)
         limit = limit or self.cfg.search_default_limit
+        # Clamp an explicit caller `limit` to a hard ceiling. It drives pool-
+        # widening math (input_k → k_each) that becomes the LIMIT of three
+        # sqlite-vec/BM25 scans plus the cross-encoder rerank top_n, so an
+        # unbounded value (e.g. `memo_search(limit=1_000_000)` — the MCP tool has
+        # no ge/le, unlike the HTTP route) is a self-inflicted resource-exhaustion
+        # vector against the shared DB / recall daemon and blows the latency budget.
+        limit = max(1, min(int(limit), _MAX_SEARCH_LIMIT))
         if date_to and len(date_to) == 10:
             date_to = date_to + "T23:59:59"  # bare date = whole day inclusive
         emb = None  # set in vec/hybrid branches; consumed by feedback boost below

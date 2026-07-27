@@ -1158,16 +1158,26 @@ def dream_run(
         # 5b. Curated graph projection — after typed entity upgrades ----------
         if _projection_on:
             progress.update(step, description="[graph] refreshing curated projection...")
-            graph_projection = _run_graph_projection(mem, dry_run=dry_run)
-            receipt["graph_projection"] = graph_projection
-            if graph_projection.get("status") == "error":
-                receipt["errors"].append(f"graph_projection: {graph_projection.get('error')}")
-            progress.update(
-                step,
-                description=(
-                    f"[graph] curated projection [green]✓[/green]  {graph_projection.get('status')}"
-                ),
-            )
+            # _run_graph_projection's own guard catches only a narrow tuple; an
+            # unexpected error class (RuntimeError/AttributeError/…) from
+            # rebuild_graph()/graph_health() would otherwise escape to the outer
+            # pipeline handler and abort every remaining pass (roi/prune/evict/
+            # compress/prewarm). Isolate it here like every sibling pass does.
+            try:
+                graph_projection = _run_graph_projection(mem, dry_run=dry_run)
+                receipt["graph_projection"] = graph_projection
+                if graph_projection.get("status") == "error":
+                    receipt["errors"].append(f"graph_projection: {graph_projection.get('error')}")
+                progress.update(
+                    step,
+                    description=(
+                        f"[graph] curated projection [green]✓[/green]  "
+                        f"{graph_projection.get('status')}"
+                    ),
+                )
+            except Exception as exc:
+                progress.update(step, description="[graph] projection [yellow]warn[/yellow]")
+                receipt["errors"].append(f"graph_projection: {type(exc).__name__}: {exc}")
             progress.advance(overall)
 
         # 6a. ROI reconcile (outcome loop) — MUST run before decay so the

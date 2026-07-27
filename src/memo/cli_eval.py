@@ -41,6 +41,18 @@ def _baseline_path(cfg: Config) -> Path:
     return cfg.state_dir / "eval" / "recall_baseline.json"
 
 
+def _atomic_write_json(path: Path, payload: object) -> None:
+    """Write JSON via tmp+os.replace so a kill (or a concurrent
+    --update-baseline in the shared-worktree/multi-agent setup) can't leave a
+    truncated baseline that fails every later --gate run."""
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _load_cache(cfg: Config) -> dict:
     p = _cache_path(cfg)
     if not p.exists():
@@ -396,8 +408,7 @@ def eval_recall_cmd(
         metrics = eval_recall.full_gate_metrics(rows)
         payload = {**metrics, "k": k, "labels_fingerprint": labels.fingerprint()}
         bp = _baseline_path(cfg)
-        bp.parent.mkdir(parents=True, exist_ok=True)
-        bp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        _atomic_write_json(bp, payload)
         console.print(
             f"[green]✓[/green] baseline saved: config {metrics['config']!r} · "
             f"prec@{k} {metrics['precision_at_k']} / "
@@ -538,8 +549,7 @@ def eval_tokens_cmd(
 
     if update_baseline:
         bp = _tokens_baseline_path(cfg)
-        bp.parent.mkdir(parents=True, exist_ok=True)
-        bp.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+        _atomic_write_json(bp, metrics)
         console.print(f"[green]✓[/green] token baseline saved → {bp}")
         return
 

@@ -176,6 +176,8 @@ def _jsonl_latest_user_text(path: Path, *, max_lines: int = 4000) -> str:
             item = json.loads(raw)
         except json.JSONDecodeError:
             continue
+        if not isinstance(item, dict):
+            continue
         text = _extract_user_text(item)
         if not text:
             continue
@@ -196,6 +198,8 @@ def _read_devin_session_meta(path: Path) -> dict[str, Any] | None:
                     item = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(item, dict):
+                    continue
                 if item.get("type") == "session_meta":
                     payload = item.get("payload")
                     return payload if isinstance(payload, dict) else {}
@@ -211,6 +215,8 @@ def _read_codex_session_meta(path: Path) -> dict[str, Any] | None:
                 try:
                     item = json.loads(raw)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(item, dict):
                     continue
                 if item.get("type") == "session_meta":
                     payload = item.get("payload")
@@ -230,6 +236,8 @@ def _read_claude_session_meta(path: Path) -> dict[str, str]:
                 try:
                     item = json.loads(raw)
                 except json.JSONDecodeError:
+                    continue
+                if not isinstance(item, dict):
                     continue
                 session_id = item.get("sessionId") or item.get("session_id")
                 if session_id and "session_id" not in out:
@@ -417,6 +425,8 @@ def _gemini_latest_user_text(path: Path, *, max_lines: int = 4000) -> str:
         try:
             item = json.loads(raw)
         except json.JSONDecodeError:
+            continue
+        if not isinstance(item, dict):
             continue
         # Messages appear both as standalone {"type": "user", ...} lines and seeded
         # inside an initial {"$set": {"messages": [...]}} mutation.

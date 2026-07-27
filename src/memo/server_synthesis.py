@@ -113,7 +113,7 @@ def register(server: FastMCP, memory: Memory) -> None:
                 Bounds rows scanned, not rows returned — the returned list may
                 be smaller when confidence is set.
         """
-        limit = scan_limit
+        limit = max(1, min(scan_limit, 500))  # a negative LIMIT binds as unbounded in sqlite
         _valid_conf = {"low", "medium", "high"}
         if confidence is not None and confidence not in _valid_conf:
             raise ValueError(

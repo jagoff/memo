@@ -982,6 +982,7 @@ def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]
 
         if not dry_run:
             from memo import dream_tune_online
+            from memo.tuned_overlay import params_version
 
             if dream_tune_online.has_unresolved_pending(
                 mem.cfg.state_dir
@@ -990,9 +991,25 @@ def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]
                 # params_version and expire the pending online verification.
                 result["floor_calibration"]["gate"] = "deferred_pending"
                 return result
+            version_before = params_version(mem.cfg.state_dir)
             params = _scalar_overlay(mem.cfg.state_dir)
             params["MEMO_RECALL_MIN_SIM"] = floor
             write_overlay(mem.cfg.state_dir, params, {"source": "floor_calibration"})
+            # Register the write with the online proof loop (same as the min_sim
+            # tuner) so a live-grounding regression it causes is auto-reverted —
+            # otherwise the applied floor is never verified and never rolled back.
+            # Only when curated measurements exist; a no-labels write is
+            # inherently unprovable so there is nothing to record.
+            if curated is not None:
+                dream_tune_online.record_pending(
+                    mem.cfg.state_dir,
+                    knob="MEMO_RECALL_MIN_SIM",
+                    value_before=current,
+                    value_after=floor,
+                    offline_before=before,
+                    offline_after=after,
+                    version_before=version_before,
+                )
         result["floor_calibration"]["applied"] = not dry_run
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"
