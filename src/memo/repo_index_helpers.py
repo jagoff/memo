@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -144,6 +145,42 @@ def _git_timeout(default: float) -> float:
     return v if v > 0 else 0.0
 
 
+# Git's `ext::`/`fd::` remote helpers execute an arbitrary command as part of a
+# clone/fetch. GIT_ALLOW_PROTOCOL is an explicit allow-list — any protocol not
+# named here (notably ext/fd) is refused by git itself, while the transports memo
+# actually uses (including `file` for local-path clones) keep working. Defense in
+# depth behind `_validate_clone_url`; disabling the credential prompt keeps a
+# missing-auth clone from hanging the indexer thread. Applied to every git call.
+_GIT_SAFE_ENV = {
+    "GIT_ALLOW_PROTOCOL": "file:git:ssh:http:https:git+ssh",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+
+_ALLOWED_URL_SCHEMES = ("https://", "http://", "ssh://", "git://", "git+ssh://", "file://")
+
+
+def _validate_clone_url(url: str) -> None:
+    """Reject repo URLs that could reach git's arbitrary-command remote helpers.
+
+    `memo_repo_index` accepts a caller-supplied URL and passes it to `git clone`.
+    Without this guard a URL like ``ext::sh -c '<cmd>'`` (git's ``ext`` transport)
+    executes ``<cmd>`` as the local user — an RCE reachable from the MCP surface.
+    The only arbitrary-command vectors are the ``<scheme>::`` remote-helper syntax
+    (``ext::``/``fd::``) and a leading ``-`` (option injection); everything else —
+    real network schemes, scp-like ``user@host:path``, and bare local filesystem
+    paths — is a normal, safe clone target. An allowed network scheme is checked
+    first so an IPv6 literal host (``https://[::1]/x``) is not mistaken for the
+    remote-helper syntax.
+    """
+    u = url.strip()
+    if not u or u.startswith("-"):
+        raise ValueError(f"unsafe repo url (empty or leading dash): {url!r}")
+    if u.lower().startswith(_ALLOWED_URL_SCHEMES):
+        return
+    if "::" in u:
+        raise ValueError(f"unsafe repo url (remote-helper transport not allowed): {url!r}")
+
+
 def _git(args: list[str], *, check: bool = True, timeout: float | None = None) -> str:
     t = _git_timeout(120.0 if timeout is None else timeout)
     try:
@@ -153,6 +190,7 @@ def _git(args: list[str], *, check: bool = True, timeout: float | None = None) -
             capture_output=True,
             text=True,
             timeout=t if t > 0 else None,
+            env={**os.environ, **_GIT_SAFE_ENV},
         )
     except FileNotFoundError as exc:
         raise RuntimeError("`git` not found on PATH") from exc

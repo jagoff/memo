@@ -53,6 +53,7 @@ from memo.repo_index_helpers import (  # noqa: F401
     _semantic_status,
     _stable_id,
     _tracked_files,
+    _validate_clone_url,
 )
 from memo.repo_index_search import (
     RepoSearchHit,
@@ -110,6 +111,7 @@ class RepoCorpus:
     ) -> dict[str, Any]:
         if not url or not url.strip():
             raise ValueError("repo url must be non-empty")
+        _validate_clone_url(url)
 
         ref_name = (ref or "HEAD").strip() or "HEAD"
         repo_id = _stable_id("repo", url.strip(), ref_name)
