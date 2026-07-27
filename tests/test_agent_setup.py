@@ -51,9 +51,7 @@ def test_setup_uses_existing_claude_project_scope_and_removes_shadow_user(
 
     assert action.remove_command == ("claude", "mcp", "remove", "-s", "project", "memo")
     assert action.mcp_command[4] == "project"
-    assert action.shadow_remove_commands == (
-        ("claude", "mcp", "remove", "-s", "user", "memo"),
-    )
+    assert action.shadow_remove_commands == (("claude", "mcp", "remove", "-s", "user", "memo"),)
 
 
 def test_default_runner_bypasses_interactive_agent_wrappers(monkeypatch) -> None:

@@ -1420,7 +1420,10 @@ def test_prune_lru_zero_equal_invalid_and_ordering_contract(tmp_path) -> None:
 )
 def test_format_relative_exact_boundaries(seconds: int, expected: str) -> None:
     now = datetime(2026, 1, 2, tzinfo=UTC)
-    assert format_relative((now - timedelta(seconds=seconds)).replace(tzinfo=None).isoformat(), now) == expected
+    assert (
+        format_relative((now - timedelta(seconds=seconds)).replace(tzinfo=None).isoformat(), now)
+        == expected
+    )
 
 
 def test_autosave_uses_floor_kibibytes_and_exact_threshold(tmp_path) -> None:
@@ -1568,18 +1571,24 @@ def test_clean_summary_and_active_memory_render_exact_contract() -> None:
         "- **Context**: `—` · `—` · 0 turns"
     )
 
-    assert session_mod._clean_snapshot_summary(
-        {
-            "running_summary": "<command-message>noise</command-message>",
-            "summary": "line one\nline two",
-            "last_user_msg": "fallback",
-        },
-        13,
-    ) == "line one line"
-    assert session_mod._clean_snapshot_summary(
-        {"summary": "<command-message>noise</command-message>", "last_user_msg": "fallback"},
-        20,
-    ) == "fallback"
+    assert (
+        session_mod._clean_snapshot_summary(
+            {
+                "running_summary": "<command-message>noise</command-message>",
+                "summary": "line one\nline two",
+                "last_user_msg": "fallback",
+            },
+            13,
+        )
+        == "line one line"
+    )
+    assert (
+        session_mod._clean_snapshot_summary(
+            {"summary": "<command-message>noise</command-message>", "last_user_msg": "fallback"},
+            20,
+        )
+        == "fallback"
+    )
 
     snapshot = {
         "running_summary": "r" * 141,

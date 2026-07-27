@@ -277,9 +277,7 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
         out["reindexed"] = mem.reindex(rebuild=True)
         try:
             out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
-            out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(
-                mem.embedder.embed_query
-            )
+            out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
         except ValueError as exc:
             # Signal schema mismatch (version skew between Macs) must not abort with
             # a raw traceback AFTER the config was already repointed: the clone,

@@ -205,9 +205,7 @@ def build_setup_plan(
             # Project scope wins in this checkout. Remove a stale user entry
             # after the project entry is healthy so Claude reports no
             # conflicting scopes.
-            shadow_remove_commands = (
-                ("claude", "mcp", "remove", "-s", "user", "memo"),
-            )
+            shadow_remove_commands = (("claude", "mcp", "remove", "-s", "user", "memo"),)
         instruction_path = root / adapter.instruction_file
         instruction_present = bool(
             instruction_path.is_file() and _MARKER in instruction_path.read_text(encoding="utf-8")

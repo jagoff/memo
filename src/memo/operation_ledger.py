@@ -96,7 +96,10 @@ class OperationLedger:
             "sequence": event.sequence if event else 0,
             "event_hash": event.event_hash if event else "",
         }
-        atomic_write_text(path, json.dumps(payload, sort_keys=True))
+        # The event segment is the durable authority and is fsynced before this
+        # call. The head is an atomic advisory cache: a stale or missing value
+        # is validated against the segment and rebuilt by _append_position().
+        atomic_write_text(path, json.dumps(payload, sort_keys=True), durable=False)
 
     @staticmethod
     def _last_complete_line(path: Path) -> str:
