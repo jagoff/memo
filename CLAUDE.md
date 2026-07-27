@@ -369,3 +369,22 @@ Saved orchestration scripts in `.claude/workflows/`, invoked as `/`-commands:
 
 Use `/effort ultracode` when a change benefits from parallel in-repo
 implementation and review.
+
+<!-- memo-mandate -->
+## Memory-first (memo)
+
+Before deciding or answering anything that prior work might already cover,
+consult memo FIRST:
+- Start with `memo_unified_briefing` (or `memo_search` / `memo_ask`) to
+  pull durable facts, decisions, and preferences.
+- Pass `source="<this-client>"` on the read tools so usage is attributed
+  (e.g. `source="codex"`). A client that never appears in memo's consult log is
+  flagged as a silent gap by `memo usefulness`.
+- Write durable outcomes back with `memo_save` so the next session inherits
+  them. memo is the source of truth for what is *known*; build on it, and
+  contradict a surfaced memory only explicitly.
+- Keep it honest: when a surfaced memory is stale or contradicted, correct it
+  instead of silently working around it — `memo_feedback_flag(kind="outdated")`
+  to retire it, or `kind="wrong"` (with `superseded_by` when a replacement
+  exists). Both archive reversibly, never hard-delete.
+<!-- /memo-mandate -->

@@ -157,8 +157,6 @@ def referenced_rate(state_dir, rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 _INTERROGATIVE = (
-    "?",
-    "¿",
     "qué",
     "que ",
     "cómo",
@@ -190,6 +188,31 @@ _INTERROGATIVE = (
     "explain",
     "decidimos",
     "prefer",
+)
+# Phrases that make a long prompt a work instruction rather than a knowledge
+# question.  These must win over incidental question-looking text: for example
+# ``en README, después de "What is memo?", quiero que...`` contains both a
+# question mark and ``what`` but is plainly an edit request.  Gap detection is
+# meant to surface missing knowledge, not resurrect completed coding tasks.
+_TASK_REQUEST_MARKERS = (
+    "quiero que ",
+    "necesito que ",
+    "cuando termines ",
+    "cuándo termines ",
+    "tenés que ",
+    "tienes que ",
+    "tiene que ",
+    "hay que ",
+    "asegurate ",
+    "asegúrate ",
+    "no dejes ",
+    " que siga ",
+    " que pongas ",
+    " que agregues ",
+    "please ",
+    "then push",
+    "después push",
+    "despues push",
 )
 # Leading verbs that mark a mechanical/coding turn unlikely to draw on durable
 # memory (it draws on the codebase / current context instead).
@@ -229,9 +252,15 @@ def _is_knowledge_prompt(prompt: str) -> bool:
     p = (prompt or "").strip().lower()
     if not p or p.startswith("/"):
         return False
-    if any(p.startswith(v) for v in _MECHANICAL_LEAD):
+    if any(p.startswith(v) for v in _MECHANICAL_LEAD) or any(
+        marker in p for marker in _TASK_REQUEST_MARKERS
+    ):
         return False
-    return any(tok in p for tok in _INTERROGATIVE) or len(p) >= 60
+    # Interrogative words are meaningful as leads.  Treating them as arbitrary
+    # substrings made "quiero que ..." and English words containing "when" or
+    # "where" look like questions.  A literal question mark remains useful for
+    # conversational forms such as "the sync decision was...?".
+    return p.startswith(_INTERROGATIVE) or "?" in p or "¿" in p
 
 
 def grounded_rate(state_dir) -> dict[str, Any]:

@@ -263,6 +263,41 @@ def test_save_emits_chunks_immediately(mock_memory, monkeypatch):
     assert len(chunk_ids) >= 2, f"Expected chunks right after save, got: {chunk_ids}"
 
 
+def test_chunks_inherit_and_track_parent_validity(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_CHUNK_INGEST", "1")
+    valid_at = "2026-07-01T00:00:00+00:00"
+    invalid_at = "2026-07-15T00:00:00+00:00"
+    rec = mock_memory.save(
+        content=_long_body(),
+        title="Validity Chunks",
+        tags=["test"],
+        valid_at=valid_at,
+    )
+    chunk_ids = _chunk_ids_for(mock_memory.store, rec.id)
+
+    assert chunk_ids
+    assert all(mock_memory.store.get(cid)["valid_at"] == valid_at for cid in chunk_ids)
+    assert all(mock_memory.store.get(cid)["invalid_at"] is None for cid in chunk_ids)
+
+    invalidated = mock_memory.invalidate(rec.id, reason="superseded", at=invalid_at)
+
+    assert invalidated.invalid_at is not None
+    assert all(
+        mock_memory.store.get(cid)["invalid_at"] == invalidated.invalid_at for cid in chunk_ids
+    )
+
+    mock_memory.reindex(rebuild=True)
+    rebuilt_ids = _chunk_ids_for(mock_memory.store, rec.id)
+
+    assert rebuilt_ids
+    assert all(
+        mock_memory.store.get(cid)["valid_at"] == invalidated.valid_at for cid in rebuilt_ids
+    )
+    assert all(
+        mock_memory.store.get(cid)["invalid_at"] == invalidated.invalid_at for cid in rebuilt_ids
+    )
+
+
 def test_save_flag_off_no_immediate_chunks(mock_memory, monkeypatch):
     monkeypatch.setenv("MEMO_CHUNK_INGEST", "0")
 

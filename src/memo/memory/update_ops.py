@@ -190,6 +190,8 @@ class _UpdateOpsMixin(_MemoryBase):
                         tags=updated.tags,
                         created=updated.created,
                         updated=updated.updated,
+                        valid_at=updated.valid_at,
+                        invalid_at=updated.invalid_at,
                     )
                 return updated
             except _RetryPreparedUpdate:

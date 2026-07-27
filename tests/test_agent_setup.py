@@ -36,6 +36,42 @@ def test_setup_dry_run_is_pure_and_declarative(monkeypatch, tmp_path: Path) -> N
     assert plan.actions[1].protocol_mode == "compact"
 
 
+def test_setup_uses_existing_claude_project_scope_and_removes_shadow_user(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runtime = _runtime(tmp_path)
+    (tmp_path / ".mcp.json").write_text(
+        '{"mcpServers":{"memo":{"command":"old-memo-mcp"}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "/usr/bin/claude")
+
+    plan = registry.build_setup_plan(["claude-code"], cwd=tmp_path, memo_mcp=runtime)
+    action = plan.actions[0]
+
+    assert action.remove_command == ("claude", "mcp", "remove", "-s", "project", "memo")
+    assert action.mcp_command[4] == "project"
+    assert action.shadow_remove_commands == (
+        ("claude", "mcp", "remove", "-s", "user", "memo"),
+    )
+
+
+def test_default_runner_bypasses_interactive_agent_wrappers(monkeypatch) -> None:
+    seen: dict[str, str] = {}
+
+    def fake_run(*_args, **kwargs):
+        seen.update(kwargs["env"])
+        return subprocess.CompletedProcess(["claude"], 0, "", "")
+
+    monkeypatch.setattr(registry.subprocess, "run", fake_run)
+
+    registry._default_runner(("claude", "mcp", "list"), False)
+
+    assert seen["MEMFLOW_CAPTURE_DISABLE"] == "1"
+    assert seen["MEMFLOW_STARTUP_BANNER"] == "0"
+    assert seen["MEMO_NONINTERACTIVE"] == "1"
+
+
 def test_setup_preserves_unknown_text_backs_up_and_is_idempotent(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -220,6 +256,27 @@ def test_agent_doctor_verifies_runtime_profile_protocol_and_isolated_smoke(
     assert report["checks"]["runtime_version_match"] is True
     assert report["checks"]["runtime_smoke"] is True
     assert report["checks"]["storage_writable"] is True
+
+
+def test_codex_doctor_reads_unmasked_json_profile(monkeypatch, tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    registry._write_mandate(tmp_path / "AGENTS.md", dry_run=False)
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    def fake_run(argv, **_kwargs):
+        payload = {
+            "transport": {
+                "command": str(runtime),
+                "env": {"MEMO_MCP_PROFILE": "core"},
+            }
+        }
+        return subprocess.CompletedProcess(argv, 0, stdout=registry.json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(registry.subprocess, "run", fake_run)
+    report = registry.verify_agent("codex", cwd=tmp_path, memo_mcp=runtime)
+
+    assert report["checks"]["mcp_runtime_current"] is True
+    assert report["checks"]["profile_current"] is True
 
 
 def test_verify_agent_reports_probe_and_storage_failures(monkeypatch, tmp_path: Path) -> None:

@@ -215,12 +215,13 @@ def checkpoint(
     cwd_path = Path(cwd).expanduser().resolve()
     git_state = gather_git_state(cwd_path)
 
-    last_user_msg: str | None = None
-    last_assistant_tail: str | None = None
+    transcript_fields: dict[str, str | None] = {}
     if transcript_path:
         tp = Path(transcript_path).expanduser()
-        last_user_msg = read_last_user_msg(tp)
-        last_assistant_tail = read_last_assistant_tail(tp)
+        transcript_fields = {
+            "last_user_msg": read_last_user_msg(tp),
+            "last_assistant_tail": read_last_assistant_tail(tp),
+        }
 
     # Git/transcript inspection above can be slow. Re-load only after acquiring
     # the per-session lock, then merge onto the latest snapshot so stamps made
@@ -249,8 +250,10 @@ def checkpoint(
             "transcript_path": str(transcript_path)
             if transcript_path
             else existing.get("transcript_path"),
-            "last_user_msg": last_user_msg or existing.get("last_user_msg"),
-            "last_assistant_tail": last_assistant_tail or existing.get("last_assistant_tail"),
+            "last_user_msg": transcript_fields.get("last_user_msg")
+            or existing.get("last_user_msg"),
+            "last_assistant_tail": transcript_fields.get("last_assistant_tail")
+            or existing.get("last_assistant_tail"),
             "prompt_trail": trail,
             "running_summary": existing.get("running_summary"),
             "summary_turn": int(existing.get("summary_turn") or 0),
@@ -259,7 +262,10 @@ def checkpoint(
             "summary": (
                 existing.get("summary")
                 if existing.get("summary") and not is_command_noise(existing.get("summary"))
-                else ((last_user_msg or "")[:_SUMMARY_FALLBACK_CHARS] or None)
+                else (
+                    (transcript_fields.get("last_user_msg") or "")[:_SUMMARY_FALLBACK_CHARS]
+                    or None
+                )
             ),
             "created": existing.get("created") or now,
             "updated": now,
@@ -388,6 +394,8 @@ def list_sessions(
             continue
         if cwd_resolved is not None:
             stored = data.get("cwd") or ""
+            if not stored:
+                continue
             try:
                 stored_resolved = str(Path(stored).expanduser().resolve())
             except OSError:
@@ -438,21 +446,19 @@ def prune_lru(state_dir: Path, *, cap: int = _LRU_CAP_DEFAULT) -> int:
         raise ValueError("cap must be non-negative")
     d = sessions_dir(state_dir)
     files = list(d.glob("*.json"))
-    if len(files) <= cap:
-        return 0
-    pairs: list[tuple[tuple[int, float, str], Path]] = []
+    pairs: list[tuple[Path, tuple[int, float, str]]] = []
     for p in files:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            updated = data.get("updated") or ""
+            sort_key = _instant_sort_key(data.get("updated"))
         except (json.JSONDecodeError, OSError):
-            updated = ""
-        pairs.append((_instant_sort_key(updated), p))
+            sort_key = (0, 0.0, "")
+        pairs.append((p, sort_key))
     # Sort ascending — oldest first — and trim the head past `cap`.
-    pairs.sort(key=lambda x: x[0])
-    to_delete = pairs[: len(pairs) - cap]
+    pairs.sort(key=lambda x: x[1])
+    to_delete = pairs[: max(len(pairs) - cap, 0)]
     deleted = 0
-    for _, p in to_delete:
+    for p, _ in to_delete:
         try:
             p.unlink()
             deleted += 1

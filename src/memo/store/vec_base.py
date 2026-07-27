@@ -18,6 +18,10 @@ from __future__ import annotations
 
 from typing import Any
 
+_DEFAULT_BODY_TEXT = ""
+_DEFAULT_PREFIX_LIMIT = 10
+_DEFAULT_RECENT_LIMIT = 20
+
 
 class VecStoreBase:
     """Template base for sqlite-vec-backed stores.
@@ -78,7 +82,7 @@ class VecStoreBase:
         body_hash: str,
         embedding: list[float],
         extra: dict[str, Any] | None = None,
-        body_text: str = "",
+        body_text: str = _DEFAULT_BODY_TEXT,
     ) -> None:
         """Insert-or-replace a document with its embedding vector."""
         raise NotImplementedError
@@ -101,13 +105,17 @@ class VecStoreBase:
         """Fetch a single document by id."""
         raise NotImplementedError
 
-    def find_by_prefix(self, prefix: str, limit: int = 10) -> list[str]:
+    def find_by_prefix(
+        self,
+        prefix: str,
+        limit: int = _DEFAULT_PREFIX_LIMIT,
+    ) -> list[str]:
         """Return ids whose prefix matches."""
         raise NotImplementedError
 
     def list_recent(
         self,
-        limit: int = 20,
+        limit: int = _DEFAULT_RECENT_LIMIT,
         type_: str | None = None,
     ) -> list[dict[str, Any]]:
         """Most recent documents by updated timestamp."""

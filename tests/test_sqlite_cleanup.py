@@ -6,10 +6,12 @@ import gc
 import sqlite3
 import threading
 import warnings
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
+from memo import sqlite_snapshot
 from memo.contradict import ContradictionStore
 from memo.crossref import CrossReferenceIndex
 from memo.graph import GraphStore
@@ -22,6 +24,76 @@ from memo.store.turn_store import TurnStore
 from memo.versioning import VersionManager, VersionStore
 
 pytestmark = pytest.mark.resource_hygiene
+
+
+def test_snapshot_backup_resolves_source_strictly(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    with closing(sqlite3.connect(source)) as connection:
+        connection.execute("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+
+    original_resolve = Path.resolve
+    strict_values: list[bool] = []
+
+    def recording_resolve(path: Path, strict: bool = False) -> Path:
+        if path == source:
+            strict_values.append(strict)
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", recording_resolve)
+
+    sqlite_snapshot._backup_database(source, destination)
+
+    assert strict_values == [True]
+    with closing(sqlite3.connect(destination)) as connection:
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+
+
+def test_snapshot_contract_uses_private_sanitized_scratch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source.db"
+    destination = tmp_path / "nested" / "deeper" / "published.db"
+    with closing(sqlite3.connect(source)) as connection:
+        connection.execute("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+
+    scratch = destination.parent / ".fixed-scratch"
+    temporary_args: list[tuple[str | None, Path | None]] = []
+    backup_calls: list[tuple[Path, Path]] = []
+    sanitized_calls: list[Path] = []
+
+    class FakeTemporaryDirectory:
+        def __init__(self, *, prefix: str | None = None, dir: Path | None = None) -> None:
+            temporary_args.append((prefix, dir))
+            scratch.mkdir()
+
+        def __enter__(self) -> str:
+            return str(scratch)
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    def fake_backup(backup_source: Path, backup_destination: Path) -> None:
+        backup_calls.append((backup_source, backup_destination))
+        with closing(sqlite3.connect(backup_destination)) as connection:
+            connection.execute("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+
+    def fake_sanitize(database: Path) -> None:
+        sanitized_calls.append(database)
+
+    monkeypatch.setattr(sqlite_snapshot.tempfile, "TemporaryDirectory", FakeTemporaryDirectory)
+    monkeypatch.setattr(sqlite_snapshot, "_backup_database", fake_backup)
+    monkeypatch.setattr(sqlite_snapshot, "_sanitize_secret_store", fake_sanitize)
+
+    sqlite_snapshot.snapshot_sqlite_database(source, destination)
+
+    sanitized = scratch / "sanitized.db"
+    assert destination.parent.is_dir()
+    assert temporary_args == [(".sqlite-snapshot-", destination.parent)]
+    assert backup_calls == [(source, sanitized), (sanitized, destination)]
+    assert sanitized_calls == [sanitized]
+    assert destination.is_file()
 
 
 def _cleanup_without_warnings(factory) -> list[warnings.WarningMessage]:

@@ -46,6 +46,7 @@ def mem(tmp_cfg: Config, monkeypatch) -> Memory:
 def _base_env(monkeypatch) -> None:
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+    monkeypatch.setenv("MEMO_RECALL_GAP_THRESHOLD", "0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
 

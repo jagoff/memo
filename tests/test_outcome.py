@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from memo import dashboard, outcome
 
 
@@ -203,6 +205,34 @@ def test_detect_gaps_drops_injected_system_noise(tmp_path: Path) -> None:
         hit=False,
     )
     assert outcome.detect_gaps(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "cuando termines de resolver todo quiero que pruebes todas las bases de datos",
+        'en el README después de "What is memo?" que siga Install — one step y después push',
+        "coordinated MCP write failed safely on one Mac after the latest production deploy",
+    ],
+)
+def test_detect_gaps_does_not_treat_work_instructions_as_knowledge(prompt: str) -> None:
+    from memo.dashboard_metrics import _is_knowledge_prompt
+
+    assert _is_knowledge_prompt(prompt) is False
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "qué decidimos sobre el embedder de memo",
+        "how does coordinated MCP writing work",
+        "the sync decision was to use a sidecar lock?",
+    ],
+)
+def test_knowledge_prompt_classifier_keeps_actual_questions(prompt: str) -> None:
+    from memo.dashboard_metrics import _is_knowledge_prompt
+
+    assert _is_knowledge_prompt(prompt) is True
 
 
 # ---------------- reconcile_source_feedback (#11 query-conditional) ----------------

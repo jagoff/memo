@@ -483,10 +483,15 @@ def test_threaded_exact_saves_create_one_file_and_n_minus_one_support(tmp_cfg: C
             memory.close()
 
 
-def test_process_exact_saves_create_one_file_and_n_minus_one_support(tmp_cfg: Config) -> None:
+def test_process_exact_saves_create_one_file_and_n_minus_one_support(
+    tmp_cfg: Config, monkeypatch
+) -> None:
     # Initialize schema before workers race only the persistence decision.
     Memory(tmp_cfg).close()
-    ctx = multiprocessing.get_context("fork")
+    # ``pytest``'s console entry point can omit the repository root from
+    # ``sys.path``. Spawned children must be able to re-import this test module.
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    ctx = multiprocessing.get_context("spawn")
     worker_count = 3
     barrier = ctx.Barrier(worker_count)
     queue = ctx.Queue()

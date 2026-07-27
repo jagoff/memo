@@ -45,6 +45,20 @@ def _write_meta(
     return _write_payload(root, _metadata_payload(results), filename=filename)
 
 
+def _write_baseline(
+    root: Path,
+    blocked: dict[str, str],
+    *,
+    overrides: dict[str, object] | None = None,
+) -> Path:
+    gate = _mutation_gate()
+    payload = gate.blocking_summary(blocked)
+    payload.update(overrides or {})
+    path = root / "mutation-baseline.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
 def test_blocking_mutants_reports_survivors_and_incomplete_results(tmp_path: Path) -> None:
     _write_meta(
         tmp_path,
@@ -100,6 +114,62 @@ def test_gate_accepts_optional_type_check_mapping_omitted_by_mutmut_3_loader(
     _write_payload(tmp_path, payload)
 
     assert _mutation_gate().main([str(tmp_path)]) == 0
+
+
+def test_gate_passes_only_when_exact_reviewed_baseline_matches(tmp_path: Path) -> None:
+    mutant = "memo.example.x_value__mutmut_1"
+    blocked = {mutant: "survived"}
+    _write_meta(tmp_path, {mutant: 0})
+    baseline = _write_baseline(tmp_path, blocked)
+
+    assert _mutation_gate().main([str(tmp_path), "--baseline", str(baseline)]) == 0
+
+
+@pytest.mark.parametrize(
+    "results",
+    [
+        {
+            "memo.example.x_value__mutmut_1": 0,
+            "memo.example.x_new__mutmut_2": 0,
+        },
+        {"memo.example.x_value__mutmut_1": 1},
+        {"memo.example.x_value__mutmut_1": 33},
+    ],
+)
+def test_gate_rejects_any_blocking_set_baseline_drift(
+    tmp_path: Path,
+    results: dict[str, int],
+) -> None:
+    mutant = "memo.example.x_value__mutmut_1"
+    baseline = _write_baseline(tmp_path, {mutant: "survived"})
+    _write_meta(tmp_path, results)
+
+    assert _mutation_gate().main([str(tmp_path), "--baseline", str(baseline)]) == 1
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"schema_version": 2},
+        {"blocking_count": -1},
+        {"blocking_sha256": "not-a-digest"},
+        {"blocking_by_reason": {"survived": "one"}},
+        {"blocking_by_reason": {"survived": 2}},
+        {"unexpected": True},
+    ],
+)
+def test_gate_rejects_malformed_baseline(
+    tmp_path: Path,
+    overrides: dict[str, object],
+) -> None:
+    baseline = _write_baseline(
+        tmp_path,
+        {"memo.example.x_value__mutmut_1": "survived"},
+        overrides=overrides,
+    )
+
+    with pytest.raises(RuntimeError, match="invalid mutation baseline"):
+        _mutation_gate().load_baseline(baseline)
 
 
 def test_gate_rejects_missing_metadata(tmp_path: Path) -> None:

@@ -45,6 +45,7 @@ jobs:
             exit "$results_status"
           fi
           .venv/bin/python scripts/check_mutation_results.py mutants \
+            --baseline eval/mutation_baseline.json \
             2>&1 | tee -a mutation-results.txt
           gate_status=${PIPESTATUS[0]}
           exit "$gate_status"

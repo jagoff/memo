@@ -487,6 +487,8 @@ class _MaintainOpsMixin(_MemoryBase):
                         tags=tags,
                         created=created,
                         updated=updated,
+                        valid_at=valid_at,
+                        invalid_at=invalid_at,
                         force=force,
                         rebuild_rows=rebuild_rows,
                     )
@@ -608,6 +610,8 @@ class _MaintainOpsMixin(_MemoryBase):
                     tags=tags,
                     created=created,
                     updated=updated,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
                     force=force,
                     rebuild_rows=None,
                 )
@@ -741,6 +745,8 @@ class _MaintainOpsMixin(_MemoryBase):
         tags: builtins.list[str],
         created: str,
         updated: str,
+        valid_at: str | None,
+        invalid_at: str | None,
         force: bool,
         rebuild_rows: list[dict[str, Any]] | None = None,
     ) -> int:
@@ -793,6 +799,8 @@ class _MaintainOpsMixin(_MemoryBase):
                 and existing_chunk["title"] == chunk_title
                 and existing_chunk["tags"] == tags
                 and (existing_chunk.get("extra") or {}) == chunk_extra
+                and existing_chunk.get("valid_at") == valid_at
+                and existing_chunk.get("invalid_at") == invalid_at
                 and not force
             ):
                 # Content and all parent-derived metadata are unchanged.
@@ -814,11 +822,18 @@ class _MaintainOpsMixin(_MemoryBase):
                 embedding=emb,
                 extra=chunk_extra,
                 body_text=chunk_body,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
             )
             if rebuild_rows is not None:
                 rebuild_rows.append(row)
             else:
                 self.store.upsert(**row)
+                self.store.update_validity(
+                    id_=chunk_id,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
+                )
             written += 1
 
         # Prune stale chunks from a previous reindex that had more chunks
@@ -838,6 +853,8 @@ class _MaintainOpsMixin(_MemoryBase):
         tags: builtins.list[str],
         created: str,
         updated: str,
+        valid_at: str | None,
+        invalid_at: str | None,
     ) -> int:
         """Best-effort chunk emission for one just-written memory.
 
@@ -859,6 +876,8 @@ class _MaintainOpsMixin(_MemoryBase):
                 tags=tags,
                 created=created,
                 updated=updated,
+                valid_at=valid_at,
+                invalid_at=invalid_at,
                 force=False,
             )
         except Exception:
