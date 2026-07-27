@@ -255,7 +255,7 @@ def test_memo_ask_does_not_run_capture_inline(tmp_cfg, monkeypatch):
         "what changed?",
         k=1,
         type_=None,
-        snippet_chars=800,
+        snippet_chars=None,
         include_repos=True,
         session_id=None,
     )

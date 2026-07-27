@@ -673,19 +673,25 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                     result.setdefault("negative_captured", []).append(_neg["captured_id"])
                 if _neg.get("error"):
                     result.setdefault("negative_capture_errors", []).append(_neg["error"])
-                # Stamp supersede provenance (winner id + close-date) into the
-                # archived .md — portable, unlike the machine-local contradict
-                # sidecar. archive_memory returns False (no raise) when the
-                # record/file is already gone: only then record success + resolve
-                # the pair; otherwise surface the failure, never overstate it.
+                # Resolve/supersede the contradiction pair BEFORE archiving the
+                # dominated memory: resolve → judge_relation → supersede looks
+                # the dominated record up, and archive_memory moves it to
+                # inactive/ + drops its index (get() → None), so archiving first
+                # raised NotFoundError. Both records must still be resolvable
+                # here.
+                mem.contradict_store.resolve(
+                    pair.pair_id,
+                    "kept_newer",
+                    note=f"dream: archived {decision.dominated_id} — {decision.reason}",
+                )
+                # Then stamp supersede provenance (winner id + close-date) into
+                # the archived .md — portable, unlike the machine-local
+                # contradict sidecar. archive_memory returns False (no raise)
+                # when the record/file is already gone: only then record success;
+                # otherwise surface the failure, never overstate it.
                 if mem.lifecycle.archive_memory(
                     decision.dominated_id, superseded_by=decision.dominant_id
                 ):
-                    mem.contradict_store.resolve(
-                        pair.pair_id,
-                        "kept_newer",
-                        note=f"dream: archived {decision.dominated_id} — {decision.reason}",
-                    )
                     result["superseded"].append(
                         {"pair_id": pair.pair_id, "older": decision.dominated_id}
                     )

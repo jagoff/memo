@@ -35,7 +35,10 @@ jobs:
           restore-keys: |
             macos-hf-${{ runner.os }}-
       - name: Install package + dev deps
-        run: uv sync --frozen --extra dev --python "$(brew --prefix python@3.13)/bin/python3.13"
+        # --extra tantivy/ocr pull the darwin/arm64-only optional backends
+        # (tantivy verbatim-FTS + Apple Vision OCR). No other CI job installs
+        # them, so their test files run only on this Apple Silicon runner.
+        run: uv sync --frozen --extra dev --extra tantivy --extra ocr --python "$(brew --prefix python@3.13)/bin/python3.13"
       - name: Confirm Apple Silicon runner
         run: .venv/bin/python -c "import platform; assert platform.machine() == 'arm64', platform.machine()"
       - name: Lint (ruff)
@@ -51,8 +54,30 @@ jobs:
         run: |
           mkdir -p "$MEMO_DATA_DIR"
           .venv/bin/memo doctor
+      - name: Tantivy FTS + OCR backend tests
+        # The tantivy verbatim-FTS backend and Apple Vision OCR path live behind
+        # darwin/arm64-only optional extras that no other CI job installs — so
+        # these two files execute in zero environments without this macOS step.
+        # No MLX here (pure backend/unit), so it fails fast before the slow
+        # real-model step below.
+        run: >-
+          .venv/bin/python -m pytest
+          tests/test_tantivy_index.py tests/test_ocr_obsidian.py
+          --timeout=120 -v
       - name: Real-MLX smoke tests
-        run: .venv/bin/python -m pytest tests/test_smoke_mlx.py::test_embedder_produces_unit_vectors tests/test_smoke_mlx.py::test_save_and_search_roundtrip -m requires_mlx --timeout=300 -v
+        # test_reranker's two real-model tests are pinned alongside the embedder
+        # smoke tests: they load the 4B Qwen3-Reranker MLX model and guard the
+        # head-slice-vs-full-forward ranking parity the repo history flags as
+        # regression-prone ("reranker batching regresses 4B"). The 4B model is
+        # heavier than the 0.6B embedder, so the per-test timeout is 600s to
+        # absorb a cold Hugging Face download without a flaky timeout.
+        run: >-
+          .venv/bin/python -m pytest
+          tests/test_smoke_mlx.py::test_embedder_produces_unit_vectors
+          tests/test_smoke_mlx.py::test_save_and_search_roundtrip
+          tests/test_reranker.py::test_score_real_model_separates_relevant_from_irrelevant
+          tests/test_reranker.py::test_head_slice_matches_full_forward_ranking
+          -m requires_mlx --timeout=600 -v
       - name: Installer smoke
         env:
           MEMO_INSTALL_SPEC: ${{ github.workspace }}

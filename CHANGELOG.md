@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.4.3] - 2026-07-27
+
+### Fixed
+
+- Audit round-2 secondaries: the `snippet_chars` sentinel now honors an
+  explicit value over the flag default; the Homebrew formula is synced; CI runs
+  the tantivy/OCR extras plus the reranker real-model MLX tests; and the nightly
+  contradiction pass resolves the pair before archiving (fixes a
+  `NotFoundError`).
+
 ## [4.4.2] - 2026-07-26
 
 ### Security

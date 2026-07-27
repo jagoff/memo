@@ -854,7 +854,7 @@ class _AskOpsMixin(_MemoryBase):
         *,
         k: int = 5,
         type_: str | None = None,
-        snippet_chars: int = 800,
+        snippet_chars: int | None = None,
         include_repos: bool = True,
         intent_text: str | None = None,
         session_id: str | None = None,
@@ -887,16 +887,11 @@ class _AskOpsMixin(_MemoryBase):
             return {"question": question, "answer": "", "sources": []}
         from memo.flags import flag_bool, flag_int
 
-        # NOTE (F4): the `== 800` sentinel can't be cleanly replaced by a
-        # `None` default here. The MCP tool (`memo_ask` in server_core_search.py)
-        # and CLI (`memo ask --snippet-chars`, cli_search.py) both bake in their
-        # own `800` default and pass it EXPLICITLY, so `MEMO_ASK_SNIPPET_CHARS`
-        # is intentionally allowed to act as the deploy-wide default whenever the
-        # effective value is still 800. Switching to a `None` sentinel here would
-        # silently disable that flag for those primary paths (they'd forward a
-        # literal 800, not None). A clean fix must thread the sentinel from those
-        # upstream layers first — out of scope for this change.
-        if snippet_chars == 800:
+        # `snippet_chars=None` means "caller didn't specify" — the sentinel is
+        # threaded from every entry point (CLI `--snippet-chars`, MCP `memo_ask`
+        # / `memo_chat_ask`), so `MEMO_ASK_SNIPPET_CHARS` (fallback 800) supplies
+        # the deploy-wide default. An explicit int is honored verbatim.
+        if snippet_chars is None:
             snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
         if use_context_pack is None:
             use_context_pack = flag_bool("MEMO_CONTEXT_PACK")
@@ -977,7 +972,7 @@ class _AskOpsMixin(_MemoryBase):
         *,
         k: int = 5,
         type_: str | None = None,
-        snippet_chars: int = 800,
+        snippet_chars: int | None = None,
         include_repos: bool = True,
         intent_text: str | None = None,
         session_id: str | None = None,
@@ -999,16 +994,11 @@ class _AskOpsMixin(_MemoryBase):
             return
         from memo.flags import flag_bool, flag_int
 
-        # NOTE (F4): the `== 800` sentinel can't be cleanly replaced by a
-        # `None` default here. The MCP tool (`memo_ask` in server_core_search.py)
-        # and CLI (`memo ask --snippet-chars`, cli_search.py) both bake in their
-        # own `800` default and pass it EXPLICITLY, so `MEMO_ASK_SNIPPET_CHARS`
-        # is intentionally allowed to act as the deploy-wide default whenever the
-        # effective value is still 800. Switching to a `None` sentinel here would
-        # silently disable that flag for those primary paths (they'd forward a
-        # literal 800, not None). A clean fix must thread the sentinel from those
-        # upstream layers first — out of scope for this change.
-        if snippet_chars == 800:
+        # `snippet_chars=None` means "caller didn't specify" — the sentinel is
+        # threaded from every entry point (CLI `--snippet-chars`, MCP `memo_ask`
+        # / `memo_chat_ask`), so `MEMO_ASK_SNIPPET_CHARS` (fallback 800) supplies
+        # the deploy-wide default. An explicit int is honored verbatim.
+        if snippet_chars is None:
             snippet_chars = flag_int("MEMO_ASK_SNIPPET_CHARS") or 800
         if use_context_pack is None:
             use_context_pack = flag_bool("MEMO_CONTEXT_PACK")
