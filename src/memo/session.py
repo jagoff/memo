@@ -352,6 +352,13 @@ def recent_prompts(state_dir: Path, session_id: str, n: int) -> list[str]:
         return []
 
 
+def _resolve_session_cwd(value: str) -> str:
+    try:
+        return str(Path(value).expanduser().resolve())
+    except OSError:
+        return value
+
+
 def list_sessions(
     state_dir: Path,
     *,
@@ -373,12 +380,7 @@ def list_sessions(
       the shell wrapper uses since it's the only one that uniquely
       identifies a working tree across siblings.
     """
-    cwd_resolved: str | None = None
-    if cwd:
-        try:
-            cwd_resolved = str(Path(cwd).expanduser().resolve())
-        except OSError:
-            cwd_resolved = cwd
+    cwd_resolved = _resolve_session_cwd(cwd) if cwd else None
 
     out: list[dict[str, Any]] = []
     d = sessions_dir(state_dir)
@@ -395,11 +397,7 @@ def list_sessions(
             stored = data.get("cwd") or ""
             if not stored:
                 continue
-            try:
-                stored_resolved = str(Path(stored).expanduser().resolve())
-            except OSError:
-                stored_resolved = stored
-            if stored_resolved != cwd_resolved:
+            if _resolve_session_cwd(stored) != cwd_resolved:
                 continue
         out.append(data)
     out.sort(key=lambda x: _instant_sort_key(x.get("updated")), reverse=True)

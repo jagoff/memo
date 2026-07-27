@@ -246,6 +246,28 @@ def _backup_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.memo-backup-{stamp}")
 
 
+def _verify_setup_action(
+    result: dict[str, Any],
+    action: SetupAction,
+    plan: SetupPlan,
+) -> None:
+    if not result["ok"]:
+        return
+    verification = verify_agent(
+        action.agent,
+        cwd=Path(plan.cwd),
+        memo_mcp=Path(plan.memo_mcp),
+        probe=False,
+    )
+    result["verification"] = verification["checks"]
+    if not verification["ok"]:
+        result.update(
+            ok=False,
+            status="verification-failed",
+            remediation=f"memo doctor --agent {action.agent}",
+        )
+
+
 def apply_setup_plan(
     plan: SetupPlan,
     *,
@@ -317,20 +339,7 @@ def apply_setup_plan(
             )
             if rollback_error:
                 result["rollback_error"] = rollback_error
-        if result["ok"]:
-            verification = verify_agent(
-                action.agent,
-                cwd=Path(plan.cwd),
-                memo_mcp=Path(plan.memo_mcp),
-                probe=False,
-            )
-            result["verification"] = verification["checks"]
-            if not verification["ok"]:
-                result.update(
-                    ok=False,
-                    status="verification-failed",
-                    remediation=f"memo doctor --agent {action.agent}",
-                )
+        _verify_setup_action(result, action, plan)
         results.append(result)
 
     return {
@@ -423,6 +432,64 @@ def _isolated_runtime_smoke(
             return False, False, str(exc)[:500]
 
 
+def _probe_agent_configuration(
+    *,
+    adapter: AgentAdapter,
+    slug: str,
+    root: Path,
+    runtime: Path | None,
+    probe: bool,
+    binary: str | None,
+) -> tuple[bool | None, bool | None, bool | None, str]:
+    if not probe or not binary:
+        return None, None, None, "not probed"
+    try:
+        proc = subprocess.run(
+            adapter.verification_command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_agent_cli_env(),
+            cwd=root,
+        )
+        config_ok = proc.returncode == 0
+        raw_detail = (proc.stdout + "\n" + proc.stderr).strip()
+        parsed: dict[str, Any] | None = None
+        if slug == "codex" and proc.returncode == 0:
+            try:
+                candidate = json.loads(proc.stdout)
+                parsed = candidate if isinstance(candidate, dict) else None
+            except ValueError:
+                parsed = None
+        if parsed is None:
+            config_runtime = bool(runtime and str(runtime) in raw_detail)
+            profile_current = adapter.mcp_profile in raw_detail
+        else:
+            transport_value = parsed.get("transport")
+            transport = transport_value if isinstance(transport_value, dict) else {}
+            command = str(transport.get("command") or "")
+            env_value = transport.get("env")
+            mcp_env = env_value if isinstance(env_value, dict) else {}
+            config_runtime = bool(runtime and command == str(runtime))
+            profile_current = mcp_env.get("MEMO_MCP_PROFILE") == adapter.mcp_profile
+        return config_ok, config_runtime, profile_current, raw_detail[:500]
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return False, False, False, str(exc)
+
+
+def _probe_storage_writable(*, probe: bool) -> bool | None:
+    if not probe:
+        return None
+    try:
+        from memo.config import Config
+
+        cfg = Config.from_env()
+        return _path_writable(cfg.data_dir) and _path_writable(cfg.state_dir)
+    except Exception:
+        return False
+
+
 def verify_agent(
     slug: str,
     *,
@@ -462,47 +529,14 @@ def verify_agent(
     except Exception:  # pragma: no cover - editable/uninstalled source tree
         runtime_version = "unknown"
 
-    config_ok: bool | None = None
-    config_runtime: bool | None = None
-    profile_current: bool | None = None
-    config_detail = "not probed"
-    if probe and binary:
-        try:
-            proc = subprocess.run(
-                adapter.verification_command,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=_agent_cli_env(),
-                cwd=root,
-            )
-            config_ok = proc.returncode == 0
-            raw_detail = (proc.stdout + "\n" + proc.stderr).strip()
-            config_detail = raw_detail[:500]
-            parsed: dict[str, Any] | None = None
-            if slug == "codex" and proc.returncode == 0:
-                try:
-                    candidate = json.loads(proc.stdout)
-                    parsed = candidate if isinstance(candidate, dict) else None
-                except ValueError:
-                    parsed = None
-            if parsed is not None:
-                transport = parsed.get("transport")
-                transport = transport if isinstance(transport, dict) else {}
-                command = str(transport.get("command") or "")
-                raw_env = transport.get("env")
-                mcp_env = raw_env if isinstance(raw_env, dict) else {}
-                config_runtime = bool(runtime and command == str(runtime))
-                profile_current = mcp_env.get("MEMO_MCP_PROFILE") == adapter.mcp_profile
-            else:
-                config_runtime = bool(runtime and str(runtime) in raw_detail)
-                profile_current = adapter.mcp_profile in raw_detail
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-            config_ok = False
-            config_runtime = False
-            profile_current = False
-            config_detail = str(exc)
+    config_ok, config_runtime, profile_current, config_detail = _probe_agent_configuration(
+        adapter=adapter,
+        slug=slug,
+        root=root,
+        runtime=runtime,
+        probe=probe,
+        binary=binary,
+    )
 
     smoke_ok: bool | None = None
     version_match: bool | None = None
@@ -513,15 +547,7 @@ def verify_agent(
             expected_version=runtime_version,
         )
 
-    storage_writable: bool | None = None
-    if probe:
-        try:
-            from memo.config import Config
-
-            cfg = Config.from_env()
-            storage_writable = _path_writable(cfg.data_dir) and _path_writable(cfg.state_dir)
-        except Exception:
-            storage_writable = False
+    storage_writable = _probe_storage_writable(probe=probe)
 
     checks = {
         "detected": binary is not None,

@@ -292,6 +292,55 @@ def resolve_notes_dir(mem: Any) -> Path:
     return vault_root / SYSTEM_DIR / "Whatsapp"
 
 
+def _group_messages(
+    messages: list[WAMessage],
+    include_chats: tuple[str, ...],
+) -> dict[str, list[WAMessage]]:
+    include = set(include_chats)
+    by_chat: dict[str, list[WAMessage]] = {}
+    for message in messages:
+        if include and message.chat_jid not in include:
+            continue
+        by_chat.setdefault(message.chat_jid, []).append(message)
+    return by_chat
+
+
+def _write_chat_notes(
+    out_dir: Path,
+    by_chat: dict[str, list[WAMessage]],
+    *,
+    include_chats: tuple[str, ...],
+    all_chats: bool,
+) -> tuple[list[str], list[str]]:
+    from memo.atomic_io import atomic_write_text, authority_write_lock
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files: list[str] = []
+    removed: list[str] = []
+    desired_paths: set[Path] = set()
+    with authority_write_lock(out_dir):
+        for jid, messages in by_chat.items():
+            chat_name = messages[0].chat_name
+            path = out_dir / (_safe_filename(chat_name, jid) + ".md")
+            atomic_write_text(path, render_chat_note(jid, chat_name, messages))
+            desired_paths.add(path)
+            files.append(str(path))
+
+        # Historical versions used only the display name as the filename.
+        # Retire only importer-owned aliases and stale all-chat outputs.
+        include = set(include_chats)
+        for candidate in sorted(out_dir.glob("*.md")):
+            managed_jid = _managed_chat_jid(candidate)
+            if managed_jid is None or candidate in desired_paths:
+                continue
+            if not all_chats and managed_jid not in include:
+                continue
+            with suppress(FileNotFoundError):
+                candidate.unlink()
+                removed.append(str(candidate))
+    return files, removed
+
+
 def run(
     mem: Any,
     *,
@@ -336,12 +385,7 @@ def run(
         db, since_ts=since_ts, exclude_jids=HARDCODED_EXCLUDE_JIDS | set(exclude_chats)
     )
 
-    include = set(include_chats)
-    by_chat: dict[str, list[WAMessage]] = {}
-    for m in messages:
-        if include and m.chat_jid not in include:
-            continue
-        by_chat.setdefault(m.chat_jid, []).append(m)
+    by_chat = _group_messages(messages, include_chats)
 
     summary: dict[str, Any] = {
         "bridge_db": str(db),
@@ -358,41 +402,13 @@ def run(
     if dry_run or not by_chat:
         return summary
 
-    from memo.atomic_io import atomic_write_text, authority_write_lock
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    written = 0
-    files: list[str] = []
-    removed: list[str] = []
-    desired_paths: set[Path] = set()
-    with authority_write_lock(out_dir):
-        for jid, msgs in by_chat.items():
-            chat_name = msgs[0].chat_name
-            note = render_chat_note(jid, chat_name, msgs)
-            fname = _safe_filename(chat_name, jid) + ".md"
-            path = out_dir / fname
-            atomic_write_text(path, note)
-            desired_paths.add(path)
-            written += 1
-            files.append(str(path))
-
-        # Historical versions used only the display name as the filename.
-        # Retire those aliases (and stale all-chat outputs) only when their
-        # frontmatter proves this importer owns them. User-authored Markdown in
-        # the same directory is never removed.
-        include = set(include_chats)
-        for candidate in sorted(out_dir.glob("*.md")):
-            managed_jid = _managed_chat_jid(candidate)
-            if managed_jid is None or candidate in desired_paths:
-                continue
-            should_remove = all_chats or managed_jid in include
-            if not should_remove:
-                continue
-            with suppress(FileNotFoundError):
-                candidate.unlink()
-                removed.append(str(candidate))
-
-    summary["notes_written"] = written
+    files, removed = _write_chat_notes(
+        out_dir,
+        by_chat,
+        include_chats=include_chats,
+        all_chats=all_chats,
+    )
+    summary["notes_written"] = len(files)
     summary["notes_removed"] = len(removed)
     summary["files"] = files
     summary["files_removed"] = removed
