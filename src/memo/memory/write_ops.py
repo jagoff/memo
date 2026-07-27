@@ -1109,6 +1109,8 @@ class _WriteOpsMixin(_MemoryBase):
                     tags=norm_tags,
                     created=created_iso,
                     updated=now_iso,
+                    valid_at=valid_at,
+                    invalid_at=invalid_at,
                 )
                 self._record_graph_entities_from_extra(
                     record_id=record_id,

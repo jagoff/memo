@@ -14,7 +14,7 @@ import builtins
 import sqlite3
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from memo.flags import flag_bool, flag_float
 from memo.memory._base import _MemoryBase
@@ -23,16 +23,6 @@ from memo.memory.record import (
     _log,
     _state_decay_factor,
 )
-
-
-def _flag_or(value: float | None, default: float) -> float:
-    """Resolve a flag default without treating a configured 0 as missing.
-
-    ``flag_float(...) or default`` silently discards a legitimately configured
-    0.0 (these knobs have ``min_val=0``, so 0 is valid); the not-None check
-    honors an explicit zero.
-    """
-    return default if value is None else value
 
 
 def _older_id(a: str, a_ts: str, b: str, b_ts: str) -> str | None:
@@ -75,10 +65,11 @@ class _SearchScoringMixin(_MemoryBase):
         the temporal engine's already-detected 'evolved' verdicts into ranking
         instead of letting known-stale facts compete at full score.
         """
-        contradict_penalty = max(
-            0.0, min(1.0, _flag_or(flag_float("MEMO_CONTRADICT_PENALTY"), 0.4))
-        )
-        evolution_penalty = max(0.0, min(1.0, _flag_or(flag_float("MEMO_EVOLUTION_PENALTY"), 0.7)))
+        # Both flags are registered, bounded floats.  Cast away the generic
+        # accessor's optional type without an ``or`` fallback, which would
+        # incorrectly discard the explicitly supported value 0.0.
+        contradict_penalty = cast(float, flag_float("MEMO_CONTRADICT_PENALTY"))
+        evolution_penalty = cast(float, flag_float("MEMO_EVOLUTION_PENALTY"))
         ids = [r.id for r in results]
         try:
             pairs = self.contradict_store.pairs_for_ids(ids)
@@ -95,7 +86,7 @@ class _SearchScoringMixin(_MemoryBase):
         mult: dict[str, float] = {}
 
         def _demote(mid: str, pen: float) -> None:
-            mult[mid] = min(mult.get(mid, 1.0), pen)
+            mult[mid] = min(mult[mid], pen) if mid in mult else pen
 
         # declare-disputes: when both sides of a competing/open pair surface in
         # the same result set, keep BOTH at full score instead of silently
@@ -116,23 +107,21 @@ class _SearchScoringMixin(_MemoryBase):
                     declared.add(_p.memory_id_b)
 
         for pair in pairs:
-            rel = (pair.relationship or "").lower()
+            rel = str(pair.relationship).lower()
             a, b = pair.memory_id_a, pair.memory_id_b
-            a_ts, b_ts = id_to_updated.get(a, ""), id_to_updated.get(b, "")
+            a_ts, b_ts = id_to_updated.get(a), id_to_updated.get(b)
             if "contrad" in rel:
                 # Only demote when BOTH sides carry a timestamp — otherwise we
                 # can't tell which is older and would risk sinking the newer one.
                 if a_ts and b_ts:
                     target = _older_id(a, a_ts, b, b_ts)
-                    if target is None or target in declared:
-                        continue  # unparseable, or both sides surfaced → don't hide
-                    _demote(target, contradict_penalty)
+                    if target is not None and target not in declared:
+                        _demote(target, contradict_penalty)
             elif "evolu" in rel and a in present and b in present and a_ts and b_ts:
                 # Only when BOTH sides surfaced can we safely demote the older.
                 target = _older_id(a, a_ts, b, b_ts)
-                if target is None or target in declared:
-                    continue  # unparseable, or both sides surfaced → don't hide
-                _demote(target, evolution_penalty)
+                if target is not None and target not in declared:
+                    _demote(target, evolution_penalty)
         if not mult:
             return results
         penalised = [
@@ -207,7 +196,7 @@ class _SearchScoringMixin(_MemoryBase):
             max_c = max(counts.values(), default=0)
             if max_c <= 0:
                 return results
-            weight = _flag_or(flag_float("MEMO_CO_RECALL_BOOST_WEIGHT"), 0.1)
+            weight = cast(float, flag_float("MEMO_CO_RECALL_BOOST_WEIGHT"))
             boosted: list[MemoryRecord] = [anchor]
             for r in results[1:]:
                 c = counts.get(r.id, 0)

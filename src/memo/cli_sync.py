@@ -264,26 +264,31 @@ def sync_bootstrap(url: str, dest: str | None, as_json: bool) -> None:
     # cache instead of cold-embedding the whole corpus on this new machine.
     cfg = Config.from_env(data_dir=Path(out["memories_dir"]))
     mem = _get_memory(cfg)
-    from memo.flags import flag_bool
-
-    if flag_bool("MEMO_SYNC_EMBED_CACHE"):
-        from memo.sync_embed_cache import embed_cache_dir_for, import_embed_cache
-
-        try:
-            out["embed_cache"] = import_embed_cache(mem.store, embed_cache_dir_for(cfg))
-        except Exception as exc:  # derived data — degrade to cold re-embed, never abort
-            out["embed_cache"] = {"error": str(exc)}
-    out["reindexed"] = mem.reindex(rebuild=True)
     try:
-        out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
-        out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
-    except ValueError as exc:
-        # Signal schema mismatch (version skew between Macs) must not abort with
-        # a raw traceback AFTER the config was already repointed: the clone,
-        # config, and reindex all succeeded — signal is derived ranking data.
-        # Degrade like the embed_cache guard above and tell the user how to
-        # finish once versions match.
-        out["signal"] = {"error": str(exc)}
+        from memo.flags import flag_bool
+
+        if flag_bool("MEMO_SYNC_EMBED_CACHE"):
+            from memo.sync_embed_cache import embed_cache_dir_for, import_embed_cache
+
+            try:
+                out["embed_cache"] = import_embed_cache(mem.store, embed_cache_dir_for(cfg))
+            except Exception as exc:  # derived data — degrade to cold re-embed, never abort
+                out["embed_cache"] = {"error": str(exc)}
+        out["reindexed"] = mem.reindex(rebuild=True)
+        try:
+            out["signal"] = import_signal(mem.store, signal_dir_for(cfg))
+            out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(
+                mem.embedder.embed_query
+            )
+        except ValueError as exc:
+            # Signal schema mismatch (version skew between Macs) must not abort with
+            # a raw traceback AFTER the config was already repointed: the clone,
+            # config, and reindex all succeeded — signal is derived ranking data.
+            # Degrade like the embed_cache guard above and tell the user how to
+            # finish once versions match.
+            out["signal"] = {"error": str(exc)}
+    finally:
+        mem.close()
 
     if as_json:
         click.echo(json.dumps(out, indent=2))
@@ -568,14 +573,19 @@ def _run_sync_setup(cfg: Config, choice: str, url: str | None, *, gh_ok: bool) -
         out = bootstrap_clone(url or "", Path.home() / "repos" / "memo-sync")
         cfg2 = Config.from_env(data_dir=Path(out["memories_dir"]))
         mem = _get_memory(cfg2)
-        out["reindexed"] = mem.reindex(rebuild=True)
         try:
-            out["signal"] = import_signal(mem.store, signal_dir_for(cfg2))
-            out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(mem.embedder.embed_query)
-        except ValueError as exc:
-            # Same degrade as `sync bootstrap`: version skew on the signal
-            # schema must not abort after the config was already repointed.
-            out["signal"] = {"error": str(exc)}
+            out["reindexed"] = mem.reindex(rebuild=True)
+            try:
+                out["signal"] = import_signal(mem.store, signal_dir_for(cfg2))
+                out["feedback_vecs_rebuilt"] = mem.store.rebuild_feedback_vecs(
+                    mem.embedder.embed_query
+                )
+            except ValueError as exc:
+                # Same degrade as `sync bootstrap`: version skew on the signal
+                # schema must not abort after the config was already repointed.
+                out["signal"] = {"error": str(exc)}
+        finally:
+            mem.close()
         return out
     return None
 

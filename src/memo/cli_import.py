@@ -197,7 +197,7 @@ def import_whatsapp(
             raise click.ClickException(f"notes dir not found: {target}")
         try:
             subprocess.run(
-                ["memo", "ingest", str(target), "--name", "whatsapp"],
+                ["memo", "ingest", str(target), "--name", "whatsapp", "--prune"],
                 check=True,
                 timeout=600,
             )
@@ -230,7 +230,14 @@ def import_whatsapp(
     if index and not dry_run and summary["notes_written"]:
         try:
             subprocess.run(
-                ["memo", "ingest", summary["notes_dir"], "--name", "whatsapp"],
+                [
+                    "memo",
+                    "ingest",
+                    summary["notes_dir"],
+                    "--name",
+                    "whatsapp",
+                    "--prune",
+                ],
                 check=True,
                 timeout=600,
             )
@@ -249,6 +256,7 @@ def import_whatsapp(
         console.print("[yellow]dry-run — nothing written[/yellow]")
     else:
         console.print(f"Notes written:   {summary['notes_written']}  → {summary['notes_dir']}")
+        console.print(f"Stale removed:   {summary['notes_removed']}")
         console.print(f"Indexed:         {summary['indexed']}")
     if summary.get("index_error"):
         console.print(f"[yellow]index error: {summary['index_error']}[/yellow]")

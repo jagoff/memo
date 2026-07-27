@@ -649,12 +649,20 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         `valid_at`/`invalid_at` are intentionally excluded from the `upsert()`
         ON CONFLICT update set (see `_upsert_memory_row`), so a re-save/edit
         never touches them. This dedicated statement is how the reindex-fold and
-        the contradiction-supersede own their mutation."""
+        the contradiction-supersede own their mutation. Derived chunks mirror
+        their parent's interval in the same transaction so an invalid parent
+        can never leave searchable chunk ghosts behind."""
         with self._tx() as cx:
             cur = cx.execute(
                 "UPDATE meta SET valid_at = ?, invalid_at = ? WHERE id = ?",
                 (valid_at, invalid_at, id_),
             )
+            if cur.rowcount:
+                cx.execute(
+                    "UPDATE meta SET valid_at = ?, invalid_at = ? "
+                    "WHERE json_extract(extra_json, '$.parent_id') = ?",
+                    (valid_at, invalid_at, id_),
+                )
         return cur.rowcount > 0
 
     def verification_candidates(self) -> list[dict[str, Any]]:
@@ -1442,7 +1450,8 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             "json_extract(extra_json, '$.chunk_seq') AS chunk_seq "
             "FROM meta "
             "WHERE json_extract(extra_json, '$.vault') = ? "
-            "AND json_extract(extra_json, '$.source') LIKE 'vault-ingest%'",
+            "AND json_extract(extra_json, '$.source') LIKE 'vault-ingest%'"
+            + self._deleted_filter_sql(),
             (label,),
         ).fetchall()
         return [
@@ -1463,8 +1472,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         (e.g. a multi-chunk note edited down to fewer chunks)."""
         rows = self._conn.execute(
             "SELECT id, path FROM meta "
-            "WHERE path = ? "
-            "OR json_extract(extra_json, '$.parent_path') = ?",
+            "WHERE (path = ? "
+            "OR json_extract(extra_json, '$.parent_path') = ?)"
+            + self._deleted_filter_sql(),
             (store_path, store_path),
         ).fetchall()
         return [{"id": r["id"], "path": r["path"]} for r in rows]

@@ -1191,6 +1191,9 @@ def test_prune_borra_fila_de_nota_recortada_bajo_min_chars(tmp_path: Path, runne
     assert con_prune.exit_code == 0, con_prune.output
     assert "pruned=1" in con_prune.output, con_prune.output
     assert _open_store(runner_env).get_by_path_ci("v/n.md") is None
+    repeated = CliRunner().invoke(cli, [*base, "--prune"], env=runner_env)
+    assert repeated.exit_code == 0, repeated.output
+    assert "pruned=0" in repeated.output, repeated.output
 
 
 def test_prune_borra_fila_cuando_nota_gana_id_frontmatter(tmp_path: Path, runner_env):

@@ -5,7 +5,16 @@
       "command": "memo-mcp",
       "args": [],
       "env": {
-        "MEMO_NONINTERACTIVE": "1"
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_MCP_PROFILE": "agent",
+        "PYTHONPATH": "",
+        "MEMO_LLM_MODEL": "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit-DWQ",
+        "MEMO_HELPER_MODEL": "mlx-community/Qwen3-4B-4bit",
+        "MEMO_RERANKER_MODEL": "vserifsaglam/Qwen3-Reranker-4B-4bit-MLX",
+        "MEMO_RERANKER_REVISION": "9655b27c01d2ff1c49f7e672a04b70d630161b46",
+        "MEMO_EMBEDDER_MODEL": "mlx-community/Qwen3-Embedding-4B-4bit-DWQ@b5d88f1fe49b50d2ac01b4692ca2d387f14f9c72",
+        "MEMO_EMBEDDER_DIMS": "2560",
+        "MEMO_SOURCE": "claude-code"
       }
     }
   }

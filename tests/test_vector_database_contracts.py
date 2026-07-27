@@ -8,18 +8,44 @@ and index housekeeping failures are attributed to ``VecStore`` itself.
 from __future__ import annotations
 
 import sqlite3
+from inspect import signature
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from memo.store import VecStore
+from memo.store.vec_base import VecStoreBase
 
 pytestmark = [pytest.mark.db_contract, pytest.mark.resource_hygiene]
 
 _X = [1.0, 0.0, 0.0, 0.0]
 _Y = [0.0, 1.0, 0.0, 0.0]
 _NEG_X = [-1.0, 0.0, 0.0, 0.0]
+
+
+def test_base_store_required_extension_points_fail_explicitly() -> None:
+    """The shared interface must never silently accept unsupported writes/reads."""
+    base = VecStoreBase()
+    assert signature(base.find_by_prefix).parameters["limit"].default == 10
+    assert signature(base.list_recent).parameters["limit"].default == 20
+    assert signature(base.upsert).parameters["body_text"].default == ""
+    with pytest.raises(NotImplementedError):
+        base.find_by_prefix("abc")
+    with pytest.raises(NotImplementedError):
+        base.list_recent()
+    with pytest.raises(NotImplementedError):
+        base.upsert(
+            id_="id",
+            path="memory/id.md",
+            title="Title",
+            type_="note",
+            tags=[],
+            created="2026-01-01T00:00:00+00:00",
+            updated="2026-01-01T00:00:00+00:00",
+            body_hash="hash",
+            embedding=[1.0],
+        )
 
 
 @pytest.fixture

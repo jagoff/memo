@@ -51,6 +51,7 @@ def _base_env(monkeypatch) -> None:
     """Permissive search settings so stub embedder always surfaces results."""
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
     monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+    monkeypatch.setenv("MEMO_RECALL_GAP_THRESHOLD", "0")
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
 

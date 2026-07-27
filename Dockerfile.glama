@@ -71,4 +71,7 @@ RUN useradd -m memo && mkdir -p /data/state /opt/hf-cache \
 USER memo
 VOLUME /data
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["memo", "config", "validate"]
+
 CMD ["memo-mcp"]

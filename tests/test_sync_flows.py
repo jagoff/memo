@@ -272,6 +272,7 @@ def test_run_sync_setup_join_calls_bootstrap(tmp_path, monkeypatch):
 
     class _FakeMem:
         store = _FakeStore()
+        closed = False
 
         class embedder:
             @staticmethod
@@ -281,7 +282,11 @@ def test_run_sync_setup_join_calls_bootstrap(tmp_path, monkeypatch):
         def reindex(self, rebuild=False):
             return 0
 
-    monkeypatch.setattr(cs, "_get_memory", lambda cfg: _FakeMem())
+        def close(self):
+            self.closed = True
+
+    memory = _FakeMem()
+    monkeypatch.setattr(cs, "_get_memory", lambda cfg: memory)
     monkeypatch.setattr(cs, "import_signal", lambda *a, **k: 0)
     monkeypatch.setattr(cs, "signal_dir_for", lambda *a, **k: tmp_path)
     monkeypatch.setattr(
@@ -298,6 +303,7 @@ def test_run_sync_setup_join_calls_bootstrap(tmp_path, monkeypatch):
     out = cs._run_sync_setup(cfg, "2", "https://example.com/memo-sync.git", gh_ok=False)
     assert calls["url"] == "https://example.com/memo-sync.git"
     assert out["reindexed"] == 0
+    assert memory.closed is True
 
 
 def test_run_sync_setup_cancel_returns_none(tmp_path):

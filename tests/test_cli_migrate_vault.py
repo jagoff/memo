@@ -12,7 +12,11 @@ from click.testing import CliRunner
 from memo.cli import cli
 from memo.config import Config
 from memo.memory import Memory
-from memo.runtime.migrate import run_backfill_valid_time
+from memo.runtime.migrate import (
+    run_backfill_valid_time,
+    run_normalize_project_tags,
+    run_sanitize_privacy,
+)
 from memo.store import VecStore
 
 
@@ -481,3 +485,88 @@ def test_migrate_backfill_valid_time_flag(tmp_path: Path, seeded_old_layout, mon
     assert rows
     for r in rows:
         assert r["valid_at"] == r["created"]
+
+
+def test_normalize_project_tags_uses_bucket_and_is_idempotent(tmp_cfg):
+    import frontmatter
+
+    target = tmp_cfg.memory_dir / "memo" / "cross-project.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "---\ntitle: Cross project\ntags: [project:memflow, project:memo, keep]\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    dry = run_normalize_project_tags(tmp_cfg, dry_run=True)
+    assert dry["files_changed"] == 1
+    assert "project:memflow" in target.read_text(encoding="utf-8")
+
+    applied = run_normalize_project_tags(tmp_cfg)
+    tags = frontmatter.load(target).metadata["tags"]
+    assert applied == {
+        "files_changed": 1,
+        "tags_converted": 1,
+        "invalid_project_tags": 0,
+        "parse_errors": 0,
+    }
+    assert tags == ["related-project:memflow", "project:memo", "keep"]
+    assert run_normalize_project_tags(tmp_cfg)["files_changed"] == 0
+
+
+def test_normalize_project_tags_flat_file_keeps_first_project(tmp_cfg):
+    import frontmatter
+
+    target = tmp_cfg.memory_dir / "legacy.md"
+    target.write_text(
+        "---\ntags: [project:synapse, project:memo]\n---\nbody\n",
+        encoding="utf-8",
+    )
+
+    report = run_normalize_project_tags(tmp_cfg)
+
+    assert report["files_changed"] == 1
+    assert frontmatter.load(target).metadata["tags"] == [
+        "project:synapse",
+        "related-project:memo",
+    ]
+
+
+def test_sanitize_privacy_is_fail_closed_and_idempotent(tmp_cfg):
+    import frontmatter
+
+    target = tmp_cfg.memory_dir / "private.md"
+    token = "AKIA" + "ABCDEFGHIJKLMNOP"
+    target.write_text(
+        f"---\ntitle: Safe\ntags: [keep]\n---\nvisible <private>hidden</private> {token}\n",
+        encoding="utf-8",
+    )
+
+    dry = run_sanitize_privacy(tmp_cfg, dry_run=True)
+    assert dry["files_changed"] == 1
+    assert token in target.read_text(encoding="utf-8")
+
+    report = run_sanitize_privacy(tmp_cfg)
+    post = frontmatter.load(target)
+    assert report == {
+        "files_changed": 1,
+        "secret_files": 1,
+        "private_files": 1,
+        "parse_errors": 0,
+        "emptied_files": 0,
+    }
+    assert "hidden" not in post.content
+    assert token not in post.content
+    assert "_redacted" in post.metadata["tags"]
+    assert run_sanitize_privacy(tmp_cfg)["files_changed"] == 0
+
+
+def test_sanitize_privacy_does_not_write_private_only_body(tmp_cfg):
+    target = tmp_cfg.memory_dir / "private-only.md"
+    original = "---\ntitle: Private\ntags: []\n---\n<private>only secret</private>\n"
+    target.write_text(original, encoding="utf-8")
+
+    report = run_sanitize_privacy(tmp_cfg)
+
+    assert report["emptied_files"] == 1
+    assert report["files_changed"] == 0
+    assert target.read_text(encoding="utf-8") == original

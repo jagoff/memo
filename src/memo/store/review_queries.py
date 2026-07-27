@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from ._base import _StoreBase
+from memo.store._base import _StoreBase
 
 
 class _ReviewQueriesMixin(_StoreBase):
@@ -56,14 +56,29 @@ class _ReviewQueriesMixin(_StoreBase):
         query = (
             "SELECT m.id, m.path, m.title, m.type, m.tags, m.created, m.updated, "
             "m.review_after, m.verification_state, m.verified_at, m.valid_at, m.invalid_at, "
-            "m.namespace, EXISTS("
-            "SELECT 1 FROM memory_relations r WHERE r.judgment_status='judged' "
-            "AND r.relation='conflicts_with' AND (r.source_id=m.id OR r.target_id=m.id)"
-            ") AS open_conflict FROM meta m WHERE "
+            "m.namespace, EXISTS(SELECT 1 FROM memory_relations r "
+            "WHERE r.judgment_status='judged' AND r.relation='conflicts_with' "
+            "AND (r.source_id=m.id OR r.target_id=m.id) "
+            "AND EXISTS(SELECT 1 FROM meta peer "
+            "WHERE peer.id=CASE WHEN r.source_id=m.id THEN r.target_id ELSE r.source_id END "
+            "AND (peer.deleted_at IS NULL OR peer.deleted_at='') AND peer.invalid_at IS NULL) "
+            "AND NOT EXISTS(SELECT 1 FROM memory_reviews reviewed "
+            "WHERE reviewed.memory_id=m.id "
+            "AND julianday(reviewed.reviewed_at) >= julianday(r.updated_at))) "
+            "AS open_conflict FROM meta m WHERE "
             "(m.review_after IS NOT NULL AND m.review_after <= ? OR EXISTS("
-            "SELECT 1 FROM memory_relations r2 WHERE r2.judgment_status='judged' "
-            "AND r2.relation='conflicts_with' AND (r2.source_id=m.id OR r2.target_id=m.id)"
-            ")) AND (m.deleted_at IS NULL OR m.deleted_at='') AND m.invalid_at IS NULL"
+            "SELECT 1 FROM memory_relations r2 "
+            "WHERE r2.judgment_status='judged' AND r2.relation='conflicts_with' "
+            "AND (r2.source_id=m.id OR r2.target_id=m.id) "
+            "AND EXISTS(SELECT 1 FROM meta peer2 "
+            "WHERE peer2.id=CASE "
+            "WHEN r2.source_id=m.id THEN r2.target_id ELSE r2.source_id END "
+            "AND (peer2.deleted_at IS NULL OR peer2.deleted_at='') "
+            "AND peer2.invalid_at IS NULL) "
+            "AND NOT EXISTS(SELECT 1 FROM memory_reviews reviewed2 "
+            "WHERE reviewed2.memory_id=m.id "
+            "AND julianday(reviewed2.reviewed_at) >= julianday(r2.updated_at)))) "
+            "AND (m.deleted_at IS NULL OR m.deleted_at='') AND m.invalid_at IS NULL"
         )
         if namespace:
             query += " AND m.namespace = ?"

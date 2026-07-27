@@ -45,6 +45,7 @@ class SetupAction:
     protocol_mode: str
     mcp_command: tuple[str, ...]
     remove_command: tuple[str, ...]
+    shadow_remove_commands: tuple[tuple[str, ...], ...]
     instruction_path: str
     instruction_present: bool
     restart_guidance: str
@@ -73,7 +74,7 @@ AGENT_REGISTRY: dict[str, AgentAdapter] = {
         mcp_profile="core",
         protocol_mode="compact",
         restart_guidance="Restart Codex so it opens a fresh MCP connection.",
-        verification_command=("codex", "mcp", "get", "memo"),
+        verification_command=("codex", "mcp", "get", "memo", "--json"),
         remove_command=("codex", "mcp", "remove", "memo"),
         rollback_limitations="The Codex CLI does not expose the previous MCP entry for restoration.",
     ),
@@ -94,9 +95,34 @@ AGENT_REGISTRY: dict[str, AgentAdapter] = {
 CommandRunner = Callable[[tuple[str, ...], bool], None]
 
 
+def _agent_cli_env() -> dict[str, str]:
+    """Environment for non-interactive agent configuration commands.
+
+    Agent launch wrappers may perform startup recall/capture intended only for
+    interactive sessions. Bypass those hooks here so setup and doctor cannot
+    deadlock behind an unrelated memory/GPU operation.
+    """
+    env = dict(os.environ)
+    env.update(
+        {
+            "MEMFLOW_CAPTURE_DISABLE": "1",
+            "MEMFLOW_STARTUP_BANNER": "0",
+            "MEMO_NONINTERACTIVE": "1",
+        }
+    )
+    return env
+
+
 def _default_runner(argv: tuple[str, ...], best_effort: bool) -> None:
     try:
-        proc = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=_agent_cli_env(),
+        )
     except FileNotFoundError as exc:
         raise SetupError(f"`{argv[0]}` not found on PATH") from exc
     except subprocess.TimeoutExpired as exc:
@@ -169,6 +195,19 @@ def build_setup_plan(
             "MEMO_MCP_PROFILE": adapter.mcp_profile,
         }
         mcp_argv = tuple(str(value) for value in _mcp_add_command(slug, runtime, env))
+        remove_command = adapter.remove_command
+        shadow_remove_commands: tuple[tuple[str, ...], ...] = ()
+        if slug == "claude-code" and _project_has_memo_server(root):
+            mcp_parts = list(mcp_argv)
+            mcp_parts[mcp_parts.index("user")] = "project"
+            mcp_argv = tuple(mcp_parts)
+            remove_command = ("claude", "mcp", "remove", "-s", "project", "memo")
+            # Project scope wins in this checkout. Remove a stale user entry
+            # after the project entry is healthy so Claude reports no
+            # conflicting scopes.
+            shadow_remove_commands = (
+                ("claude", "mcp", "remove", "-s", "user", "memo"),
+            )
         instruction_path = root / adapter.instruction_file
         instruction_present = bool(
             instruction_path.is_file() and _MARKER in instruction_path.read_text(encoding="utf-8")
@@ -181,7 +220,8 @@ def build_setup_plan(
                 mcp_profile=adapter.mcp_profile,
                 protocol_mode=adapter.protocol_mode,
                 mcp_command=mcp_argv,
-                remove_command=adapter.remove_command,
+                remove_command=remove_command,
+                shadow_remove_commands=shadow_remove_commands,
                 instruction_path=str(instruction_path),
                 instruction_present=instruction_present,
                 restart_guidance=adapter.restart_guidance,
@@ -189,6 +229,18 @@ def build_setup_plan(
             )
         )
     return SetupPlan(memo_mcp=str(runtime), cwd=str(root), actions=tuple(actions))
+
+
+def _project_has_memo_server(root: Path) -> bool:
+    config = root / ".mcp.json"
+    if not config.is_file():
+        return False
+    try:
+        payload = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    servers = payload.get("mcpServers") if isinstance(payload, dict) else None
+    return isinstance(servers, dict) and "memo" in servers
 
 
 def _backup_path(path: Path) -> Path:
@@ -225,6 +277,8 @@ def apply_setup_plan(
         try:
             runner(action.remove_command, True)
             runner(action.mcp_command, False)
+            for shadow_remove in action.shadow_remove_commands:
+                runner(shadow_remove, True)
         except Exception as exc:
             result.update(
                 ok=False,
@@ -422,12 +476,30 @@ def verify_agent(
                 capture_output=True,
                 text=True,
                 timeout=10,
+                env=_agent_cli_env(),
+                cwd=root,
             )
             config_ok = proc.returncode == 0
             raw_detail = (proc.stdout + "\n" + proc.stderr).strip()
             config_detail = raw_detail[:500]
-            config_runtime = bool(runtime and str(runtime) in raw_detail)
-            profile_current = adapter.mcp_profile in raw_detail
+            parsed: dict[str, Any] | None = None
+            if slug == "codex" and proc.returncode == 0:
+                try:
+                    candidate = json.loads(proc.stdout)
+                    parsed = candidate if isinstance(candidate, dict) else None
+                except ValueError:
+                    parsed = None
+            if parsed is not None:
+                transport = parsed.get("transport")
+                transport = transport if isinstance(transport, dict) else {}
+                command = str(transport.get("command") or "")
+                raw_env = transport.get("env")
+                mcp_env = raw_env if isinstance(raw_env, dict) else {}
+                config_runtime = bool(runtime and command == str(runtime))
+                profile_current = mcp_env.get("MEMO_MCP_PROFILE") == adapter.mcp_profile
+            else:
+                config_runtime = bool(runtime and str(runtime) in raw_detail)
+                profile_current = adapter.mcp_profile in raw_detail
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             config_ok = False
             config_runtime = False

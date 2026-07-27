@@ -41,6 +41,11 @@ def test_glama_dockerfile_builds_and_installs_checkout_wheel() -> None:
     assert "MEMO_NONINTERACTIVE=1" in dockerfile
     assert "MEMO_MCP_PROFILE=agent" in dockerfile
     assert "MEMO_EMBEDDER_BACKEND=st" in dockerfile
+    assert (
+        "HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3"
+        in dockerfile
+    )
+    assert 'CMD ["memo", "config", "validate"]' in dockerfile
     assert 'CMD ["memo-mcp"]' in dockerfile
     assert "COPY . ." not in dockerfile
     for required in (

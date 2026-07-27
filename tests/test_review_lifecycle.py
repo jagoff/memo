@@ -83,6 +83,58 @@ def test_judged_conflict_is_due_even_before_schedule(mock_memory) -> None:
     assert all(row["open_conflict"] == 1 for row in due)
 
 
+def test_conflict_review_closes_only_the_reviewed_endpoint(mock_memory) -> None:
+    first = mock_memory.save(content="endpoint A", title="A", type_="fact")
+    second = mock_memory.save(content="endpoint B", title="B", type_="fact")
+    mock_memory.compare_memories(first.id, second.id, "conflicts_with", reason="different values")
+
+    mock_memory.mark_reviewed(
+        first.id,
+        evidence="Compared both endpoints; A remains accurate in its original context.",
+        actor="tester",
+    )
+
+    assert {row["id"] for row in mock_memory.list_due_reviews()} == {second.id}
+
+    mock_memory.mark_reviewed(
+        second.id,
+        evidence="Compared both endpoints; B remains accurate in its original context.",
+        actor="tester",
+    )
+
+    assert mock_memory.list_due_reviews() == []
+
+
+def test_review_before_conflict_does_not_close_new_obligation(mock_memory) -> None:
+    first = mock_memory.save(content="endpoint A", title="A", type_="fact")
+    second = mock_memory.save(content="endpoint B", title="B", type_="fact")
+    mock_memory.mark_reviewed(
+        first.id,
+        evidence="Reviewed before the relation existed.",
+        actor="tester",
+        reviewed_at="2020-01-01T00:00:00+00:00",
+    )
+
+    mock_memory.compare_memories(first.id, second.id, "conflicts_with", reason="new conflict")
+
+    assert {row["id"] for row in mock_memory.list_due_reviews()} == {first.id, second.id}
+
+
+def test_conflict_with_inactive_endpoint_is_not_an_open_obligation(mock_memory) -> None:
+    current = mock_memory.save(content="current endpoint", title="current", type_="fact")
+    obsolete = mock_memory.save(content="obsolete endpoint", title="obsolete", type_="fact")
+    mock_memory.compare_memories(
+        current.id,
+        obsolete.id,
+        "conflicts_with",
+        reason="obsolete value",
+    )
+
+    mock_memory.invalidate(obsolete.id, reason="confirmed obsolete")
+
+    assert mock_memory.list_due_reviews() == []
+
+
 def test_invalidate_is_canonical_and_hides_current_recall(mock_memory) -> None:
     record = mock_memory.save(
         content="obsolete turquoise setting", title="obsolete setting", type_="fact"

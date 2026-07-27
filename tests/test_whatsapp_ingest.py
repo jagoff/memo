@@ -113,6 +113,67 @@ def test_run_uses_memo_whatsapp_db_env(tmp_path: Path, monkeypatch: pytest.Monke
     assert str(db_path) in str(exc_info.value)
 
 
+def test_run_replaces_legacy_alias_but_preserves_user_markdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo import whatsapp_ingest
+
+    db_path = tmp_path / "messages.db"
+    db_path.touch()
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    legacy = notes_dir / "Alice.md"
+    legacy.write_text(
+        "---\nsource: whatsapp\nchat_jid: 123@s.whatsapp.net\n---\nold\n",
+        encoding="utf-8",
+    )
+    user_note = notes_dir / "keep.md"
+    user_note.write_text("# My note\n", encoding="utf-8")
+    msg = _msg(datetime(2026, 3, 1, tzinfo=UTC).timestamp(), "Alice", "new")
+    monkeypatch.setattr(whatsapp_ingest, "read_messages", lambda *a, **k: [msg])
+
+    summary = whatsapp_ingest.run(
+        MagicMock(),
+        bridge_db=db_path,
+        all_chats=True,
+        notes_dir=notes_dir,
+    )
+
+    expected = notes_dir / (whatsapp_ingest._safe_filename("Alice", msg.chat_jid) + ".md")
+    assert expected.is_file()
+    assert not legacy.exists()
+    assert user_note.read_text(encoding="utf-8") == "# My note\n"
+    assert summary["notes_removed"] == 1
+
+
+def test_scoped_run_does_not_prune_other_managed_chats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo import whatsapp_ingest
+
+    db_path = tmp_path / "messages.db"
+    db_path.touch()
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    other = notes_dir / "Bob.md"
+    other.write_text(
+        "---\nsource: whatsapp\nchat_jid: 456@s.whatsapp.net\n---\nold\n",
+        encoding="utf-8",
+    )
+    msg = _msg(datetime(2026, 3, 1, tzinfo=UTC).timestamp(), "Alice", "new")
+    monkeypatch.setattr(whatsapp_ingest, "read_messages", lambda *a, **k: [msg])
+
+    summary = whatsapp_ingest.run(
+        MagicMock(),
+        bridge_db=db_path,
+        include_chats=(msg.chat_jid,),
+        notes_dir=notes_dir,
+    )
+
+    assert other.is_file()
+    assert summary["notes_removed"] == 0
+
+
 # ── Task 18.1: signal handler safety ─────────────────────────────────────────
 
 

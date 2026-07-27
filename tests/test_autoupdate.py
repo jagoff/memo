@@ -10,8 +10,73 @@ from pathlib import Path
 import pytest
 
 from memo.runtime import autoupdate as au
+from memo.runtime import autoupdate_worker as au_worker
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["state", "v1.2.3", "not-a-pid", "1.0"],
+        ["state", "v1.2.3", "123", "not-a-time"],
+    ],
+)
+def test_autoupdate_worker_rejects_invalid_arguments(args):
+    assert au_worker.main(args) == 2
+
+
+def test_autoupdate_worker_returns_nonzero_when_lease_is_lost(tmp_path, monkeypatch):
+    seen = {}
+
+    def reject_lease(cfg, tag, *, parent_pid, child_pid, started_at):
+        seen.update(
+            cfg=cfg,
+            tag=tag,
+            parent_pid=parent_pid,
+            child_pid=child_pid,
+            started_at=started_at,
+        )
+        return False
+
+    monkeypatch.setattr(au_worker, "_claim_spawned_lease", reject_lease)
+    monkeypatch.setattr(au_worker.os, "getpid", lambda: 456)
+
+    assert au_worker.main([str(tmp_path), "v4.4.3", "123", "12.5"]) == 1
+    assert seen["cfg"].state_dir == tmp_path.resolve()
+    assert seen["tag"] == "v4.4.3"
+    assert seen["parent_pid"] == 123
+    assert seen["child_pid"] == 456
+    assert seen["started_at"] == 12.5
+
+
+def test_autoupdate_worker_execs_trusted_interpreter_after_claim(tmp_path, monkeypatch):
+    class ExecCalled(Exception):
+        pass
+
+    seen = {}
+    monkeypatch.setattr(au_worker, "_claim_spawned_lease", lambda *args, **kwargs: True)
+
+    def fake_execv(executable, argv):
+        seen.update(executable=executable, argv=argv)
+        raise ExecCalled
+
+    monkeypatch.setattr(au_worker.os, "execv", fake_execv)
+
+    with pytest.raises(ExecCalled):
+        au_worker.main([str(tmp_path), "v4.4.3", "123", "12.5"])
+    assert seen == {
+        "executable": au_worker.sys.executable,
+        "argv": [
+            au_worker.sys.executable,
+            "-m",
+            "memo.cli",
+            "update",
+            "--to-tag",
+            "v4.4.3",
+        ],
+    }
 
 
 @pytest.mark.parametrize(

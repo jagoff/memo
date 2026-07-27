@@ -26,7 +26,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -1107,3 +1107,813 @@ def test_checkpoint_cli_recovers_transcript_via_session_id(tmp_path, monkeypatch
     snap = json.loads(result.output)
     assert snap["transcript_path"] == str(transcript)
     assert snap["last_user_msg"] == "hola"
+
+
+def test_session_low_level_contracts_are_exact(tmp_path, monkeypatch) -> None:
+    assert session_mod._instant_sort_key(None) == (0, 0.0, "")
+    assert session_mod._instant_sort_key(" invalid ") == (0, 0.0, "invalid")
+    assert session_mod._instant_sort_key("2026-01-01T00:00:00Z") == (
+        1,
+        datetime(2026, 1, 1, tzinfo=UTC).timestamp(),
+        "2026-01-01T00:00:00Z",
+    )
+    assert session_mod._instant_sort_key("2026-01-01T00:00:00z") == (
+        0,
+        0.0,
+        "2026-01-01T00:00:00z",
+    )
+    assert session_mod._instant_sort_key("2025-12-31T21:00:00-03:00")[:2] == (
+        1,
+        datetime(2026, 1, 1, tzinfo=UTC).timestamp(),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"^session_id must be 1-128 ASCII letters, digits, underscores, or hyphens$",
+    ):
+        session_mod.validate_session_id("bad/id")
+
+    state_dir = tmp_path / "nested" / "state"
+    assert session_mod.sessions_dir(state_dir) == state_dir / "sessions"
+    assert (state_dir / "sessions").is_dir()
+
+    now = session_mod._now_iso()
+    parsed = datetime.fromisoformat(now)
+    assert parsed.tzinfo == UTC
+    assert parsed.microsecond == 0
+
+
+def test_sessions_dir_rechecks_symlink_after_creation(tmp_path, monkeypatch) -> None:
+    state_dir = tmp_path / "state"
+    target = state_dir / "sessions"
+    original_is_symlink = Path.is_symlink
+    target_checks = 0
+
+    def race_is_symlink(path: Path) -> bool:
+        nonlocal target_checks
+        if path == target:
+            target_checks += 1
+            return target_checks == 2
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", race_is_symlink)
+
+    with pytest.raises(ValueError, match=r"^unsafe sessions directory: "):
+        session_mod.sessions_dir(state_dir)
+    assert target_checks == 2
+
+
+def test_session_json_io_uses_utf8_and_stable_unicode_format(tmp_path, monkeypatch) -> None:
+    encodings: list[str | None] = []
+    writes: list[tuple[Path, str]] = []
+    original_read_text = Path.read_text
+
+    def recording_read_text(path: Path, *args, **kwargs) -> str:
+        encodings.append(kwargs.get("encoding"))
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", recording_read_text)
+    monkeypatch.setattr(
+        session_mod,
+        "atomic_write_text",
+        lambda path, text: writes.append((path, text)),
+    )
+    payload = {"message": "café", "nested": {"ok": True}}
+
+    written = session_mod._write(tmp_path, "sid-io", payload)
+
+    assert written == tmp_path / "sessions" / "sid-io.json"
+    assert writes == [
+        (
+            written,
+            '{\n  "message": "café",\n  "nested": {\n    "ok": true\n  }\n}',
+        )
+    ]
+
+    original_read_text(written, encoding="utf-8") if written.exists() else None
+    written.write_text(json.dumps(payload), encoding="utf-8")
+    assert session_mod._load(tmp_path, "sid-io") == payload
+    assert encodings == ["utf-8"]
+
+
+def test_checkpoint_persists_complete_merge_contract(tmp_path, monkeypatch) -> None:
+    state_dir = tmp_path / "state"
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+    session_id = "sid-complete"
+    existing = {
+        "session_id": session_id,
+        "cwd": "/old",
+        "project": "old",
+        "branch": "old",
+        "head_commit": "old",
+        "modified_files": ["old.py"],
+        "transcript_path": "/old/transcript",
+        "last_user_msg": "old user",
+        "last_assistant_tail": "old assistant",
+        "prompt_trail": ["one", "two", "three", "four", "five"],
+        "running_summary": "Running summary",
+        "summary_turn": 3,
+        "summary": "Human summary",
+        "created": "2025-01-01T00:00:00+00:00",
+        "updated": "2025-01-02T00:00:00+00:00",
+        "turn_count": 4,
+        "last_recall_turn": 7,
+        "last_recap_turn": 6,
+        "custom": "preserved",
+    }
+    session_mod._write(state_dir, session_id, existing)
+    pruner = MagicMock()
+
+    def gather(path: Path) -> dict:
+        assert path == cwd.resolve()
+        return {
+            "branch": "master",
+            "head_commit": "abc123 exact",
+            "modified_files": ["a.py", "b.py"],
+        }
+
+    monkeypatch.setattr(session_mod, "gather_git_state", gather)
+    monkeypatch.setattr(session_mod, "read_last_user_msg", lambda path: "new user")
+    monkeypatch.setattr(session_mod, "read_last_assistant_tail", lambda path: "new assistant")
+    monkeypatch.setattr(session_mod, "_now_iso", lambda: "2026-07-27T12:34:56+00:00")
+    monkeypatch.setattr(session_mod, "prune_lru", pruner)
+
+    snapshot = checkpoint(
+        state_dir,
+        session_id=session_id,
+        cwd=str(cwd),
+        transcript_path=str(transcript),
+        prompt="  final prompt  ",
+        lru_cap=17,
+    )
+
+    assert snapshot == {
+        "session_id": session_id,
+        "cwd": str(cwd.resolve()),
+        "project": "project",
+        "branch": "master",
+        "head_commit": "abc123 exact",
+        "modified_files": ["a.py", "b.py"],
+        "transcript_path": str(transcript),
+        "last_user_msg": "new user",
+        "last_assistant_tail": "new assistant",
+        "prompt_trail": ["two", "three", "four", "five", "final prompt"],
+        "running_summary": "Running summary",
+        "summary_turn": 3,
+        "summary": "Human summary",
+        "created": "2025-01-01T00:00:00+00:00",
+        "updated": "2026-07-27T12:34:56+00:00",
+        "turn_count": 5,
+        "last_recall_turn": 7,
+        "last_recap_turn": 6,
+        "custom": "preserved",
+    }
+    pruner.assert_called_once_with(state_dir, cap=17)
+    assert session_mod._load(state_dir, session_id) == snapshot
+
+
+def test_checkpoint_empty_session_has_no_synthetic_summary(tmp_path, monkeypatch) -> None:
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    monkeypatch.setattr(
+        session_mod,
+        "gather_git_state",
+        lambda _cwd: {"branch": None, "head_commit": None, "modified_files": []},
+    )
+    monkeypatch.setattr(session_mod, "_now_iso", lambda: "2026-01-01T00:00:00+00:00")
+    monkeypatch.setattr(session_mod, "prune_lru", MagicMock())
+
+    with pytest.raises(ValueError, match=r"^session_id required$"):
+        checkpoint(tmp_path, session_id="", cwd=str(cwd))
+
+    snapshot = checkpoint(tmp_path, session_id="sid-empty", cwd=str(cwd), lru_cap=0)
+    assert snapshot["summary"] is None
+    assert snapshot["last_user_msg"] is None
+    assert snapshot["last_assistant_tail"] is None
+    session_mod.prune_lru.assert_called_once_with(tmp_path, cap=0)
+
+
+def test_turn_stamps_preserve_exact_fields(tmp_path, monkeypatch) -> None:
+    session_mod._write(tmp_path, "sid-stamp", {"preserved": True})
+    monkeypatch.setattr(session_mod, "_now_iso", lambda: "2026-07-27T00:00:00+00:00")
+
+    stamp_recall_turn(tmp_path, "sid-stamp", 4)
+    assert session_mod._load(tmp_path, "sid-stamp") == {
+        "preserved": True,
+        "session_id": "sid-stamp",
+        "last_recall_turn": 4,
+        "updated": "2026-07-27T00:00:00+00:00",
+    }
+
+    session_mod.stamp_recap_turn(tmp_path, "sid-stamp", 5)
+    assert session_mod._load(tmp_path, "sid-stamp") == {
+        "preserved": True,
+        "session_id": "sid-stamp",
+        "last_recall_turn": 4,
+        "last_recap_turn": 5,
+        "updated": "2026-07-27T00:00:00+00:00",
+    }
+
+
+def test_recent_prompts_filters_types_and_obeys_zero_boundary(tmp_path) -> None:
+    session_mod._write(
+        tmp_path,
+        "sid-prompts",
+        {"prompt_trail": [" one ", 7, "", "two", None, " three "]},
+    )
+
+    assert recent_prompts(tmp_path, "sid-prompts", 0) == []
+    assert recent_prompts(tmp_path, "sid-prompts", 1) == [" three "]
+    assert recent_prompts(tmp_path, "sid-prompts", 2) == ["two", " three "]
+    assert recent_prompts(tmp_path, "", 2) == []
+
+
+def test_session_listing_and_lookup_exact_boundaries_and_utf8(tmp_path, monkeypatch) -> None:
+    directory = session_mod.sessions_dir(tmp_path)
+    (directory / "a-mismatch.json").write_text(
+        json.dumps({"session_id": "a-mismatch", "project": "other", "updated": "invalid"}),
+        encoding="utf-8",
+    )
+    (directory / "abcd-session.json").write_text(
+        json.dumps(
+            {
+                "session_id": "abcd-session",
+                "project": "memo",
+                "cwd": str(tmp_path),
+                "updated": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (directory / "missing-cwd.json").write_text(
+        json.dumps(
+            {
+                "session_id": "missing-cwd",
+                "project": "memo",
+                "updated": "2027-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    encodings: list[str | None] = []
+    original_read_text = Path.read_text
+
+    def recording_read_text(path: Path, *args, **kwargs) -> str:
+        encodings.append(kwargs.get("encoding"))
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", recording_read_text)
+
+    rows = list_sessions(tmp_path, project="memo", cwd=str(tmp_path))
+    assert [row["session_id"] for row in rows] == ["abcd-session"]
+    assert get_session(tmp_path, "abc") is None
+    assert get_session(tmp_path, "abcd")["session_id"] == "abcd-session"
+    assert get_session(tmp_path, "abcd-session")["session_id"] == "abcd-session"
+    assert encodings and set(encodings) == {"utf-8"}
+
+
+def test_list_sessions_default_limit_is_ten(tmp_path) -> None:
+    for index in range(11):
+        session_mod._write(
+            tmp_path,
+            f"sid-{index:02d}",
+            {
+                "session_id": f"sid-{index:02d}",
+                "updated": f"2026-01-{index + 1:02d}T00:00:00+00:00",
+            },
+        )
+
+    rows = list_sessions(tmp_path)
+    assert len(rows) == 10
+    assert rows[0]["session_id"] == "sid-10"
+    assert rows[-1]["session_id"] == "sid-01"
+
+
+def test_prune_lru_zero_equal_invalid_and_ordering_contract(tmp_path) -> None:
+    session_mod._write(tmp_path, "sid-old", {"updated": "2025-01-01T00:00:00+00:00"})
+    session_mod._write(tmp_path, "sid-new", {"updated": "2026-01-01T00:00:00+00:00"})
+    bad = session_mod.sessions_dir(tmp_path) / "sid-bad.json"
+    bad.write_text("{bad json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"^cap must be non-negative$"):
+        prune_lru(tmp_path, cap=-1)
+    assert prune_lru(tmp_path, cap=3) == 0
+    assert prune_lru(tmp_path, cap=2) == 1
+    assert not bad.exists()
+    assert prune_lru(tmp_path, cap=0) == 2
+    assert list(session_mod.sessions_dir(tmp_path).glob("*.json")) == []
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (59, "<1m ago"),
+        (60, "1m ago"),
+        (3599, "59m ago"),
+        (3600, "1h ago"),
+        (86399, "23h ago"),
+        (86400, "1d ago"),
+    ],
+)
+def test_format_relative_exact_boundaries(seconds: int, expected: str) -> None:
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    assert format_relative((now - timedelta(seconds=seconds)).replace(tzinfo=None).isoformat(), now) == expected
+
+
+def test_autosave_uses_floor_kibibytes_and_exact_threshold(tmp_path) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_bytes(b"x" * 1536)
+
+    assert session_mod.check_autosave(
+        tmp_path,
+        session_id="sid-auto",
+        transcript_path=str(transcript),
+        threshold_kb=2,
+    ) == (False, 1)
+    assert session_mod.check_autosave(
+        tmp_path,
+        session_id="sid-auto",
+        transcript_path=str(transcript),
+        threshold_kb=1,
+    ) == (True, 1)
+    assert session_mod.check_autosave(
+        tmp_path,
+        session_id="sid-auto",
+        transcript_path=None,
+    ) == (False, 0)
+
+
+def test_recent_summary_exchanges_exact_roles_labels_truncation_and_utf8(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    long_text = "x" * 301
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "user", "message": {"content": "hello"}}),
+                json.dumps({"role": "assistant", "content": "reply"}),
+                json.dumps({"type": "tool", "message": {"content": "ignore"}}),
+                "{invalid",
+                json.dumps({"type": "assistant", "message": {"content": long_text}}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    encodings: list[str | None] = []
+    original_read_text = Path.read_text
+
+    def recording_read_text(path: Path, *args, **kwargs) -> str:
+        encodings.append(kwargs.get("encoding"))
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", recording_read_text)
+
+    assert session_mod._recent_summary_exchanges(transcript) == [
+        "[User] hello",
+        "[Assistant] reply",
+        f"[Assistant] {'x' * 300}",
+    ]
+    assert encodings == ["utf-8"]
+
+
+def test_refresh_summary_forwards_exact_prompt_model_options_and_caps_output(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        "\n".join(
+            json.dumps({"type": "user", "message": {"content": f"exchange-{index}"}})
+            for index in range(11)
+        ),
+        encoding="utf-8",
+    )
+    session_mod._write(
+        tmp_path,
+        "sid-summary",
+        {
+            "session_id": "sid-summary",
+            "transcript_path": str(transcript),
+            "turn_count": 5,
+            "summary_turn": 1,
+        },
+    )
+    calls: list[tuple[str, list[dict[str, str]], dict[str, float | int]]] = []
+
+    class FakeChat:
+        def chat(self, model, messages, *, options):
+            calls.append((model, messages, options))
+            return {"message": {"content": f"  {'s' * 450}  "}}
+
+    monkeypatch.setattr("memo.llm.MLXChat", FakeChat)
+
+    assert refresh_summary(
+        tmp_path,
+        "sid-summary",
+        helper_model="exact/model",
+        min_new_turns=3,
+    )
+
+    expected_recent = "\n\n".join(f"[User] exchange-{index}" for index in range(1, 11))
+    expected_prompt = (
+        "Based on this work session, write ONE brief PARAGRAPH (2-3 sentences) "
+        "in English that summarizes: (1) what was being worked on, (2) what decisions or "
+        "progress were made, (3) what was left pending or was the next step.\n\n"
+        f"Session:\n{expected_recent}\n\n"
+        "Summary (2-3 sentences, no bullets or headings):"
+    )
+    assert calls == [
+        (
+            "exact/model",
+            [{"role": "user", "content": expected_prompt}],
+            {"temperature": 0.0, "num_predict": 150},
+        )
+    ]
+    saved = session_mod._load(tmp_path, "sid-summary")
+    assert saved["running_summary"] == "s" * 400
+    assert saved["summary_turn"] == 5
+
+
+def test_refresh_summary_does_not_invent_empty_model_output(tmp_path, monkeypatch) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "work"}}),
+        encoding="utf-8",
+    )
+    initial = {
+        "session_id": "sid-empty-summary",
+        "transcript_path": str(transcript),
+        "turn_count": 3,
+        "summary_turn": 0,
+    }
+    session_mod._write(tmp_path, "sid-empty-summary", initial)
+
+    class EmptyChat:
+        def chat(self, *_args, **_kwargs):
+            return {"message": {}}
+
+    monkeypatch.setattr("memo.llm.MLXChat", EmptyChat)
+
+    assert not refresh_summary(tmp_path, "sid-empty-summary", min_new_turns=3)
+    assert session_mod._load(tmp_path, "sid-empty-summary") == initial
+
+
+def test_clean_summary_and_active_memory_render_exact_contract() -> None:
+    assert render_active_memory({"project": "", "branch": "", "turn_count": 0})[3] == (
+        "- **Context**: `—` · `—` · 0 turns"
+    )
+
+    assert session_mod._clean_snapshot_summary(
+        {
+            "running_summary": "<command-message>noise</command-message>",
+            "summary": "line one\nline two",
+            "last_user_msg": "fallback",
+        },
+        13,
+    ) == "line one line"
+    assert session_mod._clean_snapshot_summary(
+        {"summary": "<command-message>noise</command-message>", "last_user_msg": "fallback"},
+        20,
+    ) == "fallback"
+
+    snapshot = {
+        "running_summary": "r" * 141,
+        "project": "memo",
+        "branch": "",
+        "turn_count": 0,
+        "modified_files": [" a.py ", 7, "", "b.py", "c.py", "d.py", "e.py"],
+        "last_assistant_tail": "tail\n" + "z" * 170,
+        "prompt_trail": ["one", 8, "", "two", "three", "four", "p" * 121],
+    }
+    assert render_active_memory(snapshot) == [
+        "### Active memory",
+        "",
+        f"- **In progress**: {'r' * 140}",
+        "- **Context**: `memo` · `—` · 0 turns",
+        "- **Files touched**: `a.py`, `b.py`, `c.py`, `d.py`",
+        f"- **Last reply**: tail {'z' * 155}",
+        "- **Open loops (session)**:",
+        f"  1. {'p' * 120}",
+        "  2. four",
+        "  3. three",
+        "  4. two",
+        "  5. one",
+    ]
+
+
+def test_checkpoint_without_transcript_preserves_existing_message_fields(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    state = tmp_path / "state"
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    session_mod._write(
+        state,
+        "sid-preserve",
+        {
+            "transcript_path": "/existing/transcript.jsonl",
+            "last_user_msg": "existing user",
+            "last_assistant_tail": "existing assistant",
+        },
+    )
+    monkeypatch.setattr(
+        session_mod,
+        "gather_git_state",
+        lambda _cwd: {"branch": None, "head_commit": None, "modified_files": []},
+    )
+    monkeypatch.setattr(session_mod, "prune_lru", MagicMock())
+    monkeypatch.setattr(session_mod, "flag_int", lambda name: 12)
+
+    snapshot = checkpoint(state, session_id="sid-preserve", cwd=str(cwd))
+
+    assert snapshot["transcript_path"] == "/existing/transcript.jsonl"
+    assert snapshot["last_user_msg"] == "existing user"
+    assert snapshot["last_assistant_tail"] == "existing assistant"
+    session_mod.prune_lru.assert_called_once_with(state, cap=12)
+
+
+def test_next_turn_covers_empty_missing_and_existing_sessions(tmp_path) -> None:
+    assert session_mod.next_turn(tmp_path, "") == 1
+    assert session_mod.next_turn(tmp_path, "sid-missing") == 1
+    session_mod._write(tmp_path, "sid-next", {"turn_count": 2})
+    assert session_mod.next_turn(tmp_path, "sid-next") == 3
+    session_mod._write(tmp_path, "sid-zero", {"turn_count": 0})
+    assert session_mod.next_turn(tmp_path, "sid-zero") == 1
+
+
+def test_list_sessions_keeps_failed_cwd_resolution_as_exact_filter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    session_mod._write(
+        tmp_path,
+        "sid-other",
+        {
+            "session_id": "sid-other",
+            "cwd": "/other",
+            "updated": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    original_resolve = Path.resolve
+
+    def selective_resolve(path: Path, *args, **kwargs) -> Path:
+        if str(path) == "/broken":
+            raise OSError("unresolvable")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", selective_resolve)
+
+    assert list_sessions(tmp_path, cwd="/broken") == []
+
+
+def test_list_sessions_missing_cwd_never_matches_synthetic_path(tmp_path) -> None:
+    session_mod._write(
+        tmp_path,
+        "sid-missing-cwd",
+        {
+            "session_id": "sid-missing-cwd",
+            "updated": "2026-01-01T00:00:00+00:00",
+        },
+    )
+
+    assert list_sessions(tmp_path, cwd=str(Path.cwd() / "XXXX")) == []
+
+
+def test_get_session_prefix_skips_symlink_and_corrupt_candidates(tmp_path) -> None:
+    directory = session_mod.sessions_dir(tmp_path)
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"session_id": "outside"}', encoding="utf-8")
+    (directory / "pref-00.json").symlink_to(outside)
+    (directory / "pref-01.json").write_text("{invalid", encoding="utf-8")
+    (directory / "pref-02.json").write_text(
+        '{"session_id": "pref-02"}',
+        encoding="utf-8",
+    )
+
+    assert get_session(tmp_path, "pref") == {"session_id": "pref-02"}
+
+
+def test_prune_lru_sorts_by_timestamp_not_filename_and_reads_utf8(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    session_mod._write(
+        tmp_path,
+        "a-new",
+        {"updated": "2026-01-01T00:00:00+00:00"},
+    )
+    session_mod._write(
+        tmp_path,
+        "z-old",
+        {"updated": "2025-01-01T00:00:00+00:00"},
+    )
+    encodings: list[str | None] = []
+    original_read_text = Path.read_text
+
+    def recording_read_text(path: Path, *args, **kwargs) -> str:
+        encodings.append(kwargs.get("encoding"))
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", recording_read_text)
+
+    assert prune_lru(tmp_path, cap=1) == 1
+    assert (session_mod.sessions_dir(tmp_path) / "a-new.json").is_file()
+    assert not (session_mod.sessions_dir(tmp_path) / "z-old.json").exists()
+    assert encodings == ["utf-8", "utf-8"]
+
+
+def test_refresh_summary_returns_false_if_snapshot_disappears_before_commit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "work"}}),
+        encoding="utf-8",
+    )
+    initial = {
+        "session_id": "sid-vanish",
+        "transcript_path": str(transcript),
+        "turn_count": 3,
+        "summary_turn": 0,
+    }
+    loads = iter([initial, None])
+    monkeypatch.setattr(session_mod, "_load", lambda *_args: next(loads))
+
+    class Chat:
+        def chat(self, *_args, **_kwargs):
+            return {"message": {"content": "summary"}}
+
+    monkeypatch.setattr("memo.llm.MLXChat", Chat)
+
+    assert not refresh_summary(tmp_path, "sid-vanish", min_new_turns=3)
+
+
+def test_recap_stamp_empty_and_failure_paths_are_observable(
+    tmp_path,
+    monkeypatch,
+    caplog,
+) -> None:
+    writer = MagicMock()
+    monkeypatch.setattr(session_mod, "_write", writer)
+    session_mod.stamp_recap_turn(tmp_path, "", 1)
+    writer.assert_not_called()
+
+    monkeypatch.setattr(session_mod, "_load", lambda *_args: {})
+    session_mod.stamp_recap_turn(tmp_path, "sid-recap", 8)
+    payload = writer.call_args.args[2]
+    assert payload == {"session_id": "sid-recap", "last_recap_turn": 8}
+
+    writer.side_effect = OSError("disk full")
+    caplog.set_level("DEBUG")
+    session_mod.stamp_recap_turn(tmp_path, "sid-recap", 9)
+    assert "session: failed to checkpoint recap turn: disk full" in caplog.messages
+
+
+def test_autosave_missing_file_and_cooldown_boundaries(tmp_path, monkeypatch) -> None:
+    assert session_mod.check_autosave(
+        tmp_path,
+        session_id="sid-cooldown",
+        transcript_path=str(tmp_path / "missing.jsonl"),
+        threshold_kb=1,
+    ) == (False, 0)
+
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_bytes(b"x" * 1024)
+    fixed_now = datetime(2026, 7, 27, 12, 0, 0, tzinfo=UTC)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz == UTC
+            return fixed_now
+
+    monkeypatch.setattr(session_mod, "datetime", FixedDateTime)
+    session_mod._write(
+        tmp_path,
+        "sid-cooldown",
+        {
+            "last_autosave_at": (fixed_now - timedelta(seconds=299)).isoformat(),
+        },
+    )
+    assert session_mod.check_autosave(
+        tmp_path,
+        session_id="sid-cooldown",
+        transcript_path=str(transcript),
+        threshold_kb=1,
+        cooldown_secs=300,
+    ) == (False, 1)
+
+    session_mod._write(
+        tmp_path,
+        "sid-cooldown",
+        {
+            "last_autosave_at": (fixed_now - timedelta(seconds=300)).isoformat(),
+        },
+    )
+    assert session_mod.check_autosave(
+        tmp_path,
+        session_id="sid-cooldown",
+        transcript_path=str(transcript),
+        threshold_kb=1,
+        cooldown_secs=300,
+    ) == (True, 1)
+
+
+def test_mark_autosaved_updates_existing_only(tmp_path, monkeypatch) -> None:
+    session_mod._write(tmp_path, "sid-mark", {"preserved": True})
+    monkeypatch.setattr(session_mod, "_now_iso", lambda: "2026-07-27T12:00:00+00:00")
+
+    session_mod.mark_autosaved(tmp_path, "sid-mark")
+    assert session_mod._load(tmp_path, "sid-mark") == {
+        "preserved": True,
+        "last_autosave_at": "2026-07-27T12:00:00+00:00",
+    }
+
+    session_mod.mark_autosaved(tmp_path, "sid-missing")
+    assert session_mod._load(tmp_path, "sid-missing") is None
+
+
+def test_clean_snapshot_summary_empty_fallback_is_exact() -> None:
+    assert session_mod._clean_snapshot_summary({}, 80) == "—"
+
+
+def test_prune_lru_corrupt_snapshot_precedes_invalid_and_pre_epoch(
+    tmp_path,
+) -> None:
+    directory = session_mod.sessions_dir(tmp_path)
+    corrupt = directory / "corrupt.json"
+    corrupt.write_text("{invalid", encoding="utf-8")
+    (directory / "invalid-time.json").write_text(
+        '{"updated": "AAA"}',
+        encoding="utf-8",
+    )
+    (directory / "pre-epoch.json").write_text(
+        '{"updated": "1960-01-01T00:00:00+00:00"}',
+        encoding="utf-8",
+    )
+
+    assert prune_lru(tmp_path, cap=2) == 1
+    assert not corrupt.exists()
+    assert (directory / "invalid-time.json").exists()
+    assert (directory / "pre-epoch.json").exists()
+
+
+def test_autosave_invalid_timestamp_has_stable_diagnostic(
+    tmp_path,
+    caplog,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_bytes(b"x" * 1024)
+    session_mod._write(
+        tmp_path,
+        "sid-invalid-time",
+        {"last_autosave_at": "not-an-instant"},
+    )
+    caplog.set_level("DEBUG")
+
+    assert session_mod.check_autosave(
+        tmp_path,
+        session_id="sid-invalid-time",
+        transcript_path=str(transcript),
+        threshold_kb=1,
+    ) == (True, 1)
+    assert "session: unparseable transcript line, skipping" in caplog.messages
+
+
+def test_refresh_summary_llm_failure_has_stable_diagnostic(
+    tmp_path,
+    monkeypatch,
+    caplog,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "work"}}),
+        encoding="utf-8",
+    )
+    session_mod._write(
+        tmp_path,
+        "sid-llm-failure",
+        {
+            "session_id": "sid-llm-failure",
+            "transcript_path": str(transcript),
+            "turn_count": 3,
+            "summary_turn": 0,
+        },
+    )
+
+    class FailingChat:
+        def chat(self, *_args, **_kwargs):
+            raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr("memo.llm.MLXChat", FailingChat)
+    caplog.set_level("DEBUG")
+
+    assert not refresh_summary(tmp_path, "sid-llm-failure", min_new_turns=3)
+    assert "session: reflect summary LLM call failed: model unavailable" in caplog.messages

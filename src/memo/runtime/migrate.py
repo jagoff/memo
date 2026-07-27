@@ -236,6 +236,153 @@ def run_backfill_valid_time(cfg: Config) -> int:
         mem.close()
 
 
+def run_normalize_project_tags(cfg: Config, *, dry_run: bool = False) -> dict[str, int]:
+    """Resolve historical multi-project tags without losing associations.
+
+    Canonical identity permits one ``project:`` namespace. For an already
+    bucketed memory, its folder wins; otherwise the first historical project
+    tag wins. Remaining project tags become ``related-project:`` tags. The
+    rewrite is atomic, idempotent, and limited to parseable regular Markdown
+    files under the configured memory directory.
+    """
+    import frontmatter
+
+    from memo.atomic_io import atomic_write_text, authority_write_lock
+    from memo.project import slugify_project
+
+    root = cfg.memory_dir.resolve()
+    changed = converted = invalid = parse_errors = 0
+    with authority_write_lock(root):
+        for path in sorted(root.rglob("*.md")):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                post = frontmatter.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, ValueError):
+                parse_errors += 1
+                continue
+            raw_tags = post.metadata.get("tags") or []
+            if isinstance(raw_tags, str):
+                tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+            elif isinstance(raw_tags, list):
+                tags = [str(tag) for tag in raw_tags if str(tag).strip()]
+            else:
+                continue
+
+            project_tags: list[tuple[str, str]] = []
+            for tag in tags:
+                folded = tag.strip().casefold()
+                if not folded.startswith("project:"):
+                    continue
+                raw_slug = folded.split(":", 1)[1]
+                slug = slugify_project(raw_slug)
+                if not slug:
+                    invalid += 1
+                project_tags.append((tag, slug))
+            distinct = list(dict.fromkeys(slug for _, slug in project_tags if slug))
+            if len(distinct) <= 1 and all(slug for _, slug in project_tags):
+                continue
+
+            rel = path.relative_to(root)
+            folder_slug = (
+                slugify_project(rel.parts[0].removeprefix("_")) if len(rel.parts) > 1 else ""
+            )
+            primary = folder_slug if folder_slug in distinct else (distinct[0] if distinct else "")
+            rewritten: list[str] = []
+            primary_written = False
+            for tag in tags:
+                folded = tag.strip().casefold()
+                if not folded.startswith("project:"):
+                    candidate = tag
+                else:
+                    slug = slugify_project(folded.split(":", 1)[1])
+                    if slug and slug == primary and not primary_written:
+                        candidate = f"project:{slug}"
+                        primary_written = True
+                    else:
+                        candidate = f"related-project:{slug or 'unspecified'}"
+                        converted += 1
+                if candidate not in rewritten:
+                    rewritten.append(candidate)
+            if rewritten == tags:
+                continue
+            changed += 1
+            if not dry_run:
+                post["tags"] = rewritten
+                atomic_write_text(path, frontmatter.dumps(post))
+    return {
+        "files_changed": changed,
+        "tags_converted": converted,
+        "invalid_project_tags": invalid,
+        "parse_errors": parse_errors,
+    }
+
+
+def run_sanitize_privacy(cfg: Config, *, dry_run: bool = False) -> dict[str, int]:
+    """Remove private spans and mask recognized secrets in canonical Markdown.
+
+    Every changed document is parsed again after sanitization and receives the
+    ``_redacted`` audit tag. Files that would become unparsable or body-empty
+    are left untouched and reported so the CLI can fail closed.
+    """
+    import frontmatter
+
+    from memo.atomic_io import atomic_write_text, authority_write_lock
+    from memo.redact import sanitize_persisted_text, scan_secrets
+
+    root = cfg.memory_dir.resolve()
+    changed = secret_files = private_files = parse_errors = emptied = 0
+    with authority_write_lock(root):
+        for path in sorted(root.rglob("*.md")):
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                raw = path.read_text(encoding="utf-8")
+                frontmatter.loads(raw)
+            except (OSError, UnicodeError, ValueError):
+                parse_errors += 1
+                continue
+            has_secret = bool(scan_secrets(raw, entropy=False))
+            has_private = "<private>" in raw.casefold()
+            if not has_secret and not has_private:
+                continue
+            secret_files += int(has_secret)
+            private_files += int(has_private)
+            sanitized = sanitize_persisted_text(raw, entropy=False).text
+            try:
+                post = frontmatter.loads(sanitized)
+            except (TypeError, ValueError):
+                parse_errors += 1
+                continue
+            if not post.content.strip():
+                emptied += 1
+                continue
+            raw_tags = post.metadata.get("tags") or []
+            if isinstance(raw_tags, str):
+                tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+            elif isinstance(raw_tags, list):
+                tags = [str(tag) for tag in raw_tags if str(tag).strip()]
+            else:
+                tags = []
+            if not any(tag.casefold() == "_redacted" for tag in tags):
+                tags.append("_redacted")
+            post["tags"] = tags
+            rendered = frontmatter.dumps(post)
+            if scan_secrets(rendered, entropy=False) or "<private>" in rendered.casefold():
+                parse_errors += 1
+                continue
+            changed += 1
+            if not dry_run:
+                atomic_write_text(path, rendered)
+    return {
+        "files_changed": changed,
+        "secret_files": secret_files,
+        "private_files": private_files,
+        "parse_errors": parse_errors,
+        "emptied_files": emptied,
+    }
+
+
 @click.command(name="migrate-vault")
 @click.argument("new_data_dir", required=False, type=click.Path(file_okay=False, resolve_path=True))
 @click.option(
@@ -275,6 +422,24 @@ def run_backfill_valid_time(cfg: Config) -> int:
     "the value into markdown frontmatter. Non-destructive, idempotent. Does not "
     "move any .md files or touch invalid_at.",
 )
+@click.option(
+    "--normalize-project-tags",
+    is_flag=True,
+    help="Resolve historical memories with multiple project: tags: keep the "
+    "folder project (or first tag for flat files) as canonical and preserve "
+    "the rest as related-project: tags, then rebuild the index.",
+)
+@click.option(
+    "--sanitize-privacy",
+    is_flag=True,
+    help="Mask recognized secrets and remove <private> spans from canonical "
+    "Markdown, add an _redacted audit tag, then rebuild the index.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="With a normalization/sanitization migration: report without modifying files.",
+)
 @click.option("--force", is_flag=True, help="Overwrite destination even if non-empty.")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def migrate_vault(
@@ -285,6 +450,9 @@ def migrate_vault(
     consolidate_db: bool,
     bucket_by_project: bool,
     backfill_valid_time: bool,
+    normalize_project_tags: bool,
+    sanitize_privacy: bool,
+    dry_run: bool,
     force: bool,
     yes: bool,
 ) -> None:
@@ -316,6 +484,50 @@ def migrate_vault(
             f"[green]✓[/green] backfilled valid_at = created on {changed} record(s) "
             "(idempotent; invalid_at untouched)"
         )
+        return
+
+    if normalize_project_tags:
+        cfg = Config.from_env()
+        report = run_normalize_project_tags(cfg, dry_run=dry_run)
+        action = "would normalize" if dry_run else "normalized"
+        console.print(
+            f"[green]✓[/green] {action} {report['files_changed']} memory file(s); "
+            f"converted {report['tags_converted']} secondary project tag(s); "
+            f"invalid={report['invalid_project_tags']} parse_errors={report['parse_errors']}"
+        )
+        if report["parse_errors"]:
+            raise click.ClickException(
+                "some Markdown files could not be parsed; no index rebuild was attempted"
+            )
+        if not dry_run and report["files_changed"]:
+            mem = Memory(cfg)
+            try:
+                mem.reindex(rebuild=True)
+            finally:
+                mem.close()
+            console.print("[dim]rebuilt the index from normalized Markdown[/dim]")
+        return
+
+    if sanitize_privacy:
+        cfg = Config.from_env()
+        report = run_sanitize_privacy(cfg, dry_run=dry_run)
+        action = "would sanitize" if dry_run else "sanitized"
+        console.print(
+            f"[green]✓[/green] {action} {report['files_changed']} memory file(s); "
+            f"secret_files={report['secret_files']} private_files={report['private_files']} "
+            f"parse_errors={report['parse_errors']} emptied={report['emptied_files']}"
+        )
+        if report["parse_errors"] or report["emptied_files"]:
+            raise click.ClickException(
+                "some Markdown could not be sanitized safely; no index rebuild was attempted"
+            )
+        if not dry_run and report["files_changed"]:
+            mem = Memory(cfg)
+            try:
+                mem.reindex(rebuild=True)
+            finally:
+                mem.close()
+            console.print("[dim]rebuilt the index from privacy-sanitized Markdown[/dim]")
         return
 
     if bucket_by_project:

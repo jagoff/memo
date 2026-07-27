@@ -152,6 +152,7 @@ def test_mutation_workflow_is_scoped_scheduled_and_retains_results() -> None:
         '            exit "$results_status"\n'
         "          fi\n"
         "          .venv/bin/python scripts/check_mutation_results.py mutants \\\n"
+        "            --baseline eval/mutation_baseline.json \\\n"
         "            2>&1 | tee -a mutation-results.txt\n"
         "          gate_status=${PIPESTATUS[0]}\n"
         '          exit "$gate_status"\n'
