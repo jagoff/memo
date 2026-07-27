@@ -236,6 +236,53 @@ def run_backfill_valid_time(cfg: Config) -> int:
         mem.close()
 
 
+def _coerce_frontmatter_tags(raw_tags: object) -> list[str] | None:
+    if isinstance(raw_tags, str):
+        return [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+    if isinstance(raw_tags, list):
+        return [str(tag) for tag in raw_tags if str(tag).strip()]
+    return None
+
+
+def _project_tag_slugs(tags: list[str]) -> tuple[list[str], int]:
+    from memo.project import slugify_project
+
+    slugs: list[str] = []
+    invalid = 0
+    for tag in tags:
+        folded = tag.strip().casefold()
+        if not folded.startswith("project:"):
+            continue
+        slug = slugify_project(folded.split(":", 1)[1])
+        invalid += int(not slug)
+        if slug:
+            slugs.append(slug)
+    return list(dict.fromkeys(slugs)), invalid
+
+
+def _rewrite_project_tags(tags: list[str], primary: str) -> tuple[list[str], int]:
+    from memo.project import slugify_project
+
+    rewritten: list[str] = []
+    converted = 0
+    primary_written = False
+    for tag in tags:
+        folded = tag.strip().casefold()
+        if not folded.startswith("project:"):
+            candidate = tag
+        else:
+            slug = slugify_project(folded.split(":", 1)[1])
+            if slug and slug == primary and not primary_written:
+                candidate = f"project:{slug}"
+                primary_written = True
+            else:
+                candidate = f"related-project:{slug or 'unspecified'}"
+                converted += 1
+        if candidate not in rewritten:
+            rewritten.append(candidate)
+    return rewritten, converted
+
+
 def run_normalize_project_tags(cfg: Config, *, dry_run: bool = False) -> dict[str, int]:
     """Resolve historical multi-project tags without losing associations.
 
@@ -261,26 +308,13 @@ def run_normalize_project_tags(cfg: Config, *, dry_run: bool = False) -> dict[st
             except (OSError, UnicodeError, ValueError):
                 parse_errors += 1
                 continue
-            raw_tags = post.metadata.get("tags") or []
-            if isinstance(raw_tags, str):
-                tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
-            elif isinstance(raw_tags, list):
-                tags = [str(tag) for tag in raw_tags if str(tag).strip()]
-            else:
+            tags = _coerce_frontmatter_tags(post.metadata.get("tags") or [])
+            if tags is None:
                 continue
 
-            project_tags: list[tuple[str, str]] = []
-            for tag in tags:
-                folded = tag.strip().casefold()
-                if not folded.startswith("project:"):
-                    continue
-                raw_slug = folded.split(":", 1)[1]
-                slug = slugify_project(raw_slug)
-                if not slug:
-                    invalid += 1
-                project_tags.append((tag, slug))
-            distinct = list(dict.fromkeys(slug for _, slug in project_tags if slug))
-            if len(distinct) <= 1 and all(slug for _, slug in project_tags):
+            distinct, invalid_count = _project_tag_slugs(tags)
+            invalid += invalid_count
+            if len(distinct) <= 1 and invalid_count == 0:
                 continue
 
             rel = path.relative_to(root)
@@ -288,22 +322,8 @@ def run_normalize_project_tags(cfg: Config, *, dry_run: bool = False) -> dict[st
                 slugify_project(rel.parts[0].removeprefix("_")) if len(rel.parts) > 1 else ""
             )
             primary = folder_slug if folder_slug in distinct else (distinct[0] if distinct else "")
-            rewritten: list[str] = []
-            primary_written = False
-            for tag in tags:
-                folded = tag.strip().casefold()
-                if not folded.startswith("project:"):
-                    candidate = tag
-                else:
-                    slug = slugify_project(folded.split(":", 1)[1])
-                    if slug and slug == primary and not primary_written:
-                        candidate = f"project:{slug}"
-                        primary_written = True
-                    else:
-                        candidate = f"related-project:{slug or 'unspecified'}"
-                        converted += 1
-                if candidate not in rewritten:
-                    rewritten.append(candidate)
+            rewritten, converted_count = _rewrite_project_tags(tags, primary)
+            converted += converted_count
             if rewritten == tags:
                 continue
             changed += 1
@@ -318,6 +338,32 @@ def run_normalize_project_tags(cfg: Config, *, dry_run: bool = False) -> dict[st
     }
 
 
+def _sanitize_privacy_text(raw: str) -> tuple[str | None, bool, bool, str]:
+    import frontmatter
+
+    from memo.redact import sanitize_persisted_text, scan_secrets
+
+    has_secret = bool(scan_secrets(raw, entropy=False))
+    has_private = "<private>" in raw.casefold()
+    if not has_secret and not has_private:
+        return None, False, False, "clean"
+    sanitized = sanitize_persisted_text(raw, entropy=False).text
+    try:
+        post = frontmatter.loads(sanitized)
+    except (TypeError, ValueError):
+        return None, has_secret, has_private, "parse_error"
+    if not post.content.strip():
+        return None, has_secret, has_private, "emptied"
+    tags = _coerce_frontmatter_tags(post.metadata.get("tags") or []) or []
+    if not any(tag.casefold() == "_redacted" for tag in tags):
+        tags.append("_redacted")
+    post["tags"] = tags
+    rendered = frontmatter.dumps(post)
+    if scan_secrets(rendered, entropy=False) or "<private>" in rendered.casefold():
+        return None, has_secret, has_private, "parse_error"
+    return rendered, has_secret, has_private, "changed"
+
+
 def run_sanitize_privacy(cfg: Config, *, dry_run: bool = False) -> dict[str, int]:
     """Remove private spans and mask recognized secrets in canonical Markdown.
 
@@ -328,7 +374,6 @@ def run_sanitize_privacy(cfg: Config, *, dry_run: bool = False) -> dict[str, int
     import frontmatter
 
     from memo.atomic_io import atomic_write_text, authority_write_lock
-    from memo.redact import sanitize_persisted_text, scan_secrets
 
     root = cfg.memory_dir.resolve()
     changed = secret_files = private_files = parse_errors = emptied = 0
@@ -342,35 +387,18 @@ def run_sanitize_privacy(cfg: Config, *, dry_run: bool = False) -> dict[str, int
             except (OSError, UnicodeError, ValueError):
                 parse_errors += 1
                 continue
-            has_secret = bool(scan_secrets(raw, entropy=False))
-            has_private = "<private>" in raw.casefold()
-            if not has_secret and not has_private:
+            rendered, has_secret, has_private, status = _sanitize_privacy_text(raw)
+            if status == "clean":
                 continue
             secret_files += int(has_secret)
             private_files += int(has_private)
-            sanitized = sanitize_persisted_text(raw, entropy=False).text
-            try:
-                post = frontmatter.loads(sanitized)
-            except (TypeError, ValueError):
+            if status == "parse_error":
                 parse_errors += 1
                 continue
-            if not post.content.strip():
+            if status == "emptied":
                 emptied += 1
                 continue
-            raw_tags = post.metadata.get("tags") or []
-            if isinstance(raw_tags, str):
-                tags = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
-            elif isinstance(raw_tags, list):
-                tags = [str(tag) for tag in raw_tags if str(tag).strip()]
-            else:
-                tags = []
-            if not any(tag.casefold() == "_redacted" for tag in tags):
-                tags.append("_redacted")
-            post["tags"] = tags
-            rendered = frontmatter.dumps(post)
-            if scan_secrets(rendered, entropy=False) or "<private>" in rendered.casefold():
-                parse_errors += 1
-                continue
+            assert rendered is not None
             changed += 1
             if not dry_run:
                 atomic_write_text(path, rendered)
@@ -381,6 +409,190 @@ def run_sanitize_privacy(cfg: Config, *, dry_run: bool = False) -> dict[str, int
         "parse_errors": parse_errors,
         "emptied_files": emptied,
     }
+
+
+def _reindex_migration(cfg: Config, *, rebuild: bool = False) -> dict[str, int]:
+    from memo.memory import Memory
+
+    memory = Memory(cfg)
+    try:
+        return memory.reindex(rebuild=rebuild)
+    finally:
+        memory.close()
+
+
+def _run_normalize_project_tags_migration(*, dry_run: bool) -> None:
+    cfg = Config.from_env()
+    report = run_normalize_project_tags(cfg, dry_run=dry_run)
+    action = "would normalize" if dry_run else "normalized"
+    console.print(
+        f"[green]✓[/green] {action} {report['files_changed']} memory file(s); "
+        f"converted {report['tags_converted']} secondary project tag(s); "
+        f"invalid={report['invalid_project_tags']} parse_errors={report['parse_errors']}"
+    )
+    if report["parse_errors"]:
+        raise click.ClickException(
+            "some Markdown files could not be parsed; no index rebuild was attempted"
+        )
+    if not dry_run and report["files_changed"]:
+        _reindex_migration(cfg, rebuild=True)
+        console.print("[dim]rebuilt the index from normalized Markdown[/dim]")
+
+
+def _run_sanitize_privacy_migration(*, dry_run: bool) -> None:
+    cfg = Config.from_env()
+    report = run_sanitize_privacy(cfg, dry_run=dry_run)
+    action = "would sanitize" if dry_run else "sanitized"
+    console.print(
+        f"[green]✓[/green] {action} {report['files_changed']} memory file(s); "
+        f"secret_files={report['secret_files']} private_files={report['private_files']} "
+        f"parse_errors={report['parse_errors']} emptied={report['emptied_files']}"
+    )
+    if report["parse_errors"] or report["emptied_files"]:
+        raise click.ClickException(
+            "some Markdown could not be sanitized safely; no index rebuild was attempted"
+        )
+    if not dry_run and report["files_changed"]:
+        _reindex_migration(cfg, rebuild=True)
+        console.print("[dim]rebuilt the index from privacy-sanitized Markdown[/dim]")
+
+
+def _run_bucket_by_project_migration() -> None:
+    cfg = Config.from_env()
+    moved = _bucket_by_project(cfg)
+    console.print(f"[green]✓[/green] bucketed {moved} memory file(s) by project")
+    _reindex_migration(cfg)
+    console.print(
+        "[dim]reindexed (paths updated). [[id]] wikilinks are unaffected; "
+        "Obsidian path-links to moved files would change.[/dim]"
+    )
+
+
+def _run_special_migration(
+    *,
+    snapshot: Path,
+    rollback: bool,
+    consolidate_db: bool,
+    backfill_valid_time: bool,
+    normalize_project_tags: bool,
+    sanitize_privacy: bool,
+    bucket_by_project: bool,
+    dry_run: bool,
+) -> bool:
+    from memo.setup.config_io import _resolve_config_path
+
+    if rollback:
+        if not snapshot.is_file():
+            console.print(f"[red]✗[/red] no migration snapshot found at {snapshot}")
+            sys.exit(1)
+        shutil.copy2(snapshot, _resolve_config_path())
+        console.print(f"[green]✓[/green] restored config from snapshot {snapshot}")
+        console.print(
+            "[dim]Copied memory files were left in place; remove them manually "
+            "if you no longer want them.[/dim]"
+        )
+        return True
+    if consolidate_db:
+        _consolidate_sidecar_dbs()
+        return True
+    if backfill_valid_time:
+        changed = run_backfill_valid_time(Config.from_env())
+        console.print(
+            f"[green]✓[/green] backfilled valid_at = created on {changed} record(s) "
+            "(idempotent; invalid_at untouched)"
+        )
+        return True
+    if normalize_project_tags:
+        _run_normalize_project_tags_migration(dry_run=dry_run)
+        return True
+    if sanitize_privacy:
+        _run_sanitize_privacy_migration(dry_run=dry_run)
+        return True
+    if bucket_by_project:
+        _run_bucket_by_project_migration()
+        return True
+    return False
+
+
+def _resolve_migration_destination(
+    cfg: Config,
+    *,
+    into_vault: bool,
+    new_data_dir: str | None,
+) -> tuple[Path, Path | None]:
+    from memo.config import AI_SUBDIR
+
+    if into_vault:
+        chosen_vault = cfg.vault_path
+        if chosen_vault is None:
+            console.print(
+                "[red]✗[/red] --into-vault needs a vault: set MEMO_VAULT_PATH or run "
+                "`memo init` and pick an Obsidian vault first."
+            )
+            sys.exit(1)
+        return (chosen_vault / AI_SUBDIR / "memory").resolve(), chosen_vault
+    if new_data_dir:
+        return Path(new_data_dir).resolve(), cfg.vault_path
+    try:
+        result = run_picker()
+    except KeyboardInterrupt:
+        console.print("[yellow]aborted[/yellow]")
+        sys.exit(130)
+    return result.data_dir, result.vault_path
+
+
+def _copy_migration_files(
+    src: Path,
+    dst: Path,
+    *,
+    force: bool,
+    yes: bool,
+) -> int:
+    md_files = sorted(src.rglob("*.md"))
+    if dst.exists() and any(dst.iterdir()) and not force:
+        console.print(
+            f"[red]✗[/red] destination is non-empty: {dst}\n  Use --force to overwrite.",
+        )
+        sys.exit(1)
+    if not yes:
+        click.confirm(
+            f"Copy {len(md_files)} memories from\n  {src}\n→ {dst}\n"
+            "and rebuild memvec.db. Source files will be left in place. "
+            "Proceed?",
+            abort=True,
+        )
+    dst.mkdir(parents=True, exist_ok=True)
+    for markdown in md_files:
+        target = dst / markdown.relative_to(src)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(markdown, target)
+    return len(md_files)
+
+
+def _write_migration_config(
+    cfg: Config,
+    *,
+    dst: Path,
+    chosen_vault: Path | None,
+    into_vault: bool,
+    snapshot: Path,
+) -> Path:
+    from memo.setup.config_io import _resolve_config_path
+
+    existing_cfg = _resolve_config_path()
+    if existing_cfg.is_file():
+        shutil.copy2(existing_cfg, snapshot)
+        console.print(f"[green]✓[/green] config snapshot → {snapshot} (use --rollback to restore)")
+    # Preserve single_db: rewriting the config without it silently reverts a
+    # consolidated install to sidecar mode, orphaning the folded-in stores.
+    if into_vault:
+        return write_config_file(
+            data_dir=cfg.data_dir,
+            vault_path=chosen_vault,
+            memories_in_vault=True,
+            single_db=cfg.single_db,
+        )
+    return write_config_file(data_dir=dst, vault_path=chosen_vault, single_db=cfg.single_db)
 
 
 @click.command(name="migrate-vault")
@@ -456,93 +668,19 @@ def migrate_vault(
     force: bool,
     yes: bool,
 ) -> None:
-    from memo.config import AI_SUBDIR
-    from memo.memory import Memory
     from memo.setup.config_io import _resolve_config_path
 
     snapshot = _resolve_config_path().with_suffix(".toml.pre-migrate.bak")
-    if rollback:
-        if not snapshot.is_file():
-            console.print(f"[red]✗[/red] no migration snapshot found at {snapshot}")
-            sys.exit(1)
-        shutil.copy2(snapshot, _resolve_config_path())
-        console.print(f"[green]✓[/green] restored config from snapshot {snapshot}")
-        console.print(
-            "[dim]Copied memory files were left in place; remove them manually "
-            "if you no longer want them.[/dim]"
-        )
-        return
-
-    if consolidate_db:
-        _consolidate_sidecar_dbs()
-        return
-
-    if backfill_valid_time:
-        cfg = Config.from_env()
-        changed = run_backfill_valid_time(cfg)
-        console.print(
-            f"[green]✓[/green] backfilled valid_at = created on {changed} record(s) "
-            "(idempotent; invalid_at untouched)"
-        )
-        return
-
-    if normalize_project_tags:
-        cfg = Config.from_env()
-        report = run_normalize_project_tags(cfg, dry_run=dry_run)
-        action = "would normalize" if dry_run else "normalized"
-        console.print(
-            f"[green]✓[/green] {action} {report['files_changed']} memory file(s); "
-            f"converted {report['tags_converted']} secondary project tag(s); "
-            f"invalid={report['invalid_project_tags']} parse_errors={report['parse_errors']}"
-        )
-        if report["parse_errors"]:
-            raise click.ClickException(
-                "some Markdown files could not be parsed; no index rebuild was attempted"
-            )
-        if not dry_run and report["files_changed"]:
-            mem = Memory(cfg)
-            try:
-                mem.reindex(rebuild=True)
-            finally:
-                mem.close()
-            console.print("[dim]rebuilt the index from normalized Markdown[/dim]")
-        return
-
-    if sanitize_privacy:
-        cfg = Config.from_env()
-        report = run_sanitize_privacy(cfg, dry_run=dry_run)
-        action = "would sanitize" if dry_run else "sanitized"
-        console.print(
-            f"[green]✓[/green] {action} {report['files_changed']} memory file(s); "
-            f"secret_files={report['secret_files']} private_files={report['private_files']} "
-            f"parse_errors={report['parse_errors']} emptied={report['emptied_files']}"
-        )
-        if report["parse_errors"] or report["emptied_files"]:
-            raise click.ClickException(
-                "some Markdown could not be sanitized safely; no index rebuild was attempted"
-            )
-        if not dry_run and report["files_changed"]:
-            mem = Memory(cfg)
-            try:
-                mem.reindex(rebuild=True)
-            finally:
-                mem.close()
-            console.print("[dim]rebuilt the index from privacy-sanitized Markdown[/dim]")
-        return
-
-    if bucket_by_project:
-        cfg = Config.from_env()
-        moved = _bucket_by_project(cfg)
-        console.print(f"[green]✓[/green] bucketed {moved} memory file(s) by project")
-        mem = Memory(cfg)
-        try:
-            mem.reindex()
-        finally:
-            mem.close()
-        console.print(
-            "[dim]reindexed (paths updated). [[id]] wikilinks are unaffected; "
-            "Obsidian path-links to moved files would change.[/dim]"
-        )
+    if _run_special_migration(
+        snapshot=snapshot,
+        rollback=rollback,
+        consolidate_db=consolidate_db,
+        backfill_valid_time=backfill_valid_time,
+        normalize_project_tags=normalize_project_tags,
+        sanitize_privacy=sanitize_privacy,
+        bucket_by_project=bucket_by_project,
+        dry_run=dry_run,
+    ):
         return
 
     cfg = Config.from_env()
@@ -551,79 +689,29 @@ def migrate_vault(
         console.print(f"[red]✗[/red] source dir does not exist: {src}")
         sys.exit(1)
 
-    if into_vault:
-        chosen_vault = cfg.vault_path
-        if chosen_vault is None:
-            console.print(
-                "[red]✗[/red] --into-vault needs a vault: set MEMO_VAULT_PATH or run "
-                "`memo init` and pick an Obsidian vault first."
-            )
-            sys.exit(1)
-        dst = (chosen_vault / AI_SUBDIR / "memory").resolve()
-    elif new_data_dir:
-        dst = Path(new_data_dir).resolve()
-        chosen_vault = cfg.vault_path
-    else:
-        try:
-            result = run_picker()
-        except KeyboardInterrupt:
-            console.print("[yellow]aborted[/yellow]")
-            sys.exit(130)
-        dst = result.data_dir
-        chosen_vault = result.vault_path
+    dst, chosen_vault = _resolve_migration_destination(
+        cfg,
+        into_vault=into_vault,
+        new_data_dir=new_data_dir,
+    )
 
     if dst == src:
         console.print(f"[red]✗[/red] source and destination are the same: {src}")
         sys.exit(1)
 
-    md_files = sorted(src.rglob("*.md"))
-    if dst.exists() and any(dst.iterdir()) and not force:
-        console.print(
-            f"[red]✗[/red] destination is non-empty: {dst}\n  Use --force to overwrite.",
-        )
-        sys.exit(1)
-
-    if not yes:
-        click.confirm(
-            f"Copy {len(md_files)} memories from\n  {src}\n→ {dst}\n"
-            "and rebuild memvec.db. Source files will be left in place. "
-            "Proceed?",
-            abort=True,
-        )
-
-    dst.mkdir(parents=True, exist_ok=True)
-    n_copied = 0
-    for md in md_files:
-        rel = md.relative_to(src)
-        target = dst / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(md, target)
-        n_copied += 1
+    n_copied = _copy_migration_files(src, dst, force=force, yes=yes)
     console.print(f"[green]✓[/green] copied {n_copied} files → {dst}")
 
-    existing_cfg = _resolve_config_path()
-    if existing_cfg.is_file():
-        shutil.copy2(existing_cfg, snapshot)
-        console.print(f"[green]✓[/green] config snapshot → {snapshot} (use --rollback to restore)")
-    # Preserve single_db: rewriting the config without it silently reverts a
-    # consolidated install to sidecar mode, orphaning the folded-in stores.
-    if into_vault:
-        cfg_path = write_config_file(
-            data_dir=cfg.data_dir,
-            vault_path=chosen_vault,
-            memories_in_vault=True,
-            single_db=cfg.single_db,
-        )
-    else:
-        cfg_path = write_config_file(data_dir=dst, vault_path=chosen_vault, single_db=cfg.single_db)
+    cfg_path = _write_migration_config(
+        cfg,
+        dst=dst,
+        chosen_vault=chosen_vault,
+        into_vault=into_vault,
+        snapshot=snapshot,
+    )
     console.print(f"[green]✓[/green] config: {cfg_path}")
 
-    new_cfg = Config.from_env()
-    mem = Memory(new_cfg)
-    try:
-        counts = mem.reindex()
-    finally:
-        mem.close()
+    counts = _reindex_migration(Config.from_env())
     console.print(
         f"[green]✓[/green] reindex: checked {counts['checked']}  "
         f"added {counts['added']}  reindexed {counts['reindexed']}  "
