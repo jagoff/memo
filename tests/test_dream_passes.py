@@ -109,12 +109,11 @@ class TestRunContradict:
         archived .md carries the winner id + close-date (portable provenance)."""
         import frontmatter
 
-        # keep the supersede loop focused on the archive: no anti-memory minting,
-        # and stub the contradict-store resolve (its judge_relation->supersede
-        # path can't re-resolve the just-archived memory — a pre-existing quirk
-        # unrelated to the provenance stamp under test here).
+        # keep the supersede loop focused on the archive: no anti-memory minting.
+        # The contradict-store resolve runs for real (its judge_relation->supersede
+        # path now resolves the pair BEFORE the dominated memory is archived, so it
+        # no longer trips over an already-archived record).
         monkeypatch.setattr("memo.negative_capture.capture_from_supersede", lambda *a, **k: {})
-        monkeypatch.setattr(mock_memory.contradict_store, "resolve", lambda *a, **k: None)
 
         older = mock_memory.save(content="El puerto del dashboard es 8080", title="p-old")
         newer = mock_memory.save(content="El puerto del dashboard es 8765", title="p-new")
@@ -128,6 +127,7 @@ class TestRunContradict:
 
         result = _run_contradict(mock_memory, dry_run=False)
 
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
         assert result.get("superseded"), "expected the older side to be superseded"
         assert result["superseded"][0]["older"] == older.id
         assert mock_memory.get(older.id) is None  # archived
@@ -135,6 +135,44 @@ class TestRunContradict:
         assert inactive.is_file()
         post = frontmatter.loads(inactive.read_text(encoding="utf-8"))
         assert post["extra"]["superseded_by"] == newer.id
+
+    def test_contradict_resolves_pair_before_archive_no_notfound(
+        self, mock_memory, monkeypatch
+    ) -> None:
+        """Regression: archiving the dominated memory THEN resolving the pair made
+        resolve → judge_relation → supersede look up an already-archived record
+        and raise NotFoundError (swallowed into result['error'], supersede lost).
+        The pair must be resolved BEFORE the archive so the whole pass completes:
+        no error, dominated archived with superseded_by, contradiction closed."""
+        monkeypatch.setattr("memo.negative_capture.capture_from_supersede", lambda *a, **k: {})
+
+        older = mock_memory.save(content="El puerto del dashboard es 8080", title="p-old")
+        newer = mock_memory.save(content="El puerto del dashboard es 8765", title="p-new")
+        mock_memory.contradict_store.upsert_open(
+            memory_id_a=older.id,
+            memory_id_b=newer.id,
+            relationship="contradiction",
+            confidence=0.95,
+            rationale="ports differ",
+        )
+        assert mock_memory.contradict_store.is_open_pair(older.id, newer.id)
+
+        result = _run_contradict(mock_memory, dry_run=False)
+
+        # No NotFoundError leaked into the receipt, and the supersede is recorded.
+        assert "error" not in result, f"unexpected error: {result.get('error')}"
+        assert result.get("superseded"), "expected the older side to be superseded"
+        assert result["superseded"][0]["older"] == older.id
+        # Dominated archived with portable superseded_by provenance.
+        assert mock_memory.get(older.id) is None
+        inactive = mock_memory.cfg.memory_dir / "inactive" / f"{older.id}.md"
+        assert inactive.is_file()
+        import frontmatter
+
+        post = frontmatter.loads(inactive.read_text(encoding="utf-8"))
+        assert post["extra"]["superseded_by"] == newer.id
+        # The contradiction pair was actually resolved (no longer open).
+        assert not mock_memory.contradict_store.is_open_pair(older.id, newer.id)
 
     def test_contradict_archive_false_records_error_not_superseded(
         self, mock_memory, monkeypatch

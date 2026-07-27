@@ -303,9 +303,9 @@ def context_cmd(
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option(
     "--snippet-chars",
-    default=800,
+    default=None,
     type=int,
-    show_default=True,
+    show_default="MEMO_ASK_SNIPPET_CHARS or 800",
     help="Preview length for retrieved memory snippets.",
 )
 @click.option("--json", "as_json", is_flag=True)
@@ -319,7 +319,7 @@ def ask(
     question: str,
     k: int,
     type_: str | None,
-    snippet_chars: int,
+    snippet_chars: int | None,
     as_json: bool,
     source: str | None,
 ) -> None:
@@ -498,9 +498,9 @@ def embed_cmd(text: str | None, batch_json) -> None:
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option(
     "--snippet-chars",
-    default=800,
+    default=None,
     type=int,
-    show_default=True,
+    show_default="MEMO_ASK_SNIPPET_CHARS or 800",
     help="Preview length for retrieved memory snippets.",
 )
 @click.option(
@@ -535,7 +535,7 @@ def chat_ask(
     question: str,
     k: int,
     type_: str | None,
-    snippet_chars: int,
+    snippet_chars: int | None,
     history_json,
     context_json,
     as_json: bool,

@@ -159,3 +159,37 @@ def test_search_with_file_announces_dropped_date_filters_and_explain(tmp_cfg, mo
     out = search(query="deploy steps", date_from="2026-01-01")
     assert "note" not in out
     memory.search.assert_called_once()
+
+
+def test_memo_ask_tools_thread_snippet_chars_sentinel(tmp_cfg, monkeypatch) -> None:
+    """F4: `memo_ask`/`memo_chat_ask` default `snippet_chars` to `None` and
+    forward it unchanged, so `MEMO_ASK_SNIPPET_CHARS` resolution stays in
+    `Memory` — an explicit value is forwarded verbatim."""
+    import memo.server_core_search as search_server
+    from memo.memory import Memory
+
+    monkeypatch.setattr(search_server, "log_consult", lambda *a, **k: None)
+
+    async def _run_synth(memory, ctx, fn):
+        return fn(), "stub"
+
+    monkeypatch.setattr(search_server, "run_synth", _run_synth)
+
+    memory = MagicMock(spec=Memory)
+    memory.cfg = tmp_cfg
+    memory.ask.return_value = {"answer": "ok", "sources": []}
+    memory.chat_ask.return_value = {"answer": "ok", "sources": []}
+    server = _RecordingServer()
+    search_server.register(server, memory)
+
+    # Not passed → sentinel None forwarded (Memory resolves the flag).
+    asyncio.run(server.tools["memo_ask"](question="q"))
+    assert memory.ask.call_args.kwargs["snippet_chars"] is None
+    asyncio.run(server.tools["memo_chat_ask"](question="q"))
+    assert memory.chat_ask.call_args.kwargs["snippet_chars"] is None
+
+    # Explicit int forwarded verbatim.
+    asyncio.run(server.tools["memo_ask"](question="q", snippet_chars=123))
+    assert memory.ask.call_args.kwargs["snippet_chars"] == 123
+    asyncio.run(server.tools["memo_chat_ask"](question="q", snippet_chars=456))
+    assert memory.chat_ask.call_args.kwargs["snippet_chars"] == 456

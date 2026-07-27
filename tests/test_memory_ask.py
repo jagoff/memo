@@ -364,6 +364,57 @@ def test_ask_returns_no_answer_when_no_hits(mem_with_stub: Memory):
     assert out["sources"] == []
 
 
+def test_ask_honors_explicit_snippet_chars_over_flag(mem_with_stub: Memory, monkeypatch):
+    """F4: an explicit `snippet_chars` is honored verbatim even when
+    `MEMO_ASK_SNIPPET_CHARS` is set to a different value; `None` (unspecified)
+    falls back to the flag, and to the built-in 800 when the flag is unset."""
+    seen: list[int] = []
+
+    def _capture(self, question, *, snippet_chars, **kw):
+        seen.append(snippet_chars)
+        return question, [], "", []  # no sources -> ask() short-circuits, no LLM
+
+    monkeypatch.setattr(Memory, "_build_ask_context", _capture)
+
+    # Deploy-wide default set to a value that differs from the historical 800.
+    monkeypatch.setenv("MEMO_ASK_SNIPPET_CHARS", "300")
+
+    # Explicit ints win over the flag — including the old collision value 800.
+    mem_with_stub.ask("q", snippet_chars=800)
+    mem_with_stub.ask("q", snippet_chars=250)
+    # Unspecified (None) resolves to the flag.
+    mem_with_stub.ask("q")
+    assert seen == [800, 250, 300]
+
+    # Flag unset -> built-in 800 default.
+    seen.clear()
+    monkeypatch.delenv("MEMO_ASK_SNIPPET_CHARS", raising=False)
+    mem_with_stub.ask("q")
+    assert seen == [800]
+
+
+def test_ask_stream_and_chat_ask_thread_snippet_chars_sentinel(mem_with_stub: Memory, monkeypatch):
+    """The sentinel threads through `ask_stream`, `chat_ask`, and
+    `chat_ask_stream`: explicit ints are honored, `None` resolves to the flag."""
+    seen: list[int] = []
+
+    def _capture(self, question, *, snippet_chars, **kw):
+        seen.append(snippet_chars)
+        return question, [], "", []
+
+    monkeypatch.setattr(Memory, "_build_ask_context", _capture)
+    monkeypatch.setenv("MEMO_ASK_SNIPPET_CHARS", "321")
+
+    list(mem_with_stub.ask_stream("q", snippet_chars=150))
+    list(mem_with_stub.ask_stream("q"))
+    mem_with_stub.chat_ask("q", snippet_chars=175)
+    mem_with_stub.chat_ask("q")
+    list(mem_with_stub.chat_ask_stream("q", snippet_chars=190))
+    list(mem_with_stub.chat_ask_stream("q"))
+
+    assert seen == [150, 321, 175, 321, 190, 321]
+
+
 def test_recency_helpers():
     from memo.memory import (
         _is_conversation_query,
