@@ -262,6 +262,9 @@ def test_behavior_flags_are_not_read_directly_from_environ() -> None:
         # because it collapses unset → False; raw env read is the only way to distinguish
         # "not set" from "explicitly off".
         SRC / "memory" / "facade.py": {"MEMO_EMBEDDER_VIA_DAEMON"},
+        # journey-check harness saves/restores the flag to force its isolated
+        # tmp store off the real warm socket — not a behavior decision.
+        SRC / "journey_check.py": {"MEMO_EMBEDDER_VIA_DAEMON"},
     }
     violations: list[str] = []
 

@@ -38,6 +38,9 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
     ("config.py", "MEMO_EMBEDDER_DIMS"),
     ("store/schema.py", "MEMO_SKIP_MODEL_VERSION_CHECK"),
     ("memory/facade.py", "MEMO_EMBEDDER_VIA_DAEMON"),
+    # journey-check harness forces the isolated tmp store off the real warm
+    # socket, reading the prior value only to restore it on teardown.
+    ("journey_check.py", "MEMO_EMBEDDER_VIA_DAEMON"),
     ("mlx_gpu.py", "MEMO_GPU_LOCK_PATH"),
     ("mlx_gpu.py", "MEMO_GPU_XPROC_LOCK"),
     ("setup/config_io.py", "MEMO_CONFIG_FILE"),
