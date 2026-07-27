@@ -9,6 +9,35 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.4.2] - 2026-07-26
+
+### Security
+
+- Fixed a **critical** remote-code-execution vector via git remote-helper
+  transports (`ext::` / `fd::`) reachable from the `memo_repo_index` MCP tool —
+  the repo URL is now validated against an allowed-scheme list and clones run
+  with `GIT_ALLOW_PROTOCOL` set.
+- Fixed a quadratic-complexity ReDoS-class DoS in the PEM secret-redaction
+  regex; the scan is now linear. Added Stripe/npm/GitLab secret-prefix
+  redaction.
+
+### Fixed
+
+- `memo sync once` / `memo sync auto` now surface push/pull/commit errors
+  instead of silently reporting success.
+- The nightly dream pipeline writes a receipt even on a hard crash, and
+  contradiction-supersede provenance is stamped correctly.
+- The capture incremental watermark no longer loses a long turn's insight.
+- Store sidecar connections (history/graph/contradictions/crossref/fact_edges)
+  close deterministically.
+- Recall-hook rerank-pool shrink and ranking parity fixes.
+- The query-embedding cache is now thread-safe.
+- Config/flag resolution no longer silently diverges between call sites.
+- Contradiction supersede timestamps are UTC-safe.
+- The eval regression gate pins to the baseline config and guards `k`.
+
+This release is the production-audit remediation, merged as #108.
+
 ## [4.4.1] - 2026-07-26
 
 ### Fixed
