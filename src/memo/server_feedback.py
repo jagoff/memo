@@ -7,9 +7,10 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 from memo.memory import Memory
 from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE, annotated_tool
@@ -82,7 +83,21 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"rows": rows, "count": len(rows)}
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_feedback_clear(source_id: str) -> dict[str, Any]:
-        """Drop all feedback rows for `source_id`. Returns count deleted."""
+    def memo_feedback_clear(
+        source_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "meta.id of the memory whose feedback rows to delete — full 32-char id "
+                    "or a unique prefix (must resolve to exactly one memory)."
+                ),
+            ),
+        ],
+    ) -> dict[str, Any]:
+        """Drop all feedback rows for `source_id`. Returns count deleted.
+
+        Deletes every ranking-feedback row recorded for the memory (the memory
+        itself is untouched). Idempotent: a repeat call deletes 0 rows.
+        """
         n = memory.feedback_clear(source_id)
         return {"source_id": source_id, "deleted": n}

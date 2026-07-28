@@ -7,9 +7,10 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 from memo.memory import Memory
 from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, annotated_tool
@@ -18,14 +19,65 @@ from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, an
 def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_repo_index(
-        url: str,
-        name: str | None = None,
-        ref: str | None = None,
-        force: bool = False,
-        with_embeddings: bool = True,
-        include: list[str] | None = None,
-        exclude: list[str] | None = None,
-        max_file_bytes: int | None = None,
+        url: Annotated[
+            str,
+            Field(
+                description="Git clone URL (https, ssh, scp-like, or local path) passed to "
+                "local `git clone`. Remote-helper schemes (`ext::`, `fd::`) and leading-dash "
+                "URLs are rejected."
+            ),
+        ],
+        name: Annotated[
+            str | None,
+            Field(
+                description="Repo name override; None derives it from the URL. Sanitized to "
+                "lowercase [a-z0-9._-] (max 80 chars); an explicit name already used by a "
+                "different repo is an error."
+            ),
+        ] = None,
+        ref: Annotated[
+            str | None,
+            Field(
+                description="Branch, tag, or commit to check out (detached); None or empty "
+                "indexes the remote's default branch (HEAD). Leading-dash refs are rejected."
+            ),
+        ] = None,
+        force: Annotated[
+            bool,
+            Field(
+                description="Re-index files even when the commit and per-file sha256 are "
+                "unchanged; default skips an already-indexed identical state."
+            ),
+        ] = False,
+        with_embeddings: Annotated[
+            bool,
+            Field(
+                description="Embed new chunks right after indexing; False leaves the semantic "
+                "index pending (run memo_repo_embed later)."
+            ),
+        ] = True,
+        include: Annotated[
+            list[str] | None,
+            Field(
+                description="fnmatch globs over repo-relative paths; when set, only matching "
+                "files are indexed. None indexes every tracked text file."
+            ),
+        ] = None,
+        exclude: Annotated[
+            list[str] | None,
+            Field(
+                description="Extra fnmatch globs to skip, added on top of built-in excludes "
+                "(binary/media/archive extensions and vendor/build/VCS dirs like node_modules, "
+                ".git, dist)."
+            ),
+        ] = None,
+        max_file_bytes: Annotated[
+            int | None,
+            Field(
+                description="Skip files larger than this many bytes; None uses the "
+                "MEMO_REPO_MAX_FILE_BYTES env flag or the 2,000,000-byte default."
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Clone/fetch a Git repo and index all included text files.
 
@@ -45,22 +97,68 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
-    def memo_repo_embed(repo: str, force: bool = False) -> dict[str, Any]:
-        """Embed pending repo chunks. Runs automatically during repo index by default."""
+    def memo_repo_embed(
+        repo: Annotated[
+            str,
+            Field(description="Repo id, name, or URL of an indexed repo; unknown repo errors."),
+        ],
+        force: Annotated[
+            bool,
+            Field(
+                description="Re-embed every chunk instead of only chunks missing a stored "
+                "vector; cached embeddings are still reused."
+            ),
+        ] = False,
+    ) -> dict[str, Any]:
+        """Embed pending repo chunks. Runs automatically during repo index by default.
+
+        Idempotent: without `force` only chunks lacking a stored vector are
+        embedded, so re-running on a fully embedded repo writes nothing.
+        """
         return memory.repo_embed(repo, force=force)
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_repo_status(repo: str) -> dict[str, Any] | None:
+    def memo_repo_status(
+        repo: Annotated[
+            str,
+            Field(description="Repo id, name, or URL; unknown repo returns null."),
+        ],
+    ) -> dict[str, Any] | None:
         """Return exact and semantic index counts for one repo."""
         return memory.repo_status(repo)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_repo_search(
-        query: str,
-        limit: int = 10,
-        repo: str | None = None,
-        path: str | None = None,
-        mode: str = "hybrid",
+        query: Annotated[
+            str,
+            Field(description="Search text; empty or whitespace-only returns no hits."),
+        ],
+        limit: Annotated[
+            int,
+            Field(description="Maximum hits returned after fusion and boosting."),
+        ] = 10,
+        repo: Annotated[
+            str | None,
+            Field(
+                description="Restrict to one repo by id, name, or URL; an unknown repo returns "
+                "no hits. None searches every indexed repo."
+            ),
+        ] = None,
+        path: Annotated[
+            str | None,
+            Field(
+                description="SQLite GLOB pattern over repo-relative file paths "
+                "(e.g. 'src/*.py'); None searches all files."
+            ),
+        ] = None,
+        mode: Annotated[
+            str,
+            Field(
+                description="One of 'hybrid', 'vec', 'bm25', 'line'. When the scoped repo has "
+                "no embedded chunks, 'hybrid' falls back to BM25+line fusion and 'vec' returns "
+                "no hits."
+            ),
+        ] = "hybrid",
     ) -> list[dict[str, Any]]:
         """Search indexed repositories.
 
@@ -81,20 +179,61 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_repo_get_file(
-        repo: str,
-        path: str,
-        start: int | None = None,
-        end: int | None = None,
+        repo: Annotated[
+            str,
+            Field(description="Repo id, name, or URL; unknown repo returns null."),
+        ],
+        path: Annotated[
+            str,
+            Field(
+                description="Repo-relative file path exactly as indexed; unknown path returns null."
+            ),
+        ],
+        start: Annotated[
+            int | None,
+            Field(
+                description="First line number to return (1-based, clamped to >= 1); "
+                "None starts at line 1."
+            ),
+        ] = None,
+        end: Annotated[
+            int | None,
+            Field(
+                description="Last line number to return (inclusive, clamped to >= start); "
+                "None reads to end of file."
+            ),
+        ] = None,
     ) -> dict[str, Any] | None:
         """Return indexed text for one repo file or line range."""
         return memory.repo_get_file(repo, path, start=start, end=end)
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_repo_list(limit: int = 100) -> list[dict[str, Any]]:
+    def memo_repo_list(
+        limit: Annotated[
+            int,
+            Field(description="Maximum repos returned, most recently indexed first."),
+        ] = 100,
+    ) -> list[dict[str, Any]]:
         """List indexed repositories."""
         return memory.repo_list(limit=limit)
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_repo_delete(repo: str, remove_clone: bool = True) -> dict[str, bool]:
-        """Delete one indexed repo and optionally remove memo's managed clone."""
+    def memo_repo_delete(
+        repo: Annotated[
+            str,
+            Field(description="Repo id, name, or URL; unknown repo returns deleted=false."),
+        ],
+        remove_clone: Annotated[
+            bool,
+            Field(
+                description="Also delete memo's managed on-disk clone directory; False keeps "
+                "the clone and removes only the index rows."
+            ),
+        ] = True,
+    ) -> dict[str, bool]:
+        """Delete one indexed repo and optionally remove memo's managed clone.
+
+        Removal is permanent; an unknown repo returns deleted=false instead
+        of raising.
+        """
         return {"deleted": memory.repo_delete(repo, remove_clone=remove_clone)}

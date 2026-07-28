@@ -7,9 +7,10 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
@@ -57,7 +58,24 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.graph.top_entities(limit=limit, type_=type)
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_entity(name: str, type: str | None = None) -> list[str]:
+    def memo_entity(
+        name: Annotated[
+            str,
+            Field(
+                description="Entity name to look up. Matched exactly after "
+                "strip+lowercase (entity names are stored lower-cased); "
+                "no fuzzy or substring matching."
+            ),
+        ],
+        type: Annotated[
+            str | None,
+            Field(
+                description="Optional entity-type filter, one of 'person', "
+                "'project', 'technology', 'file', 'org', 'concept' "
+                "(matched after strip+lowercase). None matches any type."
+            ),
+        ] = None,
+    ) -> list[str]:
         """Memory IDs that mention `name` (and optionally a specific
         entity type). Returns a list of full UUIDs."""
         return memory.graph.entity_memories(name, type_=type)

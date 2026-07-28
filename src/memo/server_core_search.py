@@ -78,7 +78,23 @@ def register(server: Any, memory: Memory) -> None:
         }
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_unified_briefing(cwd: str | None = None, source: str = "") -> dict[str, Any]:
+    def memo_unified_briefing(
+        cwd: Annotated[
+            str | None,
+            Field(
+                description="Working directory; its basename scopes operational items "
+                "(focus, handoffs, attention, conflicts) to that project. "
+                "None includes every project."
+            ),
+        ] = None,
+        source: Annotated[
+            str,
+            Field(
+                description="Calling layer for consult attribution "
+                "(e.g. 'claude-code', 'codex'); empty falls back to client info."
+            ),
+        ] = "",
+    ) -> dict[str, Any]:
         """Load a compact startup briefing from Memo's durable and operational state.
 
         Read-only. Call before deciding or answering so prior durable facts can
@@ -119,24 +135,89 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_search(
-        query: str,
-        limit: int = 10,
-        type: str | None = None,
-        body_chars: int = 280,
-        mode: str = "hybrid",
-        explain: bool = False,
-        source: str = "",
-        file: str = "",
-        date_from: str | None = None,
-        date_to: str | None = None,
-        when: str | None = None,
+        query: Annotated[
+            str,
+            Field(description="Search text; empty or whitespace-only returns no hits."),
+        ],
+        limit: Annotated[
+            int,
+            Field(description="Maximum hits to return (clamped to 1-500)."),
+        ] = 10,
+        type: Annotated[
+            str | None,
+            Field(
+                description="Restrict retrieval to one memory type "
+                "(e.g. 'decision', 'fact'); None searches every type."
+            ),
+        ] = None,
+        body_chars: Annotated[
+            int,
+            Field(
+                description="Character cap per hit body; longer bodies are truncated "
+                "with body_truncated=true. Negative disables truncation."
+            ),
+        ] = 280,
+        mode: Annotated[
+            str,
+            Field(
+                description="Retrieval mode: 'hybrid' (RRF fusion of vector + BM25, "
+                "default), 'vec' (semantic only), 'bm25' (keyword FTS5), 'exact' "
+                "(strict-AND keyword with tag/title boost), or 'fuzzy' (typo-tolerant "
+                "keyword). Unrecognized values behave as 'hybrid'."
+            ),
+        ] = "hybrid",
+        explain: Annotated[
+            bool,
+            Field(
+                description="When true, add per-hit 'explain' fields and a 'trace' key "
+                "showing pipeline scoring. Not available with 'file' (explain stays "
+                "empty)."
+            ),
+        ] = False,
+        source: Annotated[
+            str,
+            Field(
+                description="Calling layer for consult attribution "
+                "(e.g. 'claude-code', 'codex'); empty falls back to client info."
+            ),
+        ] = "",
+        file: Annotated[
+            str,
+            Field(
+                description="Keep only hits whose capture-stamped files_read/"
+                "files_modified arrays contain this path fragment (case-insensitive "
+                "substring). Date filters and explain are not applied in file mode."
+            ),
+        ] = "",
+        date_from: Annotated[
+            str | None,
+            Field(
+                description="Inclusive ISO date/datetime lower bound "
+                "(e.g. '2026-07-01'); ignored when 'file' is set."
+            ),
+        ] = None,
+        date_to: Annotated[
+            str | None,
+            Field(
+                description="Inclusive ISO date/datetime upper bound; a bare date "
+                "covers that whole day. Ignored when 'file' is set."
+            ),
+        ] = None,
+        when: Annotated[
+            str | None,
+            Field(
+                description="Natural-language date phrase (EN/ES: 'yesterday', "
+                "'last week', 'hace 3 dias', ...) parsed into date_from/date_to when "
+                "neither is set; unrecognized phrases apply no date filter."
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Search durable memories by text, vector similarity, or hybrid mode.
 
-        Read-only. Use for direct retrieval when you need source records, ids,
-        dates, tags, or excerpts. `mode` accepts hybrid, vec, or bm25;
-        `body_chars` controls snippet length, and `source` attributes consult
-        logging.
+        Read-only. Returns raw ranked hits — source records with ids, dates,
+        tags, and excerpts. Use memo_context instead for a budgeted
+        prompt-ready pack, memo_search_trace for scoring diagnostics, and
+        memo_rerank to reorder hits you already have.
         """
         if when and not (date_from or date_to):
             from memo.nl_dates import parse_date_range
@@ -230,19 +311,62 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_context(
-        question: str,
-        k: int = 7,
-        type: str | None = None,
-        snippet_chars: int = 700,
-        budget_chars: int = 6000,
-        include_profile: bool = True,
-        include_dynamic: bool = True,
-        source: str = "",
+        question: Annotated[
+            str,
+            Field(
+                description="Natural-language question used to retrieve and pack relevant memories."
+            ),
+        ],
+        k: Annotated[
+            int,
+            Field(
+                description="Number of query hits retrieved for the pack "
+                "(hybrid mode; clamped to 1-500)."
+            ),
+        ] = 7,
+        type: Annotated[
+            str | None,
+            Field(
+                description="Restrict retrieval to one memory type "
+                "(e.g. 'decision', 'fact'); None searches every type."
+            ),
+        ] = None,
+        snippet_chars: Annotated[
+            int,
+            Field(description="Character cap per memory snippet inside the pack."),
+        ] = 700,
+        budget_chars: Annotated[
+            int,
+            Field(
+                description="Total character budget for the returned readonly prompt "
+                "wrapper; rows beyond the budget are trimmed and counted in "
+                "'omissions'."
+            ),
+        ] = 6000,
+        include_profile: Annotated[
+            bool,
+            Field(description="Include the static profile section (identity/preference lines)."),
+        ] = True,
+        include_dynamic: Annotated[
+            bool,
+            Field(
+                description="Include the dynamic section: up to 5 memories updated "
+                "in the last 7 days."
+            ),
+        ] = True,
+        source: Annotated[
+            str,
+            Field(
+                description="Calling layer for consult attribution "
+                "(e.g. 'claude-code', 'codex'); empty falls back to client info."
+            ),
+        ] = "",
     ) -> dict[str, Any]:
         """Build prompt-ready memory context without calling the answer LLM.
 
-        Read-only. Returns static profile, dynamic recent context, query hits,
-        omissions, and a readonly prompt wrapper for direct model injection.
+        Read-only. Unlike memo_search's raw hit list, this returns a budgeted,
+        prompt-ready context pack for direct injection: static profile, dynamic
+        recent context, query hits, omissions, and a readonly prompt wrapper.
         """
         from memo.context_surface import build_context_surface, consult_hits_from_context
         from memo.flags import flag_bool
@@ -277,18 +401,51 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_search_trace(
-        query: str,
-        limit: int = 10,
-        type: str | None = None,
-        body_chars: int = 280,
-        mode: str = "hybrid",
-        source: str = "",
+        query: Annotated[
+            str,
+            Field(description="Search text; empty or whitespace-only returns no hits."),
+        ],
+        limit: Annotated[
+            int,
+            Field(description="Maximum hits to return (clamped to 1-500)."),
+        ] = 10,
+        type: Annotated[
+            str | None,
+            Field(
+                description="Restrict retrieval to one memory type "
+                "(e.g. 'decision', 'fact'); None searches every type."
+            ),
+        ] = None,
+        body_chars: Annotated[
+            int,
+            Field(
+                description="Character cap per hit body; longer bodies are truncated "
+                "with body_truncated=true. Negative disables truncation."
+            ),
+        ] = 280,
+        mode: Annotated[
+            str,
+            Field(
+                description="Retrieval mode: 'hybrid' (RRF fusion of vector + BM25, "
+                "default), 'vec' (semantic only), 'bm25' (keyword FTS5), 'exact' "
+                "(strict-AND keyword with tag/title boost), or 'fuzzy' (typo-tolerant "
+                "keyword). Unrecognized values behave as 'hybrid'."
+            ),
+        ] = "hybrid",
+        source: Annotated[
+            str,
+            Field(
+                description="Calling layer for consult attribution "
+                "(e.g. 'claude-code', 'codex'); empty falls back to client info."
+            ),
+        ] = "",
     ) -> dict[str, Any]:
         """Search memories and include retrieval trace diagnostics.
 
-        Read-only. Use when debugging ranking, filters, or recall misses rather
-        than for normal lookup. Returns the same style of hits as memo_search
-        plus trace metadata that explains how candidates were selected.
+        Read-only. Debug variant of memo_search: use it when investigating
+        ranking, filters, or recall misses rather than for normal lookup.
+        Returns the same style of hits as memo_search plus trace metadata that
+        explains how candidates were selected and scored at each stage.
         """
         t0 = now_ms()
         envelope = memory.search_with_trace(
@@ -311,21 +468,54 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_rerank(
-        query: str,
-        hits: list[dict[str, Any]],
-        top_n: int | None = None,
-        body_chars: int = 1200,
+        query: Annotated[
+            str,
+            Field(
+                description="Query text the cross-encoder scores each hit against; "
+                "empty returns the hits unchanged."
+            ),
+        ],
+        hits: Annotated[
+            list[dict[str, Any]],
+            Field(
+                description="Candidate hit dicts (e.g. from memo_search); each is "
+                "scored on its title plus snippet/body and returned with a "
+                "'rerank_score' field added. Non-dict entries are dropped."
+            ),
+        ],
+        top_n: Annotated[
+            int | None,
+            Field(
+                description="Keep only the N best hits after reranking; "
+                "None or a non-positive value returns all."
+            ),
+        ] = None,
+        body_chars: Annotated[
+            int,
+            Field(description="Character cap of each hit's snippet/body fed to the reranker."),
+        ] = 1200,
     ) -> list[dict[str, Any]]:
         """Rerank candidate memory hits for a query.
 
-        Read-only. Use after memo_search or another retrieval source when you
-        already have candidate hit dictionaries and need the most relevant
-        subset ordered for answer synthesis. `top_n` limits the returned list.
+        Read-only. Performs no retrieval of its own (unlike memo_search) — it
+        only reorders caller-supplied hit dictionaries, e.g. after memo_search
+        or another retrieval source, when you need the most relevant subset
+        ordered for answer synthesis. When reranking is disabled in this
+        install, hits pass through in input order without scores.
         """
         return memory.rerank_hits(query, hits, top_n=top_n, body_chars=body_chars)
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_embed_query(text: str) -> dict[str, Any]:
+    def memo_embed_query(
+        text: Annotated[
+            str,
+            Field(
+                description="Query text to embed on the query side "
+                "(instruction-prefixed for asymmetric retrieval); empty or "
+                "whitespace-only raises an error."
+            ),
+        ],
+    ) -> dict[str, Any]:
         """Embed one query string with memo's query embedding path.
 
         Read-only. Use for diagnostics or integrations that need the exact
@@ -338,7 +528,15 @@ def register(server: Any, memory: Memory) -> None:
         return {"vector": vec, "dim": len(vec), "model": memory.store.embedder_model}
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_embed_batch(texts: list[str]) -> dict[str, Any]:
+    def memo_embed_batch(
+        texts: Annotated[
+            list[str],
+            Field(
+                description="Document strings to embed on the document side (raw, no "
+                "query instruction prefix); an empty list returns no vectors."
+            ),
+        ],
+    ) -> dict[str, Any]:
         """Embed one or more document strings with memo's document embedder.
 
         Read-only. Use for diagnostics or external indexing when you need
