@@ -300,3 +300,58 @@ def test_verbatim_short_circuit_skipped_for_disputed_top_hit(mock_memory, monkey
     monkeypatch.setattr(mock_memory, "_ensure_chat", lambda: _Chat("nope"))
     mock_memory.ask("port is 9999")
     assert calls and ID_A not in calls[0]  # disputed hit filtered out
+
+
+# ---- final-review fixes: LLM-error masking + disputed map on verbatim ----
+
+
+class _ChatRaises:
+    def chat(self, **k):
+        raise RuntimeError("boom")
+
+
+def test_ask_llm_error_not_masked_as_disputed_abstention(mock_memory, monkeypatch):
+    # All sources disputed + the LLM call raises: the error sentinel has no
+    # citations, so contested_or_none would (incorrectly) fire on it — the
+    # gate must be skipped entirely and the error returned untouched.
+    sources = [_src(ID_A, disputed_by=[ID_B])]
+    _prep_gate(mock_memory, monkeypatch, answer="unused", sources=sources)
+    monkeypatch.setattr(mock_memory, "_ensure_chat", lambda: _ChatRaises())
+    out = mock_memory.ask("what port?")
+    assert out["answer"].startswith("(error querying the model:")
+    assert "abstained" not in out
+
+
+def test_ask_verbatim_return_includes_disputed_map(mock_memory, monkeypatch):
+    sources = [_src(ID_A, disputed_by=[ID_B]), _src(ID_C)]
+    monkeypatch.setattr(
+        ask_ops._AskOpsMixin,
+        "_build_ask_context",
+        lambda self, q, **k: (q, list(sources), "ctx", []),
+    )
+    monkeypatch.setattr(
+        ask_ops._AskOpsMixin,
+        "_verbatim_short_circuit",
+        lambda self, q, h: "verbatim body [a1b2c3d4]",
+    )
+    out = mock_memory.ask("literal phrase")
+    assert out["answer"] == "verbatim body [a1b2c3d4]"
+    assert out["disputed"] == {ID_A: [ID_B]}
+
+
+def test_ask_stream_verbatim_done_includes_disputed_map(mock_memory, monkeypatch):
+    sources = [_src(ID_A, disputed_by=[ID_B]), _src(ID_C)]
+    monkeypatch.setattr(
+        ask_ops._AskOpsMixin,
+        "_build_ask_context",
+        lambda self, q, **k: (q, list(sources), "ctx", []),
+    )
+    monkeypatch.setattr(
+        ask_ops._AskOpsMixin,
+        "_verbatim_short_circuit",
+        lambda self, q, h: "verbatim body [a1b2c3d4]",
+    )
+    events = list(mock_memory.ask_stream("literal phrase"))
+    done = next(e for e in events if e.get("event") == "done")
+    assert done["answer"] == "verbatim body [a1b2c3d4]"
+    assert done["disputed"] == {ID_A: [ID_B]}
