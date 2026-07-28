@@ -934,6 +934,12 @@ class _AskOpsMixin(_MemoryBase):
         # and return the matched note body directly. Avoids the model
         # over-summarising when the user clearly wants the raw content.
         verbatim_hits = _filter_verbatim_hits(hits, sources, use_context_pack=use_context_pack)
+        # A disputed hit must not bypass the LLM + dispute gate via the
+        # verbatim path — drop it from verbatim candidates only (it stays in
+        # the normal context).
+        _disputed_hit_ids = {str(s["id"]) for s in sources if s.get("disputed_by")}
+        if _disputed_hit_ids:
+            verbatim_hits = [h for h in verbatim_hits if h.id not in _disputed_hit_ids]
         verbatim = self._verbatim_short_circuit(question, verbatim_hits)
         if verbatim is not None:
             return {
@@ -1070,6 +1076,12 @@ class _AskOpsMixin(_MemoryBase):
         # single token-style event so consumers that show progressive
         # output still get something to render, then a terminal `done`.
         verbatim_hits = _filter_verbatim_hits(hits, sources, use_context_pack=use_context_pack)
+        # A disputed hit must not bypass the LLM + dispute gate via the
+        # verbatim path — drop it from verbatim candidates only (it stays in
+        # the normal context).
+        _disputed_hit_ids = {str(s["id"]) for s in sources if s.get("disputed_by")}
+        if _disputed_hit_ids:
+            verbatim_hits = [h for h in verbatim_hits if h.id not in _disputed_hit_ids]
         verbatim = self._verbatim_short_circuit(question, verbatim_hits)
         if verbatim is not None:
             yield {"event": "token", "delta": verbatim}

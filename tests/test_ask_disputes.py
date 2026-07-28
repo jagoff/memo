@@ -271,3 +271,32 @@ def test_ask_stream_done_event_contested(mock_memory, monkeypatch):
     assert done["abstained"] == "disputed"
     assert "couldn't find" in done["answer"]
     assert done["disputed"] == {ID_A: [ID_B]}
+
+
+def test_verbatim_short_circuit_skipped_for_disputed_top_hit(mock_memory, monkeypatch):
+    # A disputed hit must NOT be dumped verbatim (it would bypass the gate);
+    # it falls through to the LLM path, where the gate abstains.
+    sources = [_src(ID_A, disputed_by=[ID_B])]
+
+    class _H:
+        id = ID_A
+        body = "port is 9999"
+
+    monkeypatch.setattr(
+        ask_ops._AskOpsMixin,
+        "_build_ask_context",
+        lambda self, q, **k: (q, list(sources), "ctx", [_H()]),
+    )
+    calls = []
+
+    def _fake_verbatim(self, q, hits):
+        calls.append([h.id for h in hits])
+        return None
+
+    monkeypatch.setattr(ask_ops._AskOpsMixin, "_verbatim_short_circuit", _fake_verbatim)
+    monkeypatch.setattr(
+        ask_ops, "_filter_verbatim_hits", lambda hits, sources, use_context_pack=False: hits
+    )
+    monkeypatch.setattr(mock_memory, "_ensure_chat", lambda: _Chat("nope"))
+    mock_memory.ask("port is 9999")
+    assert calls and ID_A not in calls[0]  # disputed hit filtered out
