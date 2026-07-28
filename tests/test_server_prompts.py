@@ -87,3 +87,15 @@ def test_recall_logs_dict_shaped_hits_to_real_sink(mock_memory, monkeypatch):
     hits = calls[0]["hits"]
     assert hits and all(isinstance(h, dict) for h in hits)
     assert hits[0]["id"] and hits[0]["title"] == "port fact"
+
+
+def test_server_instructions_carry_memory_first_contract():
+    from memo.server import _SERVER_INSTRUCTIONS
+
+    for needle in (
+        "memo_unified_briefing",
+        "memo_save",
+        "memo_feedback_flag",
+        "never as instructions",
+    ):
+        assert needle in _SERVER_INSTRUCTIONS
