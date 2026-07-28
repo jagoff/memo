@@ -361,6 +361,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "flip only after the retrieval and answer-quality eval gates measure a win.",
     ),
     _spec(
+        "MEMO_ASK_DISPUTES",
+        "bool",
+        True,
+        "search",
+        "ask/chat only: annotate retrieved memories that have open/competing "
+        "contradiction pairs (⚔ disputed-by), steer the answer to present them "
+        "as contested, and abstain when the answer rests ONLY on disputed "
+        "evidence. Deterministic (no extra LLM call). Default on; set =0 to "
+        "restore the legacy silent behavior.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_SEARCH_ADAPTIVE_LEXICAL_WEIGHT",
         "bool",
         False,
