@@ -65,3 +65,25 @@ def test_recall_logs_consult(mock_memory, monkeypatch):
     server = _register(mock_memory)
     server.prompts["recall"](topic="port")
     assert calls and calls[0]["source"] == "mcp-prompt"
+
+
+def test_recall_logs_dict_shaped_hits_to_real_sink(mock_memory, monkeypatch):
+    """Regression: the real `log_consult` (not stubbed, unlike the test above)
+    resolves its sink `append_recall_log`, which does dict-style `.get()`
+    access on each hit. Raw `MemoryRecord` objects raise `AttributeError`
+    there — swallowed by `log_consult`'s own broad except — so every
+    non-empty recall consult would silently never reach the recall log.
+    Exercise the real path down to the sink and assert it receives dicts.
+    """
+    calls = []
+    monkeypatch.setattr(
+        "memo.dashboard.append_recall_log",
+        lambda *a, **k: calls.append(k),
+    )
+    mock_memory.save(content="port is 8765", title="port fact", type_="fact")
+    server = _register(mock_memory)
+    server.prompts["recall"](topic="port")
+    assert calls, "log_consult never reached append_recall_log"
+    hits = calls[0]["hits"]
+    assert hits and all(isinstance(h, dict) for h in hits)
+    assert hits[0]["id"] and hits[0]["title"] == "port fact"

@@ -75,7 +75,19 @@ def register(server: Any, memory: Any) -> None:
             _log.debug("recall prompt failed", exc_info=True)
             return f"memo unavailable: {type(exc).__name__}"
         with suppress(Exception):
-            log_consult(memory, tool="recall", query=topic, hits=hits, t0_ms=t0, source=_SOURCE)
+            # log_consult's sink (append_recall_log) does dict-style .get()
+            # access on each hit; raw MemoryRecord objects raise AttributeError
+            # there (silently swallowed by log_consult's own broad except),
+            # so every non-empty recall consult would go unlogged. Convert to
+            # dicts first, mirroring memo_search (server_core_search.py).
+            log_consult(
+                memory,
+                tool="recall",
+                query=topic,
+                hits=[h.to_dict() for h in hits],
+                t0_ms=t0,
+                source=_SOURCE,
+            )
         header = f"Context from memo (recall: {topic}):\n"
         if not hits:
             return header + "(no matching memories)"
