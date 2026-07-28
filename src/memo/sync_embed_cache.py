@@ -40,6 +40,18 @@ Design:
   together and the guard stays truthful.
 - Import validates every vector (finite, ~unit norm) — a poisoned or corrupt
   shard row is skipped, never stored.
+
+Trust boundary (accepted residual, not a gap): import validates vector SHAPE
+only — it does not cryptographically bind a shard row's content-hash key to its
+vector value, so a peer with WRITE access to the shared sync git remote could
+substitute a shape-valid vector and shift where a memory lands in embedding
+space. That is the SAME trust boundary as the `.md` files themselves: an
+attacker who can write the sync repo already controls memory content directly
+(and more visibly). An HMAC would need a per-fleet secret shared out-of-band
+across the user's machines — a setup decision, not a code fix, and it adds no
+protection against the only attacker in scope. Operators who want the smaller
+trust boundary set `MEMO_SYNC_EMBED_CACHE=0` to skip cache import entirely and
+re-embed locally (derived data — correctness is unaffected).
 """
 
 from __future__ import annotations

@@ -726,12 +726,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "int",
         600,
         "capture",
-        "Minimum seconds between incremental in-session captures (`memo "
-        "capture-tick`, wired as an async per-prompt hook). Mines NEW turns "
-        "since a per-session watermark into durable memories so a long/crashed "
-        "session's insight reaches .md mid-session instead of only at Stop. "
-        "Self-throttled per session off the capture watermark; a cheap no-op "
-        "when not due. 0 disables the throttle (capture every prompt).",
+        "Minimum seconds between incremental captures for a non-forced `memo "
+        "capture-tick` (the throttle lives in `incremental_tick_due`). Mines NEW "
+        "turns since a per-session watermark into durable memories so a "
+        "long/crashed session's insight reaches .md mid-session instead of only "
+        "at Stop. A cheap no-op when not due; 0 disables the throttle. SCOPE: "
+        "this flag governs `capture-tick` only, and `--force` bypasses it — the "
+        "PreCompact hook calls `capture-tick --force`, and the UserPromptSubmit "
+        "incremental path (`memo session idle-maintenance --mode capture`) has "
+        "its own quiet-window throttle (MEMO_SESSION_IDLE_CAPTURE_SECS). Neither "
+        "live hook consults this value; it applies to a manual `capture-tick`.",
         min_val=0,
     ),
     _spec(
