@@ -533,6 +533,19 @@ class _AskOpsMixin(_MemoryBase):
 
         hits = [hit for hit in hits if not is_sensitive_memory(hit)]
 
+        # Dispute lookup (MEMO_ASK_DISPUTES, default on): one batched
+        # open+competing pairs query over the final hits; fail-open to {}.
+        # Baked into snippet lines + source dicts BEFORE the cache put, so a
+        # cache hit reuses it (staleness bounded by the RAG cache TTL).
+        from memo.flags import flag_bool
+        from memo.memory.ask_disputes import dispute_header_segment
+
+        disputed_ids: dict[str, list[str]] = {}
+        if flag_bool("MEMO_ASK_DISPUTES") and hits:
+            from memo.memory import ask_disputes as _ad
+
+            disputed_ids = _ad.dispute_map(self, [h.id for h in hits])
+
         snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
         primary_memory_sources: dict[str, dict[str, Any]] = {}
@@ -561,9 +574,10 @@ class _AskOpsMixin(_MemoryBase):
             relations_info = (
                 f"  |  relations: {'; '.join(memory_relations)}" if memory_relations else ""
             )
+            dispute_info = dispute_header_segment(h.id, disputed_ids)
             snippet_lines.append(
                 f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}"
-                f"{graph_info}{facts_info}{relations_info}\n{snippet}\n"
+                f"{graph_info}{facts_info}{relations_info}{dispute_info}\n{snippet}\n"
             )
             extra = h.extra or {}
             provenance = normalize_provenance(extra)
@@ -580,6 +594,8 @@ class _AskOpsMixin(_MemoryBase):
                 "memory_relations": extra.get("memory_relations") or [],
                 "provenance": provenance,
             }
+            if disputed_ids.get(h.id):
+                source["disputed_by"] = list(disputed_ids[h.id])
             sources.append(source)
             primary_memory_sources[h.id] = source
             seen_paths.update(_vault_dedup_keys(h))
@@ -590,8 +606,6 @@ class _AskOpsMixin(_MemoryBase):
         # call; ask path only — never the 5s recall hook). Community-kind
         # syntheses keep entity NAMES in synthesis_sources; non-resolvable
         # strings skip via self.get() returning None.
-        from memo.flags import flag_bool
-
         expanded_memory_rows: list[dict[str, Any]] = []
         expanded_memory_sources: dict[str, dict[str, Any]] = {}
         expanded_sensitive_omitted = 0

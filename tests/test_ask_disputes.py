@@ -125,3 +125,44 @@ def test_caveat_skipped_for_uncited_disputed_source():
 
 def test_prompt_suffix_mentions_marker():
     assert "disputed-by" in DISPUTE_PROMPT_SUFFIX
+
+
+# ---- integration: _build_ask_context annotation (mock_memory fixture) ----
+
+
+def _seed_two(mock_memory):
+    a = mock_memory.save(content="port is 8765", title="port fact A", type_="fact")
+    b = mock_memory.save(content="port is 9999", title="port fact B", type_="fact")
+    return a.id, b.id
+
+
+def _fake_pairs(monkeypatch, a_id, b_id):
+    from memo.memory import ask_disputes
+
+    monkeypatch.setattr(
+        ask_disputes,
+        "dispute_map",
+        lambda mem, ids: {a_id: [b_id], b_id: [a_id]} if a_id in ids else {},
+    )
+
+
+def test_build_ask_context_annotates_disputed_sources(mock_memory, monkeypatch):
+    a_id, b_id = _seed_two(mock_memory)
+    _fake_pairs(monkeypatch, a_id, b_id)
+    _, sources, user_msg, _ = mock_memory._build_ask_context(
+        "what port?", k=5, type_=None, snippet_chars=200, include_repos=False
+    )
+    by_id = {s["id"]: s for s in sources}
+    assert by_id[a_id]["disputed_by"] == [b_id]
+    assert f"⚔ disputed-by: [{b_id[:8]}]" in user_msg
+
+
+def test_build_ask_context_flag_off_no_annotation(mock_memory, monkeypatch):
+    a_id, b_id = _seed_two(mock_memory)
+    _fake_pairs(monkeypatch, a_id, b_id)
+    monkeypatch.setenv("MEMO_ASK_DISPUTES", "0")
+    _, sources, user_msg, _ = mock_memory._build_ask_context(
+        "what port?", k=5, type_=None, snippet_chars=200, include_repos=False
+    )
+    assert all("disputed_by" not in s for s in sources)
+    assert "disputed-by" not in user_msg
