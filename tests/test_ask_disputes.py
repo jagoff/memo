@@ -259,3 +259,15 @@ def test_ask_judge_abstention_gets_no_caveat(mock_memory, monkeypatch):
     )
     out = mock_memory.ask("what port?")
     assert out["answer"] == "I couldn't find that."  # fallback, no caveat appended
+
+
+def test_ask_stream_done_event_contested(mock_memory, monkeypatch):
+    sources = [_src(ID_A, disputed_by=[ID_B])]
+    _prep_gate(
+        mock_memory, monkeypatch, answer=f"Port is 9999 [{ID_A[:8]}].", sources=sources
+    )
+    events = list(mock_memory.ask_stream("what port?"))
+    done = next(e for e in events if e.get("event") == "done")
+    assert done["abstained"] == "disputed"
+    assert "couldn't find" in done["answer"]
+    assert done["disputed"] == {ID_A: [ID_B]}
