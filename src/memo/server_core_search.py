@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import Context
+from pydantic import Field
 
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
@@ -352,13 +353,40 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     async def memo_ask(
-        question: str,
-        k: int = 5,
-        type: str | None = None,
-        snippet_chars: int | None = None,
-        include_repos: bool = True,
-        session_id: str | None = None,
-        source: str = "",
+        question: Annotated[
+            str,
+            Field(description="Natural-language question to answer from durable memories."),
+        ],
+        k: Annotated[
+            int,
+            Field(description="Number of memories to retrieve as grounding (top-k)."),
+        ] = 5,
+        type: Annotated[
+            str | None,
+            Field(
+                description="Restrict retrieval to one memory type "
+                "(e.g. 'decision', 'fact'); None searches every type."
+            ),
+        ] = None,
+        snippet_chars: Annotated[
+            int | None,
+            Field(description="Character cap per cited snippet; None uses the default."),
+        ] = None,
+        include_repos: Annotated[
+            bool,
+            Field(description="Also search indexed repository knowledge, not just memories."),
+        ] = True,
+        session_id: Annotated[
+            str | None,
+            Field(description="Tracked memo session id to associate the answer with."),
+        ] = None,
+        source: Annotated[
+            str,
+            Field(
+                description="Calling layer for consult attribution "
+                "(e.g. 'claude-code', 'codex'); empty falls back to client info."
+            ),
+        ] = "",
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Answer a question using memo retrieval and citations.
@@ -403,14 +431,50 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     async def memo_chat_ask(
-        question: str,
-        k: int = 7,
-        type: str | None = None,
-        history: list[dict[str, Any]] | None = None,
-        context: dict[str, Any] | None = None,
-        snippet_chars: int | None = None,
-        session_id: str | None = None,
-        source: str = "",
+        question: Annotated[
+            str,
+            Field(description="Natural-language question for this conversational turn."),
+        ],
+        k: Annotated[
+            int,
+            Field(description="Number of memories to retrieve as grounding (top-k)."),
+        ] = 7,
+        type: Annotated[
+            str | None,
+            Field(
+                description="Restrict retrieval to one memory type "
+                "(e.g. 'decision', 'fact'); None searches every type."
+            ),
+        ] = None,
+        history: Annotated[
+            list[dict[str, Any]] | None,
+            Field(
+                description="Prior chat turns as {'role', 'content'} dicts; "
+                "bounded (128 items / 512KB) and used to shape retrieval."
+            ),
+        ] = None,
+        context: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description="Extra structured context for synthesis "
+                "(bounded to 256KB); merged with session_id when given."
+            ),
+        ] = None,
+        snippet_chars: Annotated[
+            int | None,
+            Field(description="Character cap per cited snippet; None uses the default."),
+        ] = None,
+        session_id: Annotated[
+            str | None,
+            Field(description="Tracked memo session id linking the answer to a session."),
+        ] = None,
+        source: Annotated[
+            str,
+            Field(
+                description="Calling layer for consult attribution "
+                "(e.g. 'claude-code', 'codex'); empty falls back to client info."
+            ),
+        ] = "",
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Answer a conversational question with optional history and context.
