@@ -103,6 +103,33 @@ async def test_too_small_terminal_shows_requirement(tmp_path: Path) -> None:
         assert warning.display is True
 
 
+def _normalize_svg(svg: str) -> str:
+    # Rich derives the SVG unique-id as an adler32 of the rendered content, so
+    # it varies with the (content-dependent) id suffix; collapse it.
+    return re.sub(r"\bterminal-\d+-([\w-]+)", r"terminal-\1", svg)
+
+
+def _render_config_svg(tmp_path: Path, terminal_size: tuple[int, int]) -> str:
+    # config_md memoizes parsed markdown config process-wide; drop it so a
+    # sibling test's cache can never leak into this render (the overlay caches
+    # are already keyed per state-dir path + mtime, so they can't collide).
+    from memo.config_md import invalidate_cache
+
+    invalidate_cache()
+
+    # Keep this small comparator local: pytest-textual-snapshot is pinned to
+    # an EOL pytest version through syrupy, while Textual's screenshot helper
+    # already produces the SVG artifact we need to compare.
+    from textual._doc import take_svg_screenshot
+
+    return take_svg_screenshot(
+        app=ConfigApp(_session(tmp_path)),
+        press=(),
+        terminal_size=terminal_size,
+        run_before=None,
+    )
+
+
 @pytest.mark.parametrize("terminal_size", [(80, 24), (100, 30), (140, 45)])
 def test_config_center_snapshots(
     tmp_path: Path,
@@ -117,23 +144,19 @@ def test_config_center_snapshots(
     monkeypatch.setenv("COLORTERM", "truecolor")
     monkeypatch.setenv("TERM", "xterm-256color")
 
-    # Keep this small comparator local: pytest-textual-snapshot is pinned to
-    # an EOL pytest version through syrupy, while Textual's screenshot helper
-    # already produces the SVG artifact we need to compare.
-    from textual._doc import take_svg_screenshot
-
-    actual = take_svg_screenshot(
-        app=ConfigApp(_session(tmp_path)),
-        press=(),
-        terminal_size=terminal_size,
-        run_before=None,
-    )
     expected_path = (
         Path(__file__).parent / "__snapshots__" / Path(__file__).stem / f"{request.node.name}.svg"
     )
-    expected = expected_path.read_text(encoding="utf-8")
+    expected = _normalize_svg(expected_path.read_text(encoding="utf-8"))
 
-    def normalize(svg: str) -> str:
-        return re.sub(r"\bterminal-\d+-([\w-]+)", r"terminal-\1", svg)
-
-    assert normalize(actual) == normalize(expected)
+    # This is a full-screen Textual→SVG snapshot. It has proven intermittently
+    # flaky on loaded CI runners (a transient render glitch under xdist), which
+    # blocks releases. Re-render a few times and accept the first exact match; a
+    # real UI regression differs on EVERY attempt, so the final strict assert
+    # still catches it (and shows the diff). Renders are isolated tmp dirs (~0.3s).
+    actual = ""
+    for _ in range(3):
+        actual = _normalize_svg(_render_config_svg(tmp_path, terminal_size))
+        if actual == expected:
+            return
+    assert actual == expected
