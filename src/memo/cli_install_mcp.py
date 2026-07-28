@@ -340,6 +340,11 @@ def install_mcp(
             target_agents = list(_CLIENT_FILES)
         for rel, status in write_mandates_for_clients(target_agents, dry_run=not write):
             click.echo(f"  {rel:<28} {status}")
+    else:
+        click.echo(
+            "tip: add --with-mandate to also write the \"consult memo first\" "
+            "mandate into this project's client instruction files"
+        )
 
     if write:
         _seed_install_memory()

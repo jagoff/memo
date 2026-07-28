@@ -17,6 +17,10 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   as contested, and when an answer rests only on disputed evidence ask
   abstains deterministically (`abstained: "disputed"`, no extra LLM call).
   Disputed top hits no longer bypass the gate via the verbatim short-circuit.
+- MCP ambient-recall parity for MCP-only clients: pinnable `briefing` and
+  `recall <topic>` MCP prompts (fail-open, consult-attributed as
+  `mcp-prompt`), a memory-first contract in the server instructions, and an
+  install-mcp tip pointing at `--with-mandate`.
 
 ## [4.4.4] - 2026-07-27
 
