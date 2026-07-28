@@ -9,6 +9,27 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.4.5] - 2026-07-28
+
+### Fixed
+
+- PyPI project page rendering: the README banner and diagrams used relative
+  paths that PyPI cannot resolve — every image `src` and doc link is now an
+  absolute GitHub URL, so the page renders the banner, diagrams, and links.
+- MCP tool schemas now describe every parameter: `Annotated` + pydantic
+  `Field(description=...)` on all `server_operational` tools
+  (`memo_evidence_pack`, `memo_handoff_consume`, `memo_attention_ack`,
+  `memo_conflict_open`, `memo_outcome_record`, `memo_procedure_promote`, …)
+  and on `memo_ask` / `memo_chat_ask`. Docstrings now state side effects,
+  idempotency, and abstention behavior. Addresses the external MCP-directory
+  quality audit that flagged 0% parameter-description coverage on the
+  lowest-scoring tools.
+
+### Changed
+
+- Package `description` refreshed to match the README tagline (time-travel,
+  contradiction radar, automatic synthesis).
+
 ## [4.4.4] - 2026-07-27
 
 A second full file-by-file production audit of the whole `src/memo/` tree
