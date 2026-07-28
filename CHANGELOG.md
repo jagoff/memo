@@ -22,6 +22,42 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   `mcp-prompt`), a memory-first contract in the server instructions, and an
   install-mcp tip pointing at `--with-mandate`.
 
+## [4.4.6] - 2026-07-28
+
+### Added
+
+- MCP tool schemas now describe **every** parameter on the full surface:
+  `Annotated` + pydantic `Field(description=...)` on the remaining 46 tools
+  (157 parameters) across all `server_*` modules — completing the pass
+  v4.4.5 started on the operational tools. Descriptions are grounded in the
+  delegate implementations (clamps, allowed values, id-resolution rules,
+  time-travel semantics) and verified by a FastMCP client probe: zero
+  undescribed parameters remain.
+- Disambiguation docstrings for overlapping tools: `memo_save` vs
+  `memo_offload`, and `memo_search` / `memo_context` / `memo_search_trace` /
+  `memo_rerank`.
+
+## [4.4.5] - 2026-07-28
+
+### Fixed
+
+- PyPI project page rendering: the README banner and diagrams used relative
+  paths that PyPI cannot resolve — every image `src` and doc link is now an
+  absolute GitHub URL, so the page renders the banner, diagrams, and links.
+- MCP tool schemas now describe every parameter: `Annotated` + pydantic
+  `Field(description=...)` on all `server_operational` tools
+  (`memo_evidence_pack`, `memo_handoff_consume`, `memo_attention_ack`,
+  `memo_conflict_open`, `memo_outcome_record`, `memo_procedure_promote`, …)
+  and on `memo_ask` / `memo_chat_ask`. Docstrings now state side effects,
+  idempotency, and abstention behavior. Addresses the external MCP-directory
+  quality audit that flagged 0% parameter-description coverage on the
+  lowest-scoring tools.
+
+### Changed
+
+- Package `description` refreshed to match the README tagline (time-travel,
+  contradiction radar, automatic synthesis).
+
 ## [4.4.4] - 2026-07-27
 
 A second full file-by-file production audit of the whole `src/memo/` tree

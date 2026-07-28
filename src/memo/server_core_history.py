@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from memo.memory import AmbiguousIdError, Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
@@ -9,7 +11,15 @@ from memo.server_annotations import READ_ONLY, annotated_tool
 
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
-    def memo_provenance(id: str) -> dict[str, Any] | None:
+    def memo_provenance(
+        id: Annotated[
+            str,
+            Field(
+                description="Memory id to trace: full 32-char hex id or a unique "
+                "short prefix (git-style). Unknown ids return null."
+            ),
+        ],
+    ) -> dict[str, Any] | None:
         """Return provenance metadata for one memory.
 
         Read-only. Use with a full id or unique prefix when you need origin,
@@ -19,7 +29,24 @@ def register(server: Any, memory: Memory) -> None:
         return memory.provenance(id)
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_record_diff(id: str, limit: int = 50) -> dict[str, Any]:
+    def memo_record_diff(
+        id: Annotated[
+            str,
+            Field(
+                description="Memory id: full 32-char hex id or a unique short prefix. "
+                "Ids shorter than 32 chars are prefix-resolved; an ambiguous prefix "
+                "returns an error payload listing the matching ids."
+            ),
+        ],
+        limit: Annotated[
+            int,
+            Field(
+                description="Maximum history events to return (no clamp). The newest "
+                "`limit` events are fetched and returned oldest-first; `has_more` is "
+                "true when the record has at least `limit` events."
+            ),
+        ] = 50,
+    ) -> dict[str, Any]:
         """Return recent history events for one memory in chronological order.
 
         Read-only. Use to inspect how a memory changed over time before
@@ -46,9 +73,26 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_history(
-        limit: int = 20,
-        op: str | None = None,
-        id: str | None = None,
+        limit: Annotated[
+            int,
+            Field(description="Maximum events to return, newest first (no clamp)."),
+        ] = 20,
+        op: Annotated[
+            str | None,
+            Field(
+                description="Exact-match filter on operation type. Events are recorded "
+                'with op "save", "update", or "delete"; omit to include all ops.'
+            ),
+        ] = None,
+        id: Annotated[
+            str | None,
+            Field(
+                description="Restrict events to one memory: full 32-char hex id or a "
+                "unique short prefix. An ambiguous prefix returns a one-element error "
+                "list with the matching ids; an unknown prefix returns an empty list. "
+                "Omit for corpus-wide history."
+            ),
+        ] = None,
     ) -> list[dict[str, Any]]:
         """List recent memory history events.
 
@@ -68,7 +112,23 @@ def register(server: Any, memory: Memory) -> None:
         return memory.history.list_recent(limit=limit, op=op, record_id=record_id)
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_session_list(limit: int = 10, project: str | None = None) -> list[dict[str, Any]]:
+    def memo_session_list(
+        limit: Annotated[
+            int,
+            Field(
+                description="Maximum sessions to return, sorted by most recently "
+                "updated first (no clamp)."
+            ),
+        ] = 10,
+        project: Annotated[
+            str | None,
+            Field(
+                description="Exact project-name filter (the working-directory basename "
+                "recorded on the session, e.g. the repo folder name). Omit to list "
+                "sessions from all projects."
+            ),
+        ] = None,
+    ) -> list[dict[str, Any]]:
         """List tracked memo sessions.
 
         Read-only. Use to find recent session ids, transcript paths, and
@@ -80,7 +140,16 @@ def register(server: Any, memory: Memory) -> None:
         return list_sessions(memory.cfg.state_dir, limit=limit, project=project)
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_session_get(session_id: str) -> dict[str, Any] | None:
+    def memo_session_get(
+        session_id: Annotated[
+            str,
+            Field(
+                description="Full session id or a prefix of at least 4 characters. "
+                "On a prefix tie the first match wins; unknown or too-short ids "
+                "return null."
+            ),
+        ],
+    ) -> dict[str, Any] | None:
         """Fetch metadata for one tracked memo session.
 
         Read-only. Use after memo_session_list or memo_start_session when you

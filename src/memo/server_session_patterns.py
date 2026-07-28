@@ -18,7 +18,9 @@ import hashlib
 import logging
 import os
 import pathlib
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from memo.errors import NotFoundError
 from memo.identity import _session_id
@@ -493,7 +495,15 @@ def register(server: Any, memory: Any) -> None:
         return {"sync_id": row["id"], "status": row["judgment_status"]}
 
     @annotated_tool(server, **READ_ONLY)
-    def mem_relation_reviews(limit: int = 50) -> dict[str, Any]:
+    def mem_relation_reviews(
+        limit: Annotated[
+            int,
+            Field(
+                description="Maximum pending relations to return (clamped to 1-200), "
+                "most recently updated first."
+            ),
+        ] = 50,
+    ) -> dict[str, Any]:
         """List pending relation candidates for explicit agent/human judgment."""
         rows = memory.list_relation_reviews(limit=max(1, min(limit, 200)))
         return {"pending": rows, "count": len(rows)}

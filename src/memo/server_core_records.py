@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import Context
+from pydantic import Field
 
 from memo.errors import IdentityConflictError
 from memo.memory import AmbiguousIdError, Memory
@@ -38,16 +39,60 @@ def _safe_mcp_extra(extra: dict[str, Any] | None) -> dict[str, Any]:
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **WRITE)
     def memo_save(
-        content: str,
-        title: str | None = None,
-        type: str = "note",
-        tags: list[str] | None = None,
-        auto_derive: bool = False,
-        extract: bool | None = None,
-        extra: dict[str, Any] | None = None,
-        scope: str | None = None,
+        content: Annotated[
+            str,
+            Field(description="Markdown body to persist. Must be non-empty."),
+        ],
+        title: Annotated[
+            str | None,
+            Field(
+                description="Optional title; when omitted it is derived from the first line of content."
+            ),
+        ] = None,
+        type: Annotated[
+            str,
+            Field(
+                description="Memory type. One of: decision, fact, bug, feedback, preference, "
+                "note, manual, synthesis, procedure, failure_pattern, reference, temp."
+            ),
+        ] = "note",
+        tags: Annotated[
+            list[str] | None,
+            Field(description="Tags to attach; lower-cased and de-duplicated."),
+        ] = None,
+        auto_derive: Annotated[
+            bool,
+            Field(
+                description="When true, a helper LLM fills missing metadata (title/type/tags); "
+                "adds ~0.5-2s per save."
+            ),
+        ] = False,
+        extract: Annotated[
+            bool | None,
+            Field(
+                description="Decompose content into atomic facts saved individually; "
+                "None defers to the MEMO_SAVE_EXTRACT flag (off by default)."
+            ),
+        ] = None,
+        extra: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description="Arbitrary JSON metadata bag stored with the record. "
+                "Authority-controlled keys (write_policy, visibility, trust_tier, ...) are stripped."
+            ),
+        ] = None,
+        scope: Annotated[
+            str | None,
+            Field(
+                description="'global' skips the auto project:<repo> tag (global recall tier); "
+                "'project' or None keep auto-detection. Other values are rejected."
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Persist `content` to memo.
+
+        Use memo_save for a durable curated fact, decision, or preference;
+        use memo_offload for bulk dumps of working context.
 
         When `extract` is true (defaults to the `MEMO_SAVE_EXTRACT` flag, off),
         the helper LLM decomposes `content` into atomic facts and saves each as
@@ -119,7 +164,19 @@ def register(server: Any, memory: Memory) -> None:
         return rec.to_dict()
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_list(limit: int = 20, type: str | None = None) -> list[dict[str, Any]]:
+    def memo_list(
+        limit: Annotated[
+            int,
+            Field(description="Maximum records to return, newest by `updated` first."),
+        ] = 20,
+        type: Annotated[
+            str | None,
+            Field(
+                description="Filter to one memory type (e.g. 'decision', 'fact'); "
+                "None lists every type."
+            ),
+        ] = None,
+    ) -> list[dict[str, Any]]:
         """List recent memories, optionally filtered by memory type.
 
         Read-only. Use this to browse the corpus before choosing an id for
@@ -129,7 +186,12 @@ def register(server: Any, memory: Memory) -> None:
         return [r.to_dict() for r in memory.list(limit=limit, type_=type)]
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_get(id: str) -> dict[str, Any] | None:
+    def memo_get(
+        id: Annotated[
+            str,
+            Field(description="Full 32-char memory id or a unique prefix (git-style short ids)."),
+        ],
+    ) -> dict[str, Any] | None:
         """Fetch one memory by id or unique id prefix.
 
         Read-only. Returns the full memory record, `None` when it does not
@@ -146,14 +208,53 @@ def register(server: Any, memory: Memory) -> None:
 
     @annotated_tool(server, **DESTRUCTIVE)
     def memo_update(
-        id: str,
-        title: str | None = None,
-        type: str | None = None,
-        tags: list[str] | None = None,
-        content: str | None = None,
-        replace_old: str | None = None,
-        replace_new: str | None = None,
-        append: str | None = None,
+        id: Annotated[
+            str,
+            Field(description="Id or unique id prefix of the memory to patch."),
+        ],
+        title: Annotated[
+            str | None,
+            Field(description="New title; None leaves the title unchanged."),
+        ] = None,
+        type: Annotated[
+            str | None,
+            Field(
+                description="New memory type (must be a valid type, e.g. 'decision', 'fact'); "
+                "None leaves it unchanged."
+            ),
+        ] = None,
+        tags: Annotated[
+            list[str] | None,
+            Field(
+                description="Full replacement tag list (lower-cased, de-duplicated); "
+                "None leaves tags unchanged."
+            ),
+        ] = None,
+        content: Annotated[
+            str | None,
+            Field(
+                description="Full replacement body. Mutually exclusive with "
+                "replace_old/replace_new and append."
+            ),
+        ] = None,
+        replace_old: Annotated[
+            str | None,
+            Field(
+                description="Exact string to find in the body; must occur exactly once. "
+                "Pass together with replace_new."
+            ),
+        ] = None,
+        replace_new: Annotated[
+            str | None,
+            Field(description="Replacement text for replace_old. Pass together with replace_old."),
+        ] = None,
+        append: Annotated[
+            str | None,
+            Field(
+                description="Paragraph appended to the end of the body. Mutually exclusive "
+                "with content and replace_old/replace_new."
+            ),
+        ] = None,
     ) -> dict[str, Any] | None:
         """Patch fields on a memory. `content` replaces the whole body;
         `replace_old`+`replace_new` is a surgical exact-string edit (old must
@@ -196,7 +297,19 @@ def register(server: Any, memory: Memory) -> None:
         return rec.to_dict() if rec else None
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_rename(title: str, id: str | None = None) -> dict[str, Any] | None:
+    def memo_rename(
+        title: Annotated[
+            str,
+            Field(description="New title for the memory."),
+        ],
+        id: Annotated[
+            str | None,
+            Field(
+                description="Id or unique prefix of the memory to rename; when omitted, "
+                "targets the most recent save made on this device."
+            ),
+        ] = None,
+    ) -> dict[str, Any] | None:
         """Rename one memory title without changing its body or tags.
 
         Destructive metadata edit. Use after memo_save or memo_search when a
@@ -218,7 +331,15 @@ def register(server: Any, memory: Memory) -> None:
         return rec.to_dict() if rec else None
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
-    def memo_reindex(force: bool = False) -> dict[str, int]:
+    def memo_reindex(
+        force: Annotated[
+            bool,
+            Field(
+                description="When true, re-embed every indexed entry even when the on-disk "
+                "body is unchanged (e.g. after an embedder model swap)."
+            ),
+        ] = False,
+    ) -> dict[str, int]:
         """Rebuild memo's searchable index from the markdown vault.
 
         Writes only derived index state; markdown remains the source of truth.
@@ -228,7 +349,15 @@ def register(server: Any, memory: Memory) -> None:
         return memory.reindex(force=force)
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_delete(id: str) -> dict[str, Any]:
+    def memo_delete(
+        id: Annotated[
+            str,
+            Field(
+                description="Id or unique prefix of the memory to delete permanently "
+                "(markdown file + index rows)."
+            ),
+        ],
+    ) -> dict[str, Any]:
         """Permanently delete one memory by id or unique prefix.
 
         Destructive. Resolves ambiguous short ids safely and returns an error
@@ -262,7 +391,19 @@ def register(server: Any, memory: Memory) -> None:
         return out
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_forget(id: str, reason: str | None = None) -> dict[str, Any]:
+    def memo_forget(
+        id: Annotated[
+            str,
+            Field(description="Id or unique prefix of the memory to hide from recall."),
+        ],
+        reason: Annotated[
+            str | None,
+            Field(
+                description="Optional free-text reason recorded in the memory's metadata "
+                "as forget_reason."
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
         """Mark one memory as forgotten without deleting its history.
 
         Destructive in retrieval behavior: the memory is hidden from normal
@@ -278,7 +419,12 @@ def register(server: Any, memory: Memory) -> None:
         return {"forgotten": True, "id": rec.id}
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
-    def memo_unforget(id: str) -> dict[str, Any]:
+    def memo_unforget(
+        id: Annotated[
+            str,
+            Field(description="Id or unique prefix of the forgotten memory to restore."),
+        ],
+    ) -> dict[str, Any]:
         """Restore a previously forgotten memory to normal retrieval.
 
         Idempotent write. Accepts a full id or unique prefix and returns

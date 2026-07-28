@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from memo.associative import associate
 from memo.errors import AmbiguousIdError
@@ -65,6 +67,34 @@ def related_for(memory: Any, query_or_id: str, hops: int = 2, limit: int = 5) ->
 
 def register(server: Any, memory: Any) -> None:
     @annotated_tool(server, **READ_ONLY)
-    def memo_related(query_or_id: str, hops: int = 2, limit: int = 5) -> list[dict]:
+    def memo_related(
+        query_or_id: Annotated[
+            str,
+            Field(
+                description=(
+                    "Memory id or search query. Resolved as an id first (single seed); "
+                    "otherwise treated as a search query whose top 5 hits seed the expansion."
+                ),
+            ),
+        ],
+        hops: Annotated[
+            int,
+            Field(
+                description=(
+                    "Graph-expansion depth over the entity/code graph (effectively capped "
+                    "at 3); activation decays per hop (1.0, 0.5, 0.25)."
+                ),
+            ),
+        ] = 2,
+        limit: Annotated[
+            int,
+            Field(
+                description=(
+                    "Maximum related memories returned, after dropping forgotten or "
+                    "missing records."
+                ),
+            ),
+        ] = 5,
+    ) -> list[dict]:
         """Memories structurally connected (via the entity/code graph) to a memory or query."""
         return related_for(memory, query_or_id, hops=hops, limit=limit)

@@ -7,9 +7,10 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
@@ -90,9 +91,30 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_graph_trace(
-        memory_id: str | None = None,
-        code: str | None = None,
-        limit: int = 50,
+        memory_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Memory id (or unique id prefix) whose linked code references to "
+                    "return. Provide exactly one of memory_id or code."
+                ),
+            ),
+        ] = None,
+        code: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Code reference whose linked memories to return: a codegraph:// "
+                    "URI (exact, case-insensitive) or a substring of a symbol label, "
+                    "qualified name, file path, or stable symbol id. Provide exactly "
+                    "one of memory_id or code."
+                ),
+            ),
+        ] = None,
+        limit: Annotated[
+            int,
+            Field(description="Maximum linked items to return (clamped to 1-200)."),
+        ] = 50,
     ) -> dict[str, Any]:
         """Trace evidence from one memory to code, or one code reference to memories.
 
@@ -103,11 +125,46 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_graph_discover(
-        min_community_size: int = 4,
-        min_bridge_side: int = 2,
-        max_communities: int = 5,
-        max_bridges: int = 5,
-        include_code: bool = True,
+        min_community_size: Annotated[
+            int,
+            Field(
+                description=(
+                    "Minimum node count for a connected component to be reported as "
+                    "a community (components above the internal 40-node region cap "
+                    "are also skipped)."
+                ),
+            ),
+        ] = 4,
+        min_bridge_side: Annotated[
+            int,
+            Field(
+                description=(
+                    "Minimum node count required on each side of an articulation "
+                    "bridge (floored to 1)."
+                ),
+            ),
+        ] = 2,
+        max_communities: Annotated[
+            int,
+            Field(description="Maximum communities to return, largest first (floored to 0)."),
+        ] = 5,
+        max_bridges: Annotated[
+            int,
+            Field(
+                description=(
+                    "Maximum bridges to return, largest combined sides first (floored to 0)."
+                ),
+            ),
+        ] = 5,
+        include_code: Annotated[
+            bool,
+            Field(
+                description=(
+                    "If false, exclude codegraph:// code nodes from the graph before "
+                    "detecting communities and bridges."
+                ),
+            ),
+        ] = True,
     ) -> dict[str, Any]:
         """Discover bounded curated communities and bridges with exact evidence."""
         return memory.graph_discover(
