@@ -61,6 +61,7 @@ from memo import server_multimodal as _srv_multimodal
 from memo import server_offload as _srv_offload
 from memo import server_operational as _srv_operational
 from memo import server_profile as _srv_profile
+from memo import server_prompts as _srv_prompts
 from memo import server_query as _srv_query
 from memo import server_reflect as _srv_reflect
 from memo import server_related as _srv_related
@@ -338,6 +339,7 @@ def _build_server(
     _srv_operational.register(server, memory)
     _srv_resources.register(server, memory)
     _srv_profile.register(server, memory)
+    _srv_prompts.register(server, memory)
     # Truth-validity lifecycle is part of the stable CRUD contract and must be
     # available to the default agent profile, not only the advanced surface.
     _srv_lifecycle.register(server, memory)
