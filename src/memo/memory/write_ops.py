@@ -457,6 +457,12 @@ class _WriteOpsMixin(_MemoryBase):
         # are correctness invariants, independent of the optional early capture
         # and ingest passes. Do this before any LLM, freeze check, hashing,
         # embedding, history, receipt, or log can observe caller-controlled text.
+        #
+        # ORDERING IS INTENTIONAL — sanitize runs on the FULL content, and the
+        # max_content_chars truncation happens LATER (see below). Do NOT reorder
+        # to truncate-first "to save work": a secret straddling the cut would be
+        # split, leaving an unredacted fragment on disk. The redaction regex is
+        # already linear, so scanning the full length is cheap (see redact.py).
         from memo.redact import sanitize_memory_input
 
         sanitized = sanitize_memory_input(
