@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/banner.jpg" alt="memo — local memory for AI" width="100%" />
+<img src="https://raw.githubusercontent.com/jagoff/memo/master/docs/banner.jpg" alt="memo — local memory for AI" width="100%" />
 
 # memo — MCP semantic memory server with MLX embeddings
 
@@ -11,7 +11,7 @@
 [![PyPI](https://img.shields.io/pypi/v/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
 [![Downloads](https://static.pepy.tech/badge/mlx-memo)](https://pepy.tech/project/mlx-memo)
 [![Python](https://img.shields.io/pypi/pyversions/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jagoff/memo/blob/master/LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
 <a href="https://glama.ai/mcp/servers/jagoff/memo">
   <img src="https://glama.ai/mcp/servers/jagoff/memo/badges/score.svg" alt="memo MCP server score" />
@@ -46,7 +46,7 @@ federation uses a local signing key that you control.
 ## Install — one step
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.4/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.5/install.sh | bash
 ```
 
 The installer auto-detects **uv** (preferred) or falls back to **pipx**. It downloads MLX models, and wires memo into every agent client it finds (Claude Code, Codex, Devin, Devin Desktop, OpenCode).
@@ -69,14 +69,14 @@ image (CPU backend on Linux — search/recall/save; the reranker + `ask`/
 docker run --rm ghcr.io/jagoff/memo:latest memo doctor
 ```
 
-Details in **[docs/docker.md](docs/docker.md)**.
+Details in **[docs/docker.md](https://github.com/jagoff/memo/blob/master/docs/docker.md)**.
 
-First install downloads ~8 GB of MLX models (5–15 min); later installs hit the HuggingFace cache. Full installer knobs and "move to a new Mac" steps: **[docs/reference.md › Install](docs/reference.md#install-detail)**.
+First install downloads ~8 GB of MLX models (5–15 min); later installs hit the HuggingFace cache. Full installer knobs and "move to a new Mac" steps: **[docs/reference.md › Install](https://github.com/jagoff/memo/blob/master/docs/reference.md#install-detail)**.
 
 **Migrating from another Mac?** Install first, then restore your corpus:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.4/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.5/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git   # restore from git
 ```
 
@@ -99,11 +99,11 @@ repositories, or private contract packages.
 
 Existing vaults remain Markdown-compatible. Legacy operational metadata is
 translated one way into Memo-native contracts; it is never required at runtime.
-See [Memo 4 independence and migration](docs/memo-4-independence.md).
+See [Memo 4 independence and migration](https://github.com/jagoff/memo/blob/master/docs/memo-4-independence.md).
 
 ### Measured results
 
-Numbers from real command output on the author's live corpus (~4,900 memories, measured 2026-07-20). Methodology, reproduction commands, limitations, and an adversarial challenger review of these very claims: **[docs/BENCHMARK.md](docs/BENCHMARK.md)**.
+Numbers from real command output on the author's live corpus (~4,900 memories, measured 2026-07-20). Methodology, reproduction commands, limitations, and an adversarial challenger review of these very claims: **[docs/BENCHMARK.md](https://github.com/jagoff/memo/blob/master/docs/BENCHMARK.md)**.
 
 | Metric | Result | Command |
 |---|---|---|
@@ -122,21 +122,21 @@ current. Set `MEMO_AUTO_UPDATE=0` to opt out and keep startup fully offline.
 Statusline and hook self-healing remain explicit opt-ins, and startup does not
 rewrite Claude or Codex configuration. Commands such as update and cross-machine
 sync, plus requested model or benchmark downloads, may use the network. See the
-[privacy and network policy](docs/privacy.md) for the exact flags and boundaries.
+[privacy and network policy](https://github.com/jagoff/memo/blob/master/docs/privacy.md) for the exact flags and boundaries.
 
 <!-- mcp-name: io.github.jagoff/memo -->
 
-`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your own machine** — **macOS on Apple Silicon** via [Apple MLX](https://github.com/ml-explore/mlx), or **Linux / Ubuntu on a CPU `sentence-transformers` backend** (see [docs/ubuntu.md](docs/ubuntu.md)). Each memory is a plain Markdown file; embeddings live in a single sqlite file; the embedder, reranker, and LLM run in-process — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
+`memo` gives any MCP-aware agent (Claude Code, Codex, Devin, OpenCode, Cursor, Cline, Continue, …) a long-term memory that **runs entirely on your own machine** — **macOS on Apple Silicon** via [Apple MLX](https://github.com/ml-explore/mlx), or **Linux / Ubuntu on a CPU `sentence-transformers` backend** (see [docs/ubuntu.md](https://github.com/jagoff/memo/blob/master/docs/ubuntu.md)). Each memory is a plain Markdown file; embeddings live in a single sqlite file; the embedder, reranker, and LLM run in-process — no Ollama, no Qdrant, no cloud API, no keys. Your prompts and memories never leave the machine.
 
 <div align="center">
 
-<img src="docs/diagram-loop.svg" alt="Save a fact once and any later session recalls it automatically, all stored locally on your own machine." width="760" />
+<img src="https://raw.githubusercontent.com/jagoff/memo/master/docs/diagram-loop.svg" alt="Save a fact once and any later session recalls it automatically, all stored locally on your own machine." width="760" />
 
 </div>
 
 <div align="center">
 
-<img src="docs/demo.gif" alt="memo in a terminal: save a fact once, then a later session recalls it automatically." width="760" />
+<img src="https://raw.githubusercontent.com/jagoff/memo/master/docs/demo.gif" alt="memo in a terminal: save a fact once, then a later session recalls it automatically." width="760" />
 
 </div>
 
@@ -151,7 +151,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 
 `memo tokens` tracks the savings in real-time:
 
-<img src="docs/tokens-screenshot.png" alt="memo tokens — showing 673k tokens saved all-time across 1924 memories used" width="760" />
+<img src="https://raw.githubusercontent.com/jagoff/memo/master/docs/tokens-screenshot.png" alt="memo tokens — showing 673k tokens saved all-time across 1924 memories used" width="760" />
 
 | Technique | How to enable | Typical saving |
 |---|---|---|
@@ -195,7 +195,7 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 ## Requirements
 
 - **macOS on Apple Silicon** (M1–M4) — MLX is the load-bearing piece and the only path with the reranker + LLM features (ask / synthesize / dream).
-- **Linux / Ubuntu** — supported as a **standalone** install via a CPU `sentence-transformers` backend (search + recall + save, no MLX). The install command in **[docs/ubuntu.md](docs/ubuntu.md)** uses the official PyTorch CPU index to avoid downloading CUDA libraries. Intel Macs are unsupported because current PyTorch releases do not ship Python 3.13 wheels for that platform.
+- **Linux / Ubuntu** — supported as a **standalone** install via a CPU `sentence-transformers` backend (search + recall + save, no MLX). The install command in **[docs/ubuntu.md](https://github.com/jagoff/memo/blob/master/docs/ubuntu.md)** uses the official PyTorch CPU index to avoid downloading CUDA libraries. Intel Macs are unsupported because current PyTorch releases do not ship Python 3.13 wheels for that platform.
 - **~8 GB** free disk for the default model set (the installer downloads it).
 - *Optional:* an Obsidian vault. Without one, memo defaults to `~/Documents/memo/`.
 
@@ -206,11 +206,11 @@ On a ~200-memory corpus, `memo roi` estimates **~80k tokens of model work avoide
 memo installs itself if you hand the repo (or just the install line) to an AI agent:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.4/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.5/install.sh | bash
 memo doctor --strict-runtime     # verify runtime is healthy
 ```
 
-After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_context`, `memo_ask`, `memo_get`, `memo_graph`, `memo_unified_briefing`, plus capture/session/version helpers on the default profile). Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md › MCP setup](docs/reference.md#mcp-setup)**.
+After install, tools surface as `mcp__memo__memo_*` (`memo_save`, `memo_search`, `memo_context`, `memo_ask`, `memo_get`, `memo_graph`, `memo_unified_briefing`, plus capture/session/version helpers on the default profile). Per-client setup (Claude Desktop, Cursor, Cline, Continue, manual JSON) is in **[docs/reference.md › MCP setup](https://github.com/jagoff/memo/blob/master/docs/reference.md#mcp-setup)**.
 
 ## Quick start
 
@@ -235,7 +235,7 @@ help and the existing `config show|validate|set|unset` commands remain headless.
 
 ## Core features
 
-- **Ambient recall** — every prompt silently consults memory and injects top hits as context. A warm recall daemon keeps it fast (p50 ~0.6 s on the benchmark corpus — see [docs/BENCHMARK.md](docs/BENCHMARK.md)). No `/remember` calls.
+- **Ambient recall** — every prompt silently consults memory and injects top hits as context. A warm recall daemon keeps it fast (p50 ~0.6 s on the benchmark corpus — see [docs/BENCHMARK.md](https://github.com/jagoff/memo/blob/master/docs/BENCHMARK.md)). No `/remember` calls.
 - **Auto-capture** — a `Stop` hook extracts durable insights from each exchange through a quality gate. The corpus grows on its own.
 - **Session briefing** — `SessionStart` surfaces open loops, a memory of the day, and one-line crash recovery.
 - **Cross-agent resume** — `memo resume` reopens any recent session from **any** agent (Claude Code, Codex, Devin, Gemini, OpenCode) in one arrow-key picker, resumed natively. [Details ↓](#-resume-any-session--from-any-agent)
@@ -250,7 +250,7 @@ help and the existing `config show|validate|set|unset` commands remain headless.
 
 <div align="center">
 
-<img src="docs/resume-screenshot.png" alt="memo resume: one arrow-key picker listing recent sessions across Claude, Codex, Devin, Gemini, and OpenCode — each tagged by agent, each resumable natively." width="820" />
+<img src="https://raw.githubusercontent.com/jagoff/memo/master/docs/resume-screenshot.png" alt="memo resume: one arrow-key picker listing recent sessions across Claude, Codex, Devin, Gemini, and OpenCode — each tagged by agent, each resumable natively." width="820" />
 
 </div>
 
@@ -322,7 +322,7 @@ Every phase logs to a **receipt** (`<state_dir>/dream/last.json` — `~/.local/s
 
 <div align="center">
 
-<img src="docs/diagram-dream.svg" alt="memo dream: 7-phase pipeline with optional self-improvement (tuner/consolidate/anticipate)" width="100%" />
+<img src="https://raw.githubusercontent.com/jagoff/memo/master/docs/diagram-dream.svg" alt="memo dream: 7-phase pipeline with optional self-improvement (tuner/consolidate/anticipate)" width="100%" />
 
 </div>
 
@@ -505,7 +505,7 @@ For an authenticated network bind, use `memo http-api --host 0.0.0.0 --allow-non
 
 <div align="center">
 
-<img src="docs/diagram-recall.svg" alt="A prompt runs a vector search and a keyword search in parallel; results are fused, reranked, and the top memory is injected." width="820" />
+<img src="https://raw.githubusercontent.com/jagoff/memo/master/docs/diagram-recall.svg" alt="A prompt runs a vector search and a keyword search in parallel; results are fused, reranked, and the top memory is injected." width="820" />
 
 </div>
 
@@ -513,7 +513,7 @@ For an authenticated network bind, use `memo http-api --host 0.0.0.0 --allow-non
 
 <div align="center">
 
-<img src="docs/diagram-storage.svg" alt="Markdown files are canonical; the sqlite index is derived and can be rebuilt from them at any time." width="760" />
+<img src="https://raw.githubusercontent.com/jagoff/memo/master/docs/diagram-storage.svg" alt="Markdown files are canonical; the sqlite index is derived and can be rebuilt from them at any time." width="760" />
 
 </div>
 
@@ -533,16 +533,16 @@ Switch with `MEMO_EMBEDDER_MODEL` + its exact 40-character
 
 | Topic | Where |
 |---|---|
-| Full install detail, installer knobs, new-Mac migration | [docs/reference.md › Install](docs/reference.md#install-detail) |
-| Per-client MCP setup + the `/memo` slash command | [docs/reference.md › MCP setup](docs/reference.md#mcp-setup) |
-| MCP profile tools and advanced domains | [docs/reference.md › MCP tools](docs/reference.md#mcp-tools) |
-| Ambient memory, recall daemon, capture & recall tuning | [docs/reference.md › Ambient memory](docs/reference.md#ambient-memory) |
-| Time-machine, session briefing, semantic map | [docs/reference.md › Surfaces](docs/reference.md#surfaces) |
-| Full CLI reference + live dashboard (`memo tui`) | [docs/reference.md › CLI](docs/reference.md#cli-reference) |
-| Stable/common `MEMO_*` flags, model profiles, upgrading the embedder | [docs/reference.md › Configuration](docs/reference.md#configuration) |
-| Architecture, sync tiers, design notes | [docs/reference.md › Design & comparison](docs/reference.md#design-and-comparison) |
+| Full install detail, installer knobs, new-Mac migration | [docs/reference.md › Install](https://github.com/jagoff/memo/blob/master/docs/reference.md#install-detail) |
+| Per-client MCP setup + the `/memo` slash command | [docs/reference.md › MCP setup](https://github.com/jagoff/memo/blob/master/docs/reference.md#mcp-setup) |
+| MCP profile tools and advanced domains | [docs/reference.md › MCP tools](https://github.com/jagoff/memo/blob/master/docs/reference.md#mcp-tools) |
+| Ambient memory, recall daemon, capture & recall tuning | [docs/reference.md › Ambient memory](https://github.com/jagoff/memo/blob/master/docs/reference.md#ambient-memory) |
+| Time-machine, session briefing, semantic map | [docs/reference.md › Surfaces](https://github.com/jagoff/memo/blob/master/docs/reference.md#surfaces) |
+| Full CLI reference + live dashboard (`memo tui`) | [docs/reference.md › CLI](https://github.com/jagoff/memo/blob/master/docs/reference.md#cli-reference) |
+| Stable/common `MEMO_*` flags, model profiles, upgrading the embedder | [docs/reference.md › Configuration](https://github.com/jagoff/memo/blob/master/docs/reference.md#configuration) |
+| Architecture, sync tiers, design notes | [docs/reference.md › Design & comparison](https://github.com/jagoff/memo/blob/master/docs/reference.md#design-and-comparison) |
 
-Contributors: `git clone https://github.com/jagoff/memo && cd memo && uv pip install -e '.[dev]'`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributors: `git clone https://github.com/jagoff/memo && cd memo && uv pip install -e '.[dev]'`. See [CONTRIBUTING.md](https://github.com/jagoff/memo/blob/master/CONTRIBUTING.md).
 
 ## Privacy
 
@@ -550,8 +550,8 @@ memo is **local-first**: everything you save is stored on your own machine as
 markdown files plus a rebuildable SQLite index. Embeddings and any LLM steps run
 in-process (MLX / CPU) — **no cloud API, no keys, no telemetry**. The only way
 memory leaves your device is if **you** configure a git `memo-sync` remote you
-own. Full detail: [PRIVACY.md](PRIVACY.md).
+own. Full detail: [PRIVACY.md](https://github.com/jagoff/memo/blob/master/PRIVACY.md).
 
 ## License & provenance
 
-MIT — see [LICENSE](LICENSE). Forked philosophically from [`mem-vault`](https://github.com/jagoff/mem-vault) (storage layout + frontmatter schema); the MLX backend pieces are ported from [`obsidian-rag`](https://github.com/jagoff/rag-obsidian). Memo is a standalone system: runtime, state, trust, recovery, and federation are all owned within this repository.
+MIT — see [LICENSE](https://github.com/jagoff/memo/blob/master/LICENSE). Forked philosophically from [`mem-vault`](https://github.com/jagoff/mem-vault) (storage layout + frontmatter schema); the MLX backend pieces are ported from [`obsidian-rag`](https://github.com/jagoff/rag-obsidian). Memo is a standalone system: runtime, state, trust, recovery, and federation are all owned within this repository.

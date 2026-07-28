@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from memo.server_annotations import READ_ONLY, WRITE, WRITE_IDEMPOTENT, annotated_tool
 
@@ -11,14 +13,46 @@ from memo.server_annotations import READ_ONLY, WRITE, WRITE_IDEMPOTENT, annotate
 def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
     @annotated_tool(server, **READ_ONLY)
     def memo_evidence_pack(
-        question: str,
-        k: int = 8,
-        max_chars: int = 12_000,
-        min_coverage: float = 0.2,
-        type: str | None = None,
-        as_of: str | None = None,
+        question: Annotated[
+            str,
+            Field(description="Natural-language question to collect cited evidence for."),
+        ],
+        k: Annotated[
+            int,
+            Field(description="Maximum candidate memories to retrieve (clamped to 1-50)."),
+        ] = 8,
+        max_chars: Annotated[
+            int,
+            Field(description="Character budget for the packed evidence text."),
+        ] = 12_000,
+        min_coverage: Annotated[
+            float,
+            Field(
+                description="Minimum retrieval coverage (0-1) required to answer; "
+                "below it the pack abstains explicitly."
+            ),
+        ] = 0.2,
+        type: Annotated[
+            str | None,
+            Field(
+                description="Restrict evidence to one memory type "
+                "(e.g. 'decision', 'fact'); None searches every type."
+            ),
+        ] = None,
+        as_of: Annotated[
+            str | None,
+            Field(
+                description="ISO date/datetime for time-travel: only memories "
+                "valid at that moment are considered."
+            ),
+        ] = None,
     ) -> dict[str, Any]:
-        """Return bounded, cited evidence or an explicit abstention."""
+        """Return bounded, cited evidence for a question, or an explicit abstention.
+
+        Read-only, no side effects. Every snippet carries a memo:// citation;
+        when retrieval coverage stays under `min_coverage` the result is an
+        explicit abstention, never a fabricated answer.
+        """
         return memory.evidence_pack(
             question,
             k=max(1, min(k, 50)),
@@ -29,13 +63,27 @@ def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
         ).to_dict()
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_operational_state(project: str | None = None) -> dict[str, Any]:
-        """Read focus, handoffs, attention, conflicts, and outcomes."""
+    def memo_operational_state(
+        project: Annotated[
+            str | None,
+            Field(description="Project tag to scope the state to; None returns every project."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Read current focus, handoffs, attention items, conflicts, and outcomes.
+
+        Read-only snapshot of the operational journal's current state.
+        """
         return memory.operational.state(project=project)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_federation_preview(
-        principal: str,
+        principal: Annotated[
+            str,
+            Field(
+                description="Principal (device id) of the intended bundle recipient "
+                "whose ACL-visible memories are previewed."
+            ),
+        ],
     ) -> dict[str, Any]:
         """Preview the exact memories an ACL would allow into a signed bundle."""
         if principal.strip() == memory.cfg.device_id:
@@ -57,11 +105,24 @@ def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
 def _register_focus_and_handoff_tools(server: Any, memory: Any) -> None:
     @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_focus_set(
-        project: str,
-        summary: str,
-        actor_id: str = "memo",
+        project: Annotated[
+            str,
+            Field(description="Project tag the focus belongs to."),
+        ],
+        summary: Annotated[
+            str,
+            Field(description="One-line description of the work currently in focus."),
+        ],
+        actor_id: Annotated[
+            str,
+            Field(description="Identifier of the agent setting the focus (journaled)."),
+        ] = "memo",
     ) -> dict[str, Any]:
-        """Set the current focus for a project."""
+        """Set the current focus for a project.
+
+        Replaces the project's previous focus; the change is journaled with
+        the acting agent's identity. Safe to repeat with the same summary.
+        """
         from memo.contracts import ActorIdentity
 
         return asdict(
@@ -73,8 +134,20 @@ def _register_focus_and_handoff_tools(server: Any, memory: Any) -> None:
         )
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
-    def memo_focus_clear(project: str, actor_id: str = "memo") -> dict[str, Any]:
-        """Clear a project's current focus."""
+    def memo_focus_clear(
+        project: Annotated[
+            str,
+            Field(description="Project tag whose focus should be cleared."),
+        ],
+        actor_id: Annotated[
+            str,
+            Field(description="Identifier of the agent clearing the focus (journaled)."),
+        ] = "memo",
+    ) -> dict[str, Any]:
+        """Clear a project's current focus.
+
+        Idempotent: returns {'cleared': false} when no focus was set.
+        """
         from memo.contracts import ActorIdentity
 
         return {
@@ -86,12 +159,31 @@ def _register_focus_and_handoff_tools(server: Any, memory: Any) -> None:
 
     @annotated_tool(server, **WRITE)
     def memo_handoff_create(
-        project: str,
-        summary: str,
-        from_actor: str,
-        to_actor: str = "",
+        project: Annotated[
+            str,
+            Field(description="Project tag the handoff belongs to."),
+        ],
+        summary: Annotated[
+            str,
+            Field(description="What the receiving agent needs to know to continue the work."),
+        ],
+        from_actor: Annotated[
+            str,
+            Field(description="Identifier of the agent creating the handoff."),
+        ],
+        to_actor: Annotated[
+            str,
+            Field(
+                description="Target agent identifier; empty string leaves the "
+                "handoff open to any agent."
+            ),
+        ] = "",
     ) -> dict[str, Any]:
-        """Create a durable handoff for another agent or session."""
+        """Create a durable handoff for another agent or session.
+
+        Writes a journaled handoff record that surfaces in
+        memo_operational_state until some agent consumes it.
+        """
         return asdict(
             memory.operational.create_handoff(
                 project=project,
@@ -102,19 +194,48 @@ def _register_focus_and_handoff_tools(server: Any, memory: Any) -> None:
         )
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
-    def memo_handoff_consume(id: str, actor_id: str = "memo") -> dict[str, Any]:
-        """Mark a handoff consumed."""
+    def memo_handoff_consume(
+        id: Annotated[
+            str,
+            Field(
+                description="Id of the handoff to mark consumed "
+                "(from memo_operational_state or memo_handoff_create)."
+            ),
+        ],
+        actor_id: Annotated[
+            str,
+            Field(description="Identifier of the consuming agent (journaled)."),
+        ] = "memo",
+    ) -> dict[str, Any]:
+        """Mark a handoff consumed so it stops surfacing to later agents.
+
+        Idempotent: returns {'consumed': false} when the id is unknown or the
+        handoff was already consumed; true only on the first consume.
+        """
         return {"consumed": memory.operational.consume_handoff(id, actor_id=actor_id)}
 
 
 def _register_attention_and_conflict_tools(server: Any, memory: Any) -> None:
     @annotated_tool(server, **WRITE)
     def memo_attention_add(
-        project: str,
-        summary: str,
-        severity: str = "medium",
+        project: Annotated[
+            str,
+            Field(description="Project tag the attention item belongs to."),
+        ],
+        summary: Annotated[
+            str,
+            Field(description="The item later agents must see before working on the project."),
+        ],
+        severity: Annotated[
+            str,
+            Field(description="One of 'low', 'medium', 'high', 'critical'."),
+        ] = "medium",
     ) -> dict[str, Any]:
-        """Add an item that must be surfaced to later agents."""
+        """Add an item that must be surfaced to later agents.
+
+        Writes a journaled attention record; severities outside
+        low|medium|high|critical are rejected.
+        """
         return asdict(
             memory.operational.add_attention(
                 project=project,
@@ -124,8 +245,21 @@ def _register_attention_and_conflict_tools(server: Any, memory: Any) -> None:
         )
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
-    def memo_attention_ack(id: str, actor_id: str = "memo") -> dict[str, Any]:
-        """Acknowledge an attention item."""
+    def memo_attention_ack(
+        id: Annotated[
+            str,
+            Field(description="Id of the attention item to acknowledge."),
+        ],
+        actor_id: Annotated[
+            str,
+            Field(description="Identifier of the acknowledging agent (journaled)."),
+        ] = "memo",
+    ) -> dict[str, Any]:
+        """Acknowledge an attention item so it stops being surfaced.
+
+        Idempotent: returns {'acknowledged': false} when the id is unknown or
+        already acknowledged; true only on the first acknowledgement.
+        """
         return {
             "acknowledged": memory.operational.acknowledge_attention(
                 id,
@@ -135,12 +269,32 @@ def _register_attention_and_conflict_tools(server: Any, memory: Any) -> None:
 
     @annotated_tool(server, **WRITE)
     def memo_conflict_open(
-        topic: str,
-        summary: str,
-        freeze_write: bool = True,
-        evidence_uris: list[str] | None = None,
+        topic: Annotated[
+            str,
+            Field(description="Short stable label for the disputed subject."),
+        ],
+        summary: Annotated[
+            str,
+            Field(description="Description of the conflicting claims or evidence."),
+        ],
+        freeze_write: Annotated[
+            bool,
+            Field(
+                description="When true, mark the topic write-frozen until a "
+                "human resolves the conflict."
+            ),
+        ] = True,
+        evidence_uris: Annotated[
+            list[str] | None,
+            Field(description="memo:// URIs of the evidence supporting each side."),
+        ] = None,
     ) -> dict[str, Any]:
-        """Open a local, auditable reality conflict."""
+        """Open a local, auditable reality conflict.
+
+        Writes a 'detected' conflict record to the hash-chained journal.
+        Resolution is human-only — memo_conflict_resolve reports the CLI
+        command a human must run.
+        """
         return asdict(
             memory.operational.open_conflict(
                 topic=topic,
@@ -152,9 +306,16 @@ def _register_attention_and_conflict_tools(server: Any, memory: Any) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_conflict_resolve(
-        id: str,
+        id: Annotated[
+            str,
+            Field(description="Id of the conflict to resolve."),
+        ],
     ) -> dict[str, Any]:
-        """Report the local human action required to resolve a conflict."""
+        """Report the local human action required to resolve a conflict.
+
+        Read-only: never resolves anything itself — it returns the
+        `memo operational conflict resolve` command a human must run locally.
+        """
         return {
             "resolved": False,
             "id": id,
@@ -166,14 +327,41 @@ def _register_attention_and_conflict_tools(server: Any, memory: Any) -> None:
 def _register_outcome_tools(server: Any, memory: Any) -> None:
     @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_outcome_record(
-        task_id: str,
-        status: str,
-        memory_ids: list[str],
-        idempotency_key: str,
-        actor_id: str = "memo",
-        artifacts: list[str] | None = None,
+        task_id: Annotated[
+            str,
+            Field(description="Stable identifier of the task whose outcome is recorded."),
+        ],
+        status: Annotated[
+            str,
+            Field(description="One of 'success', 'failure', 'partial'."),
+        ],
+        memory_ids: Annotated[
+            list[str],
+            Field(description="Ids of the memories that were recalled or used for the task."),
+        ],
+        idempotency_key: Annotated[
+            str,
+            Field(
+                description="Caller-chosen key that makes retries safe: the same "
+                "key replays the stored outcome instead of double-counting; "
+                "reusing it with a different payload is rejected."
+            ),
+        ],
+        actor_id: Annotated[
+            str,
+            Field(description="Identifier of the reporting agent (journaled)."),
+        ] = "memo",
+        artifacts: Annotated[
+            list[str] | None,
+            Field(description="Optional URIs or paths of artifacts the task produced."),
+        ] = None,
     ) -> dict[str, Any]:
-        """Record whether recalled memories helped a task succeed."""
+        """Record whether recalled memories helped a task succeed.
+
+        Feeds success/failure back into each cited memory's outcome stats —
+        the signal behind procedure promotion. Idempotent per
+        `idempotency_key`.
+        """
         return memory.record_task_outcome(
             task_id=task_id,
             status=status,
@@ -185,9 +373,18 @@ def _register_outcome_tools(server: Any, memory: Any) -> None:
 
     @annotated_tool(server, **READ_ONLY)
     def memo_procedure_candidates(
-        min_successes: int = 2,
-        min_utility: float = 0.75,
-        limit: int = 50,
+        min_successes: Annotated[
+            int,
+            Field(description="Minimum successful outcomes a memory needs (floor 1)."),
+        ] = 2,
+        min_utility: Annotated[
+            float,
+            Field(description="Minimum outcome utility score, clamped to 0-1."),
+        ] = 0.75,
+        limit: Annotated[
+            int,
+            Field(description="Maximum candidates returned (clamped to 1-500)."),
+        ] = 50,
     ) -> dict[str, Any]:
         """List outcome-backed memories ready for procedural promotion."""
         candidates = memory.procedure_candidates(
@@ -199,14 +396,45 @@ def _register_outcome_tools(server: Any, memory: Any) -> None:
 
     @annotated_tool(server, **WRITE)
     def memo_procedure_promote(
-        memory_ids: list[str],
-        title: str,
-        kind: str = "procedure",
-        content: str | None = None,
-        reason: str = "outcome-backed promotion",
-        actor_id: str = "memo",
+        memory_ids: Annotated[
+            list[str],
+            Field(
+                description="Source memories with recorded outcome evidence; "
+                "every id must exist and qualify."
+            ),
+        ],
+        title: Annotated[
+            str,
+            Field(description="Title of the new procedure or failure-pattern memory."),
+        ],
+        kind: Annotated[
+            str,
+            Field(
+                description="'procedure' (needs >=2 successes and utility >=0.75 "
+                "per source) or 'failure_pattern' (needs >=2 failures at >=50% "
+                "failure rate)."
+            ),
+        ] = "procedure",
+        content: Annotated[
+            str | None,
+            Field(
+                description="Explicit body for the new memory; None concatenates the source bodies."
+            ),
+        ] = None,
+        reason: Annotated[
+            str,
+            Field(description="Provenance note recorded with the promotion."),
+        ] = "outcome-backed promotion",
+        actor_id: Annotated[
+            str,
+            Field(description="Identifier of the promoting agent (journaled)."),
+        ] = "memo",
     ) -> dict[str, Any]:
-        """Promote grounded memories into a reusable procedure/failure pattern."""
+        """Promote grounded memories into a reusable procedure/failure pattern.
+
+        Creates a new durable memory citing the sources; rejects sources whose
+        outcome stats don't meet the `kind` threshold.
+        """
         return memory.promote_learning(
             memory_ids,
             title=title,
