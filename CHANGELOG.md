@@ -9,6 +9,21 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.4.6] - 2026-07-28
+
+### Added
+
+- MCP tool schemas now describe **every** parameter on the full surface:
+  `Annotated` + pydantic `Field(description=...)` on the remaining 46 tools
+  (157 parameters) across all `server_*` modules — completing the pass
+  v4.4.5 started on the operational tools. Descriptions are grounded in the
+  delegate implementations (clamps, allowed values, id-resolution rules,
+  time-travel semantics) and verified by a FastMCP client probe: zero
+  undescribed parameters remain.
+- Disambiguation docstrings for overlapping tools: `memo_save` vs
+  `memo_offload`, and `memo_search` / `memo_context` / `memo_search_trace` /
+  `memo_rerank`.
+
 ## [4.4.5] - 2026-07-28
 
 ### Fixed

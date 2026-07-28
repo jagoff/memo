@@ -7,9 +7,10 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, WRITE_IDEMPOTENT, annotated_tool
@@ -18,13 +19,52 @@ from memo.server_annotations import READ_ONLY, WRITE_IDEMPOTENT, annotated_tool
 def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
     def memo_fact_edges(
-        subject: str | None = None,
-        predicate: str | None = None,
-        object: str | None = None,
-        source_record_id: str | None = None,
-        as_of: str | None = None,
-        include_inactive: bool = False,
-        limit: int = 50,
+        subject: Annotated[
+            str | None,
+            Field(
+                description="Exact-match filter on the fact's subject; None matches any subject."
+            ),
+        ] = None,
+        predicate: Annotated[
+            str | None,
+            Field(
+                description="Exact-match filter on the fact's predicate; "
+                "None matches any predicate."
+            ),
+        ] = None,
+        object: Annotated[
+            str | None,
+            Field(description="Exact-match filter on the fact's object; None matches any object."),
+        ] = None,
+        source_record_id: Annotated[
+            str | None,
+            Field(
+                description="Exact-match filter on the memo record id the fact was derived from; "
+                "None matches any source."
+            ),
+        ] = None,
+        as_of: Annotated[
+            str | None,
+            Field(
+                description="ISO-8601 timestamp to evaluate validity at (naive times are treated "
+                "as UTC); defaults to now. An edge is live when valid_at <= as_of and neither "
+                "invalid_at nor expired_at has passed."
+            ),
+        ] = None,
+        include_inactive: Annotated[
+            bool,
+            Field(
+                description="When true, skip the validity-window filter and also return "
+                "invalidated/expired edges."
+            ),
+        ] = False,
+        limit: Annotated[
+            int,
+            Field(
+                description="Maximum edges to return (floored to 1, no upper clamp). Results are "
+                "ordered by valid_at, then confidence, then updated_at, descending."
+            ),
+        ] = 50,
     ) -> list[dict[str, Any]]:
         """List temporal fact edges, optionally as-of a timestamp.
 
@@ -45,17 +85,83 @@ def register(server: FastMCP, memory: Memory) -> None:
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_fact_edge_save(
-        subject: str,
-        predicate: str,
-        object: str,
-        source_record_id: str | None = None,
-        valid_at: str | None = None,
-        invalid_at: str | None = None,
-        expired_at: str | None = None,
-        confidence: float = 1.0,
-        provenance: dict[str, Any] | None = None,
-        metadata: dict[str, Any] | None = None,
-        supersedes: list[str] | None = None,
+        subject: Annotated[
+            str,
+            Field(
+                description="Fact subject (whitespace-stripped; must be non-empty). "
+                "Part of the deterministic fact id."
+            ),
+        ],
+        predicate: Annotated[
+            str,
+            Field(
+                description="Fact predicate/relation (whitespace-stripped; must be non-empty). "
+                "Part of the deterministic fact id."
+            ),
+        ],
+        object: Annotated[
+            str,
+            Field(
+                description="Fact object/value (whitespace-stripped; must be non-empty). "
+                "Part of the deterministic fact id."
+            ),
+        ],
+        source_record_id: Annotated[
+            str | None,
+            Field(
+                description="Optional memo record id this fact was derived from. "
+                "Part of the deterministic fact id."
+            ),
+        ] = None,
+        valid_at: Annotated[
+            str | None,
+            Field(
+                description="ISO-8601 timestamp when the fact became valid (naive times are "
+                "treated as UTC); defaults to now. Part of the deterministic fact id."
+            ),
+        ] = None,
+        invalid_at: Annotated[
+            str | None,
+            Field(
+                description="Optional ISO-8601 timestamp when the fact stopped being valid "
+                "(naive times are treated as UTC)."
+            ),
+        ] = None,
+        expired_at: Annotated[
+            str | None,
+            Field(
+                description="Optional ISO-8601 timestamp that ends the validity window "
+                "independently of invalid_at; the edge is inactive once either has passed."
+            ),
+        ] = None,
+        confidence: Annotated[
+            float,
+            Field(
+                description="Confidence stored on the edge (default 1.0, not clamped); used as a "
+                "descending tiebreaker when querying."
+            ),
+        ] = 1.0,
+        provenance: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description="Optional JSON object recording where the fact came from; "
+                "stored as-is, None becomes {}."
+            ),
+        ] = None,
+        metadata: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description="Optional JSON object of arbitrary extra fields; "
+                "stored as-is, None becomes {}."
+            ),
+        ] = None,
+        supersedes: Annotated[
+            list[str] | None,
+            Field(
+                description="Ids of older fact edges to invalidate at this fact's valid_at. Only "
+                "edges without an existing invalid_at are stamped; unknown ids are ignored."
+            ),
+        ] = None,
     ) -> dict[str, Any] | None:
         """Save one temporal fact edge.
 
@@ -79,8 +185,28 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.fact_edges.get(fact_id)
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
-    def memo_fact_edge_invalidate(id: str, invalid_at: str | None = None) -> dict[str, Any]:
-        """Invalidate one temporal fact edge without deleting its provenance."""
+    def memo_fact_edge_invalidate(
+        id: Annotated[
+            str,
+            Field(
+                description="Fact edge id (32-char hash) as returned by "
+                "memo_fact_edge_save or memo_fact_edges."
+            ),
+        ],
+        invalid_at: Annotated[
+            str | None,
+            Field(
+                description="ISO-8601 timestamp to record as invalid_at (naive times are treated "
+                "as UTC); defaults to now. Overwrites any existing invalid_at."
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Invalidate one temporal fact edge without deleting its provenance.
+
+        Sets the edge's ``invalid_at`` (overwriting any prior value); re-invoking
+        just re-stamps the timestamp. Returns ``invalidated: false`` when the id
+        does not exist.
+        """
         return {"id": id, "invalidated": memory.fact_edges.invalidate(id, invalid_at=invalid_at)}
 
     @annotated_tool(server, **READ_ONLY)
