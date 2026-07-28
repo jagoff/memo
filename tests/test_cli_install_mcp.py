@@ -80,6 +80,30 @@ def test_install_mcp_with_mandate_targets_selected_agents(monkeypatch, tmp_path)
     assert res.output.count("AGENTS.md") == 1
 
 
+def test_install_mcp_hints_mandate_when_absent(monkeypatch, tmp_path):
+    """Without --with-mandate, install-mcp tips the user toward it."""
+    iso = tmp_path / ".local" / "bin" / "memo-mcp"
+    iso.parent.mkdir(parents=True)
+    iso.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+
+    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "claude-code"])
+    assert res.exit_code == 0, res.output
+    assert "--with-mandate" in res.output
+
+
+def test_install_mcp_no_hint_when_mandate_used(monkeypatch, tmp_path):
+    """With --with-mandate, the tip is redundant and must not print."""
+    iso = tmp_path / ".local" / "bin" / "memo-mcp"
+    iso.parent.mkdir(parents=True)
+    iso.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(cli_install_mcp.Path, "home", staticmethod(lambda: tmp_path))
+
+    res = CliRunner().invoke(cli, ["install-mcp", "--agent", "claude-code", "--with-mandate"])
+    assert res.exit_code == 0, res.output
+    assert "--with-mandate" not in res.output
+
+
 def test_install_mcp_dry_run_works_without_consciousness_contracts(monkeypatch, tmp_path):
     """The public installer must not require a dev-only local package."""
     iso = tmp_path / ".local" / "bin" / "memo-mcp"

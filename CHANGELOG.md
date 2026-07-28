@@ -9,6 +9,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- Dispute-aware ask (`MEMO_ASK_DISPUTES`, default on): retrieved memories with
+  open/competing contradiction pairs are marked `⚔ disputed-by` in the ask
+  context and sources (`disputed_by`), the answer is steered to present them
+  as contested, and when an answer rests only on disputed evidence ask
+  abstains deterministically (`abstained: "disputed"`, no extra LLM call).
+  Disputed top hits no longer bypass the gate via the verbatim short-circuit.
+- MCP ambient-recall parity for MCP-only clients: pinnable `briefing` and
+  `recall <topic>` MCP prompts (fail-open, consult-attributed as
+  `mcp-prompt`), a memory-first contract in the server instructions, and an
+  install-mcp tip pointing at `--with-mandate`.
+
 ## [4.4.6] - 2026-07-28
 
 ### Added

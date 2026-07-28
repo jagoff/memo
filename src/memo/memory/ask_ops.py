@@ -533,6 +533,18 @@ class _AskOpsMixin(_MemoryBase):
 
         hits = [hit for hit in hits if not is_sensitive_memory(hit)]
 
+        # Dispute lookup (MEMO_ASK_DISPUTES, default on): one batched
+        # open+competing pairs query over the final hits; fail-open to {}.
+        # Baked into snippet lines + source dicts BEFORE the cache put, so a
+        # cache hit reuses it (staleness bounded by the RAG cache TTL).
+        from memo.memory.ask_disputes import dispute_header_segment
+
+        disputed_ids: dict[str, list[str]] = {}
+        if flag_bool("MEMO_ASK_DISPUTES") and hits:
+            from memo.memory import ask_disputes as _ad
+
+            disputed_ids = _ad.dispute_map(self, [h.id for h in hits])
+
         snippet_lines: list[str] = []
         sources: list[dict[str, Any]] = []
         primary_memory_sources: dict[str, dict[str, Any]] = {}
@@ -561,9 +573,10 @@ class _AskOpsMixin(_MemoryBase):
             relations_info = (
                 f"  |  relations: {'; '.join(memory_relations)}" if memory_relations else ""
             )
+            dispute_info = dispute_header_segment(h.id, disputed_ids)
             snippet_lines.append(
                 f"[{id_short}] title: {h.title}  |  type: {h.type}  |  tags: {tags}"
-                f"{graph_info}{facts_info}{relations_info}\n{snippet}\n"
+                f"{graph_info}{facts_info}{relations_info}{dispute_info}\n{snippet}\n"
             )
             extra = h.extra or {}
             provenance = normalize_provenance(extra)
@@ -580,6 +593,8 @@ class _AskOpsMixin(_MemoryBase):
                 "memory_relations": extra.get("memory_relations") or [],
                 "provenance": provenance,
             }
+            if disputed_ids.get(h.id):
+                source["disputed_by"] = list(disputed_ids[h.id])
             sources.append(source)
             primary_memory_sources[h.id] = source
             seen_paths.update(_vault_dedup_keys(h))
@@ -590,8 +605,6 @@ class _AskOpsMixin(_MemoryBase):
         # call; ask path only — never the 5s recall hook). Community-kind
         # syntheses keep entity NAMES in synthesis_sources; non-resolvable
         # strings skip via self.get() returning None.
-        from memo.flags import flag_bool
-
         expanded_memory_rows: list[dict[str, Any]] = []
         expanded_memory_sources: dict[str, dict[str, Any]] = {}
         expanded_sensitive_omitted = 0
@@ -920,24 +933,43 @@ class _AskOpsMixin(_MemoryBase):
         # and return the matched note body directly. Avoids the model
         # over-summarising when the user clearly wants the raw content.
         verbatim_hits = _filter_verbatim_hits(hits, sources, use_context_pack=use_context_pack)
+        # A disputed hit must not bypass the LLM + dispute gate via the
+        # verbatim path — drop it from verbatim candidates only (it stays in
+        # the normal context).
+        _disputed_hit_ids = {str(s["id"]) for s in sources if s.get("disputed_by")}
+        if _disputed_hit_ids:
+            verbatim_hits = [h for h in verbatim_hits if h.id not in _disputed_hit_ids]
         verbatim = self._verbatim_short_circuit(question, verbatim_hits)
         if verbatim is not None:
-            return {
+            verbatim_result: dict[str, Any] = {
                 "question": norm_question,
                 "answer": verbatim,
                 "sources": sources,
             }
+            _disputed_map = {
+                str(s["id"]): list(s["disputed_by"]) for s in sources if s.get("disputed_by")
+            }
+            if _disputed_map:
+                verbatim_result["disputed"] = _disputed_map
+            return verbatim_result
 
         # Lazy-construct the chat client (same instance used by auto_derive).
         chat = self._ensure_chat()
+        from memo.memory.ask_disputes import (
+            DISPUTE_PROMPT_SUFFIX,
+            append_dispute_caveat,
+            contested_or_none,
+        )
+
+        _system_prompt = _resolved_ask_system_prompt(self.cfg.state_dir)
+        if any(s.get("disputed_by") for s in sources):
+            _system_prompt = _system_prompt + "\n" + DISPUTE_PROMPT_SUFFIX
+        _llm_errored = False
         try:
             out = chat.chat(
                 model=self.cfg.llm_model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": _resolved_ask_system_prompt(self.cfg.state_dir),
-                    },
+                    {"role": "system", "content": _system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
                 # Higher max_tokens than auto_derive — answers can run a
@@ -947,25 +979,51 @@ class _AskOpsMixin(_MemoryBase):
             answer = ((out.get("message") or {}).get("content") or "").strip()
         except Exception as exc:
             answer = f"(error querying the model: {type(exc).__name__})"
+            _llm_errored = True
 
         from memo.flags import flag_float
 
-        _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
-        if _ask_min > 0.0 and answer:
-            _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
-            _entail = score_grounding(
-                grounding_chat(chat), self.cfg.llm_model, source=_src_text, claim=answer
-            )
-            if _entail is not None and _entail < _ask_min:
-                from memo.flags import flag_str
+        abstained: str | None = None
+        # An LLM-error sentinel has no citations, so with all sources disputed
+        # `contested_or_none` would fire and mislabel the error as a dispute
+        # abstention — skip the whole dispute+judge gate and return the error
+        # sentinel untouched, as before this feature existed.
+        if not _llm_errored:
+            _contested = contested_or_none(answer, sources)
+            if _contested is not None:
+                # Answer rests only on disputed evidence: deterministic abstention;
+                # skip the (LLM) grounding judge — nothing left to entail-check.
+                answer = _contested
+                abstained = "disputed"
+            else:
+                _judge_abstained = False
+                _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
+                if _ask_min > 0.0 and answer:
+                    _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
+                    _entail = score_grounding(
+                        grounding_chat(chat), self.cfg.llm_model, source=_src_text, claim=answer
+                    )
+                    if _entail is not None and _entail < _ask_min:
+                        from memo.flags import flag_str
 
-                answer = flag_str("MEMO_ASK_FALLBACK_MSG")
+                        answer = flag_str("MEMO_ASK_FALLBACK_MSG")
+                        _judge_abstained = True
+                if not _judge_abstained:
+                    answer = append_dispute_caveat(answer, sources)
 
-        return {
+        result: dict[str, Any] = {
             "question": norm_question,
             "answer": answer,
             "sources": sources,
         }
+        _disputed_map = {
+            str(s["id"]): list(s["disputed_by"]) for s in sources if s.get("disputed_by")
+        }
+        if _disputed_map:
+            result["disputed"] = _disputed_map
+        if abstained:
+            result["abstained"] = abstained
+        return result
 
     def ask_stream(
         self,
@@ -1030,22 +1088,45 @@ class _AskOpsMixin(_MemoryBase):
         # single token-style event so consumers that show progressive
         # output still get something to render, then a terminal `done`.
         verbatim_hits = _filter_verbatim_hits(hits, sources, use_context_pack=use_context_pack)
+        # A disputed hit must not bypass the LLM + dispute gate via the
+        # verbatim path — drop it from verbatim candidates only (it stays in
+        # the normal context).
+        _disputed_hit_ids = {str(s["id"]) for s in sources if s.get("disputed_by")}
+        if _disputed_hit_ids:
+            verbatim_hits = [h for h in verbatim_hits if h.id not in _disputed_hit_ids]
         verbatim = self._verbatim_short_circuit(question, verbatim_hits)
         if verbatim is not None:
             yield {"event": "token", "delta": verbatim}
-            yield {"event": "done", "answer": verbatim, "sources": sources}
+            verbatim_done: dict[str, Any] = {
+                "event": "done",
+                "answer": verbatim,
+                "sources": sources,
+            }
+            _disputed_map = {
+                str(s["id"]): list(s["disputed_by"]) for s in sources if s.get("disputed_by")
+            }
+            if _disputed_map:
+                verbatim_done["disputed"] = _disputed_map
+            yield verbatim_done
             return
 
         chat = self._ensure_chat()
+        from memo.memory.ask_disputes import (
+            DISPUTE_PROMPT_SUFFIX,
+            append_dispute_caveat,
+            contested_or_none,
+        )
+
+        _system_prompt = _resolved_ask_system_prompt(self.cfg.state_dir)
+        if any(s.get("disputed_by") for s in sources):
+            _system_prompt = _system_prompt + "\n" + DISPUTE_PROMPT_SUFFIX
+
         accum_parts: list[str] = []
         try:
             for delta in chat.chat_stream(
                 model=self.cfg.llm_model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": _resolved_ask_system_prompt(self.cfg.state_dir),
-                    },
+                    {"role": "system", "content": _system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
                 options={"temperature": 0.0, "max_tokens": 768},
@@ -1063,19 +1144,39 @@ class _AskOpsMixin(_MemoryBase):
         answer = "".join(accum_parts).strip()
         from memo.flags import flag_float
 
-        _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
-        if _ask_min > 0.0 and answer:
-            _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
-            _entail = score_grounding(
-                grounding_chat(chat), self.cfg.llm_model, source=_src_text, claim=answer
-            )
-            if _entail is not None and _entail < _ask_min:
-                from memo.flags import flag_str
+        abstained: str | None = None
+        _contested = contested_or_none(answer, sources)
+        if _contested is not None:
+            # Answer rests only on disputed evidence: deterministic abstention;
+            # skip the (LLM) grounding judge — nothing left to entail-check.
+            answer = _contested
+            abstained = "disputed"
+        else:
+            _judge_abstained = False
+            _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
+            if _ask_min > 0.0 and answer:
+                _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
+                _entail = score_grounding(
+                    grounding_chat(chat), self.cfg.llm_model, source=_src_text, claim=answer
+                )
+                if _entail is not None and _entail < _ask_min:
+                    from memo.flags import flag_str
 
-                answer = flag_str("MEMO_ASK_FALLBACK_MSG")
+                    answer = flag_str("MEMO_ASK_FALLBACK_MSG")
+                    _judge_abstained = True
+            if not _judge_abstained:
+                answer = append_dispute_caveat(answer, sources)
 
-        yield {
+        done: dict[str, Any] = {
             "event": "done",
             "answer": answer,
             "sources": sources,
         }
+        _disputed_map = {
+            str(s["id"]): list(s["disputed_by"]) for s in sources if s.get("disputed_by")
+        }
+        if _disputed_map:
+            done["disputed"] = _disputed_map
+        if abstained:
+            done["abstained"] = abstained
+        yield done
