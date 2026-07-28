@@ -4,6 +4,8 @@
 
 # memo — MCP semantic memory server with MLX embeddings
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.jagoff%2Fmemo.svg)](https://mcptoplist.com/server/io.github.jagoff%2Fmemo)
+
 **Local-first semantic memory for AI agents — with time-travel, contradiction radar, and automatic synthesis.**
 
 **[Explore the memo website →](https://memo-web-sigma.vercel.app)**
