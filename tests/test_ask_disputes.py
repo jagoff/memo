@@ -189,17 +189,13 @@ def _prep_gate(mock_memory, monkeypatch, *, answer, sources):
         "_build_ask_context",
         lambda self, q, **k: (q, list(sources), "ctx", []),
     )
-    monkeypatch.setattr(
-        ask_ops._AskOpsMixin, "_verbatim_short_circuit", lambda self, q, h: None
-    )
+    monkeypatch.setattr(ask_ops._AskOpsMixin, "_verbatim_short_circuit", lambda self, q, h: None)
     monkeypatch.setattr(mock_memory, "_ensure_chat", lambda: _Chat(answer))
 
 
 def test_ask_contested_abstention_when_only_disputed_cited(mock_memory, monkeypatch):
     sources = [_src(ID_A, disputed_by=[ID_B]), _src(ID_C)]
-    _prep_gate(
-        mock_memory, monkeypatch, answer=f"Port is 9999 [{ID_A[:8]}].", sources=sources
-    )
+    _prep_gate(mock_memory, monkeypatch, answer=f"Port is 9999 [{ID_A[:8]}].", sources=sources)
     out = mock_memory.ask("what port?")
     assert out["abstained"] == "disputed"
     assert "couldn't find" in out["answer"]
@@ -223,9 +219,7 @@ def test_ask_caveat_on_partially_disputed_answer(mock_memory, monkeypatch):
 
 def test_ask_clean_sources_unchanged_shape(mock_memory, monkeypatch):
     sources = [_src(ID_A), _src(ID_C)]
-    _prep_gate(
-        mock_memory, monkeypatch, answer=f"Port is 8765 [{ID_A[:8]}].", sources=sources
-    )
+    _prep_gate(mock_memory, monkeypatch, answer=f"Port is 8765 [{ID_A[:8]}].", sources=sources)
     out = mock_memory.ask("what port?")
     assert "disputed" not in out and "abstained" not in out
     assert out["answer"] == f"Port is 8765 [{ID_A[:8]}]."
@@ -234,13 +228,9 @@ def test_ask_clean_sources_unchanged_shape(mock_memory, monkeypatch):
 def test_ask_contested_skips_grounding_judge(mock_memory, monkeypatch):
     monkeypatch.setenv("MEMO_GROUNDING_ASK_MIN", "0.85")
     calls = []
-    monkeypatch.setattr(
-        ask_ops, "score_grounding", lambda *a, **k: calls.append(1) or 1.0
-    )
+    monkeypatch.setattr(ask_ops, "score_grounding", lambda *a, **k: calls.append(1) or 1.0)
     sources = [_src(ID_A, disputed_by=[ID_B])]
-    _prep_gate(
-        mock_memory, monkeypatch, answer=f"Port is 9999 [{ID_A[:8]}].", sources=sources
-    )
+    _prep_gate(mock_memory, monkeypatch, answer=f"Port is 9999 [{ID_A[:8]}].", sources=sources)
     out = mock_memory.ask("what port?")
     assert out["abstained"] == "disputed"
     assert calls == []  # contested abstention short-circuits the judge LLM call
@@ -263,9 +253,7 @@ def test_ask_judge_abstention_gets_no_caveat(mock_memory, monkeypatch):
 
 def test_ask_stream_done_event_contested(mock_memory, monkeypatch):
     sources = [_src(ID_A, disputed_by=[ID_B])]
-    _prep_gate(
-        mock_memory, monkeypatch, answer=f"Port is 9999 [{ID_A[:8]}].", sources=sources
-    )
+    _prep_gate(mock_memory, monkeypatch, answer=f"Port is 9999 [{ID_A[:8]}].", sources=sources)
     events = list(mock_memory.ask_stream("what port?"))
     done = next(e for e in events if e.get("event") == "done")
     assert done["abstained"] == "disputed"

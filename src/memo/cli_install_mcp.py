@@ -342,7 +342,7 @@ def install_mcp(
             click.echo(f"  {rel:<28} {status}")
     else:
         click.echo(
-            "tip: add --with-mandate to also write the \"consult memo first\" "
+            'tip: add --with-mandate to also write the "consult memo first" '
             "mandate into this project's client instruction files"
         )
 

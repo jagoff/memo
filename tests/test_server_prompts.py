@@ -59,9 +59,7 @@ def test_prompts_fail_open(mock_memory, monkeypatch):
 
 def test_recall_logs_consult(mock_memory, monkeypatch):
     calls = []
-    monkeypatch.setattr(
-        server_prompts, "log_consult", lambda *a, **k: calls.append(k)
-    )
+    monkeypatch.setattr(server_prompts, "log_consult", lambda *a, **k: calls.append(k))
     server = _register(mock_memory)
     server.prompts["recall"](topic="port")
     assert calls and calls[0]["source"] == "mcp-prompt"

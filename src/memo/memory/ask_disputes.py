@@ -83,9 +83,7 @@ def _contested_message(disputed: Mapping[str, list[str]], ids: Sequence[str]) ->
     )
 
 
-def contested_or_none(
-    answer: str, sources: Sequence[Mapping[str, Any]]
-) -> str | None:
+def contested_or_none(answer: str, sources: Sequence[Mapping[str, Any]]) -> str | None:
     """Contested-abstention message when the answer rests only on disputed
     evidence; None otherwise. Deterministic; fail-open to None."""
     try:
@@ -123,9 +121,7 @@ def append_dispute_caveat(answer: str, sources: Sequence[Mapping[str, Any]]) -> 
                     break  # the model already surfaced this dispute
             else:
                 others = ", ".join(f"[{o[:8]}]" for o in disputed[sid][:_MAX_RENDERED])
-                lines.append(
-                    f"⚠ Disputed evidence: [{sid[:8]}] is contested by {others}."
-                )
+                lines.append(f"⚠ Disputed evidence: [{sid[:8]}] is contested by {others}.")
         if not lines:
             return answer
         return answer + "\n\n" + "\n".join(lines)
