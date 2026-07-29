@@ -10,8 +10,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tarea 2
-  implementada y en revisión triple**.
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tarea 2 con
+  revisión `FAIL` y hardening en diseño**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -97,9 +97,16 @@ Estado: **1/7 aceptadas**.
 - [x] Non-slow completo: `5965 passed, 18 skipped`.
 - [x] Commit explícito: `5a80c74d`.
 - [x] Paquete de revisión generado para `8e85662b..5a80c74d`.
-- [ ] Revisión independiente de contrato y calidad.
-- [ ] Auditoría independiente de seguridad y durabilidad.
-- [ ] Auditoría independiente de API y fortaleza de tests.
+- [x] Revisión independiente de contrato y calidad: `FAIL`, con
+  4 `HIGH` y 2 `MEDIUM` reproducidos.
+- [x] Auditoría independiente de seguridad y durabilidad: `FAIL`, con
+  1 `BLOCKER`, 5 `HIGH` y 1 `MEDIUM` reproducidos.
+- [x] Auditoría independiente de API y fortaleza de tests: `FAIL`, con
+  3 `HIGH` y 2 `MEDIUM` reproducidos.
+- [x] Hallazgos consolidados sin duplicados: 1 `BLOCKER`, 7 `HIGH` y
+  3 `MEDIUM`.
+- [ ] TDD de hardening: provenance, recovery de compaction/tail/import y
+  revocación histórica.
 - [ ] Corregir todo hallazgo `BLOCKER/HIGH/MEDIUM`.
 - [ ] Revisión independiente y `PASS`.
 
@@ -246,7 +253,7 @@ paso todavía no comenzó, no que esté aprobado.
 | ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
 |---|---|---|---|---|---|---|---|---|
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
-| P01-T02 | Anchors, append y bundles | `plan01_task02_ledger_impl` + 3 revisores | `8e85662b` | ledger ausente + lock epoch `1 failed` | focused `56`; full `5965` | `5a80c74d` | triple revisión en curso | — |
+| P01-T02 | Anchors, append y bundles | implementador + 3 revisores + arquitecto de hardening | `8e85662b` | ledger ausente + lock epoch `1 failed` | focused `56`; full `5965` | `5a80c74d` | **FAIL** provisional: 3H/2M + 2 auditorías abiertas | — |
 | P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
 | P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
