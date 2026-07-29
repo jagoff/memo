@@ -14,7 +14,11 @@ from typing import Any, Literal
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from memo.atomic_io import atomic_write_text, authority_write_lock
+from memo.atomic_io import (
+    authority_admission_lock,
+    authority_write_lock,
+    open_secure_directory,
+)
 from memo.errors import SignatureError
 from memo.operational_key_store import (
     AuthorityPinStore,
@@ -53,32 +57,18 @@ def _decode(value: str) -> bytes:
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    with open_secure_directory(path) as directory:
+        os.fsync(directory.descriptor)
 
 
 def _atomic_authority_write(path: Path, data: bytes) -> None:
-    atomic_write_text(path, data.decode("utf-8"))
-    _fsync_directory(path.parent)
+    with open_secure_directory(path.parent, create=True) as directory:
+        directory.atomic_write_bytes(path.name, data)
 
 
 def _create_authority_file(path: Path, data: bytes) -> None:
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags, 0o600)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            descriptor = -1
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-    _fsync_directory(path.parent)
+    with open_secure_directory(path.parent, create=True) as directory:
+        directory.create_bytes_exclusive(path.name, data)
 
 
 class RosterError(SignatureError):
@@ -219,26 +209,27 @@ class VerificationRoster:
         encoded = _canonical(roster.to_dict())
         history = root / "verification-rosters" / "00000001.json"
         current = root / "verification-roster.json"
-        try:
-            pin_store._stage_roster(root, encoded)
-        except KeyStoreError as exc:
-            raise RosterError("verification roster authority pin rejected bootstrap") from exc
-        with authority_write_lock(root / "verification-rosters"):
-            history_bytes = history.read_bytes() if history.exists() else None
-            current_bytes = current.read_bytes() if current.exists() else None
-            if history_bytes not in {None, encoded} or current_bytes not in {
-                None,
-                encoded,
-            }:
-                raise RosterError("verification roster already exists")
-            if history_bytes is None:
-                _create_authority_file(history, encoded)
-            if current_bytes is None:
-                _atomic_authority_write(current, encoded)
-        try:
-            pin_store._finish_roster(root, encoded)
-        except KeyStoreError as exc:
-            raise RosterError("verification roster authority pin commit failed") from exc
+        with authority_admission_lock(root):
+            try:
+                pin_store._stage_roster(root, encoded)
+            except KeyStoreError as exc:
+                raise RosterError("verification roster authority pin rejected bootstrap") from exc
+            with authority_write_lock(root / "verification-rosters"):
+                history_bytes = history.read_bytes() if history.exists() else None
+                current_bytes = current.read_bytes() if current.exists() else None
+                if history_bytes not in {None, encoded} or current_bytes not in {
+                    None,
+                    encoded,
+                }:
+                    raise RosterError("verification roster already exists")
+                if history_bytes is None:
+                    _create_authority_file(history, encoded)
+                if current_bytes is None:
+                    _atomic_authority_write(current, encoded)
+            try:
+                pin_store._finish_roster(root, encoded)
+            except KeyStoreError as exc:
+                raise RosterError("verification roster authority pin commit failed") from exc
         return roster
 
     @classmethod
@@ -288,52 +279,51 @@ class VerificationRoster:
             raise RosterError("signed roster update requires signer and root")
         root = Path(root)
         pin_store = _resolve_pin_store(root, pin_store)
-        canonical_predecessor = VerificationRoster.load(
-            root,
-            pin_store=pin_store,
-        )
-        if canonical_predecessor != self:
-            raise RosterError(
-                "signed roster update requires the exact pinned predecessor"
+        with authority_admission_lock(root):
+            canonical_predecessor = VerificationRoster.load(
+                root,
+                pin_store=pin_store,
             )
-        updated = VerificationRoster(
-            version=version,
-            peers=peers,
-            keys=keys,
-            local_device_id=self.local_device_id,
-            created_at=datetime.now(UTC).isoformat(timespec="milliseconds"),
-            previous_roster_hash=self.roster_hash,
-        )
-        updated = replace(updated, roster_hash=updated._hash())
-        envelope = signer.sign(
-            domain=_UPDATE_DOMAIN,
-            payload=updated._signed_payload(),
-            key_id=self.local_key_id,
-        )
-        updated = replace(updated, signature=envelope)
-        _verify_roster(updated, previous=self)
-        encoded = _canonical(updated.to_dict())
-        history = root / "verification-rosters" / f"{version:08d}.json"
-        current = root / "verification-roster.json"
-        with authority_write_lock(root / "verification-rosters"):
-            loaded = _load_roster_files(root)
-            if loaded != self:
-                raise RosterError("verification roster changed concurrently")
+            if canonical_predecessor != self:
+                raise RosterError("signed roster update requires the exact pinned predecessor")
+            updated = VerificationRoster(
+                version=version,
+                peers=peers,
+                keys=keys,
+                local_device_id=self.local_device_id,
+                created_at=datetime.now(UTC).isoformat(timespec="milliseconds"),
+                previous_roster_hash=self.roster_hash,
+            )
+            updated = replace(updated, roster_hash=updated._hash())
+            envelope = signer.sign(
+                domain=_UPDATE_DOMAIN,
+                payload=updated._signed_payload(),
+                key_id=self.local_key_id,
+            )
+            updated = replace(updated, signature=envelope)
+            _verify_roster(updated, previous=self)
+            encoded = _canonical(updated.to_dict())
+            history = root / "verification-rosters" / f"{version:08d}.json"
+            current = root / "verification-roster.json"
+            with authority_write_lock(root / "verification-rosters"):
+                loaded = _load_roster_files(root)
+                if loaded != self:
+                    raise RosterError("verification roster changed concurrently")
+                try:
+                    pin_store._stage_roster(root, encoded)
+                except KeyStoreError as exc:
+                    raise RosterError("verification roster authority pin rejected update") from exc
+                if history.exists():
+                    if history.read_bytes() != encoded:
+                        raise RosterError("verification roster history already exists")
+                else:
+                    _create_authority_file(history, encoded)
+                _atomic_authority_write(current, encoded)
             try:
-                pin_store._stage_roster(root, encoded)
+                pin_store._finish_roster(root, encoded)
             except KeyStoreError as exc:
-                raise RosterError("verification roster authority pin rejected update") from exc
-            if history.exists():
-                if history.read_bytes() != encoded:
-                    raise RosterError("verification roster history already exists")
-            else:
-                _create_authority_file(history, encoded)
-            _atomic_authority_write(current, encoded)
-        try:
-            pin_store._finish_roster(root, encoded)
-        except KeyStoreError as exc:
-            raise RosterError("verification roster authority pin commit failed") from exc
-        return updated
+                raise RosterError("verification roster authority pin commit failed") from exc
+            return updated
 
 
 def _resolve_pin_store(
@@ -365,9 +355,7 @@ def _load_pinned_roster_history(
                 roster_hash=latest.roster_hash,
             )
         except KeyStoreError as exc:
-            raise RosterError(
-                "verification roster rollback or substitution detected"
-            ) from exc
+            raise RosterError("verification roster rollback or substitution detected") from exc
     return history
 
 
@@ -395,9 +383,7 @@ def _recover_prepared_roster(root: Path, pin_store: AuthorityPinStore) -> None:
         expected_predecessor_names = [
             f"{version:08d}.json" for version in range(1, prepared.version)
         ]
-        actual_predecessor_names = [
-            path.name for path in paths if path.name != target_path.name
-        ]
+        actual_predecessor_names = [path.name for path in paths if path.name != target_path.name]
         if actual_predecessor_names != expected_predecessor_names or any(
             path.name > target_path.name for path in paths
         ):
@@ -413,10 +399,7 @@ def _recover_prepared_roster(root: Path, pin_store: AuthorityPinStore) -> None:
         if previous is None:
             if state.roster_version != 0 or state.roster_hash:
                 raise RosterError("prepared bootstrap roster predecessor is missing")
-        elif (
-            previous.version != state.roster_version
-            or previous.roster_hash != state.roster_hash
-        ):
+        elif previous.version != state.roster_version or previous.roster_hash != state.roster_hash:
             raise RosterError("prepared verification roster predecessor is not pinned")
         _verify_roster(prepared, previous=previous)
 

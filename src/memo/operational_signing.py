@@ -167,9 +167,7 @@ class OperationalVerifier:
         self._validate_claims(domain, body, envelope, roster, key)
         signed_payload = signature_payload(domain, payload)
         try:
-            public_key = Ed25519PublicKey.from_public_bytes(
-                _decode_b64url(key.public_key)
-            )
+            public_key = Ed25519PublicKey.from_public_bytes(_decode_b64url(key.public_key))
             public_key.verify(_decode_b64url(envelope.signature), signed_payload)
         except (InvalidSignature, ValueError) as exc:
             raise SignatureError("operational signature verification failed") from exc
@@ -192,40 +190,25 @@ class OperationalVerifier:
             required_role = "migration_attestor"
             require_record_claims = True
             record_key_field = "attestor_key_id"
-            expected_device = _claim_string(
-                body, "attestor_device_id", required=True
-            )
+            expected_device = _claim_string(body, "attestor_device_id", required=True)
             if key.roles != ("migration_attestor",):
                 raise SignatureError("migration attestor key must have an exclusive role")
         elif domain == "memo.operational.event.v2":
             record_key_field = "key_id"
             require_record_claims = body.get("schema") == "memo.operational_event.v2"
-            expected_device = _claim_string(
-                body, "origin_device", required=require_record_claims
-            )
-            activation_sequence = _sequence(
-                body, "origin_sequence", roster.version
-            )
+            expected_device = _claim_string(body, "origin_device", required=require_record_claims)
         elif domain == "memo.operational.anchor.v1":
             record_key_field = "key_id"
             require_record_claims = True
-            activation_sequence = max(
-                _sequence(body, "final_sequence", roster.version),
-                roster.version,
-            )
             signer_role = _claim_string(body, "signer_role", required=True)
             if signer_role == "migration_attestor":
                 required_role = "migration_attestor"
                 if key.roles != ("migration_attestor",):
-                    raise SignatureError(
-                        "migration attestor key must have an exclusive role"
-                    )
+                    raise SignatureError("migration attestor key must have an exclusive role")
             elif signer_role != "origin":
                 raise SignatureError("anchor signer role is invalid")
             if signer_role == "origin":
-                expected_device = _claim_string(
-                    body, "origin_device", required=True
-                )
+                expected_device = _claim_string(body, "origin_device", required=True)
         elif domain == "memo.operational_epoch_authorization.v1":
             record_key_field = "key_id"
             require_record_claims = True
@@ -243,9 +226,7 @@ class OperationalVerifier:
             if system_role == "migration":
                 required_role = "migration_attestor"
                 if key.roles != ("migration_attestor",):
-                    raise SignatureError(
-                        "system migration key must have an exclusive role"
-                    )
+                    raise SignatureError("system migration key must have an exclusive role")
             elif system_role != "daemon":
                 raise SignatureError("system capability role is invalid")
             roster_hash = _claim_string(body, "roster_hash", required=True)
@@ -258,30 +239,20 @@ class OperationalVerifier:
             required_role = "origin"
 
         if record_key_field is not None:
-            declared_key = _claim_string(
-                body, record_key_field, required=require_record_claims
-            )
+            declared_key = _claim_string(body, record_key_field, required=require_record_claims)
             if declared_key is not None and declared_key != envelope.key_id:
                 raise SignatureError("signed record key id differs from envelope")
-        declared_roster = _claim_int(
-            body, "roster_version", required=require_record_claims
-        )
+        declared_roster = _claim_int(body, "roster_version", required=require_record_claims)
         if declared_roster is not None and (
-            declared_roster != envelope.roster_version
-            or declared_roster != roster.version
+            declared_roster != envelope.roster_version or declared_roster != roster.version
         ):
             raise SignatureError("signed record roster version mismatch")
         if key.enrollment_sequence > activation_sequence:
             raise SignatureError("key is not active at this record sequence")
-        if (
-            key.revocation_sequence is not None
-            and activation_sequence >= key.revocation_sequence
-        ):
+        if key.revocation_sequence is not None and activation_sequence >= key.revocation_sequence:
             raise KeyRevokedError("key is revoked")
         if required_role not in key.roles:
-            raise SignatureError(
-                f"key {key.key_id} is not authorized for role {required_role}"
-            )
+            raise SignatureError(f"key {key.key_id} is not authorized for role {required_role}")
         if expected_device is not None and key.device_id != expected_device:
             raise SignatureError("signature device role mismatch")
 

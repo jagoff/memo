@@ -14,7 +14,11 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Literal, NoReturn, SupportsIndex
 
-from memo.atomic_io import atomic_write_text, authority_write_lock
+from memo.atomic_io import (
+    authority_admission_lock,
+    authority_write_lock,
+    open_secure_directory,
+)
 from memo.errors import AuthorityEpochError, OperationalError
 from memo.identity import PrincipalIdentity
 from memo.operational_event import (
@@ -140,11 +144,18 @@ _ACTIVE_SYSTEM_OPERATION: ContextVar[_BoundSystemContext | None] = ContextVar(
 
 
 def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    with open_secure_directory(path) as directory:
+        os.fsync(directory.descriptor)
+
+
+def atomic_write_text(destination: Path, text: str) -> None:
+    """Write one epoch authority document through the strict no-follow path."""
+    destination = Path(destination)
+    with open_secure_directory(destination.parent, create=True) as directory:
+        directory.atomic_write_bytes(
+            destination.name,
+            text.encode("utf-8"),
+        )
 
 
 def _canonical_text(value: object) -> str:
@@ -190,9 +201,7 @@ class _FenceInstanceNonceStore:
 
     def __init__(self) -> None:
         self.__lock = RLock()
-        self.__nonces: weakref.WeakKeyDictionary[object, bytes] = (
-            weakref.WeakKeyDictionary()
-        )
+        self.__nonces: weakref.WeakKeyDictionary[object, bytes] = weakref.WeakKeyDictionary()
 
     def allocate(self, fence: EpochFence) -> None:
         with self.__lock:
@@ -477,9 +486,7 @@ class EpochFence:
                 pin_store=self.pin_store,
             )
         except RosterError as exc:
-            raise AuthorityEpochError(
-                "verification roster is unavailable or invalid"
-            ) from exc
+            raise AuthorityEpochError("verification roster is unavailable or invalid") from exc
 
     def _load_roster_version(self, version: int) -> VerificationRoster:
         try:
@@ -563,47 +570,47 @@ class EpochFence:
         observed_artifact_digests: Mapping[str, str],
         bootstrap: bool,
     ) -> None:
-        latest_roster = self._load_latest_roster()
-        self._verify_authorization(
-            authorization,
-            observed_artifact_digests,
-            roster=latest_roster,
-        )
-        authorization_record = canonical_json_bytes(asdict(authorization))
-        with authority_write_lock(self.marker_path):
-            current = self._read_authority(required=False)
-            if bootstrap:
-                if current is not None:
-                    raise AuthorityEpochError("authority epoch already bootstrapped")
-            else:
-                if current is None:
-                    raise AuthorityEpochError(
-                        "authority epoch activation requires an existing marker"
+        with authority_admission_lock(self.root):
+            latest_roster = self._load_latest_roster()
+            self._verify_authorization(
+                authorization,
+                observed_artifact_digests,
+                roster=latest_roster,
+            )
+            authorization_record = canonical_json_bytes(asdict(authorization))
+            with authority_write_lock(self.root):
+                current = self._read_authority(required=False)
+                if bootstrap:
+                    if current is not None:
+                        raise AuthorityEpochError("authority epoch already bootstrapped")
+                else:
+                    if current is None:
+                        raise AuthorityEpochError(
+                            "authority epoch activation requires an existing marker"
+                        )
+                    if authorization.epoch <= current.epoch:
+                        raise AuthorityEpochError("authority epoch must increase monotonically")
+                self._assert_latest_roster(latest_roster)
+                try:
+                    self.pin_store._stage_epoch(
+                        self.root,
+                        authorization_record,
+                        bootstrap=bootstrap,
                     )
-                if authorization.epoch <= current.epoch:
-                    raise AuthorityEpochError("authority epoch must increase monotonically")
-            self._assert_latest_roster(latest_roster)
-            try:
-                self.pin_store._stage_epoch(
-                    self.root,
-                    authorization_record,
-                    bootstrap=bootstrap,
-                )
-            except KeyStoreError as exc:
-                raise AuthorityEpochError("authority epoch pin rejected update") from exc
-            self._write_authority(authorization)
-            try:
-                self.pin_store._finish_epoch(
-                    self.root,
-                    authorization_record,
-                    bootstrap=bootstrap,
-                )
-            except KeyStoreError as exc:
-                raise AuthorityEpochError("authority epoch pin commit failed") from exc
+                except KeyStoreError as exc:
+                    raise AuthorityEpochError("authority epoch pin rejected update") from exc
+                self._write_authority(authorization)
+                try:
+                    self.pin_store._finish_epoch(
+                        self.root,
+                        authorization_record,
+                        bootstrap=bootstrap,
+                    )
+                except KeyStoreError as exc:
+                    raise AuthorityEpochError("authority epoch pin commit failed") from exc
 
     def _write_authority(self, authorization: EpochMarkerAuthorization) -> None:
         marker, high_watermark = _authority_documents(authorization)
-        self.root.mkdir(parents=True, exist_ok=True)
         atomic_write_text(self.marker_path, _canonical_text(marker))
         _fsync_directory(self.root)
         atomic_write_text(
@@ -640,9 +647,7 @@ class EpochFence:
         authorization = _decode_authorization(authorization_value)
         if canonical_json_bytes(asdict(authorization)) != authorization_record:
             raise AuthorityEpochError("prepared authority epoch is not canonical")
-        authorization_roster = self._load_roster_version(
-            authorization.roster_version
-        )
+        authorization_roster = self._load_roster_version(authorization.roster_version)
         self._verify_authorization(
             authorization,
             authorization.artifact_digests,
@@ -661,7 +666,7 @@ class EpochFence:
             raise AuthorityEpochError("prepared authority epoch predecessor is invalid")
 
         pending_documents = _authority_documents(authorization)
-        with authority_write_lock(self.marker_path):
+        with authority_write_lock(self.root):
             existing: list[tuple[Path, str, int]] = [
                 (self.marker_path, "marker", 0),
                 (self.high_watermark_path, "high-watermark", 1),
@@ -673,9 +678,7 @@ class EpochFence:
                 present += 1
                 body = self._read_json(path, description)
                 existing_authorization = _decode_authorization(body.get("authorization"))
-                existing_roster = self._load_roster_version(
-                    existing_authorization.roster_version
-                )
+                existing_roster = self._load_roster_version(existing_authorization.roster_version)
                 self._verify_authorization(
                     existing_authorization,
                     existing_authorization.artifact_digests,
@@ -700,9 +703,7 @@ class EpochFence:
                         "prepared authority epoch destination is inconsistent"
                     )
             if not bootstrap and present == 0:
-                raise AuthorityEpochError(
-                    "prepared authority epoch predecessor root is missing"
-                )
+                raise AuthorityEpochError("prepared authority epoch predecessor root is missing")
             self._write_authority(authorization)
             try:
                 self.pin_store._finish_epoch(
@@ -729,9 +730,7 @@ class EpochFence:
                 raise AuthorityEpochError("authority epoch marker is missing")
             return None
         if not marker_exists or not high_watermark_exists:
-            raise AuthorityEpochError(
-                "authority epoch marker or high-watermark is missing"
-            )
+            raise AuthorityEpochError("authority epoch marker or high-watermark is missing")
         try:
             marker = self._read_json(self.marker_path, "marker")
             high_watermark = self._read_json(self.high_watermark_path, "high-watermark")
@@ -789,9 +788,7 @@ class EpochFence:
             or marker.get("key_id") != authorization.key_id
         ):
             raise AuthorityEpochError("authority epoch marker claims mismatch")
-        authorization_roster = self._load_roster_version(
-            authorization.roster_version
-        )
+        authorization_roster = self._load_roster_version(authorization.roster_version)
         self._verify_authorization(
             authorization,
             authorization.artifact_digests,
@@ -925,7 +922,7 @@ class EpochFence:
         """
         if not isinstance(context, CommitContext):
             raise AuthorityEpochError("commit context is required")
-        with authority_write_lock(self.marker_path):
+        with authority_admission_lock(self.root), authority_write_lock(self.root):
             latest_roster = self._load_latest_roster()
             authorization = self._read_authority()
             assert authorization is not None

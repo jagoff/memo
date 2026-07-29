@@ -13,6 +13,7 @@ from memo.operational_event import (
     ChainAnchor,
     MigrationOrigin,
     OperationalEventV2,
+    SourceProof,
     canonical_anchor_hash,
     canonical_event_hash,
     canonical_json_bytes,
@@ -88,6 +89,89 @@ def test_v2_event_hash_is_canonical_and_tamper_evident() -> None:
     validate_event(first)
 
 
+def test_ordinary_v2_hash_and_wire_omit_new_migration_defaults() -> None:
+    event = _event()
+
+    assert event.event_hash == "3611d80e00a94d98ce794d1c3c2ec8e304e5ad0dbdd08db911fdadccd2278e35"
+    encoded = canonical_json_bytes(event)
+    signed = canonical_signed_bytes(event)
+    assert b'"migration_origin"' not in encoded
+    assert b'"migration_origin_sha256"' not in encoded
+    assert b'"migration_origin"' not in signed
+    assert b'"migration_origin_sha256"' not in signed
+
+
+def _source_proof(sequence: int, *, origin: str = "source-device") -> SourceProof:
+    return SourceProof(
+        source_system="memflow_active_state",
+        source_event_id=f"source-{sequence}",
+        source_schema="memflow.active_state.v1",
+        source_origin=origin,
+        source_sequence=sequence,
+        source_previous_hash="" if sequence == 1 else f"{sequence - 1:064x}",
+        source_event_hash=f"{sequence:064x}",
+        source_content_hash=f"{sequence + 10:064x}",
+        source_actor={"actor_id": "migration"},
+        source_subject_uri=f"memo://source/{sequence}",
+    )
+
+
+def test_source_proof_merkle_builders_are_domain_separated_and_tamper_evident() -> None:
+    authentication_type = getattr(
+        operational_event,
+        "SourceProofAuthentication",
+        None,
+    )
+    authenticate = getattr(operational_event, "authenticate_source_proofs", None)
+    verify = getattr(operational_event, "verify_source_proof_inclusion", None)
+    assert authentication_type is not None
+    assert authenticate is not None
+    assert verify is not None
+    manifest = "a" * 64
+    proofs = tuple(_source_proof(sequence) for sequence in range(1, 4))
+
+    root, authenticated = authenticate(
+        proofs,
+        source_manifest_sha256=manifest,
+    )
+
+    assert len(root) == 64
+    assert len(authenticated) == 3
+    for proof in authenticated:
+        assert proof.authentication is not None
+        assert proof.authentication.schema == "memo.operational_source_inclusion.v1"
+        verify(
+            proof,
+            expected_root_sha256=root,
+            expected_count=len(proofs),
+            expected_manifest_sha256=manifest,
+        )
+
+    middle = authenticated[1]
+    assert middle.authentication is not None
+    corrupt_path = replace(
+        middle.authentication,
+        merkle_path=(
+            "f" * 64,
+            *middle.authentication.merkle_path[1:],
+        ),
+    )
+    with pytest.raises(OperationalError, match=r"inclusion|Merkle|proof"):
+        verify(
+            replace(middle, authentication=corrupt_path),
+            expected_root_sha256=root,
+            expected_count=len(proofs),
+            expected_manifest_sha256=manifest,
+        )
+    with pytest.raises(OperationalError, match=r"manifest|proof"):
+        verify(
+            middle,
+            expected_root_sha256=root,
+            expected_count=len(proofs),
+            expected_manifest_sha256="b" * 64,
+        )
+
+
 def test_v2_validation_rejects_schema_sequence_and_hash() -> None:
     with pytest.raises(OperationalError) as exc:
         validate_event(_event(schema="memo.operational_event.v9"))
@@ -155,6 +239,8 @@ def test_signed_migration_origin_binds_exclusive_attestor_and_validity(tmp_path)
         issued_at="2026-07-29T12:00:00Z",
         expires_at="2026-07-29T13:00:00Z",
         signature="",
+        source_proof_root_sha256="c" * 64,
+        source_proof_count=1,
     )
     envelope = signer.sign(
         domain="memo.operational.migration_origin.v1",

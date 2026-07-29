@@ -170,7 +170,7 @@ def test_event_signatures_enforce_device_enrollment_and_revocation(tmp_path) -> 
     with pytest.raises(SignatureError):
         verify_with(replace(public, enrollment_sequence=2), 1)
     with pytest.raises(KeyRevokedError):
-        verify_with(replace(public, revocation_sequence=2), 2)
+        verify_with(replace(public, revocation_sequence=1), 2)
     with pytest.raises(SignatureError):
         body = {
             "schema": "memo.operational_event.v2",
@@ -191,6 +191,52 @@ def test_event_signatures_enforce_device_enrollment_and_revocation(tmp_path) -> 
             ),
             roster=roster,
         )
+
+
+def test_peer_enrolled_in_roster_v2_can_emit_origin_sequence_one(tmp_path) -> None:
+    keys = DeviceKeyStore.in_memory()
+    local = keys.generate(device_id="device-a", roles=("origin",))
+    pins = _pin_store(tmp_path)
+    roster_v1 = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=local,
+        root=tmp_path,
+        pin_store=pins,
+    )
+    peer = keys.generate(
+        device_id="device-b",
+        roles=("origin",),
+        enrollment_sequence=2,
+    )
+    roster_v2 = roster_v1.with_keys(
+        version=2,
+        peers=("device-a", "device-b"),
+        keys=(local, peer),
+        signer=OperationalSigner(keys, roster_version=1),
+        root=tmp_path,
+        pin_store=pins,
+    )
+    signer = OperationalSigner(keys, roster_version=2)
+    body = {
+        "schema": "memo.operational_event.v2",
+        "origin_device": "device-b",
+        "origin_sequence": 1,
+        "key_id": peer.key_id,
+        "roster_version": 2,
+        "signature": "",
+    }
+    payload = canonical_json_bytes(body)
+
+    OperationalVerifier().verify(
+        domain="memo.operational.event.v2",
+        payload=payload,
+        envelope=signer.sign(
+            domain="memo.operational.event.v2",
+            payload=payload,
+            key_id=peer.key_id,
+        ),
+        roster=roster_v2,
+    )
 
 
 def test_anchor_signature_binds_embedded_key_and_roster(tmp_path) -> None:

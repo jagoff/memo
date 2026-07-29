@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
@@ -25,6 +27,7 @@ from memo.operational_event import (
     OperationalEventV2,
     OriginBundle,
     SourceProof,
+    StateCheckpoint,
     canonical_anchor_hash,
     canonical_event_hash,
     canonical_json_bytes,
@@ -100,6 +103,14 @@ class _Authority:
         )
 
 
+class _CrashLedger(OperationLedgerV2):
+    crash_at: str
+
+    def _transaction_failpoint(self, label: str) -> None:
+        if label == self.crash_at:
+            os._exit(73)
+
+
 def _authority(
     root: Path,
     *,
@@ -140,7 +151,7 @@ def _authority(
             keys.generate(
                 device_id=remote,
                 roles=("origin",),
-                enrollment_sequence=1,
+                enrollment_sequence=2,
             )
             for remote in remote_devices
         )
@@ -184,6 +195,27 @@ def _ledger(
         pin_store=authority.pin_store,
         epoch_fence=authority.fence,
     )
+
+
+def _crash_ledger(
+    root: Path,
+    authority: _Authority,
+    *,
+    crash_at: str,
+) -> _CrashLedger:
+    ledger = _CrashLedger(
+        root,
+        device_id=authority.device_id,
+        clock=_clock,
+        signer=authority.signer,
+        verifier=authority.verifier,
+        roster=authority.roster,
+        roster_root=authority.root,
+        pin_store=authority.pin_store,
+        epoch_fence=authority.fence,
+    )
+    ledger.crash_at = crash_at
+    return ledger
 
 
 def _identity(device_id: str = "device-a") -> PrincipalIdentity:
@@ -240,6 +272,8 @@ def _signed_anchor(
     key: PublicKeyRecord | None = None,
     signer: OperationalSigner | None = None,
     source_manifest_sha256: str = "",
+    ledger_epoch: int = 0,
+    state_sha256: str | None = None,
 ) -> ChainAnchor:
     key = key or _key_for(authority, origin, signer_role)
     signer = signer or authority.signer
@@ -250,7 +284,7 @@ def _signed_anchor(
             f"anchor-{origin}-{kind}-{base_sequence}-{hashlib.sha256(checkpoint).hexdigest()[:12]}"
         ),
         origin_device=origin,
-        ledger_epoch=0,
+        ledger_epoch=ledger_epoch,
         reducer_version=1,
         kind=cast(object, kind),  # type: ignore[arg-type]
         base_sequence=base_sequence,
@@ -259,7 +293,7 @@ def _signed_anchor(
         final_event_hash=base_hash,
         previous_anchor_hash=previous_anchor_hash,
         source_manifest_sha256=source_manifest_sha256,
-        state_sha256=digest,
+        state_sha256=state_sha256 or digest,
         checkpoint_id=f"checkpoint-{origin}-{kind}-{base_sequence}",
         checkpoint_sha256=digest,
         checkpoint_size=len(checkpoint),
@@ -278,6 +312,29 @@ def _signed_anchor(
         key_id=key.key_id,
     )
     return replace(hashed, signature=envelope.signature)
+
+
+def _state_checkpoint_bytes(
+    *,
+    origin: str,
+    through_sequence: int,
+    through_hash: str,
+    state: bytes,
+    checkpoint_id: str | None = None,
+    reducer_version: int = 1,
+) -> bytes:
+    checkpoint = StateCheckpoint(
+        schema="memo.operational_checkpoint.v1",
+        checkpoint_id=(checkpoint_id or f"checkpoint-{origin}-compaction-{through_sequence}"),
+        reducer_version=reducer_version,
+        origin_device=origin,
+        through_sequence=through_sequence,
+        through_event_hash=through_hash,
+        state_bytes=state,
+        state_sha256=hashlib.sha256(state).hexdigest(),
+        created_at=_STAMP,
+    )
+    return canonical_json_bytes(checkpoint)
 
 
 def _signed_event(
@@ -362,21 +419,160 @@ def _bundle(
 
 
 def _add_attestor(authority: _Authority) -> PublicKeyRecord:
+    next_version = authority.roster.version + 1
     attestor = authority.keys.generate(
         device_id=authority.device_id,
         roles=("migration_attestor",),
-        enrollment_sequence=2,
+        enrollment_sequence=next_version,
     )
     authority.roster = authority.roster.with_keys(
-        version=2,
+        version=next_version,
         peers=authority.roster.peers,
         keys=(*authority.roster.keys, attestor),
         signer=authority.signer,
         root=authority.root,
         pin_store=authority.pin_store,
     )
-    authority.signer = OperationalSigner(authority.keys, roster_version=2)
+    authority.signer = OperationalSigner(
+        authority.keys,
+        roster_version=next_version,
+    )
     return attestor
+
+
+def _authenticate_proofs(
+    proofs: tuple[SourceProof, ...],
+    *,
+    manifest: str,
+) -> tuple[str, tuple[SourceProof, ...]]:
+    import memo.operational_event as event_module
+
+    authenticate = getattr(event_module, "authenticate_source_proofs", None)
+    assert authenticate is not None, "authenticated source-proof builder is required"
+    return authenticate(proofs, source_manifest_sha256=manifest)
+
+
+def _signed_migration_origin(
+    authority: _Authority,
+    *,
+    attestor: PublicKeyRecord,
+    migration_device: str,
+    source_manifest: str,
+    proof_root: str,
+    proof_count: int,
+    attempt_id: str = "attempt-migration",
+) -> MigrationOrigin:
+    unsigned = MigrationOrigin(
+        schema="memo.operational_migration_origin.v1",
+        attempt_id=attempt_id,
+        migration_device_id=migration_device,
+        source_manifest_sha256=source_manifest,
+        capability_manifest_sha256="f" * 64,
+        attestor_device_id=authority.device_id,
+        attestor_key_id=attestor.key_id,
+        roster_version=authority.roster.version,
+        issued_at="2026-07-29T11:00:00Z",
+        expires_at="2026-07-29T13:00:00Z",
+        signature="",
+        source_proof_root_sha256=proof_root,
+        source_proof_count=proof_count,
+    )
+    envelope = authority.signer.sign(
+        domain="memo.operational.migration_origin.v1",
+        payload=canonical_signed_bytes(unsigned),
+        key_id=attestor.key_id,
+    )
+    return replace(unsigned, signature=envelope.signature)
+
+
+def _resign_event(
+    authority: _Authority,
+    event: OperationalEventV2,
+    **changes: object,
+) -> OperationalEventV2:
+    unsigned = replace(event, **changes, event_hash="", signature="")
+    hashed = replace(unsigned, event_hash=canonical_event_hash(unsigned))
+    envelope = authority.signer.sign(
+        domain="memo.operational.event.v2",
+        payload=canonical_signed_bytes(hashed),
+        key_id=hashed.key_id,
+    )
+    return replace(hashed, signature=envelope.signature)
+
+
+def _with_revocation_proof(
+    authority: _Authority,
+    key: PublicKeyRecord,
+    *,
+    revocation_version: int,
+) -> PublicKeyRecord:
+    revoked = replace(
+        key,
+        revocation_sequence=revocation_version,
+        proof_of_possession="",
+    )
+    return replace(
+        revoked,
+        proof_of_possession=base64.urlsafe_b64encode(
+            authority.keys.sign(
+                key_id=revoked.key_id,
+                payload=revoked.proof_payload(),
+            )
+        )
+        .rstrip(b"=")
+        .decode("ascii"),
+    )
+
+
+def _rotate_local_origin(authority: _Authority) -> PublicKeyRecord:
+    previous = authority.origin_key
+    old_signer = authority.signer
+    next_version = authority.roster.version + 1
+    new_key = authority.keys.generate(
+        device_id=authority.device_id,
+        roles=("origin",),
+        enrollment_sequence=next_version,
+    )
+    revoked = _with_revocation_proof(
+        authority,
+        previous,
+        revocation_version=next_version,
+    )
+    remaining = tuple(key for key in authority.roster.keys if key.key_id != previous.key_id)
+    authority.roster = authority.roster.with_keys(
+        version=next_version,
+        peers=authority.roster.peers,
+        keys=(revoked, new_key, *remaining),
+        signer=old_signer,
+        root=authority.root,
+        pin_store=authority.pin_store,
+    )
+    authority.origin_key = new_key
+    authority.signer = OperationalSigner(
+        authority.keys,
+        roster_version=next_version,
+    )
+    return new_key
+
+
+def _fork_process_loss(
+    operation: Callable[[], None],
+    *,
+    expected_exit: int = 73,
+) -> None:
+    if not hasattr(os, "fork"):
+        pytest.skip("process-loss regression requires os.fork")
+    pid = os.fork()
+    if pid == 0:
+        try:
+            operation()
+        except BaseException:
+            os._exit(99)
+        os._exit(expected_exit)
+    waited, status = os.waitpid(pid, 0)
+    assert waited == pid
+    assert os.WIFEXITED(status)
+    assert os.WEXITSTATUS(status) == expected_exit
 
 
 def test_constructor_is_usable_without_authority_but_sensitive_operations_fail_closed(
@@ -393,6 +589,44 @@ def test_constructor_is_usable_without_authority_but_sensitive_operations_fail_c
     with pytest.raises(OperationalError, match="authority"):
         ledger.append(_command(), context=None)  # type: ignore[arg-type]
     assert not (tmp_path / "operational" / "journal").exists()
+
+
+def test_unpinned_unsigned_roster_cannot_admit_an_anchor(tmp_path: Path) -> None:
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a", roles=("origin",))
+    raw_roster = VerificationRoster(
+        version=1,
+        peers=("device-a",),
+        keys=(key,),
+        local_device_id="device-a",
+    )
+    ledger = OperationLedgerV2(
+        tmp_path / "operational",
+        device_id="device-a",
+        clock=_clock,
+        signer=OperationalSigner(keys, roster_version=1),
+        verifier=OperationalVerifier(),
+        roster=raw_roster,
+    )
+
+    with pytest.raises(OperationalError, match=r"pinned|authority"):
+        ledger.ensure_anchor()
+
+
+def test_operational_root_with_symlinked_ancestor_never_escapes(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(outside, target_is_directory=True)
+    ledger = _ledger(linked / "operational", authority)
+
+    with pytest.raises(OperationalError, match=r"symlink|unsafe|storage"):
+        ledger.ensure_anchor()
+
+    assert list(outside.iterdir()) == []
 
 
 def test_empty_anchor_uses_exact_filesystem_and_checkpoint_contract(tmp_path: Path) -> None:
@@ -464,7 +698,13 @@ def test_compaction_anchor_advances_only_from_current_anchor_and_keeps_raw_check
     ledger = _ledger(tmp_path / "operational", authority)
     first = ledger.ensure_anchor()
     first_event = ledger.append(_command(), context=authority.context())
-    checkpoint = canonical_json_bytes({"focus": {"demo": "compacted"}})
+    state = canonical_json_bytes({"focus": {"demo": "compacted"}})
+    checkpoint = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=first_event.origin_sequence,
+        through_hash=first_event.event_hash,
+        state=state,
+    )
     compacted = _signed_anchor(
         authority,
         origin="device-a",
@@ -473,6 +713,7 @@ def test_compaction_anchor_advances_only_from_current_anchor_and_keeps_raw_check
         base_sequence=first_event.origin_sequence,
         base_hash=first_event.event_hash,
         previous_anchor_hash=first.anchor_hash,
+        state_sha256=hashlib.sha256(state).hexdigest(),
     )
 
     assert ledger.ensure_anchor(compacted, checkpoint=checkpoint) == compacted
@@ -489,6 +730,122 @@ def test_compaction_anchor_advances_only_from_current_anchor_and_keeps_raw_check
     assert second_event.previous_hash == first_event.event_hash
     assert ledger.iter_events() == [second_event]
     assert ledger.verify().ok is True
+
+
+def test_compaction_checkpoint_validates_structured_envelope_and_inner_state(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    ledger = _ledger(tmp_path / "operational", authority)
+    genesis = ledger.ensure_anchor()
+    event = ledger.append(_command(), context=authority.context())
+    state = canonical_json_bytes({"focus": {"demo": "compacted"}})
+    checkpoint = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=event.origin_sequence,
+        through_hash=event.event_hash,
+        state=state,
+    )
+    anchor = _signed_anchor(
+        authority,
+        origin="device-a",
+        kind="compaction",
+        checkpoint=checkpoint,
+        base_sequence=event.origin_sequence,
+        base_hash=event.event_hash,
+        previous_anchor_hash=genesis.anchor_hash,
+        state_sha256=hashlib.sha256(state).hexdigest(),
+    )
+
+    assert ledger.ensure_anchor(anchor, checkpoint=checkpoint) == anchor
+
+    body = json.loads(checkpoint)
+    invalid_bodies = (
+        {**body, "schema": "memo.operational_checkpoint.v9"},
+        {**body, "checkpoint_id": "wrong-checkpoint"},
+        {**body, "origin_device": "device-b"},
+        {**body, "reducer_version": 2},
+        {**body, "through_sequence": 999},
+        {**body, "through_event_hash": "f" * 64},
+        {**body, "state_sha256": "0" * 64},
+        {**body, "state_bytes": "e30"},
+    )
+    for invalid_body in invalid_bodies:
+        invalid = canonical_json_bytes(invalid_body)
+        changed = _signed_anchor(
+            authority,
+            origin="device-a",
+            kind="compaction",
+            checkpoint=invalid,
+            base_sequence=event.origin_sequence,
+            base_hash=event.event_hash,
+            previous_anchor_hash=genesis.anchor_hash,
+            state_sha256=hashlib.sha256(state).hexdigest(),
+        )
+        with pytest.raises(OperationalError, match=r"checkpoint|state|reducer"):
+            ledger._validate_checkpoint(changed, invalid)
+
+
+def test_imported_compaction_rejects_ledger_epoch_regression(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    ledger = _ledger(tmp_path / "operational", authority)
+    genesis = ledger.ensure_anchor()
+    event = ledger.append(_command(), context=authority.context())
+    state_v5 = canonical_json_bytes({"epoch": 5})
+    checkpoint_v5 = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=event.origin_sequence,
+        through_hash=event.event_hash,
+        state=state_v5,
+    )
+    anchor_v5 = _signed_anchor(
+        authority,
+        origin="device-a",
+        kind="compaction",
+        checkpoint=checkpoint_v5,
+        base_sequence=event.origin_sequence,
+        base_hash=event.event_hash,
+        previous_anchor_hash=genesis.anchor_hash,
+        ledger_epoch=5,
+        state_sha256=hashlib.sha256(state_v5).hexdigest(),
+    )
+    ledger.ensure_anchor(anchor_v5, checkpoint=checkpoint_v5)
+
+    state_v4 = canonical_json_bytes({"epoch": 4})
+    checkpoint_v4 = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=event.origin_sequence,
+        through_hash=event.event_hash,
+        state=state_v4,
+    )
+    anchor_v4 = _signed_anchor(
+        authority,
+        origin="device-a",
+        kind="compaction",
+        checkpoint=checkpoint_v4,
+        base_sequence=event.origin_sequence,
+        base_hash=event.event_hash,
+        previous_anchor_hash=anchor_v5.anchor_hash,
+        ledger_epoch=4,
+        state_sha256=hashlib.sha256(state_v4).hexdigest(),
+    )
+    regressed = OriginBundle(
+        anchor=anchor_v4,
+        checkpoint=checkpoint_v4,
+        events=(),
+        head_sequence=event.origin_sequence,
+        head_hash=event.event_hash,
+    )
+
+    with pytest.raises(OperationalError, match=r"epoch|regression"):
+        ledger.import_bundles(
+            [regressed],
+            context=authority.context(),
+        )
+
+    assert ledger.anchor().ledger_epoch == 5
 
 
 def test_anchor_requires_matching_checkpoint_role_signature_and_enrolled_origin(
@@ -566,6 +923,154 @@ def test_append_before_head_crash_is_repaired_from_validated_segment(
     assert len(ledger.iter_events(origin_device="device-a")) == 2
     assert ledger.validated_events() == ledger.iter_events()
     assert ledger.verify().ok is True
+
+
+def test_torn_jsonl_tail_recovers_at_multiple_byte_boundaries_after_restart(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    operational = tmp_path / "operational"
+    ledger = _ledger(operational, authority)
+    ledger.ensure_anchor()
+    first = ledger.append(_command(), context=authority.context())
+    segment = next((ledger.events_dir / "device-a").glob("*.jsonl"))
+    durable_prefix = segment.read_bytes()
+    second = _signed_event(
+        authority,
+        origin="device-a",
+        sequence=2,
+        previous_hash=first.event_hash,
+    )
+    encoded = canonical_json_bytes(second) + b"\n"
+
+    for boundary in (1, len(encoded) // 2, len(encoded) - 1):
+        segment.write_bytes(durable_prefix)
+
+        def lose_power(boundary: int = boundary) -> None:
+            descriptor = os.open(segment, os.O_WRONLY | os.O_APPEND)
+            try:
+                os.write(descriptor, encoded[:boundary])
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+
+        _fork_process_loss(lose_power)
+        restarted = _ledger(operational, authority)
+        report = restarted.recover()
+        assert report.repaired_tails == ("device-a",)
+        assert restarted.position().sequence == first.origin_sequence
+        assert segment.read_bytes() == durable_prefix
+        assert list((restarted.root / "recovery").glob("*.json"))
+
+
+def test_complete_event_before_stale_head_is_repaired_after_process_loss(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    operational = tmp_path / "operational"
+    ledger = _ledger(operational, authority)
+    ledger.ensure_anchor()
+    first = ledger.append(_command(), context=authority.context())
+    second = _signed_event(
+        authority,
+        origin="device-a",
+        sequence=2,
+        previous_hash=first.event_hash,
+    )
+    segment = next((ledger.events_dir / "device-a").glob("*.jsonl"))
+
+    def lose_power() -> None:
+        descriptor = os.open(segment, os.O_WRONLY | os.O_APPEND)
+        try:
+            os.write(descriptor, canonical_json_bytes(second) + b"\n")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    _fork_process_loss(lose_power)
+    restarted = _ledger(operational, authority)
+    report = restarted.recover()
+
+    assert report.repaired_heads == ("device-a",)
+    assert restarted.position().sequence == 2
+    assert restarted.iter_events() == [first, second]
+
+
+def test_torn_tail_recovery_fails_closed_for_invalid_complete_rows_and_advanced_head(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+
+    invalid = _ledger(tmp_path / "invalid", authority)
+    invalid.ensure_anchor()
+    invalid.append(_command(), context=authority.context())
+    invalid_segment = next((invalid.events_dir / "device-a").glob("*.jsonl"))
+    with invalid_segment.open("ab") as handle:
+        handle.write(b'{"complete":"but-invalid"}\n')
+        handle.flush()
+        os.fsync(handle.fileno())
+    with pytest.raises(OperationalError):
+        invalid.recover()
+
+    advanced = _ledger(tmp_path / "advanced", authority)
+    advanced.ensure_anchor()
+    first = advanced.append(_command(), context=authority.context())
+    advanced_segment = next((advanced.events_dir / "device-a").glob("*.jsonl"))
+    with advanced_segment.open("ab") as handle:
+        handle.write(b'{"torn":')
+        handle.flush()
+        os.fsync(handle.fileno())
+    advanced._write_head(
+        origin="device-a",
+        sequence=99,
+        event_hash="f" * 64,
+        anchor_hash=advanced.anchor().anchor_hash,
+    )
+    with pytest.raises(OperationalError, match=r"head|fork|advanced"):
+        advanced.recover()
+    assert advanced_segment.read_bytes().endswith(b'{"torn":')
+    assert first.origin_sequence == 1
+
+
+def test_legacy_compaction_crash_after_anchor_before_head_recovers_on_restart(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    operational = tmp_path / "operational"
+    ledger = _ledger(operational, authority)
+    genesis = ledger.ensure_anchor()
+    event = ledger.append(_command(), context=authority.context())
+    state = canonical_json_bytes({"focus": "compacted"})
+    checkpoint = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=event.origin_sequence,
+        through_hash=event.event_hash,
+        state=state,
+    )
+    compacted = _signed_anchor(
+        authority,
+        origin="device-a",
+        kind="compaction",
+        checkpoint=checkpoint,
+        base_sequence=event.origin_sequence,
+        base_hash=event.event_hash,
+        previous_anchor_hash=genesis.anchor_hash,
+        ledger_epoch=1,
+        state_sha256=hashlib.sha256(state).hexdigest(),
+    )
+
+    def lose_power() -> None:
+        ledger._atomic_write_bytes(ledger._checkpoint_path(compacted), checkpoint)
+        ledger._atomic_write_json(ledger._anchor_path("device-a"), compacted)
+
+    _fork_process_loss(lose_power)
+    restarted = _ledger(operational, authority)
+    report = restarted.recover()
+
+    assert report.recovered_compactions == ("device-a",)
+    assert restarted.anchor() == compacted
+    assert restarted.position().sequence == event.origin_sequence
+    assert restarted.verify().ok is True
 
 
 def test_append_holds_epoch_fence_through_event_and_head_fsync(
@@ -673,7 +1178,7 @@ def test_source_proof_is_bound_to_sealed_v1_head_and_signed_migration_origin(
         migration_attestor=authority.signer,
         attestor_key_id=attestor.key_id,
     )
-    proof = SourceProof(
+    raw_proof = SourceProof(
         source_system="memo_v1",
         source_event_id=source.event_id,
         source_schema=source.schema,
@@ -685,25 +1190,19 @@ def test_source_proof_is_bound_to_sealed_v1_head_and_signed_migration_origin(
         source_actor=source.actor.to_dict(),
         source_subject_uri=source.subject_uri,
     )
-    unsigned_origin = MigrationOrigin(
-        schema="memo.operational_migration_origin.v1",
-        attempt_id="attempt-migration",
-        migration_device_id="device-a",
-        source_manifest_sha256=anchor.source_manifest_sha256,
-        capability_manifest_sha256="f" * 64,
-        attestor_device_id="device-a",
-        attestor_key_id=attestor.key_id,
-        roster_version=2,
-        issued_at="2026-07-29T11:00:00Z",
-        expires_at="2026-07-29T13:00:00Z",
-        signature="",
+    proof_root, authenticated = _authenticate_proofs(
+        (raw_proof,),
+        manifest=anchor.source_manifest_sha256,
     )
-    envelope = authority.signer.sign(
-        domain="memo.operational.migration_origin.v1",
-        payload=canonical_signed_bytes(unsigned_origin),
-        key_id=attestor.key_id,
+    proof = authenticated[0]
+    migration_origin = _signed_migration_origin(
+        authority,
+        attestor=attestor,
+        migration_device="device-a",
+        source_manifest=anchor.source_manifest_sha256,
+        proof_root=proof_root,
+        proof_count=1,
     )
-    migration_origin = replace(unsigned_origin, signature=envelope.signature)
     context = replace(authority.context(), migration_origin=migration_origin)
 
     event = ledger.append(
@@ -714,6 +1213,11 @@ def test_source_proof_is_bound_to_sealed_v1_head_and_signed_migration_origin(
     assert event.origin_sequence == anchor.base_sequence + 1
     assert event.previous_hash == source.event_hash
     assert event.source_proof == proof
+    assert event.migration_origin == migration_origin
+    assert (
+        event.migration_origin_sha256
+        == hashlib.sha256(canonical_json_bytes(migration_origin)).hexdigest()
+    )
     bad = replace(proof, source_event_hash="0" * 64)
     with pytest.raises(OperationalError, match="source proof"):
         ledger.append(
@@ -721,6 +1225,216 @@ def test_source_proof_is_bound_to_sealed_v1_head_and_signed_migration_origin(
             context=context,
         )
     assert ledger.position().sequence == event.origin_sequence
+
+
+def test_source_proof_without_migration_authority_and_forged_pre_head_fail(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    attestor = _add_attestor(authority)
+    legacy = LegacyOperationLedger(tmp_path / "legacy", device_id="device-a")
+    first = legacy.append(
+        "focus_set",
+        subject_uri="memo://focus/demo",
+        payload={"project": "demo", "summary": "first"},
+        content_hash="1" * 64,
+        ts=_STAMP,
+    )
+    second = legacy.append(
+        "focus_set",
+        subject_uri="memo://focus/demo",
+        payload={"project": "demo", "summary": "second"},
+        content_hash="2" * 64,
+        ts=_STAMP,
+    )
+    ledger = _ledger(tmp_path / "operational", authority)
+    anchor = ledger.ensure_anchor_from_v1(
+        legacy,
+        source_head_hash=second.event_hash,
+        migration_attestor=authority.signer,
+        attestor_key_id=attestor.key_id,
+    )
+
+    raw_proofs = tuple(
+        SourceProof(
+            source_system="memo_v1",
+            source_event_id=event.event_id,
+            source_schema=event.schema,
+            source_origin=event.device_id,
+            source_sequence=event.sequence,
+            source_previous_hash=event.previous_hash,
+            source_event_hash=event.event_hash,
+            source_content_hash=event.content_hash,
+            source_actor=event.actor.to_dict(),
+            source_subject_uri=event.subject_uri,
+        )
+        for event in (first, second)
+    )
+    root, proofs = _authenticate_proofs(
+        raw_proofs,
+        manifest=anchor.source_manifest_sha256,
+    )
+    migration = _signed_migration_origin(
+        authority,
+        attestor=attestor,
+        migration_device="device-a",
+        source_manifest=anchor.source_manifest_sha256,
+        proof_root=root,
+        proof_count=2,
+    )
+
+    with pytest.raises(OperationalError, match=r"migration|authority"):
+        ledger.append(
+            _command(source_proof=proofs[-1]),
+            context=authority.context(),
+        )
+
+    forged = replace(
+        proofs[0],
+        source_event_id="invented-pre-head",
+        source_event_hash="9" * 64,
+        source_actor={"actor_id": "forged"},
+    )
+    with pytest.raises(OperationalError, match=r"inclusion|proof"):
+        ledger.append(
+            _command(idempotency_key="forged", source_proof=forged),
+            context=replace(authority.context(), migration_origin=migration),
+        )
+    assert ledger.position().sequence == anchor.base_sequence
+
+
+def test_plan04_shaped_proof_keeps_source_origin_distinct_from_migration_origin(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="migration-device",
+        remote_devices=("source-device",),
+    )
+    attestor = _add_attestor(authority)
+    ledger = _ledger(tmp_path / "operational", authority)
+    anchor = ledger.ensure_anchor()
+    raw = SourceProof(
+        source_system="memflow_active_state",
+        source_event_id="memflow-record-1",
+        source_schema="memflow.active_state.v1",
+        source_origin="source-device",
+        source_sequence=1,
+        source_previous_hash="",
+        source_event_hash="a" * 64,
+        source_content_hash="b" * 64,
+        source_actor={"actor_id": "memflow-migration"},
+        source_subject_uri="memo://memflow/active/1",
+    )
+    manifest = "c" * 64
+    root, proofs = _authenticate_proofs((raw,), manifest=manifest)
+    migration = _signed_migration_origin(
+        authority,
+        attestor=attestor,
+        migration_device="migration-device",
+        source_manifest=manifest,
+        proof_root=root,
+        proof_count=1,
+    )
+
+    event = ledger.append(
+        _command(
+            device_id="migration-device",
+            source_proof=proofs[0],
+        ),
+        context=replace(authority.context(), migration_origin=migration),
+    )
+
+    assert anchor.kind == "empty"
+    assert event.origin_device == "migration-device"
+    assert event.source_proof is not None
+    assert event.source_proof.source_origin == "source-device"
+    assert event.migration_origin == migration
+
+
+def test_persisted_migration_origin_digest_and_inclusion_path_are_verified(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    attestor = _add_attestor(authority)
+    ledger = _ledger(tmp_path / "operational", authority)
+    ledger.ensure_anchor()
+    manifest = "d" * 64
+    raw = SourceProof(
+        source_system="memflow_active_state",
+        source_event_id="source-1",
+        source_schema="memflow.active_state.v1",
+        source_origin="legacy-device",
+        source_sequence=1,
+        source_previous_hash="",
+        source_event_hash="1" * 64,
+        source_content_hash="2" * 64,
+        source_actor={"actor_id": "migration"},
+        source_subject_uri="memo://source/1",
+    )
+    root, proofs = _authenticate_proofs((raw,), manifest=manifest)
+    migration = _signed_migration_origin(
+        authority,
+        attestor=attestor,
+        migration_device="device-a",
+        source_manifest=manifest,
+        proof_root=root,
+        proof_count=1,
+    )
+    event = ledger.append(
+        _command(source_proof=proofs[0]),
+        context=replace(authority.context(), migration_origin=migration),
+    )
+    bundle = ledger.export_bundles()
+    assert len(bundle) == 1
+    original = bundle[0]
+
+    changed_origin = _signed_migration_origin(
+        authority,
+        attestor=attestor,
+        migration_device="device-a",
+        source_manifest=manifest,
+        proof_root=root,
+        proof_count=1,
+        attempt_id="changed-attempt",
+    )
+    origin_tamper = _resign_event(
+        authority,
+        event,
+        migration_origin=changed_origin,
+    )
+    digest_tamper = _resign_event(
+        authority,
+        event,
+        migration_origin_sha256="0" * 64,
+    )
+    assert event.source_proof is not None
+    assert event.source_proof.authentication is not None
+    path_tamper = replace(
+        event.source_proof.authentication,
+        merkle_path=("f" * 64,),
+    )
+    proof_tamper = _resign_event(
+        authority,
+        event,
+        source_proof=replace(
+            event.source_proof,
+            authentication=path_tamper,
+        ),
+    )
+
+    for changed in (origin_tamper, digest_tamper, proof_tamper):
+        invalid = replace(
+            original,
+            events=(changed,),
+            head_sequence=changed.origin_sequence,
+            head_hash=changed.event_hash,
+        )
+        with pytest.raises(
+            OperationalError,
+            match=r"migration|digest|inclusion|proof",
+        ):
+            ledger._validate_bundle(invalid)
 
 
 def test_bundle_import_validates_signatures_continuity_and_exact_replay(
@@ -734,8 +1448,8 @@ def test_bundle_import_validates_signatures_continuity_and_exact_replay(
     incoming = _bundle(authority, origin="device-a")
     ledger = _ledger(tmp_path / "operational", authority)
 
-    report = ledger.import_bundles([incoming])
-    replay = ledger.import_bundles([incoming])
+    report = ledger.import_bundles([incoming], context=authority.context())
+    replay = ledger.import_bundles([incoming], context=authority.context())
 
     assert isinstance(report, LedgerImportReport)
     assert report.events_inserted == 2
@@ -757,7 +1471,7 @@ def test_import_rejects_gap_and_quarantines_stably(tmp_path: Path) -> None:
 
     for _ in range(2):
         with pytest.raises(OperationalError, match="sequence"):
-            ledger.import_bundles([gap])
+            ledger.import_bundles([gap], context=authority.context())
 
     quarantined = list(ledger.quarantine_dir.iterdir())
     assert len(quarantined) == 1
@@ -780,15 +1494,15 @@ def test_import_rejects_unknown_schema_tamper_and_same_position_fork(
         anchor=replace(incoming.anchor, schema="memo.operational_anchor.v9"),
     )
     with pytest.raises(OperationalError, match="schema"):
-        ledger.import_bundles([unknown])
+        ledger.import_bundles([unknown], context=authority.context())
     tampered = replace(
         incoming,
         events=(replace(incoming.events[0], signature="bad"), *incoming.events[1:]),
     )
     with pytest.raises(OperationalError):
-        ledger.import_bundles([tampered])
+        ledger.import_bundles([tampered], context=authority.context())
 
-    ledger.import_bundles([incoming])
+    ledger.import_bundles([incoming], context=authority.context())
     forked_second = _signed_event(
         authority,
         origin="device-a",
@@ -803,7 +1517,7 @@ def test_import_rejects_unknown_schema_tamper_and_same_position_fork(
         head_hash=forked_second.event_hash,
     )
     with pytest.raises(OperationalError, match="fork"):
-        ledger.import_bundles([fork])
+        ledger.import_bundles([fork], context=authority.context())
     assert ledger.position("device-a").event_hash == incoming.head_hash
     assert len(list(ledger.quarantine_dir.iterdir())) == 3
 
@@ -823,7 +1537,10 @@ def test_all_bundles_validate_before_any_journal_write(tmp_path: Path) -> None:
     )
 
     with pytest.raises(OperationalError):
-        ledger.import_bundles([valid, invalid])
+        ledger.import_bundles(
+            [valid, invalid],
+            context=authority.context(),
+        )
 
     assert not ledger.anchors_dir.exists()
     assert not ledger.events_dir.exists()
@@ -860,13 +1577,101 @@ def test_import_write_failure_rolls_back_every_bundle_before_quarantine(
 
     monkeypatch.setattr(ledger, "_append_event_fsync", fail_during_second_bundle)
     with pytest.raises(OperationalError, match="simulated import write failure"):
-        ledger.import_bundles(bundles)
+        ledger.import_bundles(bundles, context=authority.context())
 
     assert ledger.positions() == ()
     assert not ledger.anchors_dir.exists()
     assert not ledger.events_dir.exists()
     assert not ledger.heads_dir.exists()
     assert len(list(ledger.quarantine_dir.iterdir())) == 2
+
+
+@pytest.mark.parametrize(
+    "crash_at",
+    (
+        "before_commit",
+        "after_commit",
+        *(f"after_target:{index}" for index in range(8)),
+    ),
+)
+def test_multi_bundle_transaction_recovers_process_loss_at_every_publish_boundary(
+    tmp_path: Path,
+    crash_at: str,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a", "device-c"),
+    )
+    operational = tmp_path / "operational"
+    bundles = (
+        _bundle(authority, origin="device-a"),
+        _bundle(authority, origin="device-c"),
+    )
+    context = authority.context()
+
+    def lose_power() -> None:
+        crashing = _crash_ledger(
+            operational,
+            authority,
+            crash_at=crash_at,
+        )
+        crashing.import_bundles(bundles, context=context)
+        raise AssertionError(f"transaction failpoint was not reached: {crash_at}")
+
+    _fork_process_loss(lose_power)
+    restarted = _ledger(operational, authority)
+
+    if crash_at == "before_commit":
+        recovery = restarted.recover()
+        assert recovery.discarded_transactions
+        assert restarted.positions() == ()
+        first_retry = restarted.import_bundles(
+            bundles,
+            context=authority.context(),
+        )
+        assert first_retry.events_inserted == 4
+    else:
+        assert restarted.position("device-a").sequence == 2
+        assert tuple(position.origin_device for position in restarted.positions()) == (
+            "device-a",
+            "device-c",
+        )
+        first_retry = restarted.import_bundles(
+            bundles,
+            context=authority.context(),
+        )
+        assert first_retry.events_inserted == 0
+        assert first_retry.events_replayed == 4
+
+    immediate_retry = restarted.import_bundles(
+        bundles,
+        context=authority.context(),
+    )
+    assert immediate_retry.events_inserted == 0
+    assert immediate_retry.events_replayed == 4
+    assert restarted.verify().ok is True
+    for transaction in (restarted.root / "transactions").glob("*"):
+        if (transaction / "COMMITTED.json").exists():
+            assert (transaction / "APPLIED.json").exists()
+            manifest = json.loads((transaction / "manifest.json").read_bytes())
+            targets = manifest["targets"]
+            first_head = next(
+                (
+                    index
+                    for index, target in enumerate(targets)
+                    if str(target["relative_target"]).startswith("heads/")
+                ),
+                len(targets),
+            )
+            assert all(
+                not str(target["relative_target"]).startswith("heads/")
+                for target in targets[:first_head]
+            )
+            assert all(
+                str(target["relative_target"]).startswith("heads/")
+                for target in targets[first_head:]
+            )
 
 
 def test_import_requires_exact_checkpoint_and_reducer_version(tmp_path: Path) -> None:
@@ -879,7 +1684,10 @@ def test_import_requires_exact_checkpoint_and_reducer_version(tmp_path: Path) ->
     incoming = _bundle(authority, origin="device-a")
 
     with pytest.raises(OperationalError, match="checkpoint"):
-        ledger.import_bundles([replace(incoming, checkpoint=b'{"wrong":true}')])
+        ledger.import_bundles(
+            [replace(incoming, checkpoint=b'{"wrong":true}')],
+            context=authority.context(),
+        )
     changed_anchor = replace(incoming.anchor, reducer_version=2)
     changed_anchor = replace(
         changed_anchor,
@@ -893,7 +1701,10 @@ def test_import_requires_exact_checkpoint_and_reducer_version(tmp_path: Path) ->
     )
     changed_anchor = replace(changed_anchor, signature=envelope.signature)
     with pytest.raises(OperationalError, match="reducer"):
-        ledger.import_bundles([replace(incoming, anchor=changed_anchor)])
+        ledger.import_bundles(
+            [replace(incoming, anchor=changed_anchor)],
+            context=authority.context(),
+        )
     assert ledger.positions() == ()
 
 
@@ -989,6 +1800,138 @@ def test_roster_refresh_uses_historical_rosters_and_rejects_revoked_signer(
             context=authority.context(),
         )
     assert refreshed.position().sequence == 2
+
+
+def test_historical_roster_bundle_cannot_introduce_bytes_after_revocation(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    historical = _bundle(authority, origin="device-a")
+    remote = _key_for(authority, "device-a")
+    revoked = _with_revocation_proof(
+        authority,
+        remote,
+        revocation_version=3,
+    )
+    authority.roster = authority.roster.with_keys(
+        version=3,
+        peers=authority.roster.peers,
+        keys=tuple(
+            revoked if key.key_id == remote.key_id else key for key in authority.roster.keys
+        ),
+        signer=authority.signer,
+        root=authority.root,
+        pin_store=authority.pin_store,
+    )
+    authority.signer = OperationalSigner(authority.keys, roster_version=3)
+    ledger = _ledger(tmp_path / "operational", authority)
+
+    with pytest.raises(
+        OperationalError,
+        match=r"latest|historical|revoked|roster",
+    ):
+        ledger.import_bundles(
+            [historical],
+            context=authority.context(),
+        )
+
+    assert ledger.positions() == ()
+
+
+def test_bundle_import_requires_authenticated_commit_context(tmp_path: Path) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    ledger = _ledger(tmp_path / "operational", authority)
+    incoming = _bundle(authority, origin="device-a")
+
+    with pytest.raises(
+        (OperationalError, TypeError),
+        match=r"context|authority",
+    ):
+        ledger.import_bundles([incoming])
+
+    assert ledger.positions() == ()
+
+
+def test_append_and_revocation_are_serialized_through_event_and_head_durability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    ledger = _ledger(tmp_path / "operational", authority)
+    ledger.ensure_anchor()
+    context = authority.context()
+    event_durable = threading.Event()
+    release_head = threading.Event()
+    update_finished = threading.Event()
+    failures: list[BaseException] = []
+    real_write_head = ledger._write_head_atomic
+
+    def blocked_head(event: OperationalEventV2) -> None:
+        event_durable.set()
+        assert release_head.wait(timeout=3)
+        real_write_head(event)
+
+    def append_event() -> None:
+        try:
+            ledger.append(_command(), context=context)
+        except BaseException as exc:
+            failures.append(exc)
+
+    def revoke_origin() -> None:
+        try:
+            _rotate_local_origin(authority)
+            update_finished.set()
+        except BaseException as exc:
+            failures.append(exc)
+
+    monkeypatch.setattr(ledger, "_write_head_atomic", blocked_head)
+    appender = threading.Thread(target=append_event)
+    revoker = threading.Thread(target=revoke_origin)
+    appender.start()
+    assert event_durable.wait(timeout=3)
+    revoker.start()
+    revoked_before_commit = update_finished.wait(timeout=0.25)
+    release_head.set()
+    appender.join(timeout=3)
+    revoker.join(timeout=3)
+
+    assert not revoked_before_commit
+    assert update_finished.is_set()
+    assert failures == []
+    restarted = _ledger(tmp_path / "operational", authority)
+    assert restarted.verify().ok is True
+    assert restarted.iter_events()[0].roster_version == 1
+
+
+def test_revocation_wins_before_append_and_historical_durable_event_still_verifies(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    operational = tmp_path / "operational"
+    old_signer = authority.signer
+    ledger = _ledger(operational, authority)
+    ledger.ensure_anchor()
+    durable = ledger.append(_command(), context=authority.context())
+    _rotate_local_origin(authority)
+
+    stale = _ledger(operational, authority, signer=old_signer)
+    with pytest.raises(OperationalError, match=r"stale|roster|revoked"):
+        stale.append(
+            _command(idempotency_key="stale-after-revocation"),
+            context=authority.context(),
+        )
+
+    restarted = _ledger(operational, authority)
+    assert restarted.verify().ok is True
+    assert restarted.iter_events() == [durable]
 
 
 def test_epoch_refresh_rejects_stale_context_before_any_append(tmp_path: Path) -> None:

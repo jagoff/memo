@@ -7,19 +7,27 @@ caches and may only be repaired from a completely verified segment chain.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import os
 import re
-import tempfile
+import stat
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from memo.atomic_io import atomic_write_text, authority_write_lock
+from memo.atomic_io import (
+    SecureDirectory,
+    authority_admission_lock,
+    authority_write_lock,
+    open_secure_directory,
+)
 from memo.contracts import MemoEvent
 from memo.errors import OperationalError, OperationalErrorCode
 from memo.identity import PrincipalIdentity
@@ -29,16 +37,21 @@ from memo.operational_event import (
     EMPTY_REDUCER_STATE_BYTES,
     ChainAnchor,
     LedgerImportReport,
+    LedgerRecoveryReport,
+    MigrationOrigin,
     OperationalCommand,
     OperationalEventV2,
     OriginBundle,
     OriginPosition,
     SourceProof,
+    SourceProofAuthentication,
+    StateCheckpoint,
     VerificationReport,
     canonical_anchor_hash,
     canonical_event_hash,
     canonical_json_bytes,
     canonical_signed_bytes,
+    operational_wire_dict,
     validate_anchor,
     validate_event,
     validate_migration_origin,
@@ -56,11 +69,43 @@ _SAFE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _ANCHOR_FIELDS = frozenset(field.name for field in fields(ChainAnchor))
 _EVENT_FIELDS = frozenset(field.name for field in fields(OperationalEventV2))
+_EVENT_LEGACY_FIELDS = _EVENT_FIELDS - {"migration_origin", "migration_origin_sha256"}
 _IDENTITY_FIELDS = frozenset(field.name for field in fields(PrincipalIdentity))
 _SOURCE_PROOF_FIELDS = frozenset(field.name for field in fields(SourceProof))
+_SOURCE_PROOF_LEGACY_FIELDS = _SOURCE_PROOF_FIELDS - {"authentication"}
+_SOURCE_AUTH_FIELDS = frozenset(field.name for field in fields(SourceProofAuthentication))
+_MIGRATION_ORIGIN_FIELDS = frozenset(field.name for field in fields(MigrationOrigin))
+_CHECKPOINT_FIELDS = frozenset(field.name for field in fields(StateCheckpoint))
 _HEAD_FIELDS = frozenset({"schema", "origin_device", "sequence", "event_hash", "anchor_hash"})
 _HEAD_SCHEMA = "memo.operational_head.v1"
 _QUARANTINE_SCHEMA = "memo.operational_quarantine.v1"
+_RECOVERY_SCHEMA = "memo.operational_recovery.v1"
+_TRANSACTION_SCHEMA = "memo.operational_transaction.v1"
+_TRANSACTION_MARKER_SCHEMA = "memo.operational_transaction_marker.v1"
+_TRANSACTION_FIELDS = frozenset(
+    {
+        "schema",
+        "transaction_id",
+        "transaction_sha256",
+        "request_sha256",
+        "kind",
+        "origins",
+        "before_positions",
+        "after_positions",
+        "targets",
+        "prepared_at",
+    }
+)
+_TRANSACTION_TARGET_FIELDS = frozenset(
+    {
+        "relative_target",
+        "mode",
+        "before_sha256",
+        "after_sha256",
+        "size",
+        "stage_blob",
+    }
+)
 
 
 def _failure(
@@ -106,12 +151,30 @@ def _parse_timestamp(value: str, field: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _fsync_directory(path: Path) -> None:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+def _decode_base64url(value: object, field: str) -> bytes:
+    if not isinstance(value, str):
+        raise _failure(
+            OperationalErrorCode.ANCHOR_CONFLICT,
+            f"{field} must be canonical base64url",
+        )
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        decoded = base64.b64decode(
+            value + ("=" * (-len(value) % 4)),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (ValueError, binascii.Error) as exc:
+        raise _failure(
+            OperationalErrorCode.ANCHOR_CONFLICT,
+            f"{field} must be canonical base64url",
+        ) from exc
+    canonical = base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii")
+    if canonical != value:
+        raise _failure(
+            OperationalErrorCode.ANCHOR_CONFLICT,
+            f"{field} must be canonical base64url",
+        )
+    return decoded
 
 
 class OperationLedgerV2:
@@ -157,6 +220,11 @@ class OperationLedgerV2:
         self.pin_store = pin_store
         self.epoch_fence = epoch_fence
         self.reducer_version = reducer_version
+        self._secure_directory: ContextVar[SecureDirectory | None] = ContextVar(
+            f"memo_ledger_secure_directory_{id(self)}",
+            default=None,
+        )
+        self._transaction_staging = False
         self._assert_safe_path(self.root)
 
     @property
@@ -178,6 +246,14 @@ class OperationLedgerV2:
     @property
     def quarantine_dir(self) -> Path:
         return self.root / "quarantine"
+
+    @property
+    def transactions_dir(self) -> Path:
+        return self.root / "transactions"
+
+    @property
+    def recovery_dir(self) -> Path:
+        return self.root / "recovery"
 
     def _now(self) -> str:
         value = self.clock()
@@ -210,126 +286,194 @@ class OperationLedgerV2:
         root = self.root.absolute()
         target = Path(path).absolute()
         try:
-            relative = target.relative_to(root)
+            target.relative_to(root)
         except ValueError as exc:
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
                 f"operational path escapes journal root: {target}",
             ) from exc
-        candidates = [root]
-        current = root
-        for part in relative.parts:
-            current /= part
-            candidates.append(current)
-        if self.operational_root.is_symlink():
-            raise _failure(
-                OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"unsafe operational symlink: {self.operational_root}",
-            )
-        for candidate in candidates:
-            if candidate.is_symlink():
-                raise _failure(
-                    OperationalErrorCode.STORAGE_UNAVAILABLE,
-                    f"unsafe operational symlink: {candidate}",
-                )
 
-    def _ensure_directory(self, path: Path) -> None:
+    def _relative(self, path: Path) -> Path:
         self._assert_safe_path(path)
-        if not self.operational_root.exists():
-            try:
-                self.operational_root.mkdir(mode=0o700, parents=True)
-                _fsync_directory(self.operational_root.parent)
-            except FileExistsError:
-                pass
-            except OSError as exc:
-                raise _failure(
-                    OperationalErrorCode.STORAGE_UNAVAILABLE,
-                    f"cannot create operational root: {self.operational_root}",
-                ) from exc
-        if not self.operational_root.is_dir() or self.operational_root.is_symlink():
+        relative = Path(path).absolute().relative_to(self.root.absolute())
+        if not relative.parts:
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"unsafe operational root: {self.operational_root}",
+                "journal root is not a file target",
             )
-        missing: list[Path] = []
-        cursor = path
-        while cursor != self.operational_root and not cursor.exists():
-            missing.append(cursor)
-            cursor = cursor.parent
-        if cursor.is_symlink():
-            raise _failure(
-                OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"unsafe operational symlink: {cursor}",
-            )
-        for directory in reversed(missing):
-            self._assert_safe_path(directory)
-            try:
-                directory.mkdir(mode=0o700)
-                _fsync_directory(directory.parent)
-            except FileExistsError:
-                if not directory.is_dir() or directory.is_symlink():
-                    raise _failure(
-                        OperationalErrorCode.STORAGE_UNAVAILABLE,
-                        f"unsafe operational directory: {directory}",
-                    ) from None
-            except OSError as exc:
-                raise _failure(
-                    OperationalErrorCode.STORAGE_UNAVAILABLE,
-                    f"cannot create operational directory: {directory}",
-                ) from exc
-        if path.exists() and (not path.is_dir() or path.is_symlink()):
-            raise _failure(
-                OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"unsafe operational directory: {path}",
-            )
+        return relative
 
-    def _atomic_write_json(self, path: Path, value: object) -> None:
-        self._assert_safe_path(path)
-        self._ensure_directory(path.parent)
+    @contextmanager
+    def _secure_io(self, *, create: bool) -> Iterator[SecureDirectory]:
+        retained = self._secure_directory.get()
+        if retained is not None:
+            yield retained
+            return
         try:
-            atomic_write_text(path, canonical_json_bytes(value).decode("utf-8"))
-            _fsync_directory(path.parent)
+            directory = open_secure_directory(self.root, create=create)
+        except (OperationalError, FileNotFoundError):
+            raise
         except (OSError, ValueError) as exc:
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"cannot atomically write operational record: {path}",
+                f"unsafe operational journal path or storage failure: {self.root}",
             ) from exc
+        with directory:
+            token = self._secure_directory.set(directory)
+            try:
+                yield directory
+            finally:
+                self._secure_directory.reset(token)
 
-    def _atomic_write_bytes(self, path: Path, value: bytes) -> None:
-        self._assert_safe_path(path)
-        self._ensure_directory(path.parent)
-        if path.is_symlink():
+    def _exists(self, path: Path) -> bool:
+        try:
+            with self._secure_io(create=False) as directory:
+                return directory.exists(self._relative(path))
+        except FileNotFoundError:
+            return False
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"unsafe operational symlink: {path}",
-            )
-        descriptor = -1
-        temporary: Path | None = None
+                f"cannot inspect operational path: {path}",
+            ) from exc
+
+    def _list_names(self, path: Path) -> tuple[str, ...]:
         try:
-            descriptor, name = tempfile.mkstemp(
-                dir=path.parent,
-                prefix=f".{path.name}.",
-                suffix=".tmp",
+            with self._secure_io(create=False) as directory:
+                return directory.list_names(self._relative(path))
+        except FileNotFoundError:
+            return ()
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"cannot list operational directory: {path}",
+            ) from exc
+
+    def _stat(self, path: Path) -> os.stat_result:
+        try:
+            with self._secure_io(create=False) as directory:
+                return directory.stat(self._relative(path))
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"cannot inspect operational path: {path}",
+            ) from exc
+
+    @contextmanager
+    def _locked_journal(self, *, create: bool = True) -> Iterator[SecureDirectory]:
+        journal_lock = authority_write_lock(self.root)
+        try:
+            journal_lock.__enter__()
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"unsafe operational journal path or storage failure: {self.root}",
+            ) from exc
+        try:
+            with self._secure_io(create=create) as directory:
+                yield directory
+        finally:
+            journal_lock.__exit__(None, None, None)
+
+    @contextmanager
+    def _authority_operation(
+        self,
+        *,
+        context: CommitContext | None = None,
+        recover: bool = True,
+    ) -> Iterator[None]:
+        if self.roster_root is None:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "pinned operational roster authority is unavailable",
             )
-            temporary = Path(name)
-            with os.fdopen(descriptor, "wb") as handle:
-                descriptor = -1
-                handle.write(value)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temporary, 0o600)
-            os.replace(temporary, path)
-            _fsync_directory(path.parent)
-        except OSError as exc:
+        if context is not None and self.epoch_fence is None:
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational epoch authority is unavailable",
+            )
+        admission = authority_admission_lock(self.roster_root)
+        try:
+            admission.__enter__()
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                "cannot retain operational authority and journal snapshot",
+            ) from exc
+        try:
+            self._latest_roster()
+            with self._locked_journal():
+                if context is None:
+                    if recover:
+                        self._recover_locked()
+                    yield
+                else:
+                    assert self.epoch_fence is not None
+                    with self.epoch_fence.verified(context):
+                        if recover:
+                            self._recover_locked()
+                        yield
+        finally:
+            admission.__exit__(None, None, None)
+
+    def _ensure_directory(self, path: Path) -> None:
+        if Path(path).absolute() == self.root.absolute():
+            with self._secure_io(create=True):
+                return
+        try:
+            with self._secure_io(create=True) as directory:
+                directory.ensure_directory(self._relative(path))
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"cannot create operational directory: {path}",
+            ) from exc
+
+    def _atomic_write_json(self, path: Path, value: object) -> None:
+        self._atomic_write_bytes(path, canonical_json_bytes(value))
+
+    def _atomic_write_bytes(self, path: Path, value: bytes) -> None:
+        try:
+            with self._secure_io(create=True) as directory:
+                directory.atomic_write_bytes(self._relative(path), bytes(value))
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
                 f"cannot atomically write operational bytes: {path}",
             ) from exc
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+
+    def _create_bytes_exclusive(self, path: Path, value: bytes) -> None:
+        try:
+            with self._secure_io(create=True) as directory:
+                directory.create_bytes_exclusive(
+                    self._relative(path),
+                    bytes(value),
+                )
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"cannot create durable operational marker: {path}",
+            ) from exc
+
+    def _optional_bytes(self, path: Path) -> bytes | None:
+        try:
+            return self._read_bytes(path, "operational transaction target")
+        except OperationalError as exc:
+            if exc.code == OperationalErrorCode.NOT_FOUND:
+                return None
+            raise
 
     def _latest_roster(self) -> VerificationRoster:
         if self.verifier is None:
@@ -337,25 +481,23 @@ class OperationLedgerV2:
                 OperationalErrorCode.SIGNATURE_INVALID,
                 "operational verification authority is unavailable",
             )
-        if self.roster_root is not None:
-            try:
-                return VerificationRoster.load(
-                    self.roster_root,
-                    pin_store=self.pin_store,
-                )
-            except OperationalError:
-                raise
-            except Exception as exc:
-                raise _failure(
-                    OperationalErrorCode.SIGNATURE_INVALID,
-                    "operational roster authority is unavailable",
-                ) from exc
-        if self.roster is None:
+        if self.roster_root is None:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "pinned operational roster authority is unavailable",
+            )
+        try:
+            return VerificationRoster.load(
+                self.roster_root,
+                pin_store=self.pin_store,
+            )
+        except OperationalError:
+            raise
+        except Exception as exc:
             raise _failure(
                 OperationalErrorCode.SIGNATURE_INVALID,
                 "operational roster authority is unavailable",
-            )
-        return self.roster
+            ) from exc
 
     def _roster_for(self, version: int) -> VerificationRoster:
         if self.verifier is None:
@@ -363,26 +505,24 @@ class OperationLedgerV2:
                 OperationalErrorCode.SIGNATURE_INVALID,
                 "operational verification authority is unavailable",
             )
-        if self.roster_root is not None:
-            try:
-                return VerificationRoster.load_version(
-                    self.roster_root,
-                    version=version,
-                    pin_store=self.pin_store,
-                )
-            except OperationalError:
-                raise
-            except Exception as exc:
-                raise _failure(
-                    OperationalErrorCode.SIGNATURE_INVALID,
-                    f"verification roster version is unavailable: {version}",
-                ) from exc
-        if self.roster is None or self.roster.version != version:
+        if self.roster_root is None:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "pinned operational roster authority is unavailable",
+            )
+        try:
+            return VerificationRoster.load_version(
+                self.roster_root,
+                version=version,
+                pin_store=self.pin_store,
+            )
+        except OperationalError:
+            raise
+        except Exception as exc:
             raise _failure(
                 OperationalErrorCode.SIGNATURE_INVALID,
                 f"verification roster version is unavailable: {version}",
-            )
-        return self.roster
+            ) from exc
 
     def _signing_authority(self) -> tuple[OperationalSigner, VerificationRoster]:
         roster = self._latest_roster()
@@ -499,7 +639,10 @@ class OperationLedgerV2:
     def _decode_source_proof(self, value: object) -> SourceProof | None:
         if value is None:
             return None
-        if not isinstance(value, dict) or set(value) != _SOURCE_PROOF_FIELDS:
+        if not isinstance(value, dict) or set(value) not in {
+            _SOURCE_PROOF_LEGACY_FIELDS,
+            _SOURCE_PROOF_FIELDS,
+        }:
             raise _failure(
                 OperationalErrorCode.INVALID_EVENT,
                 "operational source proof fields are invalid",
@@ -511,24 +654,57 @@ class OperationLedgerV2:
                 "operational source proof actor is invalid",
             )
         try:
-            return SourceProof(**value)
+            body = dict(value)
+            authentication = body.get("authentication")
+            if authentication is not None:
+                if (
+                    not isinstance(authentication, dict)
+                    or set(authentication) != _SOURCE_AUTH_FIELDS
+                ):
+                    raise TypeError
+                path = authentication.get("merkle_path")
+                if not isinstance(path, list) or not all(isinstance(item, str) for item in path):
+                    raise TypeError
+                body["authentication"] = SourceProofAuthentication(
+                    **{
+                        **authentication,
+                        "merkle_path": tuple(path),
+                    }
+                )
+            return SourceProof(**body)
         except TypeError as exc:
             raise _failure(
                 OperationalErrorCode.INVALID_EVENT,
                 "operational source proof is invalid",
             ) from exc
 
+    def _decode_migration_origin(self, value: object) -> MigrationOrigin | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict) or set(value) != _MIGRATION_ORIGIN_FIELDS:
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational migration origin fields are invalid",
+            )
+        try:
+            return MigrationOrigin(**value)
+        except TypeError as exc:
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational migration origin is invalid",
+            ) from exc
+
     def _decode_event_bytes(self, encoded: bytes, description: str) -> OperationalEventV2:
         try:
             value = json.loads(encoded.decode("utf-8"))
-            if (
-                not isinstance(value, dict)
-                or set(value) != _EVENT_FIELDS
-                or canonical_json_bytes(value) != encoded
-            ):
+            if not isinstance(value, dict) or set(value) not in {
+                _EVENT_LEGACY_FIELDS,
+                _EVENT_FIELDS,
+            }:
                 raise ValueError
             actor = self._decode_identity(value["actor"])
             source_proof = self._decode_source_proof(value["source_proof"])
+            migration_origin = self._decode_migration_origin(value.get("migration_origin"))
             caused_by = value["caused_by"]
             payload = value["payload"]
             if not isinstance(caused_by, list) or not all(
@@ -540,9 +716,14 @@ class OperationLedgerV2:
             body = dict(value)
             body["actor"] = actor
             body["source_proof"] = source_proof
+            body["migration_origin"] = migration_origin
+            body.setdefault("migration_origin_sha256", "")
             body["caused_by"] = tuple(caused_by)
             body["payload"] = payload
-            return OperationalEventV2(**body)
+            event = OperationalEventV2(**body)
+            if canonical_json_bytes(event) != encoded:
+                raise ValueError
+            return event
         except OperationalError:
             raise
         except (
@@ -558,15 +739,17 @@ class OperationLedgerV2:
             ) from exc
 
     def _read_bytes(self, path: Path, description: str) -> bytes:
-        self._assert_safe_path(path)
         try:
-            return path.read_bytes()
+            with self._secure_io(create=False) as directory:
+                return directory.read_bytes(self._relative(path))
         except FileNotFoundError:
             raise _failure(
                 OperationalErrorCode.NOT_FOUND,
                 f"{description} is missing: {path}",
             ) from None
-        except OSError as exc:
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
                 f"cannot read {description}: {path}",
@@ -578,28 +761,80 @@ class OperationLedgerV2:
                 OperationalErrorCode.ANCHOR_CONFLICT,
                 "anchor checkpoint must be raw bytes",
             )
-        try:
-            parsed = json.loads(checkpoint.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise _failure(
-                OperationalErrorCode.ANCHOR_CONFLICT,
-                "anchor checkpoint must be canonical JSON reducer-state bytes",
-            ) from exc
-        if canonical_json_bytes(parsed) != checkpoint:
-            raise _failure(
-                OperationalErrorCode.ANCHOR_CONFLICT,
-                "anchor checkpoint must be canonical JSON reducer-state bytes",
-            )
         if anchor.reducer_version != self.reducer_version:
             raise _failure(
                 OperationalErrorCode.ANCHOR_CONFLICT,
                 "anchor reducer version is unsupported",
             )
-        digest = hashlib.sha256(checkpoint).hexdigest()
-        if anchor.state_sha256 != digest:
+        if anchor.kind in {"empty", "memo_v1"}:
+            if checkpoint != EMPTY_REDUCER_STATE_BYTES:
+                raise _failure(
+                    OperationalErrorCode.ANCHOR_CONFLICT,
+                    f"{anchor.kind} anchor requires the canonical empty checkpoint",
+                )
+            if anchor.state_sha256 != hashlib.sha256(checkpoint).hexdigest():
+                raise _failure(
+                    OperationalErrorCode.ANCHOR_CONFLICT,
+                    "anchor checkpoint state digest mismatch",
+                )
+            return
+        if anchor.kind != "compaction":
             raise _failure(
                 OperationalErrorCode.ANCHOR_CONFLICT,
-                "anchor checkpoint state digest mismatch",
+                "unsupported operational checkpoint kind",
+            )
+        try:
+            parsed = json.loads(checkpoint.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                "compaction checkpoint must be canonical StateCheckpoint bytes",
+            ) from exc
+        if (
+            not isinstance(parsed, dict)
+            or set(parsed) != _CHECKPOINT_FIELDS
+            or canonical_json_bytes(parsed) != checkpoint
+        ):
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                "compaction checkpoint must be a canonical StateCheckpoint",
+            )
+        state_bytes = _decode_base64url(parsed["state_bytes"], "checkpoint state_bytes")
+        try:
+            checkpoint_value = StateCheckpoint(
+                **{
+                    **parsed,
+                    "state_bytes": state_bytes,
+                }
+            )
+        except TypeError as exc:
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                "compaction checkpoint fields are invalid",
+            ) from exc
+        if canonical_json_bytes(checkpoint_value) != checkpoint:
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                "compaction checkpoint encoding is not canonical",
+            )
+        _parse_timestamp(checkpoint_value.created_at, "checkpoint created_at")
+        if (
+            checkpoint_value.schema != "memo.operational_checkpoint.v1"
+            or checkpoint_value.checkpoint_id != anchor.checkpoint_id
+            or checkpoint_value.origin_device != anchor.origin_device
+            or checkpoint_value.reducer_version != anchor.reducer_version
+            or checkpoint_value.through_sequence != anchor.base_sequence
+            or checkpoint_value.through_event_hash != anchor.base_event_hash
+        ):
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                "compaction checkpoint identity, reducer, or through-position mismatch",
+            )
+        state_digest = hashlib.sha256(state_bytes).hexdigest()
+        if checkpoint_value.state_sha256 != state_digest or anchor.state_sha256 != state_digest:
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                "compaction checkpoint inner state digest mismatch",
             )
 
     @staticmethod
@@ -696,6 +931,73 @@ class OperationLedgerV2:
                 OperationalErrorCode.INVALID_EVENT,
                 "source proof actor must be a string-keyed mapping",
             )
+        authentication = proof.authentication
+        if authentication is not None:
+            if not isinstance(authentication, SourceProofAuthentication):
+                raise _failure(
+                    OperationalErrorCode.INVALID_EVENT,
+                    "source proof authentication is invalid",
+                )
+            _require_string(
+                authentication.schema,
+                "source proof authentication schema",
+            )
+            _require_string(
+                authentication.source_manifest_sha256,
+                "source proof authentication manifest",
+            )
+            _require_int(
+                authentication.leaf_index,
+                "source proof authentication leaf_index",
+            )
+            _require_int(
+                authentication.leaf_count,
+                "source proof authentication leaf_count",
+                minimum=1,
+            )
+            if not isinstance(authentication.merkle_path, tuple) or not all(
+                isinstance(item, str) for item in authentication.merkle_path
+            ):
+                raise _failure(
+                    OperationalErrorCode.INVALID_EVENT,
+                    "source proof authentication merkle_path is invalid",
+                )
+
+    @staticmethod
+    def _validate_migration_origin_shape(origin: MigrationOrigin) -> None:
+        if not isinstance(origin, MigrationOrigin):
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational migration origin is required",
+            )
+        for field in (
+            "schema",
+            "attempt_id",
+            "migration_device_id",
+            "source_manifest_sha256",
+            "capability_manifest_sha256",
+            "attestor_device_id",
+            "attestor_key_id",
+            "issued_at",
+            "expires_at",
+            "signature",
+            "source_proof_root_sha256",
+        ):
+            _require_string(
+                getattr(origin, field),
+                f"migration origin {field}",
+                allow_empty=True,
+            )
+        _require_int(
+            origin.roster_version,
+            "migration origin roster_version",
+            minimum=1,
+        )
+        _require_int(
+            origin.source_proof_count,
+            "migration origin source_proof_count",
+            minimum=1,
+        )
 
     @classmethod
     def _validate_event_shape(cls, event: OperationalEventV2) -> None:
@@ -763,6 +1065,13 @@ class OperationLedgerV2:
         cls._validate_identity_shape(event.actor)
         if event.source_proof is not None:
             cls._validate_source_proof_shape(event.source_proof)
+        if event.migration_origin is not None:
+            cls._validate_migration_origin_shape(event.migration_origin)
+        _require_string(
+            event.migration_origin_sha256,
+            "event migration_origin_sha256",
+            allow_empty=True,
+        )
 
     def _validate_anchor_authority(self, anchor: ChainAnchor, checkpoint: bytes) -> None:
         self._validate_anchor_shape(anchor)
@@ -804,7 +1113,10 @@ class OperationLedgerV2:
 
     def anchor(self, origin_device: str | None = None) -> ChainAnchor:
         origin = origin_device or self.device_id
-        with authority_write_lock(self.root):
+        with self._authority_operation(recover=False):
+            # Complete committed multi-origin publications, but leave torn-tail
+            # repair to recover()/position()/event observations.
+            self._recover_transactions_locked()
             return self._read_anchor_with_checkpoint(origin)[0]
 
     def _make_empty_anchor(self) -> tuple[ChainAnchor, bytes]:
@@ -884,6 +1196,51 @@ class OperationLedgerV2:
             anchor_hash=anchor.anchor_hash,
         )
 
+    def _assert_current_anchor_authority(
+        self,
+        anchor: ChainAnchor,
+        roster: VerificationRoster,
+    ) -> None:
+        if anchor.roster_version != roster.version:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "new anchor must use the latest pinned roster",
+            )
+        key = roster.key(anchor.key_id)
+        role = anchor.signer_role
+        expected = self._active_key(
+            roster,
+            device_id=(anchor.origin_device if role == "origin" else key.device_id),
+            role=role,
+            activation_sequence=roster.version,
+            exclusive_role=role == "migration_attestor",
+        )
+        if expected.key_id != anchor.key_id:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "new anchor signer is not the current active authority",
+            )
+
+    @staticmethod
+    def _validate_anchor_transition(
+        current: ChainAnchor,
+        successor: ChainAnchor,
+        position: OriginPosition,
+    ) -> None:
+        if (
+            successor.kind != "compaction"
+            or successor.origin_device != current.origin_device
+            or successor.previous_anchor_hash != current.anchor_hash
+            or successor.ledger_epoch < current.ledger_epoch
+            or successor.reducer_version != current.reducer_version
+            or successor.base_sequence != position.sequence
+            or successor.base_event_hash != position.event_hash
+        ):
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                f"anchor epoch regression or transition conflict for {current.origin_device}",
+            )
+
     def _ensure_anchor_locked(
         self,
         anchor: ChainAnchor | None = None,
@@ -894,7 +1251,7 @@ class OperationLedgerV2:
             self._validate_anchor_shape(anchor)
         origin = anchor.origin_device if anchor is not None else self.device_id
         path = self._anchor_path(origin)
-        if anchor is None and path.exists():
+        if anchor is None and self._exists(path):
             return self._read_anchor_with_checkpoint(origin)[0]
         if anchor is None:
             anchor, checkpoint = self._make_empty_anchor()
@@ -907,7 +1264,10 @@ class OperationLedgerV2:
                     "compaction anchor requires matching checkpoint bytes",
                 )
         self._validate_anchor_authority(anchor, checkpoint)
-        if path.exists():
+        latest = self._latest_roster()
+        current: ChainAnchor | None = None
+        position: OriginPosition | None = None
+        if self._exists(path):
             current, current_checkpoint = self._read_anchor_with_checkpoint(origin)
             if current.anchor_hash == anchor.anchor_hash:
                 if current_checkpoint != checkpoint:
@@ -917,17 +1277,49 @@ class OperationLedgerV2:
                     )
                 return current
             position = self._load_position(origin, current, repair=False)
-            if (
-                anchor.kind != "compaction"
-                or anchor.previous_anchor_hash != current.anchor_hash
-                or anchor.ledger_epoch < current.ledger_epoch
-                or anchor.base_sequence != position.sequence
-                or anchor.base_event_hash != position.event_hash
-            ):
-                raise _failure(
-                    OperationalErrorCode.ANCHOR_CONFLICT,
-                    f"anchor regression or conflict for origin {origin}",
+            self._validate_anchor_transition(current, anchor, position)
+        self._assert_current_anchor_authority(anchor, latest)
+        if current is not None and position is not None and anchor.kind == "compaction":
+            after = OriginPosition(
+                origin_device=origin,
+                sequence=anchor.base_sequence,
+                event_hash=anchor.base_event_hash,
+                anchor_hash=anchor.anchor_hash,
+            )
+            request_sha256 = hashlib.sha256(
+                canonical_json_bytes(
+                    {
+                        "anchor": operational_wire_dict(anchor),
+                        "checkpoint": base64.urlsafe_b64encode(checkpoint)
+                        .rstrip(b"=")
+                        .decode("ascii"),
+                    }
                 )
+            ).hexdigest()
+            self._run_transaction(
+                kind="compaction",
+                request_sha256=request_sha256,
+                origins=(origin,),
+                before_positions=(self._position_wire(position, origin=origin),),
+                after_positions=(self._position_wire(after, origin=origin),),
+                target_bytes=(
+                    (self._checkpoint_path(anchor), checkpoint),
+                    (path, canonical_json_bytes(anchor)),
+                    (
+                        self._head_path(origin),
+                        canonical_json_bytes(
+                            {
+                                "schema": _HEAD_SCHEMA,
+                                "origin_device": origin,
+                                "sequence": anchor.base_sequence,
+                                "event_hash": anchor.base_event_hash,
+                                "anchor_hash": anchor.anchor_hash,
+                            }
+                        ),
+                    ),
+                ),
+            )
+            return anchor
         self._persist_anchor(anchor, checkpoint)
         return anchor
 
@@ -937,9 +1329,7 @@ class OperationLedgerV2:
         *,
         checkpoint: bytes | None = None,
     ) -> ChainAnchor:
-        self._assert_safe_path(self.root)
-        with authority_write_lock(self.root):
-            self._assert_safe_path(self.root)
+        with self._authority_operation():
             return self._ensure_anchor_locked(anchor, checkpoint=checkpoint)
 
     @staticmethod
@@ -1053,12 +1443,11 @@ class OperationLedgerV2:
                 "migration attestor roster is stale",
             )
         key = roster.key(attestor_key_id)
-        activation = max(source.sequence, roster.version)
         expected = self._active_key(
             roster,
             device_id=key.device_id,
             role="migration_attestor",
-            activation_sequence=activation,
+            activation_sequence=roster.version,
             exclusive_role=True,
         )
         if expected.key_id != attestor_key_id:
@@ -1118,16 +1507,12 @@ class OperationLedgerV2:
 
     def _decode_head(self, origin: str) -> tuple[int, str, str] | None:
         path = self._head_path(origin)
-        self._assert_safe_path(path)
         try:
-            encoded = path.read_bytes()
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            raise _failure(
-                OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"cannot read operational head: {path}",
-            ) from exc
+            encoded = self._read_bytes(path, "operational head")
+        except OperationalError as exc:
+            if exc.code == OperationalErrorCode.NOT_FOUND:
+                return None
+            raise
         try:
             value = json.loads(encoded.decode("utf-8"))
             if (
@@ -1159,30 +1544,11 @@ class OperationLedgerV2:
     def _event_segment_paths(self, origin: str) -> list[Path]:
         self._validate_safe_id(origin, "origin device")
         event_dir = self.events_dir / origin
-        self._assert_safe_path(event_dir)
-        if not event_dir.exists():
-            return []
-        if not event_dir.is_dir() or event_dir.is_symlink():
-            raise _failure(
-                OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"unsafe operational event directory: {event_dir}",
-            )
         paths: list[Path] = []
-        try:
-            entries = sorted(event_dir.iterdir(), key=lambda item: item.name)
-        except OSError as exc:
-            raise _failure(
-                OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"cannot list operational event directory: {event_dir}",
-            ) from exc
-        for path in entries:
-            self._assert_safe_path(path)
-            if path.is_symlink():
-                raise _failure(
-                    OperationalErrorCode.STORAGE_UNAVAILABLE,
-                    f"unsafe operational event symlink: {path}",
-                )
-            if not path.is_file() or path.suffix != ".jsonl":
+        for name in self._list_names(event_dir):
+            path = event_dir / name
+            observed = self._stat(path)
+            if not stat.S_ISREG(observed.st_mode) or path.suffix != ".jsonl":
                 raise _failure(
                     OperationalErrorCode.INVALID_EVENT,
                     f"unexpected operational event path: {path}",
@@ -1216,14 +1582,37 @@ class OperationLedgerV2:
             roster=roster,
         )
 
-    def _validate_source_proof(self, proof: SourceProof | None, anchor: ChainAnchor) -> None:
+    def _validate_source_proof(
+        self,
+        event: OperationalEventV2,
+        anchor: ChainAnchor,
+    ) -> None:
+        proof = event.source_proof
         if proof is None:
             return
         self._validate_source_proof_shape(proof)
-        if anchor.kind != "memo_v1":
+        migration = event.migration_origin
+        if migration is None:
             raise _failure(
                 OperationalErrorCode.INVALID_EVENT,
-                "source proof requires a memo_v1 anchor",
+                "source proof requires authenticated migration authority",
+            )
+        self._validate_migration_origin_shape(migration)
+        verifier, roster = self._verification_authority(migration.roster_version)
+        validate_migration_origin(
+            migration,
+            roster=roster,
+            verifier=verifier,
+            at_time=event.created_at,
+        )
+        if anchor.kind == "empty":
+            return
+        if anchor.kind != "memo_v1" or (
+            migration.source_manifest_sha256 != anchor.source_manifest_sha256
+        ):
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                "migration origin is not bound to the sealed v1 manifest",
             )
         if (
             proof.source_system != "memo_v1"
@@ -1247,26 +1636,32 @@ class OperationLedgerV2:
                 "source proof does not match the sealed v1 head",
             )
 
-    def _read_events_chain(self, origin: str, anchor: ChainAnchor) -> list[OperationalEventV2]:
+    def _scan_events_chain(
+        self,
+        origin: str,
+        anchor: ChainAnchor,
+        *,
+        allow_torn_tail: bool,
+    ) -> tuple[list[OperationalEventV2], tuple[Path, int] | None]:
         rows: list[OperationalEventV2] = []
         expected_sequence = anchor.base_sequence + 1
         expected_previous = anchor.base_event_hash
         previous_time: datetime | None = None
         previous_seen_sequence = 0
-        for path in self._event_segment_paths(origin):
-            try:
-                segment_bytes = path.read_bytes()
-            except OSError as exc:
-                raise _failure(
-                    OperationalErrorCode.STORAGE_UNAVAILABLE,
-                    f"cannot read operational segment: {path}",
-                ) from exc
+        paths = self._event_segment_paths(origin)
+        torn: tuple[Path, int] | None = None
+        for path_index, path in enumerate(paths):
+            segment_bytes = self._read_bytes(path, "operational segment")
             if not segment_bytes or not segment_bytes.endswith(b"\n"):
-                raise _failure(
-                    OperationalErrorCode.INVALID_EVENT,
-                    f"operational segment has an incomplete final row: {path}",
-                )
-            lines = segment_bytes.split(b"\n")[:-1]
+                if not allow_torn_tail or path_index != len(paths) - 1:
+                    raise _failure(
+                        OperationalErrorCode.INVALID_EVENT,
+                        f"operational segment has an incomplete final row: {path}",
+                    )
+                prefix_size = segment_bytes.rfind(b"\n") + 1
+                torn = (path, prefix_size)
+                segment_bytes = segment_bytes[:prefix_size]
+            lines = segment_bytes.split(b"\n")[:-1] if segment_bytes else []
             for line_number, encoded in enumerate(lines, start=1):
                 if not encoded:
                     raise _failure(
@@ -1325,12 +1720,408 @@ class OperationLedgerV2:
                         OperationalErrorCode.INVALID_EVENT,
                         f"event timestamps decrease for origin {origin}",
                     )
-                self._validate_source_proof(event.source_proof, anchor)
+                self._validate_source_proof(event, anchor)
                 rows.append(event)
                 expected_sequence += 1
                 expected_previous = event.event_hash
                 previous_time = event_time
-        return rows
+        return rows, torn
+
+    def _read_events_chain(self, origin: str, anchor: ChainAnchor) -> list[OperationalEventV2]:
+        return self._scan_events_chain(
+            origin,
+            anchor,
+            allow_torn_tail=False,
+        )[0]
+
+    def _write_recovery_record(
+        self,
+        *,
+        kind: str,
+        origins: Sequence[str],
+        details: Mapping[str, object],
+    ) -> None:
+        recovery_id = uuid.uuid4().hex
+        self._atomic_write_json(
+            self.recovery_dir / f"{recovery_id}.json",
+            {
+                "schema": _RECOVERY_SCHEMA,
+                "recovery_id": recovery_id,
+                "kind": kind,
+                "origins": tuple(origins),
+                "recorded_at": self._now(),
+                "details": details,
+            },
+        )
+
+    def _transaction_failpoint(self, _label: str) -> None:
+        """Process-loss hook used only by adversarial transaction tests."""
+
+    def _decode_transaction_manifest(
+        self,
+        encoded: bytes,
+        *,
+        transaction_id: str,
+    ) -> dict[str, Any]:
+        try:
+            value = json.loads(encoded.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction manifest is invalid: {transaction_id}",
+            ) from exc
+        if (
+            not isinstance(value, dict)
+            or set(value) != _TRANSACTION_FIELDS
+            or canonical_json_bytes(value) != encoded
+            or value.get("schema") != _TRANSACTION_SCHEMA
+            or value.get("transaction_id") != transaction_id
+        ):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction manifest is not canonical: {transaction_id}",
+            )
+        transaction_sha256 = value.get("transaction_sha256")
+        request_sha256 = value.get("request_sha256")
+        if (
+            not isinstance(transaction_sha256, str)
+            or not _SHA256_RE.fullmatch(transaction_sha256)
+            or not isinstance(request_sha256, str)
+            or not _SHA256_RE.fullmatch(request_sha256)
+        ):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction hashes are invalid: {transaction_id}",
+            )
+        unhashed = dict(value)
+        unhashed["transaction_sha256"] = ""
+        if hashlib.sha256(canonical_json_bytes(unhashed)).hexdigest() != transaction_sha256:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction manifest hash mismatch: {transaction_id}",
+            )
+        origins = value.get("origins")
+        targets = value.get("targets")
+        if (
+            not isinstance(origins, list)
+            or not all(
+                isinstance(origin, str) and _SAFE_ID_RE.fullmatch(origin) for origin in origins
+            )
+            or origins != sorted(set(origins))
+            or not isinstance(targets, list)
+        ):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction origins or targets are invalid: {transaction_id}",
+            )
+        seen_targets: set[str] = set()
+        heads_started = False
+        for ordinal, target in enumerate(targets):
+            if not isinstance(target, dict) or set(target) != _TRANSACTION_TARGET_FIELDS:
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"transaction target is invalid: {transaction_id}/{ordinal}",
+                )
+            relative = target.get("relative_target")
+            stage_blob = target.get("stage_blob")
+            before = target.get("before_sha256")
+            after = target.get("after_sha256")
+            size = target.get("size")
+            mode = target.get("mode")
+            if (
+                not isinstance(relative, str)
+                or not relative
+                or Path(relative).is_absolute()
+                or any(part in {"", ".", ".."} for part in Path(relative).parts)
+                or relative in seen_targets
+                or stage_blob != f"stage/{ordinal:06d}.bin"
+                or mode not in {"create", "replace"}
+                or (
+                    before is not None
+                    and (not isinstance(before, str) or not _SHA256_RE.fullmatch(before))
+                )
+                or (mode == "create" and before is not None)
+                or (mode == "replace" and before is None)
+                or not isinstance(after, str)
+                or not _SHA256_RE.fullmatch(after)
+                or isinstance(size, bool)
+                or not isinstance(size, int)
+                or size < 0
+            ):
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"transaction target metadata is invalid: {transaction_id}/{ordinal}",
+                )
+            self._relative(self.root / relative)
+            seen_targets.add(relative)
+            is_head = relative.startswith("heads/")
+            if is_head:
+                heads_started = True
+            elif heads_started:
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"transaction heads are not published last: {transaction_id}",
+                )
+        return cast(dict[str, Any], value)
+
+    def _validate_transaction_marker(
+        self,
+        path: Path,
+        *,
+        transaction_id: str,
+        manifest_sha256: str,
+    ) -> None:
+        encoded = self._read_bytes(path, "operational transaction marker")
+        try:
+            value = json.loads(encoded.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction marker is invalid: {path}",
+            ) from exc
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"schema", "transaction_id", "manifest_sha256", "recorded_at"}
+            or canonical_json_bytes(value) != encoded
+            or value["schema"] != _TRANSACTION_MARKER_SCHEMA
+            or value["transaction_id"] != transaction_id
+            or value["manifest_sha256"] != manifest_sha256
+        ):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction marker does not match its manifest: {path}",
+            )
+
+    def _apply_transaction_manifest(
+        self,
+        manifest: Mapping[str, Any],
+        *,
+        transaction_root: Path,
+        invoke_failpoints: bool,
+    ) -> int:
+        published = 0
+        targets = cast(list[dict[str, Any]], manifest["targets"])
+        for ordinal, target in enumerate(targets):
+            stage_path = transaction_root / cast(str, target["stage_blob"])
+            staged = self._read_bytes(stage_path, "operational transaction stage")
+            after = cast(str, target["after_sha256"])
+            size = cast(int, target["size"])
+            if len(staged) != size or hashlib.sha256(staged).hexdigest() != after:
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"transaction stage digest mismatch: {stage_path}",
+                )
+            target_path = self.root / cast(str, target["relative_target"])
+            current = self._optional_bytes(target_path)
+            current_sha = hashlib.sha256(current).hexdigest() if current is not None else None
+            if current_sha != after:
+                if current_sha != target["before_sha256"]:
+                    raise _failure(
+                        OperationalErrorCode.ANCHOR_CONFLICT,
+                        f"transaction target changed outside its manifest: {target_path}",
+                    )
+                self._atomic_write_bytes(target_path, staged)
+                published += 1
+                verified = self._read_bytes(
+                    target_path,
+                    "published operational transaction target",
+                )
+                if hashlib.sha256(verified).hexdigest() != after:
+                    raise _failure(
+                        OperationalErrorCode.STORAGE_UNAVAILABLE,
+                        f"published transaction target failed verification: {target_path}",
+                    )
+            if invoke_failpoints:
+                self._transaction_failpoint(f"after_target:{ordinal}")
+        return published
+
+    def _marker_bytes(
+        self,
+        *,
+        transaction_id: str,
+        manifest_sha256: str,
+    ) -> bytes:
+        return canonical_json_bytes(
+            {
+                "schema": _TRANSACTION_MARKER_SCHEMA,
+                "transaction_id": transaction_id,
+                "manifest_sha256": manifest_sha256,
+                "recorded_at": self._now(),
+            }
+        )
+
+    def _recover_transactions_locked(self) -> LedgerRecoveryReport:
+        recovered: list[str] = []
+        discarded: list[str] = []
+        published = 0
+        for transaction_id in self._list_names(self.transactions_dir):
+            self._validate_safe_id(transaction_id, "transaction id")
+            transaction_root = self.transactions_dir / transaction_id
+            if not stat.S_ISDIR(self._stat(transaction_root).st_mode):
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"unexpected transaction path: {transaction_root}",
+                )
+            committed_path = transaction_root / "COMMITTED.json"
+            applied_path = transaction_root / "APPLIED.json"
+            committed = self._exists(committed_path)
+            applied = self._exists(applied_path)
+            if not committed:
+                if applied:
+                    raise _failure(
+                        OperationalErrorCode.STORAGE_UNAVAILABLE,
+                        f"transaction applied without commit point: {transaction_id}",
+                    )
+                try:
+                    with self._secure_io(create=False) as directory:
+                        directory.remove_tree(self._relative(transaction_root))
+                except (OSError, ValueError) as exc:
+                    raise _failure(
+                        OperationalErrorCode.STORAGE_UNAVAILABLE,
+                        f"cannot discard prepared transaction: {transaction_id}",
+                    ) from exc
+                discarded.append(transaction_id)
+                self._write_recovery_record(
+                    kind="discarded_transaction",
+                    origins=(),
+                    details={"transaction_id": transaction_id},
+                )
+                continue
+            manifest_path = transaction_root / "manifest.json"
+            manifest_bytes = self._read_bytes(
+                manifest_path,
+                "operational transaction manifest",
+            )
+            manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+            manifest = self._decode_transaction_manifest(
+                manifest_bytes,
+                transaction_id=transaction_id,
+            )
+            self._validate_transaction_marker(
+                committed_path,
+                transaction_id=transaction_id,
+                manifest_sha256=manifest_sha256,
+            )
+            if applied:
+                self._validate_transaction_marker(
+                    applied_path,
+                    transaction_id=transaction_id,
+                    manifest_sha256=manifest_sha256,
+                )
+                continue
+            published += self._apply_transaction_manifest(
+                manifest,
+                transaction_root=transaction_root,
+                invoke_failpoints=False,
+            )
+            self._create_bytes_exclusive(
+                applied_path,
+                self._marker_bytes(
+                    transaction_id=transaction_id,
+                    manifest_sha256=manifest_sha256,
+                ),
+            )
+            recovered.append(transaction_id)
+            origins = cast(list[str], manifest["origins"])
+            self._write_recovery_record(
+                kind="recovered_transaction",
+                origins=origins,
+                details={"transaction_id": transaction_id},
+            )
+        return LedgerRecoveryReport(
+            recovered_transactions=tuple(recovered),
+            discarded_transactions=tuple(discarded),
+            published_targets=published,
+        )
+
+    def _recover_locked(self) -> LedgerRecoveryReport:
+        transaction_report = self._recover_transactions_locked()
+        repaired_tails: list[str] = []
+        repaired_heads: list[str] = []
+        recovered_compactions: list[str] = []
+        for origin in self._discover_origins():
+            anchor = self._read_anchor_with_checkpoint(origin)[0]
+            events, torn = self._scan_events_chain(
+                origin,
+                anchor,
+                allow_torn_tail=True,
+            )
+            tail_sequence = events[-1].origin_sequence if events else anchor.base_sequence
+            tail_hash = events[-1].event_hash if events else anchor.base_event_hash
+            cached = self._decode_head(origin)
+            positions = {
+                anchor.base_sequence: anchor.base_event_hash,
+                **{event.origin_sequence: event.event_hash for event in events},
+            }
+            current_prefix = cached is None or (
+                cached[2] == anchor.anchor_hash
+                and cached[0] <= tail_sequence
+                and positions.get(cached[0]) == cached[1]
+            )
+            legacy_compaction = (
+                cached is not None
+                and anchor.kind == "compaction"
+                and bool(anchor.previous_anchor_hash)
+                and cached[2] == anchor.previous_anchor_hash
+                and cached[0] == anchor.base_sequence
+                and cached[1] == anchor.base_event_hash
+            )
+            if not current_prefix and not legacy_compaction:
+                raise _failure(
+                    OperationalErrorCode.ANCHOR_CONFLICT,
+                    f"operational head is advanced or forked for origin {origin}",
+                )
+            if torn is not None:
+                path, prefix_size = torn
+                try:
+                    with self._secure_io(create=False) as directory:
+                        directory.truncate(self._relative(path), prefix_size)
+                except OperationalError:
+                    raise
+                except (OSError, ValueError) as exc:
+                    raise _failure(
+                        OperationalErrorCode.STORAGE_UNAVAILABLE,
+                        f"cannot truncate torn operational segment: {path}",
+                    ) from exc
+                repaired_tails.append(origin)
+            expected_head = (tail_sequence, tail_hash, anchor.anchor_hash)
+            if cached != expected_head:
+                self._write_head(
+                    origin=origin,
+                    sequence=tail_sequence,
+                    event_hash=tail_hash,
+                    anchor_hash=anchor.anchor_hash,
+                )
+                if legacy_compaction:
+                    recovered_compactions.append(origin)
+                elif torn is None:
+                    repaired_heads.append(origin)
+            if torn is not None or cached != expected_head:
+                self._write_recovery_record(
+                    kind=(
+                        "legacy_compaction"
+                        if legacy_compaction
+                        else ("torn_tail" if torn is not None else "stale_head")
+                    ),
+                    origins=(origin,),
+                    details={
+                        "sequence": tail_sequence,
+                        "event_hash": tail_hash,
+                        "anchor_hash": anchor.anchor_hash,
+                    },
+                )
+        return LedgerRecoveryReport(
+            recovered_transactions=transaction_report.recovered_transactions,
+            discarded_transactions=transaction_report.discarded_transactions,
+            repaired_tails=tuple(sorted(repaired_tails)),
+            repaired_heads=tuple(sorted(repaired_heads)),
+            recovered_compactions=tuple(sorted(recovered_compactions)),
+            published_targets=transaction_report.published_targets,
+        )
+
+    def recover(self) -> LedgerRecoveryReport:
+        with self._authority_operation(recover=False):
+            return self._recover_locked()
 
     def _load_position(
         self,
@@ -1381,9 +2172,9 @@ class OperationLedgerV2:
 
     def position(self, origin_device: str | None = None) -> OriginPosition:
         origin = origin_device or self.device_id
-        with authority_write_lock(self.root):
+        with self._authority_operation():
             anchor = self._read_anchor_with_checkpoint(origin)[0]
-            return self._load_position(origin, anchor, repair=True)
+            return self._load_position(origin, anchor, repair=False)
 
     def _discover_origins(self) -> tuple[str, ...]:
         origins: set[str] = set()
@@ -1392,30 +2183,18 @@ class OperationLedgerV2:
             (self.heads_dir, ".json", False),
             (self.events_dir, "", True),
         ):
-            self._assert_safe_path(directory)
-            if not directory.exists():
-                continue
-            if not directory.is_dir() or directory.is_symlink():
-                raise _failure(
-                    OperationalErrorCode.STORAGE_UNAVAILABLE,
-                    f"unsafe operational authority directory: {directory}",
-                )
-            for path in directory.iterdir():
-                self._assert_safe_path(path)
-                if path.is_symlink():
-                    raise _failure(
-                        OperationalErrorCode.STORAGE_UNAVAILABLE,
-                        f"unsafe operational authority symlink: {path}",
-                    )
+            for name in self._list_names(directory):
+                path = directory / name
+                observed = self._stat(path)
                 if nested:
-                    if not path.is_dir():
+                    if not stat.S_ISDIR(observed.st_mode):
                         raise _failure(
                             OperationalErrorCode.INVALID_EVENT,
                             f"unexpected operational event origin path: {path}",
                         )
                     origin = path.name
                 else:
-                    if not path.is_file() or path.suffix != suffix:
+                    if not stat.S_ISREG(observed.st_mode) or path.suffix != suffix:
                         raise _failure(
                             OperationalErrorCode.INVALID_EVENT,
                             f"unexpected operational authority path: {path}",
@@ -1426,11 +2205,11 @@ class OperationLedgerV2:
         return tuple(sorted(origins))
 
     def positions(self) -> tuple[OriginPosition, ...]:
-        with authority_write_lock(self.root):
+        with self._authority_operation():
             positions: list[OriginPosition] = []
             for origin in self._discover_origins():
                 anchor = self._read_anchor_with_checkpoint(origin)[0]
-                positions.append(self._load_position(origin, anchor, repair=True))
+                positions.append(self._load_position(origin, anchor, repair=False))
             return tuple(positions)
 
     def iter_events(
@@ -1443,7 +2222,7 @@ class OperationLedgerV2:
             isinstance(limit, bool) or not isinstance(limit, int) or limit < 0
         ):
             raise ValueError("limit must be a non-negative integer")
-        with authority_write_lock(self.root):
+        with self._authority_operation():
             origins = (
                 (self._validate_safe_id(origin_device, "origin device"),)
                 if origin_device is not None
@@ -1471,21 +2250,18 @@ class OperationLedgerV2:
         return self.iter_events()
 
     def _append_event_fsync(self, event: OperationalEventV2) -> None:
+        if self._transaction_staging:
+            return
         path = self._segment_path(event)
-        self._ensure_directory(path.parent)
-        self._assert_safe_path(path)
-        flags = os.O_CREAT | os.O_APPEND | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-        created = not path.exists()
         try:
-            descriptor = os.open(path, flags, 0o600)
-            with os.fdopen(descriptor, "ab") as handle:
-                descriptor = -1
-                handle.write(canonical_json_bytes(asdict(event)) + b"\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            if created:
-                _fsync_directory(path.parent)
-        except OSError as exc:
+            with self._secure_io(create=True) as directory:
+                directory.append_bytes(
+                    self._relative(path),
+                    canonical_json_bytes(event) + b"\n",
+                )
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
                 f"cannot append operational event: {path}",
@@ -1510,15 +2286,19 @@ class OperationLedgerV2:
     ) -> None:
         migration = context.migration_origin
         if migration is None:
+            if command.source_proof is not None:
+                raise _failure(
+                    OperationalErrorCode.INVALID_EVENT,
+                    "source proof requires authenticated migration authority",
+                )
             return
         if migration.migration_device_id != anchor.origin_device:
             raise _failure(
                 OperationalErrorCode.INVALID_EVENT,
                 "migration origin does not match anchored origin",
             )
-        if (
-            anchor.kind != "memo_v1"
-            or migration.source_manifest_sha256 != anchor.source_manifest_sha256
+        if anchor.kind == "memo_v1" and (
+            migration.source_manifest_sha256 != anchor.source_manifest_sha256
         ):
             raise _failure(
                 OperationalErrorCode.ANCHOR_CONFLICT,
@@ -1536,7 +2316,6 @@ class OperationLedgerV2:
                 OperationalErrorCode.INVALID_EVENT,
                 "migration event requires a source proof",
             )
-        self._validate_source_proof(command.source_proof, anchor)
 
     def _build_event(
         self,
@@ -1580,6 +2359,12 @@ class OperationLedgerV2:
             roster_version=roster.version,
             key_id=key.key_id,
             signature="",
+            migration_origin=context.migration_origin,
+            migration_origin_sha256=(
+                hashlib.sha256(canonical_json_bytes(context.migration_origin)).hexdigest()
+                if context.migration_origin is not None
+                else ""
+            ),
         )
         return replace(unsigned, event_hash=canonical_event_hash(unsigned))
 
@@ -1604,15 +2389,18 @@ class OperationLedgerV2:
                 OperationalErrorCode.INVALID_EVENT,
                 "commit context authority is required",
             )
+        if context.identity.device_id != self.device_id:
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "authenticated principal origin differs from this ledger device",
+            )
+        if command.actor != context.identity:
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational command actor differs from authenticated context",
+            )
         validate_event_payload(command.event_type, command.payload)
-        self._assert_safe_path(self.root)
-        with authority_write_lock(self.root), self.epoch_fence.verified(context):
-            self._assert_safe_path(self.root)
-            if command.actor != context.identity:
-                raise _failure(
-                    OperationalErrorCode.INVALID_EVENT,
-                    "operational command actor differs from authenticated context",
-                )
+        with self._authority_operation(context=context):
             signer, roster = self._signing_authority()
             origin = (
                 context.migration_origin.migration_device_id
@@ -1620,16 +2408,16 @@ class OperationLedgerV2:
                 else self.device_id
             )
             self._validate_safe_id(origin, "origin device")
-            if context.migration_origin is not None and not self._anchor_path(origin).exists():
+            anchor_path = self._anchor_path(origin)
+            if self._exists(anchor_path):
+                anchor = self._read_anchor_with_checkpoint(origin)[0]
+            elif origin == self.device_id:
+                anchor = self._ensure_anchor_locked()
+            else:
                 raise _failure(
                     OperationalErrorCode.ANCHOR_CONFLICT,
-                    "migration origin requires a pre-existing memo_v1 anchor",
+                    "migration origin requires its own pre-existing anchor",
                 )
-            anchor = (
-                self._read_anchor_with_checkpoint(origin)[0]
-                if context.migration_origin is not None
-                else self._ensure_anchor_locked()
-            )
             position = self._load_position(origin, anchor, repair=True)
             created_at = self._now()
             self._validate_migration_context(
@@ -1643,7 +2431,7 @@ class OperationLedgerV2:
                 roster,
                 device_id=origin,
                 role="origin",
-                activation_sequence=activation_sequence,
+                activation_sequence=roster.version,
             )
             event = self._build_event(
                 command,
@@ -1664,7 +2452,7 @@ class OperationLedgerV2:
             event = replace(event, signature=envelope.signature)
             validate_event(event)
             self._verify_event_signature(event)
-            self._validate_source_proof(event.source_proof, anchor)
+            self._validate_source_proof(event, anchor)
             self._append_event_fsync(event)
             self._write_head_atomic(event)
             return event
@@ -1675,7 +2463,7 @@ class OperationLedgerV2:
         positions: list[OriginPosition] = []
         errors: list[str] = []
         try:
-            with authority_write_lock(self.root):
+            with self._authority_operation():
                 for origin in self._discover_origins():
                     checked_origins.append(origin)
                     try:
@@ -1741,7 +2529,7 @@ class OperationLedgerV2:
                 )
             validate_event(event)
             self._verify_event_signature(event)
-            self._validate_source_proof(event.source_proof, anchor)
+            self._validate_source_proof(event, anchor)
             expected_sequence += 1
             expected_previous = event.event_hash
             previous_time = event_time
@@ -1762,28 +2550,12 @@ class OperationLedgerV2:
     ) -> tuple[list[OperationalEventV2], int]:
         origin = bundle.anchor.origin_device
         anchor_path = self._anchor_path(origin)
-        if not anchor_path.exists():
+        if not self._exists(anchor_path):
             return list(bundle.events), 0
         current, _ = self._read_anchor_with_checkpoint(origin)
         if current.anchor_hash != bundle.anchor.anchor_hash:
-            if (
-                bundle.anchor.kind != "compaction"
-                or bundle.anchor.previous_anchor_hash != current.anchor_hash
-                or bundle.anchor.base_sequence < current.base_sequence
-            ):
-                raise _failure(
-                    OperationalErrorCode.ANCHOR_CONFLICT,
-                    f"anchor regression or fork for origin {origin}",
-                )
             position = self._load_position(origin, current, repair=False)
-            if (
-                bundle.anchor.base_sequence != position.sequence
-                or bundle.anchor.base_event_hash != position.event_hash
-            ):
-                raise _failure(
-                    OperationalErrorCode.ANCHOR_CONFLICT,
-                    f"compaction anchor does not continue origin {origin}",
-                )
+            self._validate_anchor_transition(current, bundle.anchor, position)
             return list(bundle.events), 0
         existing = self._read_events_chain(origin, current)
         by_sequence = {event.origin_sequence: event for event in existing}
@@ -1813,11 +2585,34 @@ class OperationLedgerV2:
                 )
         return new_events, replayed
 
+    def _assert_current_event_authority(
+        self,
+        event: OperationalEventV2,
+        roster: VerificationRoster,
+    ) -> None:
+        if event.roster_version != roster.version:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "new event must use the latest pinned roster; historical bytes are replay-only",
+            )
+        expected = self._active_key(
+            roster,
+            device_id=event.origin_device,
+            role="origin",
+            activation_sequence=roster.version,
+        )
+        if expected.key_id != event.key_id:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "new event signer is revoked or not the current origin authority",
+            )
+
     def _validate_import_bundles_locked(
         self, bundles: Sequence[OriginBundle]
     ) -> list[tuple[OriginBundle, list[OperationalEventV2], int]]:
         seen: set[str] = set()
         validated: list[tuple[OriginBundle, list[OperationalEventV2], int]] = []
+        latest = self._latest_roster()
         for bundle in bundles:
             if not isinstance(bundle, OriginBundle):
                 raise _failure(
@@ -1834,151 +2629,300 @@ class OperationLedgerV2:
                 )
             seen.add(origin)
             new_events, replayed = self._validate_bundle_against_existing(bundle)
+            anchor_path = self._anchor_path(origin)
+            anchor_is_new = not self._exists(anchor_path)
+            if not anchor_is_new:
+                current = self._read_anchor_with_checkpoint(origin)[0]
+                anchor_is_new = current.anchor_hash != bundle.anchor.anchor_hash
+            if anchor_is_new:
+                self._assert_current_anchor_authority(bundle.anchor, latest)
+            for event in new_events:
+                self._assert_current_event_authority(event, latest)
             validated.append((bundle, new_events, replayed))
         return validated
 
     def validate_import_bundles(self, bundles: Iterable[OriginBundle]) -> tuple[OriginBundle, ...]:
         materialized = tuple(bundles)
-        with authority_write_lock(self.root):
+        with self._authority_operation():
             self._validate_import_bundles_locked(materialized)
         return materialized
 
     @staticmethod
     def _bundle_wire(bundle: OriginBundle) -> dict[str, object]:
         return {
-            "anchor": asdict(bundle.anchor),
+            "anchor": operational_wire_dict(bundle.anchor),
             "checkpoint": base64.urlsafe_b64encode(bundle.checkpoint).rstrip(b"=").decode("ascii"),
-            "events": [asdict(event) for event in bundle.events],
+            "events": [operational_wire_dict(event) for event in bundle.events],
             "head_sequence": bundle.head_sequence,
             "head_hash": bundle.head_hash,
         }
 
+    @staticmethod
+    def _position_wire(position: OriginPosition | None, *, origin: str) -> dict[str, object]:
+        if position is None:
+            return {
+                "origin_device": origin,
+                "sequence": None,
+                "event_hash": None,
+                "anchor_hash": None,
+            }
+        return cast(dict[str, object], operational_wire_dict(position))
+
+    def _run_transaction(
+        self,
+        *,
+        kind: str,
+        request_sha256: str,
+        origins: Sequence[str],
+        before_positions: Sequence[Mapping[str, object]],
+        after_positions: Sequence[Mapping[str, object]],
+        target_bytes: Sequence[tuple[Path, bytes]],
+    ) -> str | None:
+        if not target_bytes:
+            return None
+        transaction_id = uuid.uuid4().hex
+        transaction_root = self.transactions_dir / transaction_id
+        non_heads = [
+            (path, encoded)
+            for path, encoded in target_bytes
+            if not self._relative(path).as_posix().startswith("heads/")
+        ]
+        heads = [
+            (path, encoded)
+            for path, encoded in target_bytes
+            if self._relative(path).as_posix().startswith("heads/")
+        ]
+        ordered = [*non_heads, *heads]
+        targets: list[dict[str, object]] = []
+        staged: list[tuple[Path, bytes]] = []
+        seen: set[str] = set()
+        for ordinal, (path, encoded) in enumerate(ordered):
+            relative = self._relative(path).as_posix()
+            if relative in seen:
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"duplicate operational transaction target: {relative}",
+                )
+            seen.add(relative)
+            before = self._optional_bytes(path)
+            before_sha = hashlib.sha256(before).hexdigest() if before is not None else None
+            after_sha = hashlib.sha256(encoded).hexdigest()
+            stage_blob = f"stage/{ordinal:06d}.bin"
+            targets.append(
+                {
+                    "relative_target": relative,
+                    "mode": "create" if before is None else "replace",
+                    "before_sha256": before_sha,
+                    "after_sha256": after_sha,
+                    "size": len(encoded),
+                    "stage_blob": stage_blob,
+                }
+            )
+            staged.append((transaction_root / stage_blob, encoded))
+        manifest: dict[str, object] = {
+            "schema": _TRANSACTION_SCHEMA,
+            "transaction_id": transaction_id,
+            "transaction_sha256": "",
+            "request_sha256": request_sha256,
+            "kind": kind,
+            "origins": tuple(sorted(set(origins))),
+            "before_positions": tuple(before_positions),
+            "after_positions": tuple(after_positions),
+            "targets": tuple(targets),
+            "prepared_at": self._now(),
+        }
+        manifest["transaction_sha256"] = hashlib.sha256(canonical_json_bytes(manifest)).hexdigest()
+        manifest_bytes = canonical_json_bytes(manifest)
+        # Decode our own manifest before creating the durable prepare.
+        self._decode_transaction_manifest(
+            manifest_bytes,
+            transaction_id=transaction_id,
+        )
+        for path, encoded in staged:
+            self._atomic_write_bytes(path, encoded)
+        self._atomic_write_bytes(transaction_root / "manifest.json", manifest_bytes)
+        self._transaction_failpoint("before_commit")
+        manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+        self._create_bytes_exclusive(
+            transaction_root / "COMMITTED.json",
+            self._marker_bytes(
+                transaction_id=transaction_id,
+                manifest_sha256=manifest_sha256,
+            ),
+        )
+        self._transaction_failpoint("after_commit")
+        decoded = self._decode_transaction_manifest(
+            manifest_bytes,
+            transaction_id=transaction_id,
+        )
+        self._apply_transaction_manifest(
+            decoded,
+            transaction_root=transaction_root,
+            invoke_failpoints=True,
+        )
+        self._create_bytes_exclusive(
+            transaction_root / "APPLIED.json",
+            self._marker_bytes(
+                transaction_id=transaction_id,
+                manifest_sha256=manifest_sha256,
+            ),
+        )
+        return transaction_id
+
+    def _import_transaction_targets(
+        self,
+        validated: Sequence[tuple[OriginBundle, list[OperationalEventV2], int]],
+    ) -> tuple[
+        list[tuple[Path, bytes]],
+        list[dict[str, object]],
+        list[dict[str, object]],
+    ]:
+        target_bytes: list[tuple[Path, bytes]] = []
+        before_positions: list[dict[str, object]] = []
+        after_positions: list[dict[str, object]] = []
+        head_targets: list[tuple[Path, bytes]] = []
+        self._transaction_staging = True
+        try:
+            for _, new_events, _ in validated:
+                for event in new_events:
+                    # Preserve the existing private durability hook without
+                    # publishing authority bytes before COMMITTED.
+                    self._append_event_fsync(event)
+        finally:
+            self._transaction_staging = False
+        for bundle, new_events, _ in validated:
+            origin = bundle.anchor.origin_device
+            anchor_path = self._anchor_path(origin)
+            existing_anchor: ChainAnchor | None = None
+            before_position: OriginPosition | None = None
+            if self._exists(anchor_path):
+                existing_anchor = self._read_anchor_with_checkpoint(origin)[0]
+                before_position = self._load_position(
+                    origin,
+                    existing_anchor,
+                    repair=False,
+                )
+            anchor_changed = (
+                existing_anchor is None or existing_anchor.anchor_hash != bundle.anchor.anchor_hash
+            )
+            before_positions.append(self._position_wire(before_position, origin=origin))
+            after_position = OriginPosition(
+                origin_device=origin,
+                sequence=bundle.head_sequence,
+                event_hash=bundle.head_hash,
+                anchor_hash=bundle.anchor.anchor_hash,
+            )
+            after_positions.append(self._position_wire(after_position, origin=origin))
+            if anchor_changed:
+                target_bytes.extend(
+                    (
+                        (self._checkpoint_path(bundle.anchor), bundle.checkpoint),
+                        (
+                            anchor_path,
+                            canonical_json_bytes(bundle.anchor),
+                        ),
+                    )
+                )
+            segments: dict[Path, bytearray] = {}
+            for event in new_events:
+                path = self._segment_path(event)
+                if path not in segments:
+                    segments[path] = bytearray(self._optional_bytes(path) or b"")
+                segments[path].extend(canonical_json_bytes(event) + b"\n")
+            target_bytes.extend(
+                (path, bytes(encoded))
+                for path, encoded in sorted(
+                    segments.items(),
+                    key=lambda item: item[0].as_posix(),
+                )
+            )
+            if anchor_changed or new_events:
+                head_targets.append(
+                    (
+                        self._head_path(origin),
+                        canonical_json_bytes(
+                            {
+                                "schema": _HEAD_SCHEMA,
+                                "origin_device": origin,
+                                "sequence": bundle.head_sequence,
+                                "event_hash": bundle.head_hash,
+                                "anchor_hash": bundle.anchor.anchor_hash,
+                            }
+                        ),
+                    )
+                )
+        target_bytes.extend(head_targets)
+        return target_bytes, before_positions, after_positions
+
     def quarantine(self, bundle: OriginBundle, *, reason: str) -> Path:
         encoded_bundle = canonical_json_bytes(self._bundle_wire(bundle))
         digest = hashlib.sha256(encoded_bundle).hexdigest()
-        self._ensure_directory(self.quarantine_dir)
-        existing = sorted(self.quarantine_dir.glob(f"*-{digest}.json"))
-        for path in existing:
-            self._assert_safe_path(path)
-            if path.is_symlink():
-                raise _failure(
-                    OperationalErrorCode.STORAGE_UNAVAILABLE,
-                    f"unsafe quarantine symlink: {path}",
-                )
-            return path
-        timestamp = _parse_timestamp(self._now(), "clock").strftime("%Y%m%dT%H%M%S%fZ")
-        path = self.quarantine_dir / f"{timestamp}-{digest}.json"
-        self._atomic_write_json(
-            path,
-            {
-                "schema": _QUARANTINE_SCHEMA,
-                "sha256": digest,
-                "reason": reason,
-                "bundle": self._bundle_wire(bundle),
-            },
-        )
-        return path
-
-    def _snapshot_paths(
-        self,
-        validated: Sequence[tuple[OriginBundle, list[OperationalEventV2], int]],
-    ) -> dict[Path, bytes | None]:
-        paths: set[Path] = set()
-        for bundle, new_events, _ in validated:
-            paths.update(
+        with self._authority_operation():
+            suffix = f"-{digest}.json"
+            for name in self._list_names(self.quarantine_dir):
+                if name.endswith(suffix):
+                    path = self.quarantine_dir / name
+                    if not stat.S_ISREG(self._stat(path).st_mode):
+                        raise _failure(
+                            OperationalErrorCode.STORAGE_UNAVAILABLE,
+                            f"unsafe quarantine path: {path}",
+                        )
+                    return path
+            timestamp = _parse_timestamp(self._now(), "clock").strftime("%Y%m%dT%H%M%S%fZ")
+            path = self.quarantine_dir / f"{timestamp}-{digest}.json"
+            self._atomic_write_json(
+                path,
                 {
-                    self._anchor_path(bundle.anchor.origin_device),
-                    self._checkpoint_path(bundle.anchor),
-                    self._head_path(bundle.anchor.origin_device),
-                }
+                    "schema": _QUARANTINE_SCHEMA,
+                    "sha256": digest,
+                    "reason": reason,
+                    "bundle": self._bundle_wire(bundle),
+                },
             )
-            paths.update(self._segment_path(event) for event in new_events)
-        snapshots: dict[Path, bytes | None] = {}
-        for path in paths:
-            self._assert_safe_path(path)
-            try:
-                snapshots[path] = path.read_bytes()
-            except FileNotFoundError:
-                snapshots[path] = None
-            except OSError as exc:
-                raise _failure(
-                    OperationalErrorCode.STORAGE_UNAVAILABLE,
-                    f"cannot snapshot import target: {path}",
-                ) from exc
-        return snapshots
+            return path
 
-    def _restore_snapshots(self, snapshots: Mapping[Path, bytes | None]) -> None:
-        failures: list[str] = []
-        cleanup_candidates: set[Path] = set()
-        for path, encoded in snapshots.items():
-            try:
-                if encoded is None:
-                    path.unlink(missing_ok=True)
-                    cleanup_candidates.add(path.parent)
-                    if path.parent.exists():
-                        _fsync_directory(path.parent)
-                else:
-                    self._atomic_write_bytes(path, encoded)
-            except (OSError, OperationalError) as exc:
-                failures.append(f"{path}: {exc}")
-        for directory in sorted(
-            cleanup_candidates,
-            key=lambda candidate: len(candidate.parts),
-            reverse=True,
-        ):
-            current = directory
-            while current != self.root and current.is_relative_to(self.root):
-                try:
-                    current.rmdir()
-                    _fsync_directory(current.parent)
-                except FileNotFoundError:
-                    pass
-                except OSError:
-                    break
-                current = current.parent
-        if failures:
-            raise _failure(
-                OperationalErrorCode.STORAGE_UNAVAILABLE,
-                "operational import rollback failed",
-                details={"errors": failures},
-            )
-
-    def import_bundles(self, bundles: Iterable[OriginBundle]) -> LedgerImportReport:
+    def import_bundles(
+        self,
+        bundles: Iterable[OriginBundle],
+        *,
+        context: CommitContext,
+    ) -> LedgerImportReport:
         materialized = tuple(bundles)
         quarantined: list[str] = []
+        if not isinstance(context, CommitContext):
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "authenticated commit context authority is required for import",
+            )
+        if self.epoch_fence is None:
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational epoch authority is unavailable",
+            )
+        manifest_sha256 = hashlib.sha256(
+            canonical_json_bytes(
+                sorted(
+                    (self._bundle_wire(bundle) for bundle in materialized),
+                    key=lambda item: cast(dict[str, Any], item["anchor"])["origin_device"],
+                )
+            )
+        ).hexdigest()
         try:
-            with authority_write_lock(self.root):
+            with self._authority_operation(context=context):
                 validated = self._validate_import_bundles_locked(materialized)
-                snapshots = self._snapshot_paths(validated)
-                inserted = 0
-                replayed = 0
-                try:
-                    for bundle, new_events, replay_count in validated:
-                        origin = bundle.anchor.origin_device
-                        anchor_path = self._anchor_path(origin)
-                        if not anchor_path.exists():
-                            self._persist_anchor(bundle.anchor, bundle.checkpoint)
-                        else:
-                            current = self._read_anchor_with_checkpoint(origin)[0]
-                            if current.anchor_hash != bundle.anchor.anchor_hash:
-                                self._persist_anchor(
-                                    bundle.anchor,
-                                    bundle.checkpoint,
-                                )
-                        for event in new_events:
-                            self._append_event_fsync(event)
-                        if new_events:
-                            self._write_head(
-                                origin=origin,
-                                sequence=bundle.head_sequence,
-                                event_hash=bundle.head_hash,
-                                anchor_hash=bundle.anchor.anchor_hash,
-                            )
-                        inserted += len(new_events)
-                        replayed += replay_count
-                except BaseException:
-                    self._restore_snapshots(snapshots)
-                    raise
+                target_bytes, before_positions, after_positions = self._import_transaction_targets(
+                    validated
+                )
+                inserted = sum(len(new_events) for _, new_events, _ in validated)
+                replayed = sum(replay_count for _, _, replay_count in validated)
+                self._run_transaction(
+                    kind="bundle_import",
+                    request_sha256=manifest_sha256,
+                    origins=tuple(bundle.anchor.origin_device for bundle, _, _ in validated),
+                    before_positions=before_positions,
+                    after_positions=after_positions,
+                    target_bytes=target_bytes,
+                )
                 final_positions: list[OriginPosition] = []
                 for bundle, _, _ in validated:
                     anchor = self._read_anchor_with_checkpoint(bundle.anchor.origin_device)[0]
@@ -1998,14 +2942,6 @@ class OperationLedgerV2:
                 if quarantine_path is not None:
                     quarantined.append(str(quarantine_path))
             raise
-        manifest_sha256 = hashlib.sha256(
-            canonical_json_bytes(
-                sorted(
-                    (self._bundle_wire(bundle) for bundle in materialized),
-                    key=lambda item: cast(dict[str, Any], item["anchor"])["origin_device"],
-                )
-            )
-        ).hexdigest()
         return LedgerImportReport(
             manifest_sha256=manifest_sha256,
             origins_seen=tuple(sorted(bundle.anchor.origin_device for bundle in materialized)),
@@ -2023,7 +2959,7 @@ class OperationLedgerV2:
             if origins is not None
             else None
         )
-        with authority_write_lock(self.root):
+        with self._authority_operation():
             selected = requested if requested is not None else self._discover_origins()
             bundles: list[OriginBundle] = []
             for origin in selected:

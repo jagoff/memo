@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Literal
@@ -26,7 +26,20 @@ EMPTY_REDUCER_STATE_BYTES = b"{}"
 
 def _json_value(value: object) -> object:
     if is_dataclass(value) and not isinstance(value, type):
-        return _json_value(asdict(value))
+        body = {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
+        if isinstance(value, SourceProof) and value.authentication is None:
+            body.pop("authentication", None)
+        if isinstance(value, MigrationOrigin):
+            if not value.source_proof_root_sha256:
+                body.pop("source_proof_root_sha256", None)
+            if value.source_proof_count == 0:
+                body.pop("source_proof_count", None)
+        if isinstance(value, OperationalEventV2):
+            if value.migration_origin is None:
+                body.pop("migration_origin", None)
+            if not value.migration_origin_sha256:
+                body.pop("migration_origin_sha256", None)
+        return body
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, bytes):
@@ -59,6 +72,15 @@ def canonical_signed_bytes(value: object) -> bytes:
 
 
 @dataclass(frozen=True)
+class SourceProofAuthentication:
+    schema: Literal["memo.operational_source_inclusion.v1"]
+    source_manifest_sha256: str
+    leaf_index: int
+    leaf_count: int
+    merkle_path: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SourceProof:
     source_system: str
     source_event_id: str
@@ -70,6 +92,7 @@ class SourceProof:
     source_content_hash: str
     source_actor: Mapping[str, object]
     source_subject_uri: str
+    authentication: SourceProofAuthentication | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +108,8 @@ class MigrationOrigin:
     issued_at: str
     expires_at: str
     signature: str
+    source_proof_root_sha256: str = ""
+    source_proof_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -174,6 +199,8 @@ class OperationalEventV2:
     roster_version: int
     key_id: str
     signature: str
+    migration_origin: MigrationOrigin | None = None
+    migration_origin_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -256,18 +283,185 @@ class VerificationReport:
     errors: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class LedgerRecoveryReport:
+    recovered_transactions: tuple[str, ...] = ()
+    discarded_transactions: tuple[str, ...] = ()
+    repaired_tails: tuple[str, ...] = ()
+    repaired_heads: tuple[str, ...] = ()
+    recovered_compactions: tuple[str, ...] = ()
+    published_targets: int = 0
+
+
+def operational_wire_dict(value: object) -> dict[str, object]:
+    """Return the canonical wire projection for one operational record."""
+    projected = _json_value(value)
+    if not isinstance(projected, dict):
+        raise TypeError("operational record must encode as an object")
+    return projected
+
+
 def canonical_event_hash(event: OperationalEventV2) -> str:
-    body = asdict(event)
+    body = operational_wire_dict(event)
     body["event_hash"] = ""
     body["signature"] = ""
     return hashlib.sha256(canonical_json_bytes(body)).hexdigest()
 
 
 def canonical_anchor_hash(anchor: ChainAnchor) -> str:
-    body = asdict(anchor)
+    body = operational_wire_dict(anchor)
     body["anchor_hash"] = ""
     body["signature"] = ""
     return hashlib.sha256(canonical_json_bytes(body)).hexdigest()
+
+
+def _source_proof_original_fields(proof: SourceProof) -> dict[str, object]:
+    return {
+        "source_system": proof.source_system,
+        "source_event_id": proof.source_event_id,
+        "source_schema": proof.source_schema,
+        "source_origin": proof.source_origin,
+        "source_sequence": proof.source_sequence,
+        "source_previous_hash": proof.source_previous_hash,
+        "source_event_hash": proof.source_event_hash,
+        "source_content_hash": proof.source_content_hash,
+        "source_actor": proof.source_actor,
+        "source_subject_uri": proof.source_subject_uri,
+    }
+
+
+def source_proof_leaf_sha256(proof: SourceProof) -> str:
+    if not isinstance(proof, SourceProof):
+        raise TypeError("source proof is required")
+    return hashlib.sha256(
+        b"memo-source-proof-leaf-v1\0" + canonical_json_bytes(_source_proof_original_fields(proof))
+    ).hexdigest()
+
+
+def _source_proof_node(left: bytes, right: bytes) -> bytes:
+    return hashlib.sha256(b"memo-source-proof-node-v1\0" + left + right).digest()
+
+
+def authenticate_source_proofs(
+    proofs: tuple[SourceProof, ...],
+    *,
+    source_manifest_sha256: str,
+) -> tuple[str, tuple[SourceProof, ...]]:
+    """Build the exact reusable inclusion tree used by migration producers."""
+    if not proofs:
+        raise OperationalError(
+            OperationalErrorCode.INVALID_EVENT,
+            "source proof tree must contain at least one leaf",
+            retryable=False,
+        )
+    if not _SHA256_RE.fullmatch(source_manifest_sha256):
+        raise OperationalError(
+            OperationalErrorCode.INVALID_EVENT,
+            "source proof manifest digest is invalid",
+            retryable=False,
+        )
+    leaves = [bytes.fromhex(source_proof_leaf_sha256(proof)) for proof in proofs]
+    paths: list[list[str]] = [[] for _ in proofs]
+    positions = list(range(len(proofs)))
+    width = len(leaves)
+    level = leaves
+    while width > 1:
+        for leaf_index, position in enumerate(positions):
+            sibling_index = position ^ 1
+            sibling = level[position] if sibling_index >= width else level[sibling_index]
+            paths[leaf_index].append(sibling.hex())
+            positions[leaf_index] //= 2
+        next_level: list[bytes] = []
+        for index in range(0, width, 2):
+            left = level[index]
+            right = level[index + 1] if index + 1 < width else left
+            next_level.append(_source_proof_node(left, right))
+        level = next_level
+        width = len(level)
+    root = level[0].hex()
+    authenticated = tuple(
+        replace(
+            proof,
+            authentication=SourceProofAuthentication(
+                schema="memo.operational_source_inclusion.v1",
+                source_manifest_sha256=source_manifest_sha256,
+                leaf_index=index,
+                leaf_count=len(proofs),
+                merkle_path=tuple(paths[index]),
+            ),
+        )
+        for index, proof in enumerate(proofs)
+    )
+    return root, authenticated
+
+
+def verify_source_proof_inclusion(
+    proof: SourceProof,
+    *,
+    expected_root_sha256: str,
+    expected_count: int,
+    expected_manifest_sha256: str,
+) -> None:
+    authentication = proof.authentication
+    if authentication is None or authentication.schema != "memo.operational_source_inclusion.v1":
+        raise OperationalError(
+            OperationalErrorCode.INVALID_EVENT,
+            "source proof lacks authenticated inclusion",
+            retryable=False,
+        )
+    if (
+        not _SHA256_RE.fullmatch(expected_root_sha256)
+        or not _SHA256_RE.fullmatch(expected_manifest_sha256)
+        or authentication.source_manifest_sha256 != expected_manifest_sha256
+        or authentication.leaf_count != expected_count
+        or expected_count < 1
+        or authentication.leaf_index < 0
+        or authentication.leaf_index >= expected_count
+    ):
+        raise OperationalError(
+            OperationalErrorCode.INVALID_EVENT,
+            "source proof manifest, count, or inclusion index mismatch",
+            retryable=False,
+        )
+    current = bytes.fromhex(source_proof_leaf_sha256(proof))
+    index = authentication.leaf_index
+    width = expected_count
+    path_index = 0
+    while width > 1:
+        if path_index >= len(authentication.merkle_path):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "source proof inclusion path is incomplete",
+                retryable=False,
+            )
+        sibling_text = authentication.merkle_path[path_index]
+        if not _SHA256_RE.fullmatch(sibling_text):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "source proof inclusion path digest is invalid",
+                retryable=False,
+            )
+        sibling = bytes.fromhex(sibling_text)
+        if (index ^ 1) >= width and sibling != current:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "source proof odd-level duplicate is invalid",
+                retryable=False,
+            )
+        current = (
+            _source_proof_node(current, sibling)
+            if index % 2 == 0
+            else _source_proof_node(sibling, current)
+        )
+        index //= 2
+        width = (width + 1) // 2
+        path_index += 1
+    if path_index != len(authentication.merkle_path) or current.hex() != expected_root_sha256:
+        raise OperationalError(
+            OperationalErrorCode.INVALID_EVENT,
+            "source proof inclusion root mismatch",
+            retryable=False,
+        )
 
 
 def _parse_time(value: str, field: str) -> datetime:
@@ -307,6 +501,8 @@ def validate_migration_origin(
         or not origin.attestor_device_id
         or not _SHA256_RE.fullmatch(origin.source_manifest_sha256)
         or not _SHA256_RE.fullmatch(origin.capability_manifest_sha256)
+        or not _SHA256_RE.fullmatch(origin.source_proof_root_sha256)
+        or origin.source_proof_count < 1
     ):
         raise OperationalError(
             OperationalErrorCode.INVALID_EVENT,
@@ -451,6 +647,36 @@ def validate_event(event: OperationalEventV2) -> None:
             retryable=False,
         )
     validate_event_payload(event.event_type, event.payload)
+    if event.source_proof is None:
+        if event.migration_origin is not None or event.migration_origin_sha256:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "migration origin requires a source proof",
+                retryable=False,
+            )
+    else:
+        if event.migration_origin is None:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "source proof requires authenticated migration authority",
+                retryable=False,
+            )
+        migration_digest = hashlib.sha256(canonical_json_bytes(event.migration_origin)).hexdigest()
+        if (
+            event.migration_origin_sha256 != migration_digest
+            or event.origin_device != event.migration_origin.migration_device_id
+        ):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "persisted migration origin digest or device mismatch",
+                retryable=False,
+            )
+        verify_source_proof_inclusion(
+            event.source_proof,
+            expected_root_sha256=event.migration_origin.source_proof_root_sha256,
+            expected_count=event.migration_origin.source_proof_count,
+            expected_manifest_sha256=event.migration_origin.source_manifest_sha256,
+        )
     if canonical_event_hash(event) != event.event_hash:
         raise OperationalError(
             OperationalErrorCode.INVALID_EVENT,
@@ -465,6 +691,7 @@ __all__ = [
     "CommandResult",
     "EpochMarkerAuthorization",
     "LedgerImportReport",
+    "LedgerRecoveryReport",
     "MigrationOrigin",
     "MigrationPreparedStamp",
     "OperationalCommand",
@@ -473,13 +700,18 @@ __all__ = [
     "OriginPosition",
     "SessionCheckpoint",
     "SourceProof",
+    "SourceProofAuthentication",
     "StateCheckpoint",
     "VerificationReport",
+    "authenticate_source_proofs",
     "canonical_anchor_hash",
     "canonical_event_hash",
     "canonical_json_bytes",
     "canonical_signed_bytes",
+    "operational_wire_dict",
+    "source_proof_leaf_sha256",
     "validate_anchor",
     "validate_event",
     "validate_migration_origin",
+    "verify_source_proof_inclusion",
 ]
