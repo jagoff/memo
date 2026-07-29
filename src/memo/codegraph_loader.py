@@ -11,8 +11,9 @@ DB's mtime advances so long-lived processes don't serve a frozen graph.
 
 The DB is resolved per call: explicit ``db_path`` > nearest
 ``.codegraph/codegraph.db`` walking up from cwd (project-aware discovery,
-kill-switch ``MEMO_CODEGRAPH_DISCOVERY=0``) > module-level ``CODEGRAPH_DB``
-(memo's own checkout — the historical behavior).
+kill-switch ``MEMO_CODEGRAPH_DISCOVERY=0``) > ``MEMO_CODEGRAPH_DB`` (env, then
+Markdown config — pins daemons whose cwd is outside any repo) > module-level
+``CODEGRAPH_DB`` (memo's own checkout — the historical behavior).
 """
 
 from __future__ import annotations
@@ -82,14 +83,40 @@ def _discover_db(start: Path | None = None) -> Path | None:
     return None
 
 
+def _db_override() -> Path | None:
+    """Explicit index path (``MEMO_CODEGRAPH_DB``), or None when unset.
+
+    Consulted only after cwd discovery fails, so a process whose cwd is outside
+    any repo (a launchd daemon at ``$HOME``, a pipx/uv-tool install whose
+    module-relative ``CODEGRAPH_DB`` points inside site-packages) can still be
+    pinned to a real index — without overriding project-awareness when cwd
+    discovery does find a nearer one. Raw env is read first (no registry import
+    when the var is exported); the flags registry — which folds in the Markdown
+    config layer, reaching daemons that inherit no shell env — is imported
+    lazily only when the env var is unset.
+    """
+    raw = os.environ.get("MEMO_CODEGRAPH_DB", "").strip()
+    if not raw:
+        try:
+            from memo.flags import flag_str
+        except ImportError:  # circular-import guard on unusual import orders
+            return None
+        raw = (flag_str("MEMO_CODEGRAPH_DB") or "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
 def _resolve_db(db_path: Path | None = None) -> Path:
-    """Resolution order: explicit ``db_path`` > cwd discovery > ``CODEGRAPH_DB``."""
+    """Resolution order: explicit ``db_path`` > cwd discovery >
+    ``MEMO_CODEGRAPH_DB`` (env/Markdown config) > ``CODEGRAPH_DB``."""
     if db_path is not None:
         return db_path
     if _discovery_enabled():
         discovered = _discover_db()
         if discovered is not None:
             return discovered
+    override = _db_override()
+    if override is not None:
+        return override
     return CODEGRAPH_DB
 
 

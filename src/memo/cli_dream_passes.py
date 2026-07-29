@@ -1136,7 +1136,11 @@ def _run_code_drift(
         if db_path is None:
             from memo import codegraph_loader
 
-            db_path = codegraph_loader.CODEGRAPH_DB
+            # Same resolution as the recall render (_code_ref_lines): cwd
+            # discovery > MEMO_CODEGRAPH_DB > checkout default. The raw module
+            # default alone is dead under pipx/uv-tool (points inside
+            # site-packages) and for the nightly daemon whose cwd is $HOME.
+            db_path = codegraph_loader._resolve_db()
         if not db_path.is_file():
             _log.warning(
                 "code_drift: codegraph index missing at %s — aborting "

@@ -640,8 +640,9 @@ SPECS: tuple[FlagSpec, ...] = (
         "but the ref no longer resolves, '(no verificado)' when the DB is "
         "unavailable or the lookup fails. One read-only sqlite connection per "
         "render, capped at 2 refs/memory and 4 lines/render (the token budget "
-        "still wins). Default OFF: zero extra work on the recall hot path (the "
-        "codegraph DB is never even opened).",
+        "still wins). Rendered by the full and balanced formats; compact stays "
+        "one-line-per-hit and never renders it. Default OFF: zero extra work "
+        "on the recall hot path (the codegraph DB is never even opened).",
     ),
     # ── Negative Recall — the ⛔ AVOID channel ────────────────────────────────
     # A preemptive, high-precision pass over type=failure_pattern anti-memories,

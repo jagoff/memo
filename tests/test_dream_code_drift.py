@@ -259,6 +259,25 @@ def test_missing_db_aborts_without_marking(mock_memory, tmp_path, monkeypatch):
     assert mock_memory.get(rec.id) is not None
 
 
+def test_default_db_resolution_honors_override(mock_memory, graph_db, tmp_path, monkeypatch):
+    """db_path=None resolves like the recall render (_resolve_db):
+    MEMO_CODEGRAPH_DB rescues a dead module default — the pipx install and the
+    nightly daemon whose cwd is $HOME, where discovery finds nothing."""
+    from memo import codegraph_loader
+
+    monkeypatch.setenv(CODE_DRIFT_FLAG, "1")
+    monkeypatch.setenv("MEMO_CODEGRAPH_DISCOVERY", "0")
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / "missing.db")
+    monkeypatch.setenv("MEMO_CODEGRAPH_DB", str(graph_db))
+    _save_with_refs(mock_memory, [LIVE_REF], "memory citing a live symbol")
+
+    res = _run_code_drift(mock_memory)
+
+    assert res["status"] == "ok"
+    assert res["scanned"] == 1
+    assert res["outdated"] == []
+
+
 def test_stale_db_aborts_without_marking(mock_memory, graph_db, monkeypatch):
     monkeypatch.setenv(CODE_DRIFT_FLAG, "1")
     rec = _save_with_refs(mock_memory, [DEAD_FILE_REF], "notes about a deleted module")

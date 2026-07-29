@@ -247,3 +247,50 @@ def test_symbol_ref_matches_qualified_name(monkeypatch, tmp_path: Path):
     )
     out = _render([_hit(extra={"code_refs": [ref]})])
     assert "(vigente)" in out
+
+
+# --- format wiring: full AND balanced render the line, compact never does -------
+
+
+def _render_balanced(hits):
+    from memo.recall_logic import render_recall_balanced
+
+    return render_recall_balanced(hits, token_budget=0, turn=1)
+
+
+def test_balanced_format_renders_code_refs(monkeypatch, tmp_path: Path):
+    db = tmp_path / ".codegraph" / "codegraph.db"
+    _seed_codegraph_db(db)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", db)
+    monkeypatch.setenv("MEMO_CODEGRAPH_DISCOVERY", "0")
+    monkeypatch.setenv("MEMO_RECALL_CODE_REFS_ENABLED", "1")
+
+    out = _render_balanced([_hit(extra={"code_refs": [_ref()]})])
+    assert "  ↳ code: src/memo/recall_logic.py:215 (vigente)" in out
+
+
+def test_balanced_format_flag_off_unchanged_and_db_never_opened(monkeypatch):
+    monkeypatch.delenv("MEMO_RECALL_CODE_REFS_ENABLED", raising=False)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("sqlite must not be touched with the flag off")
+
+    monkeypatch.setattr(sqlite3, "connect", _boom)
+    out = _render_balanced([_hit(extra={"code_refs": [_ref()]})])
+    bare = _render_balanced([_hit()])
+    assert "↳ code" not in out
+    assert out == bare
+
+
+def test_compact_format_never_renders_code_refs(monkeypatch, tmp_path: Path):
+    """Compact stays one-line-per-hit by design, even with the flag ON."""
+    from memo.recall_logic import render_recall_compact
+
+    db = tmp_path / ".codegraph" / "codegraph.db"
+    _seed_codegraph_db(db)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", db)
+    monkeypatch.setenv("MEMO_CODEGRAPH_DISCOVERY", "0")
+    monkeypatch.setenv("MEMO_RECALL_CODE_REFS_ENABLED", "1")
+
+    out = render_recall_compact([_hit(extra={"code_refs": [_ref()]})], token_budget=0)
+    assert "↳ code" not in out

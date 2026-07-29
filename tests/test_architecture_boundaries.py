@@ -292,7 +292,11 @@ def test_behavior_flags_are_not_read_directly_from_environ() -> None:
         SRC / "mlx_gpu.py": {"MEMO_GPU_LOCK_PATH", "MEMO_GPU_XPROC_LOCK"},
         # Hot-path leaf (recall assoc): raw read keeps codegraph_loader free of
         # flags-registry imports; spec registered in flags_misc.py for validate.
-        SRC / "codegraph_loader.py": {"MEMO_CODEGRAPH_DISCOVERY", "MEMO_CODEGRAPH_MAX_EDGES"},
+        SRC / "codegraph_loader.py": {
+            "MEMO_CODEGRAPH_DISCOVERY",
+            "MEMO_CODEGRAPH_MAX_EDGES",
+            "MEMO_CODEGRAPH_DB",
+        },
         SRC / "store" / "schema.py": {"MEMO_SKIP_MODEL_VERSION_CHECK"},
         # MEMO_AGENT_TTY is set by the shim, not user-configurable; read here for IPC.
         SRC / "cli_session.py": {"MEMO_AGENT_TTY"},

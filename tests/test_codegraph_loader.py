@@ -116,6 +116,71 @@ def test_explicit_db_path_wins_over_fallback(monkeypatch, tmp_path: Path) -> Non
     assert "delta" in adjacency
 
 
+def test_db_override_rescues_missing_fallback(monkeypatch, tmp_path: Path) -> None:
+    """MEMO_CODEGRAPH_DB pins an index when cwd discovery finds nothing and the
+    module default is dead (launchd daemon at $HOME, pipx install)."""
+    override = tmp_path / "pinned" / ".codegraph" / "codegraph.db"
+    override.parent.mkdir(parents=True)
+    _seed_db(override, names=("Delta", "Epsilon", "Zeta"))
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.chdir(empty)  # discovery on, but nothing to discover here
+    monkeypatch.setenv("MEMO_CODEGRAPH_DISCOVERY", "1")
+    monkeypatch.setenv("MEMO_CODEGRAPH_DB", str(override))
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / "missing.db")
+    codegraph_loader.reset()
+
+    adjacency, _ = codegraph_loader.load()
+
+    assert "delta" in adjacency
+    assert codegraph_loader.is_stale() is False
+
+
+def test_discovery_wins_over_db_override(monkeypatch, tmp_path: Path) -> None:
+    """A discoverable project index beats the MEMO_CODEGRAPH_DB pin — the
+    override rescues cwd-less processes, it never breaks project-awareness."""
+    project_db = tmp_path / "project" / ".codegraph" / "codegraph.db"
+    project_db.parent.mkdir(parents=True)
+    _seed_db(project_db)
+    override = tmp_path / "override.db"
+    _seed_db(override, names=("Delta", "Epsilon", "Zeta"))
+    monkeypatch.setenv("MEMO_CODEGRAPH_DISCOVERY", "1")
+    monkeypatch.setenv("MEMO_CODEGRAPH_DB", str(override))
+    monkeypatch.chdir(project_db.parent.parent)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / "missing.db")
+    codegraph_loader.reset()
+
+    adjacency, _ = codegraph_loader.load()
+
+    assert "alpha" in adjacency
+    assert "delta" not in adjacency
+
+
+def test_db_override_reads_markdown_config_when_env_unset(monkeypatch, tmp_path: Path) -> None:
+    """With no MEMO_CODEGRAPH_DB export, the flags registry (Markdown config
+    layer) supplies the pin — this is how launchd daemons, which inherit no
+    shell env, get one."""
+    override = tmp_path / "pinned.db"
+    _seed_db(override, names=("Delta", "Epsilon", "Zeta"))
+    config_home = tmp_path / "memo-config"
+    (config_home / "config").mkdir(parents=True)
+    (config_home / "config" / "advanced-config.md").write_text(
+        '# Advanced config\n\n```toml\n[misc]\ncodegraph_db = "' + str(override) + '"\n```\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(config_home))
+    monkeypatch.delenv("MEMO_CODEGRAPH_DB", raising=False)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.chdir(empty)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / "missing.db")
+    codegraph_loader.reset()
+
+    adjacency, _ = codegraph_loader.load()
+
+    assert "delta" in adjacency
+
+
 def _add_delta_edge(db: Path) -> None:
     """Append a Delta node called by Alpha, so a reload is observable."""
     conn = sqlite3.connect(db)

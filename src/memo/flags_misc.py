@@ -327,6 +327,18 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=1,
     ),
     _spec(
+        "MEMO_CODEGRAPH_DB",
+        "str",
+        "",
+        "misc",
+        "Explicit path to a codegraph.db index, consulted only when cwd "
+        "discovery finds no .codegraph/ upward from the working directory "
+        "(launchd daemons at $HOME, pipx/uv-tool installs whose "
+        "module-relative default points inside site-packages). Discovery "
+        "still wins when it finds a nearer index, so project-awareness is "
+        "preserved. Default '': fall back to memo's own checkout.",
+    ),
+    _spec(
         "MEMO_BRIEFING_GRAPH",
         "bool",
         True,

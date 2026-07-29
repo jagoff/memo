@@ -564,6 +564,10 @@ def render_recall_balanced(
     no epistemic_label, no trust_dossier, and no MEMO_RECALL_CONFIDENCE_GATE
     '⚠ unverified' marker. The gate and dossier apply only to compact and full
     formats by design — the balanced format prioritizes brevity over trust signals.
+    The one exception is the flag-gated '↳ code:' citation line
+    (MEMO_RECALL_CODE_REFS_ENABLED, default OFF): a verified evidence pointer,
+    not an epistemic annotation, and the operator opted into it explicitly.
+    Compact stays one-line-per-hit and never renders it.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     lines = [f"- [{hit.id[:8]}] {hit.title}" for hit in relevant]
@@ -578,6 +582,11 @@ def render_recall_balanced(
             indent = "\n  • ".join(bullets)
             if i < len(lines):
                 lines[i] = lines[i] + "\n  • " + indent
+
+    # Verified code citations (flag off ⇒ {} — zero extra work, DB untouched).
+    for i, ref_lines in _code_ref_lines(relevant).items():
+        if i < len(lines):
+            lines[i] = lines[i] + "\n" + "\n".join(ref_lines)
 
     footer = _render_footer(turn)
     body = "<memo-recall readonly>\n## Memory\n" + "\n".join(lines) + "\n"

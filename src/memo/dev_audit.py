@@ -42,6 +42,7 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
     ("mlx_gpu.py", "MEMO_GPU_XPROC_LOCK"),
     ("codegraph_loader.py", "MEMO_CODEGRAPH_DISCOVERY"),
     ("codegraph_loader.py", "MEMO_CODEGRAPH_MAX_EDGES"),
+    ("codegraph_loader.py", "MEMO_CODEGRAPH_DB"),
     ("setup/config_io.py", "MEMO_CONFIG_FILE"),
     ("embed_protocol.py", "MEMO_STATE_DIR"),
     ("embedder.py", "MEMO_QUERY_CACHE_SIZE"),
