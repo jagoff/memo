@@ -1,4 +1,4 @@
-"""Private Ed25519 key isolation for operational signatures."""
+"""Opaque private-key operations for operational Ed25519 signatures."""
 
 from __future__ import annotations
 
@@ -6,26 +6,33 @@ import base64
 import hashlib
 import json
 import re
-import subprocess
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 _DEVICE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_SIGNATURE_PREFIX = b"memo-signature-v1\0"
+_BOOTSTRAP_DOMAIN = "memo.operational.roster.bootstrap.v1"
 
 
 def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def _decode_b64url(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+def _canonical(value: object) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 class KeyStoreError(RuntimeError):
-    """A private operational key is missing or unavailable."""
+    """An opaque operational key operation is unavailable."""
 
 
 @dataclass(frozen=True)
@@ -38,6 +45,7 @@ class PublicKeyRecord:
     enrollment_sequence: int
     revocation_sequence: int | None = None
     proof_of_possession: str = ""
+    _bootstrap_signature: str = field(default="", repr=False, compare=False)
 
     def proof_payload(self) -> bytes:
         body = {
@@ -49,40 +57,69 @@ class PublicKeyRecord:
             "revocation_sequence": self.revocation_sequence,
             "roles": list(self.roles),
         }
-        encoded = json.dumps(
-            body,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode("utf-8")
-        return b"memo-key-enrollment-v1\0" + encoded
+        return b"memo-key-enrollment-v1\0" + _canonical(body)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "device_id": self.device_id,
+            "key_id": self.key_id,
+            "fingerprint": self.fingerprint,
+            "public_key": self.public_key,
+            "roles": list(self.roles),
+            "enrollment_sequence": self.enrollment_sequence,
+            "revocation_sequence": self.revocation_sequence,
+            "proof_of_possession": self.proof_of_possession,
+        }
+
+
+def _bootstrap_roster_bodies(
+    key: PublicKeyRecord,
+) -> tuple[dict[str, object], bytes]:
+    body: dict[str, object] = {
+        "schema": "memo.operational_roster.v1",
+        "version": 1,
+        "peers": [key.device_id],
+        "keys": [key.to_dict()],
+        "local_device_id": key.device_id,
+        "created_at": "",
+        "previous_roster_hash": "",
+        "roster_hash": "",
+        "signature": "",
+    }
+    digest = hashlib.sha256(_canonical(body)).hexdigest()
+    body["roster_hash"] = digest
+    return body, _canonical(body)
 
 
 class _PrivateKeyProvider(Protocol):
-    def put(self, key_id: str, private_key: bytes) -> None: ...
+    """Only opaque handle operations cross this boundary."""
 
-    def get(self, key_id: str) -> bytes: ...
+    def generate(self, key_id: str) -> bytes: ...
+
+    def sign(self, key_id: str, payload: bytes) -> bytes: ...
 
     def destroy(self, key_id: str) -> None: ...
 
 
 class InMemoryKeyProvider:
-    """Ephemeral provider used only by tests and isolated rehearsal."""
+    """Ephemeral test provider retaining key objects, never serialized seeds."""
 
     def __init__(self) -> None:
-        self._keys: dict[str, bytes] = {}
+        self._keys: dict[str, Ed25519PrivateKey] = {}
 
-    def put(self, key_id: str, private_key: bytes) -> None:
+    def generate(self, key_id: str) -> bytes:
         if key_id in self._keys:
             raise KeyStoreError(f"duplicate private key id: {key_id}")
-        self._keys[key_id] = bytes(private_key)
+        key = Ed25519PrivateKey.generate()
+        self._keys[key_id] = key
+        return key.public_key().public_bytes_raw()
 
-    def get(self, key_id: str) -> bytes:
+    def sign(self, key_id: str, payload: bytes) -> bytes:
         try:
-            return self._keys[key_id]
+            key = self._keys[key_id]
         except KeyError as exc:
             raise KeyStoreError(f"unknown private key id: {key_id}") from exc
+        return key.sign(bytes(payload))
 
     def destroy(self, key_id: str) -> None:
         if self._keys.pop(key_id, None) is None:
@@ -90,62 +127,36 @@ class InMemoryKeyProvider:
 
 
 class MacOSKeychainProvider:
-    """macOS Keychain-backed application-secret provider."""
+    """Fail-closed placeholder for a non-exportable Ed25519 Keychain backend.
+
+    The ``security`` generic-password CLI cannot satisfy this contract: it
+    exports secret bytes and exposes them through argv/stdout. Production setup
+    therefore fails until Memo has a native SecKey-backed implementation.
+    """
+
+    _MESSAGE = (
+        "non-exportable Ed25519 Keychain operations are unavailable; "
+        "refusing exportable generic-password fallback"
+    )
 
     def __init__(self, *, service: str = "com.memo.operational-signing") -> None:
         self.service = service
 
-    def put(self, key_id: str, private_key: bytes) -> None:
-        encoded = _b64url(private_key)
-        command = [
-            "security",
-            "add-generic-password",
-            "-U",
-            "-s",
-            self.service,
-            "-a",
-            key_id,
-            "-w",
-            encoded,
-        ]
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise KeyStoreError("unable to store operational key in Keychain") from exc
+    def generate(self, key_id: str) -> bytes:
+        del key_id
+        raise KeyStoreError(self._MESSAGE)
 
-    def get(self, key_id: str) -> bytes:
-        command = [
-            "security",
-            "find-generic-password",
-            "-s",
-            self.service,
-            "-a",
-            key_id,
-            "-w",
-        ]
-        try:
-            result = subprocess.run(command, check=True, capture_output=True, text=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise KeyStoreError(f"unknown private key id: {key_id}") from exc
-        return _decode_b64url(result.stdout.strip())
+    def sign(self, key_id: str, payload: bytes) -> bytes:
+        del key_id, payload
+        raise KeyStoreError(self._MESSAGE)
 
     def destroy(self, key_id: str) -> None:
-        command = [
-            "security",
-            "delete-generic-password",
-            "-s",
-            self.service,
-            "-a",
-            key_id,
-        ]
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise KeyStoreError(f"unknown private key id: {key_id}") from exc
+        del key_id
+        raise KeyStoreError(self._MESSAGE)
 
 
 class DeviceKeyStore:
-    """Creates public records while keeping private seeds behind a provider."""
+    """Creates public records while delegating all private operations."""
 
     def __init__(self, provider: _PrivateKeyProvider | None = None) -> None:
         self._provider = provider or MacOSKeychainProvider()
@@ -170,10 +181,11 @@ class DeviceKeyStore:
             raise ValueError("roles must be unique operational signing roles")
         if enrollment_sequence < 1:
             raise ValueError("enrollment_sequence must be positive")
-        private_key = Ed25519PrivateKey.generate()
-        public_bytes = private_key.public_key().public_bytes_raw()
+        key_id = f"ed25519-{uuid.uuid4().hex}"
+        public_bytes = self._provider.generate(key_id)
+        if len(public_bytes) != 32:
+            raise KeyStoreError("provider returned an invalid public key")
         fingerprint = hashlib.sha256(public_bytes).hexdigest()
-        key_id = f"ed25519-{fingerprint[:16]}-{uuid.uuid4().hex[:8]}"
         record = PublicKeyRecord(
             device_id=device_id,
             key_id=key_id,
@@ -182,21 +194,33 @@ class DeviceKeyStore:
             roles=roles,
             enrollment_sequence=enrollment_sequence,
         )
-        private_bytes = private_key.private_bytes_raw()
-        self._provider.put(key_id, private_bytes)
-        proof = private_key.sign(record.proof_payload())
-        return replace(record, proof_of_possession=_b64url(proof))
+        proof = self._provider.sign(key_id, record.proof_payload())
+        record = replace(record, proof_of_possession=_b64url(proof))
+        _, roster_payload = _bootstrap_roster_bodies(record)
+        bootstrap_signed = (
+            _SIGNATURE_PREFIX
+            + _BOOTSTRAP_DOMAIN.encode("ascii")
+            + b"\0"
+            + roster_payload
+        )
+        bootstrap_signature = self._provider.sign(key_id, bootstrap_signed)
+        return replace(record, _bootstrap_signature=_b64url(bootstrap_signature))
 
     def sign(self, *, key_id: str, payload: bytes) -> bytes:
-        private_bytes = self._provider.get(key_id)
         try:
-            key = Ed25519PrivateKey.from_private_bytes(private_bytes)
-            return key.sign(bytes(payload))
-        except ValueError as exc:
-            raise KeyStoreError(f"invalid private key material for {key_id}") from exc
+            return self._provider.sign(key_id, bytes(payload))
+        except KeyStoreError:
+            raise
+        except Exception:
+            raise KeyStoreError("opaque signing operation failed") from None
 
     def destroy(self, *, key_id: str) -> None:
-        self._provider.destroy(key_id)
+        try:
+            self._provider.destroy(key_id)
+        except KeyStoreError:
+            raise
+        except Exception:
+            raise KeyStoreError("opaque key destruction failed") from None
 
 
 __all__ = [

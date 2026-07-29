@@ -93,6 +93,34 @@ def _sequence(body: dict[str, object], field: str, fallback: int) -> int:
     return sequence
 
 
+def _claim_string(
+    body: dict[str, object],
+    name: str,
+    *,
+    required: bool,
+) -> str | None:
+    value = body.get(name)
+    if value is None and not required:
+        return None
+    if not isinstance(value, str) or not value:
+        raise SignatureError(f"signed record has invalid {name}")
+    return value
+
+
+def _claim_int(
+    body: dict[str, object],
+    name: str,
+    *,
+    required: bool,
+) -> int | None:
+    value = body.get(name)
+    if value is None and not required:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SignatureError(f"signed record has invalid {name}")
+    return value
+
+
 @dataclass(frozen=True)
 class SignatureEnvelope:
     algorithm: Literal["ed25519"]
@@ -111,7 +139,7 @@ class OperationalSigner:
         try:
             signature = self.key_store.sign(key_id=key_id, payload=signed_payload)
         except KeyStoreError as exc:
-            raise SignatureError(str(exc)) from exc
+            raise SignatureError(str(exc)) from None
         return SignatureEnvelope(
             algorithm="ed25519",
             key_id=key_id,
@@ -133,8 +161,9 @@ class OperationalVerifier:
             raise SignatureError(f"unsupported signature algorithm: {envelope.algorithm}")
         if envelope.roster_version != roster.version:
             raise SignatureError("signature roster version mismatch")
+        body = _validate_canonical_json(payload)
         key = roster.key(envelope.key_id)
-        self._validate_key(domain, payload, key, roster.version)
+        self._validate_claims(domain, body, envelope, roster, key)
         signed_payload = signature_payload(domain, payload)
         try:
             public_key = Ed25519PublicKey.from_public_bytes(
@@ -145,31 +174,81 @@ class OperationalVerifier:
             raise SignatureError("operational signature verification failed") from exc
 
     @staticmethod
-    def _validate_key(
+    def _validate_claims(
         domain: str,
-        payload: bytes,
+        body: dict[str, object],
+        envelope: SignatureEnvelope,
+        roster: VerificationRoster,
         key: PublicKeyRecord,
-        roster_version: int,
     ) -> None:
         required_role = "origin"
         expected_device: str | None = None
-        activation_sequence = roster_version
-        body = _validate_canonical_json(payload)
+        activation_sequence = roster.version
+        record_key_field: str | None = None
+        require_record_claims = False
+
         if domain == "memo.operational.migration_origin.v1":
             required_role = "migration_attestor"
-            expected_device = str(body.get("attestor_device_id") or "") or None
+            require_record_claims = True
+            record_key_field = "attestor_key_id"
+            expected_device = _claim_string(
+                body, "attestor_device_id", required=True
+            )
+            if key.roles != ("migration_attestor",):
+                raise SignatureError("migration attestor key must have an exclusive role")
         elif domain == "memo.operational.event.v2":
-            expected_device = str(body.get("origin_device") or "") or None
-            activation_sequence = _sequence(body, "origin_sequence", roster_version)
+            record_key_field = "key_id"
+            require_record_claims = body.get("schema") == "memo.operational_event.v2"
+            expected_device = _claim_string(
+                body, "origin_device", required=require_record_claims
+            )
+            activation_sequence = _sequence(
+                body, "origin_sequence", roster.version
+            )
         elif domain == "memo.operational.anchor.v1":
-            activation_sequence = _sequence(body, "final_sequence", roster_version)
-            if body.get("signer_role") == "migration_attestor":
+            record_key_field = "key_id"
+            require_record_claims = True
+            activation_sequence = max(
+                _sequence(body, "final_sequence", roster.version),
+                roster.version,
+            )
+            signer_role = _claim_string(body, "signer_role", required=True)
+            if signer_role == "migration_attestor":
                 required_role = "migration_attestor"
-                expected_device = str(body.get("attestor_device_id") or "") or None
-            else:
-                expected_device = str(body.get("origin_device") or "") or None
+                if key.roles != ("migration_attestor",):
+                    raise SignatureError(
+                        "migration attestor key must have an exclusive role"
+                    )
+            elif signer_role != "origin":
+                raise SignatureError("anchor signer role is invalid")
+            if signer_role == "origin":
+                expected_device = _claim_string(
+                    body, "origin_device", required=True
+                )
         elif domain == "memo.operational_epoch_authorization.v1":
-            expected_device = str(body.get("device_id") or "") or None
+            record_key_field = "key_id"
+            require_record_claims = True
+            expected_device = _claim_string(body, "device_id", required=True)
+        elif domain in {
+            "memo.operational.roster.v1",
+            "memo.operational.roster.bootstrap.v1",
+        }:
+            required_role = "origin"
+
+        if record_key_field is not None:
+            declared_key = _claim_string(
+                body, record_key_field, required=require_record_claims
+            )
+            if declared_key is not None and declared_key != envelope.key_id:
+                raise SignatureError("signed record key id differs from envelope")
+        declared_roster = _claim_int(
+            body, "roster_version", required=require_record_claims
+        )
+        if declared_roster is not None and (
+            declared_roster != envelope.roster_version
+            or declared_roster != roster.version
+        ):
+            raise SignatureError("signed record roster version mismatch")
         if key.enrollment_sequence > activation_sequence:
             raise SignatureError("key is not active at this record sequence")
         if (

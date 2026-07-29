@@ -1,11 +1,12 @@
-"""Immutable public-key rosters for operational verification."""
+"""Signed, immutable verification-roster history."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
-from dataclasses import asdict, dataclass, replace
+import os
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -16,6 +17,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.errors import SignatureError
 from memo.operational_key_store import PublicKeyRecord
+from memo.operational_signing import (
+    OperationalSigner,
+    OperationalVerifier,
+    SignatureEnvelope,
+)
+
+_BOOTSTRAP_DOMAIN = "memo.operational.roster.bootstrap.v1"
+_UPDATE_DOMAIN = "memo.operational.roster.v1"
 
 
 def _canonical(value: object) -> bytes:
@@ -29,11 +38,47 @@ def _canonical(value: object) -> bytes:
 
 
 def _decode(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    try:
+        return base64.b64decode(
+            value + "=" * (-len(value) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (ValueError, TypeError) as exc:
+        raise RosterError("invalid roster base64url value") from exc
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_authority_write(path: Path, data: bytes) -> None:
+    atomic_write_text(path, data.decode("utf-8"))
+    _fsync_directory(path.parent)
+
+
+def _create_authority_file(path: Path, data: bytes) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    _fsync_directory(path.parent)
 
 
 class RosterError(SignatureError):
-    """A verification roster is structurally invalid or regressed."""
+    """A verification roster is structurally or cryptographically invalid."""
 
 
 @dataclass(frozen=True)
@@ -46,6 +91,9 @@ class VerificationRoster:
     created_at: str = ""
     previous_roster_hash: str = ""
     roster_hash: str = ""
+    signature: SignatureEnvelope | None = None
+    _bootstrap_pending: bool = field(default=False, compare=False, repr=False)
+    _bootstrap_root: str = field(default="", compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.schema != "memo.operational_roster.v1":
@@ -72,10 +120,7 @@ class VerificationRoster:
                 or not set(key.roles).issubset(allowed_roles)
             ):
                 raise RosterError(f"invalid roles for roster key: {key.key_id}")
-            try:
-                public_bytes = _decode(key.public_key)
-            except (ValueError, TypeError) as exc:
-                raise RosterError(f"invalid public key encoding: {key.key_id}") from exc
+            public_bytes = _decode(key.public_key)
             if (
                 len(public_bytes) != 32
                 or hashlib.sha256(public_bytes).hexdigest() != key.fingerprint
@@ -88,6 +133,8 @@ class VerificationRoster:
             key.key_id
             for key in self.keys
             if key.device_id == self.local_device_id
+            and "origin" in key.roles
+            and key.enrollment_sequence <= self.version
             and (
                 key.revocation_sequence is None
                 or key.revocation_sequence > self.version
@@ -103,16 +150,36 @@ class VerificationRoster:
             raise RosterError(f"unknown roster key: {key_id}")
         return matches[0]
 
+    def to_dict(self, *, blank_signature: bool = False) -> dict[str, Any]:
+        signature: object
+        if blank_signature or self.signature is None:
+            signature = ""
+        else:
+            signature = {
+                "algorithm": self.signature.algorithm,
+                "key_id": self.signature.key_id,
+                "roster_version": self.signature.roster_version,
+                "signature": self.signature.signature,
+            }
+        return {
+            "schema": self.schema,
+            "version": self.version,
+            "peers": list(self.peers),
+            "keys": [key.to_dict() for key in self.keys],
+            "local_device_id": self.local_device_id,
+            "created_at": self.created_at,
+            "previous_roster_hash": self.previous_roster_hash,
+            "roster_hash": self.roster_hash,
+            "signature": signature,
+        }
+
     def _hash(self) -> str:
-        body = self.to_dict()
+        body = self.to_dict(blank_signature=True)
         body["roster_hash"] = ""
         return hashlib.sha256(_canonical(body)).hexdigest()
 
-    def to_dict(self) -> dict[str, Any]:
-        body = asdict(self)
-        body["peers"] = list(self.peers)
-        body["keys"] = [asdict(key) for key in self.keys]
-        return body
+    def _signed_payload(self) -> bytes:
+        return _canonical(self.to_dict(blank_signature=True))
 
     @classmethod
     def bootstrap(
@@ -122,75 +189,67 @@ class VerificationRoster:
         key: PublicKeyRecord,
         root: Path,
     ) -> VerificationRoster:
+        root = Path(root)
         if key.device_id != device_id:
             raise RosterError("bootstrap key device mismatch")
         allowed_roles = {"origin", "migration_attestor"}
         if not key.roles or not set(key.roles).issubset(allowed_roles):
             raise RosterError("bootstrap key has unsupported roles")
-        stamp = datetime.now(UTC).isoformat(timespec="milliseconds")
         roster = cls(
             version=1,
             peers=(device_id,),
             keys=(key,),
             local_device_id=device_id,
-            created_at=stamp,
+            created_at="",
         )
         roster = replace(roster, roster_hash=roster._hash())
-        if not verify_bootstrap(roster, key):
-            raise RosterError("bootstrap key proof is invalid")
-        path = Path(root) / "verification-roster.json"
-        with authority_write_lock(path):
-            if path.exists():
+        if not key._bootstrap_signature:
+            raise RosterError("bootstrap key lacks a roster authorization")
+        roster = replace(
+            roster,
+            signature=SignatureEnvelope(
+                algorithm="ed25519",
+                key_id=key.key_id,
+                roster_version=1,
+                signature=key._bootstrap_signature,
+            ),
+        )
+        _verify_roster(roster, previous=None)
+        encoded = _canonical(roster.to_dict())
+        history = root / "verification-rosters" / "00000001.json"
+        current = root / "verification-roster.json"
+        with authority_write_lock(root / "verification-rosters"):
+            if history.exists() or current.exists():
                 raise RosterError("verification roster already exists")
-            atomic_write_text(
-                path,
-                json.dumps(
-                    roster.to_dict(),
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                    allow_nan=False,
-                ),
-            )
+            _create_authority_file(history, encoded)
+            _atomic_authority_write(current, encoded)
+        object.__setattr__(roster, "_bootstrap_pending", True)
+        object.__setattr__(roster, "_bootstrap_root", str(root.resolve()))
         return roster
 
     @classmethod
     def load(cls, root: Path) -> VerificationRoster:
-        path = Path(root) / "verification-roster.json"
+        root = Path(root)
+        history_root = root / "verification-rosters"
+        current_path = root / "verification-roster.json"
+        paths = sorted(history_root.glob("*.json"))
+        if not paths:
+            raise RosterError("verification roster history is missing")
+        previous: VerificationRoster | None = None
+        for expected, path in enumerate(paths, start=1):
+            if path.name != f"{expected:08d}.json":
+                raise RosterError("verification roster history has a version gap")
+            roster = _decode_roster(path)
+            _verify_roster(roster, previous=previous)
+            previous = roster
+        assert previous is not None
         try:
-            body = json.loads(path.read_text(encoding="utf-8"))
-            keys = tuple(
-                PublicKeyRecord(
-                    device_id=str(item["device_id"]),
-                    key_id=str(item["key_id"]),
-                    fingerprint=str(item["fingerprint"]),
-                    public_key=str(item["public_key"]),
-                    roles=tuple(str(role) for role in item["roles"]),
-                    enrollment_sequence=int(item["enrollment_sequence"]),
-                    revocation_sequence=(
-                        int(item["revocation_sequence"])
-                        if item.get("revocation_sequence") is not None
-                        else None
-                    ),
-                    proof_of_possession=str(item.get("proof_of_possession") or ""),
-                )
-                for item in body["keys"]
-            )
-            roster = cls(
-                version=int(body["version"]),
-                peers=tuple(str(peer) for peer in body["peers"]),
-                keys=keys,
-                local_device_id=str(body["local_device_id"]),
-                schema=str(body["schema"]),  # type: ignore[arg-type]
-                created_at=str(body.get("created_at") or ""),
-                previous_roster_hash=str(body.get("previous_roster_hash") or ""),
-                roster_hash=str(body.get("roster_hash") or ""),
-            )
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise RosterError(f"invalid verification roster: {path}") from exc
-        if roster.roster_hash != roster._hash():
-            raise RosterError("verification roster hash mismatch")
-        return roster
+            current_bytes = current_path.read_bytes()
+        except OSError as exc:
+            raise RosterError("verification roster current pointer is missing") from exc
+        if current_bytes != _canonical(previous.to_dict()):
+            raise RosterError("verification roster current pointer mismatch")
+        return previous
 
     def with_keys(
         self,
@@ -198,9 +257,15 @@ class VerificationRoster:
         version: int,
         peers: tuple[str, ...],
         keys: tuple[PublicKeyRecord, ...],
+        signer: OperationalSigner | None = None,
+        root: Path | None = None,
     ) -> VerificationRoster:
         if version <= self.version:
             raise RosterError("roster version regression")
+        if version != self.version + 1:
+            raise RosterError("roster version must advance exactly once")
+        if signer is None or root is None:
+            raise RosterError("signed roster update requires signer and root")
         updated = VerificationRoster(
             version=version,
             peers=peers,
@@ -209,24 +274,137 @@ class VerificationRoster:
             created_at=datetime.now(UTC).isoformat(timespec="milliseconds"),
             previous_roster_hash=self.roster_hash,
         )
-        return replace(updated, roster_hash=updated._hash())
+        updated = replace(updated, roster_hash=updated._hash())
+        envelope = signer.sign(
+            domain=_UPDATE_DOMAIN,
+            payload=updated._signed_payload(),
+            key_id=self.local_key_id,
+        )
+        updated = replace(updated, signature=envelope)
+        _verify_roster(updated, previous=self)
+        root = Path(root)
+        encoded = _canonical(updated.to_dict())
+        history = root / "verification-rosters" / f"{version:08d}.json"
+        current = root / "verification-roster.json"
+        with authority_write_lock(root / "verification-rosters"):
+            loaded = VerificationRoster.load(root)
+            if loaded.roster_hash != self.roster_hash:
+                raise RosterError("verification roster changed concurrently")
+            _create_authority_file(history, encoded)
+            _atomic_authority_write(current, encoded)
+        return updated
+
+    def _consume_bootstrap(self, root: Path) -> None:
+        if (
+            not self._bootstrap_pending
+            or self._bootstrap_root != str(Path(root).resolve())
+        ):
+            raise RosterError("roster is not a fresh bootstrap for this root")
+        object.__setattr__(self, "_bootstrap_pending", False)
 
 
-def verify_bootstrap(roster: VerificationRoster, key: PublicKeyRecord) -> bool:
-    if (
-        roster.schema != "memo.operational_roster.v1"
-        or roster.version != 1
-        or roster.peers != (key.device_id,)
-        or roster.keys != (key,)
-        or roster.local_device_id != key.device_id
-        or roster.roster_hash != roster._hash()
-        or not key.proof_of_possession
-    ):
-        return False
+def _decode_roster(path: Path) -> VerificationRoster:
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+        keys = tuple(
+            PublicKeyRecord(
+                device_id=str(item["device_id"]),
+                key_id=str(item["key_id"]),
+                fingerprint=str(item["fingerprint"]),
+                public_key=str(item["public_key"]),
+                roles=tuple(str(role) for role in item["roles"]),
+                enrollment_sequence=int(item["enrollment_sequence"]),
+                revocation_sequence=(
+                    int(item["revocation_sequence"])
+                    if item.get("revocation_sequence") is not None
+                    else None
+                ),
+                proof_of_possession=str(item.get("proof_of_possession") or ""),
+            )
+            for item in body["keys"]
+        )
+        signature_raw = body["signature"]
+        signature = SignatureEnvelope(
+            algorithm=str(signature_raw["algorithm"]),  # type: ignore[arg-type]
+            key_id=str(signature_raw["key_id"]),
+            roster_version=int(signature_raw["roster_version"]),
+            signature=str(signature_raw["signature"]),
+        )
+        return VerificationRoster(
+            version=int(body["version"]),
+            peers=tuple(str(peer) for peer in body["peers"]),
+            keys=keys,
+            local_device_id=str(body["local_device_id"]),
+            schema=str(body["schema"]),  # type: ignore[arg-type]
+            created_at=str(body.get("created_at") or ""),
+            previous_roster_hash=str(body.get("previous_roster_hash") or ""),
+            roster_hash=str(body.get("roster_hash") or ""),
+            signature=signature,
+        )
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RosterError(f"invalid verification roster: {path}") from exc
+
+
+def _verify_pop(key: PublicKeyRecord) -> None:
+    if not key.proof_of_possession:
+        raise RosterError(f"missing proof of possession: {key.key_id}")
     try:
         public_key = Ed25519PublicKey.from_public_bytes(_decode(key.public_key))
         public_key.verify(_decode(key.proof_of_possession), key.proof_payload())
-    except (InvalidSignature, ValueError):
+    except (InvalidSignature, ValueError) as exc:
+        raise RosterError(f"invalid proof of possession: {key.key_id}") from exc
+
+
+def _verify_roster(
+    roster: VerificationRoster,
+    *,
+    previous: VerificationRoster | None,
+) -> None:
+    if roster.roster_hash != roster._hash():
+        raise RosterError("verification roster hash mismatch")
+    for key in roster.keys:
+        _verify_pop(key)
+    if roster.signature is None:
+        raise RosterError("verification roster signature is missing")
+    if previous is None:
+        if (
+            roster.version != 1
+            or roster.previous_roster_hash
+            or len(roster.peers) != 1
+            or len(roster.keys) != 1
+        ):
+            raise RosterError("invalid bootstrap roster shape")
+        key = roster.key(roster.signature.key_id)
+        verifier_roster = roster
+        domain = _BOOTSTRAP_DOMAIN
+    else:
+        if (
+            roster.version != previous.version + 1
+            or roster.previous_roster_hash != previous.roster_hash
+        ):
+            raise RosterError("verification roster history is discontinuous")
+        key = previous.key(roster.signature.key_id)
+        verifier_roster = previous
+        domain = _UPDATE_DOMAIN
+    if "origin" not in key.roles:
+        raise RosterError("roster signer is not an origin key")
+    try:
+        OperationalVerifier().verify(
+            domain=domain,
+            payload=roster._signed_payload(),
+            envelope=roster.signature,
+            roster=verifier_roster,
+        )
+    except SignatureError as exc:
+        raise RosterError("verification roster signature is invalid") from exc
+
+
+def verify_bootstrap(roster: VerificationRoster, key: PublicKeyRecord) -> bool:
+    try:
+        if roster.keys != (key,) or roster.peers != (key.device_id,):
+            return False
+        _verify_roster(roster, previous=None)
+    except RosterError:
         return False
     return True
 

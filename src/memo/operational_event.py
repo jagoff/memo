@@ -5,15 +5,23 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from memo.errors import OperationalError, OperationalErrorCode
 from memo.identity import PrincipalIdentity
 from memo.operational_event_types import validate_event_payload
-from memo.operational_signing import SignatureEnvelope
+from memo.operational_signing import OperationalVerifier, SignatureEnvelope
+
+if TYPE_CHECKING:
+    from memo.operational_roster import VerificationRoster
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+EMPTY_REDUCER_STATE_BYTES = b"{}"
 
 
 def _json_value(value: object) -> object:
@@ -24,7 +32,9 @@ def _json_value(value: object) -> object:
     if isinstance(value, bytes):
         return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
     if isinstance(value, Mapping):
-        return {str(key): _json_value(item) for key, item in value.items()}
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("canonical operational mappings require string keys")
+        return {key: _json_value(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
         return [_json_value(item) for item in value]
     return value
@@ -260,7 +270,79 @@ def canonical_anchor_hash(anchor: ChainAnchor) -> str:
     return hashlib.sha256(canonical_json_bytes(body)).hexdigest()
 
 
-def validate_anchor(anchor: ChainAnchor) -> None:
+def _parse_time(value: str, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as exc:
+        raise OperationalError(
+            OperationalErrorCode.INVALID_EVENT,
+            f"{field} must be an ISO-8601 timestamp",
+            retryable=False,
+        ) from exc
+    if parsed.tzinfo is None:
+        raise OperationalError(
+            OperationalErrorCode.INVALID_EVENT,
+            f"{field} must include a timezone",
+            retryable=False,
+        )
+    return parsed.astimezone(UTC)
+
+
+def validate_migration_origin(
+    origin: MigrationOrigin,
+    *,
+    roster: VerificationRoster,
+    verifier: OperationalVerifier,
+    at_time: str | None = None,
+) -> None:
+    if origin.schema != "memo.operational_migration_origin.v1":
+        raise OperationalError(
+            OperationalErrorCode.UNKNOWN_SCHEMA,
+            f"unsupported migration origin schema: {origin.schema}",
+            retryable=False,
+        )
+    if (
+        not origin.attempt_id
+        or not origin.migration_device_id
+        or not origin.attestor_device_id
+        or not _SHA256_RE.fullmatch(origin.source_manifest_sha256)
+        or not _SHA256_RE.fullmatch(origin.capability_manifest_sha256)
+    ):
+        raise OperationalError(
+            OperationalErrorCode.INVALID_EVENT,
+            "migration origin identity or manifest digest is invalid",
+            retryable=False,
+        )
+    issued = _parse_time(origin.issued_at, "issued_at")
+    expires = _parse_time(origin.expires_at, "expires_at")
+    observed = _parse_time(at_time, "at_time") if at_time else datetime.now(UTC)
+    if expires <= issued or observed < issued or observed >= expires:
+        raise OperationalError(
+            OperationalErrorCode.EXPIRED,
+            "migration origin is outside its validity window",
+            retryable=False,
+        )
+    envelope = SignatureEnvelope(
+        algorithm="ed25519",
+        key_id=origin.attestor_key_id,
+        roster_version=origin.roster_version,
+        signature=origin.signature,
+    )
+    verifier.verify(
+        domain="memo.operational.migration_origin.v1",
+        payload=canonical_signed_bytes(origin),
+        envelope=envelope,
+        roster=roster,
+    )
+
+
+def validate_anchor(
+    anchor: ChainAnchor,
+    *,
+    checkpoint: bytes | None = None,
+    roster: VerificationRoster | None = None,
+    verifier: OperationalVerifier | None = None,
+) -> None:
     if anchor.schema != "memo.operational_anchor.v1":
         raise OperationalError(
             OperationalErrorCode.UNKNOWN_SCHEMA,
@@ -296,11 +378,68 @@ def validate_anchor(anchor: ChainAnchor) -> None:
             "anchor sequence range is invalid",
             retryable=False,
         )
+    if checkpoint is not None and (
+        anchor.checkpoint_size != len(checkpoint)
+        or anchor.checkpoint_sha256 != hashlib.sha256(checkpoint).hexdigest()
+    ):
+        raise OperationalError(
+            OperationalErrorCode.ANCHOR_CONFLICT,
+            "anchor checkpoint bytes do not match authority metadata",
+            retryable=False,
+        )
+    if anchor.kind in {"empty", "memo_v1"} and (
+        anchor.checkpoint_size != len(EMPTY_REDUCER_STATE_BYTES)
+        or anchor.checkpoint_sha256
+        != hashlib.sha256(EMPTY_REDUCER_STATE_BYTES).hexdigest()
+        or (
+            checkpoint is not None
+            and checkpoint != EMPTY_REDUCER_STATE_BYTES
+        )
+    ):
+        raise OperationalError(
+            OperationalErrorCode.ANCHOR_CONFLICT,
+            f"{anchor.kind} anchor requires the canonical empty checkpoint",
+            retryable=False,
+        )
+    if anchor.kind == "empty" and (
+        anchor.base_sequence != 0
+        or anchor.final_sequence != 0
+        or anchor.base_event_hash
+        or anchor.final_event_hash
+        or anchor.source_manifest_sha256
+    ):
+        raise OperationalError(
+            OperationalErrorCode.ANCHOR_CONFLICT,
+            "empty anchor cannot authorize prior events or a source manifest",
+            retryable=False,
+        )
+    if anchor.kind == "memo_v1" and not _SHA256_RE.fullmatch(
+        anchor.source_manifest_sha256
+    ):
+        raise OperationalError(
+            OperationalErrorCode.ANCHOR_CONFLICT,
+            "memo_v1 anchor requires a source manifest digest",
+            retryable=False,
+        )
     if canonical_anchor_hash(anchor) != anchor.anchor_hash:
         raise OperationalError(
             OperationalErrorCode.ANCHOR_CONFLICT,
             "anchor hash mismatch",
             retryable=False,
+        )
+    if (roster is None) != (verifier is None):
+        raise TypeError("roster and verifier must be supplied together")
+    if roster is not None and verifier is not None:
+        verifier.verify(
+            domain="memo.operational.anchor.v1",
+            payload=canonical_signed_bytes(anchor),
+            envelope=SignatureEnvelope(
+                algorithm="ed25519",
+                key_id=anchor.key_id,
+                roster_version=anchor.roster_version,
+                signature=anchor.signature,
+            ),
+            roster=roster,
         )
 
 
@@ -327,6 +466,7 @@ def validate_event(event: OperationalEventV2) -> None:
 
 
 __all__ = [
+    "EMPTY_REDUCER_STATE_BYTES",
     "ChainAnchor",
     "CommandResult",
     "EpochMarkerAuthorization",
@@ -347,4 +487,5 @@ __all__ = [
     "canonical_signed_bytes",
     "validate_anchor",
     "validate_event",
+    "validate_migration_origin",
 ]

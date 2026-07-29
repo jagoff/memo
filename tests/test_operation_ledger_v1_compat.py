@@ -4,6 +4,20 @@ from memo.contracts import ActorIdentity
 from memo.operation_ledger import OperationLedger
 from memo.operation_ledger_v1 import LegacyOperationLedger
 
+GOLDEN_EVENT_BYTES = (
+    b'{"actor": {"actor_id": "memo", "actor_kind": "system", "signature": "", '
+    b'"source_client": ""}, "content_hash": "", "device_id": "device-a", '
+    b'"event_hash": "9dbc659f883b55a16dae06206a935662e35737f009659d2e12303d7eecf06631", '
+    b'"event_id": "event-golden", "op": "focus.set", "payload": {"project": "demo", '
+    b'"summary": "caf\xc3\xa9"}, "previous_hash": "", "schema": "memo.event.v1", '
+    b'"sequence": 1, "subject_uri": "memo://focus/demo", "trace_id": "", '
+    b'"ts": "2026-07-29T12:00:00Z"}\n'
+)
+GOLDEN_HEAD_BYTES = (
+    b'{"event_hash": "9dbc659f883b55a16dae06206a935662e35737f009659d2e12303d7eecf06631", '
+    b'"sequence": 1}'
+)
+
 
 def test_frozen_v1_append_is_byte_compatible(tmp_path) -> None:
     kwargs = {
@@ -51,3 +65,21 @@ def test_v1_reader_preserves_bytes_and_head(tmp_path) -> None:
     assert frozen.verify()["ok"] is True
     assert frozen.head_hashes()["device-a"]
     assert path.read_bytes() == before
+
+
+def test_v1_reader_accepts_frozen_golden_bytes_without_mutation(tmp_path) -> None:
+    segment = tmp_path / "journal/events/device-a/2026-07-29.jsonl"
+    head = tmp_path / "journal/heads/device-a.json"
+    segment.parent.mkdir(parents=True)
+    head.parent.mkdir(parents=True)
+    segment.write_bytes(GOLDEN_EVENT_BYTES)
+    head.write_bytes(GOLDEN_HEAD_BYTES)
+
+    ledger = LegacyOperationLedger(tmp_path, device_id="device-a")
+
+    assert ledger.verify()["ok"] is True
+    assert ledger.head_hashes() == {
+        "device-a": "9dbc659f883b55a16dae06206a935662e35737f009659d2e12303d7eecf06631"
+    }
+    assert segment.read_bytes() == GOLDEN_EVENT_BYTES
+    assert head.read_bytes() == GOLDEN_HEAD_BYTES
