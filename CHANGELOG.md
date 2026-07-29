@@ -9,6 +9,14 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-07-28
+
+### Changed
+
+- CLI `memo briefing` and MCP `memo_unified_briefing` now share one
+  unified-briefing composer, so both surfaces render the same sections and
+  dispute markers; dispute-aware ask gained an MLX integration test.
+
 ### Added
 
 - MCP elicitation confirm on the six irreversible tools (`memo_delete`,
