@@ -84,7 +84,8 @@ Estado: **1/7 aceptadas**.
 
 ### Tarea 2 — Anchors, append, verificación y bundles locales v2
 
-- [ ] Generar brief y registrar BASE.
+- [x] Generar brief y registrar BASE `8e85662b`.
+- [x] Asignar implementador fresco `plan01_task02_ledger_impl`.
 - [ ] RED de anchors, gaps, forks, tampering, repair e import idempotente.
 - [ ] Implementar `OperationLedgerV2`.
 - [ ] Focused pytest, ruff y mypy.
@@ -234,7 +235,7 @@ paso todavía no comenzó, no que esté aprobado.
 | ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
 |---|---|---|---|---|---|---|---|---|
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
-| P01-T02 | Anchors, append y bundles | por asignar | por registrar | pendiente | pendiente | — | — | — |
+| P01-T02 | Anchors, append y bundles | `plan01_task02_ledger_impl` | `8e85662b` | en preparación | pendiente | — | — | — |
 | P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
 | P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
