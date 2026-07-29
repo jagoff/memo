@@ -53,6 +53,20 @@ def _string(payload: Mapping[str, object], field: str) -> str:
     return value
 
 
+def _string_allow_empty(payload: Mapping[str, object], field: str) -> str:
+    value = payload.get(field)
+    if not isinstance(value, str):
+        raise _invalid(f"payload field {field} must be a string")
+    return value
+
+
+def _mapping(payload: Mapping[str, object], field: str) -> Mapping[object, object]:
+    value = payload.get(field)
+    if not isinstance(value, Mapping):
+        raise _invalid(f"payload field {field} must be a mapping")
+    return value
+
+
 def _integer(payload: Mapping[str, object], field: str, *, minimum: int = 0) -> int:
     value = payload.get(field)
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
@@ -104,13 +118,25 @@ def _focus_cleared(payload: Mapping[str, object]) -> None:
 
 
 def _handoff_created(payload: Mapping[str, object]) -> None:
-    for field in ("id", "project", "summary", "from_actor", "to_actor"):
+    for field in ("id", "project", "summary", "from_actor"):
         _string(payload, field)
+    _string_allow_empty(payload, "to_actor")
+    if "created_at" in payload:
+        _string(payload, "created_at")
+    if "consumed_at" in payload:
+        _string_allow_empty(payload, "consumed_at")
+    if "metadata" in payload:
+        _mapping(payload, "metadata")
 
 
 def _handoff_consumed(payload: Mapping[str, object]) -> None:
     _string(payload, "id")
-    _string(payload, "actor_id")
+    if "consumed_at" in payload:
+        _string(payload, "consumed_at")
+    elif "actor_id" in payload:
+        _string(payload, "actor_id")
+    else:
+        raise _invalid("handoff consumption requires consumed_at")
 
 
 def _attention_added(payload: Mapping[str, object]) -> None:
@@ -121,7 +147,12 @@ def _attention_added(payload: Mapping[str, object]) -> None:
 
 def _attention_acknowledged(payload: Mapping[str, object]) -> None:
     _string(payload, "id")
-    _string(payload, "actor_id")
+    if "acknowledged_at" in payload:
+        _string(payload, "acknowledged_at")
+    elif "actor_id" in payload:
+        _string(payload, "actor_id")
+    else:
+        raise _invalid("attention acknowledgement requires acknowledged_at")
 
 
 def _conflict_opened(payload: Mapping[str, object]) -> None:
@@ -132,14 +163,25 @@ def _conflict_opened(payload: Mapping[str, object]) -> None:
 
 
 def _conflict_resolved(payload: Mapping[str, object]) -> None:
-    for field in ("id", "resolution", "actor_id"):
+    for field in ("id", "resolution"):
         _string(payload, field)
+    if "resolved_at" in payload:
+        _string(payload, "resolved_at")
+    elif "actor_id" in payload:
+        _string(payload, "actor_id")
+    else:
+        raise _invalid("conflict resolution requires resolved_at")
 
 
 def _outcome_recorded(payload: Mapping[str, object]) -> None:
-    for field in ("id", "project", "summary"):
-        _string(payload, field)
+    _string(payload, "task_id")
     _enum(payload, "status", frozenset({"success", "failure", "partial"}))
+    _string_list(payload, "memory_ids")
+    _string_list(payload, "artifacts")
+    _mapping(payload, "environment")
+    _string(payload, "actor_id")
+    _string_allow_empty(payload, "idempotency_key")
+    _string(payload, "recorded_at")
 
 
 def _session_checkpointed(payload: Mapping[str, object]) -> None:

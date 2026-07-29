@@ -4,8 +4,11 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from memo.operational_key_store import (
+    AuthorityPinStore,
     DeviceKeyStore,
+    InMemoryAuthorityPinProvider,
     KeyStoreError,
+    MacOSAuthorityPinProvider,
     MacOSKeychainProvider,
 )
 
@@ -76,3 +79,42 @@ def test_productive_provider_fails_closed_without_nonexportable_ed25519() -> Non
         store.generate(device_id="device-a")
     assert exc.value.__cause__ is None
     assert "non-exportable" in str(exc.value)
+
+
+def test_authority_pin_provider_persists_monotonic_state_across_instances() -> None:
+    provider = InMemoryAuthorityPinProvider()
+    first = AuthorityPinStore(authority_id="authority-a", provider=provider)
+    second = AuthorityPinStore(authority_id="authority-a", provider=provider)
+
+    first.prepare_roster(version=1, roster_hash="a" * 64)
+    second.commit_roster(version=1, roster_hash="a" * 64)
+    first.prepare_epoch(
+        epoch=0,
+        authorization_sha256="b" * 64,
+        bootstrap=True,
+    )
+    second.commit_epoch(
+        epoch=0,
+        authorization_sha256="b" * 64,
+        bootstrap=True,
+    )
+
+    state = first.read()
+    assert (state.roster_version, state.roster_hash) == (1, "a" * 64)
+    assert (state.epoch, state.authorization_sha256) == (0, "b" * 64)
+    assert state.bootstrap_state == "consumed"
+    with pytest.raises(KeyStoreError):
+        second.prepare_roster(version=1, roster_hash="c" * 64)
+
+
+def test_productive_authority_pin_provider_fails_closed_off_macos(
+    monkeypatch,
+) -> None:
+    import memo.operational_key_store as key_store_module
+
+    monkeypatch.setattr(key_store_module.sys, "platform", "linux")
+    provider = MacOSAuthorityPinProvider()
+    with pytest.raises(KeyStoreError) as exc:
+        provider.read("authority-a")
+    assert exc.value.__cause__ is None
+    assert "failing closed" in str(exc.value)

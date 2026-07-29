@@ -20,9 +20,19 @@ from memo.operational_event import (
     validate_event,
 )
 from memo.operational_event_types import FOCUS_SET
-from memo.operational_key_store import DeviceKeyStore
+from memo.operational_key_store import (
+    AuthorityPinStore,
+    DeviceKeyStore,
+    InMemoryAuthorityPinProvider,
+)
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner, OperationalVerifier
+
+_AUTHORITY_PINS = InMemoryAuthorityPinProvider()
+
+
+def _pin_store(root: object) -> AuthorityPinStore:
+    return AuthorityPinStore(authority_id=str(root), provider=_AUTHORITY_PINS)
 
 
 def _event(**changes: object) -> OperationalEventV2:
@@ -116,7 +126,7 @@ def test_signed_migration_origin_binds_exclusive_attestor_and_validity(tmp_path)
     keys = DeviceKeyStore.in_memory()
     origin_key = keys.generate(device_id="device-a", roles=("origin",))
     roster = VerificationRoster.bootstrap(
-        device_id="device-a", key=origin_key, root=tmp_path
+        device_id="device-a", key=origin_key, root=tmp_path, pin_store=_pin_store(tmp_path)
     )
     attestor_key = keys.generate(
         device_id="device-a",
@@ -129,6 +139,7 @@ def test_signed_migration_origin_binds_exclusive_attestor_and_validity(tmp_path)
         keys=(origin_key, attestor_key),
         signer=OperationalSigner(keys, roster_version=1),
         root=tmp_path,
+        pin_store=_pin_store(tmp_path),
     )
     signer = OperationalSigner(keys, roster_version=2)
     unsigned = MigrationOrigin(
@@ -218,7 +229,7 @@ def test_anchor_kind_authorization_checkpoint_and_signature(tmp_path) -> None:
     keys = DeviceKeyStore.in_memory()
     origin_key = keys.generate(device_id="device-a", roles=("origin",))
     roster = VerificationRoster.bootstrap(
-        device_id="device-a", key=origin_key, root=tmp_path
+        device_id="device-a", key=origin_key, root=tmp_path, pin_store=_pin_store(tmp_path)
     )
     signer = OperationalSigner(keys, roster_version=1)
     checkpoint = b"{}"
@@ -235,6 +246,12 @@ def test_anchor_kind_authorization_checkpoint_and_signature(tmp_path) -> None:
         roster=roster,
         verifier=OperationalVerifier(),
     )
+    with pytest.raises(TypeError):
+        validate_anchor(
+            anchor,
+            roster=roster,
+            verifier=OperationalVerifier(),
+        )  # type: ignore[call-arg]
     with pytest.raises(OperationalError):
         validate_anchor(
             replace(anchor, checkpoint_size=999),
@@ -256,12 +273,12 @@ def test_anchor_kind_authorization_checkpoint_and_signature(tmp_path) -> None:
         signer_role="origin",
         checkpoint=b'{"prepopulated":true}',
     )
-    with pytest.raises(OperationalError):
+    with pytest.raises(TypeError):
         validate_anchor(
             nonempty,
             roster=roster,
             verifier=OperationalVerifier(),
-        )
+        )  # type: ignore[call-arg]
 
 
 def test_memo_v1_anchor_rejects_prepopulated_checkpoint_and_dual_role_attestor(
@@ -269,7 +286,9 @@ def test_memo_v1_anchor_rejects_prepopulated_checkpoint_and_dual_role_attestor(
 ) -> None:
     keys = DeviceKeyStore.in_memory()
     key = keys.generate(device_id="device-a")
-    roster = VerificationRoster.bootstrap(device_id="device-a", key=key, root=tmp_path)
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a", key=key, root=tmp_path, pin_store=_pin_store(tmp_path)
+    )
     signer = OperationalSigner(keys, roster_version=1)
     checkpoint = canonical_json_bytes({"focus": {"memo": "already populated"}})
     anchor = _signed_anchor(

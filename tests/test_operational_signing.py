@@ -6,7 +6,11 @@ import pytest
 
 from memo.errors import KeyRevokedError
 from memo.operational_event import canonical_json_bytes
-from memo.operational_key_store import DeviceKeyStore
+from memo.operational_key_store import (
+    AuthorityPinStore,
+    DeviceKeyStore,
+    InMemoryAuthorityPinProvider,
+)
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import (
     OperationalSigner,
@@ -14,12 +18,18 @@ from memo.operational_signing import (
     SignatureError,
 )
 
+_AUTHORITY_PINS = InMemoryAuthorityPinProvider()
+
+
+def _pin_store(root: object) -> AuthorityPinStore:
+    return AuthorityPinStore(authority_id=str(root), provider=_AUTHORITY_PINS)
+
 
 def test_signature_is_domain_separated_and_roster_bound(tmp_path) -> None:
     keys = DeviceKeyStore.in_memory()
     public_key = keys.generate(device_id="device-a")
     roster = VerificationRoster.bootstrap(
-        device_id="device-a", key=public_key, root=tmp_path
+        device_id="device-a", key=public_key, root=tmp_path, pin_store=_pin_store(tmp_path)
     )
     signer = OperationalSigner(keys, roster_version=roster.version)
     verifier = OperationalVerifier()
@@ -64,9 +74,7 @@ def test_signer_rejects_unknown_domain_and_key() -> None:
     with pytest.raises(SignatureError):
         signer.sign(domain="unknown", payload=b"{}", key_id=record.key_id)
     with pytest.raises(SignatureError):
-        signer.sign(
-            domain="memo.operational.event.v2", payload=b"{}", key_id="missing"
-        )
+        signer.sign(domain="memo.operational.event.v2", payload=b"{}", key_id="missing")
 
 
 def test_migration_signature_binds_declared_key_roster_and_exclusive_role(
@@ -75,7 +83,7 @@ def test_migration_signature_binds_declared_key_roster_and_exclusive_role(
     keys = DeviceKeyStore.in_memory()
     dual_role = keys.generate(device_id="device-a")
     roster = VerificationRoster.bootstrap(
-        device_id="device-a", key=dual_role, root=tmp_path
+        device_id="device-a", key=dual_role, root=tmp_path, pin_store=_pin_store(tmp_path)
     )
     signer = OperationalSigner(keys, roster_version=1)
     verifier = OperationalVerifier()
@@ -130,7 +138,7 @@ def test_event_signatures_enforce_device_enrollment_and_revocation(tmp_path) -> 
     keys = DeviceKeyStore.in_memory()
     public = keys.generate(device_id="device-a")
     roster = VerificationRoster.bootstrap(
-        device_id="device-a", key=public, root=tmp_path
+        device_id="device-a", key=public, root=tmp_path, pin_store=_pin_store(tmp_path)
     )
     signer = OperationalSigner(keys, roster_version=1)
     verifier = OperationalVerifier()
@@ -188,7 +196,7 @@ def test_anchor_signature_binds_embedded_key_and_roster(tmp_path) -> None:
     keys = DeviceKeyStore.in_memory()
     public = keys.generate(device_id="device-a")
     roster = VerificationRoster.bootstrap(
-        device_id="device-a", key=public, root=tmp_path
+        device_id="device-a", key=public, root=tmp_path, pin_store=_pin_store(tmp_path)
     )
     signer = OperationalSigner(keys, roster_version=1)
     verifier = OperationalVerifier()

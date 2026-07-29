@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -16,7 +16,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.errors import SignatureError
-from memo.operational_key_store import PublicKeyRecord
+from memo.operational_key_store import (
+    AuthorityPinStore,
+    KeyStoreError,
+    PublicKeyRecord,
+)
 from memo.operational_signing import (
     OperationalSigner,
     OperationalVerifier,
@@ -92,8 +96,6 @@ class VerificationRoster:
     previous_roster_hash: str = ""
     roster_hash: str = ""
     signature: SignatureEnvelope | None = None
-    _bootstrap_pending: bool = field(default=False, compare=False, repr=False)
-    _bootstrap_root: str = field(default="", compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.schema != "memo.operational_roster.v1":
@@ -135,10 +137,7 @@ class VerificationRoster:
             if key.device_id == self.local_device_id
             and "origin" in key.roles
             and key.enrollment_sequence <= self.version
-            and (
-                key.revocation_sequence is None
-                or key.revocation_sequence > self.version
-            )
+            and (key.revocation_sequence is None or key.revocation_sequence > self.version)
         ]
         if len(keys) != 1:
             raise RosterError("local roster must have exactly one active key")
@@ -188,6 +187,7 @@ class VerificationRoster:
         device_id: str,
         key: PublicKeyRecord,
         root: Path,
+        pin_store: AuthorityPinStore,
     ) -> VerificationRoster:
         root = Path(root)
         if key.device_id != device_id:
@@ -218,37 +218,48 @@ class VerificationRoster:
         encoded = _canonical(roster.to_dict())
         history = root / "verification-rosters" / "00000001.json"
         current = root / "verification-roster.json"
+        try:
+            pin_store.prepare_roster(version=1, roster_hash=roster.roster_hash)
+        except KeyStoreError as exc:
+            raise RosterError("verification roster authority pin rejected bootstrap") from exc
         with authority_write_lock(root / "verification-rosters"):
-            if history.exists() or current.exists():
+            history_bytes = history.read_bytes() if history.exists() else None
+            current_bytes = current.read_bytes() if current.exists() else None
+            if history_bytes not in {None, encoded} or current_bytes not in {
+                None,
+                encoded,
+            }:
                 raise RosterError("verification roster already exists")
-            _create_authority_file(history, encoded)
-            _atomic_authority_write(current, encoded)
-        object.__setattr__(roster, "_bootstrap_pending", True)
-        object.__setattr__(roster, "_bootstrap_root", str(root.resolve()))
+            if history_bytes is None:
+                _create_authority_file(history, encoded)
+            if current_bytes is None:
+                _atomic_authority_write(current, encoded)
+        try:
+            pin_store.commit_roster(version=1, roster_hash=roster.roster_hash)
+        except KeyStoreError as exc:
+            raise RosterError("verification roster authority pin commit failed") from exc
         return roster
 
     @classmethod
-    def load(cls, root: Path) -> VerificationRoster:
-        root = Path(root)
-        history_root = root / "verification-rosters"
-        current_path = root / "verification-roster.json"
-        paths = sorted(history_root.glob("*.json"))
-        if not paths:
-            raise RosterError("verification roster history is missing")
-        previous: VerificationRoster | None = None
-        for expected, path in enumerate(paths, start=1):
-            if path.name != f"{expected:08d}.json":
-                raise RosterError("verification roster history has a version gap")
-            roster = _decode_roster(path)
-            _verify_roster(roster, previous=previous)
-            previous = roster
-        assert previous is not None
+    def load(cls, root: Path, *, pin_store: AuthorityPinStore) -> VerificationRoster:
         try:
-            current_bytes = current_path.read_bytes()
-        except OSError as exc:
-            raise RosterError("verification roster current pointer is missing") from exc
-        if current_bytes != _canonical(previous.to_dict()):
-            raise RosterError("verification roster current pointer mismatch")
+            pin = pin_store.read()
+        except KeyStoreError as exc:
+            raise RosterError("verification roster authority pin is unavailable") from exc
+        root = Path(root)
+        with authority_write_lock(root / "verification-rosters"):
+            previous = _load_roster_files(
+                root,
+                pending_version=pin.pending_roster_version,
+                pending_hash=pin.pending_roster_hash,
+            )
+        try:
+            pin_store.verify_roster(
+                version=previous.version,
+                roster_hash=previous.roster_hash,
+            )
+        except KeyStoreError as exc:
+            raise RosterError("verification roster rollback or substitution detected") from exc
         return previous
 
     def with_keys(
@@ -259,6 +270,7 @@ class VerificationRoster:
         keys: tuple[PublicKeyRecord, ...],
         signer: OperationalSigner | None = None,
         root: Path | None = None,
+        pin_store: AuthorityPinStore | None = None,
     ) -> VerificationRoster:
         if version <= self.version:
             raise RosterError("roster version regression")
@@ -266,6 +278,8 @@ class VerificationRoster:
             raise RosterError("roster version must advance exactly once")
         if signer is None or root is None:
             raise RosterError("signed roster update requires signer and root")
+        if pin_store is None:
+            raise RosterError("signed roster update requires an authority pin store")
         updated = VerificationRoster(
             version=version,
             peers=peers,
@@ -287,20 +301,68 @@ class VerificationRoster:
         history = root / "verification-rosters" / f"{version:08d}.json"
         current = root / "verification-roster.json"
         with authority_write_lock(root / "verification-rosters"):
-            loaded = VerificationRoster.load(root)
+            loaded = _load_roster_files(root)
             if loaded.roster_hash != self.roster_hash:
                 raise RosterError("verification roster changed concurrently")
-            _create_authority_file(history, encoded)
+            try:
+                pin_store.prepare_roster(version=version, roster_hash=updated.roster_hash)
+            except KeyStoreError as exc:
+                raise RosterError("verification roster authority pin rejected update") from exc
+            if history.exists():
+                if history.read_bytes() != encoded:
+                    raise RosterError("verification roster history already exists")
+            else:
+                _create_authority_file(history, encoded)
             _atomic_authority_write(current, encoded)
+        try:
+            pin_store.commit_roster(version=version, roster_hash=updated.roster_hash)
+        except KeyStoreError as exc:
+            raise RosterError("verification roster authority pin commit failed") from exc
         return updated
 
-    def _consume_bootstrap(self, root: Path) -> None:
-        if (
-            not self._bootstrap_pending
-            or self._bootstrap_root != str(Path(root).resolve())
-        ):
-            raise RosterError("roster is not a fresh bootstrap for this root")
-        object.__setattr__(self, "_bootstrap_pending", False)
+
+def _load_roster_files(
+    root: Path,
+    *,
+    pending_version: int | None = None,
+    pending_hash: str = "",
+) -> VerificationRoster:
+    root = Path(root)
+    history_root = root / "verification-rosters"
+    current_path = root / "verification-roster.json"
+    paths = sorted(history_root.glob("*.json"))
+    if not paths:
+        raise RosterError("verification roster history is missing")
+    previous: VerificationRoster | None = None
+    before_latest: VerificationRoster | None = None
+    for expected, path in enumerate(paths, start=1):
+        if path.name != f"{expected:08d}.json":
+            raise RosterError("verification roster history has a version gap")
+        roster = _decode_roster(path)
+        _verify_roster(roster, previous=previous)
+        before_latest = previous
+        previous = roster
+    assert previous is not None
+    try:
+        current_bytes: bytes | None = current_path.read_bytes()
+    except FileNotFoundError:
+        current_bytes = None
+    except OSError as exc:
+        raise RosterError("verification roster current pointer is invalid") from exc
+    latest_bytes = _canonical(previous.to_dict())
+    if current_bytes != latest_bytes and (
+        pending_version == previous.version
+        and pending_hash == previous.roster_hash
+        and (
+            current_bytes is None
+            or (before_latest is not None and current_bytes == _canonical(before_latest.to_dict()))
+        )
+    ):
+        _atomic_authority_write(current_path, latest_bytes)
+        current_bytes = latest_bytes
+    if current_bytes != latest_bytes:
+        raise RosterError("verification roster current pointer mismatch")
+    return previous
 
 
 def _decode_roster(path: Path) -> VerificationRoster:

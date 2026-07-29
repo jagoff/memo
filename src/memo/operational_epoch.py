@@ -5,8 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import secrets
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -20,7 +19,8 @@ from memo.operational_event import (
     canonical_json_bytes,
     canonical_signed_bytes,
 )
-from memo.operational_roster import RosterError, VerificationRoster
+from memo.operational_key_store import AuthorityPinStore, KeyStoreError
+from memo.operational_roster import VerificationRoster
 from memo.operational_signing import (
     OperationalVerifier,
     SignatureEnvelope,
@@ -29,7 +29,6 @@ from memo.operational_signing import (
 _MARKER_SCHEMA = "memo.operational_authority_epoch.v1"
 _HIGH_WATERMARK_SCHEMA = "memo.operational_authority_epoch_high_watermark.v1"
 _AUTHORIZATION_SCHEMA = "memo.operational_epoch_authorization.v1"
-_SYSTEM_CAPABILITY_TOKEN = secrets.token_bytes(32)
 
 
 @dataclass(frozen=True)
@@ -42,20 +41,25 @@ class CommitContext:
 
 
 class SystemCapability:
-    """Opaque process-local authorization for trusted internal callers."""
+    """Nominal type whose instances exist only inside trusted composition."""
 
-    __slots__ = ("_token",)
+    __slots__ = ("__weakref__",)
 
-    def __init__(self, token: bytes) -> None:
-        if token is not _SYSTEM_CAPABILITY_TOKEN:
-            raise TypeError("SystemCapability cannot be constructed externally")
-        self._token = token
+    def __new__(cls) -> SystemCapability:
+        del cls
+        raise TypeError("SystemCapability is created only inside a trusted composition closure")
 
 
-def _issue_system_capability() -> SystemCapability:
-    """Issue a capability only to an explicitly imported trusted composition root."""
+def _sealed_capability_validator() -> Callable[[object], bool]:
+    enrolled: set[int] = set()
 
-    return SystemCapability(_SYSTEM_CAPABILITY_TOKEN)
+    def validate(value: object) -> bool:
+        return isinstance(value, SystemCapability) and id(value) in enrolled
+
+    return validate
+
+
+_is_enclosed_system_capability = _sealed_capability_validator()
 
 
 def _fsync_directory(path: Path) -> None:
@@ -111,9 +115,7 @@ def _decode_authorization(value: object) -> EpochMarkerAuthorization:
         "roster_version",
         "signature",
     }:
-        raise AuthorityEpochError(
-            "authority epoch authorization signature fields are invalid"
-        )
+        raise AuthorityEpochError("authority epoch authorization signature fields are invalid")
     if not all(
         isinstance(name, str)
         and name
@@ -130,9 +132,7 @@ def _decode_authorization(value: object) -> EpochMarkerAuthorization:
             roster_version=_require_int(
                 signature_value.get("roster_version"), "signature roster version"
             ),
-            signature=_require_string(
-                signature_value.get("signature"), "authorization signature"
-            ),
+            signature=_require_string(signature_value.get("signature"), "authorization signature"),
         )
         return EpochMarkerAuthorization(
             schema=_require_string(value.get("schema"), "authorization schema"),  # type: ignore[arg-type]
@@ -141,9 +141,7 @@ def _decode_authorization(value: object) -> EpochMarkerAuthorization:
             epoch=_require_int(value.get("epoch"), "epoch"),
             control_oid=_require_string(value.get("control_oid"), "control OID"),
             artifact_digests=dict(artifact_value),
-            roster_version=_require_int(
-                value.get("roster_version"), "roster version"
-            ),
+            roster_version=_require_int(value.get("roster_version"), "roster version"),
             key_id=_require_string(value.get("key_id"), "key id"),
             signature=signature,
         )
@@ -158,12 +156,14 @@ class EpochFence:
         *,
         roster: VerificationRoster,
         verifier: OperationalVerifier,
+        pin_store: AuthorityPinStore,
     ) -> None:
         self.root = Path(root)
         self.marker_path = self.root / "authority-epoch.json"
         self.high_watermark_path = self.root / "authority-epoch-high-watermark.json"
         self.roster = roster
         self.verifier = verifier
+        self.pin_store = pin_store
         self._read_authority(required=False)
 
     def _verify_authorization(
@@ -228,31 +228,59 @@ class EpochFence:
         bootstrap: bool,
     ) -> None:
         self._verify_authorization(authorization, observed_artifact_digests)
+        authorization_sha256 = _sha256(asdict(authorization))
         with authority_write_lock(self.marker_path):
+            pin = self.pin_store.read()
+            recovering = pin.pending_epoch is not None
+            if recovering:
+                if (
+                    pin.pending_epoch != authorization.epoch
+                    or pin.pending_authorization_sha256 != authorization_sha256
+                ):
+                    raise AuthorityEpochError("a different authority epoch update is pending")
+                if bootstrap != (pin.bootstrap_state == "epoch_pending"):
+                    raise AuthorityEpochError("authority epoch recovery mode is invalid")
+                self._write_authority(authorization)
+                try:
+                    self.pin_store.commit_epoch(
+                        epoch=authorization.epoch,
+                        authorization_sha256=authorization_sha256,
+                        bootstrap=bootstrap,
+                    )
+                except KeyStoreError as exc:
+                    raise AuthorityEpochError("authority epoch pin commit failed") from exc
+                return
+
             current = self._read_authority(required=False)
             if bootstrap:
                 if current is not None:
                     raise AuthorityEpochError("authority epoch already bootstrapped")
-                try:
-                    self.roster._consume_bootstrap(self.root)
-                except RosterError as exc:
-                    raise AuthorityEpochError(
-                        "authority epoch bootstrap requires a fresh local roster"
-                    ) from exc
             else:
                 if current is None:
                     raise AuthorityEpochError(
                         "authority epoch activation requires an existing marker"
                     )
                 if authorization.epoch <= current.epoch:
-                    raise AuthorityEpochError(
-                        "authority epoch must increase monotonically"
-                    )
+                    raise AuthorityEpochError("authority epoch must increase monotonically")
+            try:
+                self.pin_store.prepare_epoch(
+                    epoch=authorization.epoch,
+                    authorization_sha256=authorization_sha256,
+                    bootstrap=bootstrap,
+                )
+            except KeyStoreError as exc:
+                raise AuthorityEpochError("authority epoch pin rejected update") from exc
             self._write_authority(authorization)
+            try:
+                self.pin_store.commit_epoch(
+                    epoch=authorization.epoch,
+                    authorization_sha256=authorization_sha256,
+                    bootstrap=bootstrap,
+                )
+            except KeyStoreError as exc:
+                raise AuthorityEpochError("authority epoch pin commit failed") from exc
 
-    def _write_authority(
-        self, authorization: EpochMarkerAuthorization
-    ) -> None:
+    def _write_authority(self, authorization: EpochMarkerAuthorization) -> None:
         authorization_body = asdict(authorization)
         authorization_sha256 = _sha256(authorization_body)
         marker = {
@@ -290,33 +318,53 @@ class EpochFence:
         except FileNotFoundError:
             raise
         except (OSError, json.JSONDecodeError, TypeError) as exc:
-            raise AuthorityEpochError(
-                f"authority epoch {description} is invalid"
-            ) from exc
+            raise AuthorityEpochError(f"authority epoch {description} is invalid") from exc
         if not isinstance(value, dict):
-            raise AuthorityEpochError(
-                f"authority epoch {description} must be an object"
-            )
+            raise AuthorityEpochError(f"authority epoch {description} must be an object")
         return value
 
-    def _read_authority(
-        self, *, required: bool = True
-    ) -> EpochMarkerAuthorization | None:
+    def _recover_pending_authority(self, *, marker_exists: bool) -> None:
+        try:
+            pin = self.pin_store.read()
+        except KeyStoreError as exc:
+            raise AuthorityEpochError("authority epoch pin is unavailable") from exc
+        if pin.pending_epoch is None or not pin.pending_authorization_sha256:
+            raise AuthorityEpochError("authority epoch marker or high-watermark is missing")
+        source = self.marker_path if marker_exists else self.high_watermark_path
+        description = "marker" if marker_exists else "high-watermark"
+        body = self._read_json(source, description)
+        authorization = _decode_authorization(body.get("authorization"))
+        authorization_sha256 = _sha256(asdict(authorization))
+        if (
+            authorization.epoch != pin.pending_epoch
+            or authorization_sha256 != pin.pending_authorization_sha256
+            or body.get("authorization_sha256") != authorization_sha256
+        ):
+            raise AuthorityEpochError("incomplete authority epoch does not match its external pin")
+        self._verify_authorization(
+            authorization,
+            authorization.artifact_digests,
+        )
+        self._write_authority(authorization)
+
+    def _read_authority(self, *, required: bool = True) -> EpochMarkerAuthorization | None:
         marker_exists = self.marker_path.exists()
         high_watermark_exists = self.high_watermark_path.exists()
         if not marker_exists and not high_watermark_exists:
+            pin = self.pin_store.read()
+            if pin.epoch is not None or pin.pending_epoch is not None:
+                raise AuthorityEpochError(
+                    "authority epoch root rollback or incomplete update detected"
+                )
             if required:
                 raise AuthorityEpochError("authority epoch marker is missing")
             return None
         if not marker_exists or not high_watermark_exists:
-            raise AuthorityEpochError(
-                "authority epoch marker or high-watermark is missing"
-            )
+            self._recover_pending_authority(marker_exists=marker_exists)
+            return self._read_authority(required=required)
         try:
             marker = self._read_json(self.marker_path, "marker")
-            high_watermark = self._read_json(
-                self.high_watermark_path, "high-watermark"
-            )
+            high_watermark = self._read_json(self.high_watermark_path, "high-watermark")
         except FileNotFoundError:
             raise AuthorityEpochError(
                 "authority epoch marker or high-watermark is missing"
@@ -324,9 +372,7 @@ class EpochFence:
         if marker.get("schema") != _MARKER_SCHEMA:
             raise AuthorityEpochError("authority epoch marker schema is invalid")
         if high_watermark.get("schema") != _HIGH_WATERMARK_SCHEMA:
-            raise AuthorityEpochError(
-                "authority epoch high-watermark schema is invalid"
-            )
+            raise AuthorityEpochError("authority epoch high-watermark schema is invalid")
         if set(marker) != {
             "schema",
             "epoch",
@@ -347,14 +393,10 @@ class EpochFence:
             "authorization",
             "authorization_sha256",
         }:
-            raise AuthorityEpochError(
-                "authority epoch high-watermark fields are invalid"
-            )
+            raise AuthorityEpochError("authority epoch high-watermark fields are invalid")
 
         authorization = _decode_authorization(marker.get("authorization"))
-        high_authorization = _decode_authorization(
-            high_watermark.get("authorization")
-        )
+        high_authorization = _decode_authorization(high_watermark.get("authorization"))
         authorization_sha256 = _sha256(asdict(authorization))
         if (
             marker.get("authorization_sha256") != authorization_sha256
@@ -362,9 +404,7 @@ class EpochFence:
             or canonical_json_bytes(asdict(high_authorization))
             != canonical_json_bytes(asdict(authorization))
         ):
-            raise AuthorityEpochError(
-                "authority epoch authorization digest mismatch"
-            )
+            raise AuthorityEpochError("authority epoch authorization digest mismatch")
         marker_sha256 = _sha256(marker)
         if high_watermark.get("marker_sha256") != marker_sha256:
             raise AuthorityEpochError("authority epoch marker rollback detected")
@@ -372,17 +412,21 @@ class EpochFence:
             high_watermark.get("highest_epoch") != authorization.epoch
             or marker.get("epoch") != authorization.epoch
             or marker.get("control_oid") != authorization.control_oid
-            or marker.get("artifact_digests")
-            != dict(authorization.artifact_digests)
+            or marker.get("artifact_digests") != dict(authorization.artifact_digests)
             or marker.get("attempt_id") != authorization.attempt_id
             or marker.get("device_id") != authorization.device_id
             or marker.get("roster_version") != authorization.roster_version
             or marker.get("key_id") != authorization.key_id
         ):
             raise AuthorityEpochError("authority epoch marker claims mismatch")
-        self._verify_authorization(
-            authorization, authorization.artifact_digests
-        )
+        self._verify_authorization(authorization, authorization.artifact_digests)
+        try:
+            self.pin_store.verify_epoch(
+                epoch=authorization.epoch,
+                authorization_sha256=authorization_sha256,
+            )
+        except KeyStoreError as exc:
+            raise AuthorityEpochError("authority epoch rollback detected") from exc
         return authorization
 
     def context(
@@ -417,10 +461,7 @@ class EpochFence:
         *,
         capability: SystemCapability,
     ) -> CommitContext:
-        if (
-            not isinstance(capability, SystemCapability)
-            or capability._token is not _SYSTEM_CAPABILITY_TOKEN
-        ):
+        if not _is_enclosed_system_capability(capability):
             raise AuthorityEpochError("invalid system capability")
         authorization = self._read_authority()
         assert authorization is not None

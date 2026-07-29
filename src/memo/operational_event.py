@@ -339,7 +339,7 @@ def validate_migration_origin(
 def validate_anchor(
     anchor: ChainAnchor,
     *,
-    checkpoint: bytes | None = None,
+    checkpoint: bytes,
     roster: VerificationRoster | None = None,
     verifier: OperationalVerifier | None = None,
 ) -> None:
@@ -378,7 +378,7 @@ def validate_anchor(
             "anchor sequence range is invalid",
             retryable=False,
         )
-    if checkpoint is not None and (
+    if (
         anchor.checkpoint_size != len(checkpoint)
         or anchor.checkpoint_sha256 != hashlib.sha256(checkpoint).hexdigest()
     ):
@@ -389,12 +389,8 @@ def validate_anchor(
         )
     if anchor.kind in {"empty", "memo_v1"} and (
         anchor.checkpoint_size != len(EMPTY_REDUCER_STATE_BYTES)
-        or anchor.checkpoint_sha256
-        != hashlib.sha256(EMPTY_REDUCER_STATE_BYTES).hexdigest()
-        or (
-            checkpoint is not None
-            and checkpoint != EMPTY_REDUCER_STATE_BYTES
-        )
+        or anchor.checkpoint_sha256 != hashlib.sha256(EMPTY_REDUCER_STATE_BYTES).hexdigest()
+        or (checkpoint is not None and checkpoint != EMPTY_REDUCER_STATE_BYTES)
     ):
         raise OperationalError(
             OperationalErrorCode.ANCHOR_CONFLICT,
@@ -413,9 +409,7 @@ def validate_anchor(
             "empty anchor cannot authorize prior events or a source manifest",
             retryable=False,
         )
-    if anchor.kind == "memo_v1" and not _SHA256_RE.fullmatch(
-        anchor.source_manifest_sha256
-    ):
+    if anchor.kind == "memo_v1" and not _SHA256_RE.fullmatch(anchor.source_manifest_sha256):
         raise OperationalError(
             OperationalErrorCode.ANCHOR_CONFLICT,
             "memo_v1 anchor requires a source manifest digest",
