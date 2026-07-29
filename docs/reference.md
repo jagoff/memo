@@ -1012,7 +1012,7 @@ plaintext disclosure operations.
 | ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion. |
 | maint-daemon | `memo maint-daemon start` | Background cleanup and synthesis. |
 
-### All 135 top-level CLI commands
+### All 137 top-level CLI commands
 
 <details>
 <summary>Complete command inventory</summary>

@@ -170,7 +170,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 | Architecture and design notes | [reference.md › Design](docs/reference.md#design-and-comparison) |
 | Privacy and network policy | [PRIVACY.md](PRIVACY.md) |
 
-### All 135 top-level CLI commands
+### All 137 top-level CLI commands
 
 <details>
 <summary>Complete command inventory (kept here so CI detects CLI/documentation drift)</summary>
@@ -197,7 +197,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 
 **Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon` `idle-daemon`
 
-**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `drift` `sleep-cycle` `operational` `ocr-image` `provenance` `secret` `verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate` `fix` `undo` `code-facts`
+**Other:** `backend-native` `collaborative` `feedback` `query` `mandate` `drift` `sleep-cycle` `operational` `ocr-image` `provenance` `secret` `verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git` `token-gate` `fix` `undo` `code-facts` `code-nudge` `code-health`
 
 </details>
 
