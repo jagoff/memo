@@ -9,9 +9,11 @@ read-only pre-mutation inventory. All are imported (and re-exported) by
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging as _logging
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 from functools import partial
@@ -1058,6 +1060,321 @@ def _run_graph_projection(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     except (MemoError, OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         _log.warning("graph projection pass failed: %s", exc)
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _code_ref_exists(
+    graph: sqlite3.Connection, ref: dict[str, Any], db_repo_id: str
+) -> bool | None:
+    """Check one code_ref against the codegraph nodes table (one query per ref).
+
+    Thin adapter over :func:`memo.code_intel.ref_status` — the single home of
+    the verification semantics (recall's ``_code_ref_status`` delegates there
+    too). Returns True/False when the ref is verifiable (has a file_path and
+    belongs to the repo this DB indexes), None when it is not — an
+    unverifiable ref must never count as drift (mirror code_traceability's
+    "never invent misses"). A ref minted against ANOTHER repo
+    (``codegraph://<repo_id>/…``) legitimately has no node in this DB, so it
+    is unverifiable here — never dead.
+    """
+    from memo import code_intel
+
+    status = code_intel.ref_status(graph, ref, db_repo_id)
+    return None if status is None else status == "vigente"
+
+
+# Rename candidates below this difflib ratio are not plausible renames: a
+# deleted symbol's surviving siblings must never be mistaken for its new name.
+_RENAME_SIMILARITY_FLOOR = 0.6
+# Containment ("save" in "old_save") is only rename evidence on real words —
+# 1-2 char names contain trivially.
+_RENAME_CONTAINMENT_MIN_LEN = 3
+
+
+def _plausible_rename(old: str, new: str) -> bool:
+    """True when ``new`` plausibly renames ``old`` (containment or edit similarity)."""
+    a, b = old.lower(), new.lower()
+    if not a or not b:
+        return False
+    if min(len(a), len(b)) >= _RENAME_CONTAINMENT_MIN_LEN and (a in b or b in a):
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= _RENAME_SIMILARITY_FLOOR
+
+
+def _repair_candidate(graph: sqlite3.Connection, ref: dict[str, Any]) -> dict[str, Any] | None:
+    """Unique rename/move candidate node for one dead code ref, or None.
+
+    Rename: a node of the same kind in the same file whose ``qualified_name``
+    keeps the dead ref's namespace (only the final segment changed) AND whose
+    name is a :func:`_plausible_rename` of the dead symbol — without the
+    similarity guard, a DELETED symbol whose file keeps exactly one sibling of
+    the same kind would be silently re-pointed at that unrelated symbol. Move:
+    a node with the same name and kind in another file. Repair is only safe
+    with EXACTLY one distinct candidate across both probes — 0 or >1 keeps
+    today's archive flow. Fail-open: any sqlite error means no candidate.
+    """
+    file_path = str(ref.get("file_path") or "").strip()
+    kind = str(ref.get("kind") or "").strip()
+    label = str(ref.get("label") or "").strip()
+    qualified = str(ref.get("qualified_name") or "").strip()
+    symbol = label or qualified.rsplit(".", 1)[-1]
+    if not file_path or not kind or not symbol:
+        return None
+    columns = "id, name, qualified_name, file_path, start_line, end_line"
+    rename_sql = f"SELECT {columns} FROM nodes WHERE file_path = ? AND kind = ? AND name != ?"  # noqa: S608 — static columns, placeholders only
+    rename_params: list[Any] = [file_path, kind, symbol]
+    if "." in qualified:
+        rename_sql += " AND qualified_name = ? || '.' || name"
+        rename_params.append(qualified.rsplit(".", 1)[0])
+    move_sql = f"SELECT {columns} FROM nodes WHERE name = ? AND kind = ? AND file_path != ?"  # noqa: S608 — static columns, placeholders only
+    try:
+        rows = [
+            row
+            for row in graph.execute(rename_sql, rename_params).fetchall()
+            if _plausible_rename(symbol, str(row[1] or ""))
+        ]
+        rows += graph.execute(move_sql, (symbol, kind, file_path)).fetchall()
+    except sqlite3.Error:
+        return None
+    unique = {str(row[0]): row for row in rows}
+    if len(unique) != 1:
+        return None
+    (row,) = unique.values()
+    return {
+        "id": str(row[0]),
+        "name": str(row[1] or ""),
+        "qualified_name": str(row[2] or row[1] or ""),
+        "file_path": str(row[3] or ""),
+        "start_line": int(row[4]) if row[4] is not None else None,
+        "end_line": int(row[5]) if row[5] is not None else None,
+    }
+
+
+def _repair_dead_refs(
+    mem: Memory,
+    graph: sqlite3.Connection,
+    mid: str,
+    extra: dict[str, Any],
+    db_repo_id: str,
+    *,
+    dry_run: bool,
+    result: dict[str, Any],
+) -> bool:
+    """Try to re-point a fully-drifted memory's dead refs; True skips archive.
+
+    Every dead ref with a unique :func:`_repair_candidate` is updated in
+    place (uri regenerated, file_path/lines/qualified_name re-pointed) and
+    the old ref is preserved in ``extra.code_refs_history``; the memory is
+    then NOT archived tonight — the repaired refs re-verify on the next
+    pass. Receipt entries land in ``result["repaired"]`` ({id, from, to});
+    a dry-run records them without writing. Returns False when nothing is
+    repairable, so the caller archives as today.
+    """
+    from memo.code_traceability import codegraph_uri
+
+    fixes: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for ref in extra.get("code_refs") or []:
+        if not isinstance(ref, dict) or _code_ref_exists(graph, ref, db_repo_id) is not False:
+            continue
+        cand = _repair_candidate(graph, ref)
+        if cand is not None:
+            fixes.append((ref, cand))
+    if not fixes:
+        return False
+    history = extra.get("code_refs_history")
+    if not isinstance(history, list):
+        history = []
+    entries: list[dict[str, str]] = []
+    for ref, cand in fixes:
+        new_uri = codegraph_uri(db_repo_id, cand["id"])
+        old = str(ref.get("uri") or ref.get("qualified_name") or ref.get("label") or "")
+        entries.append({"id": mid, "from": old, "to": new_uri})
+        if dry_run:
+            continue
+        history.append(dict(ref))
+        ref.update(
+            {
+                "uri": new_uri,
+                "repo_id": db_repo_id,
+                "stable_symbol_id": cand["id"],
+                "label": cand["name"],
+                "qualified_name": cand["qualified_name"],
+                "file_path": cand["file_path"],
+                "start_line": cand["start_line"],
+                "end_line": cand["end_line"],
+            }
+        )
+    if not dry_run:
+        extra["code_refs_history"] = history
+        try:
+            mem.update(mid, extra=extra)
+        except (MemoError, OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
+            result.setdefault("errors", []).append(f"code_drift: repair failed for {mid}: {exc}")
+            return True
+    result["repaired"].extend(entries)
+    return True
+
+
+def _drift_hub_gaps(mem: Memory, graph: sqlite3.Connection, result: dict[str, Any]) -> None:
+    """Persist tonight's "hub sin memoria" lines into the drift receipt.
+
+    Gated by MEMO_GAPS_CODE_HUBS. The SessionStart briefing reads these
+    receipt lines (``ask_gaps._hub_briefing_lines``) instead of querying the
+    graph live — its budget is zero graph queries.
+    """
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_GAPS_CODE_HUBS"):
+        return
+    from memo.ask_gaps import _HUB_TOP, _hub_gap_lines
+
+    result["hub_gaps"] = _hub_gap_lines(mem.store._conn, graph, top=_HUB_TOP)
+
+
+def _run_code_drift(
+    mem: Memory,
+    *,
+    db_path: Path | None = None,
+    dry_run: bool = False,
+    max_age_hours: float = 24.0,
+) -> dict[str, Any]:
+    """Re-verify memories carrying code_refs against the live codegraph index.
+
+    For every non-reference memory whose ``extra.code_refs`` cite codegraph
+    nodes, each ref is checked read-only against ``codegraph.db`` (one EXISTS
+    query per ref via :func:`_code_ref_exists`). A memory whose refs are ALL
+    verifiable here and ALL gone is proposed outdated through
+    ``mem.feedback_flag`` — the same reversible-archive mechanism agents use,
+    never a hard delete. Partially drifted memories — including any memory
+    carrying an unverifiable ref, which is never evidence of drift — are only
+    reported. Refs whose ``repo_id`` does not match the repo this DB indexes
+    are unverifiable (other indexed repos are not drift). Gated on MEMO_DREAM_CODE_DRIFT_ENABLED
+    (default OFF); aborts when the index is missing or older than
+    ``max_age_hours`` (a stale index would read as mass false drift).
+
+    With MEMO_DREAM_CODE_REPAIR_ENABLED (default OFF), a fully-drifted
+    memory is auto-repaired instead of archived when its dead refs have a
+    unique rename/move candidate (see :func:`_repair_dead_refs`); 0 or >1
+    candidates keep today's archive flow.
+
+    Returns a dict with:
+    - status: disabled | aborted | ok
+    - scanned: memories with >= 1 verifiable ref
+    - outdated: list of {id, refs_dead, refs_total} archived (or would-archive
+      in dry-run)
+    - partial: list of {id, refs_dead, refs_total} reported only
+    - repaired: list of {id, from, to} re-pointed refs (or would-repair in
+      dry-run)
+    - hub_gaps (with MEMO_GAPS_CODE_HUBS): "hub sin memoria" lines computed
+      here so the SessionStart briefing reads the receipt, never the graph
+    """
+    from memo.dream_flags import (  # import registers the flag specs
+        CODE_DRIFT_FLAG,
+        CODE_REPAIR_FLAG,
+    )
+    from memo.flags import flag_bool
+
+    if not flag_bool(CODE_DRIFT_FLAG):
+        return {"status": "disabled"}
+
+    repair = flag_bool(CODE_REPAIR_FLAG)
+    result: dict[str, Any] = {
+        "status": "ok",
+        "scanned": 0,
+        "outdated": [],
+        "partial": [],
+        "repaired": [],
+    }
+    try:
+        if db_path is None:
+            from memo import codegraph_loader
+
+            # Same resolution as the recall render (_code_ref_lines): cwd
+            # discovery > MEMO_CODEGRAPH_DB > checkout default. The raw module
+            # default alone is dead under pipx/uv-tool (points inside
+            # site-packages) and for the nightly daemon whose cwd is $HOME.
+            db_path = codegraph_loader._resolve_db()
+        if not db_path.is_file():
+            _log.warning(
+                "code_drift: codegraph index missing at %s — aborting "
+                "(no index would read as mass false drift)",
+                db_path,
+            )
+            return {"status": "aborted", "reason": "codegraph_db_missing"}
+        age_hours = (time.time() - db_path.stat().st_mtime) / 3600.0
+        if age_hours > max_age_hours:
+            _log.warning(
+                "code_drift: codegraph index is %.1fh old (> %.0fh) — aborting "
+                "(a stale index would mark false drift)",
+                age_hours,
+                max_age_hours,
+            )
+            return {
+                "status": "aborted",
+                "reason": "codegraph_db_stale",
+                "age_hours": round(age_hours, 1),
+            }
+
+        from memo.code_traceability import codegraph_repo_id
+
+        # The DB lives at <repo_root>/.codegraph/codegraph.db and only answers
+        # for THAT repo. Compute its repo_id so refs minted against other
+        # indexed repos are treated as unverifiable, never as dead.
+        db_repo_id = codegraph_repo_id(db_path.resolve().parent.parent)
+
+        rows = mem.store._conn.execute(
+            "SELECT id, extra_json FROM meta WHERE type != 'reference' "
+            "AND json_extract(extra_json, '$.code_refs') IS NOT NULL"
+        ).fetchall()
+
+        graph = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            for row in rows:
+                mid = str(row["id"])
+                try:
+                    extra = json.loads(row["extra_json"] or "{}")
+                except json.JSONDecodeError:
+                    continue
+                refs = extra.get("code_refs")
+                if not isinstance(refs, list):
+                    continue
+                statuses = [
+                    _code_ref_exists(graph, r, db_repo_id) for r in refs if isinstance(r, dict)
+                ]
+                dead = statuses.count(False)
+                live = statuses.count(True)
+                if dead + live == 0:
+                    continue
+                result["scanned"] += 1
+                if dead == 0:
+                    continue
+                entry = {"id": mid, "refs_dead": dead, "refs_total": dead + live}
+                # Archive needs EVERY ref dead — a live ref OR an unverifiable
+                # one (e.g. a cross-repo codegraph:// citation, possibly fully
+                # vigente in its own repo) caps the memory at partial evidence.
+                if dead < len(statuses):
+                    result["partial"].append(entry)
+                    continue
+                if repair and _repair_dead_refs(
+                    mem, graph, mid, extra, db_repo_id, dry_run=dry_run, result=result
+                ):
+                    continue
+                if not dry_run:
+                    try:
+                        mem.feedback_flag(mid, kind="outdated")
+                    except Exception as exc:
+                        result.setdefault("errors", []).append(
+                            f"code_drift: feedback_flag failed for {mid}: {exc}"
+                        )
+                        continue
+                result["outdated"].append(entry)
+            _drift_hub_gaps(mem, graph, result)
+        finally:
+            graph.close()
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("code_drift pass failed: %s", exc)
+
+    return result
 
 
 def _run_roi_reconcile(mem: Memory, dry_run: bool = False) -> dict[str, Any]:

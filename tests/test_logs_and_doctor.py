@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import sqlite3
 import subprocess
+import time
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -173,3 +178,121 @@ def test_doctor_command_prints_fts5_and_daemon(tmp_path):
     out = result.output
     assert "FTS5" in out or "fts5" in out.lower()
     assert "recall-daemon" in out
+
+
+# ---------- doctor codegraph check ------------------------------------------
+
+
+def _seed_codegraph_db(db_path: Path) -> None:
+    """Minimal synthetic codegraph index (WAL, one call edge) — never the real DB."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.executescript(
+        """
+        CREATE TABLE nodes (id TEXT PRIMARY KEY, kind TEXT, name TEXT);
+        CREATE TABLE edges (source TEXT, target TEXT, kind TEXT);
+        INSERT INTO nodes (id, kind, name) VALUES
+            ('function:a', 'function', 'Alpha'),
+            ('function:b', 'function', 'Beta');
+        INSERT INTO edges (source, target, kind) VALUES
+            ('function:a', 'function:b', 'calls');
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def _doctor_plain_output(tmp_path: Path) -> str:
+    """Run doctor and return ANSI-stripped, whitespace-collapsed output.
+
+    Rich wraps long lines at the console width, so substring asserts must not
+    depend on where a hint happens to break.
+    """
+    result = _run(
+        {"MEMO_DATA_DIR": str(tmp_path / "data"), "MEMO_STATE_DIR": str(tmp_path / "state")},
+        "doctor",
+    )
+    stripped = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    return " ".join(stripped.split())
+
+
+def test_doctor_codegraph_missing_db_with_cli_warns(tmp_path, monkeypatch):
+    """CLI installed but no index anywhere → absence IS signal, keep the WARN."""
+    from memo import cli_doctor, codegraph_loader
+
+    monkeypatch.chdir(tmp_path)  # keep _resolve_db() discovery away from any real repo
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / ".codegraph" / "codegraph.db")
+    monkeypatch.setattr(cli_doctor, "_codegraph_cli_version", lambda *a, **k: (1, 5, 0))
+
+    out = _doctor_plain_output(tmp_path)
+    assert "codegraph: index missing" in out
+    assert "npm i -g @colbymchenry/codegraph && codegraph init" in out
+    assert "codegraph: CLI v1.5.0" in out
+
+
+def test_doctor_codegraph_not_installed_is_dim_note_not_warn(tmp_path, monkeypatch):
+    """Neither index nor CLI (pipx/uv-tool installs) → informative note, no WARN."""
+    from memo import cli_doctor, codegraph_loader
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / ".codegraph" / "codegraph.db")
+    monkeypatch.setattr(cli_doctor, "_codegraph_cli_version", lambda *a, **k: None)
+
+    out = _doctor_plain_output(tmp_path)
+    assert "codegraph: not installed" in out
+    assert "codegraph: index missing" not in out
+    assert "! codegraph" not in out
+    assert "codegraph: CLI not found" not in out  # folded into the single note
+
+
+def test_doctor_codegraph_fresh_wal_db_ok(tmp_path, monkeypatch):
+    from memo import cli_doctor, codegraph_loader
+
+    db = tmp_path / ".codegraph" / "codegraph.db"
+    _seed_codegraph_db(db)
+    monkeypatch.chdir(tmp_path)  # _resolve_db() discovers the seeded project DB
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", db)
+    monkeypatch.setattr(cli_doctor, "_codegraph_cli_version", lambda *a, **k: (1, 5, 0))
+
+    out = _doctor_plain_output(tmp_path)
+    assert "codegraph: index ok (nodes=2 edges=1" in out
+    assert "codegraph: CLI v1.5.0" in out
+
+
+def test_doctor_codegraph_stale_mtime_warns(tmp_path, monkeypatch):
+    from memo import cli_doctor, codegraph_loader
+
+    db = tmp_path / ".codegraph" / "codegraph.db"
+    _seed_codegraph_db(db)
+    two_days_ago = time.time() - 48 * 3600
+    os.utime(db, (two_days_ago, two_days_ago))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", db)
+    monkeypatch.setattr(cli_doctor, "_codegraph_cli_version", lambda *a, **k: None)
+
+    out = _doctor_plain_output(tmp_path)
+    assert "index older than 24h" in out
+    assert "codegraph sync" in out
+
+
+def test_doctor_codegraph_old_cli_version_warns(tmp_path, monkeypatch):
+    from memo import codegraph_loader
+
+    db = tmp_path / ".codegraph" / "codegraph.db"
+    _seed_codegraph_db(db)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", db)
+
+    real_run = subprocess.run
+
+    def _fake_run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "codegraph":
+            return subprocess.CompletedProcess(cmd, 0, stdout="1.4.2\n", stderr="")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    out = _doctor_plain_output(tmp_path)
+    assert "codegraph: CLI v1.4.2 < v1.5.0" in out
+    assert "@colbymchenry/codegraph@latest" in out

@@ -121,6 +121,18 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_REPO_GIT_TIMEOUT_S", "float", None, "repo", "Timeout (s) for git operations on clone."
     ),
+    _spec(
+        "MEMO_REPO_CHUNK_SYMBOL_ALIGNED",
+        "bool",
+        False,
+        "repo",
+        "Align repo-index chunk boundaries to codegraph symbol spans "
+        "(function/class start/end lines) when the indexed repo has a "
+        ".codegraph/codegraph.db. Missing DB or symbol-less files fall back "
+        "silently to the char-based chunker. Default off keeps chunk output "
+        "byte-identical, so the content-addressed embed cache stays valid; "
+        "flipping the flag only affects newly (re)indexed files.",
+    ),
     # embedder daemon / client
     _spec(
         "MEMO_EMBEDDER_VIA_DAEMON",

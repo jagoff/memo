@@ -309,6 +309,47 @@ def dream_digest_lines(state_dir: Path, *, max_age_h: float = 24.0) -> list[str]
         return []
 
 
+def code_drift_lines(cfg: Any) -> list[str]:
+    """'⚠ code-drift' — one line when last night's drift pass found stale refs.
+
+    Reads the ``code_drift`` key of the dream receipt
+    (``cfg.state_dir/dream/last.json``, written by ``_run_code_drift``) — zero
+    graph queries at SessionStart. Gated by ``MEMO_BRIEFING_CODE_DRIFT``
+    (default on; the flag is checked here so a disabled flag never opens the
+    receipt). Empty list on anything else — receipt missing/corrupt, pass
+    disabled/aborted, or nothing drifted.
+    """
+    import contextlib
+    import json as _json
+
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_BRIEFING_CODE_DRIFT"):
+        return []
+    with contextlib.suppress(Exception):
+        last = Path(cfg.state_dir) / "dream" / "last.json"
+        with last.open(encoding="utf-8") as fh:
+            data = _json.load(fh)
+        drift = data.get("code_drift")
+        if not isinstance(drift, dict) or drift.get("status") != "ok":
+            return []
+
+        def _count(key: str) -> int:
+            v = drift.get(key)
+            return len(v) if isinstance(v, list) else 0
+
+        outdated = _count("outdated")
+        partial = _count("partial")
+        repaired = _count("repaired")
+        if outdated or partial or repaired:
+            return [
+                f"⚠ code-drift: {outdated} memorias archivadas, {partial} parciales, "
+                f"{repaired} reparadas anoche — 'memo dream status'",
+                "",
+            ]
+    return []
+
+
 def proactive_lines(mem: Any, *, max_lines: int = 3) -> list[str]:
     """Compact proactive-engine digest — reliability/continuity/etc nudges.
 
@@ -475,6 +516,12 @@ def memo_native_briefing_lines(
     if flag_bool("MEMO_NEGATIVE_RECALL_ENABLED"):
         with contextlib.suppress(Exception):
             lines.extend(negative_recall_lines(mem))
+
+    # ── Code drift: last night's drift-pass outcome (receipt read, zero graph queries) ─
+    # MEMO_BRIEFING_CODE_DRIFT is checked inside the helper so a disabled flag
+    # never opens the receipt, here or in any other caller.
+    with contextlib.suppress(Exception):
+        lines.extend(code_drift_lines(mem.cfg))
 
     # Judged relation truth only; pending candidates belong to review surfaces.
     with contextlib.suppress(Exception):

@@ -34,6 +34,11 @@ os.environ["MEMO_CONFIG_FILE"] = str(
 # Rich snapshots and CliRunner assertions must not inherit an outer shell's
 # request to force ANSI escapes into captured, non-terminal output.
 os.environ.pop("FORCE_COLOR", None)
+# Tests run with cwd at the repo root (real .codegraph there) — keep cwd-discovery off for hermeticity.
+os.environ["MEMO_CODEGRAPH_DISCOVERY"] = "0"
+# A developer machine may pin MEMO_CODEGRAPH_DB (shell export) to a real index;
+# tests must resolve only the paths they seed.
+os.environ.pop("MEMO_CODEGRAPH_DB", None)
 # Unique per test process (mkdtemp), NOT a fixed shared path: a fixed fallback
 # accumulates a live sqlite index across runs, leaking one run's state (and a
 # possibly stale schema) into every later run on the machine.

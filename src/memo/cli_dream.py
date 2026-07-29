@@ -32,6 +32,7 @@ from memo.cli_dream_passes import (
     _build_orientation,
     _render_run_summary,
     _run_capture_weights,
+    _run_code_drift,
     _run_compress,
     _run_consolidate_dups,
     _run_contradict,
@@ -313,6 +314,7 @@ def dream_run(
     # near-instant instead of redoing the same work. `--force` overrides.
     _prev_fp = read_previous_fingerprint(cfg)
 
+    from memo.dream_flags import CODE_DRIFT_FLAG  # import registers the flag spec
     from memo.flags import flag_bool, flag_int
 
     _evict_max = flag_int("MEMO_DREAM_EVICT_MAX_COUNT") or 0
@@ -321,6 +323,7 @@ def dream_run(
     _presynthesis_n = flag_int("MEMO_DREAM_PRESYNTHESIS_QUERIES") or 0
     _outcome_on = flag_bool("MEMO_OUTCOME_RANKING_ENABLED")
     _projection_on = flag_bool("MEMO_GRAPH_PROJECTION_ENABLED")
+    _code_drift_on = flag_bool(CODE_DRIFT_FLAG)
 
     receipt: dict[str, Any] = {
         "dry_run": dry_run,
@@ -335,6 +338,7 @@ def dream_run(
         "synthesized": [],
         "entities_extracted": 0,
         "graph_projection": {"status": "disabled"},
+        "code_drift": {"status": "disabled"},
         "roi_reconciled": 0,
         "dead_archived": [],
         "roi_decayed": 0,
@@ -349,12 +353,13 @@ def dream_run(
         "errors": [],
     }
 
-    total_steps = 14
+    total_steps = 15
     skipped = (
         (1 if skip_signal_gather or dry_run else 0)
         + (4 if skip_maintain else 0)
         + (1 if skip_entities or dry_run else 0)
         + (1 if not _projection_on else 0)
+        + (1 if not _code_drift_on else 0)
         + (1 if not _outcome_on or dry_run else 0)
         + (1 if skip_decay or dry_run else 0)
         + (1 if skip_prune_floor or dry_run else 0)
@@ -1178,6 +1183,26 @@ def dream_run(
             except Exception as exc:
                 progress.update(step, description="[graph] projection [yellow]warn[/yellow]")
                 receipt["errors"].append(f"graph_projection: {type(exc).__name__}: {exc}")
+            progress.advance(overall)
+
+        # 5c. Code drift — re-verify code_refs against the codegraph index ----
+        if _code_drift_on:
+            progress.update(step, description="[code-drift] verifying code_refs...")
+            # Same isolation rationale as graph projection above: an unexpected
+            # error class must not escape and abort every remaining pass.
+            try:
+                code_drift = _run_code_drift(mem, dry_run=dry_run)
+                receipt["code_drift"] = code_drift
+                if "error" in code_drift:
+                    receipt["errors"].append(f"code_drift: {code_drift['error']}")
+                receipt["errors"].extend(code_drift.get("errors", []))
+                progress.update(
+                    step,
+                    description=(f"[code-drift] [green]✓[/green]  {code_drift.get('status')}"),
+                )
+            except Exception as exc:
+                progress.update(step, description="[code-drift] [yellow]warn[/yellow]")
+                receipt["errors"].append(f"code_drift: {type(exc).__name__}: {exc}")
             progress.advance(overall)
 
         # 6a. ROI reconcile (outcome loop) — MUST run before decay so the

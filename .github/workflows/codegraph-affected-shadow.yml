@@ -1,0 +1,93 @@
+name: codegraph-affected-shadow
+
+# Report-only shadow of `codegraph affected` test selection.
+#
+# `codegraph affected` is BROKEN for this repo's src-layout (returns 0 tests
+# in 0.9.9 and 1.5.0) — see CLAUDE.md ("Codegraph-first"). This job exists
+# solely to detect the day the upstream fix lands: it logs what `codegraph
+# affected` reports for the PR's changed files and publishes the count.
+# It NEVER gates: the job is continue-on-error and every codegraph step
+# tolerates failure.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  affected-shadow:
+    runs-on: ubuntu-latest
+    # Report-only: never block the PR, whatever codegraph does.
+    continue-on-error: true
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "20"
+      - name: Install codegraph
+        run: npm i -g @colbymchenry/codegraph@latest
+      - name: Index repo (timed)
+        run: |
+          start=$(date +%s)
+          codegraph index . || true
+          end=$(date +%s)
+          echo "codegraph index took $((end - start))s"
+      - name: Log `codegraph affected --help` for the record
+        # Recorded so the run log shows which flags this codegraph version
+        # supports when the upstream fix eventually lands.
+        run: codegraph affected --help || true
+      - name: Compute changed files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only "origin/${BASE_REF}...HEAD" > changed.txt
+          else
+            # workflow_dispatch: no PR base — diff against the previous commit.
+            git diff --name-only HEAD~1 > changed.txt
+          fi
+          echo "Changed files ($(grep -c . changed.txt || true)):"
+          cat changed.txt
+      - name: Run codegraph affected (report-only)
+        run: |
+          : > affected.txt
+          if [ ! -s changed.txt ]; then
+            echo "No changed files — skipping codegraph affected."
+          elif codegraph affected --help 2>&1 | grep -q -- '--stdin'; then
+            codegraph affected --stdin < changed.txt > affected.txt || true
+          else
+            xargs -r codegraph affected < changed.txt > affected.txt || true
+          fi
+          echo "--- affected.txt ---"
+          cat affected.txt
+      - name: Publish step summary
+        if: always()
+        run: |
+          count=$(grep -c . affected.txt 2>/dev/null || true)
+          {
+            echo "## codegraph affected — shadow report"
+            echo ""
+            echo "Affected tests reported: **${count:-0}**"
+            echo ""
+            echo "> expected 0 while the upstream src-layout bug persists;" \
+              ">0 = fix landed, evaluate promotion to real selection" \
+              "(never a gate on master)"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload affected report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: codegraph-affected-${{ github.run_id }}
+          path: |
+            affected.txt
+            changed.txt
+          if-no-files-found: warn

@@ -361,6 +361,43 @@ file or `memo dream tune --rollback` to revert. The enable flags live in the
 nightly LaunchAgent's `EnvironmentVariables` (launchd does not inherit the shell)
 — see `~/repos/memo/launchd/com.memo.dream.plist`.
 
+## Codegraph-first (code intelligence)
+
+The repo is indexed by codegraph (`.codegraph/codegraph.db`, kept fresh by the
+MCP watcher + git hooks + nightly sync). Use it INSTEAD of the grep+Read loop:
+
+- **Understand a flow / architecture / bug:** ONE `codegraph_explore` call with
+  2-4 **exact symbol/file names** (a bag of names, never prose — retrieval is
+  lexical FTS5, no embeddings). Don't know the name? `codegraph_search` first.
+- **Treat explore output as Read-equivalent:** don't re-verify with grep, don't
+  delegate to file-reading subagents.
+- **Before `codegraph_callers`/`codegraph_impact`:** confirm the symbol EXISTS
+  with `codegraph_search` — a non-existent name silently substitutes the best
+  fuzzy match (upstream #1473).
+- **After editing:** a ⚠️ staleness banner means re-read with Read; in doubt,
+  `codegraph_status` and check `pendingChanges`.
+- **Do NOT trust the "⚠️ no covering tests" blast-radius note** (~40% false,
+  upstream #1475) — verify against `tests/` with grep.
+- **Overloaded names** (`search`, `save`, `recall`): pin with file/line via
+  `codegraph_node`.
+- **Cross-repo (memflow/synapse):** pass `projectPath` — graphs are per-repo,
+  no cross-repo edges. Caveat: synapse consumes memo via subprocess/CLI, so
+  0 cross-repo callers does NOT prove a CLI surface is unused.
+- **Pre-refactor gate:** run `scripts/cg_impact_gate.sh <symbol>` before
+  renaming or changing signatures under `src/memo/`. Success criterion for a
+  rename: `codegraph_callers` on the OLD name returns 0.
+- **`codegraph affected` is BROKEN for this repo's src-layout** (returns 0
+  tests) — use `scripts/cg_affected_tests.sh` (SQL over the DB) instead.
+
+### Review with codegraph
+
+Per file in the diff: `codegraph_node` on the file → its dependents are the
+review checklist (each caller appears in the diff or is justified). Per renamed
+symbol: `codegraph_callers <old-name>` must return 0. The CLI's
+`node --symbols-only` output truncates dependents with `+N more` — when that
+marker appears, expand via the `codegraph_node` MCP tool, never trust the
+truncated list as complete.
+
 ## Workflows (Claude Code dynamic workflows)
 
 Saved orchestration scripts in `.claude/workflows/`, invoked as `/`-commands:

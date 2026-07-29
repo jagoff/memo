@@ -10,8 +10,9 @@ import fnmatch
 import hashlib
 import os
 import re
+import sqlite3
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -391,6 +392,197 @@ def _chunk_lines(
 def _split_long_line(line: str, target_chars: int) -> list[str]:
     target = max(1, target_chars)
     return [line[i : i + target] for i in range(0, len(line), target)]
+
+
+# ---------------------------------------------------------------------------
+# Symbol-aligned chunking (codegraph) — MEMO_REPO_CHUNK_SYMBOL_ALIGNED
+# ---------------------------------------------------------------------------
+
+# Node kinds whose start/end lines are usable cut boundaries. Deliberately
+# excludes structural kinds: 'file' spans the whole file (would collapse the
+# file into one giant "symbol") and 'import'/'variable'/'constant' rows are
+# line-level noise for chunking purposes.
+_SYMBOL_KINDS = ("function", "method", "class", "property")
+
+# A single symbol larger than this factor × target_chars falls back to the
+# char-based cutter *within* the symbol, so a giant function never produces
+# an unbounded chunk.
+SYMBOL_CHUNK_HARD_FACTOR = 2
+
+
+def _symbol_chunking_enabled() -> bool:
+    from memo.flags import flag_bool
+
+    return bool(flag_bool("MEMO_REPO_CHUNK_SYMBOL_ALIGNED"))
+
+
+def _codegraph_db_for(repo_root: Path) -> Path:
+    """Conventional codegraph DB path for a repo checkout.
+
+    The `.codegraph/codegraph.db` layout is owned by `memo.codegraph_loader`;
+    derive the relative part from its constants so the convention has a
+    single source of truth.
+    """
+    from memo import codegraph_loader
+
+    rel = codegraph_loader.CODEGRAPH_DB.relative_to(codegraph_loader.CODEGRAPH_DIR.parent)
+    return repo_root / rel
+
+
+class _RepoSymbolSpans:
+    """Per-run read-only view over a repo's codegraph symbol spans.
+
+    Resolves the codegraph DB from the given candidate roots (first hit wins)
+    and opens ONE sqlite connection per indexing run — lazily, on the first
+    lookup — never one per file. Any failure (missing DB, foreign schema)
+    degrades to "no symbols", so callers fall back to the char-based chunker.
+    """
+
+    def __init__(self, *roots: Path) -> None:
+        self._db_path = next(
+            (db for db in (_codegraph_db_for(root) for root in roots) if db.is_file()),
+            None,
+        )
+        self._conn: sqlite3.Connection | None = None
+        self._failed = False
+
+    def spans_for(self, rel_path: str) -> list[tuple[int, int]]:
+        """Symbol (start_line, end_line) spans for a repo-relative file path."""
+        if self._db_path is None or self._failed:
+            return []
+        if self._conn is None:
+            try:
+                self._conn = sqlite3.connect(f"file:{self._db_path}?mode=ro", uri=True)
+            except sqlite3.Error:
+                self._failed = True
+                return []
+        try:
+            rows = self._conn.execute(
+                "SELECT start_line, end_line FROM nodes "
+                "WHERE file_path = ? AND kind IN (?, ?, ?, ?) "
+                "ORDER BY start_line, end_line",
+                (rel_path, *_SYMBOL_KINDS),
+            ).fetchall()
+        except sqlite3.Error:
+            self._failed = True
+            return []
+        return [(int(s), int(e)) for s, e in rows]
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+
+def _normalize_symbol_spans(
+    spans: Sequence[tuple[int, int]], line_count: int
+) -> list[tuple[int, int]]:
+    """Sort, clamp, and de-nest raw codegraph spans into disjoint cut regions.
+
+    Containers (a class wrapping its methods) are replaced by their leaf
+    members — the finest symbol boundaries; container-only lines (class
+    header, docstring, attributes) become gap lines. Overlapping siblings
+    keep the earliest span. 1-based inclusive in and out.
+    """
+    clamped = sorted({(start, min(end, line_count)) for start, end in spans if 1 <= start <= end})
+    clamped = [(s, e) for s, e in clamped if s <= line_count]
+    if not clamped:
+        return []
+    # Keep leaves: drop any span that contains another (distinct) span.
+    leaves = [
+        span
+        for span in clamped
+        if not any(
+            other != span and span[0] <= other[0] and other[1] <= span[1] for other in clamped
+        )
+    ]
+    out: list[tuple[int, int]] = []
+    last_end = 0
+    for start, end in leaves:
+        if start <= last_end:
+            continue  # overlapping sibling — first one wins
+        out.append((start, end))
+        last_end = end
+    return out
+
+
+def _chunk_lines_symbol_aligned(
+    lines: list[str],
+    spans: Sequence[tuple[int, int]],
+    *,
+    target_chars: int = DEFAULT_CHUNK_TARGET_CHARS,
+    overlap_lines: int = DEFAULT_CHUNK_OVERLAP_LINES,
+) -> list[tuple[int, int, int, str]] | None:
+    """Chunk `lines` cutting at codegraph symbol boundaries.
+
+    Returns None when the spans are unusable (empty after normalization) so
+    the caller falls back to `_chunk_lines`. Greedy grouping: consecutive
+    segments (symbols, plus the gap lines between them) accumulate until the
+    target size; a symbol that alone exceeds the target keeps its own whole
+    chunk; a segment beyond SYMBOL_CHUNK_HARD_FACTOR × target falls back to
+    the char-based cutter *within* the segment (same target/overlap as the
+    default chunker, line numbers re-offset).
+    """
+    if not lines:
+        return None
+    norm = _normalize_symbol_spans(spans, len(lines))
+    if not norm:
+        return None
+
+    # Ordered segments covering every line: (start0, end0) 0-based inclusive,
+    # alternating symbol spans and the gaps around them.
+    segments: list[tuple[int, int]] = []
+    cursor = 0
+    for start, end in norm:
+        if start - 1 > cursor:
+            segments.append((cursor, start - 2))
+        segments.append((start - 1, end - 1))
+        cursor = end
+    if cursor < len(lines):
+        segments.append((cursor, len(lines) - 1))
+
+    def _chars(a: int, b: int) -> int:
+        return sum(len(lines[i]) + 1 for i in range(a, b + 1))
+
+    out: list[tuple[int, int, int, str]] = []
+    seq = 0
+    group_start: int | None = None
+    group_end = -1
+    group_chars = 0
+
+    def _flush() -> None:
+        nonlocal seq, group_start, group_chars
+        if group_start is None:
+            return
+        out.append(
+            (seq, group_start + 1, group_end + 1, "\n".join(lines[group_start : group_end + 1]))
+        )
+        seq += 1
+        group_start = None
+        group_chars = 0
+
+    hard_limit = SYMBOL_CHUNK_HARD_FACTOR * target_chars
+    for seg_start, seg_end in segments:
+        size = _chars(seg_start, seg_end)
+        if size > hard_limit:
+            # Giant symbol (or gap): char-based cuts inside the segment.
+            _flush()
+            for _, sub_start, sub_end, body in _chunk_lines(
+                lines[seg_start : seg_end + 1],
+                target_chars=target_chars,
+                overlap_lines=overlap_lines,
+            ):
+                out.append((seq, seg_start + sub_start, seg_start + sub_end, body))
+                seq += 1
+            continue
+        if group_start is not None and group_chars + size > target_chars:
+            _flush()
+        if group_start is None:
+            group_start = seg_start
+        group_end = seg_end
+        group_chars += size
+    _flush()
+    return out or None
 
 
 def _language_for_path(path: str) -> str:
