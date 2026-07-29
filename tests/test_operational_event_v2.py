@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -31,8 +32,8 @@ from memo.operational_signing import OperationalSigner, OperationalVerifier
 _AUTHORITY_PINS = InMemoryAuthorityPinProvider()
 
 
-def _pin_store(root: object) -> AuthorityPinStore:
-    return AuthorityPinStore(authority_id=str(root), provider=_AUTHORITY_PINS)
+def _pin_store(root: Path) -> AuthorityPinStore:
+    return AuthorityPinStore._for_test(root, provider=_AUTHORITY_PINS)
 
 
 def _event(**changes: object) -> OperationalEventV2:

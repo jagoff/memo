@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -81,30 +85,67 @@ def test_productive_provider_fails_closed_without_nonexportable_ed25519() -> Non
     assert "non-exportable" in str(exc.value)
 
 
-def test_authority_pin_provider_persists_monotonic_state_across_instances() -> None:
+def test_authority_pin_provider_persists_monotonic_state_across_instances(tmp_path) -> None:
     provider = InMemoryAuthorityPinProvider()
-    first = AuthorityPinStore(authority_id="authority-a", provider=provider)
-    second = AuthorityPinStore(authority_id="authority-a", provider=provider)
+    first = AuthorityPinStore._for_test(tmp_path, provider=provider)
+    second = AuthorityPinStore._for_test(tmp_path, provider=provider)
+    roster_record = json.dumps(
+        {"roster_hash": "a" * 64, "version": 1},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    epoch_record = b'{"epoch":0}'
 
-    first.prepare_roster(version=1, roster_hash="a" * 64)
-    second.commit_roster(version=1, roster_hash="a" * 64)
-    first.prepare_epoch(
-        epoch=0,
-        authorization_sha256="b" * 64,
-        bootstrap=True,
-    )
-    second.commit_epoch(
-        epoch=0,
-        authorization_sha256="b" * 64,
-        bootstrap=True,
-    )
+    first._stage_roster(tmp_path, roster_record)
+    second._finish_roster(tmp_path, roster_record)
+    first._stage_epoch(tmp_path, epoch_record, bootstrap=True)
+    second._finish_epoch(tmp_path, epoch_record, bootstrap=True)
 
-    state = first.read()
+    state = first._snapshot_for_test()
     assert (state.roster_version, state.roster_hash) == (1, "a" * 64)
-    assert (state.epoch, state.authorization_sha256) == (0, "b" * 64)
+    assert state.epoch == 0
     assert state.bootstrap_state == "consumed"
+    conflicting = json.dumps(
+        {"roster_hash": "c" * 64, "version": 1},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
     with pytest.raises(KeyStoreError):
-        second.prepare_roster(version=1, roster_hash="c" * 64)
+        second._stage_roster(tmp_path, conflicting)
+
+
+def test_authority_binding_is_root_derived_stable_and_concurrency_safe(tmp_path) -> None:
+    provider = InMemoryAuthorityPinProvider()
+
+    def bind() -> AuthorityPinStore:
+        return AuthorityPinStore._for_test(tmp_path, provider=provider)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        stores = list(executor.map(lambda _: bind(), range(32)))
+
+    installation_ids = {store._installation_id_for_test() for store in stores}
+    assert len(installation_ids) == 1
+    other = AuthorityPinStore._for_test(tmp_path / "other", provider=provider)
+    assert other._installation_id_for_test() not in installation_ids
+
+    with pytest.raises(TypeError):
+        AuthorityPinStore(authority_id="caller-selected", provider=provider)
+    for public_mutator in (
+        "prepare_roster",
+        "commit_roster",
+        "prepare_epoch",
+        "commit_epoch",
+    ):
+        assert not hasattr(AuthorityPinStore, public_mutator)
+    with pytest.raises(KeyStoreError):
+        stores[0]._stage_roster(
+            tmp_path / "other",
+            json.dumps(
+                {"roster_hash": "a" * 64, "version": 1},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode(),
+        )
 
 
 def test_productive_authority_pin_provider_fails_closed_off_macos(
@@ -115,6 +156,66 @@ def test_productive_authority_pin_provider_fails_closed_off_macos(
     monkeypatch.setattr(key_store_module.sys, "platform", "linux")
     provider = MacOSAuthorityPinProvider()
     with pytest.raises(KeyStoreError) as exc:
-        provider.read("authority-a")
+        provider._read_pin("00000000-0000-0000-0000-000000000000")
     assert exc.value.__cause__ is None
     assert "failing closed" in str(exc.value)
+
+
+def test_productive_authority_provider_separates_bindings_and_pin_accounts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    provider = MacOSAuthorityPinProvider()
+    accounts: dict[str, bytes] = {}
+    account_lock = threading.Lock()
+
+    def read_account(account: str) -> bytes | None:
+        with account_lock:
+            return accounts.get(account)
+
+    def write_account(account: str, value: bytes) -> None:
+        with account_lock:
+            accounts[account] = bytes(value)
+
+    monkeypatch.setattr(provider, "_read_account", read_account)
+    monkeypatch.setattr(provider, "_write_account", write_account)
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        first_ids = set(
+            executor.map(
+                lambda _: provider._resolve_installation("canonical-root-a"),
+                range(32),
+            )
+        )
+    assert len(first_ids) == 1
+    first_id = next(iter(first_ids))
+    second_id = provider._resolve_installation("canonical-root-b")
+    assert second_id != first_id
+
+    provider._write_pin(first_id, b"first-pin")
+    provider._write_pin(second_id, b"second-pin")
+    assert provider._read_pin(first_id) == b"first-pin"
+    assert provider._read_pin(second_id) == b"second-pin"
+
+    first_store = AuthorityPinStore._create(tmp_path, provider=provider)
+    second_store = AuthorityPinStore._create(tmp_path, provider=provider)
+    roster_record = json.dumps(
+        {"roster_hash": "d" * 64, "version": 1},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(
+            executor.map(
+                lambda store: store._stage_roster(tmp_path, roster_record),
+                (first_store, second_store),
+            )
+        )
+        list(
+            executor.map(
+                lambda store: store._finish_roster(tmp_path, roster_record),
+                (first_store, second_store),
+            )
+        )
+    assert first_store._snapshot_for_test() == second_store._snapshot_for_test()
+    other_store = AuthorityPinStore._create(tmp_path / "other", provider=provider)
+    assert other_store._snapshot_for_test().roster_version == 0

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -56,8 +57,10 @@ class AuthorityPinState:
     bootstrap_state: Literal["absent", "pending", "epoch_pending", "consumed"] = "absent"
     pending_roster_version: int | None = None
     pending_roster_hash: str = ""
+    pending_roster_record: str = ""
     pending_epoch: int | None = None
     pending_authorization_sha256: str = ""
+    pending_epoch_authorization: str = ""
     schema: Literal["memo.operational_authority_pin.v1"] = "memo.operational_authority_pin.v1"
 
     def to_dict(self) -> dict[str, object]:
@@ -71,32 +74,45 @@ class AuthorityPinState:
             "bootstrap_state": self.bootstrap_state,
             "pending_roster_version": self.pending_roster_version,
             "pending_roster_hash": self.pending_roster_hash,
+            "pending_roster_record": self.pending_roster_record,
             "pending_epoch": self.pending_epoch,
             "pending_authorization_sha256": self.pending_authorization_sha256,
+            "pending_epoch_authorization": self.pending_epoch_authorization,
         }
 
 
 class _AuthorityPinProvider(Protocol):
-    def read(self, authority_id: str) -> bytes | None: ...
+    def _resolve_installation(self, location_binding: str) -> str: ...
 
-    def write(self, authority_id: str, value: bytes) -> None: ...
+    def _read_pin(self, installation_id: str) -> bytes | None: ...
+
+    def _write_pin(self, installation_id: str, value: bytes) -> None: ...
 
 
 class InMemoryAuthorityPinProvider:
     """Shared persistent test backend for cross-instance authority probes."""
 
     def __init__(self) -> None:
+        self._installations: dict[str, str] = {}
         self._values: dict[str, bytes] = {}
         self._lock = threading.RLock()
 
-    def read(self, authority_id: str) -> bytes | None:
+    def _resolve_installation(self, location_binding: str) -> str:
         with self._lock:
-            value = self._values.get(authority_id)
+            installation_id = self._installations.get(location_binding)
+            if installation_id is None:
+                installation_id = str(uuid.uuid4())
+                self._installations[location_binding] = installation_id
+            return installation_id
+
+    def _read_pin(self, installation_id: str) -> bytes | None:
+        with self._lock:
+            value = self._values.get(installation_id)
             return bytes(value) if value is not None else None
 
-    def write(self, authority_id: str, value: bytes) -> None:
+    def _write_pin(self, installation_id: str, value: bytes) -> None:
         with self._lock:
-            self._values[authority_id] = bytes(value)
+            self._values[installation_id] = bytes(value)
 
 
 class MacOSAuthorityPinProvider:
@@ -111,14 +127,14 @@ class MacOSAuthorityPinProvider:
             raise KeyStoreError("macOS Keychain authority metadata is unavailable; failing closed")
         return executable
 
-    def read(self, authority_id: str) -> bytes | None:
+    def _read_account(self, account: str) -> bytes | None:
         command = [
             self._security(),
             "find-generic-password",
             "-s",
             self.service,
             "-a",
-            authority_id,
+            account,
             "-w",
         ]
         try:
@@ -136,8 +152,12 @@ class MacOSAuthorityPinProvider:
             raise KeyStoreError("Keychain authority metadata read failed")
         return result.stdout.rstrip(b"\n")
 
-    def write(self, authority_id: str, value: bytes) -> None:
-        # The value is signed-hash metadata, not private key material.
+    def _write_account(self, account: str, value: bytes) -> None:
+        # The value is authority metadata, not private key material.
+        try:
+            text = value.decode("utf-8")
+        except UnicodeDecodeError:
+            raise KeyStoreError("Keychain authority metadata write failed") from None
         command = [
             self._security(),
             "add-generic-password",
@@ -145,9 +165,9 @@ class MacOSAuthorityPinProvider:
             "-s",
             self.service,
             "-a",
-            authority_id,
+            account,
             "-w",
-            value.decode("ascii"),
+            text,
         ]
         try:
             subprocess.run(
@@ -156,44 +176,143 @@ class MacOSAuthorityPinProvider:
                 capture_output=True,
                 timeout=10,
             )
-        except (OSError, UnicodeDecodeError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError):
             raise KeyStoreError("Keychain authority metadata write failed") from None
 
-
-class AuthorityPinStore:
-    """Crash-recoverable monotonic pins for roster and authority epochs."""
-
-    def __init__(
-        self,
-        *,
-        authority_id: str,
-        provider: _AuthorityPinProvider | None = None,
-    ) -> None:
-        if not authority_id or len(authority_id) > 512:
-            raise ValueError("authority_id is invalid")
-        self.authority_id = authority_id
-        self._provider = provider or MacOSAuthorityPinProvider()
-        lock_name = hashlib.sha256(authority_id.encode("utf-8")).hexdigest()
-        self._lock_path = (
+    def _resolve_installation(self, location_binding: str) -> str:
+        binding_digest = hashlib.sha256(location_binding.encode("utf-8")).hexdigest()
+        account = f"binding:{binding_digest}"
+        lock_path = (
             Path.home()
             / "Library"
             / "Application Support"
             / "Memo"
             / "authority-pin-locks"
-            / lock_name
+            / f"binding-{binding_digest}"
         )
+        with authority_write_lock(lock_path):
+            raw = self._read_account(account)
+            if raw is None:
+                raw = str(uuid.uuid4()).encode("ascii")
+                self._write_account(account, raw)
+                if self._read_account(account) != raw:
+                    raise KeyStoreError("Keychain authority binding was not durable")
+        try:
+            installation_id = str(uuid.UUID(raw.decode("ascii")))
+        except (UnicodeDecodeError, ValueError):
+            raise KeyStoreError("Keychain authority binding is invalid") from None
+        return installation_id
+
+    def _read_pin(self, installation_id: str) -> bytes | None:
+        return self._read_account(f"pin:{installation_id}")
+
+    def _write_pin(self, installation_id: str, value: bytes) -> None:
+        self._write_account(f"pin:{installation_id}", value)
+
+
+class AuthorityPinStore:
+    """Root-bound crash-recoverable pins for roster and authority epochs."""
+
+    _root: Path
+    _provider: _AuthorityPinProvider
+    _installation_id: str
+    _lock_path: Path
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("AuthorityPinStore is created from a canonical authority root")
 
     @classmethod
-    def in_memory(
+    def _create(
         cls,
+        root: Path,
         *,
-        authority_id: str,
+        provider: _AuthorityPinProvider,
+    ) -> AuthorityPinStore:
+        canonical_root = Path(root).expanduser().resolve()
+        location_binding = hashlib.sha256(
+            b"memo-authority-root-v1\0" + os.fsencode(canonical_root)
+        ).hexdigest()
+        installation_id = provider._resolve_installation(location_binding)
+        try:
+            installation_id = str(uuid.UUID(installation_id))
+        except ValueError:
+            raise KeyStoreError("authority installation binding is invalid") from None
+        instance = object.__new__(cls)
+        instance._root = canonical_root
+        instance._provider = provider
+        instance._installation_id = installation_id
+        instance._lock_path = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Memo"
+            / "authority-pin-locks"
+            / f"pin-{installation_id}"
+        )
+        return instance
+
+    @classmethod
+    def for_root(cls, root: Path) -> AuthorityPinStore:
+        """Open the productive authority pin bound to ``root``."""
+        return cls._create(root, provider=MacOSAuthorityPinProvider())
+
+    @classmethod
+    def _for_test(
+        cls,
+        root: Path,
+        *,
         provider: InMemoryAuthorityPinProvider | None = None,
     ) -> AuthorityPinStore:
-        return cls(
-            authority_id=authority_id,
+        return cls._create(
+            root,
             provider=provider or InMemoryAuthorityPinProvider(),
         )
+
+    def _installation_id_for_test(self) -> str:
+        return self._installation_id
+
+    def _assert_bound(self, root: Path) -> None:
+        if Path(root).expanduser().resolve() != self._root:
+            raise KeyStoreError("authority pin store is bound to a different root")
+
+    @staticmethod
+    def _roster_metadata(record: bytes) -> tuple[int, str]:
+        try:
+            body = json.loads(record.decode("utf-8"))
+            if (
+                not isinstance(body, dict)
+                or _canonical(body) != record
+                or isinstance(body.get("version"), bool)
+                or not isinstance(body.get("version"), int)
+                or not isinstance(body.get("roster_hash"), str)
+            ):
+                raise ValueError
+            version = body["version"]
+            roster_hash = body["roster_hash"]
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            raise KeyStoreError("prepared roster record is invalid") from None
+        if version < 1 or _SHA256_RE.fullmatch(roster_hash) is None:
+            raise KeyStoreError("prepared roster record is invalid")
+        return version, roster_hash
+
+    @staticmethod
+    def _epoch_metadata(record: bytes) -> tuple[int, str]:
+        try:
+            body = json.loads(record.decode("utf-8"))
+            if (
+                not isinstance(body, dict)
+                or _canonical(body) != record
+                or isinstance(body.get("epoch"), bool)
+                or not isinstance(body.get("epoch"), int)
+            ):
+                raise ValueError
+            epoch = body["epoch"]
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            raise KeyStoreError("prepared epoch authorization is invalid") from None
+        if epoch < 0:
+            raise KeyStoreError("prepared epoch authorization is invalid")
+        return epoch, hashlib.sha256(record).hexdigest()
 
     def _decode(self, raw: bytes | None) -> AuthorityPinState:
         if raw is None:
@@ -218,10 +337,12 @@ class AuthorityPinStore:
                     else None
                 ),
                 pending_roster_hash=str(body["pending_roster_hash"]),
+                pending_roster_record=str(body["pending_roster_record"]),
                 pending_epoch=(
                     int(body["pending_epoch"]) if body["pending_epoch"] is not None else None
                 ),
                 pending_authorization_sha256=str(body["pending_authorization_sha256"]),
+                pending_epoch_authorization=str(body["pending_epoch_authorization"]),
             )
         except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
             raise KeyStoreError("authority pin metadata is invalid") from None
@@ -238,37 +359,61 @@ class AuthorityPinStore:
             )
             or state.bootstrap_state not in {"absent", "pending", "epoch_pending", "consumed"}
             or (state.pending_roster_version is None) != (state.pending_roster_hash == "")
+            or (state.pending_roster_version is None) != (state.pending_roster_record == "")
             or (
                 state.pending_roster_hash
                 and _SHA256_RE.fullmatch(state.pending_roster_hash) is None
             )
             or (state.pending_epoch is None) != (state.pending_authorization_sha256 == "")
+            or (state.pending_epoch is None) != (state.pending_epoch_authorization == "")
             or (
                 state.pending_authorization_sha256
                 and _SHA256_RE.fullmatch(state.pending_authorization_sha256) is None
             )
         ):
             raise KeyStoreError("authority pin metadata is invalid")
+        if state.pending_roster_record:
+            version, roster_hash = self._roster_metadata(
+                state.pending_roster_record.encode("utf-8")
+            )
+            if (
+                version != state.pending_roster_version
+                or roster_hash != state.pending_roster_hash
+            ):
+                raise KeyStoreError("authority pin metadata is invalid")
+        if state.pending_epoch_authorization:
+            epoch, authorization_sha256 = self._epoch_metadata(
+                state.pending_epoch_authorization.encode("utf-8")
+            )
+            if (
+                epoch != state.pending_epoch
+                or authorization_sha256 != state.pending_authorization_sha256
+            ):
+                raise KeyStoreError("authority pin metadata is invalid")
         return state
 
     def _read_unlocked(self) -> AuthorityPinState:
         try:
-            return self._decode(self._provider.read(self.authority_id))
+            return self._decode(self._provider._read_pin(self._installation_id))
         except KeyStoreError:
             raise
         except Exception:
             raise KeyStoreError("authority pin metadata read failed") from None
 
-    def read(self) -> AuthorityPinState:
+    def _read(self, root: Path) -> AuthorityPinState:
+        self._assert_bound(root)
         with authority_write_lock(self._lock_path):
             return self._read_unlocked()
+
+    def _snapshot_for_test(self) -> AuthorityPinState:
+        return self._read(self._root)
 
     def _write_unlocked(self, state: AuthorityPinState) -> AuthorityPinState:
         updated = replace(state, revision=state.revision + 1)
         encoded = _canonical(updated.to_dict())
         try:
-            self._provider.write(self.authority_id, encoded)
-            persisted = self._provider.read(self.authority_id)
+            self._provider._write_pin(self._installation_id, encoded)
+            persisted = self._provider._read_pin(self._installation_id)
         except KeyStoreError:
             raise
         except Exception:
@@ -277,12 +422,17 @@ class AuthorityPinStore:
             raise KeyStoreError("authority pin metadata write was not durable")
         return updated
 
-    def prepare_roster(self, *, version: int, roster_hash: str) -> None:
-        if version < 1 or _SHA256_RE.fullmatch(roster_hash) is None:
-            raise KeyStoreError("roster pin is invalid")
+    def _stage_roster(self, root: Path, record: bytes) -> None:
+        self._assert_bound(root)
+        version, roster_hash = self._roster_metadata(record)
+        record_text = record.decode("utf-8")
         with authority_write_lock(self._lock_path):
             state = self._read_unlocked()
-            if state.pending_roster_version == version and state.pending_roster_hash == roster_hash:
+            if (
+                state.pending_roster_version == version
+                and state.pending_roster_hash == roster_hash
+                and state.pending_roster_record == record_text
+            ):
                 return
             if state.pending_roster_version is not None:
                 raise KeyStoreError("a different roster pin update is pending")
@@ -295,18 +445,26 @@ class AuthorityPinStore:
                     state,
                     pending_roster_version=version,
                     pending_roster_hash=roster_hash,
+                    pending_roster_record=record_text,
                     bootstrap_state=(
                         "pending" if state.roster_version == 0 else state.bootstrap_state
                     ),
                 )
             )
 
-    def commit_roster(self, *, version: int, roster_hash: str) -> None:
+    def _finish_roster(self, root: Path, record: bytes) -> None:
+        self._assert_bound(root)
+        version, roster_hash = self._roster_metadata(record)
+        record_text = record.decode("utf-8")
         with authority_write_lock(self._lock_path):
             state = self._read_unlocked()
             if state.roster_version == version and state.roster_hash == roster_hash:
                 return
-            if state.pending_roster_version != version or state.pending_roster_hash != roster_hash:
+            if (
+                state.pending_roster_version != version
+                or state.pending_roster_hash != roster_hash
+                or state.pending_roster_record != record_text
+            ):
                 raise KeyStoreError("roster commit does not match its pending pin")
             self._write_unlocked(
                 replace(
@@ -315,45 +473,41 @@ class AuthorityPinStore:
                     roster_hash=roster_hash,
                     pending_roster_version=None,
                     pending_roster_hash="",
+                    pending_roster_record="",
                 )
             )
 
-    def verify_roster(self, *, version: int, roster_hash: str) -> None:
+    def _verify_roster(self, root: Path, *, version: int, roster_hash: str) -> None:
+        self._assert_bound(root)
         with authority_write_lock(self._lock_path):
             state = self._read_unlocked()
             if state.pending_roster_version is not None:
-                if (
-                    state.pending_roster_version != version
-                    or state.pending_roster_hash != roster_hash
-                ):
-                    raise KeyStoreError("roster authority update is incomplete")
-                self._write_unlocked(
-                    replace(
-                        state,
-                        roster_version=version,
-                        roster_hash=roster_hash,
-                        pending_roster_version=None,
-                        pending_roster_hash="",
-                    )
-                )
-                return
+                raise KeyStoreError("roster authority update is incomplete")
             if state.roster_version != version or state.roster_hash != roster_hash:
                 raise KeyStoreError("roster rollback or trust-root substitution detected")
 
-    def prepare_epoch(
+    def _prepared_roster(self, root: Path) -> bytes | None:
+        state = self._read(root)
+        if not state.pending_roster_record:
+            return None
+        return state.pending_roster_record.encode("utf-8")
+
+    def _stage_epoch(
         self,
+        root: Path,
+        authorization: bytes,
         *,
-        epoch: int,
-        authorization_sha256: str,
         bootstrap: bool,
     ) -> None:
-        if epoch < 0 or _SHA256_RE.fullmatch(authorization_sha256) is None:
-            raise KeyStoreError("epoch pin is invalid")
+        self._assert_bound(root)
+        epoch, authorization_sha256 = self._epoch_metadata(authorization)
+        authorization_text = authorization.decode("utf-8")
         with authority_write_lock(self._lock_path):
             state = self._read_unlocked()
             if (
                 state.pending_epoch == epoch
                 and state.pending_authorization_sha256 == authorization_sha256
+                and state.pending_epoch_authorization == authorization_text
             ):
                 return
             if state.pending_epoch is not None:
@@ -368,17 +522,21 @@ class AuthorityPinStore:
                     state,
                     pending_epoch=epoch,
                     pending_authorization_sha256=authorization_sha256,
+                    pending_epoch_authorization=authorization_text,
                     bootstrap_state=("epoch_pending" if bootstrap else state.bootstrap_state),
                 )
             )
 
-    def commit_epoch(
+    def _finish_epoch(
         self,
+        root: Path,
+        authorization: bytes,
         *,
-        epoch: int,
-        authorization_sha256: str,
         bootstrap: bool,
     ) -> None:
+        self._assert_bound(root)
+        epoch, authorization_sha256 = self._epoch_metadata(authorization)
+        authorization_text = authorization.decode("utf-8")
         with authority_write_lock(self._lock_path):
             state = self._read_unlocked()
             if state.epoch == epoch and state.authorization_sha256 == authorization_sha256:
@@ -386,6 +544,7 @@ class AuthorityPinStore:
             if (
                 state.pending_epoch != epoch
                 or state.pending_authorization_sha256 != authorization_sha256
+                or state.pending_epoch_authorization != authorization_text
             ):
                 raise KeyStoreError("epoch commit does not match its pending pin")
             if bootstrap and state.bootstrap_state != "epoch_pending":
@@ -397,33 +556,34 @@ class AuthorityPinStore:
                     authorization_sha256=authorization_sha256,
                     pending_epoch=None,
                     pending_authorization_sha256="",
+                    pending_epoch_authorization="",
                     bootstrap_state=("consumed" if bootstrap else state.bootstrap_state),
                 )
             )
 
-    def verify_epoch(self, *, epoch: int, authorization_sha256: str) -> None:
+    def _verify_epoch(
+        self,
+        root: Path,
+        *,
+        epoch: int,
+        authorization_sha256: str,
+    ) -> None:
+        self._assert_bound(root)
         with authority_write_lock(self._lock_path):
             state = self._read_unlocked()
             if state.pending_epoch is not None:
-                if (
-                    state.pending_epoch != epoch
-                    or state.pending_authorization_sha256 != authorization_sha256
-                ):
-                    raise KeyStoreError("authority epoch update is incomplete")
-                bootstrap = state.bootstrap_state == "epoch_pending"
-                self._write_unlocked(
-                    replace(
-                        state,
-                        epoch=epoch,
-                        authorization_sha256=authorization_sha256,
-                        pending_epoch=None,
-                        pending_authorization_sha256="",
-                        bootstrap_state=("consumed" if bootstrap else state.bootstrap_state),
-                    )
-                )
-                return
+                raise KeyStoreError("authority epoch update is incomplete")
             if state.epoch != epoch or state.authorization_sha256 != authorization_sha256:
                 raise KeyStoreError("authority epoch rollback detected")
+
+    def _prepared_epoch(self, root: Path) -> tuple[bytes, bool] | None:
+        state = self._read(root)
+        if not state.pending_epoch_authorization:
+            return None
+        return (
+            state.pending_epoch_authorization.encode("utf-8"),
+            state.bootstrap_state == "epoch_pending",
+        )
 
 
 @dataclass(frozen=True)

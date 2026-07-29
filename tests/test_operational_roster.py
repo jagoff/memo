@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -21,8 +22,8 @@ from memo.operational_signing import OperationalSigner
 _AUTHORITY_PINS = InMemoryAuthorityPinProvider()
 
 
-def _pin_store(root: object) -> AuthorityPinStore:
-    return AuthorityPinStore(authority_id=str(root), provider=_AUTHORITY_PINS)
+def _pin_store(root: Path) -> AuthorityPinStore:
+    return AuthorityPinStore._for_test(root, provider=_AUTHORITY_PINS)
 
 
 def test_fresh_bootstrap_persists_one_peer_roster_before_epoch_zero(tmp_path) -> None:
@@ -77,6 +78,37 @@ def test_bootstrap_recovers_crash_between_history_and_current(tmp_path, monkeypa
         )
         == recovered
     )
+
+
+def test_load_recovers_bootstrap_crash_before_first_root_write(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import memo.operational_roster as roster_module
+
+    store = DeviceKeyStore.in_memory()
+    key = store.generate(device_id="device-a")
+    original = roster_module._create_authority_file
+
+    def crash_before_history(path: object, data: bytes) -> None:
+        del path, data
+        raise OSError("fault injection before first roster write")
+
+    monkeypatch.setattr(roster_module, "_create_authority_file", crash_before_history)
+    with pytest.raises(OSError, match="before first roster write"):
+        VerificationRoster.bootstrap(
+            device_id="device-a",
+            key=key,
+            root=tmp_path,
+            pin_store=_pin_store(tmp_path),
+        )
+    monkeypatch.setattr(roster_module, "_create_authority_file", original)
+
+    recovered = VerificationRoster.load(tmp_path, pin_store=_pin_store(tmp_path))
+    assert recovered.version == 1
+    assert recovered.roster_hash
+    assert (tmp_path / "verification-rosters/00000001.json").is_file()
+    assert (tmp_path / "verification-roster.json").is_file()
 
 
 def test_roster_rejects_duplicate_ids_fingerprints_and_regression(tmp_path) -> None:
@@ -229,7 +261,50 @@ def test_load_recovers_crash_between_roster_history_and_current(tmp_path, monkey
         pin_store=_pin_store(tmp_path),
     )
     assert recovered.version == 2
-    assert _pin_store(tmp_path).read().roster_version == 2
+    assert _pin_store(tmp_path)._snapshot_for_test().roster_version == 2
+
+
+def test_load_recovers_update_crash_before_first_root_write(tmp_path, monkeypatch) -> None:
+    import memo.operational_roster as roster_module
+
+    store = DeviceKeyStore.in_memory()
+    first = store.generate(device_id="device-a")
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=first,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    second = store.generate(
+        device_id="device-b",
+        roles=("origin",),
+        enrollment_sequence=2,
+    )
+    original = roster_module._create_authority_file
+
+    def crash_before_update_history(path: object, data: bytes) -> None:
+        del path, data
+        raise OSError("fault injection before first roster update write")
+
+    monkeypatch.setattr(
+        roster_module,
+        "_create_authority_file",
+        crash_before_update_history,
+    )
+    with pytest.raises(OSError, match="before first roster update write"):
+        roster.with_keys(
+            version=2,
+            peers=("device-a", "device-b"),
+            keys=(first, second),
+            signer=OperationalSigner(store, roster_version=1),
+            root=tmp_path,
+            pin_store=_pin_store(tmp_path),
+        )
+    monkeypatch.setattr(roster_module, "_create_authority_file", original)
+
+    recovered = VerificationRoster.load(tmp_path, pin_store=_pin_store(tmp_path))
+    assert recovered.version == 2
+    assert recovered.previous_roster_hash == roster.roster_hash
 
 
 def test_roster_rejects_valid_history_truncation_and_current_rollback(
