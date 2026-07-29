@@ -10,7 +10,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 en revisión final**.
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 implementada; re-revisión
+  independiente de ronda 5 pendiente**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -65,13 +66,17 @@ Estado: **0/7 aceptadas**.
 - [x] Implementador fresco asignado.
 - [x] RED capability: `7 failed, 17 deselected`.
 - [x] Capability autenticada: `54760a8a`.
-- [x] Focused de la tarea: `117 passed`.
+- [x] Revisión de ronda 4: FAIL; lifecycle ligado a `id(fence)`.
+- [x] RED lifecycle causal: `1 failed, 19 deselected`.
+- [x] Self-review RED de inmutabilidad: `1 failed, 20 deselected`.
+- [x] Nonce CSPRNG inmutable por instancia: `0edbc2ed`.
+- [x] Focused de la tarea: `119 passed`.
 - [x] Focused del brief: `30 passed`.
 - [x] Ruff: limpio.
 - [x] Mypy: limpio.
-- [x] Non-slow: `5926 passed, 18 skipped, 7 deselected`.
+- [x] Non-slow: `5928 passed, 18 skipped, 7 deselected`.
 - [x] Compatibilidad v1 y archivos congelados: intactos.
-- [ ] Generar paquete de revisión final para `d9ed37a6..54760a8a`.
+- [ ] Generar paquete de revisión final para `d9ed37a6..0edbc2ed`.
 - [ ] Revisión independiente final.
 - [ ] Corregir hallazgos residuales, si existen.
 - [ ] Obtener `PASS`.
@@ -220,3 +225,46 @@ Gate final de producto:
 - [ ] Auditoría permanente de independencia verde.
 - [ ] Despliegue productivo documentado.
 - [ ] Memo actualizado como única fuente de verdad del resultado.
+
+## Matriz de ejecución en tiempo real
+
+Esta tabla se actualiza al iniciar y cerrar cada tarea. `—` significa que el
+paso todavía no comenzó, no que esté aprobado.
+
+| ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
+|---|---|---|---|---|---|---|---|---|
+| P01-T01 | Contratos y v1 congelado | `plan01_task01_impl` + `capability_fix` | `d9ed37a6` | 5 rondas registradas | `119`; full `5928` | `f03d7418`…`0edbc2ed` | R1–R4 FAIL; R5 pendiente | — |
+| P01-T02 | Anchors, append y bundles | — | — | — | — | — | — | — |
+| P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
+| P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
+| P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
+| P01-T06 | Sesiones canónicas | — | — | — | — | — | — | — |
+| P01-T07 | Activación facade v2 | — | — | — | — | — | — | — |
+| P02-T01 | Fixtures de paridad Memflow | — | — | — | — | — | — | — |
+| P02-T02 | Coordinación, handoffs y tasks | — | — | — | — | — | — | — |
+| P02-T03 | Delivery, ACK, retry y cursors | — | — | — | — | — | — | — |
+| P02-T04 | Presence, heartbeat y conflictos | — | — | — | — | — | — | — |
+| P02-T05 | Continuidad de sesiones | — | — | — | — | — | — | — |
+| P02-T06 | Terminal bridge controlado | — | — | — | — | — | — | — |
+| P02-T07 | Sync operacional firmado | — | — | — | — | — | — | — |
+| P02-T08 | Retención y compactación | — | — | — | — | — | — | — |
+| P02-T09 | Writer, daemon y health | — | — | — | — | — | — | — |
+| P02-T10 | APIs exclusivamente Memo | — | — | — | — | — | — | — |
+| P02-T11 | Runtime distribuido E2E | — | — | — | — | — | — | — |
+| P03-T01 | Snapshot, manifest e inventario | — | — | — | — | — | — | — |
+| P03-T02 | Fencing de requests Memflow | — | — | — | — | — | — | — |
+| P03-T03 | Drain y startup refusal | — | — | — | — | — | — | — |
+| P03-T04 | Aislamiento de Synapse | — | — | — | — | — | — | — |
+| P03-T05 | Registry backend de Memo | — | — | — | — | — | — | — |
+| P03-T06 | Configuración y readiness | — | — | — | — | — | — | — |
+| P04-T01 | Probar inputs de migración | — | — | — | — | — | — | — |
+| P04-T02 | Import durable por política | — | — | — | — | — | — | — |
+| P04-T03 | Traducción y staging apply | — | — | — | — | — | — | — |
+| P04-T04 | Rollback bundle pre-epoch | — | — | — | — | — | — | — |
+| P04-T05 | Ensayo entre dos peers | — | — | — | — | — | — | — |
+| P05-T01 | Votes, monotonicidad y CAS | — | — | — | — | — | — | — |
+| P05-T02 | Controller fail-closed | — | — | — | — | — | — | — |
+| P05-T03 | Switching atómico | — | — | — | — | — | — | — |
+| P05-T04 | Verificación e independencia | — | — | — | — | — | — | — |
+| P05-T05 | Activation epoch | — | — | — | — | — | — | — |
+| P05-T06 | Retiro total de Memflow | — | — | — | — | — | — | — |
