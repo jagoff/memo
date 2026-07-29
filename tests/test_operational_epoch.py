@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import copy
 import gc
 import inspect
@@ -20,6 +21,7 @@ from memo.operational_key_store import (
     DeviceKeyStore,
     InMemoryAuthorityPinProvider,
     KeyStoreError,
+    PublicKeyRecord,
 )
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import (
@@ -86,6 +88,76 @@ def _system_identity() -> PrincipalIdentity:
         session_id="system-session",
         source_client="memo",
     )
+
+
+def _bootstrap_system_authority(
+    root: Path,
+) -> tuple[DeviceKeyStore, PublicKeyRecord, VerificationRoster, EpochFence]:
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a", roles=("origin",))
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=root,
+        pin_store=_pin_store(root),
+    )
+    fence = EpochFence(
+        root,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=_pin_store(root),
+    )
+    authorization = _authorization(
+        OperationalSigner(keys, roster_version=1),
+        key_id=key.key_id,
+        epoch=0,
+        control_oid="control-0",
+        digests={"bootstrap_roster": "a" * 64, "empty_anchor": "b" * 64},
+    )
+    fence.bootstrap(
+        authorization=authorization,
+        observed_artifact_digests=authorization.artifact_digests,
+    )
+    return keys, key, roster, fence
+
+
+def _rotate_origin_key(
+    root: Path,
+    *,
+    keys: DeviceKeyStore,
+    old_key: PublicKeyRecord,
+    roster: VerificationRoster,
+) -> tuple[VerificationRoster, PublicKeyRecord]:
+    new_key = keys.generate(
+        device_id="device-a",
+        roles=("origin",),
+        enrollment_sequence=2,
+    )
+    revoked = replace(
+        old_key,
+        revocation_sequence=2,
+        proof_of_possession="",
+    )
+    revoked = replace(
+        revoked,
+        proof_of_possession=base64.urlsafe_b64encode(
+            keys.sign(
+                key_id=revoked.key_id,
+                payload=revoked.proof_payload(),
+            )
+        )
+        .rstrip(b"=")
+        .decode("ascii"),
+    )
+    updated = roster.with_keys(
+        version=2,
+        peers=("device-a",),
+        keys=(revoked, new_key),
+        signer=OperationalSigner(keys, roster_version=1),
+        root=root,
+        pin_store=_pin_store(root),
+    )
+    return updated, new_key
 
 
 def test_public_epoch_fence_contract_uses_root_bound_pin_store(
@@ -863,6 +935,242 @@ def test_binding_requires_enrolled_signer_and_an_internal_role(tmp_path) -> None
             key_id=key.key_id,
             system_role="migration",
         )
+
+
+def test_live_fence_rejects_binding_with_signer_revoked_by_latest_roster(
+    tmp_path: Path,
+) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys, old_key, roster, fence = _bootstrap_system_authority(tmp_path)
+    _rotate_origin_key(
+        tmp_path,
+        keys=keys,
+        old_key=old_key,
+        roster=roster,
+    )
+
+    for signer_version in (1, 2):
+        with pytest.raises(AuthorityEpochError):
+            epoch_module.bind_system_context(
+                fence,
+                signer=OperationalSigner(keys, roster_version=signer_version),
+                key_id=old_key.key_id,
+                system_role="daemon",
+            )
+
+
+def test_bound_operation_is_revoked_when_latest_roster_advances(
+    tmp_path: Path,
+) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys, old_key, roster, fence = _bootstrap_system_authority(tmp_path)
+    operation = epoch_module.bind_system_context(
+        fence,
+        signer=OperationalSigner(keys, roster_version=1),
+        key_id=old_key.key_id,
+        system_role="daemon",
+    )
+    operation(_system_identity())
+    _rotate_origin_key(
+        tmp_path,
+        keys=keys,
+        old_key=old_key,
+        roster=roster,
+    )
+
+    with pytest.raises(AuthorityEpochError):
+        operation(_system_identity())
+
+
+def test_latest_enrolled_key_can_bind_and_use_live_fence(tmp_path: Path) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys, old_key, roster, fence = _bootstrap_system_authority(tmp_path)
+    updated, new_key = _rotate_origin_key(
+        tmp_path,
+        keys=keys,
+        old_key=old_key,
+        roster=roster,
+    )
+
+    operation = epoch_module.bind_system_context(
+        fence,
+        signer=OperationalSigner(keys, roster_version=updated.version),
+        key_id=new_key.key_id,
+        system_role="daemon",
+    )
+
+    context = operation(_system_identity())
+    assert (context.authority_epoch, context.control_oid) == (0, "control-0")
+
+
+def test_marker_signed_by_historical_roster_survives_latest_rotation(
+    tmp_path: Path,
+) -> None:
+    keys, old_key, roster, fence = _bootstrap_system_authority(tmp_path)
+    updated, _new_key = _rotate_origin_key(
+        tmp_path,
+        keys=keys,
+        old_key=old_key,
+        roster=roster,
+    )
+
+    live_context = fence.context(
+        _system_identity(),
+        request_epoch=0,
+        request_control_oid="control-0",
+    )
+    reopened = EpochFence(
+        tmp_path,
+        roster=updated,
+        verifier=OperationalVerifier(),
+        pin_store=_pin_store(tmp_path),
+    )
+    reopened_context = reopened.context(
+        _system_identity(),
+        request_epoch=0,
+        request_control_oid="control-0",
+    )
+
+    assert (live_context.authority_epoch, live_context.control_oid) == (
+        reopened_context.authority_epoch,
+        reopened_context.control_oid,
+    ) == (0, "control-0")
+
+
+def test_latest_roster_activation_advances_historical_marker(
+    tmp_path: Path,
+) -> None:
+    keys, old_key, roster, fence = _bootstrap_system_authority(tmp_path)
+    updated, new_key = _rotate_origin_key(
+        tmp_path,
+        keys=keys,
+        old_key=old_key,
+        roster=roster,
+    )
+    authorization = _authorization(
+        OperationalSigner(keys, roster_version=updated.version),
+        key_id=new_key.key_id,
+        epoch=1,
+        control_oid="control-1",
+        digests={"memo_generation": "c" * 64},
+    )
+
+    fence.activate(
+        authorization=authorization,
+        observed_artifact_digests=authorization.artifact_digests,
+    )
+
+    context = fence.context(
+        _system_identity(),
+        request_epoch=1,
+        request_control_oid="control-1",
+    )
+    assert (context.authority_epoch, context.control_oid) == (1, "control-1")
+
+
+@pytest.mark.parametrize("damage", ["corrupt", "truncate"])
+def test_privileged_use_fails_closed_when_roster_history_is_invalid(
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys = DeviceKeyStore.in_memory()
+    old_key = keys.generate(device_id="device-a", roles=("origin",))
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=old_key,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    updated, new_key = _rotate_origin_key(
+        tmp_path,
+        keys=keys,
+        old_key=old_key,
+        roster=roster,
+    )
+    fence = EpochFence(
+        tmp_path,
+        roster=updated,
+        verifier=OperationalVerifier(),
+        pin_store=_pin_store(tmp_path),
+    )
+    authorization = _authorization(
+        OperationalSigner(keys, roster_version=updated.version),
+        key_id=new_key.key_id,
+        epoch=0,
+        control_oid="control-0",
+        digests={"bootstrap_roster": "a" * 64, "empty_anchor": "b" * 64},
+    )
+    fence.bootstrap(
+        authorization=authorization,
+        observed_artifact_digests=authorization.artifact_digests,
+    )
+    operation = epoch_module.bind_system_context(
+        fence,
+        signer=OperationalSigner(keys, roster_version=updated.version),
+        key_id=new_key.key_id,
+        system_role="daemon",
+    )
+    operation(_system_identity())
+    if damage == "corrupt":
+        (tmp_path / "verification-rosters/00000001.json").write_text(
+            "{}",
+            encoding="utf-8",
+        )
+    else:
+        (tmp_path / "verification-rosters/00000002.json").unlink()
+
+    with pytest.raises(AuthorityEpochError):
+        operation(_system_identity())
+
+
+def test_privileged_use_fails_closed_on_concurrent_roster_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys, old_key, roster, fence = _bootstrap_system_authority(tmp_path)
+    operation = epoch_module.bind_system_context(
+        fence,
+        signer=OperationalSigner(keys, roster_version=1),
+        key_id=old_key.key_id,
+        system_role="daemon",
+    )
+    original = EpochFence._verify_system_capability
+    rotated = False
+
+    def verify_then_rotate(
+        current_fence: EpochFence,
+        payload: bytes,
+        signature: SignatureEnvelope,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        nonlocal rotated
+        original(current_fence, payload, signature, *args, **kwargs)
+        if current_fence is fence and not rotated:
+            rotated = True
+            _rotate_origin_key(
+                tmp_path,
+                keys=keys,
+                old_key=old_key,
+                roster=roster,
+            )
+
+    monkeypatch.setattr(
+        EpochFence,
+        "_verify_system_capability",
+        verify_then_rotate,
+    )
+
+    with pytest.raises(AuthorityEpochError):
+        operation(_system_identity())
+    assert rotated is True
 
 
 def test_migration_binding_accepts_an_exclusive_enrolled_attestor(tmp_path) -> None:

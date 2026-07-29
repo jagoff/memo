@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import replace
@@ -266,6 +267,67 @@ def test_signed_roster_updates_form_immutable_history(tmp_path) -> None:
     version_one.write_text(json.dumps(tampered), encoding="utf-8")
     with pytest.raises(RosterError):
         VerificationRoster.load(tmp_path, pin_store=_pin_store(tmp_path))
+
+
+def test_historical_roster_load_validates_complete_latest_pinned_history(
+    tmp_path: Path,
+) -> None:
+    store = DeviceKeyStore.in_memory()
+    first = store.generate(device_id="device-a", roles=("origin",))
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=first,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    second = store.generate(
+        device_id="device-a",
+        roles=("origin",),
+        enrollment_sequence=2,
+    )
+    revoked = replace(
+        first,
+        revocation_sequence=2,
+        proof_of_possession="",
+    )
+    revoked = replace(
+        revoked,
+        proof_of_possession=base64.urlsafe_b64encode(
+            store.sign(
+                key_id=revoked.key_id,
+                payload=revoked.proof_payload(),
+            )
+        )
+        .rstrip(b"=")
+        .decode("ascii"),
+    )
+    updated = roster.with_keys(
+        version=2,
+        peers=("device-a",),
+        keys=(revoked, second),
+        signer=OperationalSigner(store, roster_version=1),
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+
+    assert VerificationRoster.load_version(
+        tmp_path,
+        version=1,
+        pin_store=_pin_store(tmp_path),
+    ) == roster
+    assert VerificationRoster.load_version(
+        tmp_path,
+        version=2,
+        pin_store=_pin_store(tmp_path),
+    ) == updated
+
+    (tmp_path / "verification-rosters/00000002.json").unlink()
+    with pytest.raises(RosterError):
+        VerificationRoster.load_version(
+            tmp_path,
+            version=1,
+            pin_store=_pin_store(tmp_path),
+        )
 
 
 def test_roster_update_rejects_noncanonical_unpinned_predecessor(tmp_path: Path) -> None:

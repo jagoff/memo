@@ -240,6 +240,7 @@ def _fence_nonce(fence: EpochFence) -> str:
 def _system_capability_claims(
     fence: EpochFence,
     *,
+    roster: VerificationRoster,
     key_id: str,
     system_role: str,
 ) -> dict[str, object]:
@@ -250,9 +251,9 @@ def _system_capability_claims(
         "process_nonce": _PROCESS_NONCE.hex(),
         "fence_nonce": _fence_nonce(fence),
         "system_role": system_role,
-        "device_id": fence.roster.local_device_id,
-        "roster_version": fence.roster.version,
-        "roster_hash": fence.roster.roster_hash,
+        "device_id": roster.local_device_id,
+        "roster_version": roster.version,
+        "roster_hash": roster.roster_hash,
         "key_id": key_id,
     }
 
@@ -468,16 +469,48 @@ class EpochFence:
         self._recover_prepared_authority()
         self._read_authority(required=False)
 
+    def _load_latest_roster(self) -> VerificationRoster:
+        try:
+            return VerificationRoster.load(
+                self.root,
+                pin_store=self.pin_store,
+            )
+        except RosterError as exc:
+            raise AuthorityEpochError(
+                "verification roster is unavailable or invalid"
+            ) from exc
+
+    def _load_roster_version(self, version: int) -> VerificationRoster:
+        try:
+            return VerificationRoster.load_version(
+                self.root,
+                version=version,
+                pin_store=self.pin_store,
+            )
+        except RosterError as exc:
+            raise AuthorityEpochError(
+                "epoch authorization roster history is unavailable or invalid"
+            ) from exc
+
+    def _assert_latest_roster(
+        self,
+        expected: VerificationRoster,
+    ) -> None:
+        if self._load_latest_roster() != expected:
+            raise AuthorityEpochError("verification roster changed concurrently")
+
     def _verify_authorization(
         self,
         authorization: EpochMarkerAuthorization,
         observed_artifact_digests: Mapping[str, str],
+        *,
+        roster: VerificationRoster,
     ) -> None:
         if authorization.schema != _AUTHORIZATION_SCHEMA:
             raise AuthorityEpochError("unknown epoch authorization schema")
-        if authorization.device_id != self.roster.local_device_id:
+        if authorization.device_id != roster.local_device_id:
             raise AuthorityEpochError("epoch authorization device mismatch")
-        if authorization.roster_version != self.roster.version:
+        if authorization.roster_version != roster.version:
             raise AuthorityEpochError("epoch authorization roster mismatch")
         if authorization.key_id != authorization.signature.key_id:
             raise AuthorityEpochError("epoch authorization key mismatch")
@@ -488,7 +521,7 @@ class EpochFence:
                 domain=_AUTHORIZATION_SCHEMA,
                 payload=canonical_signed_bytes(authorization),
                 envelope=authorization.signature,
-                roster=self.roster,
+                roster=roster,
             )
         except OperationalError as exc:
             raise AuthorityEpochError("invalid epoch marker authorization") from exc
@@ -529,7 +562,12 @@ class EpochFence:
         observed_artifact_digests: Mapping[str, str],
         bootstrap: bool,
     ) -> None:
-        self._verify_authorization(authorization, observed_artifact_digests)
+        latest_roster = self._load_latest_roster()
+        self._verify_authorization(
+            authorization,
+            observed_artifact_digests,
+            roster=latest_roster,
+        )
         authorization_record = canonical_json_bytes(asdict(authorization))
         with authority_write_lock(self.marker_path):
             current = self._read_authority(required=False)
@@ -543,6 +581,7 @@ class EpochFence:
                     )
                 if authorization.epoch <= current.epoch:
                     raise AuthorityEpochError("authority epoch must increase monotonically")
+            self._assert_latest_roster(latest_roster)
             try:
                 self.pin_store._stage_epoch(
                     self.root,
@@ -600,7 +639,14 @@ class EpochFence:
         authorization = _decode_authorization(authorization_value)
         if canonical_json_bytes(asdict(authorization)) != authorization_record:
             raise AuthorityEpochError("prepared authority epoch is not canonical")
-        self._verify_authorization(authorization, authorization.artifact_digests)
+        authorization_roster = self._load_roster_version(
+            authorization.roster_version
+        )
+        self._verify_authorization(
+            authorization,
+            authorization.artifact_digests,
+            roster=authorization_roster,
+        )
         authorization_sha256 = hashlib.sha256(authorization_record).hexdigest()
         if (
             state.pending_epoch != authorization.epoch
@@ -626,9 +672,13 @@ class EpochFence:
                 present += 1
                 body = self._read_json(path, description)
                 existing_authorization = _decode_authorization(body.get("authorization"))
+                existing_roster = self._load_roster_version(
+                    existing_authorization.roster_version
+                )
                 self._verify_authorization(
                     existing_authorization,
                     existing_authorization.artifact_digests,
+                    roster=existing_roster,
                 )
                 existing_record = canonical_json_bytes(asdict(existing_authorization))
                 existing_sha256 = hashlib.sha256(existing_record).hexdigest()
@@ -738,7 +788,14 @@ class EpochFence:
             or marker.get("key_id") != authorization.key_id
         ):
             raise AuthorityEpochError("authority epoch marker claims mismatch")
-        self._verify_authorization(authorization, authorization.artifact_digests)
+        authorization_roster = self._load_roster_version(
+            authorization.roster_version
+        )
+        self._verify_authorization(
+            authorization,
+            authorization.artifact_digests,
+            roster=authorization_roster,
+        )
         try:
             self.pin_store._verify_epoch(
                 self.root,
@@ -753,6 +810,8 @@ class EpochFence:
         self,
         payload: bytes,
         signature: SignatureEnvelope,
+        *,
+        roster: VerificationRoster,
     ) -> None:
         if not isinstance(signature, SignatureEnvelope):
             raise AuthorityEpochError("system capability signature is invalid")
@@ -763,6 +822,7 @@ class EpochFence:
         assert isinstance(system_role, str)
         if claims != _system_capability_claims(
             self,
+            roster=roster,
             key_id=key_id,
             system_role=system_role,
         ):
@@ -774,7 +834,7 @@ class EpochFence:
                 domain=_SYSTEM_CAPABILITY_DOMAIN,
                 payload=payload,
                 envelope=signature,
-                roster=self.roster,
+                roster=roster,
             )
         except OperationalError as exc:
             raise AuthorityEpochError("invalid system capability signature") from exc
@@ -786,6 +846,7 @@ class EpochFence:
         request_epoch: int,
         request_control_oid: str,
     ) -> CommitContext:
+        latest_roster = self._load_latest_roster()
         authorization = self._read_authority()
         assert authorization is not None
         if request_epoch != authorization.epoch:
@@ -798,11 +859,12 @@ class EpochFence:
             )
         if request_control_oid != authorization.control_oid:
             raise AuthorityEpochError("request control OID does not match authority")
+        self._assert_latest_roster(latest_roster)
         return CommitContext(
             identity=identity,
             authority_epoch=request_epoch,
             control_oid=request_control_oid,
-            origin_device=self.roster.local_device_id,
+            origin_device=latest_roster.local_device_id,
         )
 
     def system_context(
@@ -835,30 +897,38 @@ class EpochFence:
             or not operation._authorizes(self, payload, signature)
         ):
             raise AuthorityEpochError("invalid system capability")
-        self._verify_system_capability(payload, signature)
+        latest_roster = self._load_latest_roster()
+        self._verify_system_capability(
+            payload,
+            signature,
+            roster=latest_roster,
+        )
         authorization = self._read_authority()
         assert authorization is not None
+        self._assert_latest_roster(latest_roster)
         return CommitContext(
             identity=identity,
             authority_epoch=authorization.epoch,
             control_oid=authorization.control_oid,
-            origin_device=self.roster.local_device_id,
+            origin_device=latest_roster.local_device_id,
         )
 
     def verify(self, context: CommitContext) -> None:
         if not isinstance(context, CommitContext):
             raise AuthorityEpochError("commit context is required")
         with authority_write_lock(self.marker_path):
+            latest_roster = self._load_latest_roster()
             authorization = self._read_authority()
             assert authorization is not None
             if context.authority_epoch != authorization.epoch:
                 raise AuthorityEpochError("commit context authority epoch mismatch")
             if context.control_oid != authorization.control_oid:
                 raise AuthorityEpochError("commit context control OID mismatch")
-            if context.origin_device != self.roster.local_device_id:
+            if context.origin_device != latest_roster.local_device_id:
                 raise AuthorityEpochError("commit context origin device mismatch")
-            if context.identity.device_id != self.roster.local_device_id:
+            if context.identity.device_id != latest_roster.local_device_id:
                 raise AuthorityEpochError("commit context principal device mismatch")
+            self._assert_latest_roster(latest_roster)
 
 
 def bind_system_context(
@@ -884,8 +954,10 @@ def bind_system_context(
         raise AuthorityEpochError("system context binding key is invalid")
     if system_role not in _SYSTEM_ROLES:
         raise AuthorityEpochError("system context binding role is invalid")
+    latest_roster = fence._load_latest_roster()
     claims = _system_capability_claims(
         fence,
+        roster=latest_roster,
         key_id=key_id,
         system_role=system_role,
     )
@@ -898,7 +970,12 @@ def bind_system_context(
         )
     except OperationalError as exc:
         raise AuthorityEpochError("system context binding signature failed") from exc
-    fence._verify_system_capability(payload, signature)
+    fence._verify_system_capability(
+        payload,
+        signature,
+        roster=latest_roster,
+    )
+    fence._assert_latest_roster(latest_roster)
     return _BoundSystemContext(fence, payload, signature)
 
 

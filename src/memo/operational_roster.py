@@ -248,20 +248,27 @@ class VerificationRoster:
         *,
         pin_store: AuthorityPinStore | None = None,
     ) -> VerificationRoster:
-        root = Path(root)
-        pin_store = _resolve_pin_store(root, pin_store)
-        _recover_prepared_roster(root, pin_store)
-        with authority_write_lock(root / "verification-rosters"):
-            previous = _load_roster_files(root)
-        try:
-            pin_store._verify_roster(
-                root,
-                version=previous.version,
-                roster_hash=previous.roster_hash,
-            )
-        except KeyStoreError as exc:
-            raise RosterError("verification roster rollback or substitution detected") from exc
-        return previous
+        history = _load_pinned_roster_history(root, pin_store)
+        return history[-1]
+
+    @classmethod
+    def load_version(
+        cls,
+        root: Path,
+        *,
+        version: int,
+        pin_store: AuthorityPinStore | None = None,
+    ) -> VerificationRoster:
+        """Load one historical roster only through the complete pinned history."""
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise RosterError("verification roster version must be positive")
+        history = _load_pinned_roster_history(root, pin_store)
+        if version > len(history):
+            raise RosterError(f"verification roster version is missing: {version}")
+        roster = history[version - 1]
+        if roster.version != version:
+            raise RosterError("verification roster history has a version gap")
+        return roster
 
     def with_keys(
         self,
@@ -341,6 +348,29 @@ def _resolve_pin_store(
         raise RosterError("verification roster authority pin is unavailable") from exc
 
 
+def _load_pinned_roster_history(
+    root: Path,
+    pin_store: AuthorityPinStore | None,
+) -> tuple[VerificationRoster, ...]:
+    root = Path(root)
+    resolved_pin_store = _resolve_pin_store(root, pin_store)
+    _recover_prepared_roster(root, resolved_pin_store)
+    with authority_write_lock(root / "verification-rosters"):
+        history = _load_roster_history(root)
+        latest = history[-1]
+        try:
+            resolved_pin_store._verify_roster(
+                root,
+                version=latest.version,
+                roster_hash=latest.roster_hash,
+            )
+        except KeyStoreError as exc:
+            raise RosterError(
+                "verification roster rollback or substitution detected"
+            ) from exc
+    return history
+
+
 def _recover_prepared_roster(root: Path, pin_store: AuthorityPinStore) -> None:
     try:
         encoded = pin_store._prepared_roster(root)
@@ -415,6 +445,10 @@ def _recover_prepared_roster(root: Path, pin_store: AuthorityPinStore) -> None:
 
 
 def _load_roster_files(root: Path) -> VerificationRoster:
+    return _load_roster_history(root)[-1]
+
+
+def _load_roster_history(root: Path) -> tuple[VerificationRoster, ...]:
     root = Path(root)
     history_root = root / "verification-rosters"
     current_path = root / "verification-roster.json"
@@ -422,12 +456,14 @@ def _load_roster_files(root: Path) -> VerificationRoster:
     if not paths:
         raise RosterError("verification roster history is missing")
     previous: VerificationRoster | None = None
+    history: list[VerificationRoster] = []
     for expected, path in enumerate(paths, start=1):
         if path.name != f"{expected:08d}.json":
             raise RosterError("verification roster history has a version gap")
         roster = _decode_roster(path)
         _verify_roster(roster, previous=previous)
         previous = roster
+        history.append(roster)
     assert previous is not None
     try:
         current_bytes: bytes | None = current_path.read_bytes()
@@ -438,7 +474,7 @@ def _load_roster_files(root: Path) -> VerificationRoster:
     latest_bytes = _canonical(previous.to_dict())
     if current_bytes != latest_bytes:
         raise RosterError("verification roster current pointer mismatch")
-    return previous
+    return tuple(history)
 
 
 def _decode_roster(path: Path) -> VerificationRoster:
