@@ -9,7 +9,7 @@ from memo.memory import AmbiguousIdError, Memory
 def register(server: Any, memory: Memory) -> None:
     @server.resource("memo://profile/{scope}")
     def _resource_profile(scope: str) -> str:
-        """Expose the bounded profile as a subscribable MCP resource."""
+        """Expose the bounded profile as a poll-only MCP resource."""
         from memo.memory_profile import build_memory_profile
 
         try:
