@@ -34,6 +34,25 @@ memo search 'what database did we pick?'      # search by meaning
 
 That's it. Your agents pick it up over MCP automatically — the installer wires every client it finds.
 
+<details>
+<summary>Installing on another Mac or handing setup to an agent?</summary>
+
+New Mac:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.6/install.sh | bash
+memo sync bootstrap git@github.com:yourname/memo-sync.git
+```
+
+Agent-managed setup:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.6/install.sh | bash
+memo doctor --strict-runtime
+```
+
+</details>
+
 **On Linux or just want to look around first?**
 
 ```bash
