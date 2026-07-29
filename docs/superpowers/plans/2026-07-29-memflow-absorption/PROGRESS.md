@@ -11,7 +11,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
 - [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tarea 2 con
-  hardening implementado y re-revisión final en curso**.
+  re-revisión `FAIL` y segunda ronda de hardening en preparación**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -119,7 +119,11 @@ Estado: **1/7 aceptadas**.
 - [x] Non-slow completo: `5995 passed, 18 skipped`.
 - [x] Commit técnico de hardening con paths explícitos: `815307ac`.
 - [x] Paquetes de revisión hardening y Task 2 completo generados.
-- [ ] Re-revisión final triple sobre `815307ac`.
+- [x] Re-revisión final sobre `815307ac`: `FAIL`, con 3 `HIGH` y
+  2 `MEDIUM` consolidados.
+- [x] Brief TDD de hardening ronda 2 generado con BASE `123cd8f6`.
+- [ ] RED de markers atómicos, finalización, anchor history y root único.
+- [ ] Implementar y verificar hardening ronda 2.
 - [ ] Corregir todo hallazgo `BLOCKER/HIGH/MEDIUM`.
 - [ ] Revisión independiente y `PASS`.
 
@@ -266,7 +270,7 @@ paso todavía no comenzó, no que esté aprobado.
 | ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
 |---|---|---|---|---|---|---|---|---|
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
-| P01-T02 | Anchors, append y bundles | implementadores + 3 revisores + arquitecto | `8e85662b`; hardening `0b1c859d` | inicial ledger/epoch; hardening `36 failed, 76 passed` | contracts `186`; full `5995` | `5a80c74d` + `815307ac` | final triple en curso | — |
+| P01-T02 | Anchors, append y bundles | implementadores + revisores especializados | `8e85662b`; hardening `0b1c859d`; ronda 2 `123cd8f6` | inicial + hardening `36 failed, 76 passed`; ronda 2 pendiente | contracts `186`; full `5995` | `5a80c74d` + `815307ac` | **FAIL** ronda 2: 3H/2M | — |
 | P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
 | P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
