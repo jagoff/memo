@@ -30,6 +30,16 @@ def test_every_dark_flag_has_a_gate():
     )
 
 
+def test_dark_scalar_boost_flags_are_inventoried_with_a_recall_gate():
+    """The spec's dark flags include the float proximity boost (default 0.0 =
+    OFF): it must be tracked by the graduation inventory and declare a recall
+    A/B gate, not escape GATES because it is not a bool *_ENABLED flag."""
+    name = "MEMO_RECALL_CODE_PROXIMITY_BOOST"
+    assert name in {s.name for s in df.dark_flags()}
+    assert name in df.GATES
+    assert df.GATES[name].kind == "recall"
+
+
 def test_no_graduated_or_stale_gates():
     dark = {s.name for s in df.dark_flags()}
     stale = sorted(set(df.GATES) - dark)

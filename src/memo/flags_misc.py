@@ -348,6 +348,27 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_BRIEFING_CODE_DRIFT",
+        "bool",
+        True,
+        "misc",
+        "Surface last night's code-drift outcome (memories archived / partial / "
+        "repaired) as one line in the SessionStart briefing, read from the dream "
+        "receipt (state_dir/dream/last.json) — zero graph queries at "
+        "SessionStart. Default on.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_GAPS_CODE_HUBS",
+        "bool",
+        True,
+        "misc",
+        "Flag knowledge gaps on code hubs in `memo ask-gaps`: top codegraph "
+        "nodes by incoming call-edges with no memory citing them. On-demand "
+        "graph query only (never the recall hook). Default on.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_OCR_ENABLED", "bool", True, "misc", "Enable OCR for image ingestion.", opt_out=True
     ),
     _spec(
@@ -1212,6 +1233,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "re-verifies memories carrying code_refs against the live codegraph index "
         "and proposes fully-drifted ones as outdated (reversible archive, never a "
         "hard delete). Aborts when the index is missing or >24h stale.",
+    ),
+    # dream — code-drift auto-repair: re-point dead refs with a unique candidate
+    _spec(
+        "MEMO_DREAM_CODE_REPAIR_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable auto-repair inside the nightly code-drift pass. OFF by default; "
+        "a dead code_ref with EXACTLY one rename/move candidate in the "
+        "codegraph index is re-pointed in place (the old ref is preserved in "
+        "extra.code_refs_history) and the memory is not archived that night. "
+        "0 or >1 candidates -> archive as today.",
     ),
     # dream v2 — anticipatory pass (Phase 3): surface unmet gaps + prewarm
     _spec(

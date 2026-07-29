@@ -63,8 +63,8 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     # Code-citation lines (MEMO_RECALL_CODE_REFS_ENABLED): verification is
     # fail-open — a codegraph open/lookup error degrades the ref line to
     # '(no verificado)' and must never break the recall render or the 5s hook
-    # budget.
-    ("recall_logic.py", "_code_ref_status", 1),
+    # budget. (_code_ref_status now delegates to code_intel.ref_status, which
+    # catches concrete sqlite errors itself — no broad except left there.)
     ("recall_logic.py", "_code_ref_lines", 1),
     ("cli_recall_hook.py", "recall_hook", 1),
     ("cli_recall_hook.py", "recall_hook._bail", 1),
