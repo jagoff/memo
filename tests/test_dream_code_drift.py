@@ -227,6 +227,28 @@ def test_foreign_repo_ref_is_unverifiable_never_dead(mock_memory, graph_db, monk
     assert mock_memory.get(rec.id) is not None
 
 
+def test_dead_local_ref_plus_foreign_ref_is_partial_not_archived(
+    mock_memory, graph_db, monkeypatch
+):
+    monkeypatch.setenv(CODE_DRIFT_FLAG, "1")
+    # The local ref is dead, but the foreign ref may be fully vigente in ITS
+    # repo — it was never checked against any DB. Archiving on the verifiable
+    # subset alone would archive on partial evidence: report as partial only.
+    foreign = _ref(
+        "src/synapse/router.py",
+        label="route",
+        qualified="synapse.router.route",
+        repo_id="feedfacefeedface",
+    )
+    rec = _save_with_refs(mock_memory, [DEAD_FILE_REF, foreign], "dead here, alive elsewhere")
+
+    res = _run_code_drift(mock_memory, db_path=graph_db)
+
+    assert res["outdated"] == []
+    assert [e["id"] for e in res["partial"]] == [rec.id]
+    assert mock_memory.get(rec.id) is not None
+
+
 def test_matching_repo_ref_is_still_verified(mock_memory, graph_db, monkeypatch):
     monkeypatch.setenv(CODE_DRIFT_FLAG, "1")
     # graph_db lives at <repo_root>/.codegraph/codegraph.db — a ref carrying
@@ -243,6 +265,35 @@ def test_matching_repo_ref_is_still_verified(mock_memory, graph_db, monkeypatch)
 
     assert res["scanned"] == 1
     assert [e["id"] for e in res["outdated"]] == [rec.id]
+
+
+# --- nightly hub gaps: computed here, read by the briefing from the receipt -------
+
+
+def test_hub_gaps_land_in_receipt_for_the_briefing(mock_memory, graph_db, monkeypatch):
+    monkeypatch.setenv(CODE_DRIFT_FLAG, "1")
+    monkeypatch.delenv("MEMO_GAPS_CODE_HUBS", raising=False)
+    conn = sqlite3.connect(graph_db)
+    conn.execute(
+        "INSERT INTO nodes VALUES "
+        "('function:caller', 'function', 'caller', 'memo.cli.caller', 'src/memo/cli.py', 1, 5)"
+    )
+    conn.execute("INSERT INTO edges VALUES ('function:caller', 'function:save', 'calls')")
+    conn.commit()
+    conn.close()
+
+    res = _run_code_drift(mock_memory, db_path=graph_db)
+
+    assert res["hub_gaps"] == ["hub sin memoria: save (1 callers) — src/memo/store.py"]
+
+
+def test_hub_gaps_absent_from_receipt_when_flag_off(mock_memory, graph_db, monkeypatch):
+    monkeypatch.setenv(CODE_DRIFT_FLAG, "1")
+    monkeypatch.setenv("MEMO_GAPS_CODE_HUBS", "0")
+
+    res = _run_code_drift(mock_memory, db_path=graph_db)
+
+    assert "hub_gaps" not in res
 
 
 # --- guard: missing or stale index aborts without marking anything ----------------

@@ -54,6 +54,14 @@ GateKind = Literal["recall", "tuner", "manual"]
 # Gates the nightly code-drift pass (`cli_dream_passes._run_code_drift`); the
 # canonical FlagSpec lives in flags_misc.py with the other dream pass flags.
 CODE_DRIFT_FLAG = "MEMO_DREAM_CODE_DRIFT_ENABLED"
+# Gates auto-repair inside the code-drift pass; canonical FlagSpec in
+# flags_misc.py next to MEMO_DREAM_CODE_DRIFT_ENABLED.
+CODE_REPAIR_FLAG = "MEMO_DREAM_CODE_REPAIR_ENABLED"
+# Dark scalar flags (default 0.0 = OFF) that owe a graduation gate like any
+# bool dark flag: the A/B seam pins them "0"/"1" (0.0 = off, 1.0 = full
+# boost), so the recall gate measures them unchanged. Explicit allowlist —
+# most float knobs are tuner territory, not graduation candidates.
+_DARK_SCALAR_FLAGS = ("MEMO_RECALL_CODE_PROXIMITY_BOOST",)
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,12 @@ GATES: dict[str, GateSpec] = dict(
         _g("MEMO_ENTITY_RETRIEVAL_ENABLED", "recall", "query-time entity-overlap boost"),
         _g("MEMO_CONTRADICT_PENALTY_ENABLED", "recall", "rank-time penalty on contradicted hits"),
         _g("MEMO_GRAPH_SIGNAL_ENABLED", "recall", "graph ranking signal; doc says eval-gated"),
+        _g(
+            "MEMO_RECALL_CODE_PROXIMITY_BOOST",
+            "recall",
+            "code-proximity additive boost (dark float, 0.0 = OFF); recall A/B "
+            "via the eval flag_overrides seam — the ON pin '1' measures boost=1.0",
+        ),
         _g(
             "MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED",
             "recall",
@@ -189,6 +203,12 @@ GATES: dict[str, GateSpec] = dict(
             "meta: gates the code-drift pass; needs a trusted fresh codegraph index, "
             "not recall-measurable — human flips",
         ),
+        _g(
+            CODE_REPAIR_FLAG,
+            "manual",
+            "repairs correctos observados en receipts de N noches; "
+            "falso-repair = ref apuntando a símbolo equivocado",
+        ),
         _g("MEMO_DREAM_TUNE_ENABLED", "manual", "meta: gates the tuner pass; op cost decision"),
         _g("MEMO_DREAM_TUNE_BOOST_ENABLED", "manual", "meta: gates the boost explorer"),
         _g("MEMO_DREAM_HYDE_TUNE_ENABLED", "manual", "meta: gates the HyDE A/B pass"),
@@ -219,13 +239,14 @@ GATES: dict[str, GateSpec] = dict(
 
 
 def dark_flags() -> list[FlagSpec]:
-    """Every default-off ``*_ENABLED`` bool flag in the registry — the set
-    ``GATES`` must cover."""
-    return [
+    """Every default-off ``*_ENABLED`` bool flag in the registry, plus the
+    :data:`_DARK_SCALAR_FLAGS` allowlist — the set ``GATES`` must cover."""
+    bools = [
         s
         for s in REGISTRY.values()
         if s.kind == "bool" and s.name.endswith("_ENABLED") and not s.opt_out and not s.default
     ]
+    return bools + [REGISTRY[name] for name in _DARK_SCALAR_FLAGS if name in REGISTRY]
 
 
 def _human_value(name: str) -> str | None:
@@ -571,6 +592,7 @@ def status_rows(cfg: Any, *, today: date | None = None) -> list[dict[str, Any]]:
 
 __all__ = [
     "CODE_DRIFT_FLAG",
+    "CODE_REPAIR_FLAG",
     "FLAG_LATENCY_HEADROOM",
     "GATES",
     "GateSpec",

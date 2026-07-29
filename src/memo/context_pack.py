@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
 from memo.quality import QualityDecision, classify_quality
+
+DEFAULT_BUDGET_CHARS = 4000
+
+# --code section caps: enough neighborhood to orient without flooding the pack.
+_CODE_SECTION_SYMBOL_CAP = 8
+_CODE_SECTION_MEMORY_CAP = 5
 
 
 @dataclass(frozen=True)
@@ -215,12 +222,64 @@ def _trim_to_budget(pack: ContextPack, budget_chars: int) -> ContextPack:
     return ContextPack(pack.question, summary, [], [], [], "")
 
 
+def _symbol_locations(graph: sqlite3.Connection, symbols: set[str]) -> list[tuple[str, str, int]]:
+    """(name, file_path, start_line) for each symbol node, alphabetical, capped."""
+    if not symbols:
+        return []
+    marks = ", ".join("?" * len(symbols))
+    sql = (
+        "SELECT DISTINCT name, file_path, start_line FROM nodes "  # noqa: S608 — placeholders only
+        f"WHERE kind != 'file' AND name IN ({marks}) ORDER BY name, file_path LIMIT ?"
+    )
+    try:
+        rows = graph.execute(sql, (*sorted(symbols), _CODE_SECTION_SYMBOL_CAP)).fetchall()
+    except sqlite3.Error:
+        return []
+    return [(str(row[0]), str(row[1] or ""), int(row[2] or 0)) for row in rows]
+
+
+def code_related_section(code: str, store_conn: Any) -> str:
+    """'## Código relacionado' block anchoring the pack on a symbol or path.
+
+    ``code`` containing '/' is treated as a file path (the symbols defined
+    there seed the walk); anything else is a literal symbol name. The seed
+    expands 1 hop over the codegraph into up to 8 symbol lines
+    (``name — file_path:start_line``) plus up to 5 memories citing the
+    neighborhood. Fail-open: missing index, unknown anchor, or any engine
+    error → '' (the pack renders exactly as without --code).
+    """
+    from memo import code_intel
+
+    anchor = str(code or "").strip()
+    if not anchor:
+        return ""
+    opened = code_intel.open_graph()
+    if opened is None:
+        return ""
+    graph, _db_repo_id = opened
+    try:
+        seeds = code_intel.symbols_for_files(graph, [anchor]) if "/" in anchor else {anchor}
+        symbols = code_intel.neighbors(graph, seeds, hops=1)
+        locations = _symbol_locations(graph, symbols)
+    finally:
+        graph.close()
+    if not locations:
+        return ""
+    lines = ["## Código relacionado"]
+    lines.extend(f"- {name} — {path}:{line}" for name, path, line in locations)
+    citing = code_intel.memories_citing(store_conn, symbols=symbols, limit=_CODE_SECTION_MEMORY_CAP)
+    if citing:
+        lines.append("Memorias que citan este código:")
+        lines.extend(f"- [{memory['id'][:8]}] {memory['title']}" for memory in citing)
+    return "\n".join(lines)
+
+
 def build_context_pack(
     question: str,
     hits: list[Any],
     *,
     snippet_chars: int,
-    budget_chars: int = 4000,
+    budget_chars: int = DEFAULT_BUDGET_CHARS,
 ) -> ContextPack:
     current: list[dict[str, Any]] = []
     supporting: list[dict[str, Any]] = []

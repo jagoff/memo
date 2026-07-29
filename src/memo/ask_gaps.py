@@ -11,11 +11,18 @@ already failed to answer from real usage; asking it back is honest.
 Report-only: shadow-logs what it WOULD ask regardless of the enable flag; a
 human flips MEMO_ASK_GAPS_ENABLED after reviewing ``memo ask-gaps shadow``.
 Deduped per session (a session asks at most one NEW gap and never repeats one).
+
+Also home to the code-hub gap surface (``MEMO_GAPS_CODE_HUBS``, default ON):
+top codegraph call-magnets no memory documents, via :func:`code_hub_gaps` —
+the briefing carries at most ONE such line, read from the nightly dream
+receipt (zero graph queries at SessionStart); the full live list is for the
+CLI and the nightly code-drift pass.
 """
 
 from __future__ import annotations
 
 import json as _json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -131,24 +138,107 @@ def _read_receipt_gaps(state_dir: Path) -> list[dict[str, Any]]:
         return []
 
 
+# --- code-hub gaps (MEMO_GAPS_CODE_HUBS) ------------------------------------------
+
+_HUB_TOP = 10
+# Same base query `memo code-facts` mines call hubs with: in-degree of `calls`
+# edges over src/ nodes only.
+_HUB_QUERY = (
+    "SELECT t.name, t.file_path, COUNT(*) AS n "
+    "FROM edges e JOIN nodes t ON e.target = t.id "
+    "WHERE e.kind = 'calls' AND t.file_path LIKE 'src/%' "
+    "GROUP BY t.id ORDER BY n DESC, t.qualified_name LIMIT ?"
+)
+
+
+def code_hub_gaps(mem: Any, top: int = _HUB_TOP) -> list[str]:
+    """Knowledge gaps on code hubs: top call-magnets no memory documents.
+
+    The top-``top`` codegraph nodes by incoming ``calls`` edges (src/ only)
+    that no non-reference memory cites, one ``hub sin memoria: …`` line each.
+    Gated by ``MEMO_GAPS_CODE_HUBS``; on-demand graph query only (never the
+    recall hook, never SessionStart). Fail-open: flag off / no index → [].
+    """
+    from memo import code_intel
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_GAPS_CODE_HUBS"):
+        return []
+    opened = code_intel.open_graph()
+    if opened is None:
+        return []
+    graph, _db_repo_id = opened
+    try:
+        return _hub_gap_lines(mem.store._conn, graph, top=top)
+    finally:
+        graph.close()
+
+
+def _hub_gap_lines(store_conn: Any, graph: Any, *, top: int) -> list[str]:
+    """The ``hub sin memoria`` lines over an OPEN graph connection — shared by
+    :func:`code_hub_gaps` and the nightly code-drift pass (which persists them
+    to the receipt for the briefing). A failed hub query degrades to no lines."""
+    from memo import code_intel
+
+    try:
+        rows = graph.execute(_HUB_QUERY, (int(top),)).fetchall()
+    except sqlite3.Error:
+        return []
+    lines: list[str] = []
+    for name, file_path, callers in rows:
+        symbol = str(name or "")
+        if not symbol:
+            continue
+        if code_intel.memories_citing(store_conn, symbols={symbol}, limit=1):
+            continue
+        lines.append(f"hub sin memoria: {symbol} ({callers} callers) — {file_path}")
+    return lines
+
+
+def _hub_briefing_lines(cfg: Any) -> list[str]:
+    """At most ONE hub line for the briefing, read from the nightly dream
+    receipt (``code_drift.hub_gaps``, written by the code-drift pass).
+
+    SessionStart's budget is ZERO graph queries: no index open, no git, no
+    store scan — one small json read. The live query belongs to
+    :func:`code_hub_gaps` (on-demand) and the nightly pass. No receipt /
+    corrupt receipt / flag off → []."""
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_GAPS_CODE_HUBS"):
+        return []
+    try:
+        data = _json.loads(
+            (Path(cfg.state_dir) / "dream" / "last.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return []
+    section = data.get("code_drift") if isinstance(data, dict) else None
+    gaps = section.get("hub_gaps") if isinstance(section, dict) else None
+    if not isinstance(gaps, list):
+        return []
+    return [g for g in gaps if isinstance(g, str) and g][:1]
+
+
 def briefing_lines(cfg: Any, *, session_id: str) -> list[str]:
-    """SessionStart render: at most one NEW high-value gap as a question. Never
-    raises, never fabricates. Shadow-logs whether or not it renders."""
+    """SessionStart render: at most one NEW high-value gap as a question plus
+    at most one undocumented code hub. Never raises, never fabricates.
+    Shadow-logs whether or not the question renders."""
+    lines: list[str] = []
     try:
         from memo.flags import flag_bool
 
         gaps = _read_receipt_gaps(cfg.state_dir)
         gap = pick_gap(gaps)
-        if gap is None:
-            return []
-        key = _gap_key(gap)
-        if already_asked(cfg.state_dir, session_id, key):
-            return []
-        render = flag_bool("MEMO_ASK_GAPS_ENABLED")
-        log_shadow(cfg.state_dir, shadow_record(gap, rendered=render))
-        if not render:
-            return []
-        note_asked(cfg.state_dir, session_id, key)
-        return [phrase_question(gap), ""]
+        if gap is not None:
+            key = _gap_key(gap)
+            if not already_asked(cfg.state_dir, session_id, key):
+                render = flag_bool("MEMO_ASK_GAPS_ENABLED")
+                log_shadow(cfg.state_dir, shadow_record(gap, rendered=render))
+                if render:
+                    note_asked(cfg.state_dir, session_id, key)
+                    lines.extend([phrase_question(gap), ""])
+        lines.extend(_hub_briefing_lines(cfg))
     except Exception:
-        return []
+        return lines
+    return lines
