@@ -17,6 +17,39 @@ from memo.cli_runtime import _print_runtime_install_report, _runtime_install_rep
 from memo.config import Config
 from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs
 
+# Codegraph doctor check — WARN-only (never fails doctor). Consumers of the
+# code graph degrade silently when the index is absent, but
+# MEMO_GRAPH_USE_CODEGRAPH is default-on, so absence IS signal worth surfacing.
+_CODEGRAPH_MIN_CLI_VERSION = (1, 5, 0)
+_CODEGRAPH_FRESH_MAX_AGE_S = 24 * 3600.0
+_CODEGRAPH_INSTALL_HINT = "npm i -g @colbymchenry/codegraph && codegraph init"
+
+
+def _codegraph_cli_version(timeout_s: float = 2.0) -> tuple[int, int, int] | None:
+    """Best-effort `codegraph --version` probe.
+
+    Returns the parsed (major, minor, patch) or None when the binary is
+    missing, the probe times out, or the output carries no semver. Never
+    raises — the doctor codegraph check is WARN-only.
+    """
+    import re
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["codegraph", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except Exception:
+        return None
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", f"{proc.stdout}\n{proc.stderr}")
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
 
 @click.command()
 @click.option("--gc", "do_gc", is_flag=True, help="Detect orphans between store and disk.")
@@ -307,6 +340,73 @@ def doctor(
         console.print(
             f"[green]✓[/green] github sync: up to date ({sync.get('remote') or 'no remote'})"
         )
+
+    # Codegraph index health — WARN-only, never flips `ok`. The graph consumers
+    # (navigation pathfinding, impact) degrade silently when the index is
+    # missing, but MEMO_GRAPH_USE_CODEGRAPH is default-on, so a missing index
+    # NEXT TO an installed CLI is signal. When neither the index nor the CLI
+    # exists (the common pipx/uv-tool install of memo), codegraph simply isn't
+    # part of this setup — total absence is not signal, stay informative.
+    from memo import codegraph_loader
+
+    _cg_version = _codegraph_cli_version()
+    _cg_db = codegraph_loader._resolve_db()
+    _cg_db_present = _cg_db.is_file()
+    if not _cg_db_present:
+        if _cg_version is None:
+            console.print(
+                f"[dim]•[/dim] codegraph: not installed "
+                f"[dim](optional — `{_CODEGRAPH_INSTALL_HINT}`)[/dim]"
+            )
+        else:
+            console.print(
+                f"[yellow]![/yellow] codegraph: index missing at {_cg_db} "
+                f"[dim](`{_CODEGRAPH_INSTALL_HINT}`)[/dim]"
+            )
+    else:
+        try:
+            import sqlite3 as _cg_sqlite3
+            import time as _cg_time
+
+            _cg_conn = _cg_sqlite3.connect(f"file:{_cg_db}?mode=ro", uri=True)
+            try:
+                _cg_journal = str(_cg_conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+                _cg_nodes = int(_cg_conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0])
+                _cg_edges = int(_cg_conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0])
+            finally:
+                _cg_conn.close()
+            _cg_age_s = _cg_time.time() - _cg_db.stat().st_mtime
+            _cg_warnings: list[str] = []
+            if _cg_journal != "wal":
+                _cg_warnings.append(f"journal_mode={_cg_journal} (expected wal)")
+            if _cg_nodes == 0 or _cg_edges == 0:
+                _cg_warnings.append(f"index empty (nodes={_cg_nodes} edges={_cg_edges})")
+            if _cg_age_s > _CODEGRAPH_FRESH_MAX_AGE_S:
+                _cg_warnings.append("index older than 24h — run `codegraph sync`")
+            if _cg_warnings:
+                console.print(f"[yellow]![/yellow] codegraph: {'; '.join(_cg_warnings)}")
+            else:
+                console.print(
+                    f"[green]✓[/green] codegraph: index ok "
+                    f"(nodes={_cg_nodes} edges={_cg_edges}, wal, fresh <24h)"
+                )
+        except Exception as exc:
+            console.print(f"[yellow]![/yellow] codegraph: index unreadable: {exc}")
+
+    if _cg_version is None:
+        if _cg_db_present:
+            console.print(
+                f"[dim]•[/dim] codegraph: CLI not found [dim](`{_CODEGRAPH_INSTALL_HINT}`)[/dim]"
+            )
+    elif _cg_version < _CODEGRAPH_MIN_CLI_VERSION:
+        _cg_min = ".".join(str(p) for p in _CODEGRAPH_MIN_CLI_VERSION)
+        _cg_ver = ".".join(str(p) for p in _cg_version)
+        console.print(
+            f"[yellow]![/yellow] codegraph: CLI v{_cg_ver} < v{_cg_min} — impact/edges "
+            f"degraded [dim](npm i -g @colbymchenry/codegraph@latest)[/dim]"
+        )
+    else:
+        console.print(f"[green]✓[/green] codegraph: CLI v{'.'.join(str(p) for p in _cg_version)}")
 
     if check_db:
         for db in _db_health_report(cfg):
