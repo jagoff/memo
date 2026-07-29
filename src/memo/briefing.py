@@ -570,6 +570,20 @@ def memo_native_briefing_lines(
     return lines
 
 
+def compose_unified_briefing(memory: Any, cwd: str | None) -> str:
+    """Compose the unified-briefing markdown — single source of truth for the
+    `memo_unified_briefing` MCP tool and the `briefing` MCP prompt."""
+    from memo.flags import flag_int
+
+    loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
+    loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
+    raw_lines: list[str] = memo_native_briefing_lines(
+        memory, loops_n=loops_n, loops_days=loops_days
+    )
+    raw_lines.extend(operational_briefing_lines(memory, cwd))
+    return compact_text("\n".join(raw_lines), max_chars=900)
+
+
 def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
     text = str(text or "").strip().replace("\n", " ")
     if len(text) <= limit:
@@ -579,6 +593,7 @@ def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
 
 __all__ = [
     "compact_text",
+    "compose_unified_briefing",
     "dream_digest_lines",
     "install_seed_lines",
     "memo_native_briefing_lines",

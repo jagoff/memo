@@ -48,6 +48,45 @@ def test_briefing_returns_context(mock_memory):
     assert out.startswith("Context from memo (briefing):")
 
 
+def test_briefing_prompt_matches_tool_markdown(mock_memory):
+    """Divergence guard: the prompt and `memo_unified_briefing` both render via
+    `compose_unified_briefing`, so for the same memory (cwd=None) the prompt is
+    exactly the tool's markdown behind the context header."""
+    import memo.server_core_search as search_server
+
+    class _ToolServer:
+        def __init__(self):
+            self.tools: dict[str, object] = {}
+
+        def tool(self, *, annotations):
+            def _decorator(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return _decorator
+
+    mock_memory.save(content="port is 8765", title="port fact", type_="fact")
+    tool_server = _ToolServer()
+    search_server.register(tool_server, mock_memory)
+    tool_out = tool_server.tools["memo_unified_briefing"](cwd=None)
+
+    server = _register(mock_memory)
+    prompt_out = server.prompts["briefing"]()
+
+    assert tool_out["markdown"]
+    assert prompt_out == "Context from memo (briefing):\n" + tool_out["markdown"]
+
+
+def test_briefing_prompt_fails_open_when_composer_raises(mock_memory, monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("memo.briefing.memo_native_briefing_lines", _boom)
+    server = _register(mock_memory)
+    out = server.prompts["briefing"]()
+    assert out.startswith("memo unavailable:")
+
+
 def test_prompts_fail_open(mock_memory, monkeypatch):
     server = _register(mock_memory)
     monkeypatch.setattr(
