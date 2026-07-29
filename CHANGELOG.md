@@ -9,6 +9,55 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-07-29
+
+### Changed
+
+- CLI `memo briefing` and MCP `memo_unified_briefing` now share one
+  unified-briefing composer, so both surfaces render the same sections and
+  dispute markers; dispute-aware ask gained an MLX integration test.
+- Code-ref verification is unified in the new `code_intel` engine: the recall
+  renderer and the dream code-drift pass now share one implementation of the
+  vigente/desaparecido/no-verificado semantics (the two previous copies had
+  already diverged once).
+
+### Added — codegraph integration (two rounds)
+
+- Project-aware codegraph loader: nearest `.codegraph/codegraph.db` discovered
+  upward from cwd, `MEMO_CODEGRAPH_DB` pin for daemons/pipx installs,
+  per-DB mtime-cached graphs, `MEMO_CODEGRAPH_MAX_EDGES` hot-path cap.
+- `memo doctor` checks the codegraph index (freshness, WAL, counts, CLI
+  version) — WARN-only, never blocks.
+- `memo code-facts [--project PATH]`: mines durable architectural facts
+  (call hubs, CLI surface, package dependencies) from any indexed repo into
+  memories with verifiable `code_refs` provenance.
+- Dream pass `code_drift` (`MEMO_DREAM_CODE_DRIFT_ENABLED`, default off):
+  re-verifies memories citing code against the live index nightly; memories
+  whose refs are all gone are reversibly archived, never hard-deleted.
+  Optional auto-repair (`MEMO_DREAM_CODE_REPAIR_ENABLED`, default off)
+  re-points a dead ref when exactly one name-similar candidate exists,
+  preserving the old ref in `code_refs_history`.
+- Verified code citations in recall (`MEMO_RECALL_CODE_REFS_ENABLED`, default
+  off): `↳ code: path:line (vigente)` lines under recalled memories, checked
+  live against the index (full and balanced formats).
+- Symbol-aligned repo chunking (`MEMO_REPO_CHUNK_SYMBOL_ALIGNED`, default
+  off): chunk boundaries follow codegraph symbol boundaries.
+- `memo code-nudge`: after a commit, surfaces memories that cite the files
+  just touched (wired into the trinity git hooks; silent when none).
+- `memo code-health`: ref-status summary, dead-knowledge report (memories
+  citing 0-caller symbols) and undocumented-hub report in one command.
+- Briefing shows the nightly code-drift outcome (`MEMO_BRIEFING_CODE_DRIFT`,
+  default on; reads the dream receipt — zero graph queries at SessionStart).
+- ask-gaps flags top call hubs with no memory documenting them
+  (`MEMO_GAPS_CODE_HUBS`, default on).
+- Recall code-proximity boost (`MEMO_RECALL_CODE_PROXIMITY_BOOST`, default
+  0.0/off): memories citing symbols near your uncommitted changes rank higher.
+- `memo context-pack --code <symbol|path>`: adds a graph-neighborhood section
+  (symbols ≤1 hop + memories citing them) to the pack.
+- Scripts `cg_impact_gate.sh` (pre-refactor caller checklist; aborts on
+  unknown symbols) and `cg_affected_tests.sh` (SQL reverse-dependency test
+  selection with fail-safe FULL_SUITE fallback) + report-only CI shadow job.
+
 ### Added
 
 - MCP elicitation confirm on the six irreversible tools (`memo_delete`,
