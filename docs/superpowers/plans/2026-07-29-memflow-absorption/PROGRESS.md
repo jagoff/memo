@@ -11,7 +11,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
 - [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tarea 2 con
-  revisión `FAIL` y hardening en diseño**.
+  hardening implementado y re-revisión final en curso**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -110,10 +110,16 @@ Estado: **1/7 aceptadas**.
 - [x] Implementador único asignado: `task02_hardening_impl`.
 - [x] Escribir y registrar los 18 escenarios RED de hardening.
 - [x] RED global: `36 failed, 76 passed` antes de tocar producción.
-- [ ] Implementar provenance autocontenida y snapshot de autoridad.
-- [ ] Implementar I/O descriptor-relative, transacciones y recovery durable.
-- [ ] Ejecutar focused, frozen-v1, Ruff, mypy y non-slow completo.
-- [ ] Commit técnico de hardening con paths explícitos.
+- [x] Implementar provenance autocontenida y snapshot de autoridad.
+- [x] Implementar I/O descriptor-relative, transacciones y recovery durable.
+- [x] Task 1 + Task 2: `186 passed`.
+- [x] Frozen-v1: `3 passed`.
+- [x] Ruff: PASS en 10 paths.
+- [x] Mypy: PASS en 6 módulos.
+- [x] Non-slow completo: `5995 passed, 18 skipped`.
+- [x] Commit técnico de hardening con paths explícitos: `815307ac`.
+- [x] Paquetes de revisión hardening y Task 2 completo generados.
+- [ ] Re-revisión final triple sobre `815307ac`.
 - [ ] Corregir todo hallazgo `BLOCKER/HIGH/MEDIUM`.
 - [ ] Revisión independiente y `PASS`.
 
@@ -260,7 +266,7 @@ paso todavía no comenzó, no que esté aprobado.
 | ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
 |---|---|---|---|---|---|---|---|---|
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
-| P01-T02 | Anchors, append y bundles | implementador inicial + 3 revisores + arquitecto + `task02_hardening_impl` | `8e85662b`; hardening `0b1c859d` | inicial ledger/epoch; hardening `36 failed, 76 passed` | inicial focused `56`; full `5965` | inicial `5a80c74d` | **FAIL**: 1B/7H/3M; producción en hardening | — |
+| P01-T02 | Anchors, append y bundles | implementadores + 3 revisores + arquitecto | `8e85662b`; hardening `0b1c859d` | inicial ledger/epoch; hardening `36 failed, 76 passed` | contracts `186`; full `5995` | `5a80c74d` + `815307ac` | final triple en curso | — |
 | P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
 | P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
