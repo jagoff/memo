@@ -303,6 +303,30 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_CODEGRAPH_DISCOVERY",
+        "bool",
+        True,
+        "misc",
+        "Project-aware codegraph DB discovery: resolve the nearest "
+        ".codegraph/codegraph.db walking up from cwd before falling back to "
+        "memo's own checkout. Default on; set =0 to pin the historical "
+        "checkout DB. Read raw in codegraph_loader (hot-path leaf, like "
+        "MEMO_GPU_XPROC_LOCK); registered here for `memo config validate`.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_CODEGRAPH_MAX_EDGES",
+        "int",
+        300000,
+        "misc",
+        "Cap on traversable codegraph edges loaded per DB: over the cap, "
+        "codegraph_loader.load() serves the cached graph (even stale) or "
+        "raises instead of scanning every edge on the recall hot path. Read "
+        "raw in codegraph_loader (hot-path leaf, like "
+        "MEMO_CODEGRAPH_DISCOVERY); registered here for `memo config validate`.",
+        min_val=1,
+    ),
+    _spec(
         "MEMO_BRIEFING_GRAPH",
         "bool",
         True,
@@ -1165,6 +1189,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "blocks in every opted-in repo (recorded when you run --dynamic --write). "
         "OFF by default; superseded rules retire and new ones appear on their own. "
         "No-op in a repo whose block a human deleted.",
+    ),
+    # dream — code-drift pass: re-verify code_refs against the codegraph index
+    _spec(
+        "MEMO_DREAM_CODE_DRIFT_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly code-drift pass in `memo dream run`. OFF by default; "
+        "re-verifies memories carrying code_refs against the live codegraph index "
+        "and proposes fully-drifted ones as outdated (reversible archive, never a "
+        "hard delete). Aborts when the index is missing or >24h stale.",
     ),
     # dream v2 — anticipatory pass (Phase 3): surface unmet gaps + prewarm
     _spec(
