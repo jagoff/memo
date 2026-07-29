@@ -23,7 +23,7 @@ from memo.operational_event import (
     canonical_signed_bytes,
 )
 from memo.operational_key_store import AuthorityPinStore, KeyStoreError
-from memo.operational_roster import VerificationRoster
+from memo.operational_roster import RosterError, VerificationRoster
 from memo.operational_signing import (
     OperationalSigner,
     OperationalVerifier,
@@ -433,16 +433,38 @@ class EpochFence:
         root: Path,
         *,
         roster: VerificationRoster,
-        verifier: OperationalVerifier,
-        pin_store: AuthorityPinStore,
+        verifier: OperationalVerifier | None = None,
+        pin_store: AuthorityPinStore | None = None,
     ) -> None:
+        if verifier is None:
+            verifier = OperationalVerifier()
         if type(verifier) is not OperationalVerifier:
             raise TypeError("EpochFence requires the stateless operational verifier")
         self.root = Path(root)
         self.marker_path = self.root / "authority-epoch.json"
         self.high_watermark_path = self.root / "authority-epoch-high-watermark.json"
-        self.roster = roster
+        if pin_store is None:
+            try:
+                pin_store = AuthorityPinStore.for_root(self.root)
+            except KeyStoreError as exc:
+                raise AuthorityEpochError(
+                    "verification roster authority pin is unavailable"
+                ) from exc
         self.pin_store = pin_store
+        try:
+            canonical_roster = VerificationRoster.load(
+                self.root,
+                pin_store=self.pin_store,
+            )
+        except RosterError as exc:
+            raise AuthorityEpochError(
+                "verification roster does not match the pinned roster"
+            ) from exc
+        if canonical_roster != roster:
+            raise AuthorityEpochError(
+                "supplied verification roster does not match the pinned roster"
+            )
+        self.roster = canonical_roster
         self._recover_prepared_authority()
         self._read_authority(required=False)
 

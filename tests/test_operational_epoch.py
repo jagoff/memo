@@ -35,6 +35,21 @@ def _pin_store(root: Path) -> AuthorityPinStore:
     return AuthorityPinStore._for_test(root, provider=_AUTHORITY_PINS)
 
 
+def _use_in_memory_productive_pin_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> InMemoryAuthorityPinProvider:
+    provider = InMemoryAuthorityPinProvider()
+
+    def for_root(
+        cls: type[AuthorityPinStore],
+        root: Path,
+    ) -> AuthorityPinStore:
+        return cls._for_test(root, provider=provider)
+
+    monkeypatch.setattr(AuthorityPinStore, "for_root", classmethod(for_root))
+    return provider
+
+
 def _authorization(
     signer: OperationalSigner,
     *,
@@ -71,6 +86,60 @@ def _system_identity() -> PrincipalIdentity:
         session_id="system-session",
         source_client="memo",
     )
+
+
+def test_public_epoch_fence_contract_uses_root_bound_pin_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _use_in_memory_productive_pin_factory(monkeypatch)
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a")
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+        pin_store=AuthorityPinStore._for_test(tmp_path, provider=provider),
+    )
+
+    fence = EpochFence(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+    )
+
+    assert fence.roster == roster
+    assert EpochFence(tmp_path, roster=roster).roster == roster
+
+
+def test_epoch_fence_rejects_valid_roster_pinned_to_different_root(
+    tmp_path: Path,
+) -> None:
+    keys = DeviceKeyStore.in_memory()
+    enrolled = keys.generate(device_id="device-a")
+    canonical = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=enrolled,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    attacker_root = tmp_path / "attacker"
+    attacker = keys.generate(device_id="device-a")
+    unpinned = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=attacker,
+        root=attacker_root,
+        pin_store=_pin_store(attacker_root),
+    )
+    assert unpinned != canonical
+
+    with pytest.raises(AuthorityEpochError, match="pinned roster"):
+        EpochFence(
+            tmp_path,
+            roster=unpinned,
+            verifier=OperationalVerifier(),
+            pin_store=_pin_store(tmp_path),
+        )
 
 
 def test_external_context_requires_explicit_epoch_and_control(tmp_path) -> None:
@@ -687,16 +756,12 @@ def test_bootstrap_is_one_shot_and_adapters_cannot_mint_system_capability(
     loaded = VerificationRoster.load(tmp_path, pin_store=_pin_store(tmp_path))
     other_root = tmp_path / "other"
     other_root.mkdir()
-    copied_fence = EpochFence(
-        other_root,
-        roster=loaded,
-        verifier=OperationalVerifier(),
-        pin_store=_pin_store(other_root),
-    )
-    with pytest.raises(AuthorityEpochError):
-        copied_fence.bootstrap(
-            authorization=auth,
-            observed_artifact_digests=auth.artifact_digests,
+    with pytest.raises(AuthorityEpochError, match="pinned roster"):
+        EpochFence(
+            other_root,
+            roster=loaded,
+            verifier=OperationalVerifier(),
+            pin_store=_pin_store(other_root),
         )
 
 

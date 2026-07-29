@@ -26,6 +26,56 @@ def _pin_store(root: Path) -> AuthorityPinStore:
     return AuthorityPinStore._for_test(root, provider=_AUTHORITY_PINS)
 
 
+def _use_in_memory_productive_pin_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> InMemoryAuthorityPinProvider:
+    provider = InMemoryAuthorityPinProvider()
+
+    def for_root(
+        cls: type[AuthorityPinStore],
+        root: Path,
+    ) -> AuthorityPinStore:
+        return cls._for_test(root, provider=provider)
+
+    monkeypatch.setattr(AuthorityPinStore, "for_root", classmethod(for_root))
+    return provider
+
+
+def test_public_bootstrap_contract_uses_root_bound_pin_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_in_memory_productive_pin_factory(monkeypatch)
+    store = DeviceKeyStore.in_memory()
+    key = store.generate(device_id="device-a")
+
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+    )
+
+    assert roster.version == 1
+    assert roster.peers == ("device-a",)
+
+
+def test_public_load_contract_uses_root_bound_pin_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _use_in_memory_productive_pin_factory(monkeypatch)
+    store = DeviceKeyStore.in_memory()
+    key = store.generate(device_id="device-a")
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+        pin_store=AuthorityPinStore._for_test(tmp_path, provider=provider),
+    )
+
+    assert VerificationRoster.load(tmp_path) == roster
+
+
 def test_fresh_bootstrap_persists_one_peer_roster_before_epoch_zero(tmp_path) -> None:
     store = DeviceKeyStore.in_memory()
     key = store.generate(device_id="device-a")
@@ -216,6 +266,73 @@ def test_signed_roster_updates_form_immutable_history(tmp_path) -> None:
     version_one.write_text(json.dumps(tampered), encoding="utf-8")
     with pytest.raises(RosterError):
         VerificationRoster.load(tmp_path, pin_store=_pin_store(tmp_path))
+
+
+def test_roster_update_rejects_noncanonical_unpinned_predecessor(tmp_path: Path) -> None:
+    store = DeviceKeyStore.in_memory()
+    first = store.generate(device_id="device-a")
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=first,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    assert roster.signature is not None
+    detached = replace(
+        roster,
+        signature=replace(
+            roster.signature,
+            signature=f"{roster.signature.signature}==",
+        ),
+    )
+    assert detached != roster
+    assert detached.roster_hash == roster.roster_hash
+    assert verify_bootstrap(detached, first)
+
+    second = store.generate(
+        device_id="device-b",
+        roles=("origin",),
+        enrollment_sequence=2,
+    )
+    with pytest.raises(RosterError, match="pinned predecessor"):
+        detached.with_keys(
+            version=2,
+            peers=("device-a", "device-b"),
+            keys=(first, second),
+            signer=OperationalSigner(store, roster_version=1),
+            root=tmp_path,
+            pin_store=_pin_store(tmp_path),
+        )
+
+
+def test_roster_update_accepts_exact_pinned_predecessor(tmp_path: Path) -> None:
+    store = DeviceKeyStore.in_memory()
+    first = store.generate(device_id="device-a")
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=first,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    second = store.generate(
+        device_id="device-b",
+        roles=("origin",),
+        enrollment_sequence=2,
+    )
+
+    updated = roster.with_keys(
+        version=2,
+        peers=("device-a", "device-b"),
+        keys=(first, second),
+        signer=OperationalSigner(store, roster_version=1),
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+
+    assert VerificationRoster.load(
+        tmp_path,
+        pin_store=_pin_store(tmp_path),
+    ) == updated
 
 
 def test_load_recovers_crash_between_roster_history_and_current(tmp_path, monkeypatch) -> None:

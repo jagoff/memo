@@ -187,9 +187,10 @@ class VerificationRoster:
         device_id: str,
         key: PublicKeyRecord,
         root: Path,
-        pin_store: AuthorityPinStore,
+        pin_store: AuthorityPinStore | None = None,
     ) -> VerificationRoster:
         root = Path(root)
+        pin_store = _resolve_pin_store(root, pin_store)
         if key.device_id != device_id:
             raise RosterError("bootstrap key device mismatch")
         allowed_roles = {"origin", "migration_attestor"}
@@ -241,8 +242,14 @@ class VerificationRoster:
         return roster
 
     @classmethod
-    def load(cls, root: Path, *, pin_store: AuthorityPinStore) -> VerificationRoster:
+    def load(
+        cls,
+        root: Path,
+        *,
+        pin_store: AuthorityPinStore | None = None,
+    ) -> VerificationRoster:
         root = Path(root)
+        pin_store = _resolve_pin_store(root, pin_store)
         _recover_prepared_roster(root, pin_store)
         with authority_write_lock(root / "verification-rosters"):
             previous = _load_roster_files(root)
@@ -272,8 +279,16 @@ class VerificationRoster:
             raise RosterError("roster version must advance exactly once")
         if signer is None or root is None:
             raise RosterError("signed roster update requires signer and root")
-        if pin_store is None:
-            raise RosterError("signed roster update requires an authority pin store")
+        root = Path(root)
+        pin_store = _resolve_pin_store(root, pin_store)
+        canonical_predecessor = VerificationRoster.load(
+            root,
+            pin_store=pin_store,
+        )
+        if canonical_predecessor != self:
+            raise RosterError(
+                "signed roster update requires the exact pinned predecessor"
+            )
         updated = VerificationRoster(
             version=version,
             peers=peers,
@@ -290,13 +305,12 @@ class VerificationRoster:
         )
         updated = replace(updated, signature=envelope)
         _verify_roster(updated, previous=self)
-        root = Path(root)
         encoded = _canonical(updated.to_dict())
         history = root / "verification-rosters" / f"{version:08d}.json"
         current = root / "verification-roster.json"
         with authority_write_lock(root / "verification-rosters"):
             loaded = _load_roster_files(root)
-            if loaded.roster_hash != self.roster_hash:
+            if loaded != self:
                 raise RosterError("verification roster changed concurrently")
             try:
                 pin_store._stage_roster(root, encoded)
@@ -313,6 +327,18 @@ class VerificationRoster:
         except KeyStoreError as exc:
             raise RosterError("verification roster authority pin commit failed") from exc
         return updated
+
+
+def _resolve_pin_store(
+    root: Path,
+    pin_store: AuthorityPinStore | None,
+) -> AuthorityPinStore:
+    if pin_store is not None:
+        return pin_store
+    try:
+        return AuthorityPinStore.for_root(root)
+    except KeyStoreError as exc:
+        raise RosterError("verification roster authority pin is unavailable") from exc
 
 
 def _recover_prepared_roster(root: Path, pin_store: AuthorityPinStore) -> None:
