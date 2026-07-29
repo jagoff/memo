@@ -105,8 +105,14 @@ Estado: **1/7 aceptadas**.
   3 `HIGH` y 2 `MEDIUM` reproducidos.
 - [x] Hallazgos consolidados sin duplicados: 1 `BLOCKER`, 7 `HIGH` y
   3 `MEDIUM`.
-- [ ] TDD de hardening: provenance, recovery de compaction/tail/import y
-  revocación histórica.
+- [x] Blueprint de hardening de provenance, autoridad, recovery y filesystem.
+- [x] Brief TDD generado con BASE `0b1c859d`.
+- [x] Implementador único asignado: `task02_hardening_impl`.
+- [ ] Escribir y registrar los 18 escenarios RED de hardening.
+- [ ] Implementar provenance autocontenida y snapshot de autoridad.
+- [ ] Implementar I/O descriptor-relative, transacciones y recovery durable.
+- [ ] Ejecutar focused, frozen-v1, Ruff, mypy y non-slow completo.
+- [ ] Commit técnico de hardening con paths explícitos.
 - [ ] Corregir todo hallazgo `BLOCKER/HIGH/MEDIUM`.
 - [ ] Revisión independiente y `PASS`.
 
@@ -253,7 +259,7 @@ paso todavía no comenzó, no que esté aprobado.
 | ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
 |---|---|---|---|---|---|---|---|---|
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
-| P01-T02 | Anchors, append y bundles | implementador + 3 revisores + arquitecto de hardening | `8e85662b` | ledger ausente + lock epoch `1 failed` | focused `56`; full `5965` | `5a80c74d` | **FAIL** provisional: 3H/2M + 2 auditorías abiertas | — |
+| P01-T02 | Anchors, append y bundles | implementador inicial + 3 revisores + arquitecto + `task02_hardening_impl` | `8e85662b`; hardening `0b1c859d` | ledger ausente + lock epoch; hardening RED en curso | inicial focused `56`; full `5965` | inicial `5a80c74d` | **FAIL**: 1B/7H/3M; corrección en curso | — |
 | P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
 | P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
