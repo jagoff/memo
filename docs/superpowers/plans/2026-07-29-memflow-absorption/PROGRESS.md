@@ -10,8 +10,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 implementada; re-revisión
-  independiente de ronda 5 pendiente**.
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tarea 2 en
+  preparación**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -20,9 +20,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Verificación de uso vivo exclusivamente vía Memo.
 - [ ] Baja definitiva de Memflow.
 
-Progreso aceptado: **0/35 tareas**. La Tarea 1 tiene implementación y gates
-verdes, pero no se contabiliza como terminada hasta recibir `PASS` del revisor
-independiente.
+Progreso aceptado: **1/35 tareas**.
 
 ## Gate obligatorio para cada tarea
 
@@ -48,7 +46,7 @@ Cada tarea debe completar todos estos pasos antes de marcarse terminada:
 
 ## Plan 01 — Operational Ledger v2
 
-Estado: **0/7 aceptadas**.
+Estado: **1/7 aceptadas**.
 
 ### Tarea 1 — Congelar v1 y definir contratos puros v2
 
@@ -76,11 +74,13 @@ Estado: **0/7 aceptadas**.
 - [x] Mypy: limpio.
 - [x] Non-slow: `5928 passed, 18 skipped, 7 deselected`.
 - [x] Compatibilidad v1 y archivos congelados: intactos.
-- [ ] Generar paquete de revisión final para `d9ed37a6..0edbc2ed`.
-- [ ] Revisión independiente final.
-- [ ] Corregir hallazgos residuales, si existen.
-- [ ] Obtener `PASS`.
-- [ ] Marcar la tarea completa en el ledger.
+- [x] Compatibilidad pública y roster pinneado: `c36f3566`.
+- [x] Refresh latest/historical y revocación live: `54b48b9e`.
+- [x] Paquete final generado para `d9ed37a6..54b48b9e`.
+- [x] Revisión independiente final: `PASS`.
+- [x] Auditoría de contrato público: `PASS`.
+- [x] Sin `BLOCKER/HIGH/MEDIUM` abiertos.
+- [x] Tarea marcada completa en el ledger.
 
 ### Tarea 2 — Anchors, append, verificación y bundles locales v2
 
@@ -233,8 +233,8 @@ paso todavía no comenzó, no que esté aprobado.
 
 | ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
 |---|---|---|---|---|---|---|---|---|
-| P01-T01 | Contratos y v1 congelado | `plan01_task01_impl` + `capability_fix` | `d9ed37a6` | 5 rondas registradas | `119`; full `5928` | `f03d7418`…`0edbc2ed` | R1–R4 FAIL; R5 pendiente | — |
-| P01-T02 | Anchors, append y bundles | — | — | — | — | — | — | — |
+| P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
+| P01-T02 | Anchors, append y bundles | por asignar | por registrar | pendiente | pendiente | — | — | — |
 | P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
 | P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
