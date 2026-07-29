@@ -237,16 +237,20 @@ def register(server: FastMCP, memory: Memory) -> None:
         Removal is permanent (elicitation-capable clients are asked to
         confirm); an unknown repo returns deleted=false instead of raising.
         """
-        from memo.server_elicit import abort_result, confirm_destructive
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
 
         try:
             source = memory.store.get_repo_source(repo)
         except Exception:
             source = None
         if source is not None:
-            name = source.get("name") or repo
+            name = sanitize_fragment(source.get("name") or repo)
             clone_path = source.get("clone_path") if remove_clone else None
-            blast = f" and its on-disk clone at {clone_path}" if clone_path else " from the index"
+            blast = (
+                f" and its on-disk clone at {sanitize_fragment(clone_path, limit=200)}"
+                if clone_path
+                else " from the index"
+            )
             gate = await confirm_destructive(
                 ctx,
                 action="delete",
@@ -260,4 +264,9 @@ def register(server: FastMCP, memory: Memory) -> None:
                     action="delete",
                     target=f"repo '{name}'",
                 )
-        return {"deleted": memory.repo_delete(repo, remove_clone=remove_clone)}
+        # Bind execution to the row the user confirmed: `repo` is id-or-name-
+        # or-URL and a re-resolve after the human-latency confirmation window
+        # could match a different row (re-indexed same-name repo) and rmtree a
+        # clone the user never saw.
+        resolved = str(source["id"]) if source is not None and source.get("id") else repo
+        return {"deleted": memory.repo_delete(resolved, remove_clone=remove_clone)}

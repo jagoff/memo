@@ -68,8 +68,15 @@ Flow (probe-verified against installed fastmcp 3.4.4 / mcp 1.28.1):
    form; `response_type=None` is deprecated in fastmcp 3.4.4 and hangs VS Code
    (`fastmcp/server/context.py:1165-1175`). Proceed **only** on
    `AcceptedElicitation(data=action)` exactly.
-4. `except McpError` → `("error", proceed=True)` (belt and braces; also covers
-   clients that advertise but misimplement).
+4. Error handling is split by *when* the failure happens (review finding,
+   2026-07-28). Before the question is answered nothing may run unconfirmed:
+   `McpError(METHOD_NOT_FOUND)` (client advertised the capability but rejects
+   the request up-front) → `("unsupported", proceed=True)` — fail-open, same
+   as no capability. Any other `McpError` (client handler crashed →
+   `INTERNAL_ERROR`, connection died mid-elicit) → `("error", proceed=False)`
+   — the user never confirmed, so the irreversible op aborts. A pydantic
+   `ValidationError` (client accepted with schema-invalid content, e.g. an
+   empty auto-accept) → `("cancelled", proceed=False)`.
 5. Instant-cancel (headless print/SDK clients auto-cancel) → treated as
    `cancelled` abort; the fail-open path for those clients is the capability
    check, which they fail before ever reaching `elicit`.
@@ -95,7 +102,15 @@ save a durable `type=feedback` memory — "user refused <action> of <target>"
 with tool + target id/title + timestamp in `extra` — so refusal itself feeds
 memo's feedback loop. Cancel is a pure no-op. Flag-gated
 `MEMO_ELICIT_DECLINE_SIGNAL`, default on; the write is fail-open (a failed
-signal save never blocks the abort).
+signal save never blocks the abort). Hardening (review findings, 2026-07-28):
+the interpolated target is sanitized + capped (titles are untrusted), the
+save carries a stable `topic_key` (`elicit-decline:<tool>:<target>`) so
+repeated declines revise/corroborate ONE memory instead of minting an
+unbounded stream, and it goes through the normal write policy (no
+`enforce_write_policy=False`). Prompt fragments interpolated into the
+elicitation `detail` are likewise sanitized at every build site plus once
+more in `confirm_destructive` (choke point) so a hostile title cannot
+rewrite the blast-radius warning.
 
 ### 4. Flags (`flags_misc.py`, registry pattern)
 
@@ -103,11 +118,16 @@ signal save never blocks the abort).
   clients can opt out.
 - `MEMO_ELICIT_DECLINE_SIGNAL` — bool, default **on**.
 
-## Transport caveats (documented, not solved here)
+## Transport caveats
 
 - HTTP daemon runs `json_response=True` for non-SSE (`server.py:449-454`) —
   no mid-call server→client stream, so elicitation is effectively
-  stdio/SSE-only. Capability check keeps HTTP fail-open.
+  stdio/SSE-only. The capability check does NOT cover this (it is
+  client-declared and transport-blind: an elicitation-capable client over
+  JSON-mode HTTP passes the check, the SDK then discards `elicitation/create`
+  and the call deadlocks). `server.py` therefore calls
+  `mark_transport_elicit_unsupported()` when enabling `json_response`, and
+  the gate skips eliciting on that transport — fail-open BEFORE asking.
 - REST `DELETE /api/memory/{id}` (`server_http.py:200`) bypasses MCP entirely —
   out of scope (see Decisions Q6).
 - Primary client OK: Claude Code ≥2.1.76 ships form elicitation.

@@ -62,8 +62,9 @@ def register(server: FastMCP, memory: Memory) -> None:
             restore_memories: Whether to restore memory files.
             restore_dbs: Whether to restore databases.
         """
-        from memo.server_elicit import abort_result, confirm_destructive
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
 
+        safe_name = sanitize_fragment(backup_name)
         try:
             scope = f"the current store ({memory.store.count()} memories)"
         except Exception:
@@ -72,7 +73,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             ctx,
             action="restore",
             detail=(
-                f"Restore backup '{backup_name}'? This overwrites {scope}; "
+                f"Restore backup '{safe_name}'? This overwrites {scope}; "
                 "the rollback journal is deleted on success."
             ),
         )
@@ -82,7 +83,7 @@ def register(server: FastMCP, memory: Memory) -> None:
                 memory,
                 tool="memo_backup_restore",
                 action="restore",
-                target=f"backup '{backup_name}'",
+                target=f"backup '{safe_name}'",
             )
         success = memory.backup.restore_backup(
             backup_name,

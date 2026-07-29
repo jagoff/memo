@@ -102,7 +102,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         deliberately preserved by reindex — so elicitation-capable clients
         are asked to confirm. Idempotent: a repeat call deletes 0 rows.
         """
-        from memo.server_elicit import abort_result, confirm_destructive
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
 
         rows: int | None
         try:
@@ -110,12 +110,13 @@ def register(server: FastMCP, memory: Memory) -> None:
         except Exception:
             rows = None
         if rows is None or rows > 0:
+            safe_id = sanitize_fragment(source_id)
             scope = f"all {rows} feedback rows" if rows is not None else "all feedback rows"
             gate = await confirm_destructive(
                 ctx,
                 action="clear",
                 detail=(
-                    f"Delete {scope} for memory {source_id}? These user ranking "
+                    f"Delete {scope} for memory {safe_id}? These user ranking "
                     "signals are deliberately preserved by reindex and are not "
                     "recoverable once cleared."
                 ),
@@ -126,7 +127,7 @@ def register(server: FastMCP, memory: Memory) -> None:
                     memory,
                     tool="memo_feedback_clear",
                     action="clear",
-                    target=f"feedback rows for {source_id}",
+                    target=f"feedback rows for {safe_id}",
                 )
         n = memory.feedback_clear(source_id)
         return {"source_id": source_id, "deleted": n}

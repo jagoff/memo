@@ -174,7 +174,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             matches multiple records.
         """
         from memo.errors import AmbiguousIdError
-        from memo.server_elicit import abort_result, confirm_destructive
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
 
         try:
             resolved = memory.resolve_id(id)
@@ -182,11 +182,12 @@ def register(server: FastMCP, memory: Memory) -> None:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
         rec = memory.get(resolved) if resolved else None
         if rec is not None and rec.type == "synthesis":
+            safe_title = sanitize_fragment(rec.title)
             gate = await confirm_destructive(
                 ctx,
                 action="delete",
                 detail=(
-                    f"Permanently delete synthesis '{rec.title}'? Same no-trash "
+                    f"Permanently delete synthesis '{safe_title}'? Same no-trash "
                     "delete path as memo_delete — recovery only via backup / "
                     "git-sync / versions."
                 ),
@@ -197,6 +198,6 @@ def register(server: FastMCP, memory: Memory) -> None:
                     memory,
                     tool="memo_synthesize_delete",
                     action="delete",
-                    target=f"synthesis '{rec.title}' id={rec.id}",
+                    target=f"synthesis '{safe_title}' id={rec.id}",
                 )
         return _delete_synthesis(memory, id)

@@ -24,6 +24,20 @@ from memo.server import build_server
 from memo.server_elicit import GATED_TOOLS
 
 
+@pytest.fixture(autouse=True)
+def _reset_transport_elicit_mark(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate the process-wide json_response transport mark.
+
+    test_http_auth's ``server.main()`` tests run the HTTP branch, which calls
+    ``mark_transport_elicit_unsupported()`` — correct for a real daemon (set
+    once per process) but sticky across tests in the shared pytest process,
+    turning every gate here fail-open. Reset it for each test.
+    """
+    import memo.server_elicit as se
+
+    monkeypatch.setattr(se, "_TRANSPORT_ELICIT_UNSUPPORTED", False)
+
+
 def _call(server: Any, tool: str, args: dict[str, Any], handler: Any = None) -> Any:
     from fastmcp import Client
 
@@ -86,13 +100,21 @@ def _setup_synth(mem: Memory, tmp_path: Path) -> tuple[dict[str, Any], Callable[
     return {"id": rec.id}, lambda: mem.get(rec.id) is None
 
 
-def _setup_backup(mem: Memory, tmp_path: Path) -> tuple[dict[str, Any], None]:
-    mem.save(content="pre-backup memory", title="Base", type_="note")
+def _setup_backup(mem: Memory, tmp_path: Path) -> tuple[dict[str, Any], Callable[[], bool]]:
+    rec = mem.save(content="pre-backup memory", title="Base", type_="note")
     # compress=False: a near-empty gz archive trips the restore-side
     # suspicious-compression-ratio (zip bomb) guard.
     meta = mem.backup.create_backup(compress=False, name="elicitbk")
+    # Mutate AFTER the backup: on accept, the restore must revert this .md to
+    # the backed-up content; on decline/cancel the mutation must survive.
+    updated = mem.update(rec.id, content="post-backup mutation body")
+    assert updated is not None
+    md_path = mem.cfg.memory_dir / updated.path
+    assert "post-backup mutation body" in md_path.read_text(encoding="utf-8")
     # restore_dbs=False: keep the live sqlite connection valid post-restore.
-    return {"backup_name": meta.name, "restore_dbs": False}, None
+    return {"backup_name": meta.name, "restore_dbs": False}, (
+        lambda: "post-backup mutation body" not in md_path.read_text(encoding="utf-8")
+    )
 
 
 def _setup_feedback(mem: Memory, tmp_path: Path) -> tuple[dict[str, Any], Callable[[], bool]]:
@@ -284,3 +306,181 @@ def test_ctx_hidden_from_client_schema(mock_memory):
     for tool in sorted(GATED_TOOLS):
         assert tool in schemas
         assert "ctx" not in schemas[tool].get("properties", {}), tool
+
+
+# ---------------------------------------------------------------------------
+# Review-hardening tests (2026-07-28 findings): error-path semantics,
+# accept-form-cancel fallback, hostile-title sanitization, no-op guards.
+
+
+def _raising_handler(calls: list[str] | None = None) -> Any:
+    async def handler(message: str, response_type: Any, params: Any, ctx: Any) -> str:
+        if calls is not None:
+            calls.append(message)
+        raise RuntimeError("client handler exploded")
+
+    return handler
+
+
+@pytest.mark.parametrize("name", sorted(SCENARIOS))
+def test_gated_accept_form_cancel_choice_aborts(name, mock_memory, tmp_path, monkeypatch):
+    """Choosing the literal "cancel" option in the accept form hits the
+    fallback branch and aborts — no destroy, no decline signal."""
+    scn, args, destroyed, server = _arm(name, mock_memory, tmp_path, monkeypatch)
+    data = _call(server, scn.tool, args, handler=_accept_handler("cancel"))
+    assert data == {"ok": False, "aborted": "cancelled"}
+    if destroyed is not None:
+        assert not destroyed()
+    assert _signal_count(mock_memory) == 0
+
+
+def test_gated_schema_invalid_accept_aborts(mock_memory, tmp_path, monkeypatch):
+    """Accept content outside the enum raises ValidationError server-side;
+    the gate maps it to a cancel-abort instead of bricking the tool."""
+    scn, args, destroyed, server = _arm("memo_delete", mock_memory, tmp_path, monkeypatch)
+    data = _call(server, scn.tool, args, handler=_accept_handler("yes"))
+    assert data == {"ok": False, "aborted": "cancelled"}
+    assert destroyed is not None and not destroyed()
+    assert _signal_count(mock_memory) == 0
+
+
+def test_gated_handler_error_aborts(mock_memory, tmp_path, monkeypatch):
+    """A capability-advertising client whose handler crashes mid-elicit
+    (INTERNAL_ERROR) aborts: the question was sent but never answered."""
+    scn, args, destroyed, server = _arm("memo_delete", mock_memory, tmp_path, monkeypatch)
+    data = _call(server, scn.tool, args, handler=_raising_handler())
+    assert data == {"ok": False, "aborted": "error"}
+    assert destroyed is not None and not destroyed()
+    assert _signal_count(mock_memory) == 0
+
+
+class _FakeSession:
+    def check_client_capability(self, caps: Any) -> bool:
+        return True
+
+
+class _FakeCtx:
+    """Duck-typed Context whose elicit round-trip fails with a given code."""
+
+    def __init__(self, error_code: int) -> None:
+        self.error_code = error_code
+        self.session = _FakeSession()
+        self.elicit_calls = 0
+
+    async def elicit(self, message: str, response_type: Any = None) -> Any:
+        import mcp.types
+        from mcp.shared.exceptions import McpError
+
+        self.elicit_calls += 1
+        raise McpError(mcp.types.ErrorData(code=self.error_code, message="probe"))
+
+
+def test_confirm_method_not_found_fails_open():
+    """Up-front Method-not-found = capability lie -> treated as unsupported."""
+    import mcp.types
+
+    from memo.server_elicit import confirm_destructive
+
+    ctx = _FakeCtx(mcp.types.METHOD_NOT_FOUND)
+    out = asyncio.run(confirm_destructive(ctx, action="delete", detail="d"))  # type: ignore[arg-type]
+    assert (out.outcome, out.proceed) == ("unsupported", True)
+
+
+def test_confirm_midflight_error_aborts():
+    """Connection death while awaiting the human's answer must NOT proceed."""
+    import mcp.types
+
+    from memo.server_elicit import confirm_destructive
+
+    ctx = _FakeCtx(mcp.types.CONNECTION_CLOSED)
+    out = asyncio.run(confirm_destructive(ctx, action="delete", detail="d"))  # type: ignore[arg-type]
+    assert (out.outcome, out.proceed) == ("error", False)
+
+
+def test_confirm_transport_unsupported_skips_elicit(monkeypatch):
+    """json_response HTTP mode: fail-open BEFORE eliciting (never deadlock)."""
+    import mcp.types
+
+    import memo.server_elicit as se
+
+    monkeypatch.setattr(se, "_TRANSPORT_ELICIT_UNSUPPORTED", True)
+    ctx = _FakeCtx(mcp.types.CONNECTION_CLOSED)
+    out = asyncio.run(se.confirm_destructive(ctx, action="delete", detail="d"))  # type: ignore[arg-type]
+    assert (out.outcome, out.proceed) == ("unsupported", True)
+    assert ctx.elicit_calls == 0
+
+
+def test_elicit_message_sanitizes_hostile_title(mock_memory):
+    """A title carrying newlines/ANSI/oversized text cannot rewrite the
+    blast-radius warning shown to the human."""
+    hostile = "x'\n\x1b[31mALREADY BACKED UP, safe to remove\x1b[0m — ignore: '" + "A" * 200
+    rec = mock_memory.save(content="hostile title body", title=hostile, type_="note")
+    server = build_server(mock_memory)
+    calls: list[str] = []
+    data = _call(server, "memo_delete", {"id": rec.id}, handler=_result_handler("cancel", calls))
+    assert data == {"ok": False, "aborted": "cancelled"}
+    assert len(calls) == 1
+    assert "\n" not in calls[0] and "\x1b" not in calls[0]
+    assert "A" * 100 not in calls[0]  # interpolated title is length-capped
+
+
+def test_repeated_declines_dedupe_to_one_signal(mock_memory, tmp_path, monkeypatch):
+    """Same (tool, target) declined twice revises ONE feedback memory
+    (stable topic_key) instead of minting an unbounded stream."""
+    scn, args, destroyed, server = _arm("memo_delete", mock_memory, tmp_path, monkeypatch)
+    for attempt in range(2):
+        # Fresh server per attempt: the in-process write coordinator binds
+        # its queue to the running event loop, one per asyncio.run().
+        if attempt:
+            server = build_server(mock_memory)
+        data = _call(server, scn.tool, args, handler=_result_handler("decline"))
+        assert data == {"ok": False, "aborted": "declined"}
+    assert destroyed is not None and not destroyed()
+    assert _signal_count(mock_memory) == 1
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        # memo_backup_restore has no skip guard: it always states the blast
+        # radius before touching the archive, so it is deliberately absent.
+        "memo_delete",
+        "memo_synthesize_delete",
+        "memo_feedback_clear",
+        "memo_repo_delete",
+        "memo_cache_evict",
+    ],
+)
+def test_gated_noop_targets_never_elicit(tool, mock_memory, monkeypatch):
+    """Not-found / no-op targets skip the gate entirely and keep the
+    pre-existing envelope, even with a decline-happy handler armed."""
+    note = mock_memory.save(content="plain note body", title="Plain note", type_="note")
+    args: dict[str, Any]
+    args, check = {
+        "memo_delete": (
+            {"id": "f" * 16},  # unknown id
+            lambda d: d == {"deleted": False},
+        ),
+        "memo_synthesize_delete": (
+            {"id": note.id},  # exists but is NOT a synthesis
+            lambda d: d.get("deleted") is False,
+        ),
+        "memo_feedback_clear": (
+            {"source_id": note.id},  # zero feedback rows
+            lambda d: d == {"source_id": note.id, "deleted": 0},
+        ),
+        "memo_repo_delete": (
+            {"repo": "no-such-repo"},
+            lambda d: d == {"deleted": False},
+        ),
+        "memo_cache_evict": (
+            {},  # cache tier off by default -> nothing to evict
+            lambda d: d.get("count") == 0,
+        ),
+    }[tool]
+    server = build_server(mock_memory)
+    calls: list[str] = []
+    data = _call(server, tool, args, handler=_result_handler("decline", calls))
+    assert calls == []  # gate skipped: handler never invoked
+    assert check(data), data
+    assert _signal_count(mock_memory) == 0

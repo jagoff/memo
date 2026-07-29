@@ -368,7 +368,7 @@ def register(server: Any, memory: Memory) -> None:
         response warns about memories that linked to the deleted record.
         """
         from memo.flags import flag_bool
-        from memo.server_elicit import abort_result, confirm_destructive
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
 
         try:
             rec = memory.get(id)
@@ -383,7 +383,9 @@ def register(server: Any, memory: Memory) -> None:
             except Exception:
                 referenced_by = []
         if rec is not None:
-            target = f"'{rec.title}' ({rec.type})"
+            # Titles are untrusted (auto-capture, LLM derivation) — sanitize
+            # so a hostile title can't rewrite the confirmation prompt.
+            target = f"'{sanitize_fragment(rec.title)}' ({rec.type})"
             linked = (
                 f" {len(referenced_by)} memories link to it; their typed edges will dangle."
                 if referenced_by
