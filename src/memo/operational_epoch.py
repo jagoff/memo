@@ -6,7 +6,8 @@ import hashlib
 import json
 import os
 import weakref
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -913,7 +914,15 @@ class EpochFence:
             origin_device=latest_roster.local_device_id,
         )
 
-    def verify(self, context: CommitContext) -> None:
+    @contextmanager
+    def verified(self, context: CommitContext) -> Iterator[None]:
+        """Hold the durable epoch fence for the complete guarded mutation.
+
+        Callers that persist authority-bound state must keep this context open
+        until their own durable commit point.  This closes the race where an
+        activation could advance the marker after a one-shot verification but
+        before the caller fsynced its record.
+        """
         if not isinstance(context, CommitContext):
             raise AuthorityEpochError("commit context is required")
         with authority_write_lock(self.marker_path):
@@ -929,6 +938,12 @@ class EpochFence:
             if context.identity.device_id != latest_roster.local_device_id:
                 raise AuthorityEpochError("commit context principal device mismatch")
             self._assert_latest_roster(latest_roster)
+            yield
+
+    def verify(self, context: CommitContext) -> None:
+        """Verify one context without retaining the mutation fence."""
+        with self.verified(context):
+            return
 
 
 def bind_system_context(

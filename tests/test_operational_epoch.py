@@ -6,6 +6,7 @@ import gc
 import inspect
 import json
 import pickle
+import threading
 import weakref
 from contextlib import suppress
 from dataclasses import replace
@@ -287,6 +288,78 @@ def test_activation_is_signed_digest_bound_and_monotonic(tmp_path) -> None:
             authorization=replace(auth, epoch=0),
             observed_artifact_digests=digests,
         )
+
+
+def test_verified_context_holds_marker_lock_and_verify_does_not_relock(
+    tmp_path: Path,
+) -> None:
+    keys, key, _roster, fence = _bootstrap_system_authority(tmp_path)
+    context = fence.context(
+        _system_identity(),
+        request_epoch=0,
+        request_control_oid="control-0",
+    )
+    epoch_one = _authorization(
+        OperationalSigner(keys, roster_version=1),
+        key_id=key.key_id,
+        epoch=1,
+        control_oid="control-1",
+        digests={"memo_generation": "c" * 64},
+    )
+    holder_entered = threading.Event()
+    release_holder = threading.Event()
+    activation_started = threading.Event()
+    activation_finished = threading.Event()
+    failures: list[BaseException] = []
+
+    def hold_verified_epoch() -> None:
+        try:
+            with fence.verified(context):
+                holder_entered.set()
+                assert release_holder.wait(timeout=2)
+        except BaseException as exc:  # pragma: no cover - diagnostic capture
+            failures.append(exc)
+
+    def activate_next_epoch() -> None:
+        try:
+            activation_started.set()
+            fence.activate(
+                authorization=epoch_one,
+                observed_artifact_digests=epoch_one.artifact_digests,
+            )
+            activation_finished.set()
+        except BaseException as exc:  # pragma: no cover - diagnostic capture
+            failures.append(exc)
+
+    holder = threading.Thread(target=hold_verified_epoch)
+    activator = threading.Thread(target=activate_next_epoch)
+    holder.start()
+    assert holder_entered.wait(timeout=2)
+    activator.start()
+    assert activation_started.wait(timeout=2)
+    assert not activation_finished.wait(timeout=0.2)
+    release_holder.set()
+    holder.join(timeout=2)
+    activator.join(timeout=2)
+
+    assert not holder.is_alive()
+    assert not activator.is_alive()
+    assert activation_finished.is_set()
+    assert failures == []
+
+    fresh = fence.context(
+        _system_identity(),
+        request_epoch=1,
+        request_control_oid="control-1",
+    )
+    verification_finished = threading.Event()
+    verifier_thread = threading.Thread(
+        target=lambda: (fence.verify(fresh), verification_finished.set())
+    )
+    verifier_thread.start()
+    verifier_thread.join(timeout=2)
+    assert not verifier_thread.is_alive()
+    assert verification_finished.is_set()
 
 
 def test_marker_tampering_is_rejected_on_every_read(tmp_path) -> None:
