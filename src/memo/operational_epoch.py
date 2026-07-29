@@ -10,7 +10,8 @@ from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal
+from threading import RLock
+from typing import Any, Literal, NoReturn, SupportsIndex
 
 from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.errors import AuthorityEpochError, OperationalError
@@ -181,18 +182,59 @@ def _authority_id(fence: EpochFence) -> str:
     return authority_id
 
 
-def _fence_nonce(fence: EpochFence) -> str:
-    challenge = b"\0".join(
-        (
-            b"memo-operational-system-fence-v1",
-            _PROCESS_NONCE,
-            str(os.getpid()).encode("ascii"),
-            str(id(fence)).encode("ascii"),
-            _authority_id(fence).encode("ascii"),
-            _authority_root_sha256(fence).encode("ascii"),
+class _FenceInstanceNonceStore:
+    """Assign one immutable CSPRNG nonce to each live fence instance."""
+
+    __slots__ = ("__lock", "__nonces")
+
+    def __init__(self) -> None:
+        self.__lock = RLock()
+        self.__nonces: weakref.WeakKeyDictionary[object, bytes] = (
+            weakref.WeakKeyDictionary()
         )
-    )
-    return hashlib.sha256(challenge).hexdigest()
+
+    def allocate(self, fence: EpochFence) -> None:
+        with self.__lock:
+            if fence in self.__nonces:
+                raise RuntimeError("EpochFence instance nonce is already allocated")
+            self.__nonces[fence] = os.urandom(32)
+
+    def read(self, fence: EpochFence) -> bytes | None:
+        with self.__lock:
+            return self.__nonces.get(fence)
+
+    def __get__(
+        self,
+        instance: EpochFence | None,
+        owner: type[EpochFence] | None = None,
+    ) -> bytes | _FenceInstanceNonceStore:
+        del owner
+        if instance is None:
+            return self
+        nonce = self.read(instance)
+        if nonce is None:
+            raise AttributeError("EpochFence instance nonce is unavailable")
+        return nonce
+
+    def __set__(self, instance: EpochFence, value: object) -> NoReturn:
+        del instance, value
+        raise AttributeError("EpochFence instance nonce is immutable")
+
+    def __delete__(self, instance: EpochFence) -> NoReturn:
+        del instance
+        raise AttributeError("EpochFence instance nonce is immutable")
+
+
+_FENCE_INSTANCE_NONCES = _FenceInstanceNonceStore()
+
+
+def _fence_nonce(fence: EpochFence) -> str:
+    nonce = _FENCE_INSTANCE_NONCES.read(fence)
+    if nonce is None:
+        raise AuthorityEpochError("fence instance nonce is unavailable") from None
+    if type(nonce) is not bytes or len(nonce) != 32:
+        raise AuthorityEpochError("fence instance nonce is invalid")
+    return nonce.hex()
 
 
 def _system_capability_claims(
@@ -347,6 +389,45 @@ def _authority_documents(
 
 
 class EpochFence:
+    __instance_nonce = _FENCE_INSTANCE_NONCES
+
+    __slots__ = (
+        "__weakref__",
+        "high_watermark_path",
+        "marker_path",
+        "pin_store",
+        "root",
+        "roster",
+    )
+
+    def __new__(
+        cls,
+        *_args: object,
+        **_kwargs: object,
+    ) -> EpochFence:
+        instance = super().__new__(cls)
+        _FENCE_INSTANCE_NONCES.allocate(instance)
+        return instance
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "_EpochFence__instance_nonce":
+            raise AttributeError("EpochFence instance nonce is immutable")
+        object.__setattr__(self, name, value)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("EpochFence instances cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> NoReturn:
+        del memo
+        raise TypeError("EpochFence instances cannot be copied")
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("EpochFence instances cannot be serialized")
+
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
+        del protocol
+        raise TypeError("EpochFence instances cannot be serialized")
+
     def __init__(
         self,
         root: Path,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 import gc
 import inspect
 import json
+import pickle
 import weakref
 from contextlib import suppress
 from dataclasses import replace
@@ -1030,6 +1032,160 @@ def test_bound_operation_dies_with_its_fence_and_process_nonce(
     )
     with pytest.raises(AuthorityEpochError):
         operation(_system_identity())
+
+
+def test_retained_proof_is_rejected_after_fence_identifier_reuse(tmp_path) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a", roles=("origin",))
+    pin_store = _pin_store(tmp_path)
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+        pin_store=pin_store,
+    )
+    signer = OperationalSigner(keys, roster_version=1)
+    fence = EpochFence(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=pin_store,
+    )
+    authorization = _authorization(
+        signer,
+        key_id=key.key_id,
+        epoch=0,
+        control_oid="control-0",
+        digests={"bootstrap_roster": "a" * 64, "empty_anchor": "b" * 64},
+    )
+    fence.bootstrap(
+        authorization=authorization,
+        observed_artifact_digests=authorization.artifact_digests,
+    )
+    original_fences = [fence]
+    original_fences.extend(
+        EpochFence(
+            tmp_path,
+            roster=roster,
+            verifier=OperationalVerifier(),
+            pin_store=pin_store,
+        )
+        for _ in range(31)
+    )
+    retained_proofs: dict[int, tuple[bytes, SignatureEnvelope]] = {}
+    fence_references: list[weakref.ReferenceType[EpochFence]] = []
+    for original_fence in original_fences:
+        operation = epoch_module.bind_system_context(
+            original_fence,
+            signer=signer,
+            key_id=key.key_id,
+            system_role="daemon",
+        )
+        referents = gc.get_referents(operation)
+        payload = next(value for value in referents if isinstance(value, bytes))
+        envelope = next(
+            value for value in referents if isinstance(value, SignatureEnvelope)
+        )
+        retained_proofs[id(original_fence)] = (payload, envelope)
+        fence_references.append(weakref.ref(original_fence))
+
+    del operation
+    del original_fence
+    del fence
+    del original_fences
+    gc.collect()
+    assert all(reference() is None for reference in fence_references)
+
+    reused_identifier = False
+    replacements: list[EpochFence] = []
+    for _ in range(4096):
+        replacement = EpochFence.__new__(EpochFence)
+        replacements.append(replacement)
+        retained_proof = retained_proofs.get(id(replacement))
+        if retained_proof is not None:
+            reused_identifier = True
+            replacement.__init__(
+                tmp_path,
+                roster=roster,
+                verifier=OperationalVerifier(),
+                pin_store=pin_store,
+            )
+            payload, envelope = retained_proof
+            replay = epoch_module._BoundSystemContext(  # type: ignore[attr-defined]
+                replacement,
+                payload,
+                envelope,
+            )
+            with pytest.raises(AuthorityEpochError):
+                replay(_system_identity())
+            break
+
+    assert reused_identifier, "test did not exercise runtime fence identifier reuse"
+
+
+def test_fence_instance_nonce_is_unique_write_once_and_not_serializable(
+    tmp_path,
+) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a", roles=("origin",))
+    pin_store = _pin_store(tmp_path)
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+        pin_store=pin_store,
+    )
+    fence = EpochFence(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=pin_store,
+    )
+    initial_nonce = epoch_module._fence_nonce(fence)  # type: ignore[attr-defined]
+    replacement = EpochFence(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=pin_store,
+    )
+    assert epoch_module._fence_nonce(replacement) != initial_nonce  # type: ignore[attr-defined]
+
+    with pytest.raises(AttributeError):
+        fence._EpochFence__instance_nonce = b"reset" * 8  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        object.__setattr__(
+            fence,
+            "_EpochFence__instance_nonce",
+            bytes.fromhex(epoch_module._fence_nonce(replacement)),  # type: ignore[attr-defined]
+        )
+    fence.__init__(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=pin_store,
+    )
+    assert epoch_module._fence_nonce(fence) == initial_nonce  # type: ignore[attr-defined]
+
+    with pytest.raises(TypeError):
+        copy.copy(fence)
+    with pytest.raises(TypeError):
+        copy.deepcopy(fence)
+    with pytest.raises(TypeError):
+        pickle.dumps(fence)
+
+    reconstructed = object.__new__(EpochFence)
+    reconstructed.__init__(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=pin_store,
+    )
+    with pytest.raises(AuthorityEpochError):
+        epoch_module._fence_nonce(reconstructed)  # type: ignore[attr-defined]
 
 
 def test_authority_writes_fsync_parent_directory(tmp_path, monkeypatch) -> None:
