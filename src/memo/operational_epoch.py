@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import weakref
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.errors import AuthorityEpochError, OperationalError
@@ -22,6 +24,7 @@ from memo.operational_event import (
 from memo.operational_key_store import AuthorityPinStore, KeyStoreError
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import (
+    OperationalSigner,
     OperationalVerifier,
     SignatureEnvelope,
 )
@@ -29,6 +32,26 @@ from memo.operational_signing import (
 _MARKER_SCHEMA = "memo.operational_authority_epoch.v1"
 _HIGH_WATERMARK_SCHEMA = "memo.operational_authority_epoch_high_watermark.v1"
 _AUTHORIZATION_SCHEMA = "memo.operational_epoch_authorization.v1"
+_SYSTEM_CAPABILITY_SCHEMA = "memo.operational_system_capability.v1"
+_SYSTEM_CAPABILITY_DOMAIN = "memo.operational.system_capability.v1"
+_SYSTEM_CAPABILITY_FIELDS = frozenset(
+    {
+        "schema",
+        "authority_id",
+        "authority_root_sha256",
+        "process_nonce",
+        "fence_nonce",
+        "system_role",
+        "device_id",
+        "roster_version",
+        "roster_hash",
+        "key_id",
+    }
+)
+_SYSTEM_ROLES = frozenset({"daemon", "migration"})
+# This is a freshness challenge, not a bearer secret. Every proof is also
+# signed by an enrolled operational key and bound to one concrete fence.
+_PROCESS_NONCE = os.urandom(32)
 
 
 @dataclass(frozen=True)
@@ -41,17 +64,77 @@ class CommitContext:
 
 
 class SystemCapability:
-    """Nominal type whose instances exist only inside trusted composition."""
+    """A signed fence-local proof created only while invoking a bound operation."""
 
-    __slots__ = ("__owner",)
+    __slots__ = ("__operation", "__payload", "__signature")
 
     def __new__(cls) -> SystemCapability:
         del cls
-        raise TypeError("SystemCapability is created only inside a trusted composition closure")
+        raise TypeError("SystemCapability is created only by authenticated composition")
 
 
 SystemContextOperation = Callable[[PrincipalIdentity], CommitContext]
-SystemContextSink = Callable[[SystemContextOperation], None]
+SystemRole = Literal["daemon", "migration"]
+
+
+class _BoundSystemContext:
+    """Opaque callable carrying immutable proof bytes, never a raw capability."""
+
+    __slots__ = ("__fence_ref", "__payload", "__signature")
+
+    def __init__(
+        self,
+        fence: EpochFence,
+        payload: bytes,
+        signature: SignatureEnvelope,
+    ) -> None:
+        self.__fence_ref = weakref.ref(fence)
+        self.__payload = bytes(payload)
+        self.__signature = signature
+
+    def __call__(self, identity: PrincipalIdentity) -> CommitContext:
+        fence = self.__fence_ref()
+        if fence is None:
+            raise AuthorityEpochError("bound system capability fence no longer exists")
+        capability = object.__new__(SystemCapability)
+        object.__setattr__(
+            capability,
+            "_SystemCapability__operation",
+            self,
+        )
+        object.__setattr__(
+            capability,
+            "_SystemCapability__payload",
+            self.__payload,
+        )
+        object.__setattr__(
+            capability,
+            "_SystemCapability__signature",
+            self.__signature,
+        )
+        token = _ACTIVE_SYSTEM_OPERATION.set(self)
+        try:
+            return fence.system_context(identity, capability=capability)
+        finally:
+            _ACTIVE_SYSTEM_OPERATION.reset(token)
+
+    def _authorizes(
+        self,
+        fence: EpochFence,
+        payload: bytes,
+        signature: SignatureEnvelope,
+    ) -> bool:
+        return (
+            self.__fence_ref() is fence
+            and self.__payload == payload
+            and self.__signature == signature
+        )
+
+
+_ACTIVE_SYSTEM_OPERATION: ContextVar[_BoundSystemContext | None] = ContextVar(
+    "memo_active_system_operation",
+    default=None,
+)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -68,6 +151,101 @@ def _canonical_text(value: object) -> str:
 
 def _sha256(value: object) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _authority_root_sha256(fence: EpochFence) -> str:
+    canonical_root = fence.root.expanduser().resolve()
+    return hashlib.sha256(
+        b"memo-operational-authority-root-v1\0" + os.fsencode(canonical_root)
+    ).hexdigest()
+
+
+def _authority_id(fence: EpochFence) -> str:
+    try:
+        authority_id = object.__getattribute__(
+            fence.pin_store,
+            "_installation_id",
+        )
+    except (AttributeError, TypeError):
+        raise AuthorityEpochError("authority installation identity is unavailable") from None
+    if not isinstance(authority_id, str) or not authority_id:
+        raise AuthorityEpochError("authority installation identity is invalid")
+    return authority_id
+
+
+def _fence_nonce(fence: EpochFence) -> str:
+    challenge = b"\0".join(
+        (
+            b"memo-operational-system-fence-v1",
+            _PROCESS_NONCE,
+            str(os.getpid()).encode("ascii"),
+            str(id(fence)).encode("ascii"),
+            _authority_id(fence).encode("ascii"),
+            _authority_root_sha256(fence).encode("ascii"),
+        )
+    )
+    return hashlib.sha256(challenge).hexdigest()
+
+
+def _system_capability_claims(
+    fence: EpochFence,
+    *,
+    key_id: str,
+    system_role: str,
+) -> dict[str, object]:
+    return {
+        "schema": _SYSTEM_CAPABILITY_SCHEMA,
+        "authority_id": _authority_id(fence),
+        "authority_root_sha256": _authority_root_sha256(fence),
+        "process_nonce": _PROCESS_NONCE.hex(),
+        "fence_nonce": _fence_nonce(fence),
+        "system_role": system_role,
+        "device_id": fence.roster.local_device_id,
+        "roster_version": fence.roster.version,
+        "roster_hash": fence.roster.roster_hash,
+        "key_id": key_id,
+    }
+
+
+def _decode_system_capability(payload: bytes) -> dict[str, object]:
+    try:
+        value = json.loads(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as exc:
+        raise AuthorityEpochError("system capability proof is invalid") from exc
+    if (
+        not isinstance(value, dict)
+        or set(value) != _SYSTEM_CAPABILITY_FIELDS
+        or canonical_json_bytes(value) != payload
+    ):
+        raise AuthorityEpochError("system capability proof is not canonical")
+    roster_version = value.get("roster_version")
+    if (
+        value.get("schema") != _SYSTEM_CAPABILITY_SCHEMA
+        or not isinstance(value.get("authority_id"), str)
+        or not value.get("authority_id")
+        or not _is_sha256(value.get("authority_root_sha256"))
+        or not _is_sha256(value.get("process_nonce"))
+        or not _is_sha256(value.get("fence_nonce"))
+        or value.get("system_role") not in _SYSTEM_ROLES
+        or not isinstance(value.get("device_id"), str)
+        or not value.get("device_id")
+        or isinstance(roster_version, bool)
+        or not isinstance(roster_version, int)
+        or roster_version < 1
+        or not _is_sha256(value.get("roster_hash"))
+        or not isinstance(value.get("key_id"), str)
+        or not value.get("key_id")
+    ):
+        raise AuthorityEpochError("system capability claims are invalid")
+    return value
 
 
 def _require_string(value: object, field: str) -> str:
@@ -176,27 +354,16 @@ class EpochFence:
         roster: VerificationRoster,
         verifier: OperationalVerifier,
         pin_store: AuthorityPinStore,
-        _system_context_sink: SystemContextSink | None = None,
     ) -> None:
+        if type(verifier) is not OperationalVerifier:
+            raise TypeError("EpochFence requires the stateless operational verifier")
         self.root = Path(root)
         self.marker_path = self.root / "authority-epoch.json"
         self.high_watermark_path = self.root / "authority-epoch-high-watermark.json"
         self.roster = roster
-        self.verifier = verifier
         self.pin_store = pin_store
         self._recover_prepared_authority()
         self._read_authority(required=False)
-        if _system_context_sink is not None:
-            # Task 3's composition root owns this one-shot handoff. It retains
-            # only the bound operation in the trusted daemon/migration closure;
-            # adapters receive neither the capability nor construction authority.
-            capability = object.__new__(SystemCapability)
-            object.__setattr__(capability, "_SystemCapability__owner", self)
-
-            def bound_system_context(identity: PrincipalIdentity) -> CommitContext:
-                return self.system_context(identity, capability=capability)
-
-            _system_context_sink(bound_system_context)
 
     def _verify_authorization(
         self,
@@ -214,7 +381,7 @@ class EpochFence:
         if dict(authorization.artifact_digests) != dict(observed_artifact_digests):
             raise AuthorityEpochError("epoch authorization artifact digest mismatch")
         try:
-            self.verifier.verify(
+            OperationalVerifier().verify(
                 domain=_AUTHORIZATION_SCHEMA,
                 payload=canonical_signed_bytes(authorization),
                 envelope=authorization.signature,
@@ -479,6 +646,36 @@ class EpochFence:
             raise AuthorityEpochError("authority epoch rollback detected") from exc
         return authorization
 
+    def _verify_system_capability(
+        self,
+        payload: bytes,
+        signature: SignatureEnvelope,
+    ) -> None:
+        if not isinstance(signature, SignatureEnvelope):
+            raise AuthorityEpochError("system capability signature is invalid")
+        claims = _decode_system_capability(payload)
+        key_id = claims["key_id"]
+        system_role = claims["system_role"]
+        assert isinstance(key_id, str)
+        assert isinstance(system_role, str)
+        if claims != _system_capability_claims(
+            self,
+            key_id=key_id,
+            system_role=system_role,
+        ):
+            raise AuthorityEpochError(
+                "system capability is bound to a different authority or process"
+            )
+        try:
+            OperationalVerifier().verify(
+                domain=_SYSTEM_CAPABILITY_DOMAIN,
+                payload=payload,
+                envelope=signature,
+                roster=self.roster,
+            )
+        except OperationalError as exc:
+            raise AuthorityEpochError("invalid system capability signature") from exc
+
     def context(
         self,
         identity: PrincipalIdentity,
@@ -511,15 +708,31 @@ class EpochFence:
         *,
         capability: SystemCapability,
     ) -> CommitContext:
+        if type(capability) is not SystemCapability:
+            raise AuthorityEpochError("invalid system capability")
         try:
-            owner = object.__getattribute__(
+            operation = object.__getattribute__(
                 capability,
-                "_SystemCapability__owner",
+                "_SystemCapability__operation",
+            )
+            payload = object.__getattribute__(
+                capability,
+                "_SystemCapability__payload",
+            )
+            signature = object.__getattribute__(
+                capability,
+                "_SystemCapability__signature",
             )
         except (AttributeError, TypeError):
-            owner = None
-        if type(capability) is not SystemCapability or owner is not self:
+            raise AuthorityEpochError("invalid system capability") from None
+        if (
+            type(operation) is not _BoundSystemContext
+            or _ACTIVE_SYSTEM_OPERATION.get() is not operation
+            or not isinstance(payload, bytes)
+            or not operation._authorizes(self, payload, signature)
+        ):
             raise AuthorityEpochError("invalid system capability")
+        self._verify_system_capability(payload, signature)
         authorization = self._read_authority()
         assert authorization is not None
         return CommitContext(
@@ -545,11 +758,53 @@ class EpochFence:
                 raise AuthorityEpochError("commit context principal device mismatch")
 
 
+def bind_system_context(
+    fence: EpochFence,
+    *,
+    signer: OperationalSigner,
+    key_id: str,
+    system_role: SystemRole,
+) -> SystemContextOperation:
+    """Authenticate one fence-local daemon/migration operation.
+
+    Possessing or constructing an ``EpochFence`` is intentionally insufficient:
+    the caller must prove control of a key enrolled for the requested internal
+    role. The returned callable contains only immutable signed proof bytes and a
+    weak fence reference; no signer or raw ``SystemCapability`` escapes.
+    """
+
+    if type(fence) is not EpochFence:
+        raise AuthorityEpochError("system context binding requires an EpochFence")
+    if type(signer) is not OperationalSigner:
+        raise AuthorityEpochError("system context binding requires an operational signer")
+    if not isinstance(key_id, str) or not key_id:
+        raise AuthorityEpochError("system context binding key is invalid")
+    if system_role not in _SYSTEM_ROLES:
+        raise AuthorityEpochError("system context binding role is invalid")
+    claims = _system_capability_claims(
+        fence,
+        key_id=key_id,
+        system_role=system_role,
+    )
+    payload = canonical_json_bytes(claims)
+    try:
+        signature = signer.sign(
+            domain=_SYSTEM_CAPABILITY_DOMAIN,
+            payload=payload,
+            key_id=key_id,
+        )
+    except OperationalError as exc:
+        raise AuthorityEpochError("system context binding signature failed") from exc
+    fence._verify_system_capability(payload, signature)
+    return _BoundSystemContext(fence, payload, signature)
+
+
 __all__ = [
     "AuthorityEpochError",
     "CommitContext",
     "EpochFence",
     "SystemCapability",
     "SystemContextOperation",
-    "SystemContextSink",
+    "SystemRole",
+    "bind_system_context",
 ]

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import gc
+import inspect
 import json
+import weakref
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,7 +20,11 @@ from memo.operational_key_store import (
     KeyStoreError,
 )
 from memo.operational_roster import VerificationRoster
-from memo.operational_signing import OperationalSigner, OperationalVerifier
+from memo.operational_signing import (
+    OperationalSigner,
+    OperationalVerifier,
+    SignatureEnvelope,
+)
 
 _AUTHORITY_PINS = InMemoryAuthorityPinProvider()
 
@@ -40,7 +48,7 @@ def _authorization(
         epoch=epoch,
         control_oid=control_oid,
         artifact_digests=digests,
-        roster_version=1,
+        roster_version=signer.roster_version,
         key_id=key_id,
         signature=None,  # type: ignore[arg-type]
     )
@@ -50,6 +58,17 @@ def _authorization(
         key_id=key_id,
     )
     return replace(unsigned, signature=envelope)
+
+
+def _system_identity() -> PrincipalIdentity:
+    return PrincipalIdentity(
+        principal_id="system-p1",
+        actor_id="migration-daemon",
+        kind="agent",
+        device_id="device-a",
+        session_id="system-session",
+        source_client="memo",
+    )
 
 
 def test_external_context_requires_explicit_epoch_and_control(tmp_path) -> None:
@@ -644,20 +663,24 @@ def test_bootstrap_is_one_shot_and_adapters_cannot_mint_system_capability(
     fence = EpochFence(
         tmp_path, roster=roster, verifier=OperationalVerifier(), pin_store=_pin_store(tmp_path)
     )
+    signer = OperationalSigner(keys, roster_version=1)
+    auth = _authorization(
+        signer,
+        key_id=key.key_id,
+        epoch=0,
+        control_oid="control-0",
+        digests={"bootstrap_roster": "a" * 64, "empty_anchor": "b" * 64},
+    )
+    fence.bootstrap(
+        authorization=auth,
+        observed_artifact_digests=auth.artifact_digests,
+    )
     assert not hasattr(fence, "system_capability")
     forged = object.__new__(epoch_module.SystemCapability)
+    with suppress(AttributeError):
+        object.__setattr__(forged, "_SystemCapability__owner", fence)
     with pytest.raises(AuthorityEpochError):
-        fence.system_context(
-            PrincipalIdentity(
-                principal_id="p1",
-                actor_id="agent-a",
-                kind="agent",
-                device_id="device-a",
-                session_id="session-a",
-                source_client="codex",
-            ),
-            capability=forged,
-        )
+        fence.system_context(_system_identity(), capability=forged)
 
     loaded = VerificationRoster.load(tmp_path, pin_store=_pin_store(tmp_path))
     other_root = tmp_path / "other"
@@ -668,14 +691,6 @@ def test_bootstrap_is_one_shot_and_adapters_cannot_mint_system_capability(
         verifier=OperationalVerifier(),
         pin_store=_pin_store(other_root),
     )
-    signer = OperationalSigner(keys, roster_version=1)
-    auth = _authorization(
-        signer,
-        key_id=key.key_id,
-        epoch=0,
-        control_oid="control-0",
-        digests={"bootstrap_roster": "a" * 64, "empty_anchor": "b" * 64},
-    )
     with pytest.raises(AuthorityEpochError):
         copied_fence.bootstrap(
             authorization=auth,
@@ -683,9 +698,52 @@ def test_bootstrap_is_one_shot_and_adapters_cannot_mint_system_capability(
         )
 
 
-def test_capability_validator_closure_cannot_be_mutated_to_accept_forgery(
+def test_ordinary_fence_construction_has_no_privileged_binding_channel(
     tmp_path,
 ) -> None:
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a")
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    constructor_parameters = inspect.signature(EpochFence).parameters
+    assert "_system_context_sink" not in constructor_parameters
+    captured: list[object] = []
+    for keyword in (
+        "_system_context_sink",
+        "system_context_sink",
+        "callback",
+        "capability",
+    ):
+        with pytest.raises(TypeError):
+            EpochFence(
+                tmp_path,
+                roster=roster,
+                verifier=OperationalVerifier(),
+                pin_store=_pin_store(tmp_path),
+                **{keyword: captured.append},
+            )
+    assert captured == []
+
+    fences = [
+        EpochFence(
+            tmp_path,
+            roster=roster,
+            verifier=OperationalVerifier(),
+            pin_store=_pin_store(tmp_path),
+        )
+        for _ in range(3)
+    ]
+    for fence in fences:
+        assert not hasattr(fence, "system_capability")
+        assert not hasattr(fence, "bound_system_context")
+        assert not hasattr(fence, "system_context_operation")
+
+
+def test_binding_requires_enrolled_signer_and_an_internal_role(tmp_path) -> None:
     import memo.operational_epoch as epoch_module
 
     keys = DeviceKeyStore.in_memory()
@@ -714,35 +772,90 @@ def test_capability_validator_closure_cannot_be_mutated_to_accept_forgery(
         authorization=authorization,
         observed_artifact_digests=authorization.artifact_digests,
     )
-    forged = object.__new__(epoch_module.SystemCapability)
-    validator = getattr(epoch_module, "_is_enclosed_system_capability", None)
-    if validator is not None:
-        enrolled = next(
-            cell.cell_contents
-            for cell in validator.__closure__
-            if isinstance(cell.cell_contents, set)
-        )
-        enrolled.add(id(forged))
+
+    untrusted_keys = DeviceKeyStore.in_memory()
+    untrusted_key = untrusted_keys.generate(device_id="device-a", roles=("origin",))
     with pytest.raises(AuthorityEpochError):
-        fence.system_context(
-            PrincipalIdentity(
-                principal_id="p1",
-                actor_id="agent-a",
-                kind="agent",
-                device_id="device-a",
-                session_id="session-a",
-                source_client="codex",
-            ),
-            capability=forged,
+        epoch_module.bind_system_context(
+            fence,
+            signer=OperationalSigner(untrusted_keys, roster_version=1),
+            key_id=untrusted_key.key_id,
+            system_role="daemon",
+        )
+    with pytest.raises(AuthorityEpochError):
+        epoch_module.bind_system_context(
+            fence,
+            signer=signer,
+            key_id=key.key_id,
+            system_role="adapter",
+        )
+    with pytest.raises(AuthorityEpochError):
+        epoch_module.bind_system_context(
+            fence,
+            signer=signer,
+            key_id=key.key_id,
+            system_role="migration",
         )
 
 
-def test_composition_sink_receives_only_bound_system_context_operation(tmp_path) -> None:
+def test_migration_binding_accepts_an_exclusive_enrolled_attestor(tmp_path) -> None:
     import memo.operational_epoch as epoch_module
 
-    captured: list[object] = []
     keys = DeviceKeyStore.in_memory()
-    key = keys.generate(device_id="device-a")
+    origin_key = keys.generate(device_id="device-a", roles=("origin",))
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=origin_key,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    migration_key = keys.generate(
+        device_id="device-a",
+        roles=("migration_attestor",),
+        enrollment_sequence=2,
+    )
+    roster = roster.with_keys(
+        version=2,
+        peers=("device-a",),
+        keys=(origin_key, migration_key),
+        signer=OperationalSigner(keys, roster_version=1),
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    signer = OperationalSigner(keys, roster_version=2)
+    fence = EpochFence(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=_pin_store(tmp_path),
+    )
+    authorization = _authorization(
+        signer,
+        key_id=origin_key.key_id,
+        epoch=0,
+        control_oid="control-0",
+        digests={"bootstrap_roster": "a" * 64, "empty_anchor": "b" * 64},
+    )
+    fence.bootstrap(
+        authorization=authorization,
+        observed_artifact_digests=authorization.artifact_digests,
+    )
+
+    operation = epoch_module.bind_system_context(
+        fence,
+        signer=signer,
+        key_id=migration_key.key_id,
+        system_role="migration",
+    )
+    context = operation(_system_identity())
+    assert (context.authority_epoch, context.control_oid) == (0, "control-0")
+
+
+def test_legitimate_binding_returns_only_an_opaque_bound_operation(tmp_path) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a", roles=("origin",))
     roster = VerificationRoster.bootstrap(
         device_id="device-a",
         key=key,
@@ -754,12 +867,9 @@ def test_composition_sink_receives_only_bound_system_context_operation(tmp_path)
         roster=roster,
         verifier=OperationalVerifier(),
         pin_store=_pin_store(tmp_path),
-        _system_context_sink=captured.append,
     )
     assert hasattr(epoch_module, "SystemCapability")
     assert hasattr(epoch_module.EpochFence, "system_context")
-    assert len(captured) == 1
-    assert callable(captured[0])
     assert not hasattr(fence, "system_capability")
     assert not hasattr(epoch_module, "_issue_system_capability")
     with pytest.raises(TypeError):
@@ -775,23 +885,151 @@ def test_composition_sink_receives_only_bound_system_context_operation(tmp_path)
         authorization=authorization,
         observed_artifact_digests=authorization.artifact_digests,
     )
-    identity = PrincipalIdentity(
-        principal_id="system-p1",
-        actor_id="migration-daemon",
-        kind="agent",
-        device_id="device-a",
-        session_id="system-session",
-        source_client="memo",
+    operation = epoch_module.bind_system_context(
+        fence,
+        signer=OperationalSigner(keys, roster_version=1),
+        key_id=key.key_id,
+        system_role="daemon",
     )
-    operation = captured[0]
     assert callable(operation)
-    context = operation(identity)
+    assert not isinstance(operation, epoch_module.SystemCapability)
+    assert getattr(operation, "__closure__", None) is None
+    assert not hasattr(operation, "__dict__")
+    assert not hasattr(operation, "capability")
+    assert not hasattr(operation, "validator")
+    direct_referents = gc.get_referents(operation)
+    assert not any(
+        isinstance(value, epoch_module.SystemCapability) for value in direct_referents
+    )
+    assert not any(
+        isinstance(value, (OperationalSigner, OperationalVerifier))
+        for value in direct_referents
+    )
+    assert not any(isinstance(value, (dict, list, set)) for value in direct_referents)
+
+    context = operation(_system_identity())
     assert (context.authority_epoch, context.control_oid) == (0, "control-0")
     with pytest.raises(AuthorityEpochError):
         fence.system_context(
-            identity,
+            _system_identity(),
             capability=object.__new__(epoch_module.SystemCapability),
         )
+
+
+def test_bound_operation_proof_cannot_replay_to_another_fence(tmp_path) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a", roles=("origin",))
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    signer = OperationalSigner(keys, roster_version=1)
+    fence = EpochFence(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=_pin_store(tmp_path),
+    )
+    authorization = _authorization(
+        signer,
+        key_id=key.key_id,
+        epoch=0,
+        control_oid="control-0",
+        digests={"bootstrap_roster": "a" * 64, "empty_anchor": "b" * 64},
+    )
+    fence.bootstrap(
+        authorization=authorization,
+        observed_artifact_digests=authorization.artifact_digests,
+    )
+    operation = epoch_module.bind_system_context(
+        fence,
+        signer=signer,
+        key_id=key.key_id,
+        system_role="daemon",
+    )
+    referents = gc.get_referents(operation)
+    payload = next(value for value in referents if isinstance(value, bytes))
+    envelope = next(
+        value for value in referents if isinstance(value, SignatureEnvelope)
+    )
+    forged = object.__new__(epoch_module.SystemCapability)
+    object.__setattr__(forged, "_SystemCapability__operation", operation)
+    object.__setattr__(forged, "_SystemCapability__payload", payload)
+    object.__setattr__(forged, "_SystemCapability__signature", envelope)
+    with pytest.raises(AuthorityEpochError):
+        fence.system_context(_system_identity(), capability=forged)
+
+    recreated = EpochFence(
+        tmp_path,
+        roster=VerificationRoster.load(tmp_path, pin_store=_pin_store(tmp_path)),
+        verifier=OperationalVerifier(),
+        pin_store=_pin_store(tmp_path),
+    )
+    with pytest.raises(AuthorityEpochError):
+        recreated.system_context(_system_identity(), capability=forged)
+
+
+def test_bound_operation_dies_with_its_fence_and_process_nonce(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import memo.operational_epoch as epoch_module
+
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a", roles=("origin",))
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    signer = OperationalSigner(keys, roster_version=1)
+    fence = EpochFence(
+        tmp_path,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=_pin_store(tmp_path),
+    )
+    authorization = _authorization(
+        signer,
+        key_id=key.key_id,
+        epoch=0,
+        control_oid="control-0",
+        digests={"bootstrap_roster": "a" * 64, "empty_anchor": "b" * 64},
+    )
+    fence.bootstrap(
+        authorization=authorization,
+        observed_artifact_digests=authorization.artifact_digests,
+    )
+    operation = epoch_module.bind_system_context(
+        fence,
+        signer=signer,
+        key_id=key.key_id,
+        system_role="daemon",
+    )
+    operation(_system_identity())
+
+    monkeypatch.setattr(epoch_module, "_PROCESS_NONCE", b"recreated-process" * 2)
+    with pytest.raises(AuthorityEpochError):
+        operation(_system_identity())
+    monkeypatch.undo()
+
+    fence_reference = weakref.ref(fence)
+    del fence
+    gc.collect()
+    assert fence_reference() is None
+    EpochFence(
+        tmp_path,
+        roster=VerificationRoster.load(tmp_path, pin_store=_pin_store(tmp_path)),
+        verifier=OperationalVerifier(),
+        pin_store=_pin_store(tmp_path),
+    )
+    with pytest.raises(AuthorityEpochError):
+        operation(_system_identity())
 
 
 def test_authority_writes_fsync_parent_directory(tmp_path, monkeypatch) -> None:

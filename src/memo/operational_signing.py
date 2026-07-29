@@ -24,6 +24,7 @@ ALLOWED_SIGNATURE_DOMAINS = frozenset(
         "memo.operational.roster.v1",
         "memo.operational.roster.bootstrap.v1",
         "memo.operational.migration_origin.v1",
+        "memo.operational.system_capability.v1",
         "memo.operational_epoch_authorization.v1",
         "memo.cutover.vote.v1",
     }
@@ -229,6 +230,27 @@ class OperationalVerifier:
             record_key_field = "key_id"
             require_record_claims = True
             expected_device = _claim_string(body, "device_id", required=True)
+        elif domain == "memo.operational.system_capability.v1":
+            if (
+                _claim_string(body, "schema", required=True)
+                != "memo.operational_system_capability.v1"
+            ):
+                raise SignatureError("system capability schema is invalid")
+            record_key_field = "key_id"
+            require_record_claims = True
+            expected_device = _claim_string(body, "device_id", required=True)
+            system_role = _claim_string(body, "system_role", required=True)
+            if system_role == "migration":
+                required_role = "migration_attestor"
+                if key.roles != ("migration_attestor",):
+                    raise SignatureError(
+                        "system migration key must have an exclusive role"
+                    )
+            elif system_role != "daemon":
+                raise SignatureError("system capability role is invalid")
+            roster_hash = _claim_string(body, "roster_hash", required=True)
+            if roster_hash != roster.roster_hash:
+                raise SignatureError("system capability roster hash mismatch")
         elif domain in {
             "memo.operational.roster.v1",
             "memo.operational.roster.bootstrap.v1",

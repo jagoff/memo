@@ -223,3 +223,62 @@ def test_anchor_signature_binds_embedded_key_and_roster(tmp_path) -> None:
             envelope=envelope,
             roster=roster,
         )
+
+
+def test_system_capability_signature_binds_key_device_roster_and_internal_role(
+    tmp_path,
+) -> None:
+    keys = DeviceKeyStore.in_memory()
+    public = keys.generate(device_id="device-a", roles=("origin",))
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=public,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    signer = OperationalSigner(keys, roster_version=1)
+    verifier = OperationalVerifier()
+    body = {
+        "schema": "memo.operational_system_capability.v1",
+        "authority_id": "4b443953-c1bb-4eaf-aa67-b7608f82f98b",
+        "authority_root_sha256": "a" * 64,
+        "process_nonce": "b" * 64,
+        "fence_nonce": "c" * 64,
+        "system_role": "daemon",
+        "device_id": "device-a",
+        "roster_version": 1,
+        "roster_hash": roster.roster_hash,
+        "key_id": public.key_id,
+    }
+    payload = canonical_json_bytes(body)
+    envelope = signer.sign(
+        domain="memo.operational.system_capability.v1",
+        payload=payload,
+        key_id=public.key_id,
+    )
+    verifier.verify(
+        domain="memo.operational.system_capability.v1",
+        payload=payload,
+        envelope=envelope,
+        roster=roster,
+    )
+
+    for field, value in (
+        ("key_id", "declared-other-key"),
+        ("device_id", "device-b"),
+        ("roster_version", 999),
+        ("system_role", "adapter"),
+    ):
+        changed_payload = canonical_json_bytes({**body, field: value})
+        changed_envelope = signer.sign(
+            domain="memo.operational.system_capability.v1",
+            payload=changed_payload,
+            key_id=public.key_id,
+        )
+        with pytest.raises(SignatureError):
+            verifier.verify(
+                domain="memo.operational.system_capability.v1",
+                payload=changed_payload,
+                envelope=changed_envelope,
+                roster=roster,
+            )
