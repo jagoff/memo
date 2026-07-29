@@ -19,7 +19,7 @@ Persistent, searchable memory for Claude Code, Codex, Cursor, Cline, Devin, and 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.6/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.5.0/install.sh | bash
 ```
 
 <sub>Prefer a package manager? `uv tool install mlx-memo` · `pipx install mlx-memo` · `brew tap jagoff/memo && brew install mlx-memo`</sub>
@@ -40,14 +40,14 @@ That's it. Your agents pick it up over MCP automatically — the installer wires
 New Mac:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.6/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.5.0/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git
 ```
 
 Agent-managed setup:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.4.6/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.5.0/install.sh | bash
 memo doctor --strict-runtime
 ```
 
@@ -165,7 +165,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 | Install detail, installer knobs, new-Mac migration | [reference.md › Install](docs/reference.md#install-detail) |
 | Per-client MCP setup (Claude Desktop, Cursor, Cline, Continue) | [reference.md › MCP setup](docs/reference.md#mcp-setup) |
 | Ambient recall, capture, and tuning | [reference.md › Ambient memory](docs/reference.md#ambient-memory) |
-| Full CLI reference (135 commands) + `memo tui` | [reference.md › CLI](docs/reference.md#cli-reference) |
+| Full CLI reference (137 commands) + `memo tui` | [reference.md › CLI](docs/reference.md#cli-reference) |
 | All `MEMO_*` flags and model profiles | [reference.md › Configuration](docs/reference.md#configuration) |
 | Architecture and design notes | [reference.md › Design](docs/reference.md#design-and-comparison) |
 | Privacy and network policy | [PRIVACY.md](PRIVACY.md) |

@@ -211,6 +211,19 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_RECALL_CODE_PROXIMITY_BOOST",
+        "float",
+        0.0,
+        "recall",
+        "Additive score boost for hits whose code_refs fall in the codegraph "
+        "neighborhood (2 hops) of the uncommitted working-tree changes "
+        "(git diff --name-only HEAD, once per render). Composes like the other "
+        "rank_hits boosts. Default 0.0 = OFF: zero subprocesses and zero graph "
+        "queries — ranking identical to today.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
         "MEMO_RECALL_RERANK_INPUT_K",
         "int",
         10,
