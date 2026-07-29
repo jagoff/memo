@@ -628,6 +628,21 @@ SPECS: tuple[FlagSpec, ...] = (
         "reusing the epistemic '?unverified' framing. Pure render-layer (no store "
         "read, no MLX on the hook path); ranking untouched. Default OFF.",
     ),
+    _spec(
+        "MEMO_RECALL_CODE_REFS_ENABLED",
+        "bool",
+        False,
+        "recall",
+        "Append a '  ↳ code: <path>:<line>' line under each recalled memory that "
+        "carries extra.code_refs, verified live against the codegraph index "
+        "(one indexed SELECT per ref over nodes by file_path [+ name]): "
+        "'(vigente)' on a positive lookup, '(desaparecido)' when the DB is live "
+        "but the ref no longer resolves, '(no verificado)' when the DB is "
+        "unavailable or the lookup fails. One read-only sqlite connection per "
+        "render, capped at 2 refs/memory and 4 lines/render (the token budget "
+        "still wins). Default OFF: zero extra work on the recall hot path (the "
+        "codegraph DB is never even opened).",
+    ),
     # ── Negative Recall — the ⛔ AVOID channel ────────────────────────────────
     # A preemptive, high-precision pass over type=failure_pattern anti-memories,
     # rendered as a distinct ⛔ AVOID block and excluded from normal recall. The

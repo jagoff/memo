@@ -212,6 +212,148 @@ def collapse_near_dups(relevant: list[Any], *, threshold: float) -> list[Any]:
     return [h for h in relevant if id(h) in survivors]
 
 
+# ── Verified code citations (MEMO_RECALL_CODE_REFS_ENABLED, default OFF) ─────
+_CODE_REFS_PER_MEMORY_CAP = 2  # max '↳ code' lines per rendered memory
+_CODE_REFS_PER_RENDER_CAP = 4  # max '↳ code' lines per render (token budget wins)
+
+
+def _code_ref_entry(
+    ref: Any,
+) -> tuple[str, int | None, str, str | None, str | None, str | None] | None:
+    """(file_path, start_line, kind, symbol, qualified_name, repo_id) from one
+    extra['code_refs'] entry, or None when the entry carries no renderable file
+    path (bare URIs skip). ``symbol`` mirrors the dream pass's _code_ref_exists:
+    label falling back to qualified_name. ``repo_id`` is parsed from the entry's
+    ``codegraph://<repo_id>/...`` uri when present (None otherwise)."""
+    if not isinstance(ref, dict):
+        return None
+    path = str(ref.get("file_path") or "").strip()
+    if not path:
+        return None
+    line: int | None
+    try:
+        line = int(ref["start_line"]) if ref.get("start_line") is not None else None
+    except (TypeError, ValueError):
+        line = None
+    kind = str(ref.get("kind") or "").strip().lower()
+    label = str(ref.get("label") or "").strip()
+    qualified = str(ref.get("qualified_name") or "").strip()
+    repo_id: str | None = None
+    uri = str(ref.get("uri") or "").strip()
+    if uri:
+        from memo.code_traceability import parse_codegraph_uri
+
+        parsed_uri = parse_codegraph_uri(uri)
+        if parsed_uri is not None:
+            repo_id = parsed_uri[0]
+    return path, line, kind, label or qualified or None, qualified or None, repo_id
+
+
+def _code_ref_status(
+    conn: Any | None, path: str, kind: str, symbol: str | None, qualified: str | None
+) -> str:
+    """'vigente' | 'desaparecido' | 'no verificado' for one code ref.
+
+    Mirrors the dream pass verifier (_code_ref_exists in cli_dream_passes.py):
+    ``kind == 'file'`` or no symbol → judged on file_path existence alone;
+    a symbol ref additionally requires a node whose name OR qualified_name
+    matches. 'vigente' is NEVER asserted without a positive SELECT against the
+    live nodes index. ``conn`` None (DB unavailable) or any sqlite error
+    degrades to 'no verificado' — the render never breaks on a verification
+    failure."""
+    if conn is None:
+        return "no verificado"
+    try:
+        if kind == "file" or not symbol:
+            row = conn.execute(
+                "SELECT 1 FROM nodes WHERE file_path = ? LIMIT 1", (path,)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT 1 FROM nodes WHERE file_path = ? AND (name = ? OR qualified_name = ?) "
+                "LIMIT 1",
+                (path, symbol, qualified or symbol),
+            ).fetchone()
+    except Exception as exc:
+        _logger.debug("code refs: verify failed for %s: %s", path, exc)
+        return "no verificado"
+    return "vigente" if row else "desaparecido"
+
+
+def _code_ref_lines(relevant: list[Any]) -> dict[int, list[str]]:
+    """Pre-computed '  ↳ code: <path>:<line> (<status>)' lines per hit index.
+
+    Gated on MEMO_RECALL_CODE_REFS_ENABLED (default OFF ⇒ {} — zero extra work
+    on the 5s recall hot path; the codegraph DB is never even opened). When ON:
+    the DB resolves like codegraph_loader.load() (explicit > cwd discovery >
+    checkout default — project-aware under pipx/uv-tool), one read-only sqlite
+    connection per render (opened once, always closed), one indexed sub-ms
+    SELECT per ref (nodes by file_path [+ name/qualified_name]), capped at
+    _CODE_REFS_PER_MEMORY_CAP refs per memory / _CODE_REFS_PER_RENDER_CAP lines
+    per render. A ref whose codegraph:// uri names another repo's graph
+    degrades to '(no verificado)' — never verified against the wrong index.
+    Any failure degrades that ref to '(no verificado)'. Known skew: the
+    codegraph watcher debounces ~2s, so a just-deleted symbol can briefly
+    still verify '(vigente)' against the previous index snapshot — accepted."""
+    if not flag_bool("MEMO_RECALL_CODE_REFS_ENABLED"):
+        return {}
+    parsed: list[tuple[int, str, int | None, str, str | None, str | None, str | None]] = []
+    total = 0
+    for i, hit in enumerate(relevant):
+        if total >= _CODE_REFS_PER_RENDER_CAP:
+            break
+        refs = (getattr(hit, "extra", None) or {}).get("code_refs")
+        if not isinstance(refs, list):
+            continue
+        per_memory = 0
+        for ref in refs:
+            if per_memory >= _CODE_REFS_PER_MEMORY_CAP or total >= _CODE_REFS_PER_RENDER_CAP:
+                break
+            entry = _code_ref_entry(ref)
+            if entry is None:
+                continue
+            parsed.append((i, *entry))
+            per_memory += 1
+            total += 1
+    if not parsed:
+        return {}
+
+    import sqlite3
+
+    from memo import codegraph_loader
+
+    conn: Any | None = None
+    db_repo_id: str | None = None
+    try:
+        db = codegraph_loader._resolve_db()
+        if db.is_file():
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            if any(entry[6] is not None for entry in parsed):
+                from memo.code_traceability import codegraph_repo_id
+
+                db_repo_id = codegraph_repo_id(db.parent.parent)
+    except Exception as exc:
+        _logger.debug("code refs: codegraph open failed: %s", exc)
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+        conn = None
+    out: dict[int, list[str]] = {}
+    try:
+        for i, path, line, kind, symbol, qualified, ref_repo_id in parsed:
+            if ref_repo_id is not None and ref_repo_id != db_repo_id:
+                status = "no verificado"  # ref cites another repo's graph
+            else:
+                status = _code_ref_status(conn, path, kind, symbol, qualified)
+            loc = f"{path}:{line}" if line is not None else path
+            out.setdefault(i, []).append(f"  ↳ code: {loc} ({status})")
+    finally:
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+    return out
+
+
 def render_recall_context(
     relevant: list[Any],
     nudge: list[Any],
@@ -261,6 +403,7 @@ def render_recall_context(
 
     use_labels = flag_bool("MEMO_RECALL_EPISTEMIC_LABELS")
     use_dossier = flag_bool("MEMO_HIT_DOSSIER")
+    code_lines_by_hit = _code_ref_lines(relevant)
     dropped: list[Any] = list(omitted or [])
     for i, hit in enumerate(relevant):
         score_tag = f" (score {hit.score:.2f})" if hit.score is not None else ""
@@ -284,7 +427,7 @@ def render_recall_context(
             *([tags_line] if tags_line else []),
             *([dossier_line] if dossier_line else []),
         ]
-        block = [*prefix, *([f"> {body}"] if body else []), ""]
+        block = [*prefix, *([f"> {body}"] if body else []), *code_lines_by_hit.get(i, []), ""]
         if max_chars is None or len(_render(block)) <= max_chars:
             lines.extend(block)
             continue
