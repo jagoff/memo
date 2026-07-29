@@ -371,6 +371,14 @@ def ask(
     show_default=True,
     help="Preview length for retrieved memory snippets.",
 )
+@click.option(
+    "--code",
+    default=None,
+    help="Anchor the pack on code: a symbol name, or a file path when it "
+    "contains '/'. Adds a '## Código relacionado' section (1-hop codegraph "
+    "neighbors + memories citing them); silently omitted when no codegraph "
+    "index is available.",
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--source",
@@ -383,13 +391,19 @@ def context_pack_cmd(
     k: int,
     type_: str | None,
     snippet_chars: int,
+    code: str | None,
     as_json: bool,
     source: str | None,
 ) -> None:
     """Build an explicit composed context pack without running the LLM."""
     import time
 
-    from memo.context_pack import build_context_pack, consult_hits_from_pack
+    from memo.context_pack import (
+        DEFAULT_BUDGET_CHARS,
+        build_context_pack,
+        code_related_section,
+        consult_hits_from_pack,
+    )
     from memo.flags import flag_bool
 
     cfg = Config.from_env()
@@ -408,7 +422,13 @@ def context_pack_cmd(
         read_through=False,
         quality_rerank=True,
     )
-    pack = build_context_pack(question, hits, snippet_chars=snippet_chars)
+    code_section = code_related_section(code, mem.store._conn) if code else ""
+    budget_chars = DEFAULT_BUDGET_CHARS
+    if code_section:
+        budget_chars = max(1, budget_chars - len(code_section) - 2)
+    pack = build_context_pack(
+        question, hits, snippet_chars=snippet_chars, budget_chars=budget_chars
+    )
     log_cli_consult(
         cfg,
         verb="context_pack",
@@ -418,12 +438,14 @@ def context_pack_cmd(
         source=source,
     )
     payload = asdict(pack)
+    if code_section:
+        payload["code_context"] = code_section
     if as_json:
         click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
         return
     console.print(
         Panel.fit(
-            pack.to_prompt(),
+            "\n\n".join(part for part in (pack.to_prompt(), code_section) if part),
             title=f"context-pack: {question[:60]}",
             border_style="cyan",
         )
