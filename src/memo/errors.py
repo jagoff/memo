@@ -13,6 +13,7 @@ error. memory.py re-exports these names for back-compat with existing
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 
@@ -77,6 +78,73 @@ class StorageError(MemoError, RuntimeError):
     """A storage-layer operation (sqlite / filesystem) failed. Wraps the
     low-level error with operation context so callers don't see bare
     `sqlite3.OperationalError` with no hint of what memo was doing."""
+
+
+class OperationalErrorCode(StrEnum):
+    """Stable public codes emitted by the operational runtime."""
+
+    INVALID_EVENT = "invalid_event"
+    UNKNOWN_SCHEMA = "unknown_schema"
+    SEQUENCE_GAP = "sequence_gap"
+    ANCHOR_CONFLICT = "anchor_conflict"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+    SIGNATURE_INVALID = "signature_invalid"
+    KEY_REVOKED = "key_revoked"
+    EXPIRED = "expired"
+    NOT_FOUND = "not_found"
+    STORAGE_UNAVAILABLE = "storage_unavailable"
+
+
+class OperationalError(MemoError, RuntimeError):
+    """A typed operational failure safe to serialize across adapters."""
+
+    def __init__(
+        self,
+        code: OperationalErrorCode,
+        message: str,
+        *,
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.code = OperationalErrorCode(code)
+        self.retryable = bool(retryable)
+        self.details = dict(details or {})
+        super().__init__(message)
+
+
+class SignatureError(OperationalError):
+    """An operational signature or its authorization context is invalid."""
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            OperationalErrorCode.SIGNATURE_INVALID,
+            message,
+            retryable=False,
+            details=details,
+        )
+
+
+class KeyRevokedError(OperationalError):
+    """A correctly identified signing key is no longer authorized."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(
+            OperationalErrorCode.KEY_REVOKED,
+            message,
+            retryable=False,
+        )
+
+
+class AuthorityEpochError(OperationalError):
+    """A request was not bound to the current durable authority marker."""
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            OperationalErrorCode.INVALID_EVENT,
+            message,
+            retryable=False,
+            details=details,
+        )
 
 
 class FederationError(MemoError, RuntimeError):

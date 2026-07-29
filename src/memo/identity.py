@@ -14,7 +14,7 @@ import socket
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from memo.errors import IdentityConflictError
 from memo.project import LIFECYCLE_ARCHIVE_DIRS, slugify_project
@@ -50,6 +50,43 @@ class Identity:
             "terminal": self.terminal,
             "label": self.label,
         }
+
+
+@dataclass(frozen=True)
+class PrincipalIdentity:
+    """Authenticated identity carried by every v2 operational command."""
+
+    principal_id: str
+    actor_id: str
+    kind: str
+    device_id: str
+    session_id: str
+    source_client: str
+    signature: str = ""
+    key_id: str = ""
+
+    @classmethod
+    def from_current(
+        cls,
+        identity: Identity,
+        source_client: str,
+        *,
+        kind: Literal["human", "agent", "tool", "system", "device"] = "agent",
+    ) -> PrincipalIdentity:
+        """Bind the current machine/session snapshot to an explicit client."""
+        client = source_client.strip()
+        if not client:
+            raise ValueError("source_client must be non-empty")
+        session_id = identity.session_id or ""
+        principal_id = f"{identity.machine_id}:{session_id or client}"
+        return cls(
+            principal_id=principal_id,
+            actor_id=client,
+            kind=kind,
+            device_id=identity.machine_id,
+            session_id=session_id,
+            source_client=client,
+        )
 
 
 def _hostname() -> str:
