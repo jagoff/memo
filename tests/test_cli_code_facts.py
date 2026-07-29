@@ -15,7 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from memo.cli import cli
-from memo.code_traceability import _explicit_references
+from memo.code_traceability import _explicit_references, codegraph_repo_id
 from memo.config import Config
 from memo.memory import Memory
 
@@ -217,7 +217,10 @@ def test_apply_saves_fact_memories_with_tags_and_code_refs(tmp_path: Path, tmp_c
     assert len(records) == _EXPECTED_FACTS
     for rec in records:
         assert "codegraph-derived" in rec.tags
-        assert "project:memo" in rec.tags
+        # The project tag derives from the mined repo's root basename
+        # (<root>/.codegraph/codegraph.db), never a hardcoded project:memo.
+        assert "project:cg" in rec.tags
+        assert "project:memo" not in rec.tags
         phash = rec.extra.get("provenance_hash")
         assert isinstance(phash, str) and len(phash) == 16
         # code_refs must be in the exact shape code_traceability parses.
@@ -342,6 +345,50 @@ def test_tests_files_never_rank_in_surface_or_hubs(tmp_path: Path, tmp_cfg: Conf
     hubs = [fact for fact in data["facts"] if fact["category"] == "call-hub"]
     assert len(hubs) == 1
     assert "store.writer.store_write" in hubs[0]["text"]
+
+
+def test_project_option_tags_facts_with_project_basename_and_repo_id(
+    tmp_path: Path, tmp_cfg: Config
+) -> None:
+    proj = tmp_path / "proj"
+    _seed_codegraph(proj / ".codegraph" / "codegraph.db")
+
+    res = CliRunner().invoke(
+        cli, ["code-facts", "--apply", "--project", str(proj), "--json"], env=_env(tmp_cfg)
+    )
+
+    assert res.exit_code == 0, res.output
+    data = json.loads(res.output)
+    # DB discovered from the --project path, not from cwd.
+    assert data["db"] == str(proj / ".codegraph" / "codegraph.db")
+    assert len(data["facts"]) == _EXPECTED_FACTS
+    # Minted refs carry proj's repo_id so drift never verifies them against
+    # the wrong repo.
+    prefix = f"codegraph://{codegraph_repo_id(proj)}/"
+    for fact in data["facts"]:
+        for ref in fact["code_refs"]:
+            assert ref["uri"].startswith(prefix), ref
+
+    mem = _read_memory(tmp_cfg)
+    try:
+        records = mem.list(type_="fact", limit=100)
+    finally:
+        mem.close()
+    assert len(records) == _EXPECTED_FACTS
+    for rec in records:
+        assert "project:proj" in rec.tags
+        assert "codegraph-derived" in rec.tags
+        assert "project:memo" not in rec.tags
+
+
+def test_project_without_index_errors_cleanly(tmp_path: Path, tmp_cfg: Config) -> None:
+    proj = tmp_path / "empty-proj"
+    proj.mkdir()
+
+    res = CliRunner().invoke(cli, ["code-facts", "--project", str(proj)], env=_env(tmp_cfg))
+
+    assert res.exit_code != 0
+    assert "codegraph index not found" in res.output
 
 
 def test_missing_db_errors_cleanly(tmp_path: Path, tmp_cfg: Config) -> None:

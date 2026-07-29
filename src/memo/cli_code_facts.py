@@ -29,8 +29,6 @@ from memo.cli_common import get_memory as _get_memory
 from memo.code_traceability import codegraph_repo_id, codegraph_uri
 from memo.config import Config
 
-CODE_FACT_TAGS = ("project:memo", "codegraph-derived")
-
 # Cross-package dependency pairs reported (top 10 by edge count).
 _DEP_PAIR_LIMIT = 10
 # Representative symbols attached as code_refs on aggregate facts.
@@ -213,6 +211,40 @@ def _existing_hashes(mem: Any) -> set[str]:
     return hashes
 
 
+def _mining_target(
+    db_override: Path | None, project: Path | None
+) -> tuple[Path, str, tuple[str, ...]]:
+    """Resolve (db, repo_id, tags) for one mining run; --project switches all three.
+
+    Same DB default as the loader: explicit --db > project-aware discovery
+    (nearest .codegraph/codegraph.db above --project when given, else above
+    cwd) > memo's own checkout. --project never falls through to the env
+    override — mining the wrong repo under a project:<basename> tag is worse
+    than failing.
+
+    The project tag always derives from the mined repo (--project basename,
+    else the resolved DB's repo root ``<root>/.codegraph/codegraph.db``) —
+    never a hardcoded name: a run whose cwd discovery lands in ANOTHER indexed
+    repo must tag that repo, or recall's project boost surfaces its facts
+    under the wrong project.
+    """
+    from memo import codegraph_loader
+
+    if project is not None and db_override is None:
+        discovered = codegraph_loader._discover_db(start=project)
+        db = discovered if discovered is not None else project / ".codegraph" / "codegraph.db"
+    else:
+        db = codegraph_loader._resolve_db(db_override)
+    if not db.is_file():
+        raise click.ClickException(f"codegraph index not found at {db}")
+
+    if project is not None:
+        tags = (f"project:{project.resolve().name}", "codegraph-derived")
+        return db, codegraph_repo_id(project), tags
+    repo_root = db.resolve().parent.parent
+    return db, codegraph_repo_id(repo_root), (f"project:{repo_root.name}", "codegraph-derived")
+
+
 @click.command(name="code-facts")
 @click.option(
     "--apply",
@@ -227,27 +259,32 @@ def _existing_hashes(mem: Any) -> set[str]:
     default=None,
     help="Codegraph DB path (default: the loader's .codegraph/codegraph.db).",
 )
+@click.option(
+    "--project",
+    "project",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    default=None,
+    help="Mine another indexed repo: discover its .codegraph DB from this path "
+    "and tag the facts project:<basename>.",
+)
 @click.option("--top", default=10, show_default=True, help="Max facts per category.")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
-def code_facts_cmd(apply_: bool, db_override: Path | None, top: int, as_json: bool) -> None:
+def code_facts_cmd(
+    apply_: bool, db_override: Path | None, project: Path | None, top: int, as_json: bool
+) -> None:
     """Mine architectural facts from the codegraph index into memories.
 
     Read-only over the codegraph DB: call hubs (most-called symbols), the
     API/CLI surface, and cross-package dependencies. Dry-run by default —
     pass --apply to save each fact as a `type=fact` memory. Re-runs skip
-    facts whose provenance hash is already saved.
+    facts whose provenance hash is already saved. --project PATH mines any
+    other indexed repo: the DB is discovered from that path and the facts
+    are tagged `project:<basename>`, with refs minted under that repo's
+    codegraph:// repo id.
 
     Example: memo code-facts --top 5 --apply
     """
-    from memo import codegraph_loader
-
-    # Same DB default as the loader: explicit --db > project-aware discovery
-    # (nearest .codegraph/codegraph.db above cwd) > memo's own checkout.
-    db = codegraph_loader._resolve_db(db_override)
-    if not db.is_file():
-        raise click.ClickException(f"codegraph index not found at {db}")
-
-    repo_id = codegraph_repo_id(db.parent.parent)
+    db, repo_id, tags = _mining_target(db_override, project)
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
@@ -273,7 +310,7 @@ def code_facts_cmd(apply_: bool, db_override: Path | None, top: int, as_json: bo
                 content=fact.text,
                 title=fact.text[:80],
                 type_="fact",
-                tags=list(CODE_FACT_TAGS),
+                tags=list(tags),
                 extra={
                     "code_refs": fact.code_refs,
                     "provenance_hash": phash,
