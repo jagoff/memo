@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 from memo.memory import Memory
@@ -187,7 +188,7 @@ def test_memo_feedback_clear_returns_envelope_with_deleted_count(tmp_cfg) -> Non
 
     assert "memo_feedback_clear" in tools
 
-    result = tools["memo_feedback_clear"](source_id="abc123")
+    result = asyncio.run(tools["memo_feedback_clear"](source_id="abc123"))
 
     mem.feedback_clear.assert_called_once_with("abc123")
     assert result == {"source_id": "abc123", "deleted": 3}
@@ -204,7 +205,7 @@ def test_memo_feedback_clear_zero_deleted(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_feedback_clear"](source_id="nonexistent")
+    result = asyncio.run(tools["memo_feedback_clear"](source_id="nonexistent"))
 
     assert result["deleted"] == 0
     assert result["source_id"] == "nonexistent"

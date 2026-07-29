@@ -10,7 +10,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from memo.memory import Memory
 from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, annotated_tool
@@ -45,20 +45,45 @@ def register(server: FastMCP, memory: Memory) -> None:
         return [dataclasses.asdict(b) for b in backups]
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_backup_restore(
+    async def memo_backup_restore(
         backup_name: str,
         restore_memories: bool = True,
         restore_dbs: bool = True,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Restore from a backup.
 
-        Restores memory files and/or databases from a backup archive.
+        Restores memory files and/or databases from a backup archive,
+        overwriting the current store. Irreversible: elicitation-capable
+        clients are asked to confirm first.
 
         Args:
             backup_name: Name of the backup to restore.
             restore_memories: Whether to restore memory files.
             restore_dbs: Whether to restore databases.
         """
+        from memo.server_elicit import abort_result, confirm_destructive
+
+        try:
+            scope = f"the current store ({memory.store.count()} memories)"
+        except Exception:
+            scope = "the current store"
+        gate = await confirm_destructive(
+            ctx,
+            action="restore",
+            detail=(
+                f"Restore backup '{backup_name}'? This overwrites {scope}; "
+                "the rollback journal is deleted on success."
+            ),
+        )
+        if not gate.proceed:
+            return abort_result(
+                gate,
+                memory,
+                tool="memo_backup_restore",
+                action="restore",
+                target=f"backup '{backup_name}'",
+            )
         success = memory.backup.restore_backup(
             backup_name,
             restore_memories=restore_memories,

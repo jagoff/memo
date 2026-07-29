@@ -439,6 +439,29 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_PROJECT_TAG", "str", "", "misc", "Pin a project tag (overrides cwd detection)."),
     _spec("MEMO_MODEL_PROFILE", "str", "", "misc", "Model profile: light | balanced | quality."),
     _spec("MEMO_NONINTERACTIVE", "bool", False, "misc", "Suppress interactive prompts (hooks/CI)."),
+    # MCP elicitation gate on irreversible tools (server_elicit.py)
+    _spec(
+        "MEMO_ELICIT_CONFIRM",
+        "bool",
+        True,
+        "mcp",
+        "MCP-side confirmation (elicitation) before irreversible tools "
+        "(memo_delete, memo_synthesize_delete, memo_backup_restore, "
+        "memo_feedback_clear, memo_repo_delete, memo_cache_evict). Fail-open: "
+        "clients without the elicitation capability proceed unchanged. "
+        "Set =0 for scripted elicitation-capable clients.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_ELICIT_DECLINE_SIGNAL",
+        "bool",
+        True,
+        "mcp",
+        "On an explicit elicitation decline (not cancel), save a durable "
+        "type=feedback memory recording the refusal so it feeds memo's "
+        "feedback loop. Fail-open: a failed signal save never blocks the abort.",
+        opt_out=True,
+    ),
     _spec(
         "MEMO_SUPPRESS_LEGACY_WARN",
         "bool",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 from memo.memory import Memory
@@ -352,7 +353,7 @@ def test_memo_repo_delete_wraps_result_in_envelope(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_repo_delete"](repo="myrepo", remove_clone=True)
+    result = asyncio.run(tools["memo_repo_delete"](repo="myrepo", remove_clone=True))
 
     mem.repo_delete.assert_called_once_with("myrepo", remove_clone=True)
     assert result == {"deleted": True}
@@ -369,7 +370,7 @@ def test_memo_repo_delete_default_remove_clone(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_repo_delete"](repo="myrepo")
+    result = asyncio.run(tools["memo_repo_delete"](repo="myrepo"))
 
     mem.repo_delete.assert_called_once_with("myrepo", remove_clone=True)
     assert result == {"deleted": False}
