@@ -36,6 +36,7 @@ from memo.cli_briefing import briefing
 from memo.cli_capture import capture_stop, capture_tick, episodes_group, resume
 from memo.cli_chat import chat_group
 from memo.cli_chronicle import chronicle_cmd
+from memo.cli_code_facts import code_facts_cmd
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
 from memo.cli_compress_context import compress_context_cmd
@@ -382,6 +383,7 @@ cli.add_command(journey_check)
 cli.add_command(debug_recall_cmd)
 cli.add_command(dream_cmd)
 cli.add_command(chronicle_cmd)
+cli.add_command(code_facts_cmd)
 cli.add_command(maintain_cmd)
 cli.add_command(invalidate_cmd)
 cli.add_command(synthesize_cmd)

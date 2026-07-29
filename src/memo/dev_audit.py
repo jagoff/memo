@@ -40,6 +40,9 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
     ("memory/facade.py", "MEMO_EMBEDDER_VIA_DAEMON"),
     ("mlx_gpu.py", "MEMO_GPU_LOCK_PATH"),
     ("mlx_gpu.py", "MEMO_GPU_XPROC_LOCK"),
+    ("codegraph_loader.py", "MEMO_CODEGRAPH_DISCOVERY"),
+    ("codegraph_loader.py", "MEMO_CODEGRAPH_MAX_EDGES"),
+    ("codegraph_loader.py", "MEMO_CODEGRAPH_DB"),
     ("setup/config_io.py", "MEMO_CONFIG_FILE"),
     ("embed_protocol.py", "MEMO_STATE_DIR"),
     ("embedder.py", "MEMO_QUERY_CACHE_SIZE"),
@@ -57,6 +60,12 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     # never break the recall payload or blow the 5s hook budget.
     ("recall_logic.py", "_negative_recall_hits", 1),
     ("recall_logic.py", "_negative_recall_block", 1),
+    # Code-citation lines (MEMO_RECALL_CODE_REFS_ENABLED): verification is
+    # fail-open — a codegraph open/lookup error degrades the ref line to
+    # '(no verificado)' and must never break the recall render or the 5s hook
+    # budget.
+    ("recall_logic.py", "_code_ref_status", 1),
+    ("recall_logic.py", "_code_ref_lines", 1),
     ("cli_recall_hook.py", "recall_hook", 1),
     ("cli_recall_hook.py", "recall_hook._bail", 1),
     ("cli_recall_hook.py", "recall_hook", 2),

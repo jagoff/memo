@@ -51,6 +51,10 @@ FLAG_LATENCY_HEADROOM = 1.25
 
 GateKind = Literal["recall", "tuner", "manual"]
 
+# Gates the nightly code-drift pass (`cli_dream_passes._run_code_drift`); the
+# canonical FlagSpec lives in flags_misc.py with the other dream pass flags.
+CODE_DRIFT_FLAG = "MEMO_DREAM_CODE_DRIFT_ENABLED"
+
 
 @dataclass(frozen=True)
 class GateSpec:
@@ -123,6 +127,12 @@ GATES: dict[str, GateSpec] = dict(
         ),
         _g("MEMO_GUARD_ENABLED", "manual", "UX banner; gate = user judgement on interjections"),
         _g("MEMO_INTERJECT_ENABLED", "manual", "UX banner; gate = user judgement"),
+        _g(
+            "MEMO_RECALL_CODE_REFS_ENABLED",
+            "manual",
+            "render-layer code citation lines; no retrieval effect — gate = token "
+            "cost / user judgement",
+        ),
         # --- Negative Recall (⛔ AVOID channel): measured by avoid@k in
         #     `memo eval recall`, not by the recall gate's (precision@k,-noise@k)
         #     _wins (surfacing failure_patterns excluded from normal recall does
@@ -173,6 +183,12 @@ GATES: dict[str, GateSpec] = dict(
             "gates in memo's synthesis evals, human flips via config",
         ),
         # --- manual (meta): flags gating nightly passes themselves ------------
+        _g(
+            CODE_DRIFT_FLAG,
+            "manual",
+            "meta: gates the code-drift pass; needs a trusted fresh codegraph index, "
+            "not recall-measurable — human flips",
+        ),
         _g("MEMO_DREAM_TUNE_ENABLED", "manual", "meta: gates the tuner pass; op cost decision"),
         _g("MEMO_DREAM_TUNE_BOOST_ENABLED", "manual", "meta: gates the boost explorer"),
         _g("MEMO_DREAM_HYDE_TUNE_ENABLED", "manual", "meta: gates the HyDE A/B pass"),
@@ -554,6 +570,7 @@ def status_rows(cfg: Any, *, today: date | None = None) -> list[dict[str, Any]]:
 
 
 __all__ = [
+    "CODE_DRIFT_FLAG",
     "FLAG_LATENCY_HEADROOM",
     "GATES",
     "GateSpec",

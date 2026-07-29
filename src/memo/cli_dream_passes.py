@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging as _logging
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 from functools import partial
@@ -1058,6 +1059,166 @@ def _run_graph_projection(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     except (MemoError, OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         _log.warning("graph projection pass failed: %s", exc)
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _code_ref_exists(
+    graph: sqlite3.Connection, ref: dict[str, Any], db_repo_id: str
+) -> bool | None:
+    """Check one code_ref against the codegraph nodes table (one query per ref).
+
+    Returns True/False when the ref is verifiable (has a file_path and belongs
+    to the repo this DB indexes), None when it is not — an unverifiable ref
+    must never count as drift (mirror code_traceability's "never invent
+    misses"). Each ref carries the repo_id it was minted against
+    (``codegraph://<repo_id>/…``); a ref from ANOTHER repo (synapse/memflow/…)
+    legitimately has no node in this DB, so it is unverifiable here — never
+    dead. File-kind refs carry no symbol, so they are judged on file_path
+    existence alone; symbol refs additionally require a node whose name or
+    qualified_name matches.
+    """
+    ref_repo_id = str(ref.get("repo_id") or "").strip()
+    if ref_repo_id and ref_repo_id != db_repo_id:
+        return None
+    file_path = str(ref.get("file_path") or "").strip()
+    if not file_path:
+        return None
+    kind = str(ref.get("kind") or "").strip().lower()
+    label = str(ref.get("label") or "").strip()
+    qualified = str(ref.get("qualified_name") or "").strip()
+    symbol = label or qualified
+    if kind == "file" or not symbol:
+        row = graph.execute(
+            "SELECT 1 FROM nodes WHERE file_path = ? LIMIT 1", (file_path,)
+        ).fetchone()
+    else:
+        row = graph.execute(
+            "SELECT 1 FROM nodes WHERE file_path = ? AND (name = ? OR qualified_name = ?) LIMIT 1",
+            (file_path, symbol, qualified or symbol),
+        ).fetchone()
+    return row is not None
+
+
+def _run_code_drift(
+    mem: Memory,
+    *,
+    db_path: Path | None = None,
+    dry_run: bool = False,
+    max_age_hours: float = 24.0,
+) -> dict[str, Any]:
+    """Re-verify memories carrying code_refs against the live codegraph index.
+
+    For every non-reference memory whose ``extra.code_refs`` cite codegraph
+    nodes, each ref is checked read-only against ``codegraph.db`` (one EXISTS
+    query per ref via :func:`_code_ref_exists`). A memory whose verifiable refs
+    are ALL gone is proposed outdated through ``mem.feedback_flag`` — the same
+    reversible-archive mechanism agents use, never a hard delete. Partially
+    drifted memories are only reported. Refs whose ``repo_id`` does not match
+    the repo this DB indexes are unverifiable (other indexed repos are not
+    drift). Gated on MEMO_DREAM_CODE_DRIFT_ENABLED
+    (default OFF); aborts when the index is missing or older than
+    ``max_age_hours`` (a stale index would read as mass false drift).
+
+    Returns a dict with:
+    - status: disabled | aborted | ok
+    - scanned: memories with >= 1 verifiable ref
+    - outdated: list of {id, refs_dead, refs_total} archived (or would-archive
+      in dry-run)
+    - partial: list of {id, refs_dead, refs_total} reported only
+    """
+    from memo.dream_flags import CODE_DRIFT_FLAG  # import registers the flag spec
+    from memo.flags import flag_bool
+
+    if not flag_bool(CODE_DRIFT_FLAG):
+        return {"status": "disabled"}
+
+    result: dict[str, Any] = {"status": "ok", "scanned": 0, "outdated": [], "partial": []}
+    try:
+        if db_path is None:
+            from memo import codegraph_loader
+
+            # Same resolution as the recall render (_code_ref_lines): cwd
+            # discovery > MEMO_CODEGRAPH_DB > checkout default. The raw module
+            # default alone is dead under pipx/uv-tool (points inside
+            # site-packages) and for the nightly daemon whose cwd is $HOME.
+            db_path = codegraph_loader._resolve_db()
+        if not db_path.is_file():
+            _log.warning(
+                "code_drift: codegraph index missing at %s — aborting "
+                "(no index would read as mass false drift)",
+                db_path,
+            )
+            return {"status": "aborted", "reason": "codegraph_db_missing"}
+        age_hours = (time.time() - db_path.stat().st_mtime) / 3600.0
+        if age_hours > max_age_hours:
+            _log.warning(
+                "code_drift: codegraph index is %.1fh old (> %.0fh) — aborting "
+                "(a stale index would mark false drift)",
+                age_hours,
+                max_age_hours,
+            )
+            return {
+                "status": "aborted",
+                "reason": "codegraph_db_stale",
+                "age_hours": round(age_hours, 1),
+            }
+
+        from memo.code_traceability import codegraph_repo_id
+
+        # The DB lives at <repo_root>/.codegraph/codegraph.db and only answers
+        # for THAT repo. Compute its repo_id so refs minted against other
+        # indexed repos are treated as unverifiable, never as dead.
+        db_repo_id = codegraph_repo_id(db_path.resolve().parent.parent)
+
+        rows = mem.store._conn.execute(
+            "SELECT id, extra_json FROM meta WHERE type != 'reference' "
+            "AND json_extract(extra_json, '$.code_refs') IS NOT NULL"
+        ).fetchall()
+        if not rows:
+            return result
+
+        graph = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            for row in rows:
+                mid = str(row["id"])
+                try:
+                    extra = json.loads(row["extra_json"] or "{}")
+                except json.JSONDecodeError:
+                    continue
+                refs = extra.get("code_refs")
+                if not isinstance(refs, list):
+                    continue
+                verdicts = [
+                    alive
+                    for r in refs
+                    if isinstance(r, dict)
+                    and (alive := _code_ref_exists(graph, r, db_repo_id)) is not None
+                ]
+                if not verdicts:
+                    continue
+                result["scanned"] += 1
+                dead = sum(1 for alive in verdicts if not alive)
+                if dead == 0:
+                    continue
+                entry = {"id": mid, "refs_dead": dead, "refs_total": len(verdicts)}
+                if dead < len(verdicts):
+                    result["partial"].append(entry)
+                    continue
+                if not dry_run:
+                    try:
+                        mem.feedback_flag(mid, kind="outdated")
+                    except Exception as exc:
+                        result.setdefault("errors", []).append(
+                            f"code_drift: feedback_flag failed for {mid}: {exc}"
+                        )
+                        continue
+                result["outdated"].append(entry)
+        finally:
+            graph.close()
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"
+        _log.warning("code_drift pass failed: %s", exc)
+
+    return result
 
 
 def _run_roi_reconcile(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
