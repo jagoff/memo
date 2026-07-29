@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ from memo.repo_index_helpers import (  # noqa: F401
     ProgressCallback,
     RepoEmbedInput,
     _chunk_lines,
+    _chunk_lines_symbol_aligned,
     _derive_repo_name,
     _embed_cache_model,
     _emit,
@@ -49,9 +51,11 @@ from memo.repo_index_helpers import (  # noqa: F401
     _repo_embed_batch_size,
     _repo_embed_input,
     _repo_flush_batch_size,
+    _RepoSymbolSpans,
     _safe_repo_name,
     _semantic_status,
     _stable_id,
+    _symbol_chunking_enabled,
     _tracked_files,
     _validate_clone_url,
 )
@@ -273,6 +277,15 @@ class RepoCorpus:
             _emit(progress, "batch_flush", files=len(pending_files), total_flushed=flushed_files)
             pending_files = []
 
+        # Symbol-aligned chunking (MEMO_REPO_CHUNK_SYMBOL_ALIGNED): resolve the
+        # repo's codegraph.db once and hold ONE read-only connection for the
+        # whole run — never one per file. Prefers a committed `.codegraph/` in
+        # the clone, else the source checkout when `url` is a local path.
+        # Missing DB → spans_for() returns [] and chunking falls back silently.
+        symbol_spans: _RepoSymbolSpans | None = None
+        if _symbol_chunking_enabled():
+            symbol_spans = _RepoSymbolSpans(clone_path, Path(url.strip()))
+
         tracked_files = _tracked_files(clone_path)
         _emit(
             progress,
@@ -345,6 +358,9 @@ class RepoCorpus:
                     text=text,
                     raw_size=size,
                     sha=sha,
+                    symbol_spans=(
+                        symbol_spans.spans_for(rel_posix) if symbol_spans is not None else None
+                    ),
                 )
                 pending_files.append(file_payload)
                 indexed_files_total += 1
@@ -365,6 +381,8 @@ class RepoCorpus:
                 _emit(progress, "file_error", path=rel_posix)
 
         _flush()
+        if symbol_spans is not None:
+            symbol_spans.close()
 
         deleted_file_ids = [
             meta["id"] for path, meta in existing_files.items() if path not in tracked_paths
@@ -731,6 +749,9 @@ class RepoCorpus:
         text: str,
         raw_size: int,
         sha: str,
+        # Sequence, not list: `RepoCorpus.list` shadows the builtin in this
+        # class's annotation scope.
+        symbol_spans: Sequence[tuple[int, int]] | None = None,
     ) -> dict[str, Any]:
         lines = text.splitlines()
         line_rows = [
@@ -748,7 +769,14 @@ class RepoCorpus:
         # fragments). Code files can be legitimately short — a 2-line function is
         # real signal, not noise — so only filter markdown.
         is_markdown = path.lower().endswith((".md", ".markdown"))
-        for seq, line_start, line_end, body in _chunk_lines(lines):
+        # Symbol-aligned cut (flag-gated): only attempted when the caller
+        # resolved codegraph spans for this file; unusable spans fall back
+        # silently to the char-based cutter, keeping the default path
+        # byte-identical.
+        chunk_tuples = _chunk_lines_symbol_aligned(lines, symbol_spans) if symbol_spans else None
+        if chunk_tuples is None:
+            chunk_tuples = _chunk_lines(lines)
+        for seq, line_start, line_end, body in chunk_tuples:
             if is_markdown and _is_noise_chunk(body):
                 continue  # near-empty md chunk, no heading/link — ingest noise
             chunk_id = _stable_id("repo-chunk", file_id, str(seq), _short_hash(body))
