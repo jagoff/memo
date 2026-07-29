@@ -23,30 +23,46 @@ All data is stored **locally on your own device**:
 
 ## What is sent off your device
 
-**Nothing, by default.** Embeddings and any LLM steps run **in-process** — MLX on
-Apple Silicon, CPU `sentence-transformers` elsewhere. memo makes **no calls to any
-cloud API**, uses **no API keys**, and collects **no telemetry or analytics**.
+Memory operations themselves are offline. Embeddings and any LLM steps run
+**in-process** — MLX on Apple Silicon, CPU `sentence-transformers` elsewhere.
+memo makes **no calls to a cloud model API**, uses **no provider API keys**, and
+collects **no telemetry or analytics** about prompts or memory content.
 
-The **only** way memory leaves your machine is if **you** explicitly configure a
-git `memo-sync` remote. In that case your memory markdown is pushed to **that
-remote, which you own and control** — memo neither hosts nor has access to it.
+The one default-on network exception is **auto-update**. On `memo-mcp` startup,
+memo makes a throttled `git ls-remote` tag probe against the public GitHub
+repository and installs a newer tagged release in the background when one is
+available. The probe sends no memory content, queries, file paths, or memo
+identity. Set `MEMO_AUTO_UPDATE=0` to opt out and keep startup fully offline.
 
-### Optional update-check heartbeat (off by default)
+Memory leaves your machine only if **you** explicitly configure a git
+`memo-sync` remote. In that case your memory markdown is pushed to **that remote,
+which you own and control** — memo neither hosts nor has access to it.
 
-memo can check for a newer release on startup. By default that check uses
-`git ls-remote` against the public GitHub repo and sends **nothing** about you.
+### Startup network and self-heal controls
 
-If **you** set `MEMO_UPDATE_ENDPOINT` (empty by default) *and* enable update
-checks (`MEMO_UPDATE_CHECK_ENABLED` or `MEMO_AUTO_UPDATE`, both off by default),
-the check instead GETs that endpoint, which lets the operator count active
-installs. The **entire** payload is three anonymous fields:
+- `MEMO_AUTO_UPDATE` defaults to `1`. Set it to `0` to disable the remote tag
+  probe and background install.
+- `MEMO_UPDATE_CHECK_ENABLED=1` enables the check-only path and records a local
+  update notification. It is implied while auto-update is enabled.
+- `MEMO_STATUSLINE_SELFHEAL=1` and `MEMO_HOOK_SELFHEAL=1` permit local repairs
+  to Claude settings. Both are off by default and require no network.
+
+If **you** set `MEMO_UPDATE_ENDPOINT` (empty by default) while an update check is
+enabled, the check GETs that endpoint instead of using `git ls-remote`. This
+lets the endpoint operator count active installs. The **entire** payload is
+three anonymous fields:
 
 - `id` — `sha256(device_id)[:16]`, a one-way hash computed on your machine; the
   raw device id never leaves it and the hash is not reversible to identity.
 - `v` — your memo version. `os` — your OS name (e.g. `Darwin`).
 
-No memory content, file paths, queries, or IP are collected. This is **opt-in**:
-leave `MEMO_UPDATE_ENDPOINT` unset and memo never contacts any such endpoint.
+No memory content, file paths, or queries are included. This endpoint path is
+**opt-in**: leave `MEMO_UPDATE_ENDPOINT` unset and memo uses only the public git
+tag probe described above.
+
+Explicit commands may also use the network when you request `memo update`,
+`memo sync` against a configured remote, model downloads, or benchmark
+downloads.
 
 The explicit `memo map` and `memo dashboard` browser views use Canvas/SVG
 renderers contained in their generated HTML. They make no third-party request
@@ -56,10 +72,11 @@ pan/zoom/export controls to avoid a large browser dependency.
 
 ## Third-party sharing
 
-memo shares your data with **no third parties**. No server operated by the author
-receives, stores, or processes your memory **content** — ever. The only optional
-exception is the opt-in update-check heartbeat above, which sends a hashed
-install id, version, and OS name (never content) and only when you configure it.
+memo shares your memory data with **no third parties**. No server operated by
+the author receives, stores, or processes your memory **content** — ever. The
+only optional author-operated endpoint is the update-check heartbeat above,
+which sends a hashed install id, version, and OS name (never content) only when
+you configure it.
 
 ## Retention & deletion
 
