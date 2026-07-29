@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import Field
 
 from memo.memory import Memory
@@ -218,7 +218,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.repo_list(limit=limit)
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_repo_delete(
+    async def memo_repo_delete(
         repo: Annotated[
             str,
             Field(description="Repo id, name, or URL; unknown repo returns deleted=false."),
@@ -230,10 +230,43 @@ def register(server: FastMCP, memory: Memory) -> None:
                 "the clone and removes only the index rows."
             ),
         ] = True,
-    ) -> dict[str, bool]:
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
         """Delete one indexed repo and optionally remove memo's managed clone.
 
-        Removal is permanent; an unknown repo returns deleted=false instead
-        of raising.
+        Removal is permanent (elicitation-capable clients are asked to
+        confirm); an unknown repo returns deleted=false instead of raising.
         """
-        return {"deleted": memory.repo_delete(repo, remove_clone=remove_clone)}
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
+
+        try:
+            source = memory.store.get_repo_source(repo)
+        except Exception:
+            source = None
+        if source is not None:
+            name = sanitize_fragment(source.get("name") or repo)
+            clone_path = source.get("clone_path") if remove_clone else None
+            blast = (
+                f" and its on-disk clone at {sanitize_fragment(clone_path, limit=200)}"
+                if clone_path
+                else " from the index"
+            )
+            gate = await confirm_destructive(
+                ctx,
+                action="delete",
+                detail=f"Delete indexed repo '{name}'{blast}? Removal is permanent.",
+            )
+            if not gate.proceed:
+                return abort_result(
+                    gate,
+                    memory,
+                    tool="memo_repo_delete",
+                    action="delete",
+                    target=f"repo '{name}'",
+                )
+        # Bind execution to the row the user confirmed: `repo` is id-or-name-
+        # or-URL and a re-resolve after the human-latency confirmation window
+        # could match a different row (re-indexed same-name repo) and rmtree a
+        # clone the user never saw.
+        resolved = str(source["id"]) if source is not None and source.get("id") else repo
+        return {"deleted": memory.repo_delete(resolved, remove_clone=remove_clone)}

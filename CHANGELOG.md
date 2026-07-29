@@ -11,6 +11,22 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Added
 
+- MCP elicitation confirm on the six irreversible tools (`memo_delete`,
+  `memo_synthesize_delete`, `memo_backup_restore`, `memo_feedback_clear`,
+  `memo_repo_delete`, `memo_cache_evict`): elicitation-capable clients get an
+  in-band confirmation stating the blast radius before the operation runs;
+  clients without the capability proceed unchanged (fail-open, capability
+  check first). An explicit decline (not cancel) is persisted as a durable
+  `type=feedback` memory — decline-as-signal, itself fail-open. Flags:
+  `MEMO_ELICIT_CONFIRM` + `MEMO_ELICIT_DECLINE_SIGNAL`, both default on.
+  Review-hardened: once the question has been sent the gate fails closed (a
+  mid-elicit error/disconnect aborts instead of running unconfirmed); the
+  HTTP daemon's `json_response` transport skips eliciting up-front (it cannot
+  carry it and would deadlock); prompt fragments from untrusted titles are
+  sanitized + capped; the decline signal dedupes via a stable `topic_key`
+  and goes through the normal write policy; `memo_repo_delete` executes
+  against the exact row the user confirmed (id-bound, no re-resolve).
+
 - Dispute-aware ask (`MEMO_ASK_DISPUTES`, default on): retrieved memories with
   open/competing contradiction pairs are marked `⚔ disputed-by` in the ask
   context and sources (`disputed_by`), the answer is steered to present them

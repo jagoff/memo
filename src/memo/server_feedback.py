@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from pydantic import Field
 
 from memo.memory import Memory
@@ -83,7 +83,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         return {"rows": rows, "count": len(rows)}
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_feedback_clear(
+    async def memo_feedback_clear(
         source_id: Annotated[
             str,
             Field(
@@ -93,11 +93,41 @@ def register(server: FastMCP, memory: Memory) -> None:
                 ),
             ),
         ],
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Drop all feedback rows for `source_id`. Returns count deleted.
 
         Deletes every ranking-feedback row recorded for the memory (the memory
-        itself is untouched). Idempotent: a repeat call deletes 0 rows.
+        itself is untouched). Irreversible — these user signals are
+        deliberately preserved by reindex — so elicitation-capable clients
+        are asked to confirm. Idempotent: a repeat call deletes 0 rows.
         """
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
+
+        rows: int | None
+        try:
+            rows = len(memory.feedback_list(source_id=source_id, limit=100_000))
+        except Exception:
+            rows = None
+        if rows is None or rows > 0:
+            safe_id = sanitize_fragment(source_id)
+            scope = f"all {rows} feedback rows" if rows is not None else "all feedback rows"
+            gate = await confirm_destructive(
+                ctx,
+                action="clear",
+                detail=(
+                    f"Delete {scope} for memory {safe_id}? These user ranking "
+                    "signals are deliberately preserved by reindex and are not "
+                    "recoverable once cleared."
+                ),
+            )
+            if not gate.proceed:
+                return abort_result(
+                    gate,
+                    memory,
+                    tool="memo_feedback_clear",
+                    action="clear",
+                    target=f"feedback rows for {safe_id}",
+                )
         n = memory.feedback_clear(source_id)
         return {"source_id": source_id, "deleted": n}

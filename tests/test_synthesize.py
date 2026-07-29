@@ -6,6 +6,7 @@ No MLX forward passes — synthesis is driven by a local chat stub.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 from typing import Any
@@ -443,7 +444,7 @@ def test_synthesize_delete_removes_synthesis(mock_memory):
     synth_id = saved[0]["id"]
 
     delete_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_delete")
-    result = delete_fn(id=synth_id)
+    result = asyncio.run(delete_fn(id=synth_id))
 
     assert result["deleted"] is True
     assert result["id"] == synth_id
@@ -455,7 +456,7 @@ def test_synthesize_delete_refuses_non_synthesis(mock_memory):
     rec = mock_memory.save(content="Regular note", type_="note")
 
     delete_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_delete")
-    result = delete_fn(id=rec.id)
+    result = asyncio.run(delete_fn(id=rec.id))
 
     assert result["deleted"] is False
     assert "synthesis" in result["reason"].lower()
@@ -466,7 +467,7 @@ def test_synthesize_delete_refuses_non_synthesis(mock_memory):
 def test_synthesize_delete_nonexistent_id(mock_memory):
     """memo_synthesize_delete returns deleted=False for unknown ID."""
     delete_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_delete")
-    result = delete_fn(id="00000000-0000-0000-0000-000000000000")
+    result = asyncio.run(delete_fn(id="00000000-0000-0000-0000-000000000000"))
 
     assert result["deleted"] is False
     assert "reason" in result
@@ -486,7 +487,7 @@ def test_synthesize_delete_ambiguous_prefix_returns_structured_error(mock_memory
     monkeypatch.setattr(mock_memory, "resolve_id", _raise)
     delete_fn = _get_synth_tool_fn(mock_memory, "memo_synthesize_delete")
 
-    result = delete_fn(id="a1b2")
+    result = asyncio.run(delete_fn(id="a1b2"))
 
     assert result == {"error": "ambiguous", "prefix": "a1b2", "matches": matches}
 

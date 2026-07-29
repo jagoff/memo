@@ -7,6 +7,7 @@ Python objects without going through FastMCP/JSON-RPC transport.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 from memo.memory import Memory
@@ -116,11 +117,12 @@ def test_memo_cache_evict_wraps_evicted_ids(tmp_cfg) -> None:
 
     evicted_ids = ["abc123def", "xyz789uvw"]
     mem.cache.evict_if_needed.return_value = evicted_ids
+    mem.cache.stats.return_value = {"enabled": True, "over_capacity": 0}
 
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_cache_evict"]()
+    result = asyncio.run(tools["memo_cache_evict"]())
 
     mem.cache.evict_if_needed.assert_called_once_with()
     assert result["evicted"] == evicted_ids
@@ -135,11 +137,12 @@ def test_memo_cache_evict_empty_when_no_overflow(tmp_cfg) -> None:
     mem.cfg = tmp_cfg
 
     mem.cache.evict_if_needed.return_value = []
+    mem.cache.stats.return_value = {"enabled": False, "over_capacity": 0}
 
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_cache_evict"]()
+    result = asyncio.run(tools["memo_cache_evict"]())
 
     assert result["evicted"] == []
     assert result["count"] == 0

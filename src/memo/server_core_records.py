@@ -349,7 +349,7 @@ def register(server: Any, memory: Memory) -> None:
         return memory.reindex(force=force)
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_delete(
+    async def memo_delete(
         id: Annotated[
             str,
             Field(
@@ -357,27 +357,56 @@ def register(server: Any, memory: Memory) -> None:
                 "(markdown file + index rows)."
             ),
         ],
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Permanently delete one memory by id or unique prefix.
 
-        Destructive. Resolves ambiguous short ids safely and returns an error
+        Destructive and irreversible (no trash). Elicitation-capable clients
+        are asked to confirm before the delete runs; other clients proceed
+        unchanged. Resolves ambiguous short ids safely and returns an error
         instead of guessing. When cross-reference indexing is enabled, the
         response warns about memories that linked to the deleted record.
         """
         from memo.flags import flag_bool
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
 
+        try:
+            rec = memory.get(id)
+        except AmbiguousIdError as exc:
+            return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        except Exception:
+            rec = None
         referenced_by: list[str] = []
-        if flag_bool("MEMO_CROSSREF_INDEX"):
+        if rec is not None and flag_bool("MEMO_CROSSREF_INDEX"):
             try:
-                rec = memory.get(id)
-                if rec is not None:
-                    referenced_by = [
-                        b.source_id for b in memory.crossref.referencing_sources(rec.id)
-                    ]
-            except AmbiguousIdError as exc:
-                return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+                referenced_by = [b.source_id for b in memory.crossref.referencing_sources(rec.id)]
             except Exception:
                 referenced_by = []
+        if rec is not None:
+            # Titles are untrusted (auto-capture, LLM derivation) — sanitize
+            # so a hostile title can't rewrite the confirmation prompt.
+            target = f"'{sanitize_fragment(rec.title)}' ({rec.type})"
+            linked = (
+                f" {len(referenced_by)} memories link to it; their typed edges will dangle."
+                if referenced_by
+                else ""
+            )
+            gate = await confirm_destructive(
+                ctx,
+                action="delete",
+                detail=(
+                    f"Permanently delete {target}?{linked} No trash — recovery "
+                    "only via backup / git-sync / versions."
+                ),
+            )
+            if not gate.proceed:
+                return abort_result(
+                    gate,
+                    memory,
+                    tool="memo_delete",
+                    action="delete",
+                    target=f"{target} id={rec.id}",
+                )
         try:
             out: dict[str, Any] = {"deleted": memory.delete(id)}
         except AmbiguousIdError as exc:
