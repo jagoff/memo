@@ -10,8 +10,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tarea 2 en
-  preparación**.
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tarea 2
+  implementada y en revisión triple**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -86,10 +86,21 @@ Estado: **1/7 aceptadas**.
 
 - [x] Generar brief y registrar BASE `8e85662b`.
 - [x] Asignar implementador fresco `plan01_task02_ledger_impl`.
-- [ ] RED de anchors, gaps, forks, tampering, repair e import idempotente.
-- [ ] Implementar `OperationLedgerV2`.
-- [ ] Focused pytest, ruff y mypy.
-- [ ] Commit explícito.
+- [x] RED de ledger ausente: error de colección `ModuleNotFoundError`.
+- [x] RED de lock epoch continuo: `1 failed`.
+- [x] Implementar `OperationLedgerV2`.
+- [x] Agregar `EpochFence.verified(context)` para mantener el lock durante
+  append, fsync y actualización del head.
+- [x] Focused v2 + compatibilidad v1 + epoch: `56 passed`.
+- [x] Ruff: limpio.
+- [x] Mypy: limpio.
+- [x] Non-slow completo: `5965 passed, 18 skipped`.
+- [x] Commit explícito: `5a80c74d`.
+- [x] Paquete de revisión generado para `8e85662b..5a80c74d`.
+- [ ] Revisión independiente de contrato y calidad.
+- [ ] Auditoría independiente de seguridad y durabilidad.
+- [ ] Auditoría independiente de API y fortaleza de tests.
+- [ ] Corregir todo hallazgo `BLOCKER/HIGH/MEDIUM`.
 - [ ] Revisión independiente y `PASS`.
 
 ### Tarea 3 — Vistas SQLite transaccionales e idempotencia
@@ -235,7 +246,7 @@ paso todavía no comenzó, no que esté aprobado.
 | ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
 |---|---|---|---|---|---|---|---|---|
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
-| P01-T02 | Anchors, append y bundles | `plan01_task02_ledger_impl` | `8e85662b` | en preparación | pendiente | — | — | — |
+| P01-T02 | Anchors, append y bundles | `plan01_task02_ledger_impl` + 3 revisores | `8e85662b` | ledger ausente + lock epoch `1 failed` | focused `56`; full `5965` | `5a80c74d` | triple revisión en curso | — |
 | P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
 | P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
