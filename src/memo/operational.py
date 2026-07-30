@@ -478,8 +478,13 @@ class OperationalStore:
                 "authenticated epoch context is required for operational writes",
                 retryable=False,
             )
-        if self.epoch_fence is not None:
-            self.epoch_fence.verify(authenticated)
+        if self.epoch_fence is None:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "authenticated epoch fence is required for operational writes",
+                retryable=False,
+            )
+        self.epoch_fence.verify(authenticated)
         event = self.ledger.append(
             op,
             subject_uri=subject_uri,
