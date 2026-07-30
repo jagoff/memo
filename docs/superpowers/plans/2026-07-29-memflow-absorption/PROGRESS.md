@@ -135,7 +135,7 @@ Estado: **1/7 aceptadas**.
 
 ### Tarea 3 — Vistas SQLite transaccionales e idempotencia
 
-- [ ] Generar brief y registrar BASE.
+- [x] Generar brief y registrar BASE `c9127f39`.
 - [ ] RED de transacción, replay, crash window e idempotency conflict.
 - [ ] Implementar schema, reducers, catch-up, rebuild y commit de nueve pasos.
 - [ ] Probar bypass de epoch en CLI, MCP, daemon y librería.
