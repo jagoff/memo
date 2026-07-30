@@ -47,10 +47,12 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Corregir `P03-T01`: manifest fail-closed ante symlinks y receipts stale;
   validar snapshot bytes/target/mode, cobertura/freshness estructurada,
   predicates/fixtures y transform allowlist con digest.
-- [ ] Corregir `P03-T02/T03`: cubrir todos los writers CLI/auxiliares y
+- [x] Corregir `P03-T02/T03`: cubrir todos los writers CLI/auxiliares y
   autoridad descriptor-relative. Auditoría confirmó writers sin fence en
   chat delete, dream, homeostasis, autopilot, kernel, user_signal, lookup,
-  quality_feedback y cursor de extract.
+  quality_feedback y cursor de extract. P03-T02 quedó fenced en todos los
+  writers auditados; commits `c0ae3a0779`..`3cb254dc3`, `131` pruebas,
+  Ruff/mypy/diff-check limpios y revisión independiente PASS.
 - [x] Cerrar `P03-T04`: `f32e789` construye desde objetos Git exactos,
   valida submódulos recursivos, digest completo, mount kernel-read-only,
   attestation externa y cleanup de mounts; `8600800` exige provenance
@@ -500,7 +502,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P02-T10 | APIs exclusivamente Memo | — | — | — | — | — | — | — |
 | P02-T11 | Runtime distribuido E2E | — | — | — | — | — | — | — |
 | P03-T01 | Snapshot, manifest e inventario | Codex | `90a7144e` | import RED | focused `32`; matriz `60`; full `6138` | `f6ca3fff`…`7858d540` | pendiente | — |
-| P03-T02 | Fencing de requests Memflow | Codex | Memflow `5426e8e5` | import RED | focused `34`; paridad `211`; full `1888` | `22299647` + `2c643863` | pendiente | — |
+| P03-T02 | Fencing de requests Memflow | Codex + agente especializado | Memflow `5426e8e5` | writers directos y dominios/compatibilidad | `131` focused; Ruff/mypy/diff-check | `c0ae3a0779` + `4b3f99348` + `ab252b7bc` + `303c6a4ad` + `b15cf9570` + `3cb254dc3` | **PASS final** | revisión independiente PASS |
 | P03-T03 | Drain y startup refusal | Codex + agentes especializados | Memflow `2c643863` | Git env/root, `.git` symlink/swap, descriptor ABA | focused `79`; integrated `312` | `a3a6070912` + `45b22d6c64` + `8ebc663091` + `7193be2a0` | **PASS final** | revisión independiente PASS |
 | P03-T04 | Aislamiento de Synapse | Codex + agentes especializados | Synapse `45c146d5` | regresiones Git-object, attestation, submódulos y mounts | focused `45`; re-review subset `14` | `933445fd` + `f32e789` + `8600800` | **PASS final** | — |
 | P03-T05 | Registry backend de Memo | — | — | — | — | — | — | — |
