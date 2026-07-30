@@ -29,3 +29,7 @@
   deterministic recovery, but remains dormant until Task 7. No production
   activation or Memflow mutation occurred. Independent review is still
   required before acceptance.
+- Task 6: brief frozen at BASE `6b68a260`; no production edits, activation, or
+  Memflow mutation yet. The brief defines three monotonic portable session
+  events, preserves local artifacts outside the ledger, and keeps the v1
+  session adapter active until Task 7 explicitly installs the v2 runtime.

@@ -181,7 +181,8 @@ Estado: **1/7 aceptadas**.
 
 ### Tarea 6 — Sesiones canónicas sobre ledger v2
 
-- [ ] Generar brief y registrar BASE.
+- [x] Generar brief y registrar BASE `6b68a260`.
+- [x] Consultar Memo y Codegraph antes de editar producción.
 - [ ] RED de lifecycle monotónico, merge y artifacts locales.
 - [ ] Implementar servicio de sesiones y cache JSON derivado.
 - [ ] Reemplazar nombres públicos `mem_session_*` por `memo_session_*`.
@@ -299,7 +300,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P01-T03 | Vistas SQLite e idempotencia | Codex | `c9127f39` | import RED | focused `22`; acumulado `256`; full `6032` | `daf3bf36` | pendiente | — |
 | P01-T04 | Migración genesis y paridad | Codex | `42f458c0` | import RED | focused `10`; matriz `100`; acumulado `276`; full `6043` | `78764d74` | pendiente | — |
 | P01-T05 | Outbox durable exactly-once | Codex | `20e16ba4` | import RED | focused `490`; matriz `500`; acumulado `676`; full `6079` | `24f7a406` | pendiente | — |
-| P01-T06 | Sesiones canónicas | — | — | — | — | — | — | — |
+| P01-T06 | Sesiones canónicas | Codex | `6b68a260` | — | — | — | pendiente | — |
 | P01-T07 | Activación facade v2 | — | — | — | — | — | — | — |
 | P02-T01 | Fixtures de paridad Memflow | — | — | — | — | — | — | — |
 | P02-T02 | Coordinación, handoffs y tasks | — | — | — | — | — | — | — |
