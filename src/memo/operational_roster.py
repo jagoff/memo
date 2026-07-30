@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from memo.atomic_io import (
@@ -22,8 +24,11 @@ from memo.atomic_io import (
 from memo.errors import SignatureError
 from memo.operational_key_store import (
     AuthorityPinStore,
+    DeviceKeyStore,
     KeyStoreError,
     PublicKeyRecord,
+    SignatureAlgorithm,
+    _is_canonical_p256_signature,
 )
 from memo.operational_signing import (
     OperationalSigner,
@@ -144,10 +149,29 @@ class VerificationRoster:
             ):
                 raise RosterError(f"invalid roles for roster key: {key.key_id}")
             public_bytes = _decode(key.public_key)
-            if (
-                len(public_bytes) != 32
-                or hashlib.sha256(public_bytes).hexdigest() != key.fingerprint
-            ):
+            try:
+                bound_algorithm = DeviceKeyStore.algorithm_for_key_id(key.key_id)
+            except KeyStoreError:
+                bound_algorithm = None
+            if key.algorithm == "ed25519":
+                valid_public_key = bound_algorithm == key.algorithm and len(public_bytes) == 32
+            elif key.algorithm == "ecdsa-p256-sha256":
+                valid_public_key = (
+                    bound_algorithm == key.algorithm
+                    and len(public_bytes) == 65
+                    and public_bytes[:1] == b"\x04"
+                )
+                if valid_public_key:
+                    try:
+                        ec.EllipticCurvePublicKey.from_encoded_point(
+                            ec.SECP256R1(),
+                            public_bytes,
+                        )
+                    except ValueError:
+                        valid_public_key = False
+            else:
+                valid_public_key = False
+            if not valid_public_key or hashlib.sha256(public_bytes).hexdigest() != key.fingerprint:
                 raise RosterError(f"public key fingerprint mismatch: {key.key_id}")
 
     @property
@@ -230,7 +254,7 @@ class VerificationRoster:
         roster = replace(
             roster,
             signature=SignatureEnvelope(
-                algorithm="ed25519",
+                algorithm=key.algorithm,
                 key_id=key.key_id,
                 roster_version=1,
                 signature=key._bootstrap_signature,
@@ -500,6 +524,14 @@ def _decode_roster(path: Path, *, root: Path) -> VerificationRoster:
     return _decode_roster_bytes(encoded, str(path))
 
 
+def _decode_key_algorithm(item: dict[str, Any]) -> SignatureAlgorithm:
+    if "algorithm" not in item:
+        return "ed25519"
+    if item["algorithm"] == "ecdsa-p256-sha256":
+        return "ecdsa-p256-sha256"
+    raise ValueError("non-canonical roster key algorithm")
+
+
 def _decode_roster_bytes(encoded: bytes, description: str) -> VerificationRoster:
     try:
         body = json.loads(encoded.decode("utf-8"))
@@ -513,6 +545,7 @@ def _decode_roster_bytes(encoded: bytes, description: str) -> VerificationRoster
                 public_key=str(item["public_key"]),
                 roles=tuple(str(role) for role in item["roles"]),
                 enrollment_sequence=int(item["enrollment_sequence"]),
+                algorithm=_decode_key_algorithm(item),
                 revocation_sequence=(
                     int(item["revocation_sequence"])
                     if item.get("revocation_sequence") is not None
@@ -548,8 +581,23 @@ def _verify_pop(key: PublicKeyRecord) -> None:
     if not key.proof_of_possession:
         raise RosterError(f"missing proof of possession: {key.key_id}")
     try:
-        public_key = Ed25519PublicKey.from_public_bytes(_decode(key.public_key))
-        public_key.verify(_decode(key.proof_of_possession), key.proof_payload())
+        public_bytes = _decode(key.public_key)
+        signature = _decode(key.proof_of_possession)
+        if key.algorithm == "ed25519":
+            ed_public_key = Ed25519PublicKey.from_public_bytes(public_bytes)
+            ed_public_key.verify(signature, key.proof_payload())
+        else:
+            if not _is_canonical_p256_signature(signature):
+                raise ValueError
+            p256_public_key = ec.EllipticCurvePublicKey.from_encoded_point(
+                ec.SECP256R1(),
+                public_bytes,
+            )
+            p256_public_key.verify(
+                signature,
+                key.proof_payload(),
+                ec.ECDSA(hashes.SHA256()),
+            )
     except (InvalidSignature, ValueError) as exc:
         raise RosterError(f"invalid proof of possession: {key.key_id}") from exc
 

@@ -763,7 +763,7 @@ def _verify_stamp(
         domain="memo.operational.migration_prepared.v1",
         payload=canonical_signed_bytes(stamp),
         envelope=SignatureEnvelope(
-            algorithm="ed25519",
+            algorithm=authority.roster.key(stamp.attestor_key_id).algorithm,
             key_id=stamp.attestor_key_id,
             roster_version=authority.roster.version,
             signature=stamp.signature,

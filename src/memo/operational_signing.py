@@ -1,17 +1,25 @@
-"""Domain-separated Ed25519 signing for operational authority records."""
+"""Domain-separated signing for operational authority records."""
 
 from __future__ import annotations
 
 import base64
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from memo.errors import KeyRevokedError, SignatureError
-from memo.operational_key_store import DeviceKeyStore, KeyStoreError, PublicKeyRecord
+from memo.operational_key_store import (
+    DeviceKeyStore,
+    KeyStoreError,
+    PublicKeyRecord,
+    SignatureAlgorithm,
+    _is_canonical_p256_signature,
+)
 
 if TYPE_CHECKING:
     from memo.operational_roster import VerificationRoster
@@ -132,7 +140,7 @@ def _claim_int(
 
 @dataclass(frozen=True)
 class SignatureEnvelope:
-    algorithm: Literal["ed25519"]
+    algorithm: SignatureAlgorithm
     key_id: str
     roster_version: int
     signature: str
@@ -147,10 +155,11 @@ class OperationalSigner:
         signed_payload = signature_payload(domain, payload)
         try:
             signature = self.key_store.sign(key_id=key_id, payload=signed_payload)
+            algorithm = self.key_store.algorithm_for_key_id(key_id)
         except KeyStoreError as exc:
             raise SignatureError(str(exc)) from None
         return SignatureEnvelope(
-            algorithm="ed25519",
+            algorithm=algorithm,
             key_id=key_id,
             roster_version=self.roster_version,
             signature=_b64url(signature),
@@ -166,17 +175,34 @@ class OperationalVerifier:
         envelope: SignatureEnvelope,
         roster: VerificationRoster,
     ) -> None:
-        if envelope.algorithm != "ed25519":
+        if envelope.algorithm not in {"ed25519", "ecdsa-p256-sha256"}:
             raise SignatureError(f"unsupported signature algorithm: {envelope.algorithm}")
         if envelope.roster_version != roster.version:
             raise SignatureError("signature roster version mismatch")
         body = _validate_canonical_json(payload)
         key = roster.key(envelope.key_id)
+        if envelope.algorithm != key.algorithm:
+            raise SignatureError("signature algorithm differs from roster key")
         self._validate_claims(domain, body, envelope, roster, key)
         signed_payload = signature_payload(domain, payload)
         try:
-            public_key = Ed25519PublicKey.from_public_bytes(_decode_b64url(key.public_key))
-            public_key.verify(_decode_b64url(envelope.signature), signed_payload)
+            public_bytes = _decode_b64url(key.public_key)
+            signature = _decode_b64url(envelope.signature)
+            if envelope.algorithm == "ed25519":
+                ed_public_key = Ed25519PublicKey.from_public_bytes(public_bytes)
+                ed_public_key.verify(signature, signed_payload)
+            else:
+                if not _is_canonical_p256_signature(signature):
+                    raise ValueError
+                p256_public_key = ec.EllipticCurvePublicKey.from_encoded_point(
+                    ec.SECP256R1(),
+                    public_bytes,
+                )
+                p256_public_key.verify(
+                    signature,
+                    signed_payload,
+                    ec.ECDSA(hashes.SHA256()),
+                )
         except (InvalidSignature, ValueError) as exc:
             raise SignatureError("operational signature verification failed") from exc
 

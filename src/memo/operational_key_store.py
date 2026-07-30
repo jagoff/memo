@@ -1,4 +1,4 @@
-"""Opaque private-key operations for operational Ed25519 signatures."""
+"""Opaque private-key operations for operational authority signatures."""
 
 from __future__ import annotations
 
@@ -14,17 +14,33 @@ import threading
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+    encode_dss_signature,
+)
 
 from memo.atomic_io import authority_write_lock
 
 _DEVICE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_ED25519_KEY_ID_RE = re.compile(r"ed25519-[0-9a-f]{32}\Z")
+_P256_KEY_ID_RE = re.compile(r"p256-se-[0-9a-f]{32}\Z")
+_SECURE_ENCLAVE_SERVICE_RE = re.compile(
+    r"com\.memo\.operational-signing"
+    r"(?:\.[A-Za-z0-9][A-Za-z0-9-]{0,62}){0,4}\Z"
+)
 _SIGNATURE_PREFIX = b"memo-signature-v1\0"
 _BOOTSTRAP_DOMAIN = "memo.operational.roster.bootstrap.v1"
 _AUTHORITY_PIN_SCHEMA = "memo.operational_authority_pin.v1"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_P256_ORDER = int(
+    "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
+    16,
+)
+SignatureAlgorithm = Literal["ed25519", "ecdsa-p256-sha256"]
 
 
 def _b64url(value: bytes) -> str:
@@ -43,6 +59,30 @@ def _canonical(value: object) -> bytes:
 
 class KeyStoreError(RuntimeError):
     """An opaque operational key operation is unavailable."""
+
+
+def _normalize_p256_signature(signature: bytes) -> bytes:
+    try:
+        r, s = decode_dss_signature(bytes(signature))
+    except ValueError:
+        raise KeyStoreError("Secure Enclave returned an invalid P-256 signature") from None
+    if not 0 < r < _P256_ORDER or not 0 < s < _P256_ORDER:
+        raise KeyStoreError("Secure Enclave returned an invalid P-256 signature")
+    if s > _P256_ORDER // 2:
+        s = _P256_ORDER - s
+    return encode_dss_signature(r, s)
+
+
+def _is_canonical_p256_signature(signature: bytes) -> bool:
+    try:
+        r, s = decode_dss_signature(bytes(signature))
+    except ValueError:
+        return False
+    return (
+        0 < r < _P256_ORDER
+        and 0 < s <= _P256_ORDER // 2
+        and encode_dss_signature(r, s) == signature
+    )
 
 
 @dataclass(frozen=True)
@@ -602,6 +642,7 @@ class PublicKeyRecord:
     enrollment_sequence: int
     revocation_sequence: int | None = None
     proof_of_possession: str = ""
+    algorithm: SignatureAlgorithm = "ed25519"
     _bootstrap_signature: str = field(default="", repr=False, compare=False)
 
     def proof_payload(self) -> bytes:
@@ -614,10 +655,12 @@ class PublicKeyRecord:
             "revocation_sequence": self.revocation_sequence,
             "roles": list(self.roles),
         }
+        if self.algorithm != "ed25519":
+            body["algorithm"] = self.algorithm
         return b"memo-key-enrollment-v1\0" + _canonical(body)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        body: dict[str, object] = {
             "device_id": self.device_id,
             "key_id": self.key_id,
             "fingerprint": self.fingerprint,
@@ -627,6 +670,9 @@ class PublicKeyRecord:
             "revocation_sequence": self.revocation_sequence,
             "proof_of_possession": self.proof_of_possession,
         }
+        if self.algorithm != "ed25519":
+            body["algorithm"] = self.algorithm
+        return body
 
 
 def _bootstrap_roster_bodies(
@@ -651,6 +697,8 @@ def _bootstrap_roster_bodies(
 class _PrivateKeyProvider(Protocol):
     """Only opaque handle operations cross this boundary."""
 
+    algorithm: SignatureAlgorithm
+
     def generate(self, key_id: str) -> bytes: ...
 
     def sign(self, key_id: str, payload: bytes) -> bytes: ...
@@ -660,6 +708,8 @@ class _PrivateKeyProvider(Protocol):
 
 class InMemoryKeyProvider:
     """Ephemeral test provider retaining key objects, never serialized seeds."""
+
+    algorithm: SignatureAlgorithm = "ed25519"
 
     def __init__(self) -> None:
         self._keys: dict[str, Ed25519PrivateKey] = {}
@@ -684,32 +734,51 @@ class InMemoryKeyProvider:
 
 
 class MacOSKeychainProvider:
-    """Fail-closed placeholder for a non-exportable Ed25519 Keychain backend.
+    """Productive non-exportable P-256 provider backed by Secure Enclave."""
 
-    The ``security`` generic-password CLI cannot satisfy this contract: it
-    exports secret bytes and exposes them through argv/stdout. Production setup
-    therefore fails until Memo has a native SecKey-backed implementation.
-    """
+    algorithm: SignatureAlgorithm = "ecdsa-p256-sha256"
 
-    _MESSAGE = (
-        "non-exportable Ed25519 Keychain operations are unavailable; "
-        "refusing exportable generic-password fallback"
-    )
-
-    def __init__(self, *, service: str = "com.memo.operational-signing") -> None:
+    def __init__(
+        self,
+        *,
+        service: str = "com.memo.operational-signing",
+        backend: _PrivateKeyProvider | None = None,
+    ) -> None:
+        if not _SECURE_ENCLAVE_SERVICE_RE.fullmatch(service):
+            raise KeyStoreError("Secure Enclave Keychain service is unsafe")
         self.service = service
+        resolved: _PrivateKeyProvider
+        if backend is None:
+            from memo.operational_macos_secure_enclave import (
+                SecureEnclaveP256Backend,
+            )
+
+            resolved = cast(
+                _PrivateKeyProvider,
+                SecureEnclaveP256Backend(service=service),
+            )
+        else:
+            resolved = backend
+        if getattr(resolved, "algorithm", None) != self.algorithm:
+            raise KeyStoreError("Secure Enclave backend algorithm mismatch")
+        self._backend = resolved
+
+    @staticmethod
+    def _validate_key_id(key_id: str) -> None:
+        if not _P256_KEY_ID_RE.fullmatch(key_id):
+            raise KeyStoreError("Secure Enclave key id is unsafe")
 
     def generate(self, key_id: str) -> bytes:
-        del key_id
-        raise KeyStoreError(self._MESSAGE)
+        self._validate_key_id(key_id)
+        return self._backend.generate(key_id)
 
     def sign(self, key_id: str, payload: bytes) -> bytes:
-        del key_id, payload
-        raise KeyStoreError(self._MESSAGE)
+        self._validate_key_id(key_id)
+        return _normalize_p256_signature(self._backend.sign(key_id, bytes(payload)))
 
     def destroy(self, key_id: str) -> None:
-        del key_id
-        raise KeyStoreError(self._MESSAGE)
+        self._validate_key_id(key_id)
+        self._backend.destroy(key_id)
 
 
 class DeviceKeyStore:
@@ -736,27 +805,62 @@ class DeviceKeyStore:
             raise ValueError("roles must be unique operational signing roles")
         if enrollment_sequence < 1:
             raise ValueError("enrollment_sequence must be positive")
-        key_id = f"ed25519-{uuid.uuid4().hex}"
+        algorithm = cast(
+            SignatureAlgorithm,
+            getattr(self._provider, "algorithm", "ed25519"),
+        )
+        if algorithm not in {"ed25519", "ecdsa-p256-sha256"}:
+            raise KeyStoreError("provider uses an unsupported signing algorithm")
+        prefix = "ed25519" if algorithm == "ed25519" else "p256-se"
+        key_id = f"{prefix}-{uuid.uuid4().hex}"
         public_bytes = self._provider.generate(key_id)
-        if len(public_bytes) != 32:
-            raise KeyStoreError("provider returned an invalid public key")
-        fingerprint = hashlib.sha256(public_bytes).hexdigest()
-        record = PublicKeyRecord(
-            device_id=device_id,
-            key_id=key_id,
-            fingerprint=fingerprint,
-            public_key=_b64url(public_bytes),
-            roles=roles,
-            enrollment_sequence=enrollment_sequence,
-        )
-        proof = self._provider.sign(key_id, record.proof_payload())
-        record = replace(record, proof_of_possession=_b64url(proof))
-        _, roster_payload = _bootstrap_roster_bodies(record)
-        bootstrap_signed = (
-            _SIGNATURE_PREFIX + _BOOTSTRAP_DOMAIN.encode("ascii") + b"\0" + roster_payload
-        )
-        bootstrap_signature = self._provider.sign(key_id, bootstrap_signed)
-        return replace(record, _bootstrap_signature=_b64url(bootstrap_signature))
+        try:
+            if algorithm == "ed25519":
+                valid_public_key = len(public_bytes) == 32
+            else:
+                valid_public_key = len(public_bytes) == 65 and public_bytes[:1] == b"\x04"
+                if valid_public_key:
+                    ec.EllipticCurvePublicKey.from_encoded_point(
+                        ec.SECP256R1(),
+                        public_bytes,
+                    )
+            if not valid_public_key:
+                raise KeyStoreError("provider returned an invalid public key")
+            fingerprint = hashlib.sha256(public_bytes).hexdigest()
+            record = PublicKeyRecord(
+                device_id=device_id,
+                key_id=key_id,
+                fingerprint=fingerprint,
+                public_key=_b64url(public_bytes),
+                roles=roles,
+                enrollment_sequence=enrollment_sequence,
+                algorithm=algorithm,
+            )
+            proof = self._provider.sign(key_id, record.proof_payload())
+            if algorithm == "ecdsa-p256-sha256":
+                proof = _normalize_p256_signature(proof)
+            record = replace(record, proof_of_possession=_b64url(proof))
+            _, roster_payload = _bootstrap_roster_bodies(record)
+            bootstrap_signed = (
+                _SIGNATURE_PREFIX + _BOOTSTRAP_DOMAIN.encode("ascii") + b"\0" + roster_payload
+            )
+            bootstrap_signature = self._provider.sign(key_id, bootstrap_signed)
+            if algorithm == "ecdsa-p256-sha256":
+                bootstrap_signature = _normalize_p256_signature(bootstrap_signature)
+            return replace(
+                record,
+                _bootstrap_signature=_b64url(bootstrap_signature),
+            )
+        except Exception as exc:
+            try:
+                self._provider.destroy(key_id)
+            except Exception:
+                raise KeyStoreError(
+                    "operational key enrollment failed and cleanup was not durable"
+                ) from None
+            if isinstance(exc, KeyStoreError):
+                raise
+            raise KeyStoreError("operational key enrollment failed") from None
 
     def sign(self, *, key_id: str, payload: bytes) -> bytes:
         try:
@@ -765,6 +869,14 @@ class DeviceKeyStore:
             raise
         except Exception:
             raise KeyStoreError("opaque signing operation failed") from None
+
+    @staticmethod
+    def algorithm_for_key_id(key_id: str) -> SignatureAlgorithm:
+        if _ED25519_KEY_ID_RE.fullmatch(key_id):
+            return "ed25519"
+        if _P256_KEY_ID_RE.fullmatch(key_id):
+            return "ecdsa-p256-sha256"
+        raise KeyStoreError("operational key id has no supported algorithm binding")
 
     def destroy(self, *, key_id: str) -> None:
         try:
@@ -785,4 +897,5 @@ __all__ = [
     "MacOSAuthorityPinProvider",
     "MacOSKeychainProvider",
     "PublicKeyRecord",
+    "SignatureAlgorithm",
 ]

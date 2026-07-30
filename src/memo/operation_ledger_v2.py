@@ -1854,7 +1854,7 @@ class OperationLedgerV2:
             domain="memo.operational.event.v2",
             payload=canonical_signed_bytes(event),
             envelope=SignatureEnvelope(
-                algorithm="ed25519",
+                algorithm=roster.key(event.key_id).algorithm,
                 key_id=event.key_id,
                 roster_version=event.roster_version,
                 signature=event.signature,

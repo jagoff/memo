@@ -546,7 +546,7 @@ def validate_migration_origin(
             retryable=False,
         )
     envelope = SignatureEnvelope(
-        algorithm="ed25519",
+        algorithm=roster.key(origin.attestor_key_id).algorithm,
         key_id=origin.attestor_key_id,
         roster_version=origin.roster_version,
         signature=origin.signature,
@@ -651,7 +651,7 @@ def validate_anchor(
             domain="memo.operational.anchor.v1",
             payload=canonical_signed_bytes(anchor),
             envelope=SignatureEnvelope(
-                algorithm="ed25519",
+                algorithm=roster.key(anchor.key_id).algorithm,
                 key_id=anchor.key_id,
                 roster_version=anchor.roster_version,
                 signature=anchor.signature,
