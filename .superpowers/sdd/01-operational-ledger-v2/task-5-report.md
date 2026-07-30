@@ -4,8 +4,9 @@ BASE: `20e16ba4`
 Brief commit: `ae46ea83`
 Technical commit: `24f7a406`
 
-Status: implementation delivered and green; independent specification,
-durability, and quality review is still required before acceptance.
+Status: **ACCEPTED**. Independent specification, durability, and quality
+review returned `PASS` with no material defect and no open
+`BLOCKER/HIGH/MEDIUM`.
 
 ## Delivered
 
@@ -113,3 +114,22 @@ Required independent checks:
    equivalence.
 4. Outcome-event provenance and stable replay across v1 and dormant v2.
 5. Frozen-v1 compatibility and absence of activation or Memflow mutation.
+
+## Independent acceptance
+
+Durable review record: Memo `99210fd486024444b3715ef395a24ff0`.
+
+The independent review explicitly returned `Task 5 PASS`. Its only note was
+missing symlink/path-confinement test coverage; it identified no material
+defect. The normative task did not require that additional test, terminal
+symlink/non-file candidates are already rejected, and operation identity uses
+the fixed `promotion/<sha256>` namespace rather than caller-controlled paths.
+The note is optional LOW test-quality coverage, not an acceptance gap.
+
+Current focused verification after later shared-view changes:
+
+```text
+40 passed
+```
+
+P01-T05 therefore requires no implementation follow-up or re-review.
