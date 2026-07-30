@@ -474,6 +474,63 @@ def test_federation_enforces_acl_signature_and_idempotent_import(
         )
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="phase-0: federation currently leaves earlier records visible after a later save fails",
+)
+def test_federation_import_rolls_back_current_state_when_a_later_save_fails(
+    mem_with_stub,
+    tmp_cfg,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    key = b"0123456789abcdef0123456789abcdef"
+    owner = "owner-fer"
+    for title in ("first", "second"):
+        mem_with_stub.save(
+            content=f"{title} shared body",
+            title=title,
+            extra={
+                "visibility": "shared",
+                "owner_principal": owner,
+                "principals": ["bob"],
+            },
+            auto_project=False,
+        )
+    bundle_path = tmp_path / "atomicity.memo-federation.json"
+    mem_with_stub.federation.export_bundle(
+        bundle_path,
+        principal="bob",
+        owner_principal=owner,
+        signing_key=key,
+    )
+
+    target = Memory(_target_config(tmp_cfg, tmp_path))
+    original_save = target.save
+    calls = 0
+
+    def fail_second_save(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise MemoError("seeded second-save failure")
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(target, "save", fail_second_save)
+    try:
+        result = target.federation.import_bundle(
+            bundle_path,
+            principal="bob",
+            signing_key=key,
+        )
+        assert result["failed"] == 1
+        assert target.store.count() == 0
+        assert target.list(limit=10) == []
+        assert result["journal"]["imported"] == 0
+    finally:
+        target.close()
+
+
 @pytest.mark.parametrize(
     ("trust_peer", "expected_trust"),
     [

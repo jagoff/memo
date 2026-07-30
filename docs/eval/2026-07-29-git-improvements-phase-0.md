@@ -26,3 +26,25 @@ Baseline note: a second full xdist run reached 100% test completion but stalled 
 pytest recursively cleaned an old numbered temporary directory; it was interrupted during
 `pytest_sessionfinish`. The earlier clean run above is the product baseline, and focused
 reruns are used below so temporary-directory cleanup is not mistaken for a code failure.
+
+## 1. Atomic mutation and quarantine
+
+Decision: **Admit, narrowed**
+
+Observed gap: a seeded failure on the second save leaves the first federation record in
+current Markdown/searchable state. The current implementation then continues to the
+operational-journal seam even though the durable-memory half of the import failed.
+
+Smallest admitted slice: make one federation bundle import all-or-nothing in final current
+state, keep operational events unapplied on memory failure, and emit an honest rollback
+receipt. The full cross-process read-barrier transaction and general importer framework are
+deferred until this slice proves value.
+
+Primary gate: after a seeded failure at every imported item boundary, zero bundle records
+are current/searchable and zero bundle operational events are imported.
+
+Guardrails: successful and idempotent imports keep their current API; rollback failure is
+typed and fail-closed; no second transaction framework or daemon is introduced.
+
+Rollback: revert the federation-only rail; current Markdown remains readable and no schema
+downgrade is required.
