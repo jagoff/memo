@@ -7,7 +7,7 @@ from pathlib import Path
 
 from memo.errors import OperationalError, OperationalErrorCode
 
-OPERATIONAL_VIEW_SCHEMA_VERSION = 1
+OPERATIONAL_VIEW_SCHEMA_VERSION = 2
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS view_meta (
@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS applied_events (
     origin_device TEXT NOT NULL,
     origin_sequence INTEGER NOT NULL,
     event_hash TEXT NOT NULL,
+    event_json TEXT NOT NULL,
     applied_at TEXT NOT NULL,
     UNIQUE(origin_device, origin_sequence)
 ) STRICT;
@@ -138,7 +139,7 @@ def connect_operational_db(path: Path) -> sqlite3.Connection:
 
 
 def ensure_operational_schema(connection: sqlite3.Connection) -> None:
-    """Create schema v1 or reject a database from another schema generation."""
+    """Create the current schema or make the rebuildable v1 history upgradeable."""
     connection.execute(
         "CREATE TABLE IF NOT EXISTS view_meta "
         "(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT"
@@ -146,6 +147,36 @@ def ensure_operational_schema(connection: sqlite3.Connection) -> None:
     row = connection.execute(
         "SELECT value FROM view_meta WHERE key = 'schema_version'"
     ).fetchone()
+    if row is not None and row["value"] == "1":
+        applied_table = connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'applied_events'
+            """
+        ).fetchone()
+        if applied_table is not None:
+            columns = {
+                str(column["name"])
+                for column in connection.execute("PRAGMA table_info(applied_events)")
+            }
+            if "event_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE applied_events "
+                    "ADD COLUMN event_json TEXT NOT NULL DEFAULT ''"
+                )
+        connection.execute(
+            """
+            INSERT INTO view_meta(key, value) VALUES('rebuild_required', '1')
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """
+        )
+        connection.execute(
+            "UPDATE view_meta SET value = ? WHERE key = 'schema_version'",
+            (str(OPERATIONAL_VIEW_SCHEMA_VERSION),),
+        )
+        row = connection.execute(
+            "SELECT value FROM view_meta WHERE key = 'schema_version'"
+        ).fetchone()
     if row is not None and row["value"] != str(OPERATIONAL_VIEW_SCHEMA_VERSION):
         raise _storage_failure(
             f"unsupported operational view schema: {row['value']}"
@@ -155,6 +186,26 @@ def ensure_operational_schema(connection: sqlite3.Connection) -> None:
         "INSERT OR IGNORE INTO view_meta(key, value) VALUES('schema_version', ?)",
         (str(OPERATIONAL_VIEW_SCHEMA_VERSION),),
     )
+    history_incomplete = (
+        connection.execute(
+            "SELECT 1 FROM applied_events WHERE event_json = '' LIMIT 1"
+        ).fetchone()
+        is not None
+    )
+    if history_incomplete:
+        connection.execute(
+            """
+            INSERT INTO view_meta(key, value) VALUES('rebuild_required', '1')
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """
+        )
+    else:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO view_meta(key, value)
+            VALUES('rebuild_required', '0')
+            """
+        )
 
 
 __all__ = [

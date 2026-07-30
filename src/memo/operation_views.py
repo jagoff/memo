@@ -14,9 +14,13 @@ from typing import TYPE_CHECKING
 
 from memo.contracts import MEMO_OPERATIONAL_SCHEMA
 from memo.errors import OperationalError, OperationalErrorCode
+from memo.identity import PrincipalIdentity
 from memo.operation_view_schema import connect_operational_db, ensure_operational_schema
 from memo.operational_event import (
+    MigrationOrigin,
     OperationalEventV2,
+    SourceProof,
+    SourceProofAuthentication,
     canonical_json_bytes,
     operational_wire_dict,
 )
@@ -145,6 +149,94 @@ def _payload(event: OperationalEventV2) -> dict[str, object]:
             f"event payload is not a string-keyed mapping: {event.event_id}",
         )
     return dict(event.payload)
+
+
+def _event_order(event: OperationalEventV2) -> tuple[str, str, int]:
+    return (
+        _canonical_timestamp(event.created_at),
+        event.origin_device,
+        event.origin_sequence,
+    )
+
+
+def _event_from_json(encoded: str, *, description: str) -> OperationalEventV2:
+    """Decode only canonical rows previously written by this projection store."""
+    try:
+        body = json.loads(encoded)
+        if not isinstance(body, dict):
+            raise TypeError
+        actor_body = body["actor"]
+        if not isinstance(actor_body, dict):
+            raise TypeError
+        source_proof_body = body.get("source_proof")
+        source_proof: SourceProof | None = None
+        if source_proof_body is not None:
+            if not isinstance(source_proof_body, dict):
+                raise TypeError
+            authentication_body = source_proof_body.get("authentication")
+            authentication: SourceProofAuthentication | None = None
+            if authentication_body is not None:
+                if not isinstance(authentication_body, dict):
+                    raise TypeError
+                merkle_path = authentication_body.get("merkle_path")
+                if not isinstance(merkle_path, list):
+                    raise TypeError
+                authentication = SourceProofAuthentication(
+                    **{
+                        **authentication_body,
+                        "merkle_path": tuple(merkle_path),
+                    }
+                )
+            source_proof = SourceProof(
+                **{
+                    **source_proof_body,
+                    "authentication": authentication,
+                }
+            )
+        migration_origin_body = body.get("migration_origin")
+        migration_origin: MigrationOrigin | None = None
+        if migration_origin_body is not None:
+            if not isinstance(migration_origin_body, dict):
+                raise TypeError
+            migration_origin = MigrationOrigin(**migration_origin_body)
+        caused_by = body["caused_by"]
+        payload = body["payload"]
+        if (
+            not isinstance(caused_by, list)
+            or not all(isinstance(item, str) for item in caused_by)
+            or not isinstance(payload, dict)
+        ):
+            raise TypeError
+        event = OperationalEventV2(
+            **{
+                **body,
+                "actor": PrincipalIdentity(**actor_body),
+                "source_proof": source_proof,
+                "migration_origin": migration_origin,
+                "migration_origin_sha256": body.get("migration_origin_sha256", ""),
+                "caused_by": tuple(caused_by),
+                "payload": payload,
+            }
+        )
+        if canonical_json_bytes(event).decode("utf-8") != encoded:
+            raise ValueError
+        return event
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _failure(
+            OperationalErrorCode.STORAGE_UNAVAILABLE,
+            f"stored operational event is invalid: {description}",
+        ) from exc
+
+
+def _ensure_rebuild_complete(connection: sqlite3.Connection) -> None:
+    row = connection.execute(
+        "SELECT value FROM view_meta WHERE key = 'rebuild_required'"
+    ).fetchone()
+    if row is None or row["value"] != "0":
+        raise _failure(
+            OperationalErrorCode.STORAGE_UNAVAILABLE,
+            "operational view rebuild is required",
+        )
 
 
 def _read_row(
@@ -801,7 +893,7 @@ class OperationalViewStore:
                 )
             existing_event = connection.execute(
                 """
-                SELECT origin_device, origin_sequence, event_hash
+                SELECT origin_device, origin_sequence, event_hash, event_json
                 FROM applied_events WHERE event_id = ?
                 """,
                 (event.event_id,),
@@ -811,6 +903,8 @@ class OperationalViewStore:
                     existing_event["origin_device"] != event.origin_device
                     or existing_event["origin_sequence"] != event.origin_sequence
                     or existing_event["event_hash"] != event.event_hash
+                    or existing_event["event_json"]
+                    != _json(operational_wire_dict(event))
                 ):
                     raise _failure(
                         OperationalErrorCode.ANCHOR_CONFLICT,
@@ -883,14 +977,16 @@ class OperationalViewStore:
             connection.execute(
                 """
                 INSERT INTO applied_events(
-                  event_id, origin_device, origin_sequence, event_hash, applied_at
-                ) VALUES(?, ?, ?, ?, ?)
+                  event_id, origin_device, origin_sequence, event_hash,
+                  event_json, applied_at
+                ) VALUES(?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.event_id,
                     event.origin_device,
                     event.origin_sequence,
                     event.event_hash,
+                    _json(operational_wire_dict(event)),
                     _canonical_timestamp(event.created_at),
                 ),
             )
@@ -950,12 +1046,195 @@ class OperationalViewStore:
             quarantined=quarantined,
         )
 
+    @staticmethod
+    def _materialize_events(
+        events: Iterable[OperationalEventV2],
+    ) -> tuple[OperationalEventV2, ...]:
+        materialized = tuple(events)
+        for event in materialized:
+            if not isinstance(event, OperationalEventV2):
+                raise _failure(
+                    OperationalErrorCode.INVALID_EVENT,
+                    "OperationalEventV2 is required for view application",
+                )
+        return tuple(sorted(materialized, key=_event_order))
+
+    @staticmethod
+    def _stored_events(
+        connection: sqlite3.Connection,
+    ) -> tuple[tuple[OperationalEventV2, ...], frozenset[str], frozenset[str]]:
+        applied_rows = connection.execute(
+            """
+            SELECT event_id, origin_device, origin_sequence, event_hash,
+                   event_json, applied_at
+            FROM applied_events
+            """
+        ).fetchall()
+        quarantined_rows = connection.execute(
+            """
+            SELECT event_id, event_type, event_json, quarantined_at
+            FROM quarantined_events
+            """
+        ).fetchall()
+        applied_ids = frozenset(str(row["event_id"]) for row in applied_rows)
+        quarantined_ids = frozenset(str(row["event_id"]) for row in quarantined_rows)
+        applied_events: list[OperationalEventV2] = []
+        for row in applied_rows:
+            event = _event_from_json(
+                str(row["event_json"]),
+                description=f"applied/{row['event_id']}",
+            )
+            if (
+                row["event_id"] != event.event_id
+                or row["origin_device"] != event.origin_device
+                or row["origin_sequence"] != event.origin_sequence
+                or row["event_hash"] != event.event_hash
+                or row["applied_at"] != _canonical_timestamp(event.created_at)
+            ):
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"stored operational event binding is invalid: {event.event_id}",
+                )
+            applied_events.append(event)
+        quarantined_events: list[OperationalEventV2] = []
+        for row in quarantined_rows:
+            event = _event_from_json(
+                str(row["event_json"]),
+                description=f"quarantined/{row['event_id']}",
+            )
+            if (
+                row["event_id"] != event.event_id
+                or row["event_type"] != event.event_type
+                or row["quarantined_at"] != event.created_at
+            ):
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"quarantined operational event binding is invalid: {event.event_id}",
+                )
+            quarantined_events.append(event)
+        return (
+            (*applied_events, *quarantined_events),
+            applied_ids,
+            quarantined_ids,
+        )
+
+    @staticmethod
+    def _merge_history(
+        stored: Iterable[OperationalEventV2],
+        incoming: Iterable[OperationalEventV2],
+    ) -> tuple[OperationalEventV2, ...]:
+        by_id: dict[str, OperationalEventV2] = {}
+        by_position: dict[tuple[str, int], OperationalEventV2] = {}
+        for event in (*tuple(stored), *tuple(incoming)):
+            existing = by_id.get(event.event_id)
+            if existing is not None:
+                if canonical_json_bytes(existing) != canonical_json_bytes(event):
+                    raise _failure(
+                        OperationalErrorCode.ANCHOR_CONFLICT,
+                        f"applied event identity collision: {event.event_id}",
+                    )
+                continue
+            position = (event.origin_device, event.origin_sequence)
+            origin_event = by_position.get(position)
+            if origin_event is not None:
+                raise _failure(
+                    OperationalErrorCode.ANCHOR_CONFLICT,
+                    (
+                        "origin sequence collision: "
+                        f"{event.origin_device}/{event.origin_sequence}"
+                    ),
+                )
+            by_id[event.event_id] = event
+            by_position[position] = event
+        return tuple(sorted(by_id.values(), key=_event_order))
+
+    def _incoming_report(
+        self,
+        connection: sqlite3.Connection,
+        incoming: Iterable[OperationalEventV2],
+        *,
+        previously_applied: frozenset[str],
+    ) -> ApplyReport:
+        applied_after = frozenset(
+            str(row["event_id"])
+            for row in connection.execute("SELECT event_id FROM applied_events").fetchall()
+        )
+        applied = 0
+        duplicates = 0
+        quarantined = 0
+        seen = set(previously_applied)
+        for event in incoming:
+            if event.event_id in seen:
+                duplicates += 1
+            elif event.event_id in applied_after:
+                applied += 1
+                seen.add(event.event_id)
+            else:
+                quarantined += 1
+        state = self._state(connection)
+        return ApplyReport(
+            applied=applied,
+            duplicates=duplicates,
+            quarantined=quarantined,
+            state_sha256=hashlib.sha256(canonical_json_bytes(state)).hexdigest(),
+        )
+
     def apply_events(self, events: Iterable[OperationalEventV2]) -> ApplyReport:
+        materialized = self._materialize_events(events)
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
             connection.execute("BEGIN IMMEDIATE")
             try:
-                report = self._apply_events(connection, events)
+                _ensure_rebuild_complete(connection)
+                stored, applied_ids, quarantined_ids = self._stored_events(connection)
+                max_applied = connection.execute(
+                    """
+                    SELECT applied_at, origin_device, origin_sequence
+                    FROM applied_events
+                    ORDER BY applied_at DESC, origin_device DESC, origin_sequence DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                max_order = (
+                    (
+                        str(max_applied["applied_at"]),
+                        str(max_applied["origin_device"]),
+                        int(max_applied["origin_sequence"]),
+                    )
+                    if max_applied is not None
+                    else None
+                )
+                new_events = tuple(
+                    event for event in materialized if event.event_id not in applied_ids
+                )
+                needs_rereduction = bool(materialized) and (
+                    bool(quarantined_ids)
+                    or (
+                        max_order is not None
+                        and any(_event_order(event) < max_order for event in new_events)
+                    )
+                )
+                if needs_rereduction:
+                    history = self._merge_history(stored, materialized)
+                    for statement in _RESET_STATEMENTS:
+                        connection.execute(statement)
+                    self._apply_events(connection, history)
+                    report = self._incoming_report(
+                        connection,
+                        materialized,
+                        previously_applied=applied_ids,
+                    )
+                else:
+                    reduced = self._apply_events(connection, materialized)
+                    state = self._state(connection)
+                    report = ApplyReport(
+                        applied=reduced.applied,
+                        duplicates=reduced.duplicates,
+                        quarantined=reduced.quarantined,
+                        state_sha256=hashlib.sha256(
+                            canonical_json_bytes(state)
+                        ).hexdigest(),
+                    )
             except BaseException:
                 connection.rollback()
                 raise
@@ -973,7 +1252,7 @@ class OperationalViewStore:
         return event_type in EVENT_REDUCERS
 
     def rebuild(self, events: Iterable[OperationalEventV2]) -> ApplyReport:
-        materialized = tuple(events)
+        materialized = self._materialize_events(events)
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
             connection.execute("BEGIN IMMEDIATE")
@@ -982,6 +1261,12 @@ class OperationalViewStore:
                     connection.execute(statement)
                 report = self._apply_events(connection, materialized)
                 state = self._state(connection)
+                connection.execute(
+                    """
+                    INSERT INTO view_meta(key, value) VALUES('rebuild_required', '0')
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """
+                )
             except BaseException:
                 connection.rollback()
                 raise
@@ -1079,6 +1364,7 @@ class OperationalViewStore:
     def state(self, *, project: str | None = None) -> dict[str, object]:
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
+            _ensure_rebuild_complete(connection)
             return self._state(connection, project=project)
 
     def session(self, session_id: str) -> OperationalSession | None:
@@ -1089,6 +1375,7 @@ class OperationalViewStore:
             raise ValueError("session_id must be non-empty")
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
+            _ensure_rebuild_complete(connection)
             row = connection.execute(
                 "SELECT row_json FROM sessions WHERE session_id = ?",
                 (normalized,),
@@ -1115,8 +1402,6 @@ class OperationalViewStore:
 
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
             raise ValueError("limit must be an integer >= 0")
-        if limit == 0:
-            return []
         filters: list[str] = []
         parameters: list[object] = []
         if project is not None:
@@ -1131,6 +1416,9 @@ class OperationalViewStore:
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
+            _ensure_rebuild_complete(connection)
+            if limit == 0:
+                return []
             rows = connection.execute(
                 f"SELECT row_json FROM sessions {where}",  # noqa: S608
                 tuple(parameters),
@@ -1237,6 +1525,7 @@ class OperationalViewStore:
     def outbox_status(self, promotion_id: str) -> dict[str, object] | None:
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
+            _ensure_rebuild_complete(connection)
             row = connection.execute(
                 "SELECT row_json FROM durable_outbox WHERE promotion_id = ?",
                 (promotion_id,),
@@ -1265,6 +1554,7 @@ class OperationalViewStore:
         canonical_now = _canonical_timestamp(now or utc_now_iso())
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
+            _ensure_rebuild_complete(connection)
             rows = connection.execute(
                 """
                 SELECT row_json FROM durable_outbox
@@ -1297,6 +1587,7 @@ class OperationalViewStore:
 
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
+            _ensure_rebuild_complete(connection)
             rows = connection.execute(
                 """
                 SELECT status, COUNT(*) AS count
@@ -1320,6 +1611,7 @@ class OperationalViewStore:
     ) -> IdempotencyRecord | None:
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
+            _ensure_rebuild_complete(connection)
             row = connection.execute(
                 """
                 SELECT request_hash, event_id, result_json FROM idempotency

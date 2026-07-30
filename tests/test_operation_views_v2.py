@@ -12,7 +12,7 @@ from memo.errors import OperationalError
 from memo.identity import PrincipalIdentity
 from memo.operation_view_schema import connect_operational_db, ensure_operational_schema
 from memo.operation_views import OperationalViewStore
-from memo.operational_event import OperationalEventV2
+from memo.operational_event import OperationalEventV2, canonical_json_bytes
 from memo.operational_event_types import (
     ATTENTION_ACKNOWLEDGED,
     ATTENTION_ADDED,
@@ -109,6 +109,119 @@ def test_schema_creation_is_idempotent_and_rejects_unknown_version(
         connection.commit()
         with pytest.raises(OperationalError, match="schema"):
             ensure_operational_schema(connection)
+
+
+def test_v1_schema_upgrade_requires_rebuild_and_keeps_local_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "operational.db"
+    event = _event(1, FOCUS_SET, {"project": "demo", "summary": "restored"})
+    with connect_operational_db(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE view_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            ) STRICT;
+            INSERT INTO view_meta(key, value) VALUES('schema_version', '1');
+            CREATE TABLE applied_events (
+                event_id TEXT PRIMARY KEY,
+                origin_device TEXT NOT NULL,
+                origin_sequence INTEGER NOT NULL,
+                event_hash TEXT NOT NULL,
+                applied_at TEXT NOT NULL,
+                UNIQUE(origin_device, origin_sequence)
+            ) STRICT;
+            CREATE TABLE session_local_artifacts (
+                session_id TEXT NOT NULL,
+                artifact_uri TEXT NOT NULL,
+                row_json TEXT NOT NULL,
+                PRIMARY KEY(session_id, artifact_uri)
+            ) STRICT;
+            CREATE TABLE focus (
+                project TEXT PRIMARY KEY,
+                row_json TEXT NOT NULL,
+                updated_event_id TEXT NOT NULL
+            ) STRICT;
+            INSERT INTO focus(project, row_json, updated_event_id)
+            VALUES(
+                'demo',
+                '{"project":"demo","summary":"stale-visible"}',
+                'stale-event'
+            );
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO applied_events(
+              event_id, origin_device, origin_sequence, event_hash, applied_at
+            ) VALUES(?, ?, ?, ?, ?)
+            """,
+            (
+                event.event_id,
+                event.origin_device,
+                event.origin_sequence,
+                event.event_hash,
+                "2026-07-30T12:00:01.000000Z",
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO session_local_artifacts(session_id, artifact_uri, row_json)
+            VALUES('session-a', 'cwd', '{"key":"cwd","value":"/private/demo"}')
+            """
+        )
+    store = OperationalViewStore(path)
+
+    assert store.session_local_artifacts("session-a") == {"cwd": "/private/demo"}
+    with pytest.raises(OperationalError, match="rebuild is required"):
+        store.state()
+    with pytest.raises(OperationalError, match="rebuild is required"):
+        store.sessions()
+    with pytest.raises(OperationalError, match="rebuild is required"):
+        store.sessions(limit=0)
+    with pytest.raises(OperationalError, match="rebuild is required"):
+        store.apply_events((_event(2, FOCUS_SET, {"project": "demo"}),))
+
+    class _ValidatedLedger:
+        @staticmethod
+        def validated_events() -> tuple[OperationalEventV2, ...]:
+            return (event,)
+
+    with pytest.raises(OperationalError, match="rebuild is required"):
+        store.catch_up(_ValidatedLedger())
+
+    original_reducer = operation_views.EVENT_REDUCERS[FOCUS_SET]
+
+    def fail_rebuild(
+        _connection: sqlite3.Connection,
+        _event: OperationalEventV2,
+    ) -> object:
+        raise RuntimeError("upgrade rebuild exploded")
+
+    monkeypatch.setitem(operation_views.EVENT_REDUCERS, FOCUS_SET, fail_rebuild)
+    with pytest.raises(RuntimeError, match="upgrade rebuild exploded"):
+        store.rebuild((event,))
+    with pytest.raises(OperationalError, match="rebuild is required"):
+        store.state()
+    assert store.session_local_artifacts("session-a") == {"cwd": "/private/demo"}
+
+    monkeypatch.setitem(operation_views.EVENT_REDUCERS, FOCUS_SET, original_reducer)
+    store.rebuild((event,))
+
+    assert store.state()["focus"]["demo"]["summary"] == "restored"
+    assert store.session_local_artifacts("session-a") == {"cwd": "/private/demo"}
+    with connect_operational_db(path) as connection:
+        version = connection.execute(
+            "SELECT value FROM view_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        columns = {
+            str(column["name"])
+            for column in connection.execute("PRAGMA table_info(applied_events)")
+        }
+    assert version["value"] == "2"
+    assert "event_json" in columns
 
 
 def test_apply_is_one_transaction_and_exact_replay_is_noop(tmp_path: Path) -> None:
@@ -471,6 +584,108 @@ def test_catch_up_reduces_every_validated_event_in_ledger_order(
     assert report.applied == 2
     assert ledger.calls == 1
     assert store.state()["focus"]["demo"]["summary"] == "second"
+
+
+def test_late_cross_origin_backfill_converges_with_rebuild_and_keeps_local_artifacts(
+    tmp_path: Path,
+) -> None:
+    newest = replace(
+        _event(
+            1,
+            FOCUS_SET,
+            {"project": "demo", "summary": "newest"},
+            origin="device-a",
+        ),
+        created_at="2026-07-30T12:00:00Z",
+    )
+    older = replace(
+        _event(
+            1,
+            FOCUS_SET,
+            {"project": "demo", "summary": "older"},
+            origin="device-b",
+        ),
+        created_at="2026-07-30T11:30:00Z",
+    )
+    incremental = OperationalViewStore(tmp_path / "incremental.db")
+    caught_up = OperationalViewStore(tmp_path / "caught-up.db")
+    rebuilt = OperationalViewStore(tmp_path / "rebuilt.db")
+    incremental.replace_session_local_artifacts(
+        "session-a",
+        {"prompt_path": "/private/p"},
+    )
+
+    incremental.apply_events((newest,))
+    incremental_report = incremental.apply_events((older,))
+    caught_up.apply_events((newest,))
+
+    class _ValidatedLedger:
+        @staticmethod
+        def validated_events() -> tuple[OperationalEventV2, ...]:
+            return (older, newest)
+
+    catch_up_report = caught_up.catch_up(_ValidatedLedger())
+    rebuilt_report = rebuilt.rebuild((older, newest))
+
+    assert canonical_json_bytes(incremental.state()) == canonical_json_bytes(
+        rebuilt.state()
+    )
+    assert canonical_json_bytes(caught_up.state()) == canonical_json_bytes(rebuilt.state())
+    assert incremental_report.state_sha256 == rebuilt_report.state_sha256
+    assert catch_up_report.state_sha256 == rebuilt_report.state_sha256
+    assert incremental.state()["focus"]["demo"]["summary"] == "newest"
+    assert incremental.idempotency("demo", newest.idempotency_key) == rebuilt.idempotency(
+        "demo",
+        newest.idempotency_key,
+    )
+    assert incremental.session_local_artifacts("session-a") == {
+        "prompt_path": "/private/p"
+    }
+
+
+def test_late_backfill_rereduction_failure_rolls_back_all_portable_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = OperationalViewStore(tmp_path / "operational.db")
+    newest = replace(
+        _event(
+            1,
+            FOCUS_SET,
+            {"project": "demo", "summary": "newest"},
+            origin="device-a",
+        ),
+        created_at="2026-07-30T12:00:00Z",
+    )
+    older = replace(
+        _event(
+            1,
+            FOCUS_SET,
+            {"project": "demo", "summary": "older"},
+            origin="device-b",
+        ),
+        created_at="2026-07-30T11:30:00Z",
+    )
+    store.apply_events((newest,))
+    store.replace_session_local_artifacts("session-a", {"cwd": "/private/demo"})
+    original_reducer = operation_views.EVENT_REDUCERS[FOCUS_SET]
+
+    def fail_on_backfill(
+        connection: sqlite3.Connection,
+        event: OperationalEventV2,
+    ) -> object:
+        if event.payload["summary"] == "older":
+            raise RuntimeError("backfill reducer exploded")
+        return original_reducer(connection, event)
+
+    monkeypatch.setitem(operation_views.EVENT_REDUCERS, FOCUS_SET, fail_on_backfill)
+    with pytest.raises(RuntimeError, match="backfill reducer exploded"):
+        store.apply_events((older,))
+
+    assert store.state()["focus"]["demo"]["summary"] == "newest"
+    assert store.idempotency("demo", newest.idempotency_key) is not None
+    assert store.idempotency("demo", older.idempotency_key) is None
+    assert store.session_local_artifacts("session-a") == {"cwd": "/private/demo"}
 
 
 def test_global_last_event_uses_normalized_event_time_not_arrival_order(

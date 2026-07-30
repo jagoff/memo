@@ -18,9 +18,10 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   `review_plan03`; preliminar: T1/T2/T3 `FAIL`, T4 `HIGH`.
 - [ ] Preparar TDD de Plan 01 Tarea 7: selector fail-closed v1/v2, fresh
   install v2 y activation stamp firmado — agente principal.
-- [ ] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
+- [x] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
   multi-origen puede divergir del rebuild por orden global. Agregar regresión
-  `newest(a) -> older(b)` y re-reducción transaccional determinista.
+  `newest(a) -> older(b)` y re-reducción transaccional determinista. Revisión
+  continua final: `PASS`.
 - [x] Corrección técnica `P01-T02 HIGH`: TOCTOU entre verificación del ledger v1 y la
   relectura usada por manifest/anchor. Capturar una sola instantánea
   descriptor-relative con `O_NOFOLLOW` y derivar de ella bytes, eventos, heads
@@ -75,11 +76,13 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   plan/anclaje; `70 passed`, Ruff y mypy limpios.
 - [x] `P01-T06` GREEN técnico: timestamps canónicos estables en retry y
   lecturas con artifacts locales; `118 passed`, Ruff y mypy limpios.
+- [x] `P01-T03` re-revisión final: `PASS`; backfill global y upgrade v1
+  fail-closed cerrados, `20 + 55 passed`, Ruff y mypy limpios.
 
 ### Próximos gates
 
 - [ ] Consolidar hallazgos de los tres revisores sin duplicados.
-- [ ] Cerrar `P01-T03 HIGH` y obtener re-revisión PASS del revisor continuo.
+- [x] Cerrar `P01-T03 HIGH` y obtener re-revisión PASS del revisor continuo.
 - [ ] Cerrar `P01-T02 HIGH` y obtener re-revisión PASS del revisor continuo.
 - [ ] Cerrar el provider productivo de claves y obtener revisión de seguridad
   antes de escribir cualquier activation stamp.
@@ -240,9 +243,14 @@ Estado: **1/7 aceptadas**.
 - [x] Focused `22 passed`, acumulado `256 passed`, ruff y mypy limpios.
 - [x] Non-slow: `6032 passed, 18 skipped`.
 - [x] Commit técnico: `daf3bf36`.
+- [x] Corregir backfill multi-origen mediante re-reducción transaccional
+  determinista desde eventos canónicos persistidos.
+- [x] Upgrade v1 marca `rebuild_required` y bloquea reads/apply/catch-up hasta
+  rebuild explícito exitoso, preservando artifacts locales.
+- [x] Re-revisión continua final: `PASS`; `20 + 55 passed`, Ruff/mypy limpios.
 - [ ] Activar propagación autenticada y probar bypass en CLI/MCP/daemon al
   seleccionar v2 en Tarea 7.
-- [ ] Revisión independiente y `PASS`.
+- [x] Revisión independiente y `PASS`.
 
 ### Tarea 4 — Migración genesis v1 determinista y gate de paridad
 
