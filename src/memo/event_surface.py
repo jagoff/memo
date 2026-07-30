@@ -23,6 +23,8 @@ def ingest_event(event: dict[str, Any], *, state_dir: Path | None = None, expect
         raise ValueError("kind must be terminal, conversation, or agent")
     data_path, context_path = _paths(state_dir or Config.from_env().state_dir)
     context = _context(context_path)
+    if expected_epoch is not None and not context_path.exists():
+        raise RuntimeError("missing context")
     if expected_epoch is not None and expected_epoch != int(context.get("epoch", 0)):
         raise RuntimeError("stale context epoch")
     record = dict(event); record.update(schema=SCHEMA, kind=kind)
