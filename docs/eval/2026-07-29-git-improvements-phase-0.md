@@ -93,3 +93,40 @@ Guardrails: committed recall labels lose no expected ID; ranking is unchanged wh
 are absent; warm p50 is within 5% of baseline; no new flag is needed for a correctness fix.
 
 Rollback: revert the extra store parameters; no data migration exists.
+
+## 3. Explicit operation context and plumbing/porcelain
+
+Decision: **Defer**
+
+Evidence: `Config`, explicit `ActorIdentity`, native trace scope, project tags, and the
+raw-environment AST ratchet already constrain the important boundaries. The audit passed
+(`4 passed`), and no cross-vault, cross-principal, or signature-growth failure was
+reproduced.
+
+Re-entry gate: a concrete context-propagation bug or a measured reduction in repeated
+parameters/ambient reads must be shown before introducing a context type.
+
+## 5. Structured tracing plus perf/fuzz/fault discipline
+
+Decision: **Defer runtime tracing; Admit test discipline inside admitted slices**
+
+Evidence: Memo already propagates a native trace ID and `search_with_trace` exposes
+candidate stages. The trace/search/maintenance baseline passed (`57 passed`). No diagnosis
+incident was reproduced that requires a second event system, and no sampled-trace overhead
+budget has been measured.
+
+Re-entry gate: a fault that cannot be localized with existing receipts/traces plus a
+disabled/sampled overhead benchmark. Admitted transaction, history, and retrieval slices
+must still add deterministic fault and complexity tests.
+
+## 6. Need-driven incremental maintenance
+
+Decision: **Defer**
+
+Evidence: maintenance entry points are fragmented across `maintain`, `dream`,
+`maint-daemon`, session idle work, and the runtime sleep cycle, but Phase 0 has no receipt
+proving incompatible overlap, avoidable work, or a lock/recovery failure. A registry now
+would be a wrapper around live schedulers and fail the consolidation gate.
+
+Re-entry gate: two existing paths must be shown scheduling the same or incompatible work,
+with before/after code and execution counts that a single task descriptor can reduce.
