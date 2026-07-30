@@ -558,7 +558,10 @@ def apply_synapse_data(
                 # and count it as imported, so the receipt remains its witness.
                 pass
             imported += 1
-        canonical_skipped_ids = tuple(sorted(dict.fromkeys(skipped_ids)))
+        # Dynamic skips (duplicate operation, missing source, pre-existing
+        # query) must pass through the same casefold/validation policy as
+        # caller-provided skips before they reach the receipt.
+        canonical_skipped_ids = _canonical_skipped_feedback_ids(skipped_ids)
         metadata = {
             "schema": _RECEIPT_SCHEMA,
             "attempt_id": attempt_id,

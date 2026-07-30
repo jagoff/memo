@@ -260,6 +260,20 @@ def test_caller_skipped_ids_are_canonicalized_before_receipt(mem_with_stub: Memo
     assert receipt.skipped_feedback_ids == ("feedback-one",)
 
 
+def test_dynamic_skipped_feedback_id_is_casefolded_before_receipt(mem_with_stub: Memory) -> None:
+    record = mem_with_stub.save(content="known source", title="Source")
+    mem_with_stub.feedback_record(record.id, query_text="already exists", rating="up")
+    data = SynapseDataBundle(
+        feedback=(FeedbackImport("FEEDBACK-DYNAMIC", record.id, "already exists", "up"),),
+        eval_fixtures=(),
+        input_sha256="f" * 64,
+    )
+    receipt = apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-7")
+    assert receipt.feedback_imported == 0
+    assert receipt.feedback_skipped == 1
+    assert receipt.skipped_feedback_ids == ("feedback-dynamic",)
+
+
 def test_invalid_caller_skipped_id_is_rejected_before_receipt(mem_with_stub: Memory) -> None:
     data = SynapseDataBundle(
         feedback=(),
