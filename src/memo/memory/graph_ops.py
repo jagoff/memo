@@ -149,6 +149,180 @@ class _GraphOpsMixin(_MemoryBase):
             "memories": memories,
         }
 
+    def code_change_impact(
+        self,
+        cwd: str,
+        *,
+        depth: int = 1,
+        limit: int = 8,
+    ) -> dict[str, Any]:
+        """Map working-tree changes through CodeGraph to linked durable memories."""
+        from pathlib import Path
+
+        from memo.code_impact import code_change_impact
+        from memo.session_sources import gather_git_state
+
+        state = gather_git_state(Path(cwd))
+        changed_files = [
+            str(path).split(" -> ")[-1].rstrip("/") for path in state.get("modified_files") or []
+        ]
+        impact = code_change_impact(cwd, changed_files, depth=depth)
+        max_age = flag_int("MEMO_GRAPH_PROJECTION_MAX_AGE_HOURS") or 36
+        model = self.graph.projection.read_model(max_age)
+        if not model.available:
+            return {
+                **impact,
+                "projection_version": None,
+                "memories": [],
+                "memory_reason": model.skip_reason or "projection_unavailable",
+            }
+
+        symbol_distance = {
+            str(symbol["stable_symbol_id"]): int(symbol["distance"]) for symbol in impact["symbols"]
+        }
+        changed = set(impact["changed_files"])
+        candidates: dict[str, dict[str, Any]] = {}
+        for link in model.all_code_links():
+            distance = symbol_distance.get(link.stable_symbol_id)
+            if distance is None and link.file_path not in changed:
+                continue
+            effective_distance = 0 if link.file_path in changed else int(distance or 0)
+            score = 1.0 / (1.0 + effective_distance)
+            candidate = candidates.setdefault(
+                link.memory_id,
+                {
+                    "id": link.memory_id,
+                    "score": score,
+                    "distance": effective_distance,
+                    "code_refs": [],
+                },
+            )
+            candidate["score"] = max(float(candidate["score"]), score)
+            candidate["distance"] = min(int(candidate["distance"]), effective_distance)
+            if len(candidate["code_refs"]) < 4:
+                candidate["code_refs"].append(asdict(link))
+
+        ranked = sorted(
+            candidates.values(),
+            key=lambda item: (-float(item["score"]), int(item["distance"]), str(item["id"])),
+        )[: max(1, min(int(limit), 50))]
+        for item in ranked:
+            record = self.get(str(item["id"]))
+            item["title"] = getattr(record, "title", "") if record is not None else ""
+            item["type"] = getattr(record, "type", "") if record is not None else ""
+        return {
+            **impact,
+            "projection_version": model.version,
+            "memories": ranked,
+            "memory_reason": None if ranked else "no_linked_memories",
+        }
+
+    def code_context_pack(
+        self,
+        cwd: str,
+        *,
+        focus: str | None = None,
+        scope: str | None = None,
+        mode: str = "scout",
+        limit: int = 8,
+        cursor: str | None = None,
+        max_chars: int = 12_000,
+    ) -> dict[str, Any]:
+        """Compose bounded architecture findings with linked durable memories."""
+        from memo.code_context import build_code_context_pack
+
+        pack = build_code_context_pack(
+            cwd,
+            focus=focus,
+            scope=scope,
+            mode=mode,
+            limit=limit,
+            cursor=cursor,
+            max_chars=max_chars,
+        )
+        if not pack.get("available"):
+            return {
+                **pack,
+                "projection_version": None,
+                "memories": [],
+                "memory_reason": "code_context_unavailable",
+            }
+
+        max_age = flag_int("MEMO_GRAPH_PROJECTION_MAX_AGE_HOURS") or 36
+        model = self.graph.projection.read_model(max_age)
+        if not model.available:
+            return {
+                **pack,
+                "projection_version": None,
+                "memories": [],
+                "memory_reason": model.skip_reason or "projection_unavailable",
+            }
+
+        stable_ids: set[str] = set()
+        file_paths: set[str] = set()
+        evidence_uris: set[str] = set()
+
+        def _collect(value: Any) -> None:
+            if isinstance(value, dict):
+                stable_id = value.get("stable_symbol_id")
+                file_path = value.get("file_path")
+                if stable_id:
+                    stable_ids.add(str(stable_id))
+                if file_path:
+                    file_paths.add(str(file_path))
+                for child in value.values():
+                    _collect(child)
+            elif isinstance(value, list):
+                for child in value:
+                    _collect(child)
+
+        for finding in pack.get("findings") or []:
+            _collect(finding.get("data") or {})
+            evidence_uris.update(str(uri) for uri in finding.get("evidence_uris") or [])
+
+        repo_id = str((pack.get("code_evidence") or {}).get("repo_id") or "")
+        candidates: dict[str, dict[str, Any]] = {}
+        for link in model.all_code_links():
+            if repo_id and link.repo_id != repo_id:
+                continue
+            if (
+                link.stable_symbol_id not in stable_ids
+                and link.file_path not in file_paths
+                and link.uri not in evidence_uris
+            ):
+                continue
+            candidate = candidates.setdefault(
+                link.memory_id,
+                {
+                    "id": link.memory_id,
+                    "score": 0.0,
+                    "matched_code_refs": 0,
+                    "code_refs": [],
+                },
+            )
+            candidate["matched_code_refs"] = int(candidate["matched_code_refs"]) + 1
+            candidate["score"] = round(
+                min(1.0, 0.5 + 0.1 * int(candidate["matched_code_refs"])),
+                4,
+            )
+            if len(candidate["code_refs"]) < 4:
+                candidate["code_refs"].append(asdict(link))
+
+        ranked = sorted(
+            candidates.values(),
+            key=lambda item: (-float(item["score"]), str(item["id"])),
+        )[: max(1, min(int(limit), 50))]
+        for item in ranked:
+            record = self.get(str(item["id"]))
+            item["title"] = getattr(record, "title", "") if record is not None else ""
+            item["type"] = getattr(record, "type", "") if record is not None else ""
+        return {
+            **pack,
+            "projection_version": model.version,
+            "memories": ranked,
+            "memory_reason": None if ranked else "no_linked_memories",
+        }
+
     def graph_discover(
         self,
         *,

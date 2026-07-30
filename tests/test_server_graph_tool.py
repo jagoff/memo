@@ -95,6 +95,19 @@ def test_memo_graph_path_verb(mock_memory):
     assert out["result"]["path"] == ["alpha", "beta", "gamma"]
 
 
+def test_memo_graph_code_navigation_includes_evidence(mock_memory):
+    _seed_chain(mock_memory)
+    out = _call(
+        mock_memory,
+        verb="path",
+        a="alpha",
+        b="gamma",
+        include_code=True,
+    )
+    assert out["code_evidence"]["schema"] == "memo.code_evidence.v1"
+    assert out["code_evidence"]["recording_status"] == "missing"
+
+
 def test_memo_graph_why_verb(mock_memory):
     _seed_chain(mock_memory)
     out = _call(mock_memory, verb="why", a="alpha", b="gamma")
@@ -125,6 +138,41 @@ def test_memo_graph_communities_verb(mock_memory):
     assert out["verb"] == "communities"
     assert isinstance(out["result"], list)
     assert len(out["result"]) <= 5
+
+
+def test_memo_graph_architecture_verb(mock_memory, monkeypatch):
+    monkeypatch.setattr(
+        mock_memory,
+        "code_context_pack",
+        lambda cwd, **kwargs: {
+            "schema": "memo.code_context_pack.v1",
+            "cwd": cwd,
+            **kwargs,
+        },
+    )
+
+    out = _call(
+        mock_memory,
+        verb="architecture",
+        cwd="/tmp/repo",
+        entity="src/memo",
+        scope="src",
+        mode="verify",
+        cursor="next-page",
+        max_chars=4_000,
+    )
+
+    assert out["verb"] == "architecture"
+    assert out["result"]["schema"] == "memo.code_context_pack.v1"
+    assert out["result"]["focus"] == "src/memo"
+    assert out["result"]["scope"] == "src"
+    assert out["result"]["mode"] == "verify"
+    assert out["result"]["cursor"] == "next-page"
+
+
+def test_memo_graph_architecture_requires_cwd(mock_memory):
+    out = _call(mock_memory, verb="architecture")
+    assert out == {"error": "architecture requires cwd"}
 
 
 def test_memo_graph_unknown_verb_returns_error(mock_memory):

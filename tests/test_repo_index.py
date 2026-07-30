@@ -102,6 +102,12 @@ def test_repo_index_indexes_lines_chunks_and_gets_ranges(tmp_path: Path, monkeyp
     assert out["embedded_chunks"] == 2
     assert out["pending_chunks"] == 0
     assert out["semantic_status"] == "semantic_ready"
+    evidence = out["code_evidence"]
+    assert evidence["schema"] == "memo.code_evidence.v1"
+    assert evidence["provider"] == "memo-repo"
+    assert evidence["recording_status"] == "complete"
+    assert evidence["coverage_status"] == "known_gaps"
+    assert {gap["reason"] for gap in evidence["gaps"]} >= {"binary", "excluded"}
 
     line_hits = mem.repo_search("needle-value", repo="sample", mode="line")
     assert line_hits
@@ -116,11 +122,14 @@ def test_repo_index_indexes_lines_chunks_and_gets_ranges(tmp_path: Path, monkeyp
     assert body is not None
     assert "def alpha" in body["text"]
     assert "needle-value" in body["text"]
+    assert body["code_evidence"]["coverage_status"] == "complete"
+    assert body["code_evidence"]["freshness"] == "current"
 
     unchanged = mem.repo_index(str(repo), name="sample")
     assert unchanged["skipped_repo_unchanged"] is True
     assert unchanged["unchanged_files"] == 2
     assert unchanged["semantic_status"] == "semantic_ready"
+    assert unchanged["code_evidence"]["index_generation"] == evidence["index_generation"]
 
 
 def test_noise_filter_drops_md_fragments_but_keeps_short_code(tmp_path: Path, monkeypatch):
