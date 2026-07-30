@@ -33,7 +33,8 @@ from memo.operational_event_types import (
     PRESENCE_UPDATED,
     ROSTER_UPDATED,
     SESSION_CHECKPOINTED,
-    SESSION_STATUS_CHANGED,
+    SESSION_RECOVERABLE,
+    SESSION_TERMINATED,
     TERMINAL_COMMAND_FINISHED,
     TERMINAL_COMMAND_STARTED,
     validate_event_payload,
@@ -145,12 +146,24 @@ V2_NATIVE_PAYLOADS = {
     SESSION_CHECKPOINTED: {
         "session_id": "s1",
         "principal_id": "p1",
+        "project": "memo",
+        "workspace": "/work/memo",
         "status": "active",
+        "branch": "main",
+        "head": "abc123",
+        "summary": "working",
         "checkpointed_at": "2026-07-29T12:00:00Z",
+        "source_event_id": "source-1",
     },
-    SESSION_STATUS_CHANGED: {
+    SESSION_RECOVERABLE: {
         "session_id": "s1",
-        "status": "recoverable",
+        "recoverable_at": "2026-07-29T12:01:00Z",
+        "reason": "",
+    },
+    SESSION_TERMINATED: {
+        "session_id": "s1",
+        "terminated_at": "2026-07-29T12:02:00Z",
+        "summary": "done",
     },
     COORDINATION_CREATED: {"task_id": "t1", "summary": "work", "status": "pending"},
     COORDINATION_CLAIMED: {"task_id": "t1", "principal_id": "p1"},
@@ -294,6 +307,27 @@ def test_each_registered_event_rejects_empty_payload(event_type: str) -> None:
         (CURSOR_ADVANCED, {"cursor": "delivery", "position": -1}),
         (PRESENCE_UPDATED, {**V2_NATIVE_PAYLOADS[PRESENCE_UPDATED], "status": "maybe"}),
         (TERMINAL_COMMAND_FINISHED, {"command_id": "cmd1", "exit_code": True}),
+        (
+            SESSION_CHECKPOINTED,
+            {
+                **V2_NATIVE_PAYLOADS[SESSION_CHECKPOINTED],
+                "status": "recoverable",
+            },
+        ),
+        (
+            SESSION_CHECKPOINTED,
+            {
+                **V2_NATIVE_PAYLOADS[SESSION_CHECKPOINTED],
+                "transcript_path": "/private/transcript.jsonl",
+            },
+        ),
+        (
+            SESSION_RECOVERABLE,
+            {
+                **V2_NATIVE_PAYLOADS[SESSION_RECOVERABLE],
+                "recoverable_at": "not-a-timestamp",
+            },
+        ),
         (
             DURABLE_PROMOTION_REQUESTED,
             {

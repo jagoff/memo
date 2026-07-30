@@ -137,6 +137,12 @@ def register(server: Any, memory: Memory) -> None:
         """
         from memo.session import list_sessions
 
+        capabilities = getattr(memory, "_capabilities", {})
+        canonical = (
+            capabilities.get("operational_sessions") if isinstance(capabilities, dict) else None
+        )
+        if canonical is not None:
+            return [session.to_dict() for session in canonical.list(limit=limit, project=project)]
         return list_sessions(memory.cfg.state_dir, limit=limit, project=project)
 
     @annotated_tool(server, **READ_ONLY)
@@ -158,6 +164,13 @@ def register(server: Any, memory: Memory) -> None:
         """
         from memo.session import get_session
 
+        capabilities = getattr(memory, "_capabilities", {})
+        canonical = (
+            capabilities.get("operational_sessions") if isinstance(capabilities, dict) else None
+        )
+        if canonical is not None:
+            session = canonical.get(session_id)
+            return session.to_dict() if session is not None else None
         return get_session(memory.cfg.state_dir, session_id)
 
     @annotated_tool(server, **READ_ONLY)

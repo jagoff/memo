@@ -23,7 +23,8 @@ CONFLICT_OPENED = "memo.operational.conflict.opened.v1"
 CONFLICT_RESOLVED = "memo.operational.conflict.resolved.v1"
 OUTCOME_RECORDED = "memo.operational.outcome.recorded.v1"
 SESSION_CHECKPOINTED = "memo.operational.session.checkpointed.v1"
-SESSION_STATUS_CHANGED = "memo.operational.session.status_changed.v1"
+SESSION_RECOVERABLE = "memo.operational.session.recoverable.v1"
+SESSION_TERMINATED = "memo.operational.session.terminated.v1"
 COORDINATION_CREATED = "memo.operational.coordination.created.v1"
 COORDINATION_CLAIMED = "memo.operational.coordination.claimed.v1"
 COORDINATION_COMPLETED = "memo.operational.coordination.completed.v1"
@@ -38,9 +39,7 @@ HEALTH_REPORTED = "memo.operational.health.reported.v1"
 ROSTER_UPDATED = "memo.operational.roster.updated.v1"
 COMPACTION_COMPLETED = "memo.operational.compaction.completed.v1"
 DURABLE_PROMOTION_REQUESTED = "memo.operational.durable.promotion.requested.v1"
-DURABLE_PROMOTION_RETRY_SCHEDULED = (
-    "memo.operational.durable.promotion.retry_scheduled.v1"
-)
+DURABLE_PROMOTION_RETRY_SCHEDULED = "memo.operational.durable.promotion.retry_scheduled.v1"
 DURABLE_PROMOTION_COMPLETED = "memo.operational.durable.promotion.completed.v1"
 DURABLE_PROMOTION_REJECTED = "memo.operational.durable.promotion.rejected.v1"
 
@@ -244,14 +243,55 @@ def _outcome_recorded(payload: Mapping[str, object]) -> None:
 
 
 def _session_checkpointed(payload: Mapping[str, object]) -> None:
-    for field in ("session_id", "principal_id", "checkpointed_at"):
+    _exact_fields(
+        payload,
+        frozenset(
+            {
+                "session_id",
+                "principal_id",
+                "project",
+                "workspace",
+                "status",
+                "branch",
+                "head",
+                "summary",
+                "checkpointed_at",
+                "source_event_id",
+            }
+        ),
+    )
+    for field in (
+        "session_id",
+        "principal_id",
+        "project",
+        "workspace",
+        "source_event_id",
+    ):
         _string(payload, field)
-    _enum(payload, "status", frozenset({"active", "recoverable", "terminated"}))
+    _enum(payload, "status", frozenset({"active"}))
+    for field in ("branch", "head", "summary"):
+        _string_allow_empty(payload, field)
+    _timestamp(payload, "checkpointed_at")
 
 
-def _session_status_changed(payload: Mapping[str, object]) -> None:
+def _session_recoverable(payload: Mapping[str, object]) -> None:
+    _exact_fields(
+        payload,
+        frozenset({"session_id", "recoverable_at", "reason"}),
+    )
     _string(payload, "session_id")
-    _enum(payload, "status", frozenset({"active", "recoverable", "terminated"}))
+    _timestamp(payload, "recoverable_at")
+    _string_allow_empty(payload, "reason")
+
+
+def _session_terminated(payload: Mapping[str, object]) -> None:
+    _exact_fields(
+        payload,
+        frozenset({"session_id", "terminated_at", "summary"}),
+    )
+    _string(payload, "session_id")
+    _timestamp(payload, "terminated_at")
+    _string_allow_empty(payload, "summary")
 
 
 def _coordination_created(payload: Mapping[str, object]) -> None:
@@ -372,14 +412,10 @@ def _promotion_requested(payload: Mapping[str, object]) -> None:
     extra = save_kwargs.get("extra")
     provenance = extra.get("provenance") if isinstance(extra, Mapping) else None
     stored_source_ids = (
-        provenance.get("source_event_ids")
-        if isinstance(provenance, Mapping)
-        else None
+        provenance.get("source_event_ids") if isinstance(provenance, Mapping) else None
     )
     if stored_source_ids != list(source_event_ids):
-        raise _invalid(
-            "save_kwargs provenance source_event_ids must match the requested intent"
-        )
+        raise _invalid("save_kwargs provenance source_event_ids must match the requested intent")
     _timestamp(payload, "created_at")
 
 
@@ -448,7 +484,8 @@ EVENT_TYPES: dict[str, PayloadValidator] = {
     CONFLICT_RESOLVED: _conflict_resolved,
     OUTCOME_RECORDED: _outcome_recorded,
     SESSION_CHECKPOINTED: _session_checkpointed,
-    SESSION_STATUS_CHANGED: _session_status_changed,
+    SESSION_RECOVERABLE: _session_recoverable,
+    SESSION_TERMINATED: _session_terminated,
     COORDINATION_CREATED: _coordination_created,
     COORDINATION_CLAIMED: _coordination_claimed,
     COORDINATION_COMPLETED: _coordination_completed,
@@ -505,7 +542,8 @@ __all__ = [
     "PRESENCE_UPDATED",
     "ROSTER_UPDATED",
     "SESSION_CHECKPOINTED",
-    "SESSION_STATUS_CHANGED",
+    "SESSION_RECOVERABLE",
+    "SESSION_TERMINATED",
     "TERMINAL_COMMAND_FINISHED",
     "TERMINAL_COMMAND_STARTED",
     "validate_event_payload",

@@ -35,11 +35,13 @@ from memo.operational_event_types import (
     HANDOFF_CREATED,
     OUTCOME_RECORDED,
     SESSION_CHECKPOINTED,
-    SESSION_STATUS_CHANGED,
+    SESSION_RECOVERABLE,
+    SESSION_TERMINATED,
 )
 
 if TYPE_CHECKING:
     from memo.durable_outbox import FrozenPromotionIntent, OutboxRunReport
+    from memo.operational_sessions import OperationalSession
 
 
 @dataclass(frozen=True)
@@ -105,7 +107,6 @@ _RESET_STATEMENTS = (
     "DELETE FROM conflicts",
     "DELETE FROM outcomes",
     "DELETE FROM sessions",
-    "DELETE FROM session_local_artifacts",
     "DELETE FROM durable_outbox",
     "DELETE FROM quarantined_events",
 )
@@ -132,11 +133,7 @@ def _canonical_timestamp(value: str) -> str:
             OperationalErrorCode.INVALID_EVENT,
             f"operational event timestamp has no timezone: {value!r}",
         )
-    return (
-        parsed.astimezone(UTC)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
-    )
+    return parsed.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _payload(event: OperationalEventV2) -> dict[str, object]:
@@ -359,6 +356,55 @@ def _session_checkpointed(
 ) -> Mapping[str, object]:
     payload = _payload(event)
     session_id = str(payload["session_id"])
+    if event.target_id != session_id:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            "session checkpoint target does not match session_id",
+        )
+    if event.actor.principal_id != payload["principal_id"]:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            "session checkpoint identity/principal differs from authenticated actor",
+        )
+    if event.project != payload["project"] or event.workspace != payload["workspace"]:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            "session checkpoint project/workspace differs from event envelope",
+        )
+    existing = _read_row(
+        connection,
+        "SELECT row_json FROM sessions WHERE session_id = ?",
+        session_id,
+        description="sessions",
+    )
+    if existing is not None:
+        if existing.get("status") == "terminated":
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                f"session is terminal: {session_id}",
+            )
+        if existing.get("status") == "recoverable":
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                f"recoverable session cannot regress to active: {session_id}",
+            )
+        if (
+            existing.get("principal_id") != payload["principal_id"]
+            or existing.get("project") != payload["project"]
+            or existing.get("workspace") != payload["workspace"]
+        ):
+            raise _failure(
+                OperationalErrorCode.IDEMPOTENCY_CONFLICT,
+                f"session identity, project, or workspace changed: {session_id}",
+            )
+    row = {
+        **payload,
+        "checkpointed_at": _canonical_timestamp(str(payload["checkpointed_at"])),
+        "recoverable_at": "",
+        "terminated_at": "",
+        "recoverable_reason": "",
+        "updated_event_id": event.event_id,
+    }
     connection.execute(
         """
         INSERT INTO sessions(
@@ -373,20 +419,20 @@ def _session_checkpointed(
         """,
         (
             session_id,
-            str(payload.get("project") or event.project),
-            str(payload.get("workspace") or event.workspace),
-            str(payload["status"]),
-            _json(payload),
+            str(payload["project"]),
+            str(payload["workspace"]),
+            "active",
+            _json(row),
             event.event_id,
         ),
     )
-    return payload
+    return row
 
 
-def _session_status_changed(
+def _session_row_for_transition(
     connection: sqlite3.Connection,
     event: OperationalEventV2,
-) -> Mapping[str, object]:
+) -> tuple[str, dict[str, object]]:
     payload = _payload(event)
     session_id = str(payload["session_id"])
     row = _read_row(
@@ -396,15 +442,90 @@ def _session_status_changed(
         description="sessions",
     )
     if row is None:
-        return {"session_id": session_id, "changed": False}
-    row["status"] = payload["status"]
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"session lifecycle event has no checkpoint: {session_id}",
+        )
+    if event.target_id != session_id:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            "session lifecycle target does not match session_id",
+        )
+    if row.get("principal_id") != event.actor.principal_id:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            "session lifecycle actor differs from session principal",
+        )
+    if row.get("project") != event.project or row.get("workspace") != event.workspace:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            "session lifecycle project/workspace differs from canonical session",
+        )
+    if row.get("status") == "terminated":
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"session is terminal: {session_id}",
+        )
+    return session_id, row
+
+
+def _session_recoverable(
+    connection: sqlite3.Connection,
+    event: OperationalEventV2,
+) -> Mapping[str, object]:
+    payload = _payload(event)
+    session_id, row = _session_row_for_transition(connection, event)
+    if row.get("status") != "active":
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"session cannot become recoverable from {row.get('status')}: {session_id}",
+        )
+    row.update(
+        {
+            "status": "recoverable",
+            "recoverable_at": _canonical_timestamp(str(payload["recoverable_at"])),
+            "recoverable_reason": payload["reason"],
+            "updated_event_id": event.event_id,
+        }
+    )
     connection.execute(
         """
         UPDATE sessions
         SET status = ?, row_json = ?, updated_event_id = ?
         WHERE session_id = ?
         """,
-        (str(payload["status"]), _json(row), event.event_id, session_id),
+        ("recoverable", _json(row), event.event_id, session_id),
+    )
+    return row
+
+
+def _session_terminated(
+    connection: sqlite3.Connection,
+    event: OperationalEventV2,
+) -> Mapping[str, object]:
+    payload = _payload(event)
+    session_id, row = _session_row_for_transition(connection, event)
+    if row.get("status") not in {"active", "recoverable"}:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"session cannot terminate from {row.get('status')}: {session_id}",
+        )
+    summary = str(payload["summary"]) or str(row.get("summary") or "")
+    row.update(
+        {
+            "status": "terminated",
+            "summary": summary,
+            "terminated_at": _canonical_timestamp(str(payload["terminated_at"])),
+            "updated_event_id": event.event_id,
+        }
+    )
+    connection.execute(
+        """
+        UPDATE sessions
+        SET status = 'terminated', row_json = ?, updated_event_id = ?
+        WHERE session_id = ?
+        """,
+        (_json(row), event.event_id, session_id),
     )
     return row
 
@@ -425,10 +546,9 @@ def _assert_promotion_binding(
     row: Mapping[str, object],
     payload: Mapping[str, object],
 ) -> None:
-    if (
-        row.get("operation_key") != payload.get("operation_key")
-        or row.get("request_hash") != payload.get("request_hash")
-    ):
+    if row.get("operation_key") != payload.get("operation_key") or row.get(
+        "request_hash"
+    ) != payload.get("request_hash"):
         raise _failure(
             OperationalErrorCode.IDEMPOTENCY_CONFLICT,
             "durable promotion event identifies a different request",
@@ -638,7 +758,8 @@ EVENT_REDUCERS: dict[str, EventReducer] = {
     CONFLICT_RESOLVED: _conflict_resolved,
     OUTCOME_RECORDED: _outcome_recorded,
     SESSION_CHECKPOINTED: _session_checkpointed,
-    SESSION_STATUS_CHANGED: _session_status_changed,
+    SESSION_RECOVERABLE: _session_recoverable,
+    SESSION_TERMINATED: _session_terminated,
     DURABLE_PROMOTION_REQUESTED: _promotion_requested,
     DURABLE_PROMOTION_RETRY_SCHEDULED: _promotion_retry_scheduled,
     DURABLE_PROMOTION_COMPLETED: _promotion_completed,
@@ -711,10 +832,7 @@ class OperationalViewStore:
             if origin_event is not None:
                 raise _failure(
                     OperationalErrorCode.ANCHOR_CONFLICT,
-                    (
-                        "origin sequence collision: "
-                        f"{event.origin_device}/{event.origin_sequence}"
-                    ),
+                    (f"origin sequence collision: {event.origin_device}/{event.origin_sequence}"),
                 )
             reducer = EVENT_REDUCERS.get(event.event_type)
             if reducer is None or event.origin_device in blocked_origins:
@@ -955,15 +1073,160 @@ class OperationalViewStore:
                 "promotion_id",
             ),
             "last_event_hash": str(last["event_hash"]) if last is not None else "",
-            "journal_heads": {
-                str(row["origin_device"]): str(row["event_hash"]) for row in cursors
-            },
+            "journal_heads": {str(row["origin_device"]): str(row["event_hash"]) for row in cursors},
         }
 
     def state(self, *, project: str | None = None) -> dict[str, object]:
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
             return self._state(connection, project=project)
+
+    def session(self, session_id: str) -> OperationalSession | None:
+        from memo.operational_sessions import operational_session_from_row
+
+        normalized = str(session_id).strip()
+        if not normalized:
+            raise ValueError("session_id must be non-empty")
+        with closing(connect_operational_db(self.path)) as connection:
+            ensure_operational_schema(connection)
+            row = connection.execute(
+                "SELECT row_json FROM sessions WHERE session_id = ?",
+                (normalized,),
+            ).fetchone()
+        if row is None:
+            return None
+        body = json.loads(row["row_json"])
+        if not isinstance(body, dict):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"stored operational session is invalid: {normalized}",
+            )
+        return operational_session_from_row(body)
+
+    def sessions(
+        self,
+        *,
+        limit: int = 10,
+        project: str | None = None,
+        workspace: str | None = None,
+        status: str | None = None,
+    ) -> list[OperationalSession]:
+        from memo.operational_sessions import operational_session_from_row
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError("limit must be an integer >= 0")
+        if limit == 0:
+            return []
+        filters: list[str] = []
+        parameters: list[object] = []
+        if project is not None:
+            filters.append("project = ?")
+            parameters.append(project)
+        if workspace is not None:
+            filters.append("workspace = ?")
+            parameters.append(workspace)
+        if status is not None:
+            filters.append("status = ?")
+            parameters.append(status)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        with closing(connect_operational_db(self.path)) as connection:
+            ensure_operational_schema(connection)
+            rows = connection.execute(
+                f"SELECT row_json FROM sessions {where}",  # noqa: S608
+                tuple(parameters),
+            ).fetchall()
+        sessions: list[OperationalSession] = []
+        for row in rows:
+            body = json.loads(row["row_json"])
+            if not isinstance(body, dict):
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    "stored operational session row is invalid",
+                )
+            sessions.append(operational_session_from_row(body))
+        sessions.sort(
+            key=lambda item: (
+                item.terminated_at or item.recoverable_at or item.checkpointed_at,
+                item.session_id,
+            ),
+            reverse=True,
+        )
+        return sessions[:limit]
+
+    def replace_session_local_artifacts(
+        self,
+        session_id: str,
+        artifacts: Mapping[str, object],
+    ) -> None:
+        normalized = str(session_id).strip()
+        if not normalized:
+            raise ValueError("session_id must be non-empty")
+        if not isinstance(artifacts, Mapping):
+            raise TypeError("artifacts must be a mapping")
+        canonical: list[tuple[str, str]] = []
+        for key, value in sorted(artifacts.items()):
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("local artifact keys must be non-empty strings")
+            artifact_key = key.strip()
+            try:
+                detached = json.loads(canonical_json_bytes(value))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"local session artifact is not canonical JSON: {artifact_key}"
+                ) from exc
+            canonical.append(
+                (
+                    artifact_key,
+                    _json({"key": artifact_key, "value": detached}),
+                )
+            )
+        with closing(connect_operational_db(self.path)) as connection:
+            ensure_operational_schema(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    "DELETE FROM session_local_artifacts WHERE session_id = ?",
+                    (normalized,),
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO session_local_artifacts(
+                      session_id, artifact_uri, row_json
+                    ) VALUES(?, ?, ?)
+                    """,
+                    ((normalized, artifact_key, row_json) for artifact_key, row_json in canonical),
+                )
+            except BaseException:
+                connection.rollback()
+                raise
+            connection.commit()
+
+    def session_local_artifacts(self, session_id: str) -> dict[str, object]:
+        normalized = str(session_id).strip()
+        if not normalized:
+            raise ValueError("session_id must be non-empty")
+        with closing(connect_operational_db(self.path)) as connection:
+            ensure_operational_schema(connection)
+            rows = connection.execute(
+                """
+                SELECT artifact_uri, row_json
+                FROM session_local_artifacts
+                WHERE session_id = ?
+                ORDER BY artifact_uri
+                """,
+                (normalized,),
+            ).fetchall()
+        artifacts: dict[str, object] = {}
+        for row in rows:
+            body = json.loads(row["row_json"])
+            key = str(row["artifact_uri"])
+            if not isinstance(body, dict) or body.get("key") != key or "value" not in body:
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"stored local session artifact is invalid: {normalized}/{key}",
+                )
+            artifacts[key] = body["value"]
+        return artifacts
 
     def outbox_intent(self, promotion_id: str) -> FrozenPromotionIntent | None:
         from memo.durable_outbox import frozen_intent_from_row

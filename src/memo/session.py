@@ -57,14 +57,17 @@ dir size is self-bounding without a separate daemon.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import re
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.flags import flag_int
@@ -77,6 +80,10 @@ from memo.session_sources import (
     read_last_assistant_tail,
     read_last_user_msg,
 )
+
+if TYPE_CHECKING:
+    from memo.identity import PrincipalIdentity
+    from memo.operational_sessions import OperationalSession, OperationalSessionService
 
 
 def _instant_sort_key(value: str | None) -> tuple[int, float, str]:
@@ -105,6 +112,107 @@ _PROMPT_TRAIL_CHARS = 100
 _RUNNING_SUMMARY_CHARS = 400
 _SUMMARY_MIN_NEW_TURNS = 3
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+_CANONICAL_SESSION_KEYS = frozenset(
+    {
+        "session_id",
+        "principal_id",
+        "project",
+        "workspace",
+        "cwd",
+        "status",
+        "branch",
+        "head",
+        "head_commit",
+        "summary",
+        "checkpointed_at",
+        "source_event_id",
+        "recoverable_at",
+        "terminated_at",
+        "recoverable_reason",
+        "updated_event_id",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _OperationalSessionRuntime:
+    service: OperationalSessionService
+    identity_factory: Callable[[], PrincipalIdentity]
+
+
+_OPERATIONAL_SESSION_RUNTIMES: dict[Path, _OperationalSessionRuntime] = {}
+_OPERATIONAL_SESSION_RUNTIMES_LOCK = threading.RLock()
+
+
+def _runtime_key(state_dir: Path) -> Path:
+    return Path(state_dir).expanduser().resolve()
+
+
+def install_operational_session_runtime(
+    state_dir: Path,
+    *,
+    service: OperationalSessionService,
+    identity_factory: Callable[[], PrincipalIdentity],
+) -> None:
+    """Install an explicitly constructed v2 session runtime for one state root."""
+    if not callable(identity_factory):
+        raise TypeError("identity_factory must be callable")
+    key = _runtime_key(state_dir)
+    with _OPERATIONAL_SESSION_RUNTIMES_LOCK:
+        existing = _OPERATIONAL_SESSION_RUNTIMES.get(key)
+        binding = _OperationalSessionRuntime(
+            service=service,
+            identity_factory=identity_factory,
+        )
+        if existing is not None and existing != binding:
+            raise RuntimeError(f"operational session runtime already installed: {key}")
+        _OPERATIONAL_SESSION_RUNTIMES[key] = binding
+
+
+def remove_operational_session_runtime(state_dir: Path) -> None:
+    """Remove the process-local v2 binding without mutating durable state."""
+    key = _runtime_key(state_dir)
+    with _OPERATIONAL_SESSION_RUNTIMES_LOCK:
+        _OPERATIONAL_SESSION_RUNTIMES.pop(key, None)
+
+
+def _operational_session_runtime(
+    state_dir: Path,
+) -> _OperationalSessionRuntime | None:
+    key = _runtime_key(state_dir)
+    with _OPERATIONAL_SESSION_RUNTIMES_LOCK:
+        return _OPERATIONAL_SESSION_RUNTIMES.get(key)
+
+
+def _canonical_session_snapshot(
+    session: OperationalSession,
+    local_artifacts: Mapping[str, object],
+) -> dict[str, Any]:
+    portable = session.to_dict()
+    local = {
+        key: value
+        for key, value in local_artifacts.items()
+        if isinstance(key, str) and key not in _CANONICAL_SESSION_KEYS
+    }
+    updated = session.terminated_at or session.recoverable_at or session.checkpointed_at
+    return {
+        **local,
+        **portable,
+        "cwd": session.workspace,
+        "branch": session.branch or None,
+        "head_commit": session.head or None,
+        "summary": session.summary or None,
+        "created": local.get("created") or session.checkpointed_at,
+        "updated": updated,
+    }
+
+
+def _runtime_snapshot(
+    runtime: _OperationalSessionRuntime,
+    session: OperationalSession,
+) -> dict[str, Any]:
+    local = runtime.service.views.session_local_artifacts(session.session_id)
+    return _canonical_session_snapshot(session, local)
 
 
 def validate_session_id(session_id: str) -> str:
@@ -197,6 +305,9 @@ def checkpoint(
     transcript_path: str | None = None,
     prompt: str | None = None,
     lru_cap: int | None = None,
+    source_event_id: str | None = None,
+    checkpointed_at: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Idempotent upsert keyed by `session_id`. Returns the persisted
     snapshot dict.
@@ -226,6 +337,7 @@ def checkpoint(
     # Git/transcript inspection above can be slow. Re-load only after acquiring
     # the per-session lock, then merge onto the latest snapshot so stamps made
     # while that work ran are not clobbered.
+    runtime = _operational_session_runtime(state_dir)
     with _session_write_lock(state_dir, session_id):
         existing = _load(state_dir, session_id) or {}
 
@@ -238,7 +350,7 @@ def checkpoint(
                 trail.append(clean_prompt[:_PROMPT_TRAIL_CHARS])
                 trail = trail[-_PROMPT_TRAIL_MAX:]
 
-        now = _now_iso()
+        now = checkpointed_at or _now_iso()
         snapshot: dict[str, Any] = {
             **existing,
             "session_id": session_id,
@@ -272,6 +384,48 @@ def checkpoint(
             "last_recall_turn": existing.get("last_recall_turn"),
             "last_recap_turn": existing.get("last_recap_turn"),
         }
+        if runtime is not None:
+            turn_count = int(snapshot["turn_count"])
+            source_id = source_event_id or (
+                "local-session/"
+                + hashlib.sha256(
+                    json.dumps(
+                        {
+                            "session_id": session_id,
+                            "turn_count": turn_count,
+                            "cwd": str(cwd_path),
+                            "branch": snapshot["branch"],
+                            "head": snapshot["head_commit"],
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
+            operation_key = idempotency_key or f"session-checkpoint/{session_id}/{turn_count}"
+            canonical = runtime.service.checkpoint(
+                identity=runtime.identity_factory(),
+                session_id=session_id,
+                project=cwd_path.name,
+                workspace=str(cwd_path),
+                summary=str(snapshot.get("summary") or ""),
+                branch=str(snapshot.get("branch") or ""),
+                head=str(snapshot.get("head_commit") or ""),
+                source_event_id=source_id,
+                checkpointed_at=now,
+                idempotency_key=operation_key,
+            )
+            local_artifacts = {
+                key: value for key, value in snapshot.items() if key not in _CANONICAL_SESSION_KEYS
+            }
+            runtime.service.views.replace_session_local_artifacts(
+                session_id,
+                local_artifacts,
+            )
+            snapshot = _canonical_session_snapshot(
+                canonical,
+                local_artifacts,
+            )
         _write(state_dir, session_id, snapshot)
     cap = lru_cap if lru_cap is not None else (flag_int("MEMO_SESSION_LRU_CAP") or _LRU_CAP_DEFAULT)
     prune_lru(state_dir, cap=cap)
@@ -381,6 +535,14 @@ def list_sessions(
       identifies a working tree across siblings.
     """
     cwd_resolved = _resolve_session_cwd(cwd) if cwd else None
+    runtime = _operational_session_runtime(state_dir)
+    if runtime is not None:
+        sessions = runtime.service.list(
+            limit=max(0, limit),
+            project=project,
+            workspace=cwd_resolved,
+        )
+        return [_runtime_snapshot(runtime, session) for session in sessions]
 
     out: list[dict[str, Any]] = []
     d = sessions_dir(state_dir)
@@ -416,6 +578,17 @@ def get_session(state_dir: Path, session_id_or_prefix: str) -> dict[str, Any] | 
         session_id_or_prefix = validate_session_id(session_id_or_prefix)
     except ValueError:
         return None
+    runtime = _operational_session_runtime(state_dir)
+    if runtime is not None:
+        canonical = runtime.service.get(session_id_or_prefix)
+        if canonical is not None:
+            return _runtime_snapshot(runtime, canonical)
+        matches = [
+            session
+            for session in runtime.service.list(limit=10_000)
+            if session.session_id.startswith(session_id_or_prefix)
+        ]
+        return _runtime_snapshot(runtime, matches[0]) if matches else None
     d = sessions_dir(state_dir)
     # Fast path: exact filename hit.
     exact = _session_path(state_dir, session_id_or_prefix)

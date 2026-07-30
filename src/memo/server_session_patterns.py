@@ -222,8 +222,22 @@ def _ensure_session_table(memory: Any) -> None:
 def register(server: Any, memory: Any) -> None:
     """Register session-pattern MCP tools."""
 
+    def _canonical_sessions() -> Any | None:
+        capabilities = getattr(memory, "_capabilities", {})
+        if isinstance(capabilities, dict):
+            return capabilities.get("operational_sessions")
+        return None
+
+    def _principal() -> Any:
+        from memo.identity import PrincipalIdentity, current
+
+        return PrincipalIdentity.from_current(
+            current(memory.cfg),
+            "memo-mcp",
+        )
+
     @annotated_tool(server, **WRITE)
-    def mem_session_start(
+    def memo_session_start(
         directory: str | None = None,
         cwd: str | None = None,
     ) -> dict[str, Any]:
@@ -245,6 +259,21 @@ def register(server: Any, memory: Any) -> None:
         project = _project_from_cwd()
         session_id = _effective_session_id()
         now = datetime.datetime.now(datetime.UTC).isoformat()
+        resolved_directory = dir_override or _session_directory()
+        canonical = _canonical_sessions()
+        if canonical is not None:
+            return canonical.checkpoint(
+                identity=_principal(),
+                session_id=session_id,
+                project=project,
+                workspace=resolved_directory,
+                summary="",
+                branch="",
+                head="",
+                source_event_id=f"memo-mcp/session-start/{session_id}",
+                checkpointed_at=now,
+                idempotency_key=f"memo-mcp/session-start/{session_id}",
+            ).to_dict()
 
         _ensure_session_table(memory)
 
@@ -258,19 +287,19 @@ def register(server: Any, memory: Any) -> None:
                 "ON CONFLICT(id) DO UPDATE SET project = excluded.project, "
                 "directory = excluded.directory, started_at = excluded.started_at, "
                 "status = 'active'",
-                (session_id, project, dir_override or _session_directory(), now),
+                (session_id, project, resolved_directory, now),
             )
 
         return {
             "session_id": session_id,
             "project": project,
-            "directory": dir_override or _session_directory(),
+            "directory": resolved_directory,
             "started_at": now,
             "status": "active",
         }
 
     @annotated_tool(server, **WRITE)
-    def mem_session_end(
+    def memo_session_end(
         summary: str | None = None,
     ) -> dict[str, Any]:
         """End the current session (session pattern).
@@ -285,6 +314,15 @@ def register(server: Any, memory: Any) -> None:
         """
         session_id = _effective_session_id()
         now = datetime.datetime.now(datetime.UTC).isoformat()
+        canonical = _canonical_sessions()
+        if canonical is not None:
+            return canonical.terminate(
+                identity=_principal(),
+                session_id=session_id,
+                summary=summary or "",
+                terminated_at=now,
+                idempotency_key=f"memo-mcp/session-end/{session_id}",
+            ).to_dict()
 
         _ensure_session_table(memory)
 
@@ -322,6 +360,38 @@ def register(server: Any, memory: Any) -> None:
         """
         proj = project or _project_from_cwd()
         limit = max(1, min(limit, 100))  # a negative LIMIT binds as unbounded in sqlite
+        canonical = _canonical_sessions()
+        if canonical is not None:
+            canonical_rows = canonical.list(
+                limit=limit,
+                project=proj,
+                status="terminated",
+            )
+            rows = [
+                {
+                    "id": row.session_id,
+                    "directory": row.workspace,
+                    "ended_at": row.terminated_at,
+                    "summary": row.summary,
+                }
+                for row in canonical_rows
+            ]
+            if not rows:
+                return {"project": proj, "context": "", "sessions": []}
+            parts = [f"## Previous Sessions ({proj})"]
+            for row in rows:
+                parts.append(f"\n### Session {row['id'][:8]}")
+                if row["directory"]:
+                    parts.append(f"Directory: {row['directory']}")
+                if row["ended_at"]:
+                    parts.append(f"Ended: {row['ended_at']}")
+                if row["summary"]:
+                    parts.append(f"\n{row['summary']}")
+            return {
+                "project": proj,
+                "context": "\n\n".join(parts),
+                "sessions": rows,
+            }
 
         _ensure_session_table(memory)
 

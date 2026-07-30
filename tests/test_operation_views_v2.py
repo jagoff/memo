@@ -29,7 +29,8 @@ from memo.operational_event_types import (
     HANDOFF_CREATED,
     OUTCOME_RECORDED,
     SESSION_CHECKPOINTED,
-    SESSION_STATUS_CHANGED,
+    SESSION_RECOVERABLE,
+    SESSION_TERMINATED,
 )
 
 _PROMOTION_SAVE_KWARGS = {
@@ -67,7 +68,11 @@ def _event(
         event_id=f"event-{origin}-{sequence}",
         event_type=event_type,
         actor=_identity(),
-        target_id=None,
+        target_id=(
+            str(payload["session_id"])
+            if event_type in {SESSION_CHECKPOINTED, SESSION_RECOVERABLE, SESSION_TERMINATED}
+            else None
+        ),
         project="demo",
         workspace="/tmp/demo",
         origin_device=origin,
@@ -100,9 +105,7 @@ def test_schema_creation_is_idempotent_and_rejects_unknown_version(
     with connect_operational_db(path) as connection:
         ensure_operational_schema(connection)
         ensure_operational_schema(connection)
-        connection.execute(
-            "UPDATE view_meta SET value = '999' WHERE key = 'schema_version'"
-        )
+        connection.execute("UPDATE view_meta SET value = '999' WHERE key = 'schema_version'")
         connection.commit()
         with pytest.raises(OperationalError, match="schema"):
             ensure_operational_schema(connection)
@@ -268,8 +271,12 @@ def test_core_reducers_preserve_public_state_shape(tmp_path: Path) -> None:
         ),
         _event(
             10,
-            SESSION_STATUS_CHANGED,
-            {"session_id": "session-a", "status": "recoverable"},
+            SESSION_RECOVERABLE,
+            {
+                "session_id": "session-a",
+                "recoverable_at": "2026-07-30T12:00:10Z",
+                "reason": "client disconnected",
+            },
         ),
     )
 
@@ -292,7 +299,12 @@ def test_core_reducers_preserve_public_state_shape(tmp_path: Path) -> None:
     }
     expected_session = {
         **events[8].payload,
+        "checkpointed_at": "2026-07-30T12:00:09.000000Z",
         "status": "recoverable",
+        "recoverable_at": "2026-07-30T12:00:10.000000Z",
+        "recoverable_reason": "client disconnected",
+        "terminated_at": "",
+        "updated_event_id": events[9].event_id,
     }
 
     assert state["focus"] == {"demo": dict(events[0].payload)}
@@ -301,6 +313,121 @@ def test_core_reducers_preserve_public_state_shape(tmp_path: Path) -> None:
     assert state["conflicts"] == {"conflict-1": expected_conflict}
     assert state["outcomes"] == {"task-1": dict(events[7].payload)}
     assert state["sessions"] == {"session-a": expected_session}
+
+
+def test_session_reducer_rejects_regression_identity_drift_and_post_terminal(
+    tmp_path: Path,
+) -> None:
+    store = OperationalViewStore(tmp_path / "operational.db")
+    checkpoint = _event(
+        1,
+        SESSION_CHECKPOINTED,
+        {
+            "session_id": "session-a",
+            "principal_id": "device-a:session-a",
+            "project": "demo",
+            "workspace": "/tmp/demo",
+            "status": "active",
+            "branch": "main",
+            "head": "abc",
+            "summary": "working",
+            "checkpointed_at": "2026-07-30T12:00:01Z",
+            "source_event_id": "source-1",
+        },
+    )
+    recoverable = _event(
+        2,
+        SESSION_RECOVERABLE,
+        {
+            "session_id": "session-a",
+            "recoverable_at": "2026-07-30T12:00:02Z",
+            "reason": "",
+        },
+    )
+    store.apply_events((checkpoint, recoverable))
+
+    with pytest.raises(OperationalError, match=r"recoverable|transition"):
+        store.apply_events(
+            (
+                _event(
+                    3,
+                    SESSION_CHECKPOINTED,
+                    {
+                        **checkpoint.payload,
+                        "checkpointed_at": "2026-07-30T12:00:03Z",
+                        "source_event_id": "source-2",
+                    },
+                ),
+            )
+        )
+
+    terminated = _event(
+        3,
+        SESSION_TERMINATED,
+        {
+            "session_id": "session-a",
+            "terminated_at": "2026-07-30T12:00:03Z",
+            "summary": "done",
+        },
+    )
+    store.apply_events((terminated,))
+    with pytest.raises(OperationalError, match=r"terminal|terminated"):
+        store.apply_events(
+            (
+                _event(
+                    4,
+                    SESSION_RECOVERABLE,
+                    {
+                        "session_id": "session-a",
+                        "recoverable_at": "2026-07-30T12:00:04Z",
+                        "reason": "late",
+                    },
+                ),
+            )
+        )
+
+
+def test_session_checkpoint_rejects_principal_project_or_workspace_drift(
+    tmp_path: Path,
+) -> None:
+    store = OperationalViewStore(tmp_path / "operational.db")
+    payload = {
+        "session_id": "session-a",
+        "principal_id": "device-a:session-a",
+        "project": "demo",
+        "workspace": "/tmp/demo",
+        "status": "active",
+        "branch": "main",
+        "head": "abc",
+        "summary": "working",
+        "checkpointed_at": "2026-07-30T12:00:01Z",
+        "source_event_id": "source-1",
+    }
+    store.apply_events((_event(1, SESSION_CHECKPOINTED, payload),))
+
+    for field, value in (
+        ("principal_id", "device-b:session-a"),
+        ("project", "other"),
+        ("workspace", "/tmp/other"),
+    ):
+        with pytest.raises(
+            OperationalError,
+            match=r"identity|project|workspace",
+        ):
+            store.apply_events(
+                (
+                    _event(
+                        2,
+                        SESSION_CHECKPOINTED,
+                        {
+                            **payload,
+                            field: value,
+                            "checkpointed_at": "2026-07-30T12:00:02Z",
+                            "source_event_id": f"source-{field}",
+                        },
+                    ),
+                )
+            )
 
 
 def test_clear_and_rebuild_are_deterministic(tmp_path: Path) -> None:

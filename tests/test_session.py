@@ -1926,3 +1926,158 @@ def test_refresh_summary_llm_failure_has_stable_diagnostic(
 
     assert not refresh_summary(tmp_path, "sid-llm-failure", min_new_turns=3)
     assert "session: reflect summary LLM call failed: model unavailable" in caplog.messages
+
+
+def test_canonical_session_runtime_writes_only_a_derived_json_cache(
+    tmp_path,
+    fake_git,
+) -> None:
+    from memo.identity import PrincipalIdentity
+    from memo.operation_views import OperationalViewStore
+    from memo.operational_sessions import OperationalSession
+    from memo.session import (
+        install_operational_session_runtime,
+        remove_operational_session_runtime,
+    )
+
+    identity = PrincipalIdentity(
+        principal_id="device-a:session-a",
+        actor_id="agent-a",
+        kind="agent",
+        device_id="device-a",
+        session_id="session-a",
+        source_client="codex",
+    )
+    views = OperationalViewStore(tmp_path / "operational.db")
+    session = OperationalSession(
+        session_id="session-a",
+        principal_id=identity.principal_id,
+        project="memo",
+        workspace=str(tmp_path),
+        status="active",
+        branch="main",
+        head="abc123",
+        summary="working",
+        checkpointed_at="2026-07-30T12:00:00.000000Z",
+        source_event_id="source-1",
+        recoverable_at="",
+        terminated_at="",
+        recoverable_reason="",
+        updated_event_id="event-1",
+    )
+
+    class _Service:
+        def __init__(self) -> None:
+            self.views = views
+            self.calls = []
+
+        def checkpoint(self, **kwargs):
+            self.calls.append(kwargs)
+            return session
+
+        def list(self, **_kwargs):
+            return [session]
+
+        def get(self, session_id):
+            return session if session_id == "session-a" else None
+
+    service = _Service()
+    install_operational_session_runtime(
+        tmp_path,
+        service=service,  # type: ignore[arg-type]
+        identity_factory=lambda: identity,
+    )
+    try:
+        snapshot = checkpoint(
+            tmp_path,
+            session_id="session-a",
+            cwd=str(tmp_path),
+            prompt="local prompt",
+            source_event_id="source-1",
+            checkpointed_at="2026-07-30T12:00:00Z",
+            idempotency_key="checkpoint-1",
+            lru_cap=10,
+        )
+    finally:
+        remove_operational_session_runtime(tmp_path)
+
+    assert len(service.calls) == 1
+    assert service.calls[0]["source_event_id"] == "source-1"
+    assert "prompt" not in service.calls[0]
+    assert snapshot["session_id"] == "session-a"
+    assert snapshot["cwd"] == str(tmp_path)
+    assert snapshot["workspace"] == str(tmp_path)
+    assert snapshot["prompt_trail"] == ["local prompt"]
+    assert views.session_local_artifacts("session-a")["prompt_trail"] == ["local prompt"]
+    cache = json.loads((tmp_path / "sessions" / "session-a.json").read_text())
+    assert cache == snapshot
+
+
+def test_canonical_session_runtime_drives_list_and_get_without_json_authority(
+    tmp_path,
+) -> None:
+    from memo.identity import PrincipalIdentity
+    from memo.operational_sessions import OperationalSession
+    from memo.session import (
+        install_operational_session_runtime,
+        remove_operational_session_runtime,
+    )
+
+    identity = PrincipalIdentity(
+        principal_id="device-a:session-a",
+        actor_id="agent-a",
+        kind="agent",
+        device_id="device-a",
+        session_id="session-a",
+        source_client="codex",
+    )
+    canonical = OperationalSession(
+        session_id="session-a",
+        principal_id=identity.principal_id,
+        project="memo",
+        workspace="/work/memo",
+        status="recoverable",
+        branch="main",
+        head="abc123",
+        summary="resume me",
+        checkpointed_at="2026-07-30T12:00:00.000000Z",
+        source_event_id="source-1",
+        recoverable_at="2026-07-30T12:01:00.000000Z",
+        terminated_at="",
+        recoverable_reason="client disconnected",
+        updated_event_id="event-2",
+    )
+
+    class _Views:
+        @staticmethod
+        def session_local_artifacts(_session_id):
+            return {"transcript_path": "/private/transcript.jsonl"}
+
+    class _Service:
+        views = _Views()
+
+        @staticmethod
+        def list(**_kwargs):
+            return [canonical]
+
+        @staticmethod
+        def get(session_id):
+            return canonical if session_id == "session-a" else None
+
+    install_operational_session_runtime(
+        tmp_path,
+        service=_Service(),  # type: ignore[arg-type]
+        identity_factory=lambda: identity,
+    )
+    try:
+        rows = list_sessions(tmp_path, limit=10, project="memo")
+        loaded = get_session(tmp_path, "session-a")
+    finally:
+        remove_operational_session_runtime(tmp_path)
+
+    assert rows == [loaded]
+    assert loaded is not None
+    assert loaded["status"] == "recoverable"
+    assert loaded["cwd"] == "/work/memo"
+    assert loaded["transcript_path"] == "/private/transcript.jsonl"
+    assert not (tmp_path / "sessions" / "session-a.json").exists()

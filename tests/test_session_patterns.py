@@ -148,8 +148,8 @@ class TestMCPSessionTools:
         mock = _MockServer()
         register(mock, None)  # none because tools don't inspect memory during registration
         expected = {
-            "mem_session_start",
-            "mem_session_end",
+            "memo_session_start",
+            "memo_session_end",
             "mem_context",
             "mem_timeline",
             "mem_judge",
@@ -186,9 +186,9 @@ class TestMCPSessionTools:
             monkeypatch.delenv(var, raising=False)
         mock = _MockServer()
         register(mock, session_mem)
-        started = mock._tools["mem_session_start"]()
+        started = mock._tools["memo_session_start"]()
         assert started["session_id"]
-        mock._tools["mem_session_end"](summary="did things")
+        mock._tools["memo_session_end"](summary="did things")
         row = session_mem.store._conn.execute(
             "SELECT summary, status FROM sessions WHERE id = ?", (started["session_id"],)
         ).fetchone()
@@ -196,18 +196,25 @@ class TestMCPSessionTools:
         assert row["summary"] == "did things"
 
     def test_session_restart_preserves_summary(self, session_mem, monkeypatch):
-        """A second mem_session_start with the same id (process restart) must
+        """A second memo_session_start with the same id (process restart) must
         not wipe the completed session's summary (INSERT OR REPLACE did)."""
         monkeypatch.setenv("MEMO_SESSION_ID", "stable-abc")
         mock = _MockServer()
         register(mock, session_mem)
-        mock._tools["mem_session_start"]()
-        mock._tools["mem_session_end"](summary="the summary")
-        mock._tools["mem_session_start"]()
+        mock._tools["memo_session_start"]()
+        mock._tools["memo_session_end"](summary="the summary")
+        mock._tools["memo_session_start"]()
         row = session_mem.store._conn.execute(
             "SELECT summary FROM sessions WHERE id = 'stable-abc'"
         ).fetchone()
         assert row["summary"] == "the summary"
+
+    def test_legacy_session_lifecycle_aliases_are_not_registered(self):
+        mock = _MockServer()
+        register(mock, None)
+
+        assert "mem_session_start" not in mock._tools
+        assert "mem_session_end" not in mock._tools
 
     def test_mem_judge_reports_missing_relation(self, session_mem):
         mock = _MockServer()

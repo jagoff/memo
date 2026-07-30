@@ -35,6 +35,7 @@ def _make_mem(tmp_cfg) -> MagicMock:
     # so spec=Memory does not auto-expose them. Wire them manually.
     mem.history = MagicMock()
     mem.store = MagicMock()
+    mem._capabilities = {}
     return mem
 
 
@@ -372,6 +373,42 @@ def test_memo_session_get_none_when_missing(tmp_cfg) -> None:
         result = tools["memo_session_get"](session_id="no-such-session")
 
     assert result is None
+
+
+def test_memo_session_list_reads_canonical_runtime_when_installed(tmp_cfg) -> None:
+    from memo.server_core_history import register
+
+    mem = _make_mem(tmp_cfg)
+    canonical = MagicMock()
+    canonical.list.return_value = [MagicMock(to_dict=lambda: {"session_id": "canonical-1"})]
+    mem._capabilities["operational_sessions"] = canonical
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    with patch("memo.session.list_sessions") as legacy:
+        result = tools["memo_session_list"](limit=5, project="memo")
+
+    assert result == [{"session_id": "canonical-1"}]
+    canonical.list.assert_called_once_with(limit=5, project="memo")
+    legacy.assert_not_called()
+
+
+def test_memo_session_get_reads_canonical_runtime_when_installed(tmp_cfg) -> None:
+    from memo.server_core_history import register
+
+    mem = _make_mem(tmp_cfg)
+    canonical = MagicMock()
+    canonical.get.return_value = MagicMock(to_dict=lambda: {"session_id": "canonical-1"})
+    mem._capabilities["operational_sessions"] = canonical
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    with patch("memo.session.get_session") as legacy:
+        result = tools["memo_session_get"](session_id="canonical-1")
+
+    assert result == {"session_id": "canonical-1"}
+    canonical.get.assert_called_once_with("canonical-1")
+    legacy.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

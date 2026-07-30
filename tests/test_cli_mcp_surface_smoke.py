@@ -108,6 +108,15 @@ def _decorated_server_tool_names() -> set[str]:
     return names
 
 
+def test_session_lifecycle_surface_uses_only_memo_prefix() -> None:
+    names = _decorated_server_tool_names()
+
+    assert "memo_session_start" in names
+    assert "memo_session_end" in names
+    assert "mem_session_start" not in names
+    assert "mem_session_end" not in names
+
+
 def _mcp_tools(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
