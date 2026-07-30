@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import errno
 import hashlib
@@ -17,12 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from memo.atomic_io import (
-    SecureDirectory,
-    atomic_write_text,
-    authority_write_lock,
-    open_secure_directory,
-)
+from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.contracts import MemoEvent
 from memo.errors import OperationalError, OperationalErrorCode
 from memo.identity import PrincipalIdentity
@@ -862,12 +858,19 @@ def _assert_source_unchanged(plan: V1MigrationPlan) -> None:
 
 
 @dataclass
+class _BoundPathComponent:
+    name: str
+    identity: os.stat_result
+
+
+@dataclass
 class _BoundPreparedParent:
-    """Retained authority for one requested prepared-generation parent."""
+    """Retained authority for one requested parent and its full root chain."""
 
     path: Path
     name: str | None
-    boundary: SecureDirectory
+    root_descriptor: int
+    chain: tuple[_BoundPathComponent, ...]
     descriptor: int
     identity: os.stat_result
 
@@ -875,7 +878,9 @@ class _BoundPreparedParent:
         if self.descriptor >= 0:
             os.close(self.descriptor)
             self.descriptor = -1
-        self.boundary.close()
+        if self.root_descriptor >= 0:
+            os.close(self.root_descriptor)
+            self.root_descriptor = -1
 
 
 def _safe_path_component(value: str) -> bool:
@@ -883,67 +888,118 @@ def _safe_path_component(value: str) -> bool:
 
 
 def _open_bound_prepared_parent(target: Path) -> _BoundPreparedParent:
-    """Bind target.parent to its no-follow name below a retained boundary."""
+    """Bind target.parent through every no-follow component from filesystem root."""
     parent = target.parent.absolute()
-    boundary_path = parent.parent
-    boundary = open_secure_directory(boundary_path)
+    parts = parent.parts
+    if not parts or parts[0] != os.sep:
+        raise ValueError("prepared target parent must be absolute")
+    root_descriptor = os.open(os.sep, _DIRECTORY_FLAGS)
     parent_descriptor = -1
+    current_descriptor = root_descriptor
+    chain: list[_BoundPathComponent] = []
     try:
-        if parent == boundary_path:
-            parent_name: str | None = None
-            parent_descriptor = os.dup(boundary.descriptor)
-            named_parent = os.fstat(boundary.descriptor)
-        else:
-            parent_name = parent.name
-            if not _safe_path_component(parent_name):
-                raise ValueError(
-                    "prepared parent must have a safe path component name"
+        for index, part in enumerate(parts[1:]):
+            if not _safe_path_component(part):
+                raise ValueError("prepared parent has an unsafe path component")
+            child_descriptor = -1
+            try:
+                try:
+                    child_descriptor = os.open(
+                        part,
+                        _DIRECTORY_FLAGS,
+                        dir_fd=current_descriptor,
+                    )
+                except FileNotFoundError:
+                    with contextlib.suppress(FileExistsError):
+                        os.mkdir(part, mode=0o700, dir_fd=current_descriptor)
+                    os.fsync(current_descriptor)
+                    child_descriptor = os.open(
+                        part,
+                        _DIRECTORY_FLAGS,
+                        dir_fd=current_descriptor,
+                    )
+                child_identity = os.fstat(child_descriptor)
+                named_child = os.stat(
+                    part,
+                    dir_fd=current_descriptor,
+                    follow_symlinks=False,
                 )
-            parent_descriptor = os.open(
-                parent_name,
-                _DIRECTORY_FLAGS,
-                dir_fd=boundary.descriptor,
-            )
-            named_parent = os.stat(
-                parent_name,
-                dir_fd=boundary.descriptor,
-                follow_symlinks=False,
-            )
+                if (
+                    not stat.S_ISDIR(child_identity.st_mode)
+                    or not stat.S_ISDIR(named_child.st_mode)
+                    or not os.path.samestat(child_identity, named_child)
+                ):
+                    raise OSError(_PARENT_NAMESPACE_CHANGED)
+            except BaseException:
+                if child_descriptor >= 0:
+                    os.close(child_descriptor)
+                raise
+            chain.append(_BoundPathComponent(part, child_identity))
+            if index == len(parts[1:]) - 1:
+                parent_descriptor = child_descriptor
+            else:
+                if current_descriptor != root_descriptor:
+                    os.close(current_descriptor)
+                current_descriptor = child_descriptor
+        if parent_descriptor < 0:
+            parent_descriptor = os.dup(root_descriptor)
+        if current_descriptor != root_descriptor:
+            os.close(current_descriptor)
+            current_descriptor = -1
         parent_identity = os.fstat(parent_descriptor)
-        if (
-            not stat.S_ISDIR(named_parent.st_mode)
-            or not stat.S_ISDIR(parent_identity.st_mode)
-            or not os.path.samestat(parent_identity, named_parent)
-        ):
-            raise OSError(_PARENT_NAMESPACE_CHANGED)
         return _BoundPreparedParent(
             path=parent,
-            name=parent_name,
-            boundary=boundary,
+            name=parent.name if parent != Path(os.sep) else None,
+            root_descriptor=root_descriptor,
+            chain=tuple(chain),
             descriptor=parent_descriptor,
             identity=parent_identity,
         )
     except BaseException:
         if parent_descriptor >= 0:
             os.close(parent_descriptor)
-        boundary.close()
+        if current_descriptor >= 0 and current_descriptor != root_descriptor:
+            os.close(current_descriptor)
+        os.close(root_descriptor)
         raise
 
 
 def _resolve_bound_parent(parent: _BoundPreparedParent) -> int:
-    """Re-open the requested parent no-follow and require its bound identity."""
-    resolved_descriptor = -1
+    """Re-open the complete root-to-parent chain and require all identities."""
+    resolved_descriptor = os.dup(parent.root_descriptor)
     try:
-        if parent.name is None:
-            resolved_descriptor = os.dup(parent.boundary.descriptor)
-        else:
-            resolved_descriptor = os.open(
-                parent.name,
-                _DIRECTORY_FLAGS,
-                dir_fd=parent.boundary.descriptor,
-            )
-        resolved = os.fstat(resolved_descriptor)
+        root_identity = os.fstat(resolved_descriptor)
+        if not stat.S_ISDIR(root_identity.st_mode):
+            raise OSError(_PARENT_NAMESPACE_CHANGED)
+        for component in parent.chain:
+            child_descriptor = -1
+            try:
+                child_descriptor = os.open(
+                    component.name,
+                    _DIRECTORY_FLAGS,
+                    dir_fd=resolved_descriptor,
+                )
+                child_identity = os.fstat(child_descriptor)
+                named_child = os.stat(
+                    component.name,
+                    dir_fd=resolved_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    not stat.S_ISDIR(child_identity.st_mode)
+                    or not stat.S_ISDIR(named_child.st_mode)
+                    or not os.path.samestat(component.identity, child_identity)
+                    or not os.path.samestat(component.identity, named_child)
+                ):
+                    raise OSError(_PARENT_NAMESPACE_CHANGED)
+            except BaseException:
+                if child_descriptor >= 0:
+                    os.close(child_descriptor)
+                raise
+            os.close(resolved_descriptor)
+            resolved_descriptor = child_descriptor
         retained = os.fstat(parent.descriptor)
+        resolved = os.fstat(resolved_descriptor)
         if (
             not stat.S_ISDIR(resolved.st_mode)
             or not os.path.samestat(parent.identity, retained)
@@ -1197,7 +1253,6 @@ def apply_v1_migration(
     if target_root == source_root or source_root in target_root.parents:
         raise _failure("prepared target must be outside the v1 source root")
 
-    target_root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     bound_parent = _open_bound_prepared_parent(target_root)
     staging: Path | None = None
     staging_identity: os.stat_result | None = None

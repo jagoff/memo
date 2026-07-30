@@ -802,6 +802,79 @@ def test_publish_rejects_parent_swap_after_rename_before_parent_fsync(
     assert not (target / "operational-v2-activated.json").exists()
 
 
+def test_publish_rejects_boundary_swap_before_exclusive_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "v1"
+    boundary = tmp_path / "boundary"
+    requested_parent = boundary / "requested"
+    requested_parent.mkdir(parents=True)
+    target = requested_parent / "v2"
+    displaced_boundary = tmp_path / "boundary-displaced"
+    _populate_v1(source)
+    authority = _authority(tmp_path / "authority")
+    plan = plan_v1_migration(source, device_id=_LOCAL)
+    publish = operation_migration._renameat_exclusive
+
+    def swap_boundary_before_publish(
+        parent_descriptor: int,
+        source_name: str,
+        target_name: str,
+    ) -> None:
+        boundary.rename(displaced_boundary)
+        boundary.mkdir(mode=0o700)
+        (boundary / "requested").mkdir(mode=0o700)
+        publish(parent_descriptor, source_name, target_name)
+
+    monkeypatch.setattr(
+        operation_migration,
+        "_renameat_exclusive",
+        swap_boundary_before_publish,
+    )
+
+    with pytest.raises(OSError, match="parent namespace identity changed"):
+        apply_v1_migration(plan, target, authority=authority)
+
+    assert not target.exists()
+    assert (displaced_boundary / "requested" / "v2" / "migration-v1.json").is_file()
+    assert not (target / "operational-v2-activated.json").exists()
+
+
+def test_publish_rejects_boundary_swap_after_rename_before_parent_fsync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "v1"
+    boundary = tmp_path / "boundary"
+    requested_parent = boundary / "requested"
+    requested_parent.mkdir(parents=True)
+    target = requested_parent / "v2"
+    displaced_boundary = tmp_path / "boundary-displaced"
+    _populate_v1(source)
+    authority = _authority(tmp_path / "authority")
+    plan = plan_v1_migration(source, device_id=_LOCAL)
+
+    def swap_boundary_after_publish(label: str) -> None:
+        assert label == "after-rename-before-parent-fsync"
+        boundary.rename(displaced_boundary)
+        boundary.mkdir(mode=0o700)
+        (boundary / "requested").mkdir(mode=0o700)
+
+    monkeypatch.setattr(
+        operation_migration,
+        "_migration_publish_failpoint",
+        swap_boundary_after_publish,
+    )
+
+    with pytest.raises(OSError, match="parent namespace identity changed"):
+        apply_v1_migration(plan, target, authority=authority)
+
+    assert not target.exists()
+    assert (displaced_boundary / "requested" / "v2" / "migration-v1.json").is_file()
+    assert not (target / "operational-v2-activated.json").exists()
+
+
 def test_publish_rejects_replacement_generation_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
