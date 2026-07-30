@@ -6,7 +6,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 10:41 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 10:52 America/Argentina/Cordoba
 
 ### En curso
 
@@ -15,13 +15,14 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   `T5 PASS`, `T6 PASS`.
 - [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
   nuevo — agente `constant_code_reviewer`; `P01-T04 FAIL HIGH` cerrado y
-  `P03-T03 FAIL BLOCKER` confirmado; Secure Enclave `23a64ccb` en revisión.
+  `P03-T03 FAIL BLOCKER` confirmado; Secure Enclave `23a64ccb` FAIL HIGH;
+  re-review de `ce608c42` en curso.
 - [x] Auditoría read-only cross-repo de Plan 03 T3/T4: ambos lotes corregidos
   siguen presentes sin commit y no se solapan con Secure Enclave.
-- [ ] Cerrar el prerrequisito productivo de Plan 01 Tarea 7: proveedor
-  Secure Enclave P-256, compatibilidad Ed25519 y lifecycle completo —
-  implementación `23a64ccb`, `236 passed / 1 skipped`, smoke productivo M3
-  `1 passed`; revisión independiente en curso.
+- [ ] Corregir el prerrequisito productivo de Plan 01 Tarea 7: helper
+  precompilado/estable sin `swiftc` en runtime y ACL/upgrade de Keychain.
+  `23a64ccb` tuvo `236 passed / 1 skipped`, pero revisión independiente
+  encontró 2 HIGH.
 - [x] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
   multi-origen puede divergir del rebuild por orden global. Agregar regresión
   `newest(a) -> older(b)` y re-reducción transaccional determinista. Revisión
@@ -30,14 +31,13 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   v1 y la relectura usada por manifest/anchor. Snapshot descriptor-relative
   único, locks estables antes/durante creación y devices vacíos ligados.
   Revisión final: `PASS`, `80 passed`.
-- [ ] Resolver `P01-T07 BLOCKER`: `MacOSKeychainProvider` es un placeholder
-  fail-closed; el fresh install v2 productivo no puede crear la clave,
-  roster y epoch-0. Implementar un provider productivo no exportable antes de
-  habilitar activación.
-- [ ] Corregir `P01-T04 HIGH`: si el parent se renombra después de abrir su FD,
-  la publicación puede completar en el directorio desplazado mientras el
-  target solicitado no existe. Implementador `p01_t04_parent_binding_fix`
-  escribiendo las dos regresiones y binding descriptor-relative.
+- [ ] Resolver `P01-T07 BLOCKER`: el provider productivo ya genera/reabre/
+  firma/destruye, pero su helper depende de `swiftc` en runtime y su ACL
+  queda ligada al cdhash ad-hoc. Fix de helper precompilado/estable y upgrade
+  de Keychain en curso antes de habilitar activación.
+- [ ] Re-review `P01-T04` de `ce608c42`: el fix ya liga parent
+  descriptor-relative y re-resuelve parent+target antes de éxito; PASS
+  independiente pendiente.
 - [x] Corrección técnica `P01-T06 HIGH/MEDIUM`: replay del evento/resultado
   canónico por idempotency key, validación de identidad explícita y derivación
   de key default bajo el lock de sesión. Revisión final: `PASS`, `141 passed`.
@@ -52,8 +52,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   quality_feedback y cursor de extract.
 - [ ] Corregir `P03-T04 HIGH`: construir desde snapshot/commit inmutable o
   revalidar el repo después del build antes de publicar runtime. Corrección
-  no commiteada cubre snapshot kernel-read-only, digest externo y árbol
-  completo; gate actual `31 passed`, mypy/Ruff limpios.
+  no commiteada cubre snapshot kernel-read-only y árbol completo; revisión
+  adversarial encontró 2 BLOCKER + 2 HIGH adicionales (Git-object snapshot,
+  attestation externa, submódulos y cleanup de mounts).
 - [ ] Corregir `P03-T03 BLOCKER`: aunque el control ya proviene de un commit
   Git exacto, `GIT_DIR` heredado puede desviar el gate fresh a otro state root,
   ocultar el ledger real (`inflight=1`) y devolver falsamente `clean=True`.
