@@ -10,8 +10,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tarea 2 con
-  re-revisión `FAIL` y segunda ronda de hardening en preparación**.
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; hardening ronda 2
+  de Tarea 2 implementado y verde, pendiente de re-revisión independiente**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -122,9 +122,15 @@ Estado: **1/7 aceptadas**.
 - [x] Re-revisión final sobre `815307ac`: `FAIL`, con 3 `HIGH` y
   2 `MEDIUM` consolidados.
 - [x] Brief TDD de hardening ronda 2 generado con BASE `123cd8f6`.
-- [ ] RED de markers atómicos, finalización, anchor history y root único.
-- [ ] Implementar y verificar hardening ronda 2.
-- [ ] Corregir todo hallazgo `BLOCKER/HIGH/MEDIUM`.
+- [x] RED de markers atómicos, finalización, anchor history y root único:
+  `9 failed, 2 passed`.
+- [x] Implementar y verificar hardening ronda 2 en `ed454393`.
+- [x] Corregir los 3 `HIGH`, 2 `MEDIUM` y quality guards de la ronda.
+- [x] Task 1 + Task 2: `200 passed`.
+- [x] Frozen v1: `3 passed` y sin diff.
+- [x] Ruff y mypy: limpios.
+- [x] Non-slow completo: `6009 passed, 18 skipped`.
+- [x] Reporte de implementación generado.
 - [ ] Revisión independiente y `PASS`.
 
 ### Tarea 3 — Vistas SQLite transaccionales e idempotencia
