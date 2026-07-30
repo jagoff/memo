@@ -138,8 +138,7 @@ def consumer_inventory_from_dict(value: Mapping[str, Any]) -> ConsumerInventory:
             or not (
                 isinstance(keep_alive, bool)
                 or (
-                    isinstance(keep_alive, dict)
-                    and all(isinstance(key, str) for key in keep_alive)
+                    isinstance(keep_alive, dict) and all(isinstance(key, str) for key in keep_alive)
                 )
             )
             or (
@@ -183,16 +182,12 @@ def consumer_inventory_from_dict(value: Mapping[str, Any]) -> ConsumerInventory:
                 references=_string_tuple(raw["references"], "consumer references"),
                 label=raw["label"],
                 active=raw["active"],
-                program_arguments=_string_tuple(
-                    raw["program_arguments"], "consumer arguments"
-                ),
+                program_arguments=_string_tuple(raw["program_arguments"], "consumer arguments"),
                 correlated_launchd_label=raw["correlated_launchd_label"],
                 run_at_load=raw["run_at_load"],
                 keep_alive=keep_alive,
                 start_interval_seconds=raw["start_interval_seconds"],
-                start_calendar_interval=tuple(
-                    tuple(sorted(item.items())) for item in calendar
-                ),
+                start_calendar_interval=tuple(tuple(sorted(item.items())) for item in calendar),
                 watch_paths=_string_tuple(raw["watch_paths"], "consumer watch paths"),
                 throttle_interval_seconds=raw["throttle_interval_seconds"],
                 environment_keys=_string_tuple(
@@ -232,16 +227,12 @@ def consumer_inventory_from_dict(value: Mapping[str, Any]) -> ConsumerInventory:
         verification_phases=cast(
             Any, _string_tuple(value["verification_phases"], "verification phases")
         ),
-        covered_surfaces=_string_tuple(
-            value["covered_surfaces"], "covered surfaces"
-        ),
+        covered_surfaces=_string_tuple(value["covered_surfaces"], "covered surfaces"),
         surface_observations={
             key: _string_tuple(items, f"surface observation {key}")
             for key, items in observations.items()
         },
-        scan_receipt_sha256=_string_tuple(
-            value["scan_receipt_sha256"], "scan receipt digests"
-        ),
+        scan_receipt_sha256=_string_tuple(value["scan_receipt_sha256"], "scan receipt digests"),
     )
 
 
@@ -279,27 +270,18 @@ def synapse_retirement_manifest_from_dict(
             not isinstance(raw, dict)
             or set(raw) != operation_fields
             or not isinstance(raw["source_operation"], str)
-            or not (
-                raw["exclusion_reason"] is None
-                or isinstance(raw["exclusion_reason"], str)
-            )
+            or not (raw["exclusion_reason"] is None or isinstance(raw["exclusion_reason"], str))
         ):
             raise InventoryError("Synapse retirement operation fields are invalid")
         operations.append(
             SynapseOperation(
                 source_operation=raw["source_operation"],
                 source_files=_string_tuple(raw["source_files"], "operation source files"),
-                source_symbols=_string_tuple(
-                    raw["source_symbols"], "operation source symbols"
-                ),
+                source_symbols=_string_tuple(raw["source_symbols"], "operation source symbols"),
                 consumers=_string_tuple(raw["consumers"], "operation consumers"),
-                daemon_routes=_string_tuple(
-                    raw["daemon_routes"], "operation daemon routes"
-                ),
+                daemon_routes=_string_tuple(raw["daemon_routes"], "operation daemon routes"),
                 exclusion_reason=raw["exclusion_reason"],
-                fixture_paths=_string_tuple(
-                    raw["fixture_paths"], "operation fixture paths"
-                ),
+                fixture_paths=_string_tuple(raw["fixture_paths"], "operation fixture paths"),
             )
         )
     for field in (
@@ -347,10 +329,22 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
         raise InventoryError(f"inventory root is unavailable: {root}") from exc
     if not stat.S_ISDIR(observed.st_mode):
         raise InventoryError(f"inventory root is not a directory: {root}")
+
     def traversal_error(error: OSError) -> None:
-        raise InventoryError(
-            f"inventory traversal failed below {absolute}: {error}"
-        ) from error
+        raise InventoryError(f"inventory traversal failed below {absolute}: {error}") from error
+
+    def entry_kind(path: Path) -> str:
+        try:
+            mode = path.lstat().st_mode
+        except OSError as exc:
+            raise InventoryError(f"cannot classify inventory entry: {path}") from exc
+        if stat.S_ISLNK(mode):
+            return "symlink"
+        if stat.S_ISDIR(mode):
+            return "directory"
+        if stat.S_ISREG(mode):
+            return "file"
+        raise InventoryError(f"unsupported inventory entry type: {path}")
 
     for directory, directory_names, file_names in os.walk(
         absolute,
@@ -362,21 +356,23 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
         retained: list[str] = []
         for name in sorted(directory_names):
             child = parent / name
-            if child.is_symlink():
+            kind = entry_kind(child)
+            if kind == "symlink":
                 yield child, "symlink"
-            else:
-                retained.append(name)
+                continue
+            if kind != "directory":
+                raise InventoryError(f"inventory entry changed type during traversal: {child}")
+            retained.append(name)
         directory_names[:] = retained
         for name in sorted(file_names):
             path = parent / name
-            if path.is_symlink():
+            kind = entry_kind(path)
+            if kind == "symlink":
                 yield path, "symlink"
                 continue
-            try:
-                if path.is_file():
-                    yield path, "file"
-            except OSError as exc:
-                raise InventoryError(f"inventory input changed during scan: {path}") from exc
+            if kind != "file":
+                raise InventoryError(f"inventory entry changed type during traversal: {path}")
+            yield path, "file"
 
 
 def _read_text(path: Path) -> tuple[bytes, str]:
@@ -409,9 +405,7 @@ def _consumer_references(text: str) -> tuple[str, ...]:
 
 
 def _retirement_references(text: str) -> tuple[str, ...]:
-    return tuple(
-        sorted(set(match.group(0) for match in _ACTIVE_RETIREMENT_RE.finditer(text)))
-    )
+    return tuple(sorted(set(match.group(0) for match in _ACTIVE_RETIREMENT_RE.finditer(text))))
 
 
 def _normalized_scan_roots(
@@ -419,10 +413,7 @@ def _normalized_scan_roots(
     *,
     description: str,
 ) -> tuple[Path, ...]:
-    normalized = tuple(
-        Path(os.path.abspath(os.fspath(root)))
-        for root in roots
-    )
+    normalized = tuple(Path(os.path.abspath(os.fspath(root))) for root in roots)
     if not normalized:
         raise InventoryError(f"{description} requires at least one root")
     if len(normalized) != len(set(normalized)):
@@ -464,9 +455,7 @@ def build_independence_receipt(
     )
     if archives:
         if roster is None:
-            raise InventoryError(
-                "archived provenance requires a roster-verified signed manifest"
-            )
+            raise InventoryError("archived provenance requires a roster-verified signed manifest")
         verify_synapse_retirement_manifest(manifest, roster=roster)
     if any(
         installed_root == archive_root
@@ -476,9 +465,7 @@ def build_independence_receipt(
         for archive_root in archives
     ):
         raise InventoryError("installed and archived retirement roots overlap")
-    allowed_archive_paths = frozenset(
-        (*manifest.files, *manifest.tests, *manifest.goldens)
-    )
+    allowed_archive_paths = frozenset((*manifest.files, *manifest.tests, *manifest.goldens))
     if any(
         not path
         or Path(path).is_absolute()
@@ -495,21 +482,16 @@ def build_independence_receipt(
             for path, kind in _safe_files(root):
                 relative = path.relative_to(root).as_posix()
                 if kind == "symlink":
-                    raise InventoryError(
-                        f"retirement audit cannot prove a symlink: {path}"
-                    )
+                    raise InventoryError(f"retirement audit cannot prove a symlink: {path}")
                 data, text = _read_text(path)
                 file_count += 1
                 references = _retirement_references(relative + "\n" + text)
                 allowed = (
-                    role == "archive"
-                    and relative in allowed_archive_paths
-                    and bool(references)
+                    role == "archive" and relative in allowed_archive_paths and bool(references)
                 )
                 if references and not allowed:
                     raise InventoryError(
-                        "unlisted active reference: "
-                        f"{path} ({','.join(references)})"
+                        f"unlisted active reference: {path} ({','.join(references)})"
                     )
                 if allowed:
                     archived_provenance.add(relative)
@@ -674,10 +656,7 @@ def build_consumer_inventory(
         roster_version=roster_version,
         signature="",
         surface_observations=(
-            {
-                key: tuple(values)
-                for key, values in sorted(surface_observations.items())
-            }
+            {key: tuple(values) for key, values in sorted(surface_observations.items())}
             if surface_observations is not None
             else {}
         ),
@@ -789,7 +768,11 @@ def verify_consumer_inventory(
         raise InventoryError("consumer inventory is blocked or unsigned")
     if not _SHA256_RE.fullmatch(inventory.source_scan_sha256):
         raise InventoryError("consumer inventory source digest is invalid")
-    if not inventory.signer_key_id or not inventory.signer_device_id or inventory.roster_version < 1:
+    if (
+        not inventory.signer_key_id
+        or not inventory.signer_device_id
+        or inventory.roster_version < 1
+    ):
         raise InventoryError("consumer inventory signer fields are incomplete")
     if inventory.roster_version != roster.version:
         raise InventoryError("consumer inventory roster version is invalid")
@@ -799,11 +782,15 @@ def verify_consumer_inventory(
         raise InventoryError("consumer inventory signer key is not in roster") from exc
     if key.device_id != inventory.signer_device_id or "origin" not in key.roles:
         raise InventoryError("consumer inventory signer key ownership is invalid")
-    if any(not isinstance(k, str) or not isinstance(v, tuple) or any(not isinstance(x, str) for x in v)
-           for k, v in inventory.surface_observations.items()):
+    if any(
+        not isinstance(k, str) or not isinstance(v, tuple) or any(not isinstance(x, str) for x in v)
+        for k, v in inventory.surface_observations.items()
+    ):
         raise InventoryError("consumer inventory surface observations are invalid")
-    if any(row.kind not in {"source", "process", "launchd"} or not row.location or not row.references
-           for row in inventory.rows):
+    if any(
+        row.kind not in {"source", "process", "launchd"} or not row.location or not row.references
+        for row in inventory.rows
+    ):
         raise InventoryError("consumer inventory row is malformed")
     try:
         OperationalVerifier().verify(
@@ -825,8 +812,9 @@ def verify_synapse_retirement_manifest(
         raise InventoryError("Synapse retirement schema is invalid")
     if not manifest.signature:
         raise InventoryError("Synapse retirement manifest is unsigned")
-    if (not re.fullmatch(r"[0-9a-f]{40}", manifest.source_commit)
-            or not _SHA256_RE.fullmatch(manifest.active_reference_sha256)):
+    if not re.fullmatch(r"[0-9a-f]{40}", manifest.source_commit) or not _SHA256_RE.fullmatch(
+        manifest.active_reference_sha256
+    ):
         raise InventoryError("Synapse retirement digest fields are invalid")
     if not manifest.signer_key_id:
         raise InventoryError("Synapse retirement signer key is incomplete")
@@ -839,9 +827,12 @@ def verify_synapse_retirement_manifest(
     if not manifest.operations:
         raise InventoryError("Synapse retirement operation catalog is empty")
     for operation in manifest.operations:
-        if (not operation.source_operation or not operation.source_files
-                or any(not isinstance(path, str) or not path for path in operation.source_files)
-                or any(not isinstance(path, str) or not path for path in operation.fixture_paths)):
+        if (
+            not operation.source_operation
+            or not operation.source_files
+            or any(not isinstance(path, str) or not path for path in operation.source_files)
+            or any(not isinstance(path, str) or not path for path in operation.fixture_paths)
+        ):
             raise InventoryError("Synapse retirement operation is malformed")
     try:
         OperationalVerifier().verify(

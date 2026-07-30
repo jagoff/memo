@@ -148,3 +148,47 @@ passed
 The operational blockers and refusal-only behavior are unchanged. No runtime,
 service, LaunchAgent, configuration, state, repository, release, or cleanup
 mutation was performed.
+
+## Correction round 2 — CLI roster path and entry classification
+
+The second review identified two remaining fail-open edges. Both now reject
+without recovery or mutation:
+
+- `synapse-manifest` now obtains its roster through the same strictly
+  read-only `_verification_roster` path as the other CLI commands; it no
+  longer calls `VerificationRoster.load`. The production-style Keychain test
+  stages a pending roster update, snapshots every authority file and the pin,
+  invokes the CLI handler, verifies the read-only rejection, and proves both
+  snapshots are unchanged.
+- `_safe_files` now calls `lstat` for every directory and file entry returned
+  by `os.walk`. A vanished entry, denied/stat failure, unsupported special
+  file, or traversal-time type change becomes `InventoryError`; no
+  `Path.is_file`/`Path.is_symlink` false result can silently omit an entry.
+
+Correction-round-2 verification:
+
+```text
+uv run --no-sync pytest tests/tools/test_retirement_audit.py -q
+20 passed
+
+uv run --no-sync pytest tests/tools/test_retirement_audit.py tests/tools/test_absorption_*.py -q
+59 passed
+
+uv run --no-sync pytest tests/tools -q
+160 passed
+
+uv run --no-sync ruff check tools/memflow_absorption tests/tools/test_retirement_audit.py
+All checks passed!
+
+uv run --no-sync ruff format --check tools/memflow_absorption/inventory.py tools/memflow_absorption/__main__.py tests/tools/test_retirement_audit.py
+3 files already formatted
+
+uv run --no-sync mypy tools/memflow_absorption
+Success: no issues found in 15 source files
+
+git diff --check
+passed
+```
+
+Cleanup remains refusal-only. No runtime, service, LaunchAgent,
+configuration, state, repository, release, or cleanup mutation was performed.

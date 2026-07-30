@@ -302,6 +302,37 @@ def test_retirement_audit_scans_ascii_references_inside_non_utf8_files(
         build_independence_receipt((tmp_path,), manifest=_manifest())
 
 
+@pytest.mark.parametrize(
+    "failure",
+    [FileNotFoundError("vanished"), PermissionError("denied")],
+)
+def test_retirement_audit_rejects_entry_lstat_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: OSError,
+) -> None:
+    target = tmp_path / "listed.txt"
+    target.write_text("clean", encoding="utf-8")
+    original_lstat = Path.lstat
+
+    def failing_lstat(path: Path) -> os.stat_result:
+        if path == target:
+            raise failure
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", failing_lstat)
+
+    with pytest.raises(InventoryError, match="cannot classify inventory entry"):
+        build_independence_receipt((tmp_path,), manifest=_manifest())
+
+
+def test_retirement_audit_rejects_special_files(tmp_path: Path) -> None:
+    os.mkfifo(tmp_path / "runtime.pipe")
+
+    with pytest.raises(InventoryError, match="unsupported inventory entry type"):
+        build_independence_receipt((tmp_path,), manifest=_manifest())
+
+
 def test_roster_loader_is_strictly_read_only_and_rejects_pending_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -334,19 +365,21 @@ def test_roster_loader_is_strictly_read_only_and_rejects_pending_recovery(
     assert pins._snapshot_for_test() == before_pin
 
     installation_id = next(iter(provider._installations.values()))
-    pin_bytes = provider._values[installation_id]
 
     class ReadOnlyProductionProvider:
+        def _resolve_installation(self, _location_binding: str) -> str:
+            return installation_id
+
         def _read_account(self, account: str) -> bytes | None:
             if account.startswith("binding:"):
                 return installation_id.encode("ascii")
             if account == f"pin:{installation_id}":
-                return pin_bytes
+                return provider._values[installation_id]
             return None
 
         def _read_pin(self, requested_installation_id: str) -> bytes | None:
             assert requested_installation_id == installation_id
-            return pin_bytes
+            return provider._values[installation_id]
 
         def _write_account(self, _account: str, _value: bytes) -> None:
             raise AssertionError("read-only roster loader attempted a Keychain write")
@@ -401,6 +434,61 @@ def test_roster_loader_is_strictly_read_only_and_rejects_pending_recovery(
         if path.is_file()
     } == pending_files
     assert pins._snapshot_for_test() == pending_pin
+
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "source.json").write_bytes(canonical_json_bytes({"source_commit": "a" * 40}))
+    monkeypatch.setattr(
+        absorption_cli,
+        "discover_synapse_operations",
+        lambda _snapshot: (
+            SynapseOperation(
+                source_operation="synapse.runtime.loop",
+                source_files=("src/synapse/runtime.py",),
+                source_symbols=("runtime_loop",),
+                consumers=("com.synapse.runtime",),
+                daemon_routes=("runtime",),
+                exclusion_reason="self_audit",
+                fixture_paths=(),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        absorption_cli,
+        "_verified_receipt_ids",
+        lambda _args, _roster, _source_commit: ([], []),
+    )
+    monkeypatch.setattr(
+        AuthorityPinStore,
+        "for_root",
+        classmethod(lambda _cls, _root: pins),
+    )
+    cli_files = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    cli_pin = pins._snapshot_for_test()
+
+    with pytest.raises(SystemExit, match="read-only"):
+        absorption_cli._synapse_manifest(
+            SimpleNamespace(
+                attempt_root=tmp_path / "state" / "memo" / "cutover" / "attempt-123",
+                attempt_id="attempt-123",
+                snapshot=snapshot,
+                roster_root=tmp_path,
+                usage_proof=[],
+                exclusion=[],
+                apply=False,
+            )
+        )
+
+    assert {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    } == cli_files
+    assert pins._snapshot_for_test() == cli_pin
 
 
 def test_cleanup_authority_rejects_non_verified_control(tmp_path: Path) -> None:
@@ -624,16 +712,10 @@ def test_cleanup_cli_is_refusal_only_even_with_exact_inputs(
     plan_bytes = canonical_json_bytes(objects["plan"])
     independence_bytes = canonical_json_bytes(objects["independence"])
     expected = {
-        "control_record": hashlib.sha256(
-            canonical_json_bytes(objects["control"])
-        ).hexdigest(),
-        "retirement_manifest": hashlib.sha256(
-            manifest.signed_bytes()
-        ).hexdigest(),
+        "control_record": hashlib.sha256(canonical_json_bytes(objects["control"])).hexdigest(),
+        "retirement_manifest": hashlib.sha256(manifest.signed_bytes()).hexdigest(),
         "consumer_replacement_receipt": hashlib.sha256(plan_bytes).hexdigest(),
-        "bounded_data_receipt": hashlib.sha256(
-            canonical_json_bytes(objects["data"])
-        ).hexdigest(),
+        "bounded_data_receipt": hashlib.sha256(canonical_json_bytes(objects["data"])).hexdigest(),
         "independence_receipt": hashlib.sha256(independence_bytes).hexdigest(),
     }
     control = _verified_control(

@@ -185,9 +185,7 @@ def _snapshot(args: argparse.Namespace) -> dict[str, object]:
             "would_write": str(root / relative),
         }
     if args.manifest_sha256 is None:
-        raise SystemExit(
-            "snapshot --apply requires exact manifest SHA-256 via --manifest-sha256"
-        )
+        raise SystemExit("snapshot --apply requires exact manifest SHA-256 via --manifest-sha256")
     target = resolve_under_attempt(
         args.attempt_root,
         relative,
@@ -235,13 +233,10 @@ def _verified_receipt_ids(
 ) -> tuple[list[str], list[str]]:
     try:
         proofs = [
-            _usage_proof(_read_canonical_object(path, "usage proof"))
-            for path in args.usage_proof
+            _usage_proof(_read_canonical_object(path, "usage proof")) for path in args.usage_proof
         ]
         exclusions = [
-            audit_exclusions_from_dict(
-                _read_canonical_object(path, "audit exclusion receipt")
-            )
+            audit_exclusions_from_dict(_read_canonical_object(path, "audit exclusion receipt"))
             for path in args.exclusion
         ]
         for proof in proofs:
@@ -263,10 +258,7 @@ def _verified_receipt_ids(
 def _synapse_manifest(args: argparse.Namespace) -> dict[str, object]:
     root = assert_safe_attempt_root(args.attempt_root, args.attempt_id)
     rows = discover_synapse_operations(args.snapshot)
-    try:
-        roster = VerificationRoster.load(args.roster_root)
-    except Exception as exc:  # roster failures are deliberately fail-closed at the CLI boundary.
-        raise SystemExit("synapse catalog preflight cannot load verification roster") from exc
+    roster = _verification_roster(args.roster_root)
     source = _read_canonical_object(args.snapshot / "source.json", "Synapse source record")
     source_commit = source.get("source_commit")
     if not isinstance(source_commit, str):
@@ -320,9 +312,7 @@ def _verification_roster(path: Path) -> VerificationRoster:
     try:
         return load_verification_roster_readonly(path)
     except Exception as exc:
-        raise SystemExit(
-            "Synapse cutover cannot load verification roster read-only"
-        ) from exc
+        raise SystemExit("Synapse cutover cannot load verification roster read-only") from exc
 
 
 def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
@@ -371,16 +361,12 @@ def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
         or verified_control.synapse_state is not SynapseRetirementState.PREPARING
     ):
         raise SystemExit("Synapse preflight requires a signed PREPARING control record")
-    if (
-        len(typed_manifest.machine_ids) != 2
-        or typed_manifest.machine_ids
-        != tuple(sorted(set(typed_manifest.machine_ids)))
+    if len(typed_manifest.machine_ids) != 2 or typed_manifest.machine_ids != tuple(
+        sorted(set(typed_manifest.machine_ids))
     ):
         raise SystemExit("Synapse capability manifest lacks exact two-peer authority")
     if typed_plan.authority_bytes() != rebuilt_plan.authority_bytes():
-        raise SystemExit(
-            "Synapse consumer plan differs from deterministic verified authority"
-        )
+        raise SystemExit("Synapse consumer plan differs from deterministic verified authority")
     required = set(rebuilt_plan.covered_surfaces)
     manifest_sha256 = hashlib.sha256(typed_manifest.signed_bytes()).hexdigest()
     return {
@@ -388,9 +374,7 @@ def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
         "dry_run": True,
         "preflight_passed": True,
         "capability_manifest_sha256": manifest_sha256,
-        "consumer_plan_sha256": hashlib.sha256(
-            typed_plan.authority_bytes()
-        ).hexdigest(),
+        "consumer_plan_sha256": hashlib.sha256(typed_plan.authority_bytes()).hexdigest(),
         "peer_count": 2,
         "covered_surfaces": sorted(required),
     }
@@ -430,9 +414,7 @@ def _synapse_verify(args: argparse.Namespace) -> dict[str, object]:
         typed_receipt.control_oid != verified_control.previous_control_oid
         or receipt_sha256 != verified_control.independence_receipt_sha256
     ):
-        raise SystemExit(
-            "Synapse VERIFIED control does not commit the predecessor-bound receipt"
-        )
+        raise SystemExit("Synapse VERIFIED control does not commit the predecessor-bound receipt")
     try:
         verify_independence_receipt(
             typed_receipt,
@@ -467,9 +449,7 @@ def _retirement_audit(args: argparse.Namespace) -> dict[str, object]:
     )
     manifest_sha256 = hashlib.sha256(manifest.signed_bytes()).hexdigest()
     if manifest_sha256 != authority["synapse_manifest_sha256"]:
-        raise SystemExit(
-            "retirement manifest changed after verification"
-        )
+        raise SystemExit("retirement manifest changed after verification")
     try:
         roster = _verification_roster(args.roster_root) if args.archive_root else None
         receipt = build_independence_receipt(
@@ -481,9 +461,7 @@ def _retirement_audit(args: argparse.Namespace) -> dict[str, object]:
     except InventoryError as exc:
         raise SystemExit(f"Synapse retirement negative scan failed: {exc}") from exc
     if receipt.manifest_sha256 != authority["synapse_manifest_sha256"]:
-        raise SystemExit(
-            "retirement manifest changed during negative scan"
-        )
+        raise SystemExit("retirement manifest changed during negative scan")
     return {
         "command": "retirement-audit",
         "dry_run": True,
@@ -508,9 +486,7 @@ def _retirement_audit(args: argparse.Namespace) -> dict[str, object]:
         ],
         "synapse_manifest_sha256": authority["synapse_manifest_sha256"],
         "consumer_inventory_sha256": authority["consumer_inventory_sha256"],
-        "independence_receipt_sha256": authority[
-            "independence_receipt_sha256"
-        ],
+        "independence_receipt_sha256": authority["independence_receipt_sha256"],
     }
 
 
@@ -561,9 +537,7 @@ def _retirement_cleanup(args: argparse.Namespace) -> dict[str, object]:
     expected = {
         "control_record": args.control_record_sha256,
         "retirement_manifest": args.retirement_manifest_sha256,
-        "consumer_replacement_receipt": (
-            args.consumer_replacement_receipt_sha256
-        ),
+        "consumer_replacement_receipt": (args.consumer_replacement_receipt_sha256),
         "bounded_data_receipt": args.bounded_data_receipt_sha256,
         "independence_receipt": args.independence_receipt_sha256,
     }
@@ -610,8 +584,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.apply:
             if args.manifest_sha256 is None:
                 raise SystemExit(
-                    f"{args.command} --apply requires exact manifest SHA-256 "
-                    "via --manifest-sha256"
+                    f"{args.command} --apply requires exact manifest SHA-256 via --manifest-sha256"
                 )
             assert_safe_attempt_root(
                 root,
