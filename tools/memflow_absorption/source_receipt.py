@@ -75,7 +75,8 @@ def sign_source_receipt(receipt: SourceReceiptV2, signer: OperationalSigner) -> 
     env = signer.sign(domain=DOMAIN, payload=receipt.signed_bytes(), key_id=receipt.key_id)
     return SourceReceiptV2(**{**receipt.__dict__, "signature": env})
 
-def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoster, frozen_at: str | None = None) -> None:
+def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoster, frozen_at: str | None = None,
+                          window_start: str | None = None, window_end: str | None = None) -> None:
     if receipt.schema != "memo.cutover_source_receipt.v2" or receipt.signature is None:
         raise SignatureError("source receipt is unsigned or has invalid schema")
     key = roster.key(receipt.key_id)
@@ -84,15 +85,29 @@ def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoste
     if len(receipt.raw_event_set_sha256) != 64 or any(c not in "0123456789abcdef" for c in receipt.raw_event_set_sha256):
         raise SignatureError("invalid raw event digest")
     start, end = _ts(receipt.window_start), _ts(receipt.window_end)
-    if end < start or _ts(receipt.collected_at) > _ts(receipt.issued_at):
+    if window_start is not None and start != _ts(window_start):
+        raise SignatureError("source receipt window start mismatch")
+    if window_end is not None and end != _ts(window_end):
+        raise SignatureError("source receipt window end mismatch")
+    issued = _ts(receipt.issued_at)
+    if end < start or _ts(receipt.collected_at) > issued or end > issued:
         raise SignatureError("invalid source receipt time window")
     if frozen_at is not None and _ts(receipt.collected_at) > _ts(frozen_at):
         raise SignatureError("source receipt is newer than frozen_at")
-    previous = None
+    if not receipt.hourly_buckets:
+        raise SignatureError("hourly buckets are required")
+    previous_end = start
     for bucket in receipt.hourly_buckets:
-        if bucket.count < 0 or len(bucket.digest) != 64 or (previous is not None and _ts(bucket.start) <= previous):
+        if isinstance(bucket.count, bool) or not isinstance(bucket.count, int) or bucket.count < 0:
+            raise SignatureError("hourly bucket count is invalid")
+        if len(bucket.digest) != 64 or any(c not in "0123456789abcdef" for c in bucket.digest):
+            raise SignatureError("hourly bucket digest is invalid")
+        bs, be = _ts(bucket.start), _ts(bucket.end)
+        if bs != previous_end or be <= bs or (be - bs).total_seconds() != 3600 or be > end:
             raise SignatureError("hourly buckets are malformed or unordered")
-        previous = _ts(bucket.start)
+        previous_end = be
+    if previous_end != end:
+        raise SignatureError("hourly buckets do not cover receipt window")
     if not receipt.cursor or not receipt.extraction_complete:
         raise SignatureError("source extraction is incomplete")
     OperationalVerifier().verify(domain=DOMAIN, payload=receipt.signed_bytes(), envelope=receipt.signature, roster=roster)
