@@ -14,16 +14,31 @@
   exclusions, and in-tree fixture SHA-256 values.
 - Strengthened route validation to reject overlapping closed predicates and
   added optional route fixture paths for source-byte binding.
-- Added dry-run-only `synapse-catalog` and `synapse-manifest` CLI inspection.
-  They emit the catalog/manifest digest, operation/disposition counts, source
-  commit, blocker list, and two proof identifiers; neither writes production
-  state.
+- Added dry-run-only `synapse-catalog` inspection and a
+  `synapse-manifest` catalog preflight. The preflight is explicitly not a
+  readiness claim: it verifies canonical, signed, roster-authorized two-Mac
+  usage proofs and canonical signed exclusion receipts, then reports only the
+  catalog digest and verified receipt identifiers. Neither command writes
+  production state.
+
+## Correction round 1
+
+- `build_synapse_retirement_manifest` now always requires the complete
+  canonical source set and a non-empty discovered operation catalog. A snapshot
+  can no longer produce a signed v2 manifest with `operations=()`.
+- Added reusable signature verification for individual usage proofs and audit
+  exclusion receipts. The CLI loads a verification roster explicitly via
+  `--roster-root`, rejects arbitrary/non-canonical JSON, invalid signatures,
+  and duplicate device proofs.
+- Renamed the `synapse-manifest` output to `synapse-catalog-preflight` and
+  removed fabricated manifest digest, blocker, disposition, and readiness
+  claims. Full readiness authority remains the Python manifest builder.
 
 ## Verification
 
 ```text
 uv run --no-sync pytest tests/tools/test_synapse_catalog.py tests/tools/test_absorption_inventory.py tests/tools/test_absorption_manifest.py -q
-21 passed
+23 passed
 
 uv run --no-sync ruff check tools/memflow_absorption tests/tools
 All checks passed!

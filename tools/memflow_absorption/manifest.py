@@ -137,6 +137,59 @@ def sign_usage_proof(
     return replace(proof, signature=envelope.signature)
 
 
+def verify_usage_proof(
+    proof: UsageProof,
+    *,
+    roster: VerificationRoster,
+) -> None:
+    """Verify one canonical two-Mac usage receipt independently of a manifest."""
+
+    try:
+        valid = (
+            proof.schema == "memo.cutover_usage_proof.v1"
+            and bool(proof.device_id)
+            and bool(proof.key_id)
+            and proof.roster_version == roster.version
+            and bool(proof.query_version)
+            and _require_oid(proof.snapshot_commit_oid, "usage proof source commit")
+            and _require_digest(proof.raw_event_set_sha256, "usage proof event digest")
+            and _require_digest(proof.exclusion_set_sha256, "usage proof exclusion digest")
+            and _timestamp(proof.window_started_at, "usage proof window start")
+            <= _timestamp(proof.window_ended_at, "usage proof window end")
+            <= _timestamp(proof.issued_at, "usage proof issuance")
+            <= _timestamp(proof.window_ended_at, "usage proof window end") + timedelta(hours=24)
+            and roster.key(proof.key_id).device_id == proof.device_id
+        )
+    except (ManifestError, SignatureError):
+        valid = False
+    if not valid:
+        raise ManifestError("usage proof provenance mismatch")
+    try:
+        OperationalVerifier().verify(
+            domain=USAGE_PROOF_DOMAIN,
+            payload=proof.signed_bytes(),
+            envelope=proof.signature_envelope(),
+            roster=roster,
+        )
+    except SignatureError as exc:
+        raise ManifestError("usage proof signature is invalid") from exc
+
+
+def verify_audit_exclusions(
+    exclusions: AuditExclusions,
+    *,
+    roster: VerificationRoster,
+) -> None:
+    """Verify a standalone canonical audit-exclusion receipt."""
+
+    _verify_exclusions(
+        exclusions,
+        roster=roster,
+        window_started_at=exclusions.window_started_at,
+        window_ended_at=exclusions.window_ended_at,
+    )
+
+
 def _verify_exclusions(
     exclusions: AuditExclusions,
     *,
@@ -184,6 +237,26 @@ def _usage_proof(value: Mapping[str, Any]) -> UsageProof:
         )
     except (KeyError, TypeError) as exc:
         raise ManifestError("usage proof schema is incomplete") from exc
+
+
+def audit_exclusions_from_dict(value: Mapping[str, Any]) -> AuditExclusions:
+    """Decode a canonical audit-exclusion object without accepting JSON lists as tuples."""
+
+    try:
+        return AuditExclusions(
+            schema=value["schema"],
+            event_ids=_strings(value["event_ids"], "audit exclusion event ids"),
+            attempt_ids=_strings(value["attempt_ids"], "audit exclusion attempt ids"),
+            window_started_at=value["window_started_at"],
+            window_ended_at=value["window_ended_at"],
+            signer_device_id=value["signer_device_id"],
+            signer_key_id=value["signer_key_id"],
+            roster_version=value["roster_version"],
+            issued_at=value["issued_at"],
+            signature=value["signature"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise ManifestError("audit exclusion schema is incomplete") from exc
 
 
 def _route(value: Mapping[str, Any]) -> OperationRoute:
@@ -408,15 +481,7 @@ def _verify_proofs(
             )
         ):
             raise ManifestError("usage proof provenance mismatch")
-        try:
-            OperationalVerifier().verify(
-                domain=USAGE_PROOF_DOMAIN,
-                payload=proof.signed_bytes(),
-                envelope=proof.signature_envelope(),
-                roster=roster,
-            )
-        except SignatureError as exc:
-            raise ManifestError("usage proof signature is invalid") from exc
+        verify_usage_proof(proof, roster=roster)
 
 
 def build_capability_manifest(
@@ -874,9 +939,12 @@ __all__ = [
     "CAPABILITY_MANIFEST_DOMAIN",
     "USAGE_PROOF_DOMAIN",
     "ManifestError",
+    "audit_exclusions_from_dict",
     "build_capability_manifest",
     "build_synapse_capability_manifest",
     "sign_audit_exclusions",
     "sign_usage_proof",
+    "verify_audit_exclusions",
     "verify_capability_manifest",
+    "verify_usage_proof",
 ]

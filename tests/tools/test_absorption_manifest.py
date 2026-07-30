@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ from memo.operational_key_store import (
 )
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner, OperationalVerifier
+from tools.memflow_absorption.__main__ import _verified_receipt_ids
 from tools.memflow_absorption.manifest import (
     CAPABILITY_MANIFEST_DOMAIN,
     ManifestError,
@@ -535,3 +537,30 @@ def test_overlapping_route_predicates_block_freeze(tmp_path: Path) -> None:
     )
 
     assert "continuity:operation-map" in manifest.blockers
+
+
+def test_catalog_preflight_requires_canonical_signed_two_mac_receipts(tmp_path: Path) -> None:
+    keys, roster = _authority(tmp_path / "authority")
+    _memo, _memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
+    usage_record = json.loads((usage / "usage.json").read_text(encoding="utf-8"))
+    proof_paths = []
+    for index, proof in enumerate(usage_record["proofs"]):
+        path = tmp_path / f"proof-{index}.json"
+        _write_json(path, proof)
+        proof_paths.append(path)
+    exclusion_path = tmp_path / "exclusions.json"
+    _write_json(exclusion_path, exclusions.to_dict())
+    args = SimpleNamespace(usage_proof=proof_paths, exclusion=[exclusion_path])
+
+    proof_ids, exclusion_ids = _verified_receipt_ids(args, roster)
+
+    assert proof_ids == sorted(proof_ids)
+    assert {proof_id.split(":")[0] for proof_id in proof_ids} == {"mac-a", "mac-b"}
+    assert exclusion_ids == [f"mac-a:{exclusions.signer_key_id}"]
+
+    tampered = json.loads(proof_paths[0].read_text(encoding="utf-8"))
+    tampered["signature"] = "invalid"
+    _write_json(proof_paths[0], tampered)
+    with pytest.raises(SystemExit, match="receipt validation"):
+        _verified_receipt_ids(args, roster)

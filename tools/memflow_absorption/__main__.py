@@ -7,7 +7,17 @@ import hashlib
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, cast
 
+from memo.operational_event import canonical_json_bytes
+from memo.operational_roster import VerificationRoster
+from tools.memflow_absorption.manifest import (
+    ManifestError,
+    _usage_proof,
+    audit_exclusions_from_dict,
+    verify_audit_exclusions,
+    verify_usage_proof,
+)
 from tools.memflow_absorption.safety import (
     assert_safe_attempt_root,
     resolve_under_attempt,
@@ -43,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
     synapse_manifest.add_argument("--snapshot", type=Path, required=True)
     synapse_manifest.add_argument("--usage-proof", type=Path, action="append", default=[])
     synapse_manifest.add_argument("--exclusion", type=Path, action="append", default=[])
+    synapse_manifest.add_argument("--roster-root", type=Path, required=True)
     synapse_manifest.add_argument("--apply", action="store_true")
     return parser
 
@@ -93,39 +104,66 @@ def _synapse_catalog(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _read_canonical_object(path: Path, description: str) -> dict[str, Any]:
+    try:
+        encoded = path.read_bytes()
+        value = json.loads(encoded)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"{description} must be readable canonical JSON") from exc
+    if not isinstance(value, dict) or canonical_json_bytes(value) != encoded:
+        raise SystemExit(f"{description} must be canonical JSON object")
+    return cast(dict[str, Any], value)
+
+
+def _verified_receipt_ids(args: argparse.Namespace, roster: VerificationRoster) -> tuple[list[str], list[str]]:
+    try:
+        proofs = [
+            _usage_proof(_read_canonical_object(path, "usage proof"))
+            for path in args.usage_proof
+        ]
+        exclusions = [
+            audit_exclusions_from_dict(
+                _read_canonical_object(path, "audit exclusion receipt")
+            )
+            for path in args.exclusion
+        ]
+        for proof in proofs:
+            verify_usage_proof(proof, roster=roster)
+        for receipt in exclusions:
+            verify_audit_exclusions(receipt, roster=roster)
+    except (ManifestError, TypeError) as exc:
+        raise SystemExit(f"synapse catalog preflight receipt validation failed: {exc}") from exc
+    if len(proofs) != 2 or len({proof.device_id for proof in proofs}) != 2:
+        raise SystemExit("synapse catalog preflight requires two distinct signed usage proofs")
+    return (
+        sorted(f"{proof.device_id}:{proof.key_id}" for proof in proofs),
+        sorted(f"{receipt.signer_device_id}:{receipt.signer_key_id}" for receipt in exclusions),
+    )
+
+
 def _synapse_manifest(args: argparse.Namespace) -> dict[str, object]:
     root = assert_safe_attempt_root(args.attempt_root, args.attempt_id)
     rows = discover_synapse_operations(args.snapshot)
     try:
-        source = json.loads((args.snapshot / "source.json").read_bytes())
-        proof_ids = [
-            f"{record['device_id']}:{record['key_id']}"
-            for path in args.usage_proof
-            if isinstance((record := json.loads(path.read_bytes())), dict)
-        ]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise SystemExit("synapse-manifest inputs must be readable canonical JSON") from exc
-    if len(proof_ids) != 2 or len(set(proof_ids)) != 2:
-        raise SystemExit("synapse-manifest requires exactly two distinct usage proofs")
+        roster = VerificationRoster.load(args.roster_root)
+    except Exception as exc:  # roster failures are deliberately fail-closed at the CLI boundary.
+        raise SystemExit("synapse catalog preflight cannot load verification roster") from exc
+    proof_ids, exclusion_ids = _verified_receipt_ids(args, roster)
     if args.apply:
-        raise SystemExit("synapse-manifest apply requires signed authority; use the Python API")
-    dispositions = {"admit": 0, "excluded": 0}
-    for row in rows:
-        dispositions["excluded" if row.exclusion_reason else "admit"] += 1
+        raise SystemExit("synapse catalog preflight is inspection-only and never writes")
     encoded = json.dumps(
         [row.to_dict() for row in rows], sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return {
-        "command": "synapse-manifest",
+        "command": "synapse-catalog-preflight",
         "dry_run": True,
         "attempt_root": str(root),
-        "manifest_digest": hashlib.sha256(encoded).hexdigest(),
+        "catalog_sha256": hashlib.sha256(encoded).hexdigest(),
         "operation_count": len(rows),
-        "dispositions": dispositions,
-        "blockers": [],
-        "source_commit": source.get("source_commit"),
-        "usage_proof_ids": sorted(proof_ids),
-        "exclusion_count": len(args.exclusion),
+        "excluded_operation_count": sum(row.exclusion_reason is not None for row in rows),
+        "verified_usage_proof_ids": proof_ids,
+        "verified_exclusion_receipt_ids": exclusion_ids,
+        "readiness_claim": False,
     }
 
 

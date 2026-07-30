@@ -236,19 +236,12 @@ def build_synapse_retirement_manifest(
     ):
         raise InventoryError("Synapse source commit is invalid")
 
-    operations: tuple[SynapseOperation, ...] = ()
-    catalog_sources = (
-        root / "src/synapse/mcp_catalog.py",
-        root / "src/synapse/cli/parser.py",
-        *(root / f"src/synapse/{name}" for name in (
-            "runtime.py", "watcher.py", "morning_digest.py", "whatsapp_live.py", "vault_archive.py"
-        )),
-    )
-    if any(path.exists() for path in catalog_sources):
-        try:
-            operations = discover_synapse_operations(root)
-        except SynapseCatalogError as exc:
-            raise InventoryError(str(exc)) from exc
+    try:
+        operations: tuple[SynapseOperation, ...] = discover_synapse_operations(root)
+    except SynapseCatalogError as exc:
+        raise InventoryError(str(exc)) from exc
+    if not operations:
+        raise InventoryError("Synapse canonical operation catalog is empty")
 
     files: set[str] = set()
     symbols: set[str] = set()

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from memo.operational_event import canonical_json_bytes
 from memo.operational_key_store import (
     AuthorityPinStore,
     DeviceKeyStore,
@@ -40,6 +41,30 @@ def _authority(tmp_path: Path) -> tuple[DeviceKeyStore, VerificationRoster]:
         ),
     )
     return keys, roster
+
+
+def _write_canonical_synapse_catalog(snapshot: Path) -> None:
+    package = snapshot / "src" / "synapse"
+    (package / "cli").mkdir(parents=True, exist_ok=True)
+    (snapshot / "source.json").write_bytes(
+        canonical_json_bytes({"source_commit": "a" * 40})
+    )
+    (package / "mcp_catalog.py").write_text(
+        "CANONICAL_MCP_TOOLS = [McpToolManifest(tool_id='synapse.federate.query', mcp_name='synapse_federate_query')]\n",
+        encoding="utf-8",
+    )
+    (package / "cli" / "parser.py").write_text(
+        "def build_parser():\n    sub.add_parser('query')\n",
+        encoding="utf-8",
+    )
+    for name, functions in {
+        "runtime.py": "def runtime_loop(): pass\n",
+        "watcher.py": "def _emit(): pass\n",
+        "morning_digest.py": "def run_morning_digest(): pass\n",
+        "whatsapp_live.py": "def last_messages(): pass\ndef last_messages_multi(): pass\n",
+        "vault_archive.py": "def move_to_archive(): pass\n",
+    }.items():
+        (package / name).write_text(functions, encoding="utf-8")
 
 
 def test_inventory_combines_source_process_and_launchd_without_following_symlinks(
@@ -147,10 +172,7 @@ def test_synapse_retirement_manifest_enumerates_memflow_surface(tmp_path: Path) 
     snapshot = tmp_path / "synapse"
     (snapshot / "src" / "synapse").mkdir(parents=True)
     (snapshot / "tests" / "goldens").mkdir(parents=True)
-    (snapshot / "source.json").write_text(
-        '{"source_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
-        encoding="utf-8",
-    )
+    _write_canonical_synapse_catalog(snapshot)
     (snapshot / "src" / "synapse" / "memflow_backend.py").write_text(
         "MEMFLOW_PROVIDER = 'legacy'\nclass MemflowBackend:\n    pass\n",
         encoding="utf-8",
@@ -173,15 +195,13 @@ def test_synapse_retirement_manifest_enumerates_memflow_surface(tmp_path: Path) 
     assert "tests/test_memflow.py" in manifest.tests
     assert "tests/goldens/memflow.json" in manifest.goldens
     assert len(manifest.active_reference_sha256) == 64
+    assert manifest.operations
 
 
 def test_synapse_retirement_manifest_can_be_signed(tmp_path: Path) -> None:
     snapshot = tmp_path / "synapse"
     snapshot.mkdir()
-    (snapshot / "source.json").write_text(
-        '{"source_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
-        encoding="utf-8",
-    )
+    _write_canonical_synapse_catalog(snapshot)
     (snapshot / "memflow.py").write_text("MEMFLOW = True\n", encoding="utf-8")
     keys, roster = _authority(tmp_path / "authority")
 
@@ -199,3 +219,14 @@ def test_synapse_retirement_manifest_can_be_signed(tmp_path: Path) -> None:
             replace(manifest, files=("other.py",)),
             roster=roster,
         )
+
+
+def test_synapse_retirement_manifest_rejects_missing_canonical_catalog(tmp_path: Path) -> None:
+    snapshot = tmp_path / "synapse"
+    snapshot.mkdir()
+    (snapshot / "source.json").write_bytes(
+        canonical_json_bytes({"source_commit": "a" * 40})
+    )
+
+    with pytest.raises(InventoryError, match="canonical MCP catalog"):
+        build_synapse_retirement_manifest(snapshot)
