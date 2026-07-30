@@ -6,27 +6,29 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 10:08 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 10:16 America/Argentina/Cordoba
 
 ### En curso
 
 - [x] Revisión independiente de especificación, APIs y tests de Plan 01
-  Tareas 2–6 — `T2 PASS`, `T3 FAIL`, `T4 FAIL`, `T5 PASS`, `T6 FAIL`.
+  Tareas 2–6 — `T2 PASS`, `T3 PASS`, `T4 corrección en re-review`,
+  `T5 PASS`, `T6 PASS`.
 - [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
-  nuevo — agente `review_plan01_security`.
+  nuevo — agente `constant_code_reviewer`; auditando `P01-T04`.
 - [ ] Revisión independiente cross-repo de Plan 03 Tareas 1–4 — agente
-  `review_plan03`; preliminar: T1/T2/T3 `FAIL`, T4 `HIGH`.
-- [ ] Preparar TDD de Plan 01 Tarea 7: selector fail-closed v1/v2, fresh
-  install v2 y activation stamp firmado — agente principal.
+  `plan03_readiness_audit`; verificando estado real de T3/T4 antes de la
+  próxima asignación.
+- [ ] Cerrar el prerrequisito productivo de Plan 01 Tarea 7: proveedor
+  Secure Enclave P-256, compatibilidad Ed25519 y lifecycle completo — agente
+  `secure_enclave_provider`.
 - [x] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
   multi-origen puede divergir del rebuild por orden global. Agregar regresión
   `newest(a) -> older(b)` y re-reducción transaccional determinista. Revisión
   continua final: `PASS`.
-- [x] Corrección técnica `P01-T02 HIGH`: TOCTOU entre verificación del ledger v1 y la
-  relectura usada por manifest/anchor. Capturar una sola instantánea
-  descriptor-relative con `O_NOFOLLOW` y derivar de ella bytes, eventos, heads
-  y manifest. Re-review de `0b2e3c9d`: `FAIL MEDIUM` por carrera al crear root;
-  follow-up técnico listo con `79 passed`; nueva re-revisión pendiente.
+- [x] Corrección técnica `P01-T02 HIGH`: TOCTOU entre verificación del ledger
+  v1 y la relectura usada por manifest/anchor. Snapshot descriptor-relative
+  único, locks estables antes/durante creación y devices vacíos ligados.
+  Revisión final: `PASS`, `80 passed`.
 - [ ] Resolver `P01-T07 BLOCKER`: `MacOSKeychainProvider` es un placeholder
   fail-closed; el fresh install v2 productivo no puede crear la clave,
   roster y epoch-0. Implementar un provider productivo no exportable antes de
@@ -34,13 +36,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Re-revisar `P01-T04 MEDIUM`: publicación reforzada con parent FD
   retenido, rename exclusivo descriptor-relative, verificación de identidad y
   recovery post-rename/pre-fsync. Corrección técnica lista; PASS pendiente.
-- [x] Corrección técnica `P01-T06 HIGH`: adapters públicos propagan timestamp
-  `None` y reutilizar el resultado canónico para retry idempotente después de
-  crash. Re-review de `3fc4bf88`: `FAIL MEDIUM` porque HEAD/summary podían
-  cambiar el resto del request; follow-up de replay canónico listo.
-- [x] Corrección técnica `P01-T06 MEDIUM`: preservar get por prefijo y
-  artifacts locales en reads canónicos locales, sin federarlos. Focused
-  `118 passed`; Ruff y mypy limpios; re-revisión pendiente.
+- [x] Corrección técnica `P01-T06 HIGH/MEDIUM`: replay del evento/resultado
+  canónico por idempotency key, validación de identidad explícita y derivación
+  de key default bajo el lock de sesión. Revisión final: `PASS`, `141 passed`.
 - [ ] Completar el gate diferido `P01-T03 MEDIUM`: stale/missing epoch por
   MCP/CLI/daemon/Memory/direct store queda bloqueante de T7.
 - [ ] Corregir `P03-T01`: manifest fail-closed ante symlinks y receipts stale;
@@ -58,9 +56,10 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   indispensables; eliminar capacidades sin uso junto con Memflow.
 - [x] Estrategia fijada: revisores y subagentes paralelos con ownership no
   superpuesto.
-- [x] P03-T03 drenaje observable entregado en Memflow `a3a6070912`.
+- [x] P03-T03 drenaje observable inicial entregado en Memflow `a3a6070912`;
+  el control Git-autoritativo exacto permanece abierto.
 - [x] Evidencia P03-T03 registrada en Memo `e4de56db`.
-- [x] Memflow productivo verificado sin mutaciones: PID `2046`, binario y
+- [x] Memflow productivo verificado sin mutaciones: PID `1961`, binario y
   listener `127.0.0.1:18766` sin cambios.
 - [x] Gate fresco de Plan 01 foundation:
   `187 passed in 24.08s`.
@@ -105,7 +104,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Cerrar el provider productivo de claves y obtener revisión de seguridad
   antes de escribir cualquier activation stamp.
 - [ ] Obtener re-revisión PASS de `P01-T04 MEDIUM`.
-- [ ] Cerrar ambos hallazgos `P01-T06` y obtener re-revisión PASS.
+- [x] Cerrar ambos hallazgos `P01-T06` y obtener re-revisión PASS.
 - [ ] Asignar correcciones BLOCKER/HIGH/MEDIUM a agentes con archivos
   separados.
 - [ ] Obtener PASS de re-revisión para cada tarea corregida.
