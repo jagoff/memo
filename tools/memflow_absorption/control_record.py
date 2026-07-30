@@ -960,13 +960,19 @@ def verify_control_record(
     if not record.attempt_id:
         raise ControlRecordError("control record attempt id is missing")
     try:
+        key = roster.key(record.signer_key_id)
+        if (
+            record.roster_version != roster.version
+            or key.device_id != record.signer_device_id
+        ):
+            raise SignatureError("control record signer does not match roster authority")
         OperationalVerifier().verify(
             domain=CONTROL_RECORD_DOMAIN,
             payload=record.canonical_payload,
             envelope=record.signature_envelope(),
             roster=roster,
         )
-    except SignatureError as exc:
+    except (KeyError, SignatureError) as exc:
         raise ControlRecordError("control record signature is invalid") from exc
     _validate_synapse_fields(record)
     return VerifiedControlRecord(
