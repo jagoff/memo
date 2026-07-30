@@ -26,3 +26,12 @@
   Only temporary roots, in-memory keys, and sanitized fixtures were used. No
   live state changed and Memflow remains active. Independent review is still
   required before acceptance or any production evidence capture.
+- Task 3: observable cross-process drain, strict Git/lock probes, final
+  fsync-and-recheck, autonomous-loop admission, temporary operator CLI, and
+  pre-listener/pre-thread startup refusal delivered in Memflow at
+  `a3a6070912`. The required focused matrix is `224 passed`; full Memflow is
+  `1906 passed` with one external deprecation warning; Ruff, mypy, installer
+  syntax, and diff checks are clean. Signed ACTIVE rollback recovery and
+  explicit-environment isolation are covered. No production marker, service,
+  configuration, or state changed; the live job remains PID `2046` on
+  `127.0.0.1:18766`. Independent review is still required before acceptance.

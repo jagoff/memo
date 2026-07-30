@@ -228,7 +228,7 @@ Gate del plan:
 
 ## Plan 03 — Readiness para corte
 
-Estado: **0/6 aceptadas; Tareas 1, 2 y 4 implementadas y verdes, pendientes de
+Estado: **0/6 aceptadas; Tareas 1–4 implementadas y verdes, pendientes de
 revisión independiente**.
 
 - [ ] Tarea 1 — Snapshot seguro, capability manifest e inventario.
@@ -239,8 +239,10 @@ revisión independiente**.
   Implementación técnica: `22299647` + `2c643863`; focused `34 passed`;
   paridad `211 passed`; suite completa `1888 passed`. Falta revisión
   independiente y `PASS`.
-- [ ] Tarea 3 — Drain observable y startup refusal. Implementación en curso
-  sobre Memflow `2c643863`.
+- [ ] Tarea 3 — Drain observable y startup refusal. Implementación técnica:
+  `a3a6070912`; matriz requerida `224 passed`; suite completa `1906 passed`;
+  Ruff, mypy, instalador y diff limpios. Falta revisión independiente y
+  `PASS`.
 - [ ] Tarea 4 — Aislar Synapse del runtime Memflow. Implementación técnica:
   `933445fd`; focused `18 passed`; suite completa `2326 passed, 5 skipped`;
   build real e idempotente verificado. Falta revisión independiente y `PASS`.
