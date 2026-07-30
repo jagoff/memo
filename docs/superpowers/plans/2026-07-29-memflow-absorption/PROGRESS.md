@@ -10,7 +10,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tareas 2 y 3
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tareas 2, 3 y 4
   implementadas y verdes, pendientes de revisión independiente**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
@@ -150,11 +150,18 @@ Estado: **1/7 aceptadas**.
 ### Tarea 4 — Migración genesis v1 determinista y gate de paridad
 
 - [x] Generar brief y registrar BASE `42f458c0`.
-- [ ] RED de corrupción, source drift, determinismo e idempotencia.
-- [ ] Implementar plan/apply/verify sin tocar v1.
-- [ ] Probar paridad exacta y ausencia de activation stamp prematuro.
-- [ ] Focused pytest, ruff y mypy.
-- [ ] Commit, revisión independiente y `PASS`.
+- [x] RED real: `ModuleNotFoundError` para `memo.operation_migration`.
+- [x] RED de corrupción, source drift, determinismo e idempotencia.
+- [x] Implementar plan/apply/verify sin tocar v1.
+- [x] Probar paridad exacta, reapertura con plan exacto y ausencia de
+  activation stamp prematuro.
+- [x] Focused `10 passed`; matriz requerida `100 passed`; acumulado `276
+  passed`.
+- [x] Ruff y mypy limpios; frozen-v1 sin diff.
+- [x] Non-slow: `6043 passed, 18 skipped, 7 deselected`.
+- [x] Commit técnico: `78764d74`.
+- [x] Reporte de implementación generado.
+- [ ] Revisión independiente y `PASS`.
 
 ### Tarea 5 — Outbox durable exactly-once
 
@@ -282,8 +289,8 @@ paso todavía no comenzó, no que esté aprobado.
 |---|---|---|---|---|---|---|---|---|
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
 | P01-T02 | Anchors, append y bundles | implementadores + revisores especializados | `8e85662b`; hardening `0b1c859d`; ronda 2 `123cd8f6` | inicial + hardening `36 failed, 76 passed`; ronda 2 pendiente | contracts `186`; full `5995` | `5a80c74d` + `815307ac` | **FAIL** ronda 2: 3H/2M | — |
-| P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
-| P01-T04 | Migración genesis y paridad | Codex | `42f458c0` | en preparación | — | — | pendiente | — |
+| P01-T03 | Vistas SQLite e idempotencia | Codex | `c9127f39` | import RED | focused `22`; acumulado `256`; full `6032` | `daf3bf36` | pendiente | — |
+| P01-T04 | Migración genesis y paridad | Codex | `42f458c0` | import RED | focused `10`; matriz `100`; acumulado `276`; full `6043` | `78764d74` | pendiente | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
 | P01-T06 | Sesiones canónicas | — | — | — | — | — | — | — |
 | P01-T07 | Activación facade v2 | — | — | — | — | — | — | — |

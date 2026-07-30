@@ -2,9 +2,10 @@
 
 BASE: `42f458c0`
 
-Status: in progress. v1 remains the production authority, v2 remains dormant,
-and this task may write only to an isolated prepared generation. Task 2 and
-Task 3 still require independent acceptance.
+Status: implementation delivered in `78764d74` and all gates are green;
+independent acceptance is still required. v1 remains the production authority,
+v2 remains dormant, and this task writes only to an isolated prepared
+generation. Tasks 2 and 3 also require independent acceptance.
 
 ## Owned paths
 
@@ -12,7 +13,9 @@ Production:
 
 - create `src/memo/operation_migration.py`
 - modify `src/memo/operation_ledger_v2.py` only to admit a deterministic,
-  migration-authorized event ID
+  migration-authorized event ID and verified cross-origin v1 source proofs
+- modify `src/memo/operational_signing.py` only to admit the exclusive
+  migration-attestor prepared-stamp signature domain
 - modify `src/memo/definitive.py`
 
 Tests:
