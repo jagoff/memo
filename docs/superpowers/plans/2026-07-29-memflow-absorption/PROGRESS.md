@@ -58,6 +58,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Añadir borrado seguro de sesiones en Memo (`19109499`) y conectarlo al
   dashboard Synapse con backend Memo (`70525d5`); Memo `82` tests y Synapse
   focused `52` tests verdes.
+- [x] Añadir señales operacionales Memo-native (`8aa8a992`, `ca8f29e3`):
+  journal durable, replay idempotente, filtro por epoch y rechazo fail-closed
+  sin `CommitContext`; tests adversariales `2 passed`.
 - [x] Corregir `P03-T02/T03`: cubrir todos los writers CLI/auxiliares y
   autoridad descriptor-relative. Auditoría confirmó writers sin fence en
   chat delete, dream, homeostasis, autopilot, kernel, user_signal, lookup,
