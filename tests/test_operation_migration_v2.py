@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
@@ -646,45 +644,40 @@ def test_prepared_generation_is_fsynced_before_publish_and_retry_recovers(
     authority = _authority(tmp_path / "authority")
     plan = plan_v1_migration(source, device_id=_LOCAL)
     real_fsync = operation_migration.os.fsync
-    real_rename = operation_migration.os.rename
-    real_open_secure_directory = operation_migration.open_secure_directory
-    opened: dict[int, Path] = {}
-    fsynced: list[Path] = []
-
-    @contextmanager
-    def tracked_open_secure_directory(path: Path) -> Iterator[object]:
-        with real_open_secure_directory(path) as directory:
-            opened[directory.descriptor] = Path(path)
-            yield directory
+    real_publish = operation_migration._renameat_exclusive
+    fsynced: set[tuple[int, int]] = set()
 
     def tracked_fsync(descriptor: int) -> None:
-        path = opened.get(descriptor)
-        if path is not None:
-            fsynced.append(path)
+        observed = operation_migration.os.fstat(descriptor)
+        fsynced.add((observed.st_dev, observed.st_ino))
         real_fsync(descriptor)
 
     def crash_before_publish(
-        source_path: object,
-        target_path: object,
-        *args: object,
-        **kwargs: object,
+        parent_descriptor: int,
+        source_name: str,
+        target_name: str,
     ) -> None:
-        if args or kwargs:
-            real_rename(source_path, target_path, *args, **kwargs)
-            return
-        staging = Path(source_path)
-        assert staging in fsynced
-        assert (staging / "migration-v1.json").is_file()
-        assert not Path(target_path).exists()
+        observed = operation_migration.os.stat(
+            source_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        assert (observed.st_dev, observed.st_ino) in fsynced
+        assert next(tmp_path.glob(".v2.staging-*/migration-v1.json")).is_file()
+        with pytest.raises(FileNotFoundError):
+            operation_migration.os.stat(
+                target_name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
         raise OSError("simulated crash before prepared-generation publish")
 
+    monkeypatch.setattr(operation_migration.os, "fsync", tracked_fsync)
     monkeypatch.setattr(
         operation_migration,
-        "open_secure_directory",
-        tracked_open_secure_directory,
+        "_renameat_exclusive",
+        crash_before_publish,
     )
-    monkeypatch.setattr(operation_migration.os, "fsync", tracked_fsync)
-    monkeypatch.setattr(operation_migration.os, "rename", crash_before_publish)
 
     with pytest.raises(OSError, match="simulated crash"):
         apply_v1_migration(plan, target, authority=authority)
@@ -692,11 +685,94 @@ def test_prepared_generation_is_fsynced_before_publish_and_retry_recovers(
     assert not target.exists()
     assert not list(tmp_path.glob(".v2.staging-*"))
 
-    monkeypatch.setattr(operation_migration.os, "rename", real_rename)
+    monkeypatch.setattr(operation_migration, "_renameat_exclusive", real_publish)
     report = apply_v1_migration(plan, target, authority=authority)
 
     assert report.parity.equal is True
     assert (target / "migration-v1.json").is_file()
+    assert not (target / "operational-v2-activated.json").exists()
+
+
+def test_retry_recovers_after_crash_between_publish_and_parent_fsync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "v1"
+    target = tmp_path / "v2"
+    _populate_v1(source)
+    authority = _authority(tmp_path / "authority")
+    plan = plan_v1_migration(source, device_id=_LOCAL)
+    failpoint = operation_migration._migration_publish_failpoint
+
+    def crash_after_publish(label: str) -> None:
+        assert label == "after-rename-before-parent-fsync"
+        raise OSError("simulated crash after prepared-generation publish")
+
+    monkeypatch.setattr(
+        operation_migration,
+        "_migration_publish_failpoint",
+        crash_after_publish,
+    )
+
+    with pytest.raises(OSError, match="simulated crash after"):
+        apply_v1_migration(plan, target, authority=authority)
+
+    assert target.is_dir()
+    assert (target / "migration-v1.json").is_file()
+    assert not list(tmp_path.glob(".v2.staging-*"))
+
+    monkeypatch.setattr(
+        operation_migration,
+        "_migration_publish_failpoint",
+        failpoint,
+    )
+    report = apply_v1_migration(plan, target, authority=authority)
+
+    assert report.events_inserted == 0
+    assert report.parity.equal is True
+    assert not (target / "operational-v2-activated.json").exists()
+
+
+def test_publish_rejects_replacement_generation_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "v1"
+    target = tmp_path / "v2"
+    _populate_v1(source)
+    authority = _authority(tmp_path / "authority")
+    plan = plan_v1_migration(source, device_id=_LOCAL)
+    publish = operation_migration._renameat_exclusive
+
+    def replace_after_publish(
+        parent_descriptor: int,
+        source_name: str,
+        target_name: str,
+    ) -> None:
+        publish(parent_descriptor, source_name, target_name)
+        operation_migration.os.rename(
+            target_name,
+            f".{target_name}.replaced",
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=parent_descriptor,
+        )
+        operation_migration.os.mkdir(
+            target_name,
+            mode=0o700,
+            dir_fd=parent_descriptor,
+        )
+
+    monkeypatch.setattr(
+        operation_migration,
+        "_renameat_exclusive",
+        replace_after_publish,
+    )
+
+    with pytest.raises(OSError, match="identity changed"):
+        apply_v1_migration(plan, target, authority=authority)
+
+    assert target.is_dir()
+    assert not (target / "migration-v1.json").exists()
     assert not (target / "operational-v2-activated.json").exists()
 
 

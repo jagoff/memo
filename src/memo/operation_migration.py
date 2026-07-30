@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -59,6 +61,8 @@ _EVENT_TYPES = {
     "conflicts": CONFLICT_OPENED,
     "outcomes": OUTCOME_RECORDED,
 }
+_RENAME_EXCL = 0x00000004
+_RENAME_NOREPLACE = 0x00000001
 
 
 def _failure(
@@ -847,17 +851,109 @@ def _assert_source_unchanged(plan: V1MigrationPlan) -> None:
         )
 
 
+def _renameat_exclusive(
+    parent_descriptor: int,
+    source_name: str,
+    target_name: str,
+) -> None:
+    """Rename one child directory without replacing an existing target."""
+    library = ctypes.CDLL(None, use_errno=True)
+    source = os.fsencode(source_name)
+    target = os.fsencode(target_name)
+    if hasattr(library, "renameatx_np"):
+        rename = library.renameatx_np
+        flags = _RENAME_EXCL
+    elif hasattr(library, "renameat2"):
+        rename = library.renameat2
+        flags = _RENAME_NOREPLACE
+    else:
+        raise OSError(
+            errno.ENOTSUP,
+            "exclusive descriptor-relative rename is unavailable",
+        )
+    rename.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    rename.restype = ctypes.c_int
+    if rename(
+        parent_descriptor,
+        source,
+        parent_descriptor,
+        target,
+        flags,
+    ) == 0:
+        return
+    error = ctypes.get_errno()
+    if error in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise FileExistsError(error, os.strerror(error), target_name)
+    raise OSError(error, os.strerror(error), target_name)
+
+
+def _migration_publish_failpoint(_label: str) -> None:
+    """Test hook for process-crash boundaries in generation publication."""
+
+
 def _install_prepared(staging: Path, target: Path) -> None:
-    if target.exists() or target.is_symlink():
-        raise FileExistsError(target)
-    # The generation marker is the final authority file written in staging.
-    # Persist its directory entry before publishing the directory itself so a
-    # crash cannot make the target rename durable while losing the marker.
-    with open_secure_directory(staging) as directory:
-        os.fsync(directory.descriptor)
-    os.rename(staging, target)
-    with open_secure_directory(target.parent) as directory:
-        os.fsync(directory.descriptor)
+    parent = target.parent.absolute()
+    if staging.parent.absolute() != parent:
+        raise ValueError("prepared staging and target must share one parent")
+    if not staging.name or not target.name or staging.name in {".", ".."}:
+        raise ValueError("prepared generation names must be safe path components")
+    if target.name in {".", ".."}:
+        raise ValueError("prepared generation names must be safe path components")
+
+    staging_descriptor = -1
+    with open_secure_directory(parent) as directory:
+        try:
+            staging_descriptor = os.open(
+                staging.name,
+                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory.descriptor,
+            )
+            prepared_identity = os.fstat(staging_descriptor)
+            # The generation marker is the final authority file written in
+            # staging. Persist its directory entry before publishing the
+            # directory itself.
+            os.fsync(staging_descriptor)
+            named_staging = os.stat(
+                staging.name,
+                dir_fd=directory.descriptor,
+                follow_symlinks=False,
+            )
+            if not os.path.samestat(prepared_identity, named_staging):
+                raise OSError("prepared staging identity changed before publication")
+            _renameat_exclusive(
+                directory.descriptor,
+                staging.name,
+                target.name,
+            )
+            _migration_publish_failpoint("after-rename-before-parent-fsync")
+            published = os.stat(
+                target.name,
+                dir_fd=directory.descriptor,
+                follow_symlinks=False,
+            )
+            if not os.path.samestat(prepared_identity, published):
+                raise OSError(
+                    "prepared generation identity changed during publication"
+                )
+            os.fsync(directory.descriptor)
+            durable = os.stat(
+                target.name,
+                dir_fd=directory.descriptor,
+                follow_symlinks=False,
+            )
+            if not os.path.samestat(prepared_identity, durable):
+                raise OSError(
+                    "prepared generation identity changed after publication"
+                )
+        finally:
+            if staging_descriptor >= 0:
+                os.close(staging_descriptor)
 
 
 def apply_v1_migration(

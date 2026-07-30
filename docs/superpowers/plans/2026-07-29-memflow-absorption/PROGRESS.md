@@ -30,8 +30,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   fail-closed; el fresh install v2 productivo no puede crear la clave,
   roster y epoch-0. Implementar un provider productivo no exportable antes de
   habilitar activación.
-- [ ] Re-revisar `P01-T04 MEDIUM`: implementación técnica lista; fsync del
-  staging antes del rename, crash pre-publish y retry verificados.
+- [ ] Re-revisar `P01-T04 MEDIUM`: publicación reforzada con parent FD
+  retenido, rename exclusivo descriptor-relative, verificación de identidad y
+  recovery post-rename/pre-fsync. Corrección técnica lista; PASS pendiente.
 - [x] Corrección técnica `P01-T06 HIGH`: adapters públicos propagan timestamp
   `None` y reutilizar el resultado canónico para retry idempotente después de
   crash. Re-revisión pendiente.
@@ -78,6 +79,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   lecturas con artifacts locales; `118 passed`, Ruff y mypy limpios.
 - [x] `P01-T03` re-revisión final: `PASS`; backfill global y upgrade v1
   fail-closed cerrados, `20 + 55 passed`, Ruff y mypy limpios.
+- [x] `P01-T04` segunda corrección técnica: rename exclusivo sin clobber bajo
+  parent FD retenido, identidad pre/post publish y retry tras crash; migración
+  + definitive `17 passed`, Ruff y mypy limpios.
 
 ### Próximos gates
 
@@ -266,6 +270,12 @@ Estado: **1/7 aceptadas**.
 - [x] Non-slow: `6043 passed, 18 skipped, 7 deselected`.
 - [x] Commit técnico: `78764d74`.
 - [x] Reporte de implementación generado.
+- [x] Primera corrección de fsync nominal: `217adc28`; re-revisión `FAIL`
+  `MEDIUM` por reemplazo de staging/parent entre fsync y rename.
+- [x] Segunda corrección: parent FD retenido, renameat exclusivo, identidad
+  `(dev, ino)` verificada y fsync del mismo parent descriptor.
+- [x] Regresiones de reemplazo de staging y crash post-rename/pre-parent-fsync.
+- [x] Migración + definitive: `17 passed`; Ruff y mypy limpios.
 - [ ] Revisión independiente y `PASS`.
 
 ### Tarea 5 — Outbox durable exactly-once
