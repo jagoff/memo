@@ -214,3 +214,53 @@ uv run --no-sync pytest tests/tools -q
 git diff --check
 passed
 ```
+
+## Correction round 3 — typed CLI authority and peer identity
+
+The third review found three remaining CLI/peer identity gaps:
+
+- `synapse-preflight` now requires `--memo-bin`, strictly decodes the complete
+  typed control record and capability manifest, and runs
+  `verify_control_record` plus `verify_capability_manifest` before considering
+  `READY`. The manifest decoder requires exact outer, capability, operation
+  mapping, route, and SLO fields. Malformed control OIDs/sequences and
+  malformed signed mappings fail closed.
+- The CLI strictly decodes `ConsumerReplacementPlan`, rebuilds it using
+  `build_consumer_replacement_plan` from the verified inventory, verified
+  capability manifest, roster, and exact Memo binary, then requires exact
+  `authority_bytes` equality. A caller-controlled row set with a valid
+  self-hash is rejected.
+- Peer-vote verification requires each roster key to belong to the claimed
+  signer device and requires two distinct roster key IDs, in addition to two
+  distinct authority devices. A vote signed by one peer's real key while
+  claiming the other peer's device is rejected before CAS.
+
+The correction adds explicit CLI regressions for malformed OID, sequence,
+mapping, typed inventory, and self-consistent forged plan authority, plus a
+named peer impersonation/key-reuse regression.
+
+The production runtime boundary map and blocker from correction round 2 are
+unchanged. No Memo entrypoint was wired to a Synapse fence, and production
+fence delivery is still not claimed.
+
+### Correction-round-3 verification
+
+```text
+uv run --no-sync pytest tests/tools/test_synapse_cutover.py tests/tools/test_absorption_control_record.py tests/tools/test_absorption_safety.py tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py -q
+86 passed
+
+uv run --no-sync pytest tests/test_operational_signing.py -q
+8 passed
+
+uv run --no-sync pytest tests/tools -q
+140 passed
+
+uv run --no-sync ruff check src/memo/operational_signing.py tools/memflow_absorption tests/tools
+All checks passed!
+
+uv run --no-sync mypy tools/memflow_absorption
+Success: no issues found in 15 source files
+
+git diff --check
+passed
+```
