@@ -367,6 +367,7 @@ class ConsumerInventoryRow:
     start_calendar_interval: tuple[tuple[tuple[str, int], ...], ...] = ()
     watch_paths: tuple[str, ...] = ()
     throttle_interval_seconds: int | None = None
+    environment_keys: tuple[str, ...] = ()
     environment: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, object]:

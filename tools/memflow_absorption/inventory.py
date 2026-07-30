@@ -228,6 +228,7 @@ def build_consumer_inventory(
                     start_calendar_interval=job.start_calendar_interval,
                     watch_paths=job.watch_paths,
                     throttle_interval_seconds=job.throttle_interval_seconds,
+                    environment_keys=job.environment_keys,
                     environment=job.environment,
                 )
             )

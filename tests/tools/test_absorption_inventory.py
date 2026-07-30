@@ -100,7 +100,7 @@ def test_inventory_combines_source_process_and_launchd_without_following_symlink
                     "-m",
                     "synapse.cli",
                 ),
-                environment_keys=("SYNAPSE_MEMFLOW_BIN",),
+                environment_keys=("SYNAPSE_MEMFLOW_BIN", "MEMO_DATA_DIR", "PATH"),
                 loaded=True,
                 run_at_load=True,
                 keep_alive={"SuccessfulExit": False},
@@ -133,6 +133,11 @@ def test_inventory_combines_source_process_and_launchd_without_following_symlink
     assert launchd_row.environment == (
         ("MEMO_DATA_DIR", "/operator/memo"),
         ("PATH", "/usr/bin:/bin"),
+    )
+    assert launchd_row.environment_keys == (
+        "SYNAPSE_MEMFLOW_BIN",
+        "MEMO_DATA_DIR",
+        "PATH",
     )
     assert inventory.blockers == ("symlink-skipped:linked.txt",)
     assert len(inventory.source_scan_sha256) == 64

@@ -189,3 +189,49 @@ Shared-worktree commit `e3152027` incorporated the round-2 implementation,
 schemas, regressions, and this report while committing concurrent source
 receipt tests. History was not rewritten; the dedicated Task 4 correction
 commit records this handoff and verification outcome.
+
+## Correction round 3
+
+Three remaining launchd authority boundaries now fail closed:
+
+- `KeepAlive.PathState` requires non-empty absolute filesystem paths and
+  boolean values. `KeepAlive.OtherJobEnabled` instead requires non-empty
+  launchd labels (not filesystem paths) and boolean values; valid dictionaries
+  remain byte-for-byte represented in the plan and plist.
+- Staging-root protection compares case-folded components, canonical resolved
+  paths, and existing filesystem identities. This rejects Darwin
+  case-insensitive aliases such as `/library` and
+  `/users/<name>/library`, as well as symlink/mount identities that resolve to
+  a protected Library or an existing protected ancestor.
+- Signed inventory rows now carry `environment_keys`. If an observed retained
+  key (`MEMO_*` or `PATH`) lacks its exact signed value in `environment`, plan
+  construction blocks rather than synthesizing a value.
+
+Correction verification:
+
+```text
+uv run pytest -q tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py
+42 passed
+
+uv run --no-sync pytest tests/tools/test_consumer_migration.py tests/test_runtime_isolation.py tests/test_watcher.py tests/test_whatsapp_ingest.py -q
+78 passed
+
+uv run --no-sync mypy src/memo
+Success: no issues found in 463 source files
+
+uv run mypy --follow-imports=skip tools/memflow_absorption/schemas.py tools/memflow_absorption/inventory.py tools/memflow_absorption/consumer_migration.py
+Success: no issues found in 3 source files
+
+uv run ruff check tools/memflow_absorption/schemas.py tools/memflow_absorption/inventory.py tools/memflow_absorption/consumer_migration.py tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py
+All checks passed!
+
+git diff --check
+passed
+```
+
+The concurrent transform-registry work leaves the broader `tests/tools` gate
+at 99 passed and 8 failures because existing manifest fixtures do not yet
+supply its new mandatory `fixture_root` and `FrozenTransformRegistry`.
+The full Ruff scope likewise reports concurrent errors in `manifest.py` and
+`transforms.py`, plus the pre-existing unused `published_stat` in
+`snapshot.py`. Task 4 does not modify those files.

@@ -326,11 +326,16 @@ def _validated_keep_alive(
         if not isinstance(value, Mapping) or not value:
             raise ConsumerMigrationError(f"consumer has an invalid KeepAlive policy: {label}")
         if any(
-            not isinstance(path, str)
-            or not path
-            or not Path(path).is_absolute()
+            not isinstance(name, str)
+            or not name
+            or "\x00" in name
             or not isinstance(expected, bool)
-            for path, expected in value.items()
+            or (key == "PathState" and not Path(name).is_absolute())
+            or (
+                key == "OtherJobEnabled"
+                and (not name.strip() or "/" in name)
+            )
+            for name, expected in value.items()
         ):
             raise ConsumerMigrationError(f"consumer has an invalid KeepAlive policy: {label}")
         normalized[key] = dict(sorted(value.items()))
@@ -506,6 +511,18 @@ def _memo_environment(
                 f"consumer has an invalid authoritative environment: {row.label}"
             )
         source[key] = value
+    retained_keys: set[str] = set()
+    for key in row.environment_keys:
+        if not isinstance(key, str) or not key or "\x00" in key:
+            raise ConsumerMigrationError(
+                f"consumer lacks exact authoritative environment values: {row.label}"
+            )
+        if key == "PATH" or key.startswith("MEMO_"):
+            retained_keys.add(key)
+    if not retained_keys.issubset(source):
+        raise ConsumerMigrationError(
+            f"consumer lacks exact authoritative environment values: {row.label}"
+        )
     retained = {
         key: value
         for key, value in source.items()
@@ -753,29 +770,93 @@ def _expected_outputs(plan: ConsumerReplacementPlan) -> dict[str, bytes]:
 
 def _staging_root(root: Path) -> Path:
     absolute = Path(os.path.abspath(os.fspath(root)))
-    protected = {Path("/Library"), Path("/System/Library"), Path.home() / "Library"}
+    protected = {
+        Path("/Library"),
+        Path("/System/Library"),
+        Path("/var/root/Library"),
+        Path.home() / "Library",
+    }
     parts = absolute.parts
+    casefolded_parts = tuple(part.casefold() for part in parts)
     if (
         len(parts) == 3
-        and parts[1] in {"Users", "home"}
+        and casefolded_parts[1] in {"users", "home"}
         and parts[2]
     ):
         protected.add(absolute / "Library")
-    if absolute == Path("/var/root"):
+    if casefolded_parts == ("/", "var", "root"):
         protected.add(absolute / "Library")
     for index, part in enumerate(parts):
-        if part == "Library" and index >= 2 and parts[index - 2] in {"Users", "home"}:
+        if (
+            part.casefold() == "library"
+            and index >= 2
+            and casefolded_parts[index - 2] in {"users", "home"}
+        ):
             protected.add(Path(*parts[: index + 1]))
-        if part == "Library" and index >= 1 and parts[index - 1] == "root":
+        if (
+            part.casefold() == "library"
+            and index >= 1
+            and casefolded_parts[index - 1] == "root"
+        ):
             protected.add(Path(*parts[: index + 1]))
+
+    def _casefold_parts(path: Path) -> tuple[str, ...]:
+        return tuple(part.casefold() for part in path.parts)
+
+    def _overlaps(left: Path, right: Path) -> bool:
+        left_parts = _casefold_parts(left)
+        right_parts = _casefold_parts(right)
+        shortest = min(len(left_parts), len(right_parts))
+        return left_parts[:shortest] == right_parts[:shortest]
+
+    try:
+        canonical = absolute.resolve(strict=False)
+        protected_identities = tuple(
+            (library, library.resolve(strict=False))
+            for library in protected
+        )
+    except OSError as exc:
+        raise ConsumerMigrationError("operator staging root identity is unsafe") from exc
+
+    def _identity(
+        path: Path,
+        *,
+        fail_closed: bool,
+    ) -> tuple[int, int] | None:
+        try:
+            observed = path.stat()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            if not fail_closed:
+                return None
+            raise ConsumerMigrationError(
+                "operator staging root identity is unsafe"
+            ) from exc
+        return observed.st_dev, observed.st_ino
+
+    candidate_prefixes = (absolute, *absolute.parents[:-1])
     if any(
-        absolute == library
-        or absolute in library.parents
-        or library in absolute.parents
-        for library in protected
+        _overlaps(absolute, library)
+        or _overlaps(canonical, canonical_library)
+        or (
+            (library_identity := _identity(library, fail_closed=False)) is not None
+            and any(
+                _identity(prefix, fail_closed=True) == library_identity
+                for prefix in candidate_prefixes
+            )
+        )
+        or (
+            (absolute_identity := _identity(absolute, fail_closed=True)) is not None
+            and any(
+                _identity(prefix, fail_closed=False) == absolute_identity
+                for prefix in (library, *library.parents[:-1])
+            )
+        )
+        for library, canonical_library in protected_identities
     ):
         raise ConsumerMigrationError("operator staging root overlaps the production Library")
-    if absolute.name == _LAUNCHD_DIRECTORY:
+    if absolute.name.casefold() == _LAUNCHD_DIRECTORY.casefold():
         raise ConsumerMigrationError("operator staging root must be a dedicated parent directory")
     return absolute
 

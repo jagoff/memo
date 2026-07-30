@@ -207,6 +207,7 @@ def _launchd_row(label: str) -> ConsumerInventoryRow:
             ("PATH", "/usr/bin:/bin"),
             ("UNRELATED_SECRET", "discard-me"),
         ),
+        "environment_keys": ("MEMO_DATA_DIR", "PATH", "UNRELATED_SECRET"),
     }
     if label == "com.synapse.whatsapp-ingest":
         common.update(
@@ -564,6 +565,22 @@ def test_relative_environment_path_blocks(inventory, manifest, authority, memo_b
         _plan(changed, manifest, authority, memo_bin)
 
 
+@pytest.mark.parametrize("missing_key", ("MEMO_DATA_DIR", "PATH"))
+def test_retained_environment_key_without_exact_value_blocks(
+    inventory, manifest, authority, memo_bin, missing_key
+):
+    keys, roster = authority
+    row = _launchd_row("com.synapse.whatsapp-ingest")
+    changed_environment = tuple(
+        item for item in row.environment if item[0] != missing_key
+    )
+    row = replace(row, environment=changed_environment)
+    changed = _resign_inventory(replace(inventory, rows=(row,)), keys, roster)
+
+    with pytest.raises(ConsumerMigrationError, match="exact authoritative environment values"):
+        _plan(changed, manifest, authority, memo_bin)
+
+
 def test_renderer_preserves_authoritative_schedules(
     inventory, manifest, authority, memo_bin, tmp_path
 ):
@@ -629,6 +646,32 @@ def test_invalid_keepalive_and_calendar_shapes_block(
         _plan(changed, manifest, authority, memo_bin)
 
 
+@pytest.mark.parametrize(
+    ("keep_alive", "valid"),
+    (
+        ({"PathState": {"/operator/ready": True}}, True),
+        ({"PathState": {"operator/ready": True}}, False),
+        ({"OtherJobEnabled": {"com.memo.indexer": True}}, True),
+        ({"OtherJobEnabled": {"/Library/LaunchAgents/com.memo.indexer": True}}, False),
+        ({"OtherJobEnabled": {"": True}}, False),
+        ({"OtherJobEnabled": {"   ": True}}, False),
+    ),
+)
+def test_keepalive_state_keys_validate_paths_and_job_labels(
+    inventory, manifest, authority, memo_bin, keep_alive, valid
+):
+    keys, roster = authority
+    row = replace(_launchd_row("com.synapse.watcher"), keep_alive=keep_alive)
+    changed = _resign_inventory(replace(inventory, rows=(row,)), keys, roster)
+
+    if valid:
+        planned = _plan(changed, manifest, authority, memo_bin)
+        assert planned.by_old_label("com.synapse.watcher").keep_alive == keep_alive
+    else:
+        with pytest.raises(ConsumerMigrationError, match="invalid KeepAlive"):
+            _plan(changed, manifest, authority, memo_bin)
+
+
 def test_periodic_job_without_schedule_blocks(inventory, manifest, authority, memo_bin):
     keys, roster = authority
     row = replace(
@@ -653,8 +696,10 @@ def test_renderer_rejects_production_library_or_ancestor(
         render_memo_launch_agents(plan, Path.home())
     for protected in (
         Path("/Library"),
+        Path("/library"),
         Path("/System/Library"),
         Path("/Users/another-user/Library"),
+        Path("/users/another-user/library"),
         Path("/Users/another-user"),
     ):
         with pytest.raises(ConsumerMigrationError, match="production Library"):
