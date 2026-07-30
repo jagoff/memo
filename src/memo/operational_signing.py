@@ -34,6 +34,7 @@ ALLOWED_SIGNATURE_DOMAINS = frozenset(
         "memo.cutover.consumer_inventory.v1",
         "memo.cutover.synapse_retirement.v1",
         "memo.cutover.control_record.v1",
+        "memo.cutover.fence.v1",
     }
 )
 
@@ -247,6 +248,9 @@ class OperationalVerifier:
         elif domain == "memo.cutover.usage_proof.v1":
             record_key_field = "key_id"
             require_record_claims = True
+            expected_device = _claim_string(body, "device_id", required=True)
+        elif domain == "memo.cutover.fence.v1":
+            record_key_field = "key_id"
             expected_device = _claim_string(body, "device_id", required=True)
         elif domain in {
             "memo.cutover.audit_exclusions.v1",

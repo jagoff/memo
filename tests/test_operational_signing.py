@@ -78,6 +78,49 @@ def test_signer_rejects_unknown_domain_and_key() -> None:
         signer.sign(domain="memo.operational.event.v2", payload=b"{}", key_id="missing")
 
 
+def test_cutover_fence_signature_accepts_exact_schema_without_roster_field(
+    tmp_path: Path,
+) -> None:
+    keys = DeviceKeyStore.in_memory()
+    public = keys.generate(device_id="device-a")
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=public,
+        root=tmp_path,
+        pin_store=_pin_store(tmp_path),
+    )
+    payload = canonical_json_bytes(
+        {
+            "schema": "memo.cutover_fence.v1",
+            "attempt_id": "attempt-1",
+            "mode": "quiescing",
+            "epoch": 7,
+            "expected_commit": "a" * 40,
+            "runtime_digest": "b" * 64,
+            "device_id": "device-a",
+            "key_id": public.key_id,
+            "issued_at": "2026-07-30T06:00:00Z",
+            "expires_at": "2026-07-30T07:00:00Z",
+            "control_oid": "c" * 40,
+            "control_sequence": 9,
+            "previous_control_oid": "d" * 40,
+            "signature": "",
+        }
+    )
+    envelope = OperationalSigner(keys, roster_version=roster.version).sign(
+        domain="memo.cutover.fence.v1",
+        payload=payload,
+        key_id=public.key_id,
+    )
+
+    OperationalVerifier().verify(
+        domain="memo.cutover.fence.v1",
+        payload=payload,
+        envelope=envelope,
+        roster=roster,
+    )
+
+
 def test_migration_signature_binds_declared_key_roster_and_exclusive_role(
     tmp_path,
 ) -> None:
