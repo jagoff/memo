@@ -73,7 +73,17 @@ class SourceReceiptV2:
         return self.signature
 
 def sign_source_receipt(receipt: SourceReceiptV2, signer: OperationalSigner) -> SourceReceiptV2:
-    env = signer.sign(domain=DOMAIN, payload=receipt.signed_bytes(), key_id=receipt.key_id)
+    # Include envelope metadata in the canonical payload before signing; the
+    # verifier reconstructs the same bytes from the persisted receipt.
+    seeded = SignatureEnvelope(
+        algorithm="ed25519", key_id=receipt.key_id,
+        roster_version=signer.roster_version, signature="",
+    )
+    env = signer.sign(
+        domain=DOMAIN,
+        payload=SourceReceiptV2(**{**receipt.__dict__, "signature": seeded}).signed_bytes(),
+        key_id=receipt.key_id,
+    )
     return SourceReceiptV2(**{**receipt.__dict__, "signature": env})
 
 def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoster, frozen_at: str | None = None,
