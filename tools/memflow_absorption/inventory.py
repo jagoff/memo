@@ -30,6 +30,9 @@ from tools.memflow_absorption.synapse_catalog import (
 )
 
 _REFERENCE_RE = re.compile(r"(?i)(?:\bmemflow\b|memflow[-_.a-z0-9]*|synapse_memflow_[a-z0-9_]+)")
+_CONSUMER_REFERENCE_RE = re.compile(
+    r"(?i)(?:\bmemflow\b|memflow[-_.a-z0-9]*|synapse_memflow_[a-z0-9_]+|\bsynapse\b|synapse[-_.a-z0-9]*)"
+)
 _SYMBOL_RE = re.compile(r"\b(?:class|def)\s+([A-Za-z_][A-Za-z0-9_]*)")
 _IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 CONSUMER_INVENTORY_DOMAIN = "memo.cutover.consumer_inventory.v1"
@@ -106,6 +109,17 @@ def _references(text: str) -> tuple[str, ...]:
     return tuple(sorted(set(match.group(0) for match in _REFERENCE_RE.finditer(text))))
 
 
+def _consumer_references(text: str) -> tuple[str, ...]:
+    """Return retired-runtime references without broadening the source manifest.
+
+    The Synapse retirement manifest intentionally inventories the historical
+    Memflow-specific surface.  Consumer staging additionally needs a plain
+    ``synapse`` label so a live LaunchAgent that has already stopped naming
+    Memflow cannot disappear from the replacement plan.
+    """
+    return tuple(sorted(set(match.group(0) for match in _CONSUMER_REFERENCE_RE.finditer(text))))
+
+
 def build_consumer_inventory(
     roots: tuple[Path, ...] | list[Path],
     process_snapshot: ProcessSnapshot,
@@ -143,6 +157,10 @@ def build_consumer_inventory(
                     "sha256": hashlib.sha256(data).hexdigest(),
                 }
             )
+            # Source rows preserve the original Memflow-specific inventory
+            # contract.  Plain ``synapse`` is intentionally broadened only for
+            # process/launchd observations below; otherwise every source file
+            # that merely documents Synapse becomes a fake runnable consumer.
             references = _references(relative + "\n" + text)
             if references:
                 rows.append(
@@ -150,17 +168,19 @@ def build_consumer_inventory(
                         kind="source",
                         location=str(path),
                         references=references,
+                        label=relative,
                     )
                 )
     for process in sorted(process_snapshot.records, key=lambda row: row.pid):
         text = "\n".join((process.executable, *process.argv))
-        references = _references(text)
+        references = _consumer_references(text)
         if references:
             rows.append(
                 ConsumerInventoryRow(
                     kind="process",
                     location=f"pid:{process.pid}:{process.executable}",
                     references=references,
+                    label=text,
                 )
             )
     for job in sorted(launchd_snapshot.records, key=lambda row: row.label):
@@ -172,13 +192,15 @@ def build_consumer_inventory(
                 *job.environment_keys,
             )
         )
-        references = _references(text)
+        references = _consumer_references(text)
         if references:
             rows.append(
                 ConsumerInventoryRow(
                     kind="launchd",
                     location=f"{job.label}:{job.plist_path}",
                     references=references,
+                    label=job.label,
+                    active=job.loaded,
                 )
             )
     if (signer is None) != (roster is None) or (signer is None) != (signer_key_id == ""):

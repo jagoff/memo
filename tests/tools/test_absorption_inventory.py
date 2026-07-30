@@ -111,6 +111,9 @@ def test_inventory_combines_source_process_and_launchd_without_following_symlink
     assert {row.kind for row in inventory.rows} == {"source", "process", "launchd"}
     assert any(row.location.endswith("client.json") for row in inventory.rows)
     assert all("outside.txt" not in row.location for row in inventory.rows)
+    launchd_row = next(row for row in inventory.rows if row.kind == "launchd")
+    assert launchd_row.label == "com.synapse.dashboard"
+    assert launchd_row.active is True
     assert inventory.blockers == ("symlink-skipped:linked.txt",)
     assert len(inventory.source_scan_sha256) == 64
 

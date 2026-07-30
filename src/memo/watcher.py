@@ -192,6 +192,9 @@ def render_plist(memo_bin: str) -> str:
     # Forward MEMO_* env vars from the user's interactive shell so the
     # daemon uses the same vault/state dir as `memo` in a terminal.
     env_vars = {k: v for k, v in os.environ.items() if k.startswith("MEMO_")}
+    # A LaunchAgent never has a useful interactive terminal.  Pin this rather
+    # than inheriting an accidental interactive value from the installer shell.
+    env_vars["MEMO_NONINTERACTIVE"] = "1"
     env_keys = "".join(
         f"        <key>{k}</key>\n        <string>{v}</string>\n" for k, v in env_vars.items()
     )

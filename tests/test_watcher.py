@@ -62,6 +62,8 @@ def test_render_plist_contains_label_and_bin(monkeypatch: Any, tmp_path: Path) -
     assert "<string>watch</string>" in xml
     assert "MEMO_DATA_DIR" in xml
     assert "/tmp/memo-data" in xml
+    assert "MEMO_NONINTERACTIVE" in xml
+    assert "<string>1</string>" in xml
     assert "KeepAlive" in xml
 
 
