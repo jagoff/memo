@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -92,7 +91,7 @@ def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoste
     if receipt.schema != "memo.cutover_source_receipt.v2" or receipt.signature is None:
         raise SignatureError("source receipt is unsigned or has invalid schema")
     key = roster.key(receipt.key_id)
-    if key.device_id != receipt.device_id or receipt.roster_id not in {roster.roster_hash, str(roster.version)}:
+    if key.device_id != receipt.device_id or receipt.roster_id != roster.roster_hash:
         raise SignatureError("source receipt device/key/roster mismatch")
     if len(receipt.raw_event_set_sha256) != 64 or any(c not in "0123456789abcdef" for c in receipt.raw_event_set_sha256):
         raise SignatureError("invalid raw event digest")
@@ -121,9 +120,32 @@ def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoste
     if previous_end != end:
         raise SignatureError("hourly buckets do not cover receipt window")
     if authoritative_events is not None:
-        digest = hashlib.sha256(json.dumps(authoritative_events, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-        if digest != receipt.raw_event_set_sha256 or sum(b.count for b in receipt.hourly_buckets) != len(authoritative_events):
+        digest = hashlib.sha256(canonical_json_bytes(authoritative_events)).hexdigest()
+        if digest != receipt.raw_event_set_sha256:
             raise SignatureError("source receipt aggregate does not match authoritative events")
+        # Every authoritative event must belong to exactly one bucket.  Hourly
+        # intervals are half-open, except that the receipt window endpoint is
+        # included in the final bucket.
+        bucket_events: list[list[dict[str, Any]]] = [[] for _ in receipt.hourly_buckets]
+        for event in authoritative_events:
+            occurred_at = event.get("occurred_at")
+            if not isinstance(occurred_at, str):
+                raise SignatureError("authoritative event timestamp is invalid")
+            observed = _ts(occurred_at)
+            assigned = False
+            for index, bucket in enumerate(receipt.hourly_buckets):
+                bs, be = _ts(bucket.start), _ts(bucket.end)
+                is_final = index == len(receipt.hourly_buckets) - 1
+                if bs <= observed < be or (is_final and observed == be):
+                    bucket_events[index].append(event)
+                    assigned = True
+                    break
+            if not assigned:
+                raise SignatureError("authoritative event is outside receipt window")
+        for bucket, events in zip(receipt.hourly_buckets, bucket_events, strict=True):
+            expected_digest = hashlib.sha256(canonical_json_bytes(events)).hexdigest()
+            if bucket.count != len(events) or bucket.digest != expected_digest:
+                raise SignatureError("source receipt bucket does not match authoritative events")
     if not receipt.cursor or not receipt.extraction_complete:
         raise SignatureError("source extraction is incomplete")
     OperationalVerifier().verify(domain=DOMAIN, payload=receipt.signed_bytes(), envelope=receipt.signature, roster=roster)
