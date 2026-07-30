@@ -10,6 +10,7 @@ import stat
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 from memo.atomic_io import open_secure_directory
 from memo.errors import SignatureError
@@ -45,6 +46,252 @@ SYNAPSE_RETIREMENT_DOMAIN = "memo.cutover.synapse_retirement.v1"
 
 class InventoryError(RuntimeError):
     """An inventory input cannot be scanned without following unsafe paths."""
+
+
+def _string_tuple(value: Any, description: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise InventoryError(f"{description} must be a string list")
+    return tuple(value)
+
+
+def consumer_inventory_from_dict(value: Mapping[str, Any]) -> ConsumerInventory:
+    """Parse the exact signed inventory schema before any authority check."""
+
+    expected = {
+        "schema",
+        "rows",
+        "blockers",
+        "source_scan_sha256",
+        "signer_device_id",
+        "signer_key_id",
+        "roster_version",
+        "signature",
+        "verification_phases",
+        "covered_surfaces",
+        "surface_observations",
+        "scan_receipt_sha256",
+    }
+    if set(value) != expected or not isinstance(value.get("rows"), list):
+        raise InventoryError("consumer inventory fields are invalid")
+    rows: list[ConsumerInventoryRow] = []
+    row_fields = {
+        "kind",
+        "location",
+        "references",
+        "label",
+        "active",
+        "program_arguments",
+        "correlated_launchd_label",
+        "run_at_load",
+        "keep_alive",
+        "start_interval_seconds",
+        "start_calendar_interval",
+        "watch_paths",
+        "throttle_interval_seconds",
+        "environment_keys",
+        "environment",
+    }
+    for raw in value["rows"]:
+        if not isinstance(raw, dict) or set(raw) != row_fields:
+            raise InventoryError("consumer inventory row fields are invalid")
+        calendar = raw["start_calendar_interval"]
+        environment = raw["environment"]
+        keep_alive = raw["keep_alive"]
+        if (
+            raw["kind"] not in {"source", "process", "launchd"}
+            or not isinstance(raw["location"], str)
+            or not isinstance(raw["label"], str)
+            or not isinstance(raw["active"], bool)
+            or not isinstance(raw["correlated_launchd_label"], str)
+            or not isinstance(raw["run_at_load"], bool)
+            or not (
+                isinstance(keep_alive, bool)
+                or (
+                    isinstance(keep_alive, dict)
+                    and all(isinstance(key, str) for key in keep_alive)
+                )
+            )
+            or (
+                raw["start_interval_seconds"] is not None
+                and (
+                    isinstance(raw["start_interval_seconds"], bool)
+                    or not isinstance(raw["start_interval_seconds"], int)
+                )
+            )
+            or (
+                raw["throttle_interval_seconds"] is not None
+                and (
+                    isinstance(raw["throttle_interval_seconds"], bool)
+                    or not isinstance(raw["throttle_interval_seconds"], int)
+                )
+            )
+            or not isinstance(calendar, list)
+            or any(
+                not isinstance(item, dict)
+                or any(
+                    not isinstance(key, str)
+                    or isinstance(number, bool)
+                    or not isinstance(number, int)
+                    for key, number in item.items()
+                )
+                for item in calendar
+            )
+            or not isinstance(environment, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or any(not isinstance(part, str) for part in item)
+                for item in environment
+            )
+        ):
+            raise InventoryError("consumer inventory row values are invalid")
+        rows.append(
+            ConsumerInventoryRow(
+                kind=cast(Any, raw["kind"]),
+                location=raw["location"],
+                references=_string_tuple(raw["references"], "consumer references"),
+                label=raw["label"],
+                active=raw["active"],
+                program_arguments=_string_tuple(
+                    raw["program_arguments"], "consumer arguments"
+                ),
+                correlated_launchd_label=raw["correlated_launchd_label"],
+                run_at_load=raw["run_at_load"],
+                keep_alive=keep_alive,
+                start_interval_seconds=raw["start_interval_seconds"],
+                start_calendar_interval=tuple(
+                    tuple(sorted(item.items())) for item in calendar
+                ),
+                watch_paths=_string_tuple(raw["watch_paths"], "consumer watch paths"),
+                throttle_interval_seconds=raw["throttle_interval_seconds"],
+                environment_keys=_string_tuple(
+                    raw["environment_keys"], "consumer environment keys"
+                ),
+                environment=tuple((item[0], item[1]) for item in environment),
+            )
+        )
+    observations = value.get("surface_observations")
+    if not isinstance(observations, dict) or any(
+        not isinstance(key, str) or not isinstance(items, list)
+        for key, items in observations.items()
+    ):
+        raise InventoryError("consumer inventory surface observations are invalid")
+    string_fields = (
+        "schema",
+        "source_scan_sha256",
+        "signer_device_id",
+        "signer_key_id",
+        "signature",
+    )
+    if (
+        any(not isinstance(value.get(field), str) for field in string_fields)
+        or isinstance(value.get("roster_version"), bool)
+        or not isinstance(value.get("roster_version"), int)
+    ):
+        raise InventoryError("consumer inventory signer fields are invalid")
+    return ConsumerInventory(
+        schema=cast(Any, value["schema"]),
+        rows=tuple(rows),
+        blockers=_string_tuple(value["blockers"], "consumer blockers"),
+        source_scan_sha256=cast(str, value["source_scan_sha256"]),
+        signer_device_id=cast(str, value["signer_device_id"]),
+        signer_key_id=cast(str, value["signer_key_id"]),
+        roster_version=cast(int, value["roster_version"]),
+        signature=cast(str, value["signature"]),
+        verification_phases=cast(
+            Any, _string_tuple(value["verification_phases"], "verification phases")
+        ),
+        covered_surfaces=_string_tuple(
+            value["covered_surfaces"], "covered surfaces"
+        ),
+        surface_observations={
+            key: _string_tuple(items, f"surface observation {key}")
+            for key, items in observations.items()
+        },
+        scan_receipt_sha256=_string_tuple(
+            value["scan_receipt_sha256"], "scan receipt digests"
+        ),
+    )
+
+
+def synapse_retirement_manifest_from_dict(
+    value: Mapping[str, Any],
+) -> SynapseRetirementManifest:
+    """Parse the exact signed retirement manifest schema."""
+
+    expected = {
+        "schema",
+        "source_commit",
+        "files",
+        "symbols",
+        "tests",
+        "goldens",
+        "active_reference_sha256",
+        "signer_key_id",
+        "signature",
+        "operations",
+    }
+    if set(value) != expected or not isinstance(value.get("operations"), list):
+        raise InventoryError("Synapse retirement manifest fields are invalid")
+    operations: list[SynapseOperation] = []
+    operation_fields = {
+        "source_operation",
+        "source_files",
+        "source_symbols",
+        "consumers",
+        "daemon_routes",
+        "exclusion_reason",
+        "fixture_paths",
+    }
+    for raw in value["operations"]:
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != operation_fields
+            or not isinstance(raw["source_operation"], str)
+            or not (
+                raw["exclusion_reason"] is None
+                or isinstance(raw["exclusion_reason"], str)
+            )
+        ):
+            raise InventoryError("Synapse retirement operation fields are invalid")
+        operations.append(
+            SynapseOperation(
+                source_operation=raw["source_operation"],
+                source_files=_string_tuple(raw["source_files"], "operation source files"),
+                source_symbols=_string_tuple(
+                    raw["source_symbols"], "operation source symbols"
+                ),
+                consumers=_string_tuple(raw["consumers"], "operation consumers"),
+                daemon_routes=_string_tuple(
+                    raw["daemon_routes"], "operation daemon routes"
+                ),
+                exclusion_reason=raw["exclusion_reason"],
+                fixture_paths=_string_tuple(
+                    raw["fixture_paths"], "operation fixture paths"
+                ),
+            )
+        )
+    for field in (
+        "schema",
+        "source_commit",
+        "active_reference_sha256",
+        "signer_key_id",
+        "signature",
+    ):
+        if not isinstance(value.get(field), str):
+            raise InventoryError("Synapse retirement manifest values are invalid")
+    return SynapseRetirementManifest(
+        schema=cast(Any, value["schema"]),
+        source_commit=cast(str, value["source_commit"]),
+        files=_string_tuple(value["files"], "Synapse retirement files"),
+        symbols=_string_tuple(value["symbols"], "Synapse retirement symbols"),
+        tests=_string_tuple(value["tests"], "Synapse retirement tests"),
+        goldens=_string_tuple(value["goldens"], "Synapse retirement goldens"),
+        active_reference_sha256=cast(str, value["active_reference_sha256"]),
+        signer_key_id=cast(str, value["signer_key_id"]),
+        signature=cast(str, value["signature"]),
+        operations=tuple(operations),
+    )
 
 
 def _reject_symlink_components(path: Path) -> None:
@@ -437,6 +684,8 @@ __all__ = [
     "InventoryError",
     "build_consumer_inventory",
     "build_synapse_retirement_manifest",
+    "consumer_inventory_from_dict",
+    "synapse_retirement_manifest_from_dict",
     "verify_consumer_inventory",
     "verify_synapse_retirement_manifest",
 ]

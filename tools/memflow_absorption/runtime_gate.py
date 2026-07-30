@@ -5,50 +5,60 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Literal
 
-from tools.memflow_absorption.control_record import validate_synapse_request
-from tools.memflow_absorption.schemas import VerifiedControlRecord
+from memo.operational_roster import VerificationRoster
+from tools.memflow_absorption.control_record import (
+    ControlRecordCAS,
+    fetch_current_verified_control,
+    validate_synapse_request,
+)
 
 
 def _guarded[T](
-    control: VerifiedControlRecord,
+    cas: ControlRecordCAS,
+    roster: VerificationRoster,
     epoch: int,
     kind: Literal["startup", "write", "fallback"],
     callback: Callable[[], T],
 ) -> T:
+    control = fetch_current_verified_control(cas, roster=roster)
     validate_synapse_request(control, epoch, kind=kind)
     return callback()
 
 
 def before_listener_start[T](
-    control: VerifiedControlRecord,
+    cas: ControlRecordCAS,
+    roster: VerificationRoster,
     epoch: int,
     callback: Callable[[], T],
 ) -> T:
-    return _guarded(control, epoch, "startup", callback)
+    return _guarded(cas, roster, epoch, "startup", callback)
 
 
 def before_worker_start[T](
-    control: VerifiedControlRecord,
+    cas: ControlRecordCAS,
+    roster: VerificationRoster,
     epoch: int,
     callback: Callable[[], T],
 ) -> T:
-    return _guarded(control, epoch, "startup", callback)
+    return _guarded(cas, roster, epoch, "startup", callback)
 
 
 def before_write[T](
-    control: VerifiedControlRecord,
+    cas: ControlRecordCAS,
+    roster: VerificationRoster,
     epoch: int,
     callback: Callable[[], T],
 ) -> T:
-    return _guarded(control, epoch, "write", callback)
+    return _guarded(cas, roster, epoch, "write", callback)
 
 
 def before_fallback[T](
-    control: VerifiedControlRecord,
+    cas: ControlRecordCAS,
+    roster: VerificationRoster,
     epoch: int,
     callback: Callable[[], T],
 ) -> T:
-    return _guarded(control, epoch, "fallback", callback)
+    return _guarded(cas, roster, epoch, "fallback", callback)
 
 
 __all__ = [

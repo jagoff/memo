@@ -28,6 +28,7 @@ from tools.memflow_absorption.inventory import (
 )
 from tools.memflow_absorption.schemas import (
     ConsumerInventory,
+    IndependenceObservation,
     IndependenceReceipt,
     IndependenceScanReceipt,
     SynapseRetirementManifest,
@@ -351,12 +352,12 @@ def verify_independence_receipt(
         raise CutoverSafetyError(
             "independence receipt artifact signature is invalid"
         ) from exc
-    stop_digest, _stop_time = _verify_independence_scan(
+    stop_digest, stop_time = _verify_independence_scan(
         post_stop_scan,
         phase="post_stop",
         roster=roster,
     )
-    reboot_digest, _reboot_time = _verify_independence_scan(
+    reboot_digest, reboot_time = _verify_independence_scan(
         post_reboot_scan,
         phase="post_reboot",
         roster=roster,
@@ -365,13 +366,35 @@ def verify_independence_receipt(
         stop_digest,
         reboot_digest,
     )
+    if post_stop_scan.boot_id == post_reboot_scan.boot_id:
+        raise CutoverSafetyError("post-reboot scan did not cross a boot boundary")
+    if reboot_time <= stop_time:
+        raise CutoverSafetyError("post-reboot scan capture time is not later")
+    if inventory.scan_receipt_sha256 != scan_digests:
+        raise CutoverSafetyError("signed inventory does not bind both scan receipts")
+    expected_scan_source = hashlib.sha256(
+        canonical_json_bytes(list(scan_digests))
+    ).hexdigest()
+    if inventory.source_scan_sha256 != expected_scan_source:
+        raise CutoverSafetyError("signed inventory source digest does not bind final scans")
+    receipt_sha256 = hashlib.sha256(receipt.signed_bytes()).hexdigest()
+    control_binding = (
+        control.synapse_state is SynapseRetirementState.COMMITTED
+        and receipt.control_oid == control.control_oid
+    ) or (
+        control.synapse_state is SynapseRetirementState.VERIFIED
+        and receipt.control_oid == control.previous_control_oid
+        and receipt_sha256 == control.independence_receipt_sha256
+    )
     expected = (
         control.synapse_state
         in {SynapseRetirementState.COMMITTED, SynapseRetirementState.VERIFIED}
         and control.retirement_epoch > 0
+        and control.synapse_manifest_sha256
+        == hashlib.sha256(manifest.signed_bytes()).hexdigest()
         and receipt.schema == "memo.synapse_independence_receipt.v1"
         and receipt.attempt_id == control.attempt_id
-        and receipt.control_oid == control.control_oid
+        and control_binding
         and receipt.retirement_epoch == control.retirement_epoch
         and receipt.synapse_manifest_sha256
         == hashlib.sha256(manifest.signed_bytes()).hexdigest()
@@ -394,6 +417,71 @@ def verify_independence_receipt(
         )
     except (KeyError, SignatureError) as exc:
         raise CutoverSafetyError("independence receipt signature is invalid") from exc
+
+
+def independence_scan_from_dict(value: dict[str, Any]) -> IndependenceScanReceipt:
+    expected = {
+        "schema",
+        "phase",
+        "boot_id",
+        "captured_at",
+        "source_scan_sha256",
+        "observations",
+        "signer_device_id",
+        "signer_key_id",
+        "roster_version",
+        "signature",
+    }
+    if set(value) != expected or not isinstance(value.get("observations"), list):
+        raise CutoverSafetyError("independence scan fields are invalid")
+    observations: list[IndependenceObservation] = []
+    for raw in value["observations"]:
+        if (
+            not isinstance(raw, dict)
+            or set(raw) != {"surface", "identifier", "active", "references"}
+            or raw["surface"] not in _INDEPENDENCE_SURFACES
+            or not isinstance(raw["identifier"], str)
+            or not isinstance(raw["active"], bool)
+            or not isinstance(raw["references"], list)
+            or any(not isinstance(item, str) for item in raw["references"])
+        ):
+            raise CutoverSafetyError("independence scan observation is invalid")
+        observations.append(
+            IndependenceObservation(
+                surface=cast(Any, raw["surface"]),
+                identifier=raw["identifier"],
+                active=raw["active"],
+                references=tuple(raw["references"]),
+            )
+        )
+    string_fields = (
+        "schema",
+        "phase",
+        "boot_id",
+        "captured_at",
+        "source_scan_sha256",
+        "signer_device_id",
+        "signer_key_id",
+        "signature",
+    )
+    if (
+        any(not isinstance(value.get(field), str) for field in string_fields)
+        or isinstance(value.get("roster_version"), bool)
+        or not isinstance(value.get("roster_version"), int)
+    ):
+        raise CutoverSafetyError("independence scan values are invalid")
+    return IndependenceScanReceipt(
+        schema=cast(Any, value["schema"]),
+        phase=cast(Any, value["phase"]),
+        boot_id=cast(str, value["boot_id"]),
+        captured_at=cast(str, value["captured_at"]),
+        source_scan_sha256=cast(str, value["source_scan_sha256"]),
+        observations=tuple(observations),
+        signer_device_id=cast(str, value["signer_device_id"]),
+        signer_key_id=cast(str, value["signer_key_id"]),
+        roster_version=cast(int, value["roster_version"]),
+        signature=cast(str, value["signature"]),
+    )
 
 
 def independence_receipt_from_dict(value: dict[str, Any]) -> IndependenceReceipt:
@@ -463,6 +551,7 @@ __all__ = [
     "SafetyError",
     "assert_safe_attempt_root",
     "independence_receipt_from_dict",
+    "independence_scan_from_dict",
     "initialize_attempt_root",
     "prepare_synapse_retirement",
     "resolve_under_attempt",

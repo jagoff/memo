@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from pathlib import Path
+from typing import Any, Literal, Protocol, cast
 
 from memo.errors import SignatureError
 from memo.operational_event import canonical_json_bytes
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner, OperationalVerifier
+from tools.memflow_absorption.consumer_migration import (
+    ConsumerMigrationError,
+    build_consumer_replacement_plan,
+)
 from tools.memflow_absorption.inventory import (
     InventoryError,
     verify_consumer_inventory,
@@ -24,6 +30,8 @@ from tools.memflow_absorption.schemas import (
     ConsumerReplacementPlan,
     CutoverControlRecord,
     CutoverState,
+    IndependenceReceipt,
+    IndependenceScanReceipt,
     SynapsePeerVote,
     SynapseRetirementManifest,
     SynapseRetirementState,
@@ -40,6 +48,87 @@ class ControlRecordError(RuntimeError):
 
 class CutoverSafetyError(RuntimeError):
     """A Synapse retirement request would cross the committed safety fence."""
+
+
+def control_record_from_dict(value: Mapping[str, Any]) -> CutoverControlRecord:
+    """Parse the exact signed control-record schema without coercion."""
+
+    expected = {
+        "schema",
+        "control_oid",
+        "state",
+        "sequence",
+        "previous_control_oid",
+        "attempt_id",
+        "roster_version",
+        "signer_device_id",
+        "signer_key_id",
+        "issued_at",
+        "signature",
+        "synapse_state",
+        "capability_manifest_sha256",
+        "synapse_manifest_sha256",
+        "consumer_plan_sha256",
+        "synapse_authority_sha256",
+        "active_state_receipt_sha256",
+        "peer_vote_sha256",
+        "peer_device_ids",
+        "retirement_epoch",
+        "independence_receipt_sha256",
+    }
+    string_fields = expected - {
+        "sequence",
+        "roster_version",
+        "peer_vote_sha256",
+        "peer_device_ids",
+        "retirement_epoch",
+    }
+    if (
+        set(value) != expected
+        or any(not isinstance(value.get(field), str) for field in string_fields)
+        or any(
+            isinstance(value.get(field), bool) or not isinstance(value.get(field), int)
+            for field in ("sequence", "roster_version", "retirement_epoch")
+        )
+        or any(
+            not isinstance(value.get(field), list)
+            or any(not isinstance(item, str) for item in value[field])
+            for field in ("peer_vote_sha256", "peer_device_ids")
+        )
+    ):
+        raise ControlRecordError("control record fields are invalid")
+    try:
+        state = CutoverState(cast(str, value["state"]))
+        synapse_state = SynapseRetirementState(cast(str, value["synapse_state"]))
+    except ValueError as exc:
+        raise ControlRecordError("control record state is invalid") from exc
+    return CutoverControlRecord(
+        schema=cast(Any, value["schema"]),
+        control_oid=cast(str, value["control_oid"]),
+        state=state,
+        sequence=cast(int, value["sequence"]),
+        previous_control_oid=cast(str, value["previous_control_oid"]),
+        attempt_id=cast(str, value["attempt_id"]),
+        roster_version=cast(int, value["roster_version"]),
+        signer_device_id=cast(str, value["signer_device_id"]),
+        signer_key_id=cast(str, value["signer_key_id"]),
+        issued_at=cast(str, value["issued_at"]),
+        signature=cast(str, value["signature"]),
+        synapse_state=synapse_state,
+        capability_manifest_sha256=cast(str, value["capability_manifest_sha256"]),
+        synapse_manifest_sha256=cast(str, value["synapse_manifest_sha256"]),
+        consumer_plan_sha256=cast(str, value["consumer_plan_sha256"]),
+        synapse_authority_sha256=cast(str, value["synapse_authority_sha256"]),
+        active_state_receipt_sha256=cast(
+            str, value["active_state_receipt_sha256"]
+        ),
+        peer_vote_sha256=tuple(value["peer_vote_sha256"]),
+        peer_device_ids=tuple(value["peer_device_ids"]),
+        retirement_epoch=cast(int, value["retirement_epoch"]),
+        independence_receipt_sha256=cast(
+            str, value["independence_receipt_sha256"]
+        ),
+    )
 
 
 class ControlRecordCAS(Protocol):
@@ -284,27 +373,28 @@ def _consumer_plan_digest(
     inventory: ConsumerInventory,
     manifest: CapabilityManifest,
     roster: VerificationRoster,
+    memo_bin: Path,
 ) -> str:
     try:
         verify_consumer_inventory(inventory, roster=roster)
         verify_capability_manifest(manifest, roster=roster)
     except (InventoryError, ManifestError) as exc:
         raise CutoverSafetyError("Synapse consumer-plan authority is invalid") from exc
-    inventory_sha256 = hashlib.sha256(inventory.signed_bytes()).hexdigest()
-    manifest_sha256 = hashlib.sha256(manifest.signed_bytes()).hexdigest()
-    if (
-        plan.inventory_sha256 != inventory_sha256
-        or plan.capability_manifest_sha256 != manifest_sha256
-        or dict(plan.covered_surfaces) != dict(inventory.surface_observations)
-    ):
-        raise CutoverSafetyError(
-            "Synapse consumer plan is not derived from verified inventory and manifest"
+    try:
+        expected = build_consumer_replacement_plan(
+            inventory,
+            manifest,
+            roster=roster,
+            memo_bin=memo_bin,
         )
-    row_digest = hashlib.sha256(
-        canonical_json_bytes([row.to_dict() for row in plan.rows])
-    ).hexdigest()
-    if row_digest != plan.digest:
-        raise CutoverSafetyError("Synapse consumer-plan digest mismatch")
+    except ConsumerMigrationError as exc:
+        raise CutoverSafetyError(
+            "Synapse consumer plan cannot be deterministically rebuilt"
+        ) from exc
+    if plan.authority_bytes() != expected.authority_bytes():
+        raise CutoverSafetyError(
+            "Synapse consumer plan differs from deterministic verified authority"
+        )
     if set(plan.covered_surfaces) != _REQUIRED_SURFACES:
         missing = sorted(_REQUIRED_SURFACES - set(plan.covered_surfaces))
         extra = sorted(set(plan.covered_surfaces) - _REQUIRED_SURFACES)
@@ -466,11 +556,22 @@ def _commit_signed_transition(
     roster: VerificationRoster,
 ) -> VerifiedControlRecord:
     signed = sign_control_record(replacement, signer=signer, predecessor=predecessor)
+    try:
+        verified_signed = verify_control_record(
+            expected_oid=signed.control_oid,
+            roster=roster,
+            record=signed,
+            fetched_oid=signed.control_oid,
+        )
+    except ControlRecordError as exc:
+        raise CutoverSafetyError(
+            "replacement control record failed roster verification before CAS"
+        ) from exc
     if not cas.compare_and_swap(predecessor.control_oid, signed):
         raise CutoverSafetyError("control record CAS compare-and-swap failed")
     fetched_oid, fetched = cas.read()
     try:
-        return verify_control_record(
+        committed = verify_control_record(
             expected_oid=signed.control_oid,
             roster=roster,
             record=fetched,
@@ -478,6 +579,9 @@ def _commit_signed_transition(
         )
     except ControlRecordError as exc:
         raise CutoverSafetyError("committed control record failed verification") from exc
+    if committed.canonical_payload != verified_signed.canonical_payload:
+        raise CutoverSafetyError("committed control record differs from verified replacement")
+    return committed
 
 
 def prepare_synapse_retirement(
@@ -490,6 +594,7 @@ def prepare_synapse_retirement(
     roster: VerificationRoster,
     signer: OperationalSigner,
     next_control_oid: str,
+    memo_bin: Path,
 ) -> VerifiedControlRecord:
     """Bind all signed preflight authority before quiescing either product."""
 
@@ -507,6 +612,7 @@ def prepare_synapse_retirement(
         inventory=inventory,
         manifest=manifest,
         roster=roster,
+        memo_bin=memo_bin,
     )
     peer_device_ids = tuple(sorted(manifest.machine_ids))
     authority_sha256 = hashlib.sha256(
@@ -548,7 +654,11 @@ def advance_synapse_retirement(
     peer_votes: tuple[SynapsePeerVote, ...] = (),
     active_state_receipt_sha256: str = "",
     synapse_manifest: SynapseRetirementManifest | None = None,
-    independence_receipt_sha256: str = "",
+    independence_receipt: IndependenceReceipt | None = None,
+    independence_inventory: ConsumerInventory | None = None,
+    independence_manifest: SynapseRetirementManifest | None = None,
+    post_stop_scan: IndependenceScanReceipt | None = None,
+    post_reboot_scan: IndependenceScanReceipt | None = None,
 ) -> VerifiedControlRecord:
     """Advance one signed CAS edge from an exactly freshly verified record."""
 
@@ -608,8 +718,34 @@ def advance_synapse_retirement(
         )
     else:
         assert target is SynapseRetirementState.VERIFIED
-        if not _valid_sha256(independence_receipt_sha256):
-            raise CutoverSafetyError("Synapse independence receipt digest is missing")
+        evidence = (
+            independence_receipt,
+            independence_inventory,
+            independence_manifest,
+            post_stop_scan,
+            post_reboot_scan,
+        )
+        if any(item is None for item in evidence):
+            raise CutoverSafetyError("verified Synapse independence evidence is incomplete")
+        assert independence_receipt is not None
+        assert independence_inventory is not None
+        assert independence_manifest is not None
+        assert post_stop_scan is not None
+        assert post_reboot_scan is not None
+        from tools.memflow_absorption.safety import verify_independence_receipt
+
+        verify_independence_receipt(
+            independence_receipt,
+            control,
+            independence_inventory,
+            independence_manifest,
+            post_stop_scan,
+            post_reboot_scan,
+            roster=roster,
+        )
+        independence_receipt_sha256 = hashlib.sha256(
+            independence_receipt.signed_bytes()
+        ).hexdigest()
         replacement = _next_control_record(
             control,
             next_control_oid=next_control_oid,
@@ -759,6 +895,36 @@ def sign_control_record(
             or record.peer_device_ids != predecessor.peer_device_ids
         ):
             raise ControlRecordError("control record authority changed after preflight")
+        if predecessor.synapse_state in {
+            SynapseRetirementState.QUIESCED,
+            SynapseRetirementState.STAGED,
+            SynapseRetirementState.COMMITTED,
+            SynapseRetirementState.VERIFIED,
+        } and record.peer_vote_sha256 != predecessor.peer_vote_sha256:
+            raise ControlRecordError("control record peer votes changed after quiescence")
+        if predecessor.synapse_state in {
+            SynapseRetirementState.STAGED,
+            SynapseRetirementState.COMMITTED,
+            SynapseRetirementState.VERIFIED,
+        } and (
+            record.synapse_manifest_sha256 != predecessor.synapse_manifest_sha256
+            or record.active_state_receipt_sha256
+            != predecessor.active_state_receipt_sha256
+        ):
+            raise ControlRecordError("control record staging evidence changed after staging")
+        if predecessor.synapse_state in {
+            SynapseRetirementState.COMMITTED,
+            SynapseRetirementState.VERIFIED,
+        } and record.retirement_epoch != predecessor.retirement_epoch:
+            raise ControlRecordError("control record retirement epoch changed after commit")
+        if (
+            predecessor.independence_receipt_sha256
+            and record.independence_receipt_sha256
+            != predecessor.independence_receipt_sha256
+        ):
+            raise ControlRecordError(
+                "control record independence receipt changed after verification"
+            )
     if not record.attempt_id:
         raise ControlRecordError("control record attempt id is missing")
     _validate_synapse_fields(record)
@@ -842,6 +1008,22 @@ def fetch_verified_control(
     )
 
 
+def fetch_current_verified_control(
+    cas: ControlRecordCAS,
+    *,
+    roster: VerificationRoster,
+) -> VerifiedControlRecord:
+    """Fetch and verify the authoritative CAS head without trusting cached state."""
+
+    fetched_oid, record = cas.read()
+    return verify_control_record(
+        expected_oid=fetched_oid,
+        roster=roster,
+        record=record,
+        fetched_oid=fetched_oid,
+    )
+
+
 __all__ = [
     "CONTROL_RECORD_DOMAIN",
     "SYNAPSE_PEER_VOTE_DOMAIN",
@@ -851,6 +1033,8 @@ __all__ = [
     "InMemoryControlRecordCAS",
     "advance_synapse_retirement",
     "commit_synapse_activation",
+    "control_record_from_dict",
+    "fetch_current_verified_control",
     "fetch_verified_control",
     "prepare_synapse_retirement",
     "sign_control_record",
