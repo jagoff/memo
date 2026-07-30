@@ -26,9 +26,11 @@ from tools.memflow_absorption.control_record import (
 )
 from tools.memflow_absorption.inventory import (
     InventoryError,
+    build_independence_receipt,
     consumer_inventory_from_dict,
     synapse_retirement_manifest_from_dict,
     verify_consumer_inventory,
+    verify_synapse_retirement_manifest,
 )
 from tools.memflow_absorption.manifest import (
     ManifestError,
@@ -40,6 +42,7 @@ from tools.memflow_absorption.manifest import (
     verify_usage_proof,
 )
 from tools.memflow_absorption.safety import (
+    assert_retirement_cleanup_authority,
     assert_safe_attempt_root,
     independence_receipt_from_dict,
     independence_scan_from_dict,
@@ -113,6 +116,52 @@ def _parser() -> argparse.ArgumentParser:
     synapse_verify.add_argument("--independence-receipt", type=Path, required=True)
     synapse_verify.add_argument("--roster-root", type=Path, required=True)
     synapse_verify.add_argument("--apply", action="store_true")
+    retirement_audit = commands.add_parser("retirement-audit")
+    retirement_audit.add_argument("--control-record", type=Path, required=True)
+    retirement_audit.add_argument("--inventory", type=Path, required=True)
+    retirement_audit.add_argument("--retirement-manifest", type=Path, required=True)
+    retirement_audit.add_argument("--post-stop-scan", type=Path, required=True)
+    retirement_audit.add_argument("--post-reboot-scan", type=Path, required=True)
+    retirement_audit.add_argument("--independence-receipt", type=Path, required=True)
+    retirement_audit.add_argument("--roster-root", type=Path, required=True)
+    retirement_audit.add_argument("--scan-root", type=Path, action="append", required=True)
+    retirement_audit.add_argument("--archive-root", type=Path, action="append", default=[])
+    retirement_audit.set_defaults(apply=False)
+    retirement_cleanup = commands.add_parser("retirement-cleanup")
+    retirement_cleanup.add_argument("--control-record", type=Path, required=True)
+    retirement_cleanup.add_argument(
+        "--retirement-manifest",
+        type=Path,
+        required=True,
+    )
+    retirement_cleanup.add_argument(
+        "--consumer-replacement-receipt",
+        type=Path,
+        required=True,
+    )
+    retirement_cleanup.add_argument(
+        "--bounded-data-receipt",
+        type=Path,
+        required=True,
+    )
+    retirement_cleanup.add_argument(
+        "--independence-receipt",
+        type=Path,
+        required=True,
+    )
+    retirement_cleanup.add_argument("--roster-root", type=Path, required=True)
+    retirement_cleanup.add_argument("--cleanup-path", type=Path, action="append", required=True)
+    for artifact in (
+        "control-record",
+        "retirement-manifest",
+        "consumer-replacement-receipt",
+        "bounded-data-receipt",
+        "independence-receipt",
+    ):
+        retirement_cleanup.add_argument(
+            f"--{artifact}-sha256",
+            required=True,
+        )
     return parser
 
 
@@ -401,6 +450,125 @@ def _synapse_verify(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _retirement_audit(args: argparse.Namespace) -> dict[str, object]:
+    """Verify terminal authority, then scan only the operator-named roots."""
+
+    authority = _synapse_verify(args)
+    manifest = synapse_retirement_manifest_from_dict(
+        _read_canonical_object(args.retirement_manifest, "retirement manifest")
+    )
+    try:
+        roster = _verification_roster(args.roster_root) if args.archive_root else None
+        receipt = build_independence_receipt(
+            args.scan_root,
+            manifest=manifest,
+            archived_roots=args.archive_root,
+            roster=roster,
+        )
+    except InventoryError as exc:
+        raise SystemExit(f"Synapse retirement negative scan failed: {exc}") from exc
+    return {
+        "command": "retirement-audit",
+        "dry_run": True,
+        "status": receipt.status,
+        "independent": authority["independent"],
+        "retirement_epoch": authority["retirement_epoch"],
+        "source_scan_sha256": receipt.source_scan_sha256,
+        "file_count": receipt.file_count,
+        "archived_provenance": list(receipt.archived_provenance),
+        "covered_surfaces": [
+            "configuration",
+            "launchagent",
+            "mcp_gateway_route",
+            "package_metadata",
+            "port",
+            "process",
+            "runtime",
+            "shell_config_path",
+            "source",
+            "state_root",
+            "wrapper",
+        ],
+        "synapse_manifest_sha256": authority["synapse_manifest_sha256"],
+        "consumer_inventory_sha256": authority["consumer_inventory_sha256"],
+        "independence_receipt_sha256": authority[
+            "independence_receipt_sha256"
+        ],
+    }
+
+
+def _retirement_cleanup(args: argparse.Namespace) -> dict[str, object]:
+    """Validate available authority and refuse all cleanup while blockers remain."""
+
+    control_object = _read_canonical_object(
+        args.control_record,
+        "cutover control record",
+    )
+    manifest_object = _read_canonical_object(
+        args.retirement_manifest,
+        "retirement manifest",
+    )
+    plan_object = _read_canonical_object(
+        args.consumer_replacement_receipt,
+        "consumer replacement receipt",
+    )
+    data_object = _read_canonical_object(
+        args.bounded_data_receipt,
+        "bounded data receipt",
+    )
+    independence_object = _read_canonical_object(
+        args.independence_receipt,
+        "independence receipt",
+    )
+    roster = _verification_roster(args.roster_root)
+    try:
+        control_record = control_record_from_dict(control_object)
+        control = verify_control_record(
+            expected_oid=control_record.control_oid,
+            roster=roster,
+            record=control_record,
+            fetched_oid=control_record.control_oid,
+        )
+        manifest = synapse_retirement_manifest_from_dict(manifest_object)
+        verify_synapse_retirement_manifest(manifest, roster=roster)
+        plan = consumer_replacement_plan_from_dict(plan_object)
+        independence = independence_receipt_from_dict(independence_object)
+    except (
+        ConsumerMigrationError,
+        ControlRecordError,
+        CutoverSafetyError,
+        InventoryError,
+    ) as exc:
+        raise SystemExit("retirement cleanup authority parsing failed") from exc
+
+    expected = {
+        "control_record": args.control_record_sha256,
+        "retirement_manifest": args.retirement_manifest_sha256,
+        "consumer_replacement_receipt": (
+            args.consumer_replacement_receipt_sha256
+        ),
+        "bounded_data_receipt": args.bounded_data_receipt_sha256,
+        "independence_receipt": args.independence_receipt_sha256,
+    }
+    observed = {
+        "control_record": _sha256_bytes(canonical_json_bytes(control_object)),
+        "retirement_manifest": _sha256_bytes(manifest.signed_bytes()),
+        "consumer_replacement_receipt": _sha256_bytes(plan.authority_bytes()),
+        "bounded_data_receipt": _sha256_bytes(canonical_json_bytes(data_object)),
+        "independence_receipt": _sha256_bytes(independence.signed_bytes()),
+    }
+    try:
+        assert_retirement_cleanup_authority(
+            control,
+            expected_digests=expected,
+            observed_digests=observed,
+            cleanup_paths=args.cleanup_path,
+        )
+    except CutoverSafetyError as exc:
+        raise SystemExit(str(exc)) from exc
+    raise AssertionError("retirement cleanup authority unexpectedly returned")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "snapshot":
@@ -415,6 +583,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = _synapse_preflight(args)
     elif args.command == "synapse-verify":
         result = _synapse_verify(args)
+    elif args.command == "retirement-audit":
+        result = _retirement_audit(args)
+    elif args.command == "retirement-cleanup":
+        result = _retirement_cleanup(args)
     else:
         root = assert_safe_attempt_root(args.attempt_root, args.attempt_id)
         if args.apply:

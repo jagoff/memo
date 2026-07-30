@@ -8,9 +8,9 @@ import os
 import re
 import stat
 from collections.abc import Iterator, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from memo.atomic_io import open_secure_directory
 from memo.errors import SignatureError
@@ -38,6 +38,13 @@ _CONSUMER_REFERENCE_RE = re.compile(
 _SYMBOL_RE = re.compile(r"\b(?:class|def)\s+([A-Za-z_][A-Za-z0-9_]*)")
 _IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_ACTIVE_RETIREMENT_RE = re.compile(
+    r"(?i)(?:"
+    r"\bSYNAPSE_[A-Z0-9_]+\b"
+    r"|\bsynapse(?:[-_.][a-z0-9]+)*\b"
+    r"|\bmemflow(?:[-_.][a-z0-9]+)*\b"
+    r")"
+)
 CONSUMER_INVENTORY_DOMAIN = "memo.cutover.consumer_inventory.v1"
 # The schema evolved, but its Ed25519 purpose remains the pre-approved
 # retirement authority domain.  Do not silently introduce an unsigned domain.
@@ -46,6 +53,30 @@ SYNAPSE_RETIREMENT_DOMAIN = "memo.cutover.synapse_retirement.v1"
 
 class InventoryError(RuntimeError):
     """An inventory input cannot be scanned without following unsafe paths."""
+
+
+@dataclass(frozen=True)
+class RetirementAuditReceipt:
+    """Deterministic read-only result of the final filesystem negative scan."""
+
+    status: Literal["verified"]
+    source_scan_sha256: str
+    manifest_sha256: str
+    roots: tuple[str, ...]
+    archived_roots: tuple[str, ...]
+    archived_provenance: tuple[str, ...]
+    file_count: int
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "source_scan_sha256": self.source_scan_sha256,
+            "manifest_sha256": self.manifest_sha256,
+            "roots": list(self.roots),
+            "archived_roots": list(self.archived_roots),
+            "archived_provenance": list(self.archived_provenance),
+            "file_count": self.file_count,
+        }
 
 
 def _string_tuple(value: Any, description: str) -> tuple[str, ...]:
@@ -369,6 +400,143 @@ def _consumer_references(text: str) -> tuple[str, ...]:
     return tuple(sorted(set(match.group(0) for match in _CONSUMER_REFERENCE_RE.finditer(text))))
 
 
+def _retirement_references(text: str) -> tuple[str, ...]:
+    return tuple(
+        sorted(set(match.group(0) for match in _ACTIVE_RETIREMENT_RE.finditer(text)))
+    )
+
+
+def _normalized_scan_roots(
+    roots: tuple[Path, ...] | list[Path],
+    *,
+    description: str,
+) -> tuple[Path, ...]:
+    normalized = tuple(
+        Path(os.path.abspath(os.fspath(root)))
+        for root in roots
+    )
+    if not normalized:
+        raise InventoryError(f"{description} requires at least one root")
+    if len(normalized) != len(set(normalized)):
+        raise InventoryError(f"{description} contains duplicate roots")
+    for index, root in enumerate(normalized):
+        for other in normalized[index + 1 :]:
+            if root in other.parents or other in root.parents:
+                raise InventoryError(f"{description} contains overlapping roots")
+    return normalized
+
+
+def build_independence_receipt(
+    roots: tuple[Path, ...] | list[Path],
+    *,
+    manifest: SynapseRetirementManifest,
+    archived_roots: tuple[Path, ...] | list[Path] = (),
+    roster: VerificationRoster | None = None,
+) -> RetirementAuditReceipt:
+    """Prove that installed roots contain no active retired-runtime reference.
+
+    ``archived_roots`` is deliberately separate from installed roots.  Inside
+    those roots, only paths enumerated by the final retirement manifest may
+    contain a retired reference.  A path match in an installed root is never
+    treated as provenance, because that would bless the still-active source
+    tree that this audit is intended to detect.
+
+    The walk is descriptor-safe through :func:`_safe_files`, never follows a
+    symlink, and performs no filesystem mutation.
+    """
+
+    installed = _normalized_scan_roots(roots, description="retirement audit")
+    archives = (
+        _normalized_scan_roots(
+            archived_roots,
+            description="retirement archive audit",
+        )
+        if archived_roots
+        else ()
+    )
+    if archives:
+        if roster is None:
+            raise InventoryError(
+                "archived provenance requires a roster-verified signed manifest"
+            )
+        verify_synapse_retirement_manifest(manifest, roster=roster)
+    if any(
+        installed_root == archive_root
+        or installed_root in archive_root.parents
+        or archive_root in installed_root.parents
+        for installed_root in installed
+        for archive_root in archives
+    ):
+        raise InventoryError("installed and archived retirement roots overlap")
+    allowed_archive_paths = frozenset(
+        (*manifest.files, *manifest.tests, *manifest.goldens)
+    )
+    if any(
+        not path
+        or Path(path).is_absolute()
+        or any(part in {"", ".", ".."} for part in Path(path).parts)
+        for path in allowed_archive_paths
+    ):
+        raise InventoryError("retirement manifest contains an unsafe archive path")
+
+    records: list[dict[str, object]] = []
+    archived_provenance: set[str] = set()
+    file_count = 0
+    for role, scan_roots in (("installed", installed), ("archive", archives)):
+        for root_index, root in enumerate(scan_roots):
+            for path, kind in _safe_files(root):
+                relative = path.relative_to(root).as_posix()
+                if kind == "symlink":
+                    raise InventoryError(
+                        f"retirement audit cannot prove a symlink: {path}"
+                    )
+                data, text = _read_text(path)
+                file_count += 1
+                references = _retirement_references(relative + "\n" + text)
+                allowed = (
+                    role == "archive"
+                    and relative in allowed_archive_paths
+                    and bool(references)
+                )
+                if references and not allowed:
+                    raise InventoryError(
+                        "unlisted active reference: "
+                        f"{path} ({','.join(references)})"
+                    )
+                if allowed:
+                    archived_provenance.add(relative)
+                records.append(
+                    {
+                        "role": role,
+                        "root_index": root_index,
+                        "path": relative,
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                        "archived_provenance": allowed,
+                    }
+                )
+    manifest_sha256 = hashlib.sha256(manifest.signed_bytes()).hexdigest()
+    roots_as_text = tuple(str(root) for root in installed)
+    archives_as_text = tuple(str(root) for root in archives)
+    return RetirementAuditReceipt(
+        status="verified",
+        source_scan_sha256=hashlib.sha256(
+            canonical_json_bytes(
+                {
+                    "manifest_sha256": manifest_sha256,
+                    "roots": list(roots_as_text),
+                    "archived_roots": list(archives_as_text),
+                    "records": records,
+                }
+            )
+        ).hexdigest(),
+        manifest_sha256=manifest_sha256,
+        roots=roots_as_text,
+        archived_roots=archives_as_text,
+        archived_provenance=tuple(sorted(archived_provenance)),
+        file_count=file_count,
+    )
+
+
 def _process_launchd_matches(
     process: ProcessRecord,
     launchd_snapshot: LaunchdSnapshot,
@@ -682,7 +850,9 @@ __all__ = [
     "CONSUMER_INVENTORY_DOMAIN",
     "SYNAPSE_RETIREMENT_DOMAIN",
     "InventoryError",
+    "RetirementAuditReceipt",
     "build_consumer_inventory",
+    "build_independence_receipt",
     "build_synapse_retirement_manifest",
     "consumer_inventory_from_dict",
     "synapse_retirement_manifest_from_dict",

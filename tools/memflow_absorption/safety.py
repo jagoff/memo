@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +29,7 @@ from tools.memflow_absorption.inventory import (
 )
 from tools.memflow_absorption.schemas import (
     ConsumerInventory,
+    CutoverState,
     IndependenceObservation,
     IndependenceReceipt,
     IndependenceScanReceipt,
@@ -39,6 +41,15 @@ from tools.memflow_absorption.schemas import (
 ATTEMPT_SENTINEL = ".memo-cutover-attempt.json"
 _ATTEMPT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_CLEANUP_DIGEST_KEYS = frozenset(
+    {
+        "bounded_data_receipt",
+        "consumer_replacement_receipt",
+        "control_record",
+        "independence_receipt",
+        "retirement_manifest",
+    }
+)
 _INDEPENDENCE_SURFACES = (
     "launchagent",
     "mcp_gateway_route",
@@ -182,6 +193,101 @@ def resolve_under_attempt(
     except ValueError as exc:
         raise SafetyError("requested path escapes cutover attempt authority") from exc
     return target
+
+
+def assert_retirement_cleanup_authority(
+    control: VerifiedControlRecord,
+    *,
+    expected_digests: Mapping[str, str],
+    observed_digests: Mapping[str, str],
+    cleanup_paths: tuple[Path, ...] | list[Path],
+) -> None:
+    """Reject cleanup until all exact authority and runtime blockers are closed.
+
+    This validator intentionally has no success path today.  The signed
+    control record binds the consumer plan, final retirement manifest, and
+    independence receipt, but the repository has neither a signed deletion
+    plan for exact filesystem targets nor evidence that the retirement fence
+    is wired at the production Synapse runtime boundary.  Validating the
+    available evidence before reporting that blocker makes the future operator
+    command fail for the most specific authority defect while remaining
+    incapable of deleting anything.
+    """
+
+    if (
+        control.state is not CutoverState.VERIFIED
+        or control.synapse_state is not SynapseRetirementState.VERIFIED
+        or control.retirement_epoch < 1
+    ):
+        raise CutoverSafetyError(
+            "retirement cleanup requires a VERIFIED control record"
+        )
+    if (
+        set(expected_digests) != _CLEANUP_DIGEST_KEYS
+        or set(observed_digests) != _CLEANUP_DIGEST_KEYS
+        or any(
+            not isinstance(value, str) or not _SHA256_RE.fullmatch(value)
+            for value in (*expected_digests.values(), *observed_digests.values())
+        )
+    ):
+        raise CutoverSafetyError(
+            "retirement cleanup requires all exact artifact digests"
+        )
+    mismatches = sorted(
+        key
+        for key in _CLEANUP_DIGEST_KEYS
+        if expected_digests[key] != observed_digests[key]
+    )
+    if mismatches:
+        raise CutoverSafetyError(
+            "retirement cleanup artifact digest mismatch: " + ",".join(mismatches)
+        )
+    if (
+        expected_digests["retirement_manifest"]
+        != control.synapse_manifest_sha256
+        or expected_digests["consumer_replacement_receipt"]
+        != control.consumer_plan_sha256
+        or expected_digests["independence_receipt"]
+        != control.independence_receipt_sha256
+    ):
+        raise CutoverSafetyError(
+            "retirement cleanup digest mismatch with VERIFIED control authority"
+        )
+    if not cleanup_paths:
+        raise CutoverSafetyError("retirement cleanup requires exact cleanup paths")
+    normalized: list[Path] = []
+    for path in cleanup_paths:
+        raw = os.fspath(path)
+        if _contains_unresolved(raw) or not Path(raw).is_absolute():
+            raise CutoverSafetyError(
+                f"retirement cleanup path is unresolved or relative: {raw}"
+            )
+        candidate = Path(os.path.abspath(raw))
+        if (
+            candidate == Path(candidate.anchor)
+            or candidate == Path.home()
+            or _is_repository(candidate)
+        ):
+            raise CutoverSafetyError(
+                f"retirement cleanup path is broad or a repository: {candidate}"
+            )
+        try:
+            _reject_symlink_components(candidate)
+        except SafetyError as exc:
+            raise CutoverSafetyError(
+                f"retirement cleanup path is unsafe: {candidate}"
+            ) from exc
+        normalized.append(candidate)
+    if len(normalized) != len(set(normalized)):
+        raise CutoverSafetyError("retirement cleanup paths are duplicated")
+    for index, path in enumerate(normalized):
+        for other in normalized[index + 1 :]:
+            if path in other.parents or other in path.parents:
+                raise CutoverSafetyError("retirement cleanup paths overlap")
+    raise CutoverSafetyError(
+        "retirement cleanup is blocked: production runtime gate evidence "
+        "and a signed exact-path deletion plan are unavailable"
+    )
 
 
 def verify_synapse_retired(
@@ -549,6 +655,7 @@ __all__ = [
     "SYNAPSE_INDEPENDENCE_SCAN_DOMAIN",
     "CutoverSafetyError",
     "SafetyError",
+    "assert_retirement_cleanup_authority",
     "assert_safe_attempt_root",
     "independence_receipt_from_dict",
     "independence_scan_from_dict",
