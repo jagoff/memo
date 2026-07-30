@@ -74,6 +74,12 @@ historical-store retirement require a separate shadow-write/storage-amplificatio
 Rollback: readers ignore the additive delete-event fields; old and new history databases
 remain readable.
 
+Implementation result: **Admitted and shipped on the feature branch.** New delete events
+preserve the exact body and tags in the existing history envelope, and time-machine
+reconstruction consumes them. Legacy events remain explicitly unavailable. No new store,
+command, flag, or authority was added. Focused verification passed (`65 passed`), along
+with Ruff and mypy (`461 source files`).
+
 ## 4. Retrieval planning and backend filter pushdown
 
 Decision: **Admit, narrowed**
