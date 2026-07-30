@@ -128,4 +128,4 @@ def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoste
         raise SignatureError("source extraction is incomplete")
     OperationalVerifier().verify(domain=DOMAIN, payload=receipt.signed_bytes(), envelope=receipt.signature, roster=roster)
 
-__all__ = ["SourceBucket", "SourceReceiptV2", "sign_source_receipt", "verify_source_receipt", "DOMAIN"]
+__all__ = ["DOMAIN", "SourceBucket", "SourceReceiptV2", "sign_source_receipt", "verify_source_receipt"]

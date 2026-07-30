@@ -5,18 +5,18 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+from memo.atomic_io import open_secure_directory
 from memo.errors import SignatureError
 from memo.operational_event import canonical_json_bytes
 from memo.operational_roster import VerificationRoster
-from memo.operational_signing import OperationalSigner, OperationalVerifier
-from memo.atomic_io import open_secure_directory
-import stat
+from memo.operational_signing import OperationalSigner, OperationalVerifier, SignatureEnvelope
 from tools.memflow_absorption.schemas import (
     AuditExclusions,
     CapabilityManifest,
@@ -27,8 +27,11 @@ from tools.memflow_absorption.schemas import (
     SynapseOperation,
     UsageProof,
 )
-from tools.memflow_absorption.source_receipt import SourceBucket, SourceReceiptV2, verify_source_receipt
-from memo.operational_signing import SignatureEnvelope
+from tools.memflow_absorption.source_receipt import (
+    SourceBucket,
+    SourceReceiptV2,
+    verify_source_receipt,
+)
 from tools.memflow_absorption.synapse_catalog import (
     SynapseCatalogError,
     discover_synapse_operations,
@@ -50,7 +53,7 @@ def _load_json(path: Path) -> Any:
         receipt_name = f"{absolute.name}.receipt.json"
         with open_secure_directory(absolute.parent) as directory:
             encoded, observed = directory.read_bytes_snapshot(absolute.name)
-            receipt_encoded, receipt_stat = directory.read_bytes_snapshot(receipt_name)
+            receipt_encoded, _receipt_stat = directory.read_bytes_snapshot(receipt_name)
         receipt = json.loads(receipt_encoded)
         if canonical_json_bytes(receipt) != receipt_encoded or receipt.get("schema") != "memo.cutover_snapshot_receipt.v2":
             raise ManifestError(f"invalid snapshot receipt: {path}")

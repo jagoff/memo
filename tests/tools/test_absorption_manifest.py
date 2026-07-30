@@ -3,9 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
-import os
 from types import SimpleNamespace
 from typing import Any
 
@@ -30,12 +29,12 @@ from tools.memflow_absorption.manifest import (
     verify_capability_manifest,
 )
 from tools.memflow_absorption.schemas import AuditExclusions, UsageProof
+from tools.memflow_absorption.snapshot import create_readonly_snapshot
 from tools.memflow_absorption.source_receipt import (
     SourceBucket,
     SourceReceiptV2,
     sign_source_receipt,
 )
-from tools.memflow_absorption.snapshot import create_readonly_snapshot
 
 FROZEN_AT = "2026-07-30T00:00:00Z"
 WINDOW_STARTED_AT = "2026-05-01T00:00:00Z"
