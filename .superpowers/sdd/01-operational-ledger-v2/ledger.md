@@ -15,3 +15,7 @@
   passed`; Task 1 + Task 2 + Task 3 + legacy operational contracts `256
   passed`; non-slow `6032 passed, 18 skipped`; Ruff/mypy/frozen-v1 clean;
   independent review still required before acceptance.
+- Task 4: brief created at BASE `42f458c0`; implementation in progress. The
+  local v1 origin is the only seed writer, every verified v1 origin receives a
+  genesis anchor, seed IDs are deterministic and migration-authorized, and no
+  production activation or Memflow mutation is permitted.

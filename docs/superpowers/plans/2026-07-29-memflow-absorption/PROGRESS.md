@@ -149,7 +149,7 @@ Estado: **1/7 aceptadas**.
 
 ### Tarea 4 — Migración genesis v1 determinista y gate de paridad
 
-- [ ] Generar brief y registrar BASE.
+- [x] Generar brief y registrar BASE `42f458c0`.
 - [ ] RED de corrupción, source drift, determinismo e idempotencia.
 - [ ] Implementar plan/apply/verify sin tocar v1.
 - [ ] Probar paridad exacta y ausencia de activation stamp prematuro.
@@ -283,7 +283,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
 | P01-T02 | Anchors, append y bundles | implementadores + revisores especializados | `8e85662b`; hardening `0b1c859d`; ronda 2 `123cd8f6` | inicial + hardening `36 failed, 76 passed`; ronda 2 pendiente | contracts `186`; full `5995` | `5a80c74d` + `815307ac` | **FAIL** ronda 2: 3H/2M | — |
 | P01-T03 | Vistas SQLite e idempotencia | — | — | — | — | — | — | — |
-| P01-T04 | Migración genesis y paridad | — | — | — | — | — | — | — |
+| P01-T04 | Migración genesis y paridad | Codex | `42f458c0` | en preparación | — | — | pendiente | — |
 | P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
 | P01-T06 | Sesiones canónicas | — | — | — | — | — | — | — |
 | P01-T07 | Activación facade v2 | — | — | — | — | — | — | — |
