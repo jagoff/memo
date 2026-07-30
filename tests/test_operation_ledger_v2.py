@@ -1354,6 +1354,17 @@ def test_source_proof_is_bound_to_sealed_v1_head_and_signed_migration_origin(
         event.migration_origin_sha256
         == hashlib.sha256(canonical_json_bytes(migration_origin)).hexdigest()
     )
+    position = ledger.position()
+    with pytest.raises(OperationalError, match="sealed namespace"):
+        ledger.append_migration_seed(
+            _command(
+                idempotency_key="outside-migration-namespace",
+                source_proof=proof,
+            ),
+            context=context,
+            event_id="outside-migration-namespace",
+        )
+    assert ledger.position() == position
     bad = replace(proof, source_event_hash="0" * 64)
     with pytest.raises(OperationalError, match="source proof"):
         ledger.append(

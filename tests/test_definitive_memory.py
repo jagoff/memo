@@ -11,9 +11,11 @@ import pytest
 
 from memo.config import Config
 from memo.contracts import AnswerStatus
+from memo.definitive import definitive_check
 from memo.errors import FederationError, MemoError, NotFoundError
 from memo.memory import Memory
 from memo.operation_ledger import LedgerIntegrityError, OperationLedger
+from memo.operational_event import MigrationPreparedStamp, canonical_json_bytes
 
 
 def _evidence_hit(
@@ -616,6 +618,36 @@ def test_owner_federation_includes_complete_causal_journal(mem_with_stub, tmp_pa
     assert result["operations"] > 0
     assert bundle["operations"][0]["sequence"] == 1
     assert bundle["manifest"]["operation_count"] == len(bundle["operations"])
+
+
+def test_definitive_reports_prepared_v2_without_treating_it_as_activation(
+    mem_with_stub,
+) -> None:
+    root = mem_with_stub.cfg.operational_root
+    root.mkdir(mode=0o700, parents=True)
+    stamp = MigrationPreparedStamp(
+        schema="memo.operational_migration_prepared.v1",
+        source_manifest_sha256="a" * 64,
+        target_generation_sha256="b" * 64,
+        parity_report_sha256="c" * 64,
+        attestor_key_id="attestor-key",
+        signature="prepared-signature",
+    )
+    (root / "migration-v1.json").write_bytes(canonical_json_bytes(stamp))
+
+    report = definitive_check(mem_with_stub)
+
+    assert report["ok"] is True
+    assert report["prepared_operational_v2"] == {
+        "present": True,
+        "structurally_valid": True,
+        "activated": False,
+        "source_manifest_sha256": "a" * 64,
+        "target_generation_sha256": "b" * 64,
+        "parity_report_sha256": "c" * 64,
+        "attestor_key_id": "attestor-key",
+    }
+    assert "prepared_operational_v2" not in report["checks"]
 
 
 def test_federation_rejects_invalid_journal_before_importing_memories(

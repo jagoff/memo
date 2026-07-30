@@ -24,6 +24,7 @@ ALLOWED_SIGNATURE_DOMAINS = frozenset(
         "memo.operational.roster.v1",
         "memo.operational.roster.bootstrap.v1",
         "memo.operational.migration_origin.v1",
+        "memo.operational.migration_prepared.v1",
         "memo.operational.system_capability.v1",
         "memo.operational_epoch_authorization.v1",
         "memo.cutover.vote.v1",
@@ -191,6 +192,11 @@ class OperationalVerifier:
             require_record_claims = True
             record_key_field = "attestor_key_id"
             expected_device = _claim_string(body, "attestor_device_id", required=True)
+            if key.roles != ("migration_attestor",):
+                raise SignatureError("migration attestor key must have an exclusive role")
+        elif domain == "memo.operational.migration_prepared.v1":
+            required_role = "migration_attestor"
+            record_key_field = "attestor_key_id"
             if key.roles != ("migration_attestor",):
                 raise SignatureError("migration attestor key must have an exclusive role")
         elif domain == "memo.operational.event.v2":

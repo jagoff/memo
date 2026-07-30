@@ -1711,11 +1711,27 @@ class OperationLedgerV2:
                 OperationalErrorCode.ANCHOR_CONFLICT,
                 "migration origin is not bound to the sealed v1 manifest",
             )
+        source_anchor = anchor
+        if proof.source_origin != anchor.origin_device:
+            if not self._exists(self._anchor_path(proof.source_origin)):
+                raise _failure(
+                    OperationalErrorCode.INVALID_EVENT,
+                    "source proof origin has no sealed memo_v1 anchor",
+                )
+            source_anchor = self._read_anchor_with_checkpoint(proof.source_origin)[0]
+            if (
+                source_anchor.kind != "memo_v1"
+                or source_anchor.source_manifest_sha256
+                != anchor.source_manifest_sha256
+            ):
+                raise _failure(
+                    OperationalErrorCode.ANCHOR_CONFLICT,
+                    "source proof origin is not bound to the same sealed v1 manifest",
+                )
         if (
             proof.source_system != "memo_v1"
-            or proof.source_origin != anchor.origin_device
             or proof.source_sequence < 1
-            or proof.source_sequence > anchor.base_sequence
+            or proof.source_sequence > source_anchor.base_sequence
             or not proof.source_event_id
             or not proof.source_schema
             or not _SHA256_RE.fullmatch(proof.source_event_hash)
@@ -1725,8 +1741,8 @@ class OperationLedgerV2:
                 "source proof is not linked to the sealed memo_v1 source",
             )
         if (
-            proof.source_sequence == anchor.base_sequence
-            and proof.source_event_hash != anchor.base_event_hash
+            proof.source_sequence == source_anchor.base_sequence
+            and proof.source_event_hash != source_anchor.base_event_hash
         ):
             raise _failure(
                 OperationalErrorCode.INVALID_EVENT,
@@ -2721,12 +2737,13 @@ class OperationLedgerV2:
         created_at: str,
         roster: VerificationRoster,
         key: PublicKeyRecord,
+        event_id: str | None = None,
     ) -> OperationalEventV2:
         content_hash = hashlib.sha256(canonical_json_bytes(asdict(command))).hexdigest()
         unsigned = OperationalEventV2(
             schema="memo.operational_event.v2",
             schema_version=2,
-            event_id=uuid.uuid4().hex,
+            event_id=event_id or uuid.uuid4().hex,
             event_type=command.event_type,
             actor=command.actor,
             target_id=command.target_id,
@@ -2761,11 +2778,40 @@ class OperationLedgerV2:
         )
         return replace(unsigned, event_hash=canonical_event_hash(unsigned))
 
-    def append(
+    @staticmethod
+    def _validate_migration_event_id(
+        command: OperationalCommand,
+        context: CommitContext,
+        event_id: str,
+    ) -> None:
+        migration = context.migration_origin
+        if (
+            migration is None
+            or command.source_proof is None
+            or command.source_proof.source_system != "memo_v1"
+        ):
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "deterministic event IDs require a memo_v1 migration context",
+            )
+        expected_prefix = f"memo-v1/{migration.source_manifest_sha256}/"
+        if (
+            not isinstance(event_id, str)
+            or event_id != command.idempotency_key
+            or not event_id.startswith(expected_prefix)
+            or len(event_id) <= len(expected_prefix)
+        ):
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "deterministic migration event ID is outside its sealed namespace",
+            )
+
+    def _append(
         self,
         command: OperationalCommand,
         *,
         context: CommitContext,
+        event_id: str | None,
     ) -> OperationalEventV2:
         if not isinstance(command, OperationalCommand):
             raise _failure(
@@ -2792,6 +2838,8 @@ class OperationLedgerV2:
                 OperationalErrorCode.INVALID_EVENT,
                 "operational command actor differs from authenticated context",
             )
+        if event_id is not None:
+            self._validate_migration_event_id(command, context, event_id)
         validate_event_payload(command.event_type, command.payload)
         with self._authority_operation(context=context):
             signer, roster = self._signing_authority()
@@ -2835,6 +2883,7 @@ class OperationLedgerV2:
                 created_at=created_at,
                 roster=roster,
                 key=key,
+                event_id=event_id,
             )
             self._validate_event_shape(event)
             envelope = signer.sign(
@@ -2849,6 +2898,24 @@ class OperationLedgerV2:
             self._append_event_fsync(event)
             self._write_head_atomic(event)
             return event
+
+    def append(
+        self,
+        command: OperationalCommand,
+        *,
+        context: CommitContext,
+    ) -> OperationalEventV2:
+        return self._append(command, context=context, event_id=None)
+
+    def append_migration_seed(
+        self,
+        command: OperationalCommand,
+        *,
+        context: CommitContext,
+        event_id: str,
+    ) -> OperationalEventV2:
+        """Append one deterministic event only inside sealed memo-v1 migration."""
+        return self._append(command, context=context, event_id=event_id)
 
     def verify(self) -> VerificationReport:
         checked_origins: list[str] = []

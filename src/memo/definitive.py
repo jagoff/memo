@@ -73,6 +73,9 @@ def definitive_check(memory: Any) -> dict[str, Any]:
     """
     journal = memory.operational.ledger.verify()
     independence = independence_audit()
+    from memo.operation_migration import inspect_prepared_migration
+
+    prepared_migration = inspect_prepared_migration(memory.cfg.operational_root)
     contracts = {
         "event": MEMO_EVENT_SCHEMA,
         "evidence": MEMO_EVIDENCE_SCHEMA,
@@ -103,6 +106,9 @@ def definitive_check(memory: Any) -> dict[str, Any]:
         "capabilities": capabilities,
         "journal": journal,
         "independence": independence,
+        # Prepared evidence is deliberately informational until Task 7 writes
+        # and verifies the separate production activation stamp.
+        "prepared_operational_v2": prepared_migration,
     }
 
 
