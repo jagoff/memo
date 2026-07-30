@@ -357,34 +357,30 @@ def test_nested_legacy_provenance_is_normalized_and_cannot_elevate_trust(tmp_cfg
         memory.close()
 
 
-def test_evidence_pack_answers_or_abstains_explicitly(tmp_cfg):
-    memory = Memory(tmp_cfg)
-    try:
-        memory.save(
-            title="Invoice retry policy",
-            content="Invoice retries use exponential backoff capped at five attempts.",
-            type_="decision",
-            defer_embed=True,
-            auto_project=False,
-            extra={"trust_tier": "human"},
-            actor=ActorIdentity(actor_id="maintainer", actor_kind="human"),
-        )
-        answered = memory.evidence_pack(
-            "What invoice retry policy uses exponential backoff?",
-            min_coverage=0.1,
-        )
-        assert answered.status is AnswerStatus.ANSWERED
-        assert answered.items[0].uri.startswith("memo://memoria/")
-        assert answered.claims[0]["evidence_uris"]
+def test_evidence_pack_answers_or_abstains_explicitly(mock_memory):
+    mock_memory.save(
+        title="Invoice retry policy",
+        content="Invoice retries use exponential backoff capped at five attempts.",
+        type_="decision",
+        defer_embed=True,
+        auto_project=False,
+        extra={"trust_tier": "human"},
+        actor=ActorIdentity(actor_id="maintainer", actor_kind="human"),
+    )
+    answered = mock_memory.evidence_pack(
+        "What invoice retry policy uses exponential backoff?",
+        min_coverage=0.1,
+    )
+    assert answered.status is AnswerStatus.ANSWERED
+    assert answered.items[0].uri.startswith("memo://memoria/")
+    assert answered.claims[0]["evidence_uris"]
 
-        abstained = memory.evidence_pack(
-            "What is the launch code for the lunar submarine?",
-            min_coverage=0.8,
-        )
-        assert abstained.status is AnswerStatus.INSUFFICIENT_EVIDENCE
-        assert abstained.abstention_reason
-    finally:
-        memory.close()
+    abstained = mock_memory.evidence_pack(
+        "What is the launch code for the lunar submarine?",
+        min_coverage=0.8,
+    )
+    assert abstained.status is AnswerStatus.INSUFFICIENT_EVIDENCE
+    assert abstained.abstention_reason
 
 
 def test_independence_migration_rewrites_provenance_and_is_idempotent(

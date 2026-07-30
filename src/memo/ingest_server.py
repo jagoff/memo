@@ -28,6 +28,7 @@ Lifecycle mirrors the recall daemon: ``memo ingest-daemon start|stop|status``.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import signal
@@ -49,6 +50,7 @@ from memo.daemon_common import (
     read_pid,
     serve_until_shutdown,
 )
+from memo.ingest_ledger import IngestFailureLedger
 
 # Back-compat alias for the CLI daemon wrapper.
 _is_pid_alive = is_pid_alive
@@ -59,6 +61,17 @@ _MAX_LINE_BYTES = 1 << 20
 # A job runner takes (kind, payload) and returns the job result dict, or
 # raises. Injectable so tests exercise the daemon without MLX / real clones.
 JobRunner = Callable[[str, dict[str, Any]], dict[str, Any]]
+
+
+def _job_fingerprint(kind: str, payload: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        {"kind": kind, "payload": payload},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _socket_path(state_dir: Path) -> Path:
@@ -85,37 +98,100 @@ class _JobBook:
     are retained (bounded) so a caller can poll `status` after completion.
     """
 
-    def __init__(self, runner: JobRunner, *, retain: int = 256) -> None:
+    def __init__(
+        self,
+        runner: JobRunner,
+        *,
+        retain: int = 256,
+        ledger: IngestFailureLedger | None = None,
+        quarantine_threshold: int = 3,
+    ) -> None:
         self._runner = runner
         self._lock = threading.Lock()
         self._jobs: dict[str, dict[str, Any]] = {}
         self._order: deque[str] = deque()
         self._retain = retain
         self._queue: deque[str] = deque()
+        self._active_by_fingerprint: dict[str, str] = {}
+        self._ledger = ledger
+        self._quarantine_threshold = max(0, int(quarantine_threshold))
+        self._fatal_failures = ledger.fatal_failure_counts() if ledger is not None else {}
         self._wakeup = threading.Condition(self._lock)
-        self._worker = threading.Thread(target=self._drain, name="ingest-worker", daemon=True)
         self._stop = False
-        self._worker.start()
+        self._worker: threading.Thread | None = None
+        self._worker_starts = 0
+        with self._lock:
+            self._start_worker_locked()
 
     def enqueue(self, kind: str, payload: dict[str, Any]) -> str:
+        return self.enqueue_receipt(kind, payload)["job_id"]
+
+    def enqueue_receipt(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        fingerprint = _job_fingerprint(kind, payload)
         job_id = uuid.uuid4().hex
         with self._lock:
+            self._ensure_worker_locked()
+            active_id = self._active_by_fingerprint.get(fingerprint)
+            active = self._jobs.get(active_id) if active_id else None
+            if active is not None and active["state"] in {"queued", "running"}:
+                return {
+                    "job_id": str(active_id),
+                    "deduplicated": True,
+                    "state": str(active["state"]),
+                    "fingerprint": fingerprint,
+                }
+            quarantined = (
+                self._quarantine_threshold > 0
+                and self._fatal_failures.get(fingerprint, 0) >= self._quarantine_threshold
+            )
             self._jobs[job_id] = {
-                "state": "queued",
+                "state": "quarantined" if quarantined else "queued",
                 "kind": kind,
                 "payload": payload,
                 "result": None,
-                "error": None,
+                "error": (
+                    "job fingerprint quarantined after repeated fatal worker failures"
+                    if quarantined
+                    else None
+                ),
+                "fingerprint": fingerprint,
+                "deduplicated": False,
                 "enqueued_at": time.time(),
             }
             self._order.append(job_id)
-            self._queue.append(job_id)
+            if quarantined:
+                self._append_event_locked(
+                    {
+                        "event": "quarantined",
+                        "job_id": job_id,
+                        "kind": kind,
+                        "fingerprint": fingerprint,
+                        "fatal_failures": self._fatal_failures.get(fingerprint, 0),
+                    }
+                )
+            else:
+                self._queue.append(job_id)
+                self._active_by_fingerprint[fingerprint] = job_id
+                self._append_event_locked(
+                    {
+                        "event": "queued",
+                        "job_id": job_id,
+                        "kind": kind,
+                        "fingerprint": fingerprint,
+                    }
+                )
             self._evict_locked()
             self._wakeup.notify()
-        return job_id
+        return {
+            "job_id": job_id,
+            "deduplicated": False,
+            "state": "quarantined" if quarantined else "queued",
+            "fingerprint": fingerprint,
+        }
 
     def status(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
+            self._ensure_worker_locked()
             rec = self._jobs.get(job_id)
             if rec is None:
                 return None
@@ -124,7 +200,23 @@ class _JobBook:
 
     def count(self) -> int:
         with self._lock:
+            self._ensure_worker_locked()
             return len(self._jobs)
+
+    def health(self) -> dict[str, Any]:
+        with self._lock:
+            self._ensure_worker_locked()
+            return {
+                "worker_alive": bool(self._worker and self._worker.is_alive()),
+                "worker_starts": self._worker_starts,
+                "queued": len(self._queue),
+                "quarantined_fingerprints": sum(
+                    count >= self._quarantine_threshold for count in self._fatal_failures.values()
+                )
+                if self._quarantine_threshold
+                else 0,
+                "ledger": self._ledger.health() if self._ledger is not None else None,
+            }
 
     def shutdown(self) -> None:
         with self._lock:
@@ -136,7 +228,7 @@ class _JobBook:
             old = self._order.popleft()
             # Never evict a job still queued/running.
             rec = self._jobs.get(old)
-            if rec and rec["state"] in ("done", "error"):
+            if rec and rec["state"] in ("done", "error", "quarantined"):
                 self._jobs.pop(old, None)
             else:
                 self._order.append(old)
@@ -156,6 +248,14 @@ class _JobBook:
                 rec["state"] = "running"
                 rec["started_at"] = time.time()
                 kind, payload = rec["kind"], rec["payload"]
+                self._append_event_locked(
+                    {
+                        "event": "running",
+                        "job_id": job_id,
+                        "kind": kind,
+                        "fingerprint": rec["fingerprint"],
+                    }
+                )
             # Run OUTSIDE the lock so status polls stay responsive.
             try:
                 result = self._runner(kind, payload)
@@ -163,11 +263,62 @@ class _JobBook:
                     rec["state"] = "done"
                     rec["result"] = result
                     rec["finished_at"] = time.time()
-            except Exception as exc:
+                    self._active_by_fingerprint.pop(str(rec["fingerprint"]), None)
+                    self._append_event_locked(
+                        {
+                            "event": "done",
+                            "job_id": job_id,
+                            "kind": kind,
+                            "fingerprint": rec["fingerprint"],
+                        }
+                    )
+            except BaseException as exc:
+                fatal = not isinstance(exc, Exception)
                 with self._lock:
                     rec["state"] = "error"
                     rec["error"] = f"{type(exc).__name__}: {exc}"
                     rec["finished_at"] = time.time()
+                    rec["fatal"] = fatal
+                    fingerprint = str(rec["fingerprint"])
+                    self._active_by_fingerprint.pop(fingerprint, None)
+                    if fatal:
+                        self._fatal_failures[fingerprint] = (
+                            self._fatal_failures.get(fingerprint, 0) + 1
+                        )
+                    self._append_event_locked(
+                        {
+                            "event": "error",
+                            "job_id": job_id,
+                            "kind": kind,
+                            "fingerprint": fingerprint,
+                            "fatal": fatal,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc),
+                        }
+                    )
+
+    def _start_worker_locked(self) -> None:
+        self._worker = threading.Thread(
+            target=self._drain,
+            name="ingest-worker",
+            daemon=True,
+        )
+        self._worker_starts += 1
+        self._worker.start()
+
+    def _ensure_worker_locked(self) -> None:
+        if not self._stop and (self._worker is None or not self._worker.is_alive()):
+            self._start_worker_locked()
+            self._append_event_locked(
+                {
+                    "event": "worker_restart",
+                    "worker_starts": self._worker_starts,
+                }
+            )
+
+    def _append_event_locked(self, event: dict[str, Any]) -> None:
+        if self._ledger is not None:
+            self._ledger.append(event)
 
 
 class _IngestHandler(socketserver.StreamRequestHandler):
@@ -191,7 +342,14 @@ class _IngestHandler(socketserver.StreamRequestHandler):
                 return
             op = str(req.get("op") or "").strip()
             if op == embed_protocol.OP_PING or op == "ping":
-                self._write({"ok": True, "kind": "ingest", "jobs": self.server.book.count()})
+                self._write(
+                    {
+                        "ok": True,
+                        "kind": "ingest",
+                        "jobs": self.server.book.count(),
+                        "health": self.server.book.health(),
+                    }
+                )
             elif op == "enqueue":
                 kind = str(req.get("kind") or "").strip()
                 payload = req.get("payload")
@@ -201,8 +359,8 @@ class _IngestHandler(socketserver.StreamRequestHandler):
                 if not isinstance(payload, dict):
                     self._write({"error": "payload must be a JSON object"})
                     return
-                job_id = self.server.book.enqueue(kind, payload)
-                self._write({"ok": True, "job_id": job_id})
+                receipt = self.server.book.enqueue_receipt(kind, payload)
+                self._write({"ok": True, **receipt})
             elif op == "status":
                 job_id = str(req.get("job_id") or "")
                 st = self.server.book.status(job_id)
@@ -279,7 +437,14 @@ def run_server(state_dir: Path | None = None, *, runner: JobRunner | None = None
     sock_path.unlink(missing_ok=True)
     pid_file.unlink(missing_ok=True)
 
-    book = _JobBook(runner or _default_runner(cfg))
+    from memo.flags import flag_int
+
+    ledger = IngestFailureLedger(state_dir / "ingest-jobs.jsonl")
+    book = _JobBook(
+        runner or _default_runner(cfg),
+        ledger=ledger,
+        quarantine_threshold=int(flag_int("MEMO_INGEST_QUARANTINE_THRESHOLD") or 0),
+    )
     try:
         server = _IngestServer(str(sock_path), book)
     except OSError as exc:

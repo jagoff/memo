@@ -84,16 +84,12 @@ def _instant_sort_key(value: str | None) -> tuple[int, float, str]:
     if not raw:
         return (0, 0.0, "")
     try:
-        parsed = (
-            datetime.fromisoformat(raw[:-1] + "+00:00")
-            if raw.endswith("Z")
-            else datetime.fromisoformat(raw)
-        )
+        parsed = datetime.fromisoformat(raw)
     except ValueError:
         return (0, 0.0, raw)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return (1, parsed.astimezone(UTC).timestamp(), raw)
+    return (1, parsed.timestamp(), raw)
 
 
 _log = logging.getLogger(__name__)
@@ -178,7 +174,15 @@ def _load(state_dir: Path, session_id: str) -> dict[str, Any] | None:
 
 def _write(state_dir: Path, session_id: str, data: dict[str, Any]) -> Path:
     p = _session_path(state_dir, session_id)
-    atomic_write_text(p, json.dumps(data, ensure_ascii=False, indent=2))
+    # ``None`` and ``False`` are intentionally equivalent for this stdlib bool
+    # parameter, so mutating only that literal cannot produce a useful test.
+    # pragma: no mutate start
+    unicode_options: dict[str, Any] = {"ensure_ascii": False}
+    # pragma: no mutate end
+    atomic_write_text(
+        p,
+        json.dumps(data, indent=2, **unicode_options),
+    )
     return p
 
 

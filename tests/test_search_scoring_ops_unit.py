@@ -396,6 +396,78 @@ def test_contradict_penalty_queries_exact_statuses_and_applies_evolution_default
     assert [hit.id for hit in out] == ["b", "d", "c", "a"]
 
 
+def test_evolution_demotes_b_side_with_none_score() -> None:
+    newer = replace(_record("newer", 0.5), updated="2026-01-01T00:00:00+00:00")
+    older = replace(_record("older", None), updated="2025-01-01T00:00:00+00:00")
+    harness = _Harness()
+    harness.contradict_store = MagicMock()
+    harness.contradict_store.pairs_for_ids.side_effect = [
+        [],
+        [_Pair("newer", "older", "evolution")],
+    ]
+
+    out = harness._apply_contradict_penalty([newer, older])
+
+    assert [hit.id for hit in out] == ["newer", "older"]
+    assert out[0] is newer
+    assert out[1].id == "older"
+    assert out[1].score == 0.0
+
+
+def test_unknown_relationship_does_not_hide_later_evolution() -> None:
+    unknown_a = replace(_record("unknown-a", 0.9), updated="2024-01-01T00:00:00+00:00")
+    unknown_b = replace(_record("unknown-b", 0.8), updated="2025-01-01T00:00:00+00:00")
+    older = replace(_record("older", 0.7), updated="2025-02-01T00:00:00+00:00")
+    newer = replace(_record("newer", 0.6), updated="2026-02-01T00:00:00+00:00")
+    harness = _Harness()
+    harness.contradict_store = MagicMock()
+    harness.contradict_store.pairs_for_ids.side_effect = [
+        [_Pair("unknown-a", "unknown-b", "related")],
+        [_Pair("older", "newer", "evolution")],
+    ]
+
+    out = harness._apply_contradict_penalty([unknown_a, unknown_b, older, newer])
+
+    assert {hit.id: hit.score for hit in out} == {
+        "unknown-a": pytest.approx(0.9),
+        "unknown-b": pytest.approx(0.8),
+        "older": pytest.approx(0.49),
+        "newer": pytest.approx(0.6),
+    }
+
+
+def test_declared_open_pair_queries_exact_ids_and_preserves_evolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMO_DECLARE_DISPUTES", "1")
+    older = replace(_record("older", 0.5), updated="2025-01-01T00:00:00+00:00")
+    newer = replace(_record("newer", 0.4), updated="2026-01-01T00:00:00+00:00")
+    pair = _Pair("older", "newer", "evolution")
+    harness = _Harness()
+    harness.contradict_store = MagicMock()
+
+    def pairs(ids: list[str], status: str | None = None) -> list[_Pair]:
+        assert ids == ["older", "newer"]
+        if status == "evolved":
+            return [pair]
+        if status == "open":
+            return [pair]
+        if status in {None, "competing"}:
+            return []
+        raise AssertionError(f"unexpected contradiction status: {status}")
+
+    harness.contradict_store.pairs_for_ids.side_effect = pairs
+    original = [older, newer]
+
+    assert harness._apply_contradict_penalty(original) is original
+    assert harness.contradict_store.pairs_for_ids.call_args_list == [
+        call(["older", "newer"]),
+        call(["older", "newer"], status="evolved"),
+        call(["older", "newer"], status="competing"),
+        call(["older", "newer"], status="open"),
+    ]
+
+
 def test_contradict_penalty_honors_registered_boundaries_and_keeps_strongest_pair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -475,7 +547,9 @@ def test_entity_boost_rounds_none_scores_to_six_places(
     assert out[0].score == 0.123457
 
 
-def test_co_recall_contract_covers_empty_zero_missing_and_default_weight() -> None:
+def test_co_recall_contract_covers_empty_zero_missing_and_default_weight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     harness = _Harness()
     harness.graph = MagicMock()
     hits = [_record("anchor", 0.2), _record("one", None), _record("missing", 0.05)]
@@ -493,8 +567,15 @@ def test_co_recall_contract_covers_empty_zero_missing_and_default_weight() -> No
 
     harness.graph.co_recall_counts.reset_mock()
     harness.graph.co_recall_counts.return_value = {}
+    log_exception = MagicMock()
+    monkeypatch.setattr("memo.memory.search_scoring_ops._log.exception", log_exception)
     original = list(hits)
     assert harness._apply_co_recall_boost(original) is original
+    log_exception.assert_not_called()
+
+    harness.graph.co_recall_counts.return_value = {"zero": 0}
+    assert harness._apply_co_recall_boost(original) is original
+    log_exception.assert_not_called()
 
 
 def test_co_recall_failure_has_stable_diagnostic(caplog: pytest.LogCaptureFixture) -> None:
@@ -816,12 +897,13 @@ def test_health_scores_neutral_path_preserves_order_and_none_score_sorts_last() 
     none_score = _record("none", None)
     changed = _record("changed", 0.12345678)
     harness.store.get_health_batch.return_value = {
+        "none": {"confidence": 0.5, "roi_score": 1.0},
         "changed": {"confidence": 1.23456789, "roi_score": 1.0},
     }
     out = harness._apply_health_scores([none_score, changed])
     assert [hit.id for hit in out] == ["changed", "none"]
     assert out[0].score == 0.152416
-    assert out[1] is none_score
+    assert out[1].score == 0.0
 
 
 def test_materialize_cache_candidate_missing_body_is_rejected() -> None:

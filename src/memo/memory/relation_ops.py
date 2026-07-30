@@ -88,6 +88,8 @@ class _RelationOpsMixin(_MemoryBase):
     def attach_post_save_relations(self, record: MemoryRecord) -> MemoryRecord:
         if record.action not in {"created", "revised"}:
             return record
+        if (record.extra or {}).get("_memo_embed_pending"):
+            return replace(record, relation_candidates=[], relation_detection="deferred")
         if not flag_bool("MEMO_RELATION_CANDIDATES_ENABLED"):
             return replace(record, relation_candidates=[], relation_detection="disabled")
         try:

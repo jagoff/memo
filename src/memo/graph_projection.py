@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS graph_projection_code_links (
     end_line          INTEGER,
     confidence        REAL NOT NULL,
     evidence_id       TEXT NOT NULL,
+    evidence_json     TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (version, memory_id, uri, relation)
 );
 
@@ -209,6 +210,7 @@ class ProjectedCodeLink:
     end_line: int | None
     confidence: float
     evidence_id: str
+    code_evidence: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -485,6 +487,14 @@ class GraphReadModel:
     def code_links_for_uri(self, uri: str) -> tuple[ProjectedCodeLink, ...]:
         return self._code_by_uri.get(uri, ())
 
+    def all_code_links(self) -> tuple[ProjectedCodeLink, ...]:
+        unique = {
+            (link.memory_id, link.uri, link.relation): link
+            for links in self._code_by_memory.values()
+            for link in links
+        }
+        return tuple(unique[key] for key in sorted(unique))
+
     def resolve_code(self, query: str) -> tuple[ProjectedNode, ...]:
         needle = query.strip().casefold()
         if not needle:
@@ -520,6 +530,14 @@ class GraphProjectionStore:
         self._tx_factory = tx_factory
         with self._tx_factory() as cx:
             cx.executescript(_PROJECTION_DDL)
+            columns = {
+                str(row[1]) for row in cx.execute("PRAGMA table_info(graph_projection_code_links)")
+            }
+            if "evidence_json" not in columns:
+                cx.execute(
+                    "ALTER TABLE graph_projection_code_links "
+                    "ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @staticmethod
     def _state(cx: sqlite3.Connection, key: str) -> str | None:
@@ -773,7 +791,8 @@ class GraphProjectionStore:
                         "INSERT INTO graph_projection_code_links "
                         "(version, memory_id, uri, relation, repo_id, stable_symbol_id, kind, "
                         "label, qualified_name, file_path, start_line, end_line, confidence, "
-                        "evidence_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "evidence_id, evidence_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             version,
                             link["memory_id"],
@@ -789,6 +808,7 @@ class GraphProjectionStore:
                             link["end_line"],
                             link["confidence"],
                             link["evidence_id"],
+                            json.dumps(link.get("code_evidence") or {}, sort_keys=True),
                         ),
                     )
                 for rejection in rejections:
@@ -897,6 +917,7 @@ class GraphProjectionStore:
                     end_line=(int(row["end_line"]) if row["end_line"] is not None else None),
                     confidence=float(row["confidence"]),
                     evidence_id=str(row["evidence_id"]),
+                    code_evidence=json.loads(str(row["evidence_json"] or "{}")),
                 )
                 for row in self._conn.execute(
                     "SELECT * FROM graph_projection_code_links WHERE version = ? "

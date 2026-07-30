@@ -445,7 +445,7 @@ Core tool behavior:
 | `memo_search(query, limit?, type?, body_chars=280, mode="hybrid", source?)` | Top-k. `hybrid` fuses vec + BM25 via RRF, then optionally reranks. `vec` is semantic only; `bm25` is keyword. |
 | `memo_unified_briefing(cwd?, source?)` | Session-start briefing: knowledge map, open loops, memory of the day, and current-project context. |
 | `memo_ask(question, k?, type?, source?)` | RAG synthesis; cites memories by id. |
-| `memo_graph(verb, a?, b?, entity?, limit?, include_code?)` | Compact graph navigator available on every profile. Use `verb="why"` with `a` and `b` for a weighted path plus evidence memory ids. |
+| `memo_graph(verb, a?, b?, entity?, limit?, include_code?, cwd?, scope?, mode?, cursor?)` | Compact graph navigator available on every profile. Besides memory paths, `verb="impact"` maps local changes and `verb="architecture"` returns a bounded code-context pack. |
 | `memo_offload(content, title?)` | Content-addressed offload for large text that should not be inlined into model context. |
 | `memo_idle_capture(dry_run?)`, `memo_pop_notification()`, `memo_start_session(cwd?)`, `memo_save_text(text, title?)` | MCP-only capture/session plumbing for clients without Claude Code hooks. |
 | `memo_version()` | Installed package version plus backend protocol version. |
@@ -584,6 +584,107 @@ suppresses broad hubs, and preserves the primary retrieval score. Persistent
 settings belong in `graph-config.md`; use `memo config set` so keys are typed
 and written to the right Markdown file.
 
+Code-derived MCP results carry a `memo.code_evidence.v1` envelope. It identifies
+the provider, provider/index generation, repository commit, requested paths or
+scopes, recorded coverage gaps, and byte-level freshness when it was checked.
+`coverage_status="complete"` is only about the explicit request; an absent
+result must not be presented as proof when coverage is `unknown` or
+`known_gaps`.
+
+`memo_graph(verb="architecture", cwd=...)` returns
+`memo.code_context_pack.v1`. The provider-neutral contract projects an existing
+CodeGraph index into bounded layers, packages, hotspots, cross-package
+boundaries, cycles, route nodes, clusters, and a one-hop blast radius for a
+focus, then attaches durable memories linked to the page's code evidence. It
+never parses source itself. `entity` (or `a`) selects a symbol/path focus and
+`scope` bounds the repo-relative source area. When a path focus starts under
+`src`, `lib`, `app`, `tests`, `apps/*`, `packages/*`, or `services/*` and
+`scope` is omitted, Memo infers that source root and records
+`scope_inferred=true`; passing `scope="."` requests the whole index explicitly.
+
+The evidence mode controls what the result may claim:
+
+- `scout` is a fast positive-finding pass and never proves absence.
+- `verify` adds source/coverage checks; an exact current path may prove
+  completeness after its final page.
+- `audit` exposes the full provider result through an opaque `next_cursor`, but
+  still refuses source-absence claims when provider coverage cannot account for
+  excluded files.
+
+Every page reports provider-record, pagination, and source-universe
+completeness separately under `claims`. Consumers must follow `next_cursor`
+until `page.exhausted=true`; even then, `absence_claim_allowed` is the only safe
+gate for a negative claim, and it applies only to the exact
+`absence_claim_scope` (currently a verified path). Architecture-wide absence is
+always disabled because CodeGraph cannot account for excluded source files.
+`omissions` makes page, scan-cap, unresolved-focus, and cross-scope blast-radius
+gaps machine-readable.
+
+### Repository intelligence
+
+`memo repo` keeps source corpora separate from curated memories and publishes
+each completed index as a named generation. While a generation is being
+written, repo search fails closed for that source instead of serving a mixture
+of old and new rows; the source becomes visible again at the final status
+cutover. A killed run remains resumable through per-file hashes.
+
+```bash
+memo repo index https://github.com/acme/service --name service
+memo repo index https://github.com/acme/service --name service --refresh
+memo repo search "where is request authentication" --repo service --mode unified \
+  --scope production --explain
+memo repo watch service
+memo repo artifact service generation ./shared-artifacts
+memo eval repo-search --labels eval/repo_search_labels.json --gate
+```
+
+Search modes are deliberately explicit:
+
+- `lexical` fuses chunk BM25 and exact-line BM25; it is the grep-first
+  evaluation baseline.
+- `hybrid` adds semantic chunks and preserves the previous default behavior.
+- `unified` adds positive CodeGraph relationships plus Git-history co-change
+  and cross-service paths. Missing CodeGraph data is reported as an unavailable
+  provider, never interpreted as proof of absence.
+- `vec`, `bm25`, and `line` select one channel for diagnostics.
+
+`--scope all|production|tests|vendor` is enforced inside the SQLite queries,
+not just after ranking. JSON hits include `channel_scores`,
+`rank_explanation`, path scope, and the active `index_generation`.
+
+Every completed index writes immutable SHA-256-addressed artifacts for the
+generation manifest and bounded Git-history signals. Reads and exports verify
+the recorded size and digest; `memo repo status` reports verification for each
+artifact. `memo repo watch` debounces filesystem bursts and uses `refresh=true`,
+which scans hashes at an unchanged HEAD but rewrites only changed files.
+
+`memo eval repo-search` runs grep-first and graph-first adjacently with the same
+labels, K, repo and scope. Its deterministic path judge is independent of the
+ranker. The report includes every run, total session/search cost, failures and
+zero-result cases rather than silently dropping them. Label files use:
+
+```json
+{
+  "schema": "memo.eval.repo_search.labels.v1",
+  "queries": [
+    {
+      "id": "auth-entrypoint",
+      "query": "request authentication",
+      "expected_paths": ["src/auth.py", "services/api/auth/*"],
+      "scope": "production"
+    }
+  ]
+}
+```
+
+With `MEMO_INGEST_VIA_DAEMON=1`, identical queued/running repo jobs share one
+job ID. The daemon records hash-chained lifecycle/failure telemetry in
+`$MEMO_STATE_DIR/ingest-jobs.jsonl`, catches fatal worker exits, and only
+quarantines a fingerprint after the configured number of observed fatal
+crashes. Ordinary indexing errors never trigger quarantine.
+`memo ingest-daemon status --job <id>` polls a job; `--json` exposes worker and
+ledger health.
+
 | Config key (`MEMO_*` equivalent) | Default | Purpose |
 |---|---|---|
 | `graph.projection_enabled` (`MEMO_GRAPH_PROJECTION_ENABLED`) | `0` | Build and serve the versioned curated projection. |
@@ -594,6 +695,9 @@ and written to the right Markdown file.
 | `graph.signal_budget_ms` (`MEMO_GRAPH_SIGNAL_BUDGET_MS`) | `150` | Millisecond budget for graph signal work in hot paths. |
 | `graph.signal_alpha` (`MEMO_GRAPH_SIGNAL_ALPHA`) | `0.15` | Bounded graph leg weight in weighted reciprocal-rank fusion. |
 | `graph.code_trace_enabled` (`MEMO_GRAPH_CODE_TRACE_ENABLED`) | `0` | Resolve captured file/code evidence into stable `codegraph://` references. |
+| `briefing.code_impact` (`MEMO_BRIEFING_CODE_IMPACT`) | `0` | Surface memories linked to locally changed code in startup briefings. |
+| `graph.code_impact_depth` (`MEMO_CODE_IMPACT_DEPTH`) | `1` | Traverse 0–3 CodeGraph relationship hops for change impact. |
+| `graph.code_impact_limit` (`MEMO_CODE_IMPACT_LIMIT`) | `5` | Maximum affected memories included in a change-impact result. |
 | `graph.discovery_enabled` (`MEMO_GRAPH_DISCOVERY_ENABLED`) | `0` | Expose curated community/bridge insight packets. |
 | `graph.dream_communities_enabled` (`MEMO_DREAM_COMMUNITIES_ENABLED`) | `0` | Save evidence-bearing community syntheses during dream. |
 | `graph.dream_bridges_enabled` (`MEMO_DREAM_BRIDGES_ENABLED`) | `0` | Save evidence-bearing articulation-bridge syntheses during dream. |
@@ -601,6 +705,9 @@ and written to the right Markdown file.
 | `graph.min_entity_idf` (`MEMO_GRAPH_MIN_ENTITY_IDF`) | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
 | `graph.outcome_signal_enabled` (`MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`) | `0` | Modulate graph-touched boosts by outcome `roi_score`. |
 | `graph.outcome_weight` (`MEMO_GRAPH_OUTCOME_WEIGHT`) | `0.05` | Strength of optional outcome modulation on graph boosts. |
+| `MEMO_REPO_SIGNAL_MAX_COMMITS` | `300` | Bound Git-history co-change/cross-service signal collection. |
+| `MEMO_INGEST_VIA_DAEMON` | `0` | Route repo index jobs through the serialized ingest worker. |
+| `MEMO_INGEST_QUARANTINE_THRESHOLD` | `3` | Quarantine an identical job after N fatal crashes; `0` disables it. |
 
 Example:
 
@@ -612,6 +719,7 @@ memo config set graph.semantic_relations true
 memo config set graph.hub_suppression true
 memo config set graph.signal_alpha 0.15
 memo config set graph.code_trace_enabled true
+memo config set briefing.code_impact true
 memo config set graph.discovery_enabled true
 memo config set graph.dream_communities_enabled true
 memo config set graph.dream_bridges_enabled true
@@ -1009,7 +1117,7 @@ plaintext disclosure operations.
 |---|---|---|
 | recall-daemon | `memo recall-daemon start` | Keep the MLX embedder warm over a local socket for sub-200 ms recall. |
 | idle-daemon | auto-started by `memo-mcp` | Auto-capture for MCP-only clients such as Devin and OpenCode. |
-| ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion. |
+| ingest-daemon | `memo ingest-daemon start` | Serialized repo/batch indexing with dedupe and failure ledger. |
 | maint-daemon | `memo maint-daemon start` | Background cleanup and synthesis. |
 
 ### All 137 top-level CLI commands

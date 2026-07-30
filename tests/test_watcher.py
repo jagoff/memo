@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from memo.repo_watcher import DebouncedRepoRefresh
 from memo.watcher import _PLIST_LABEL, _DebouncedReindex, render_plist
 
 
@@ -69,3 +70,32 @@ def test_render_plist_log_dir_created(monkeypatch: Any, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     render_plist("/usr/bin/memo")
     assert (tmp_path / "Library" / "Logs" / "memo").is_dir()
+
+
+def test_repo_debounce_refreshes_incrementally_and_ignores_git(tmp_path: Path) -> None:
+    class RepoSpy:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def repo_index(self, url: str, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append((url, kwargs))
+            return {"indexed_files": 1, "deleted_files": 0, "unchanged_files": 2}
+
+    spy = RepoSpy()
+    source = {
+        "url": "https://example/repo.git",
+        "name": "repo",
+        "ref": "HEAD",
+        "extra": {"include": ["*.py"], "exclude": ["tmp/*"], "max_file_bytes": 1000},
+    }
+    debounce = DebouncedRepoRefresh(spy, source, delay=0.05)
+    debounce.schedule(tmp_path / ".git" / "index")
+    debounce.schedule(tmp_path / "src" / "a.py")
+    debounce.schedule(tmp_path / "src" / "b.py")
+    time.sleep(0.2)
+
+    assert len(spy.calls) == 1
+    url, kwargs = spy.calls[0]
+    assert url == source["url"]
+    assert kwargs["refresh"] is True
+    assert kwargs["include"] == ["*.py"]

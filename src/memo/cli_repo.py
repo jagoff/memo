@@ -10,6 +10,7 @@ import json
 import re
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import click
@@ -154,6 +155,11 @@ def _run_with_repo_progress(
 )
 @click.option("--force", is_flag=True, help="Re-index even when commit/file hashes are unchanged.")
 @click.option(
+    "--refresh",
+    is_flag=True,
+    help="Scan file hashes even when HEAD is unchanged; only changed files are rewritten.",
+)
+@click.option(
     "--no-embeddings",
     is_flag=True,
     help="Write exact line/BM25 index only; run `memo repo embed` later.",
@@ -169,6 +175,7 @@ def repo_index_cmd(
     name: str | None,
     ref_: str | None,
     force: bool,
+    refresh: bool,
     no_embeddings: bool,
     include: tuple[str, ...],
     exclude: tuple[str, ...],
@@ -186,6 +193,7 @@ def repo_index_cmd(
                 name=name,
                 ref=ref_,
                 force=force,
+                refresh=refresh,
                 with_embeddings=not no_embeddings,
                 include=list(include),
                 exclude=list(exclude),
@@ -199,6 +207,7 @@ def repo_index_cmd(
                     name=name,
                     ref=ref_,
                     force=force,
+                    refresh=refresh,
                     with_embeddings=not no_embeddings,
                     include=list(include),
                     exclude=list(exclude),
@@ -333,9 +342,16 @@ def repo_list_cmd(limit: int, as_json: bool) -> None:
 @click.option(
     "--mode",
     default="hybrid",
-    type=click.Choice(["hybrid", "vec", "bm25", "line"]),
+    type=click.Choice(["hybrid", "lexical", "unified", "vec", "bm25", "line"]),
     show_default=True,
 )
+@click.option(
+    "--scope",
+    default="all",
+    type=click.Choice(["all", "production", "tests", "vendor"]),
+    show_default=True,
+)
+@click.option("--explain", is_flag=True, help="Show contributing rank channels.")
 @click.option("--json", "as_json", is_flag=True)
 def repo_search_cmd(
     query: str,
@@ -343,6 +359,8 @@ def repo_search_cmd(
     repo: str | None,
     path_glob: str | None,
     mode: str,
+    scope: str,
+    explain: bool,
     as_json: bool,
 ) -> None:
     """Search indexed repos by semantic chunks, keyword chunks, or exact lines."""
@@ -350,7 +368,14 @@ def repo_search_cmd(
 
     mem = Memory(Config.from_env())
     try:
-        hits = mem.repo_search(query, limit=limit, repo=repo, path=path_glob, mode=mode)
+        hits = mem.repo_search(
+            query,
+            limit=limit,
+            repo=repo,
+            path=path_glob,
+            mode=mode,
+            scope=scope,
+        )
     finally:
         mem.close()
     if as_json:
@@ -370,9 +395,53 @@ def repo_search_cmd(
             f"{h.score:.3f}" if h.score is not None else "—",
             h.repo_name,
             f"{h.path}:{h.line_start}-{h.line_end}",
-            preview,
+            (
+                f"{preview}\n[dim]channels={','.join(h.channel_scores) or h.match_type}[/dim]"
+                if explain
+                else preview
+            ),
         )
     console.print(tbl)
+
+
+@repo_group.command(name="artifact")
+@click.argument("repo")
+@click.argument("kind", type=click.Choice(["generation", "change_signals"]))
+@click.argument(
+    "destination",
+    type=click.Path(file_okay=False, path_type=Path),
+)
+@click.option("--json", "as_json", is_flag=True)
+def repo_artifact_cmd(repo: str, kind: str, destination: Path, as_json: bool) -> None:
+    """Export a verified, content-addressed repo artifact."""
+    from memo.artifact_store import ArtifactIntegrityError
+    from memo.memory import Memory
+
+    mem = Memory(Config.from_env())
+    try:
+        out = mem.repo_export_artifact(repo, kind, destination)
+    except (ArtifactIntegrityError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        mem.close()
+    if as_json:
+        click.echo(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        console.print(
+            f"[green]exported[/green] {kind} digest={str(out['digest'])[:12]} "
+            f"artifact={out['artifact']}"
+        )
+
+
+@repo_group.command(name="watch")
+@click.argument("repo")
+@click.option("--delay", type=click.FloatRange(min=0.05), default=1.0, show_default=True)
+@click.option("--debug", is_flag=True)
+def repo_watch_cmd(repo: str, delay: float, debug: bool) -> None:
+    """Watch a managed clone and incrementally refresh changed files."""
+    from memo.repo_watcher import run_repo_watcher
+
+    run_repo_watcher(repo, delay=delay, debug=debug)
 
 
 @repo_group.command(name="get")

@@ -28,6 +28,7 @@ def mem(tmp_cfg: Config, monkeypatch) -> Memory:
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
+        reranker_enabled=False,
     )
     monkeypatch.setattr(
         "memo.embedder.MLXEmbedder.embed",

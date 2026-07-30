@@ -348,6 +348,7 @@ def _assoc_setup(monkeypatch) -> None:
     from memo.associative import AssociativeHit
 
     monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "1")
+    monkeypatch.setattr(recall_assoc, "_codegraph_adj", lambda: None)
     monkeypatch.setattr(
         recall_assoc,
         "associate",
