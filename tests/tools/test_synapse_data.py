@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from memo.memory import Memory
+from memo.identity import PrincipalIdentity
+from memo.operational_epoch import CommitContext
 from tools.memflow_absorption.synapse_data import (
     EvalFixture,
     FeedbackImport,
@@ -24,6 +26,32 @@ from tools.memflow_absorption.synapse_data import (
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def authenticated_epoch_for_operational_receipts(mem_with_stub: Memory) -> None:
+    """Exercise migration receipts under an explicit test epoch, never bypassing production guards."""
+    identity = PrincipalIdentity(
+        principal_id="test-synapse-data",
+        actor_id="test-importer",
+        kind="agent",
+        device_id="test-device",
+        session_id="test-session",
+        source_client="pytest",
+    )
+    context = CommitContext(
+        identity=identity,
+        authority_epoch=0,
+        control_oid="test-control",
+        origin_device="test-device",
+    )
+
+    class _TestFence:
+        def verify(self, observed: CommitContext) -> None:
+            assert observed == context
+
+    mem_with_stub.operational._context_provider = lambda: context
+    mem_with_stub.operational.epoch_fence = _TestFence()
 
 
 @pytest.fixture
