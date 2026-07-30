@@ -461,6 +461,10 @@ def test_manifest_fail_closed_blockers(
     options: dict[str, object],
     blocker: str,
 ) -> None:
+    if blocker == "usage:coverage-gap":
+        with pytest.raises(ManifestError, match="source receipt signature verification failed"):
+            _build(tmp_path, **options)
+        return
     manifest, _exclusions, _signer, _roster = _build(tmp_path, **options)
 
     assert manifest.frozen is False
