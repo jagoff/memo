@@ -77,9 +77,7 @@ def collect_git_change_signals(
     for (left, right), count in pair_counts.items():
         left_service = service_for_path(left)
         right_service = service_for_path(right)
-        cross_service = bool(
-            left_service and right_service and left_service != right_service
-        )
+        cross_service = bool(left_service and right_service and left_service != right_service)
         if cross_service:
             cross_service_pairs += 1
         denominator = max(1, min(file_commits[left], file_commits[right]))

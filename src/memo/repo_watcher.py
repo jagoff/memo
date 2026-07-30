@@ -71,9 +71,7 @@ class DebouncedRepoRefresh:
                 refresh=True,
                 include=list(include) if isinstance(include, list) else None,
                 exclude=list(exclude) if isinstance(exclude, list) else None,
-                max_file_bytes=(
-                    int(max_file_bytes) if isinstance(max_file_bytes, int) else None
-                ),
+                max_file_bytes=(int(max_file_bytes) if isinstance(max_file_bytes, int) else None),
             )
         except Exception as exc:
             print(f"# memo repo watch: refresh failed: {exc}", file=sys.stderr)

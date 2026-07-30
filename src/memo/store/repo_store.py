@@ -68,9 +68,7 @@ def _repo_scope_sql(column: str, scope: str) -> str:
         return vendor
     if normalized == "production":
         return f"NOT {tests} AND NOT {vendor}"
-    raise ValueError(
-        f"invalid repo scope {scope!r}; expected all, production, tests, or vendor"
-    )
+    raise ValueError(f"invalid repo scope {scope!r}; expected all, production, tests, or vendor")
 
 
 def _attach_repo_generation(row: dict[str, Any]) -> None:

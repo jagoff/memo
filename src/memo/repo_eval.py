@@ -118,9 +118,7 @@ def load_repo_eval_labels(path: Path) -> list[RepoEvalLabel]:
         if not query:
             raise ValueError(f"repo-search label {label_id!r} has an empty query")
         if not isinstance(expected, list) or not expected:
-            raise ValueError(
-                f"repo-search label {label_id!r} requires non-empty expected_paths"
-            )
+            raise ValueError(f"repo-search label {label_id!r} requires non-empty expected_paths")
         scope = str(case.get("scope") or "all").strip().lower()
         if scope not in {"all", "production", "tests", "vendor"}:
             raise ValueError(f"repo-search label {label_id!r} has invalid scope {scope!r}")
@@ -236,9 +234,7 @@ def _strategy_metrics(
     query_hits = sum(bool(run.relevant_ranks) for run in successful)
     relevant_results = sum(len(run.relevant_ranks) for run in successful)
     returned = sum(run.result_count for run in successful)
-    reciprocal = sum(
-        1.0 / run.relevant_ranks[0] for run in successful if run.relevant_ranks
-    )
+    reciprocal = sum(1.0 / run.relevant_ranks[0] for run in successful if run.relevant_ranks)
     denominator = max(1, len(selected))
     return RepoEvalStrategy(
         strategy=strategy,

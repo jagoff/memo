@@ -211,8 +211,7 @@ class _JobBook:
                 "worker_starts": self._worker_starts,
                 "queued": len(self._queue),
                 "quarantined_fingerprints": sum(
-                    count >= self._quarantine_threshold
-                    for count in self._fatal_failures.values()
+                    count >= self._quarantine_threshold for count in self._fatal_failures.values()
                 )
                 if self._quarantine_threshold
                 else 0,

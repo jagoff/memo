@@ -172,14 +172,8 @@ def _neighbor_nodes(
         "       nodes.qualified_name, nodes.file_path, nodes.start_line, nodes.end_line "
         "FROM edges "
         "JOIN nodes ON nodes.id = CASE "
-        "  WHEN edges.source IN ("
-        + placeholders
-        + ") THEN edges.target ELSE edges.source END "
-        "WHERE edges.source IN ("
-        + placeholders
-        + ") OR edges.target IN ("
-        + placeholders
-        + ") "
+        "  WHEN edges.source IN (" + placeholders + ") THEN edges.target ELSE edges.source END "
+        "WHERE edges.source IN (" + placeholders + ") OR edges.target IN (" + placeholders + ") "
         "ORDER BY edges.kind, nodes.file_path LIMIT ?"
     )
     params = [*node_ids, *node_ids, *node_ids, limit]

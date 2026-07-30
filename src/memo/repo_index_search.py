@@ -93,8 +93,7 @@ def _hits_from_rows(rows: list[dict[str, Any]]) -> list[RepoSearchHit]:
             match_type=r.get("match_type") or "chunk",
             scope=str(r.get("scope") or classify_repo_path(str(r.get("path") or ""))),
             channel_scores={
-                str(key): float(value)
-                for key, value in dict(r.get("channel_scores") or {}).items()
+                str(key): float(value) for key, value in dict(r.get("channel_scores") or {}).items()
             },
             rank_explanation=dict(r.get("rank_explanation") or {}),
             index_generation=str(r.get("index_generation") or ""),
@@ -312,12 +311,13 @@ def _rrf_fuse_repo(
     for rid, score in ranked:
         d = dict(canon[rid])
         d["score"] = score
-        d["match_type"] = "hybrid" if len(contributions[rid]) > 1 else next(
-            iter(contributions[rid]), d.get("match_type") or "chunk"
+        d["match_type"] = (
+            "hybrid"
+            if len(contributions[rid]) > 1
+            else next(iter(contributions[rid]), d.get("match_type") or "chunk")
         )
         d["channel_scores"] = {
-            channel: round(value, 8)
-            for channel, value in sorted(contributions[rid].items())
+            channel: round(value, 8) for channel, value in sorted(contributions[rid].items())
         }
         d["rank_explanation"] = {
             "fusion": "rrf",

@@ -186,15 +186,11 @@ def register(server: FastMCP, memory: Memory) -> None:
         ] = "hybrid",
         scope: Annotated[
             str,
-            Field(
-                description="Path class filter: 'all', 'production', 'tests', or 'vendor'."
-            ),
+            Field(description="Path class filter: 'all', 'production', 'tests', or 'vendor'."),
         ] = "all",
         include_evidence: Annotated[
             bool,
-            Field(
-                description="Attach a coverage/freshness evidence envelope for each hit path."
-            ),
+            Field(description="Attach a coverage/freshness evidence envelope for each hit path."),
         ] = True,
     ) -> list[dict[str, Any]]:
         """Search indexed repositories.

@@ -134,8 +134,7 @@ def ingest_daemon_status(job_id: str | None, as_json: bool) -> None:
             console.print(f"[red]{payload['error']}[/red]")
         else:
             console.print(
-                f"job={job_id} state={payload.get('state')} "
-                f"error={payload.get('error') or '-'}"
+                f"job={job_id} state={payload.get('state')} error={payload.get('error') or '-'}"
             )
         return
 
