@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,6 +29,11 @@ from tools.memflow_absorption.manifest import (
     verify_capability_manifest,
 )
 from tools.memflow_absorption.schemas import AuditExclusions, UsageProof
+from tools.memflow_absorption.source_receipt import (
+    SourceBucket,
+    SourceReceiptV2,
+    sign_source_receipt,
+)
 
 FROZEN_AT = "2026-07-30T00:00:00Z"
 WINDOW_STARTED_AT = "2026-05-01T00:00:00Z"
@@ -313,6 +319,54 @@ def _signed_inputs(
             ).to_dict()
         )
     usage["proofs"] = proofs
+    # Source receipts are the authoritative, signed aggregate for each machine.
+    # Build one bucket per hour so the exact cutover window is covered.
+    start = datetime.fromisoformat(WINDOW_STARTED_AT.replace("Z", "+00:00"))
+    end = datetime.fromisoformat(FROZEN_AT.replace("Z", "+00:00"))
+    receipts: list[dict[str, object]] = []
+    for device_id in ("mac-a", "mac-b"):
+        device_events = events[device_id]
+        digest = hashlib.sha256(
+            json.dumps(device_events, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+        buckets: list[SourceBucket] = []
+        cursor = start
+        while cursor < end:
+            bucket_end = cursor + timedelta(hours=1)
+            count = sum(
+                1
+                for event in device_events
+                if cursor <= datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) < bucket_end
+            )
+            buckets.append(
+                SourceBucket(
+                    start=cursor.isoformat().replace("+00:00", "Z"),
+                    end=bucket_end.isoformat().replace("+00:00", "Z"),
+                    count=count,
+                    digest=hashlib.sha256(f"{device_id}:{cursor.isoformat()}".encode()).hexdigest(),
+                )
+            )
+            cursor = bucket_end
+        key_id = next(key.key_id for key in roster.keys if key.device_id == device_id)
+        receipt = SourceReceiptV2(
+            device_id=device_id,
+            key_id=key_id,
+            roster_id=roster.roster_hash,
+            query="memflow.cutover.events",
+            extractor_version="memflow-extractor-v2",
+            snapshot_commit=SOURCE_COMMIT,
+            raw_event_set_sha256=digest,
+            window_start=WINDOW_STARTED_AT,
+            window_end=FROZEN_AT,
+            issued_at=FROZEN_AT,
+            collected_at=FROZEN_AT,
+            cursor=f"cursor-{device_id}-final",
+            extraction_complete=True,
+            hourly_buckets=tuple(buckets),
+            frozen_at=FROZEN_AT,
+        )
+        receipts.append(sign_source_receipt(receipt, signer=OperationalSigner(keys, roster_version=roster.version)).to_dict())
+    usage["source_receipts_v2"] = receipts
     _write_json(usage_snapshot / "usage.json", usage)
     return exclusions
 
