@@ -75,13 +75,16 @@ All binding transitions and helper execution hold the existing
 
 ### Generate
 
-1. Install or verify the packaged helper into `helpers-v1/<sha256>` using
+1. Use a versioned productive service namespace
+   `com.memo.operational-signing.v2`; never reuse the prototype/default
+   namespace implicitly.
+2. Install or verify the packaged helper into `helpers-v1/<sha256>` using
    exclusive descriptor-relative publication and file/directory fsync.
-2. Create a canonical `generating` binding exclusively and fsync it and its
+3. Create a canonical `generating` binding exclusively and fsync it and its
    parent before any Keychain mutation.
-3. Execute `SecItemAdd` with that exact helper.
-4. Validate the returned public point/key id.
-5. Atomically replace `generating` with `active`, fsync file and directory,
+4. Execute `SecItemAdd` with that exact helper.
+5. Validate the returned public point/key id.
+6. Atomically replace `generating` with `active`, fsync file and directory,
    then return success.
 
 If recovery finds `generating`, it must invoke destroy with the bound helper.
@@ -178,18 +181,34 @@ wheel A reopen/sign/destroy key B
 Both helper hashes/CDHashes must differ and every operation must remain
 non-interactive.
 
-## Existing-key gate
+## Existing-authority gate
 
-Historical keys without bindings cannot be migrated automatically.
+Historical enrolled keys without bindings cannot be migrated automatically.
 
 Before any productive activation, prove from immutable Memo activation/roster
-authority that no live production P-256 Secure Enclave key was created by
-`23a64ccb` or a prototype. The known activation marker is currently absent,
-but the implementer must record exact read-only evidence.
+authority that no production P-256 Secure Enclave authority was enrolled by
+`23a64ccb` or a prototype. Record exact read-only evidence for every approved
+state root and installed production package:
 
-If a live unbound key exists, stop. Do not probe helpers or trigger Keychain
-prompts. Migration then requires a separate explicitly authorized procedure
-using a known helper and verification against the expected public key.
+- no operational-v2 root, activation marker, roster/history, epoch marker, or
+  migration stamp;
+- no P-256 algorithm or key id in whitelisted operational metadata;
+- installed production CLI lacks the prototype backend/helper;
+- prototype smoke used an isolated UUID service and completed destroy.
+
+The safe result is named `CLEAN_ENROLLED_STATE_KEYCHAIN_UNOBSERVED`. It proves
+there is no enrolled authority to migrate; it deliberately does not claim
+that no raw Keychain item exists.
+
+A raw orphan without roster, public record, binding, or activation cannot
+authorize an operational signature. Never probe historical helpers or query
+Keychain to resolve that irrelevant uncertainty. The versioned v2 service
+namespace and random key id prevent a new bound key from adopting such an
+orphan.
+
+If any enrolled metadata residue exists, stop with `FAIL_METADATA_RESIDUE`.
+Migration then requires a separate explicitly authorized procedure using a
+known helper and verification against the expected public key.
 
 ## Acceptance gates
 
