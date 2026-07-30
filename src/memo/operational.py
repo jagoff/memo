@@ -364,8 +364,11 @@ class OperationalStore:
             canonical_json_bytes(asdict(command))
         ).hexdigest()
         ledger = cast("OperationLedgerV2", self.ledger)
-        with authority_write_lock(self.transaction_root):
-            self.epoch_fence.verify(context)
+        # Retain the durable epoch fence through the complete append + view
+        # commit.  A one-shot ``verify`` here leaves a race where authority
+        # activation can advance the marker between validation and fsync,
+        # allowing a stale writer to append under the old epoch.
+        with authority_write_lock(self.transaction_root), self.epoch_fence.verified(context):
             self.views.catch_up(ledger)
             if not self.views.supports(command.event_type):
                 raise OperationalError(
