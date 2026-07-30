@@ -57,6 +57,7 @@ from tools.memflow_absorption.schemas import (
     IndependenceObservation,
     IndependenceScanReceipt,
     SynapsePeerVote,
+    SynapseOperation,
     SynapseRetirementManifest,
     SynapseRetirementState,
     VerifiedControlRecord,
@@ -262,6 +263,17 @@ def _retirement_manifest(authority) -> SynapseRetirementManifest:
         active_reference_sha256="d" * 64,
         signer_key_id=roster.local_key_id,
         signature="",
+        operations=(
+            SynapseOperation(
+                source_operation="synapse.chat.ask",
+                source_files=("synapse/server.py",),
+                source_symbols=("chat_ask",),
+                consumers=("dashboard",),
+                daemon_routes=("/chat",),
+                exclusion_reason=None,
+                fixture_paths=("tests/goldens/ask.json",),
+            ),
+        ),
     )
     envelope = signer.sign(
         domain=SYNAPSE_RETIREMENT_DOMAIN,
