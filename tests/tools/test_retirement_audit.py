@@ -412,6 +412,39 @@ def test_retirement_audit_rejects_directory_change_after_listing(
     assert changed is True
 
 
+def test_retirement_audit_revalidates_closed_child_after_sibling_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scan_root = tmp_path / "installed"
+    first = scan_root / "a"
+    sibling = scan_root / "z"
+    first.mkdir(parents=True)
+    sibling.mkdir()
+    (first / "clean.txt").write_text("clean", encoding="utf-8")
+    (sibling / "trigger.txt").write_text("trigger", encoding="utf-8")
+    original_read = os.read
+    changed = False
+
+    def changing_read(descriptor: int, length: int) -> bytes:
+        nonlocal changed
+        data = original_read(descriptor, length)
+        if data == b"trigger" and not changed:
+            (first / "late.txt").write_text(
+                "SYNAPSE_TOKEN=active",
+                encoding="utf-8",
+            )
+            changed = True
+        return data
+
+    monkeypatch.setattr(os, "read", changing_read)
+
+    with pytest.raises(InventoryError, match="inventory directory membership changed"):
+        build_independence_receipt((scan_root,), manifest=_manifest())
+
+    assert changed is True
+
+
 def test_retirement_audit_rejects_file_swap_before_descriptor_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

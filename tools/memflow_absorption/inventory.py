@@ -382,6 +382,7 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str, bytes | None]]:
             except OSError as exc:
                 raise InventoryError(f"cannot classify inventory entry: {path}") from exc
             entries.append((name, path, observed, entry_kind(path, observed)))
+        directory_frames.append((descriptor, parent, tuple(names), tuple(entries)))
 
         for name, path, observed, kind in entries:
             if kind == "symlink":
@@ -398,37 +399,27 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str, bytes | None]]:
                 )
             except OSError as exc:
                 raise InventoryError(f"cannot descend safely into inventory entry: {path}") from exc
+            descriptors.append(child_descriptor)
             try:
-                try:
-                    opened = os.fstat(child_descriptor)
-                except OSError as exc:
-                    raise InventoryError(
-                        f"cannot validate inventory directory descriptor: {path}"
-                    ) from exc
-                if not stat.S_ISDIR(opened.st_mode) or identity(opened) != identity(observed):
-                    raise InventoryError(f"inventory directory changed identity: {path}")
-                yield from walk_directory(child_descriptor, path)
-            finally:
-                os.close(child_descriptor)
-
-        try:
-            final_names = sorted(os.listdir(descriptor))
-        except OSError as exc:
-            raise InventoryError(f"inventory traversal failed below {parent}: {exc}") from exc
-        if final_names != names:
-            raise InventoryError(f"inventory directory membership changed: {parent}")
-        for name, path, observed, kind in entries:
-            try:
-                final = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                opened = os.fstat(child_descriptor)
             except OSError as exc:
-                raise InventoryError(f"inventory entry changed identity: {path}") from exc
-            if identity(final) != identity(observed):
-                raise InventoryError(f"inventory entry changed identity: {path}")
-            if kind == "file" and metadata(final) != metadata(observed):
-                raise InventoryError(f"inventory file changed after reading: {path}")
+                raise InventoryError(
+                    f"cannot validate inventory directory descriptor: {path}"
+                ) from exc
+            if not stat.S_ISDIR(opened.st_mode) or identity(opened) != identity(observed):
+                raise InventoryError(f"inventory directory changed identity: {path}")
+            yield from walk_directory(child_descriptor, path)
 
     descriptors: list[int] = []
     component_links: list[tuple[int, str, Path, os.stat_result]] = []
+    directory_frames: list[
+        tuple[
+            int,
+            Path,
+            tuple[str, ...],
+            tuple[tuple[str, Path, os.stat_result, str], ...],
+        ]
+    ] = []
     try:
         root_descriptor = os.open(os.sep, directory_flags)
     except OSError as exc:
@@ -474,6 +465,23 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str, bytes | None]]:
 
         root_descriptor = descriptors[-1]
         yield from walk_directory(root_descriptor, absolute)
+
+        for descriptor, parent, names, entries in directory_frames:
+            try:
+                final_names = tuple(sorted(os.listdir(descriptor)))
+            except OSError as exc:
+                raise InventoryError(f"inventory traversal failed below {parent}: {exc}") from exc
+            if final_names != names:
+                raise InventoryError(f"inventory directory membership changed: {parent}")
+            for name, path, observed, kind in entries:
+                try:
+                    final = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                except OSError as exc:
+                    raise InventoryError(f"inventory entry changed identity: {path}") from exc
+                if identity(final) != identity(observed):
+                    raise InventoryError(f"inventory entry changed identity: {path}")
+                if kind == "file" and metadata(final) != metadata(observed):
+                    raise InventoryError(f"inventory file changed after reading: {path}")
 
         for parent_descriptor, part, current, opened in component_links:
             try:
