@@ -228,6 +228,7 @@ def build_consumer_inventory(
                     start_calendar_interval=job.start_calendar_interval,
                     watch_paths=job.watch_paths,
                     throttle_interval_seconds=job.throttle_interval_seconds,
+                    environment=job.environment,
                 )
             )
     if (signer is None) != (roster is None) or (signer is None) != (signer_key_id == ""):

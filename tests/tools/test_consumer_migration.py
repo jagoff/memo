@@ -52,6 +52,17 @@ _OPERATIONS = (
     "synapse.watcher.event",
     "synapse.whatsapp_live.message",
 )
+_CLIS_BY_OPERATION = {
+    "synapse.chat.ask": ("client-close-reconnect",),
+    "synapse.cli.ops": (
+        "memo dream run",
+        "memo recall-daemon _serve",
+        "memo reindex",
+    ),
+    "synapse.morning_digest.run": ("memo digest",),
+    "synapse.watcher.event": ("memo watch",),
+    "synapse.whatsapp_live.message": ("memo import whatsapp",),
+}
 
 
 @pytest.fixture
@@ -72,20 +83,23 @@ def authority(tmp_path: Path) -> tuple[DeviceKeyStore, VerificationRoster]:
 
 
 def _mapping(operation: str) -> OperationMappingRow:
-    route = OperationRoute(
-        route_id=f"{operation}-native",
-        predicate={"mode": {"eq": "native"}},
-        memo_methods=("memo.native",),
-        memo_mcp=("memo_native",),
-        memo_cli=("memo native",),
-        parameter_mapping={},
-        defaults={"mode": "native"},
-        result_mapping={"status": "status"},
-        error_mapping={"error": "error"},
-        transform_id="identity",
-        fixture_sha256=("a" * 64,),
-        atomic_group=None,
-        fixture_paths=("eval/native.json",),
+    routes = tuple(
+        OperationRoute(
+            route_id=f"{operation}-{index}",
+            predicate={"mode": {"eq": "native"}},
+            memo_methods=(f"memo.route.{index}",),
+            memo_mcp=(f"memo_route_{index}",),
+            memo_cli=(cli,),
+            parameter_mapping={},
+            defaults={"mode": "native"},
+            result_mapping={"status": "status"},
+            error_mapping={"error": "error"},
+            transform_id="identity",
+            fixture_sha256=("a" * 64,),
+            atomic_group=None,
+            fixture_paths=("eval/native.json",),
+        )
+        for index, cli in enumerate(_CLIS_BY_OPERATION[operation])
     )
     return OperationMappingRow(
         source_operation=operation,
@@ -94,7 +108,7 @@ def _mapping(operation: str) -> OperationMappingRow:
         evidence_ids=(f"usage:{operation}",),
         capability=operation,
         disposition="memo_native",
-        routes=(route,),
+        routes=routes,
         parity_tests=("tests/tools/test_consumer_migration.py",),
         deletion_proof=(),
     )
@@ -146,7 +160,13 @@ def manifest(
             slo_baseline_ids=(),
             dependencies=(),
             disposition="memo_native",
-            memo_target="memo.native",
+            memo_target=",".join(
+                sorted(
+                    method
+                    for route in mapping.routes
+                    for method in route.memo_methods
+                )
+            ),
             parity_tests=mapping.parity_tests,
             deletion_proof=(),
         )
@@ -182,6 +202,11 @@ def _launchd_row(label: str) -> ConsumerInventoryRow:
         "label": label,
         "active": True,
         "run_at_load": True,
+        "environment": (
+            ("MEMO_DATA_DIR", "/operator/memo-data"),
+            ("PATH", "/usr/bin:/bin"),
+            ("UNRELATED_SECRET", "discard-me"),
+        ),
     }
     if label == "com.synapse.whatsapp-ingest":
         common.update(
@@ -200,20 +225,30 @@ def _launchd_row(label: str) -> ConsumerInventoryRow:
             watch_paths=("/operator/whatsapp/messages.db",),
             throttle_interval_seconds=300,
         )
-    elif label in {"com.synapse.watcher", "com.synapse.memo-recall-daemon"}:
+    elif label == "com.synapse.watcher":
         common.update(
             program_arguments=("/operator/runtime/memo", "watch"),
+            keep_alive={"SuccessfulExit": False},
+        )
+    elif label == "com.synapse.memo-recall-daemon":
+        common.update(
+            program_arguments=("/operator/runtime/memo", "recall-daemon", "_serve"),
             keep_alive=True,
         )
-    elif label in {
-        "com.synapse.memo-nightly",
-        "com.synapse.morning-digest",
-        "com.synapse.dream-synthesis",
-    }:
+    elif label == "com.synapse.morning-digest":
+        common.update(
+            program_arguments=("/operator/runtime/memo", "digest"),
+            run_at_load=False,
+            start_calendar_interval=((("Hour", 3), ("Minute", 0)),),
+        )
+    elif label in {"com.synapse.memo-nightly", "com.synapse.dream-synthesis"}:
         common.update(
             program_arguments=("/operator/runtime/memo", "dream", "run"),
             run_at_load=False,
-            start_calendar_interval=(("Hour", 3), ("Minute", 0)),
+            start_calendar_interval=(
+                (("Hour", 3), ("Minute", 0)),
+                (("Hour", 15), ("Minute", 30)),
+            ),
         )
     elif label == "com.synapse.vault-ingest":
         common.update(
@@ -329,6 +364,43 @@ def test_whatsapp_without_authoritative_scope_blocks(
         _plan(changed, manifest, authority, memo_bin)
 
 
+@pytest.mark.parametrize(
+    ("option", "values", "message"),
+    (
+        ("--retention-days", ("90", "30"), "repeated"),
+        ("--since", ("2026-01-01", "2026-02-01"), "repeated"),
+        ("--notes-dir", ("/one", "/two"), "repeated"),
+        ("--db", ("/one.db", "/two.db"), "repeated"),
+        ("--retention-days", ("zero",), "retention"),
+        ("--retention-days", ("0",), "retention"),
+        ("--since", ("2026-02-30",), "since date"),
+        ("--notes-dir", ("relative",), "path must be absolute"),
+        ("--db", ("relative.db",), "path must be absolute"),
+    ),
+)
+def test_whatsapp_single_value_options_are_typed_and_unique(
+    inventory,
+    manifest,
+    authority,
+    memo_bin,
+    option,
+    values,
+    message,
+):
+    keys, roster = authority
+    arguments = ["/old/memo", "import", "whatsapp", "--all-chats"]
+    for value in values:
+        arguments.extend((option, value))
+    row = replace(
+        _launchd_row("com.synapse.whatsapp-ingest"),
+        program_arguments=tuple(arguments),
+    )
+    changed = _resign_inventory(replace(inventory, rows=(row,)), keys, roster)
+
+    with pytest.raises(ConsumerMigrationError, match=message):
+        _plan(changed, manifest, authority, memo_bin)
+
+
 def test_unsigned_or_tampered_authority_blocks(inventory, manifest, authority, memo_bin):
     with pytest.raises(ConsumerMigrationError, match="authority is invalid"):
         _plan(replace(inventory, signature=""), manifest, authority, memo_bin)
@@ -366,6 +438,58 @@ def test_missing_operation_capability_mapping_blocks(
     )
 
     with pytest.raises(ConsumerMigrationError, match="operation mapping"):
+        _plan(inventory, changed, authority, memo_bin)
+
+
+def test_cli_route_and_capability_target_must_match_replacement_exactly(
+    inventory, manifest, authority, memo_bin
+):
+    keys, roster = authority
+    mapping = next(
+        row
+        for row in manifest.operation_mappings
+        if row.source_operation == "synapse.watcher.event"
+    )
+    capability = next(
+        row
+        for row in manifest.capabilities
+        if row.name == mapping.capability
+    )
+    mismatched_route = replace(mapping.routes[0], memo_cli=("memo native",))
+    mismatched_mapping = replace(mapping, routes=(mismatched_route,))
+    changed = _resign_manifest(
+        replace(
+            manifest,
+            operation_mappings=tuple(
+                mismatched_mapping if row is mapping else row
+                for row in manifest.operation_mappings
+            ),
+            capabilities=tuple(
+                replace(capability, operation_mappings=(mismatched_mapping,))
+                if row is capability
+                else row
+                for row in manifest.capabilities
+            ),
+        ),
+        keys,
+        roster,
+    )
+    with pytest.raises(ConsumerMigrationError, match="exact admitted CLI route"):
+        _plan(inventory, changed, authority, memo_bin)
+
+    wrong_target_capability = replace(capability, memo_target="memo.unrelated")
+    changed = _resign_manifest(
+        replace(
+            manifest,
+            capabilities=tuple(
+                wrong_target_capability if row is capability else row
+                for row in manifest.capabilities
+            ),
+        ),
+        keys,
+        roster,
+    )
+    with pytest.raises(ConsumerMigrationError, match="target is not exactly admitted"):
         _plan(inventory, changed, authority, memo_bin)
 
 
@@ -420,6 +544,25 @@ def test_relative_or_project_runtime_binary_blocks(inventory, manifest, authorit
     with pytest.raises(ConsumerMigrationError, match="stable isolated"):
         _plan(inventory, manifest, authority, project_bin)
 
+    wrongly_named = tmp_path / "isolated-runtime" / "memo-wrapper"
+    wrongly_named.parent.mkdir(exist_ok=True)
+    wrongly_named.write_text("#!/bin/sh\n", encoding="utf-8")
+    wrongly_named.chmod(0o755)
+    with pytest.raises(ConsumerMigrationError, match="must be named memo"):
+        _plan(inventory, manifest, authority, wrongly_named)
+
+
+def test_relative_environment_path_blocks(inventory, manifest, authority, memo_bin):
+    keys, roster = authority
+    row = replace(
+        _launchd_row("com.synapse.whatsapp-ingest"),
+        environment=(("MEMO_DATA_DIR", "/operator/memo"), ("PATH", "relative:/bin")),
+    )
+    changed = _resign_inventory(replace(inventory, rows=(row,)), keys, roster)
+
+    with pytest.raises(ConsumerMigrationError, match="authoritative PATH"):
+        _plan(changed, manifest, authority, memo_bin)
+
 
 def test_renderer_preserves_authoritative_schedules(
     inventory, manifest, authority, memo_bin, tmp_path
@@ -431,20 +574,59 @@ def test_renderer_preserves_authoritative_schedules(
         for path in paths
     }
 
-    assert rendered["com.memo.watch"]["KeepAlive"] is True
-    assert rendered["com.memo.dream-nightly"]["StartCalendarInterval"] == {
+    assert rendered["com.memo.watch"]["KeepAlive"] == {"SuccessfulExit": False}
+    assert rendered["com.memo.recall-daemon"]["KeepAlive"] is True
+    assert rendered["com.memo.dream-nightly"]["StartCalendarInterval"] == [
+        {"Hour": 3, "Minute": 0},
+        {"Hour": 15, "Minute": 30},
+    ]
+    assert rendered["com.memo.digest"]["StartCalendarInterval"] == {
         "Hour": 3,
         "Minute": 0,
     }
+    assert rendered["com.memo.digest"]["KeepAlive"] is False
     assert rendered["com.memo.import-whatsapp"]["WatchPaths"] == [
         "/operator/whatsapp/messages.db"
     ]
     assert rendered["com.memo.import-whatsapp"]["ThrottleInterval"] == 300
-    assert all(
-        row["EnvironmentVariables"] == {"MEMO_NONINTERACTIVE": "1"}
-        for row in rendered.values()
-    )
+    for row in rendered.values():
+        environment = row["EnvironmentVariables"]
+        assert environment["MEMO_DATA_DIR"] == "/operator/memo-data"
+        assert environment["MEMO_NONINTERACTIVE"] == "1"
+        assert "UNRELATED_SECRET" not in environment
+        path_entries = environment["PATH"].split(":")
+        assert path_entries[0] == str(memo_bin.resolve().parent)
+        assert all(Path(entry).is_absolute() for entry in path_entries)
     assert all(Path(row["ProgramArguments"][0]).is_absolute() for row in rendered.values())
+
+
+def test_invalid_keepalive_and_calendar_shapes_block(
+    inventory, manifest, authority, memo_bin
+):
+    keys, roster = authority
+    invalid_keep_alive = replace(
+        _launchd_row("com.synapse.watcher"),
+        keep_alive={"SuccessfulExit": "false"},
+    )
+    changed = _resign_inventory(
+        replace(inventory, rows=(invalid_keep_alive,)),
+        keys,
+        roster,
+    )
+    with pytest.raises(ConsumerMigrationError, match="invalid KeepAlive"):
+        _plan(changed, manifest, authority, memo_bin)
+
+    invalid_calendar = replace(
+        _launchd_row("com.synapse.memo-nightly"),
+        start_calendar_interval=((("Hour", 24),),),
+    )
+    changed = _resign_inventory(
+        replace(inventory, rows=(invalid_calendar,)),
+        keys,
+        roster,
+    )
+    with pytest.raises(ConsumerMigrationError, match="invalid calendar"):
+        _plan(changed, manifest, authority, memo_bin)
 
 
 def test_periodic_job_without_schedule_blocks(inventory, manifest, authority, memo_bin):
@@ -469,6 +651,14 @@ def test_renderer_rejects_production_library_or_ancestor(
         render_memo_launch_agents(plan, Path.home() / "Library")
     with pytest.raises(ConsumerMigrationError, match="production Library"):
         render_memo_launch_agents(plan, Path.home())
+    for protected in (
+        Path("/Library"),
+        Path("/System/Library"),
+        Path("/Users/another-user/Library"),
+        Path("/Users/another-user"),
+    ):
+        with pytest.raises(ConsumerMigrationError, match="production Library"):
+            render_memo_launch_agents(plan, protected)
 
 
 def test_renderer_rejects_symlink_and_hardlink_outputs_without_mutation(

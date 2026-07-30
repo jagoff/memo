@@ -6,7 +6,9 @@ import hashlib
 import os
 import plistlib
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from memo.atomic_io import SecureDirectory, open_secure_directory
@@ -34,8 +36,16 @@ class _ReplacementSpec:
     command_tail: tuple[str, ...]
     owner: str
     authority_operation: str
+    authority_cli: str
     schedule_kind: str
     whatsapp: bool = False
+
+
+@dataclass(frozen=True)
+class _AuthorityBinding:
+    mapping: OperationMappingRow
+    route_id: str
+    memo_target: str
 
 
 # Exact labels are part of the reviewed cutover contract. A substring match can
@@ -46,6 +56,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         (),
         "memo_native",
         "synapse.whatsapp_live.message",
+        "memo import whatsapp",
         "periodic",
         whatsapp=True,
     ),
@@ -54,6 +65,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("watch",),
         "memo_native",
         "synapse.watcher.event",
+        "memo watch",
         "persistent",
     ),
     "com.synapse.memo-recall-daemon": _ReplacementSpec(
@@ -61,6 +73,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("recall-daemon", "_serve"),
         "memo_native",
         "synapse.cli.ops",
+        "memo recall-daemon _serve",
         "persistent",
     ),
     "com.synapse.memo-nightly": _ReplacementSpec(
@@ -68,6 +81,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("dream", "run"),
         "memo_native",
         "synapse.cli.ops",
+        "memo dream run",
         "periodic",
     ),
     "com.synapse.morning-digest": _ReplacementSpec(
@@ -75,6 +89,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("digest",),
         "memo_native",
         "synapse.morning_digest.run",
+        "memo digest",
         "periodic",
     ),
     "com.synapse.dream-synthesis": _ReplacementSpec(
@@ -82,6 +97,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("dream", "run"),
         "memo_native",
         "synapse.cli.ops",
+        "memo dream run",
         "periodic",
     ),
     "com.synapse.vault-ingest": _ReplacementSpec(
@@ -89,6 +105,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("reindex",),
         "memo_native",
         "synapse.cli.ops",
+        "memo reindex",
         "periodic",
     ),
     "com.synapse.vault-archive": _ReplacementSpec(
@@ -96,6 +113,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("reindex",),
         "memo_native",
         "synapse.vault_archive.move",
+        "memo reindex",
         "periodic",
     ),
     "com.synapse.dashboard": _ReplacementSpec(
@@ -103,6 +121,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("client-close-reconnect",),
         "client",
         "synapse.chat.ask",
+        "client-close-reconnect",
         "client",
     ),
     "com.synapse.dashboard-relay": _ReplacementSpec(
@@ -110,6 +129,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("client-close-reconnect",),
         "client",
         "synapse.chat.ask",
+        "client-close-reconnect",
         "client",
     ),
     "com.synapse.gateway": _ReplacementSpec(
@@ -117,6 +137,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("client-close-reconnect",),
         "client",
         "synapse.federate.query",
+        "client-close-reconnect",
         "client",
     ),
     "com.synapse.mcp": _ReplacementSpec(
@@ -124,6 +145,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("client-close-reconnect",),
         "client",
         "synapse.federate.query",
+        "client-close-reconnect",
         "client",
     ),
     "com.synapse.memo-daemon": _ReplacementSpec(
@@ -131,6 +153,7 @@ _REPLACEMENTS: dict[str, _ReplacementSpec] = {
         ("client-close-reconnect",),
         "client",
         "synapse.chat.ask",
+        "client-close-reconnect",
         "client",
     ),
 }
@@ -145,6 +168,12 @@ _WHATSAPP_VALUE_OPTIONS = {
     "--db",
 }
 _WHATSAPP_FLAG_OPTIONS = {"--all-chats", "--index", "--no-index", "--json"}
+_WHATSAPP_SINGLE_VALUE_OPTIONS = {
+    "--retention-days",
+    "--since",
+    "--notes-dir",
+    "--db",
+}
 _CALENDAR_KEYS = {"Month", "Day", "Weekday", "Hour", "Minute", "Second"}
 _CALENDAR_RANGES = {
     "Month": (1, 12),
@@ -172,6 +201,10 @@ def _stable_memo_binary(memo_bin: Path) -> str:
         raise ConsumerMigrationError("Memo runtime binary is unavailable") from exc
     if not stat.S_ISREG(observed.st_mode) or not os.access(resolved, os.X_OK):
         raise ConsumerMigrationError("Memo runtime binary must be a regular executable")
+    if resolved.name != "memo":
+        raise ConsumerMigrationError(
+            "Memo runtime binary must be named memo for nested isolated commands"
+        )
     if any(part in {".venv", "venv"} for part in resolved.parts):
         raise ConsumerMigrationError("Memo runtime binary must use a stable isolated runtime")
     return str(resolved)
@@ -212,10 +245,42 @@ def _whatsapp_command(row: ConsumerInventoryRow, memo_bin: str) -> tuple[str, ..
                     f"WhatsApp authoritative option lacks a value: {option}"
                 )
             value = source[index + 1]
+            if option in _WHATSAPP_SINGLE_VALUE_OPTIONS:
+                if option in singletons:
+                    raise ConsumerMigrationError(
+                        f"WhatsApp authoritative option is repeated: {option}"
+                    )
+                singletons.add(option)
+            if not value or "\x00" in value:
+                raise ConsumerMigrationError(
+                    f"WhatsApp authoritative option has an invalid value: {option}"
+                )
             if option in {"--db", "--notes-dir"} and not Path(value).is_absolute():
                 raise ConsumerMigrationError(
                     f"WhatsApp authoritative path must be absolute: {option}"
                 )
+            if option == "--retention-days":
+                try:
+                    retention_days = int(value)
+                except ValueError as exc:
+                    raise ConsumerMigrationError(
+                        "WhatsApp authoritative retention must be an integer"
+                    ) from exc
+                if str(retention_days) != value or not 1 <= retention_days <= 36_500:
+                    raise ConsumerMigrationError(
+                        "WhatsApp authoritative retention is invalid"
+                    )
+            if option == "--since":
+                try:
+                    parsed = date.fromisoformat(value)
+                except ValueError as exc:
+                    raise ConsumerMigrationError(
+                        "WhatsApp authoritative since date is invalid"
+                    ) from exc
+                if parsed.isoformat() != value:
+                    raise ConsumerMigrationError(
+                        "WhatsApp authoritative since date is invalid"
+                    )
             admitted.extend((option, value))
             include_count += option == "--include-chat"
             index += 2
@@ -232,6 +297,81 @@ def _whatsapp_command(row: ConsumerInventoryRow, memo_bin: str) -> tuple[str, ..
     return (memo_bin, "import", "whatsapp", *admitted)
 
 
+def _validated_keep_alive(
+    keep_alive: bool | Mapping[str, object],
+    *,
+    label: str,
+) -> bool | dict[str, object]:
+    if isinstance(keep_alive, bool):
+        return keep_alive
+    if not isinstance(keep_alive, Mapping) or not keep_alive:
+        raise ConsumerMigrationError(f"consumer has an invalid KeepAlive policy: {label}")
+    bool_keys = {"SuccessfulExit", "NetworkState", "Crashed", "AfterInitialDemand"}
+    state_keys = {"PathState", "OtherJobEnabled"}
+    if any(
+        not isinstance(key, str) or key not in bool_keys | state_keys
+        for key in keep_alive
+    ):
+        raise ConsumerMigrationError(f"consumer has an invalid KeepAlive policy: {label}")
+    normalized: dict[str, object] = {}
+    for key in sorted(keep_alive):
+        value = keep_alive[key]
+        if key in bool_keys:
+            if not isinstance(value, bool):
+                raise ConsumerMigrationError(
+                    f"consumer has an invalid KeepAlive policy: {label}"
+                )
+            normalized[key] = value
+            continue
+        if not isinstance(value, Mapping) or not value:
+            raise ConsumerMigrationError(f"consumer has an invalid KeepAlive policy: {label}")
+        if any(
+            not isinstance(path, str)
+            or not path
+            or not Path(path).is_absolute()
+            or not isinstance(expected, bool)
+            for path, expected in value.items()
+        ):
+            raise ConsumerMigrationError(f"consumer has an invalid KeepAlive policy: {label}")
+        normalized[key] = dict(sorted(value.items()))
+    return normalized
+
+
+def _validated_calendars(
+    calendars: tuple[tuple[tuple[str, int], ...], ...],
+    *,
+    label: str,
+) -> tuple[tuple[tuple[str, int], ...], ...]:
+    normalized: list[tuple[tuple[str, int], ...]] = []
+    for calendar in calendars:
+        if not calendar or calendar != tuple(sorted(calendar)):
+            raise ConsumerMigrationError(
+                f"consumer has a noncanonical calendar schedule: {label}"
+            )
+        if len({key for key, _value in calendar}) != len(calendar):
+            raise ConsumerMigrationError(
+                f"consumer has a noncanonical calendar schedule: {label}"
+            )
+        if any(key not in _CALENDAR_KEYS for key, _value in calendar):
+            raise ConsumerMigrationError(
+                f"consumer has an unsupported calendar schedule: {label}"
+            )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not (_CALENDAR_RANGES[key][0] <= value <= _CALENDAR_RANGES[key][1])
+            for key, value in calendar
+        ):
+            raise ConsumerMigrationError(
+                f"consumer has an invalid calendar schedule: {label}"
+            )
+        normalized.append(calendar)
+    result = tuple(normalized)
+    if result != tuple(sorted(set(result))):
+        raise ConsumerMigrationError(f"consumer has a noncanonical calendar schedule: {label}")
+    return result
+
+
 def _validate_schedule(row: ConsumerInventoryRow, spec: _ReplacementSpec) -> None:
     if spec.schedule_kind == "client":
         return
@@ -239,15 +379,8 @@ def _validate_schedule(row: ConsumerInventoryRow, spec: _ReplacementSpec) -> Non
         raise ConsumerMigrationError(f"consumer has an invalid StartInterval: {row.label}")
     if row.throttle_interval_seconds is not None and row.throttle_interval_seconds <= 0:
         raise ConsumerMigrationError(f"consumer has an invalid ThrottleInterval: {row.label}")
-    if row.start_calendar_interval != tuple(sorted(set(row.start_calendar_interval))):
-        raise ConsumerMigrationError(f"consumer has a noncanonical calendar schedule: {row.label}")
-    if any(key not in _CALENDAR_KEYS for key, _value in row.start_calendar_interval):
-        raise ConsumerMigrationError(f"consumer has an unsupported calendar schedule: {row.label}")
-    if any(
-        not (_CALENDAR_RANGES[key][0] <= value <= _CALENDAR_RANGES[key][1])
-        for key, value in row.start_calendar_interval
-    ):
-        raise ConsumerMigrationError(f"consumer has an invalid calendar schedule: {row.label}")
+    keep_alive = _validated_keep_alive(row.keep_alive, label=row.label)
+    _validated_calendars(row.start_calendar_interval, label=row.label)
     if any(not Path(path).is_absolute() for path in row.watch_paths):
         raise ConsumerMigrationError(f"consumer WatchPaths must be absolute: {row.label}")
     if any(
@@ -263,7 +396,7 @@ def _validate_schedule(row: ConsumerInventoryRow, spec: _ReplacementSpec) -> Non
         or row.watch_paths
     )
     if spec.schedule_kind == "persistent":
-        if not row.keep_alive:
+        if keep_alive is False:
             raise ConsumerMigrationError(
                 f"persistent consumer lacks authoritative KeepAlive policy: {row.label}"
             )
@@ -277,7 +410,7 @@ def _authorized_mapping(
     manifest: CapabilityManifest,
     spec: _ReplacementSpec,
     old_label: str,
-) -> OperationMappingRow:
+) -> _AuthorityBinding:
     matches = tuple(
         row
         for row in manifest.operation_mappings
@@ -298,9 +431,10 @@ def _authorized_mapping(
     capabilities = tuple(
         row
         for row in manifest.capabilities
-        if mapping.source_operation in row.source_operations
+        if row.name == mapping.capability
+        and mapping.source_operation in row.source_operations
         and any(
-            nested.source_operation == mapping.source_operation
+            nested == mapping
             for nested in row.operation_mappings
         )
     )
@@ -315,7 +449,94 @@ def _authorized_mapping(
         or not capability.memo_target
     ):
         raise ConsumerMigrationError(f"consumer capability is not admitted: {old_label}")
-    return mapping
+    route_matches = tuple(
+        route for route in mapping.routes if route.memo_cli == (spec.authority_cli,)
+    )
+    if len(route_matches) != 1:
+        raise ConsumerMigrationError(
+            f"consumer lacks one exact admitted CLI route: {old_label}"
+        )
+    route = route_matches[0]
+    route_targets = {
+        method
+        for method in route.memo_methods
+    }
+    expected_capability_targets = {
+        method
+        for nested in capability.operation_mappings
+        for candidate in nested.routes
+        for method in candidate.memo_methods
+    }
+    capability_targets = {
+        target.strip()
+        for target in capability.memo_target.split(",")
+        if target.strip()
+    }
+    if (
+        not route.memo_methods
+        or not route_targets.issubset(capability_targets)
+        or capability_targets != expected_capability_targets
+    ):
+        raise ConsumerMigrationError(
+            f"consumer CLI route target is not exactly admitted: {old_label}"
+        )
+    return _AuthorityBinding(
+        mapping=mapping,
+        route_id=route.route_id,
+        memo_target=",".join(sorted(route.memo_methods)),
+    )
+
+
+def _memo_environment(
+    row: ConsumerInventoryRow,
+    *,
+    memo_bin: str,
+) -> tuple[tuple[str, str], ...]:
+    source: dict[str, str] = {}
+    for key, value in row.environment:
+        if (
+            not isinstance(key, str)
+            or not isinstance(value, str)
+            or not key
+            or key in source
+            or "\x00" in key
+            or "\x00" in value
+        ):
+            raise ConsumerMigrationError(
+                f"consumer has an invalid authoritative environment: {row.label}"
+            )
+        source[key] = value
+    retained = {
+        key: value
+        for key, value in source.items()
+        if key.startswith("MEMO_")
+    }
+    retained["MEMO_NONINTERACTIVE"] = "1"
+    existing_path = source.get("PATH", "")
+    path_entries = existing_path.split(":") if existing_path else []
+    if any(
+        not entry
+        or not Path(entry).is_absolute()
+        or any(retired in entry.casefold() for retired in ("synapse", "memflow"))
+        for entry in path_entries
+    ):
+        raise ConsumerMigrationError(
+            f"consumer has an invalid authoritative PATH: {row.label}"
+        )
+    memo_parent = str(Path(memo_bin).parent)
+    retained["PATH"] = ":".join(
+        (memo_parent, *(entry for entry in path_entries if entry != memo_parent))
+    )
+    if any(
+        retired in value.casefold()
+        for key, value in retained.items()
+        if key != "PATH"
+        for retired in ("synapse", "memflow")
+    ):
+        raise ConsumerMigrationError(
+            f"consumer environment retains a retired runtime: {row.label}"
+        )
+    return tuple(sorted(retained.items()))
 
 
 def _replacement_digest(payload: dict[str, object]) -> str:
@@ -333,8 +554,9 @@ def _replacement_payload(
     command: tuple[str, ...],
     owner: str,
     manifest_sha256: str,
-    mapping: OperationMappingRow,
+    binding: _AuthorityBinding,
     row: ConsumerInventoryRow,
+    environment: tuple[tuple[str, str], ...],
 ) -> dict[str, object]:
     return {
         "old_label": old_label,
@@ -343,13 +565,21 @@ def _replacement_payload(
         "owner": owner,
         "restart_required": True,
         "manifest_sha256": manifest_sha256,
-        "authority_operation": mapping.source_operation,
+        "authority_operation": binding.mapping.source_operation,
+        "authority_route_id": binding.route_id,
+        "authority_memo_target": binding.memo_target,
         "run_at_load": row.run_at_load,
-        "keep_alive": row.keep_alive,
+        "keep_alive": (
+            dict(row.keep_alive) if isinstance(row.keep_alive, Mapping) else row.keep_alive
+        ),
         "start_interval_seconds": row.start_interval_seconds,
-        "start_calendar_interval": [list(item) for item in row.start_calendar_interval],
+        "start_calendar_interval": [
+            {key: value for key, value in calendar}
+            for calendar in row.start_calendar_interval
+        ],
         "watch_paths": list(row.watch_paths),
         "throttle_interval_seconds": row.throttle_interval_seconds,
+        "environment": [list(item) for item in environment],
     }
 
 
@@ -406,7 +636,7 @@ def build_consumer_replacement_plan(
         if old_label in seen:
             raise ConsumerMigrationError(f"consumer inventory repeats active label: {old_label}")
         seen.add(old_label)
-        mapping = _authorized_mapping(manifest, spec, old_label)
+        binding = _authorized_mapping(manifest, spec, old_label)
         _validate_schedule(row, spec)
         command = (
             spec.command_tail
@@ -416,6 +646,20 @@ def build_consumer_replacement_plan(
                 if spec.whatsapp
                 else (stable_memo_bin, *spec.command_tail)
             )
+        )
+        generated_cli = (
+            " ".join(command)
+            if spec.owner == "client"
+            else "memo " + " ".join(command[1 : 3 if spec.whatsapp else None])
+        )
+        if generated_cli != spec.authority_cli:
+            raise ConsumerMigrationError(
+                f"replacement command does not match admitted CLI route: {old_label}"
+            )
+        environment = (
+            _memo_environment(row, memo_bin=stable_memo_bin)
+            if spec.owner == "memo_native"
+            else ()
         )
         if spec.owner == "memo_native" and any(
             retired in argument.casefold()
@@ -431,8 +675,9 @@ def build_consumer_replacement_plan(
             command=command,
             owner=spec.owner,
             manifest_sha256=manifest_sha256,
-            mapping=mapping,
+            binding=binding,
             row=row,
+            environment=environment,
         )
         replacements.append(
             ConsumerReplacement(
@@ -457,6 +702,7 @@ def build_consumer_replacement_plan(
                 throttle_interval_seconds=(
                     row.throttle_interval_seconds if spec.owner == "memo_native" else None
                 ),
+                environment=environment,
             )
         )
     rows = tuple(sorted(replacements, key=lambda replacement: replacement.old_label))
@@ -467,15 +713,21 @@ def _plist_bytes(row: ConsumerReplacement) -> bytes:
     payload: dict[str, object] = {
         "Label": row.new_label,
         "ProgramArguments": list(row.command),
-        "EnvironmentVariables": {"MEMO_NONINTERACTIVE": "1"},
+        "EnvironmentVariables": dict(row.environment),
         "RunAtLoad": row.run_at_load,
+        "KeepAlive": (
+            dict(row.keep_alive)
+            if isinstance(row.keep_alive, Mapping)
+            else row.keep_alive
+        ),
     }
-    if row.keep_alive:
-        payload["KeepAlive"] = True
     if row.start_interval_seconds is not None:
         payload["StartInterval"] = row.start_interval_seconds
     if row.start_calendar_interval:
-        payload["StartCalendarInterval"] = dict(row.start_calendar_interval)
+        calendars = [dict(calendar) for calendar in row.start_calendar_interval]
+        payload["StartCalendarInterval"] = (
+            calendars[0] if len(calendars) == 1 else calendars
+        )
     if row.watch_paths:
         payload["WatchPaths"] = list(row.watch_paths)
     if row.throttle_interval_seconds is not None:
@@ -501,8 +753,27 @@ def _expected_outputs(plan: ConsumerReplacementPlan) -> dict[str, bytes]:
 
 def _staging_root(root: Path) -> Path:
     absolute = Path(os.path.abspath(os.fspath(root)))
-    library = Path.home() / "Library"
-    if absolute == library or absolute in library.parents or library in absolute.parents:
+    protected = {Path("/Library"), Path("/System/Library"), Path.home() / "Library"}
+    parts = absolute.parts
+    if (
+        len(parts) == 3
+        and parts[1] in {"Users", "home"}
+        and parts[2]
+    ):
+        protected.add(absolute / "Library")
+    if absolute == Path("/var/root"):
+        protected.add(absolute / "Library")
+    for index, part in enumerate(parts):
+        if part == "Library" and index >= 2 and parts[index - 2] in {"Users", "home"}:
+            protected.add(Path(*parts[: index + 1]))
+        if part == "Library" and index >= 1 and parts[index - 1] == "root":
+            protected.add(Path(*parts[: index + 1]))
+    if any(
+        absolute == library
+        or absolute in library.parents
+        or library in absolute.parents
+        for library in protected
+    ):
         raise ConsumerMigrationError("operator staging root overlaps the production Library")
     if absolute.name == _LAUNCHD_DIRECTORY:
         raise ConsumerMigrationError("operator staging root must be a dedicated parent directory")

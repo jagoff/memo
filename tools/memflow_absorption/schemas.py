@@ -326,11 +326,12 @@ class LaunchdRecord:
     environment_keys: tuple[str, ...]
     loaded: bool
     run_at_load: bool = False
-    keep_alive: bool = False
+    keep_alive: bool | Mapping[str, object] = False
     start_interval_seconds: int | None = None
-    start_calendar_interval: tuple[tuple[str, int], ...] = ()
+    start_calendar_interval: tuple[tuple[tuple[str, int], ...], ...] = ()
     watch_paths: tuple[str, ...] = ()
     throttle_interval_seconds: int | None = None
+    environment: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -353,11 +354,12 @@ class ConsumerInventoryRow:
     program_arguments: tuple[str, ...] = ()
     correlated_launchd_label: str = ""
     run_at_load: bool = False
-    keep_alive: bool = False
+    keep_alive: bool | Mapping[str, object] = False
     start_interval_seconds: int | None = None
-    start_calendar_interval: tuple[tuple[str, int], ...] = ()
+    start_calendar_interval: tuple[tuple[tuple[str, int], ...], ...] = ()
     watch_paths: tuple[str, ...] = ()
     throttle_interval_seconds: int | None = None
+    environment: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -410,11 +412,12 @@ class ConsumerReplacement:
     config_sha256: str
     rollback_action: str
     run_at_load: bool = False
-    keep_alive: bool = False
+    keep_alive: bool | Mapping[str, object] = False
     start_interval_seconds: int | None = None
-    start_calendar_interval: tuple[tuple[str, int], ...] = ()
+    start_calendar_interval: tuple[tuple[tuple[str, int], ...], ...] = ()
     watch_paths: tuple[str, ...] = ()
     throttle_interval_seconds: int | None = None
+    environment: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -426,11 +429,17 @@ class ConsumerReplacement:
             "config_sha256": self.config_sha256,
             "rollback_action": self.rollback_action,
             "run_at_load": self.run_at_load,
-            "keep_alive": self.keep_alive,
+            "keep_alive": (
+                dict(self.keep_alive) if isinstance(self.keep_alive, Mapping) else self.keep_alive
+            ),
             "start_interval_seconds": self.start_interval_seconds,
-            "start_calendar_interval": [list(item) for item in self.start_calendar_interval],
+            "start_calendar_interval": [
+                {key: value for key, value in calendar}
+                for calendar in self.start_calendar_interval
+            ],
             "watch_paths": list(self.watch_paths),
             "throttle_interval_seconds": self.throttle_interval_seconds,
+            "environment": [list(item) for item in self.environment],
         }
 
 

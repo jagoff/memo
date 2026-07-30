@@ -103,7 +103,15 @@ def test_inventory_combines_source_process_and_launchd_without_following_symlink
                 environment_keys=("SYNAPSE_MEMFLOW_BIN",),
                 loaded=True,
                 run_at_load=True,
-                keep_alive=True,
+                keep_alive={"SuccessfulExit": False},
+                start_calendar_interval=(
+                    (("Hour", 3), ("Minute", 0)),
+                    (("Hour", 15), ("Minute", 30)),
+                ),
+                environment=(
+                    ("MEMO_DATA_DIR", "/operator/memo"),
+                    ("PATH", "/usr/bin:/bin"),
+                ),
             ),
         ),
     )
@@ -117,7 +125,15 @@ def test_inventory_combines_source_process_and_launchd_without_following_symlink
     assert launchd_row.label == "com.synapse.dashboard"
     assert launchd_row.active is True
     assert launchd_row.run_at_load is True
-    assert launchd_row.keep_alive is True
+    assert launchd_row.keep_alive == {"SuccessfulExit": False}
+    assert launchd_row.start_calendar_interval == (
+        (("Hour", 3), ("Minute", 0)),
+        (("Hour", 15), ("Minute", 30)),
+    )
+    assert launchd_row.environment == (
+        ("MEMO_DATA_DIR", "/operator/memo"),
+        ("PATH", "/usr/bin:/bin"),
+    )
     assert inventory.blockers == ("symlink-skipped:linked.txt",)
     assert len(inventory.source_scan_sha256) == 64
 

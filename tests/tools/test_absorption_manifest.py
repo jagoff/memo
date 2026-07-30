@@ -351,12 +351,17 @@ def _signed_inputs(
                 if cursor <= datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) < bucket_end
                 or (bucket_end == end and datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) == end)
             )
+            bucket_events = [
+                event for event in device_events
+                if cursor <= datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) < bucket_end
+                or (bucket_end == end and datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) == end)
+            ]
             buckets.append(
                 SourceBucket(
                     start=cursor.isoformat().replace("+00:00", "Z"),
                     end=bucket_end.isoformat().replace("+00:00", "Z"),
                     count=count,
-                    digest=hashlib.sha256(f"{device_id}:{cursor.isoformat()}".encode()).hexdigest(),
+                    digest=hashlib.sha256(canonical_json_bytes(bucket_events)).hexdigest(),
                 )
             )
             cursor = bucket_end

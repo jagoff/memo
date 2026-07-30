@@ -129,3 +129,58 @@ commit `4187276a` incorporated the schema/inventory and most planner/renderer
 correction hunks while committing source-receipt work; this correction commit
 preserves that history and contains the remaining Task 4 hardening,
 regressions, and report.
+
+## Correction round 2
+
+The replacement stage now binds every executable detail to signed authority
+without losing valid launchd configuration:
+
+- WhatsApp's single-value options (`--retention-days`, `--since`,
+  `--notes-dir`, and `--db`) reject duplicates. Retention is a canonical
+  positive integer, `--since` is a canonical ISO date, and both filesystem
+  options require absolute paths.
+- Each reviewed replacement names its exact admitted CLI route. Planning
+  requires one matching `OperationRoute.memo_cli`, verifies that the selected
+  route's Memo method is in the capability target, and verifies that the full
+  capability target exactly matches the methods of its signed nested routes.
+  The route id and target are included in the replacement config digest.
+- Signed `MEMO_*` environment is preserved, `MEMO_NONINTERACTIVE=1` is forced,
+  unrelated variables are discarded, and `PATH` accepts only absolute,
+  non-retired entries. The isolated Memo binary directory is first in `PATH`,
+  and the binary must be named `memo`, so WhatsApp's nested `memo ingest`
+  invocation resolves to the same isolated runtime.
+- Staging rejects `/Library`, `/System/Library`, the current user's Library,
+  other `/Users/<name>/Library` and `/home/<name>/Library` roots, and their
+  ancestors or descendants.
+- `KeepAlive` now preserves valid boolean or dictionary policies, including
+  state dictionaries. `StartCalendarInterval` preserves one dictionary or an
+  array of multiple canonical dictionaries, with key and range validation.
+
+Correction verification:
+
+```text
+uv run --no-sync pytest tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py -q
+34 passed
+
+uv run --no-sync pytest tests/tools/test_consumer_migration.py tests/test_runtime_isolation.py tests/test_watcher.py tests/test_whatsapp_ingest.py -q
+70 passed
+
+uv run --no-sync pytest tests/tools -q
+100 passed
+
+uv run --no-sync mypy src/memo
+Success: no issues found in 463 source files
+
+uv run mypy --follow-imports=skip tools/memflow_absorption/schemas.py tools/memflow_absorption/inventory.py tools/memflow_absorption/consumer_migration.py
+Success: no issues found in 3 source files
+
+uv run ruff check tools/memflow_absorption/schemas.py tools/memflow_absorption/inventory.py tools/memflow_absorption/consumer_migration.py tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py
+All checks passed!
+
+git diff --check
+passed
+```
+
+The brief's full Ruff scope remains red only on the concurrent, unrelated
+`published_stat` unused local in `tools/memflow_absorption/snapshot.py`.
+Task 4 does not modify that file.
