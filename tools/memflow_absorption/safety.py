@@ -7,19 +7,29 @@ import json
 import os
 import re
 import stat
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, cast
 
 from memo.atomic_io import open_secure_directory
+from memo.errors import SignatureError
 from memo.operational_event import canonical_json_bytes
+from memo.operational_roster import VerificationRoster
+from memo.operational_signing import OperationalSigner, OperationalVerifier
 from tools.memflow_absorption.control_record import (
     CutoverSafetyError,
     prepare_synapse_retirement,
 )
+from tools.memflow_absorption.inventory import (
+    InventoryError,
+    verify_consumer_inventory,
+    verify_synapse_retirement_manifest,
+)
 from tools.memflow_absorption.schemas import (
     ConsumerInventory,
     IndependenceReceipt,
+    IndependenceScanReceipt,
     SynapseRetirementManifest,
     SynapseRetirementState,
     VerifiedControlRecord,
@@ -28,10 +38,6 @@ from tools.memflow_absorption.schemas import (
 ATTEMPT_SENTINEL = ".memo-cutover-attempt.json"
 _ATTEMPT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
-_INDEPENDENCE_PHASES: tuple[Literal["post_stop", "post_reboot"], ...] = (
-    "post_stop",
-    "post_reboot",
-)
 _INDEPENDENCE_SURFACES = (
     "launchagent",
     "mcp_gateway_route",
@@ -39,6 +45,10 @@ _INDEPENDENCE_SURFACES = (
     "process",
     "shell_config_path",
     "state_root",
+)
+SYNAPSE_INDEPENDENCE_SCAN_DOMAIN = "memo.cutover.synapse_independence_scan.v1"
+SYNAPSE_INDEPENDENCE_RECEIPT_DOMAIN = (
+    "memo.cutover.synapse_independence_receipt.v1"
 )
 
 
@@ -177,8 +187,14 @@ def verify_synapse_retired(
     control: VerifiedControlRecord,
     inventory: ConsumerInventory,
     manifest: SynapseRetirementManifest,
+    post_stop_scan: IndependenceScanReceipt,
+    post_reboot_scan: IndependenceScanReceipt,
+    *,
+    roster: VerificationRoster,
+    signer: OperationalSigner,
+    signer_key_id: str,
 ) -> IndependenceReceipt:
-    """Prove retirement from signed, post-stop and post-reboot negative scans."""
+    """Create a signed proof from two independently signed negative scans."""
 
     if control.synapse_state not in {
         SynapseRetirementState.COMMITTED,
@@ -187,59 +203,269 @@ def verify_synapse_retired(
         raise CutoverSafetyError("Synapse retirement is not committed")
     if control.retirement_epoch < 1:
         raise CutoverSafetyError("Synapse retirement epoch is missing")
-    if manifest.schema != "memo.synapse_retirement.v2" or not manifest.signature:
-        raise CutoverSafetyError("Synapse retirement manifest is unsigned")
-    if (
-        not _SHA256_RE.fullmatch(manifest.active_reference_sha256)
-        or not manifest.signer_key_id
-    ):
-        raise CutoverSafetyError("Synapse retirement manifest authority is malformed")
+    try:
+        verify_synapse_retirement_manifest(manifest, roster=roster)
+        verify_consumer_inventory(inventory, roster=roster)
+    except InventoryError as exc:
+        raise CutoverSafetyError(
+            "Synapse final manifest or inventory signature is invalid"
+        ) from exc
     manifest_sha256 = hashlib.sha256(manifest.signed_bytes()).hexdigest()
     if manifest_sha256 != control.synapse_manifest_sha256:
         raise CutoverSafetyError("Synapse retirement manifest digest mismatch")
-    if (
-        inventory.schema != "memo.cutover_consumer_inventory.v1"
-        or not inventory.signature
-        or inventory.blockers
-        or not _SHA256_RE.fullmatch(inventory.source_scan_sha256)
-        or not inventory.signer_device_id
-        or not inventory.signer_key_id
-        or inventory.roster_version < 1
-    ):
-        raise CutoverSafetyError("Synapse independence inventory is blocked or unsigned")
-    if inventory.verification_phases != _INDEPENDENCE_PHASES:
-        raise CutoverSafetyError(
-            "Synapse independence requires post-stop and post-reboot scans"
-        )
-    if inventory.covered_surfaces != _INDEPENDENCE_SURFACES:
-        raise CutoverSafetyError("Synapse independence surface coverage is incomplete")
-    active_rows = tuple(row for row in inventory.rows if row.active or row.references)
-    if active_rows:
-        kinds = ",".join(
-            sorted({f"{row.kind}:{row.location}" for row in active_rows})
-        )
-        raise CutoverSafetyError(f"Synapse active reference resurrected: {kinds}")
+    stop_digest, stop_time = _verify_independence_scan(
+        post_stop_scan,
+        phase="post_stop",
+        roster=roster,
+    )
+    reboot_digest, reboot_time = _verify_independence_scan(
+        post_reboot_scan,
+        phase="post_reboot",
+        roster=roster,
+    )
+    if post_stop_scan.boot_id == post_reboot_scan.boot_id:
+        raise CutoverSafetyError("post-reboot scan did not cross a boot boundary")
+    if reboot_time <= stop_time:
+        raise CutoverSafetyError("post-reboot scan capture time is not later")
+    scan_digests = (stop_digest, reboot_digest)
+    if inventory.scan_receipt_sha256 != scan_digests:
+        raise CutoverSafetyError("signed inventory does not bind both scan receipts")
+    expected_scan_source = hashlib.sha256(
+        canonical_json_bytes(list(scan_digests))
+    ).hexdigest()
+    if inventory.source_scan_sha256 != expected_scan_source:
+        raise CutoverSafetyError("signed inventory source digest does not bind final scans")
     inventory_sha256 = hashlib.sha256(inventory.signed_bytes()).hexdigest()
-    return IndependenceReceipt(
+    try:
+        signer_device_id = roster.key(signer_key_id).device_id
+    except KeyError as exc:
+        raise CutoverSafetyError("independence receipt signer is not in roster") from exc
+    unsigned = IndependenceReceipt(
         schema="memo.synapse_independence_receipt.v1",
         attempt_id=control.attempt_id,
         control_oid=control.control_oid,
         retirement_epoch=control.retirement_epoch,
         synapse_manifest_sha256=manifest_sha256,
         consumer_inventory_sha256=inventory_sha256,
-        verification_phases=_INDEPENDENCE_PHASES,
-        covered_surfaces=_INDEPENDENCE_SURFACES,
+        scan_receipt_sha256=scan_digests,
         verified_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        signer_device_id=signer_device_id,
+        signer_key_id=signer_key_id,
+        roster_version=roster.version,
+        signature="",
     )
+    envelope = signer.sign(
+        domain=SYNAPSE_INDEPENDENCE_RECEIPT_DOMAIN,
+        payload=unsigned.signed_bytes(),
+        key_id=signer_key_id,
+    )
+    receipt = replace(unsigned, signature=envelope.signature)
+    verify_independence_receipt(
+        receipt,
+        control,
+        inventory,
+        manifest,
+        post_stop_scan,
+        post_reboot_scan,
+        roster=roster,
+    )
+    return receipt
+
+
+def _captured_at(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise CutoverSafetyError("independence scan capture time is invalid") from exc
+    if parsed.tzinfo is None:
+        raise CutoverSafetyError("independence scan capture time lacks timezone")
+    return parsed.astimezone(UTC)
+
+
+def _verify_independence_scan(
+    scan: IndependenceScanReceipt,
+    *,
+    phase: str,
+    roster: VerificationRoster,
+) -> tuple[str, datetime]:
+    if (
+        scan.schema != "memo.synapse_independence_scan.v1"
+        or scan.phase != phase
+        or not scan.boot_id
+        or not _SHA256_RE.fullmatch(scan.source_scan_sha256)
+        or not scan.signature
+    ):
+        raise CutoverSafetyError(f"{phase} independence scan is malformed")
+    try:
+        key = roster.key(scan.signer_key_id)
+        if key.device_id != scan.signer_device_id:
+            raise SignatureError("scan signer device does not own its key")
+        OperationalVerifier().verify(
+            domain=SYNAPSE_INDEPENDENCE_SCAN_DOMAIN,
+            payload=scan.signed_bytes(),
+            envelope=scan.signature_envelope(),
+            roster=roster,
+        )
+    except (KeyError, SignatureError) as exc:
+        raise CutoverSafetyError(f"{phase} independence scan signature is invalid") from exc
+    surfaces = {row.surface for row in scan.observations}
+    if surfaces != set(_INDEPENDENCE_SURFACES):
+        raise CutoverSafetyError(f"{phase} scan observations are incomplete")
+    identifiers = [(row.surface, row.identifier) for row in scan.observations]
+    if (
+        len(identifiers) != len(set(identifiers))
+        or any(not row.identifier for row in scan.observations)
+    ):
+        raise CutoverSafetyError(f"{phase} scan observations are ambiguous")
+    resurrected = [
+        f"{row.surface}:{row.identifier}"
+        for row in scan.observations
+        if row.active or row.references
+    ]
+    if resurrected:
+        raise CutoverSafetyError(
+            "Synapse active reference resurrected: " + ",".join(sorted(resurrected))
+        )
+    observed_digest = hashlib.sha256(
+        canonical_json_bytes([row.to_dict() for row in scan.observations])
+    ).hexdigest()
+    if observed_digest != scan.source_scan_sha256:
+        raise CutoverSafetyError(f"{phase} scan source digest mismatch")
+    return hashlib.sha256(scan.signed_bytes()).hexdigest(), _captured_at(scan.captured_at)
+
+
+def verify_independence_receipt(
+    receipt: IndependenceReceipt,
+    control: VerifiedControlRecord,
+    inventory: ConsumerInventory,
+    manifest: SynapseRetirementManifest,
+    post_stop_scan: IndependenceScanReceipt,
+    post_reboot_scan: IndependenceScanReceipt,
+    *,
+    roster: VerificationRoster,
+) -> None:
+    try:
+        verify_consumer_inventory(inventory, roster=roster)
+        verify_synapse_retirement_manifest(manifest, roster=roster)
+    except InventoryError as exc:
+        raise CutoverSafetyError(
+            "independence receipt artifact signature is invalid"
+        ) from exc
+    stop_digest, _stop_time = _verify_independence_scan(
+        post_stop_scan,
+        phase="post_stop",
+        roster=roster,
+    )
+    reboot_digest, _reboot_time = _verify_independence_scan(
+        post_reboot_scan,
+        phase="post_reboot",
+        roster=roster,
+    )
+    scan_digests = (
+        stop_digest,
+        reboot_digest,
+    )
+    expected = (
+        control.synapse_state
+        in {SynapseRetirementState.COMMITTED, SynapseRetirementState.VERIFIED}
+        and control.retirement_epoch > 0
+        and receipt.schema == "memo.synapse_independence_receipt.v1"
+        and receipt.attempt_id == control.attempt_id
+        and receipt.control_oid == control.control_oid
+        and receipt.retirement_epoch == control.retirement_epoch
+        and receipt.synapse_manifest_sha256
+        == hashlib.sha256(manifest.signed_bytes()).hexdigest()
+        and receipt.consumer_inventory_sha256
+        == hashlib.sha256(inventory.signed_bytes()).hexdigest()
+        and receipt.scan_receipt_sha256 == scan_digests
+    )
+    if not expected:
+        raise CutoverSafetyError("independence receipt is not bound to final authority")
+    _captured_at(receipt.verified_at)
+    try:
+        key = roster.key(receipt.signer_key_id)
+        if key.device_id != receipt.signer_device_id:
+            raise SignatureError("receipt signer device does not own its key")
+        OperationalVerifier().verify(
+            domain=SYNAPSE_INDEPENDENCE_RECEIPT_DOMAIN,
+            payload=receipt.signed_bytes(),
+            envelope=receipt.signature_envelope(),
+            roster=roster,
+        )
+    except (KeyError, SignatureError) as exc:
+        raise CutoverSafetyError("independence receipt signature is invalid") from exc
+
+
+def independence_receipt_from_dict(value: dict[str, Any]) -> IndependenceReceipt:
+    expected = {
+        "schema",
+        "attempt_id",
+        "control_oid",
+        "retirement_epoch",
+        "synapse_manifest_sha256",
+        "consumer_inventory_sha256",
+        "scan_receipt_sha256",
+        "verified_at",
+        "signer_device_id",
+        "signer_key_id",
+        "roster_version",
+        "signature",
+    }
+    if set(value) != expected:
+        raise CutoverSafetyError("independence receipt fields are invalid")
+    scans = value["scan_receipt_sha256"]
+    string_fields = (
+        "schema",
+        "attempt_id",
+        "control_oid",
+        "synapse_manifest_sha256",
+        "consumer_inventory_sha256",
+        "verified_at",
+        "signer_device_id",
+        "signer_key_id",
+        "signature",
+    )
+    if (
+        any(not isinstance(value[field], str) or not value[field] for field in string_fields)
+        or isinstance(value["retirement_epoch"], bool)
+        or not isinstance(value["retirement_epoch"], int)
+        or isinstance(value["roster_version"], bool)
+        or not isinstance(value["roster_version"], int)
+        or not isinstance(scans, list)
+        or len(scans) != 2
+        or any(not isinstance(item, str) for item in scans)
+    ):
+        raise CutoverSafetyError("independence receipt scan digests are invalid")
+    try:
+        return IndependenceReceipt(
+            schema=cast(Any, value["schema"]),
+            attempt_id=cast(str, value["attempt_id"]),
+            control_oid=cast(str, value["control_oid"]),
+            retirement_epoch=cast(int, value["retirement_epoch"]),
+            synapse_manifest_sha256=cast(str, value["synapse_manifest_sha256"]),
+            consumer_inventory_sha256=cast(str, value["consumer_inventory_sha256"]),
+            scan_receipt_sha256=(scans[0], scans[1]),
+            verified_at=cast(str, value["verified_at"]),
+            signer_device_id=cast(str, value["signer_device_id"]),
+            signer_key_id=cast(str, value["signer_key_id"]),
+            roster_version=cast(int, value["roster_version"]),
+            signature=cast(str, value["signature"]),
+        )
+    except (TypeError, ValueError) as exc:
+        raise CutoverSafetyError("independence receipt values are invalid") from exc
 
 
 __all__ = [
     "ATTEMPT_SENTINEL",
+    "SYNAPSE_INDEPENDENCE_RECEIPT_DOMAIN",
+    "SYNAPSE_INDEPENDENCE_SCAN_DOMAIN",
     "CutoverSafetyError",
     "SafetyError",
     "assert_safe_attempt_root",
+    "independence_receipt_from_dict",
     "initialize_attempt_root",
     "prepare_synapse_retirement",
     "resolve_under_attempt",
+    "verify_independence_receipt",
     "verify_synapse_retired",
 ]

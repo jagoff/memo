@@ -7,7 +7,7 @@ import json
 import os
 import re
 import stat
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -36,6 +36,7 @@ _CONSUMER_REFERENCE_RE = re.compile(
 )
 _SYMBOL_RE = re.compile(r"\b(?:class|def)\s+([A-Za-z_][A-Za-z0-9_]*)")
 _IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CONSUMER_INVENTORY_DOMAIN = "memo.cutover.consumer_inventory.v1"
 # The schema evolved, but its Ed25519 purpose remains the pre-approved
 # retirement authority domain.  Do not silently introduce an unsigned domain.
@@ -143,6 +144,7 @@ def build_consumer_inventory(
     signer: OperationalSigner | None = None,
     signer_key_id: str = "",
     roster: VerificationRoster | None = None,
+    surface_observations: Mapping[str, tuple[str, ...]] | None = None,
 ) -> ConsumerInventory:
     """Combine explicit source roots with already-captured process/launchd inputs."""
 
@@ -248,6 +250,14 @@ def build_consumer_inventory(
         signer_key_id=signer_key_id,
         roster_version=roster_version,
         signature="",
+        surface_observations=(
+            {
+                key: tuple(values)
+                for key, values in sorted(surface_observations.items())
+            }
+            if surface_observations is not None
+            else {}
+        ),
     )
     if signer is None or unsigned.blockers:
         return unsigned
@@ -350,8 +360,28 @@ def verify_consumer_inventory(
     *,
     roster: VerificationRoster,
 ) -> None:
+    if inventory.schema != "memo.cutover_consumer_inventory.v1":
+        raise InventoryError("consumer inventory schema is invalid")
     if inventory.blockers or not inventory.signature:
         raise InventoryError("consumer inventory is blocked or unsigned")
+    if not _SHA256_RE.fullmatch(inventory.source_scan_sha256):
+        raise InventoryError("consumer inventory source digest is invalid")
+    if not inventory.signer_key_id or not inventory.signer_device_id or inventory.roster_version < 1:
+        raise InventoryError("consumer inventory signer fields are incomplete")
+    if inventory.roster_version != roster.version:
+        raise InventoryError("consumer inventory roster version is invalid")
+    try:
+        key = roster.key(inventory.signer_key_id)
+    except Exception as exc:
+        raise InventoryError("consumer inventory signer key is not in roster") from exc
+    if key.device_id != inventory.signer_device_id or "origin" not in key.roles:
+        raise InventoryError("consumer inventory signer key ownership is invalid")
+    if any(not isinstance(k, str) or not isinstance(v, tuple) or any(not isinstance(x, str) for x in v)
+           for k, v in inventory.surface_observations.items()):
+        raise InventoryError("consumer inventory surface observations are invalid")
+    if any(row.kind not in {"source", "process", "launchd"} or not row.location or not row.references
+           for row in inventory.rows):
+        raise InventoryError("consumer inventory row is malformed")
     try:
         OperationalVerifier().verify(
             domain=CONSUMER_INVENTORY_DOMAIN,
@@ -368,8 +398,28 @@ def verify_synapse_retirement_manifest(
     *,
     roster: VerificationRoster,
 ) -> None:
+    if manifest.schema != "memo.synapse_retirement.v2":
+        raise InventoryError("Synapse retirement schema is invalid")
     if not manifest.signature:
         raise InventoryError("Synapse retirement manifest is unsigned")
+    if (not re.fullmatch(r"[0-9a-f]{40}", manifest.source_commit)
+            or not _SHA256_RE.fullmatch(manifest.active_reference_sha256)):
+        raise InventoryError("Synapse retirement digest fields are invalid")
+    if not manifest.signer_key_id:
+        raise InventoryError("Synapse retirement signer key is incomplete")
+    try:
+        key = roster.key(manifest.signer_key_id)
+    except Exception as exc:
+        raise InventoryError("Synapse retirement signer key is not in roster") from exc
+    if "origin" not in key.roles:
+        raise InventoryError("Synapse retirement signer key ownership is invalid")
+    if not manifest.operations:
+        raise InventoryError("Synapse retirement operation catalog is empty")
+    for operation in manifest.operations:
+        if (not operation.source_operation or not operation.source_files
+                or any(not isinstance(path, str) or not path for path in operation.source_files)
+                or any(not isinstance(path, str) or not path for path in operation.fixture_paths)):
+            raise InventoryError("Synapse retirement operation is malformed")
     try:
         OperationalVerifier().verify(
             domain=SYNAPSE_RETIREMENT_DOMAIN,

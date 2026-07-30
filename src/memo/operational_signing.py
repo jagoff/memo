@@ -44,6 +44,8 @@ ALLOWED_SIGNATURE_DOMAINS = frozenset(
         "memo.cutover.source_receipt.v2",
         "memo.cutover.control_record.v1",
         "memo.cutover.fence.v1",
+        "memo.cutover.synapse_independence_scan.v1",
+        "memo.cutover.synapse_independence_receipt.v1",
     }
 )
 

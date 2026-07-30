@@ -16,11 +16,17 @@ from memo.operational_key_store import (
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner
 from tools.memflow_absorption.__main__ import main
+from tools.memflow_absorption.consumer_migration import (
+    build_consumer_replacement_plan,
+)
 from tools.memflow_absorption.control_record import (
+    SYNAPSE_PEER_VOTE_DOMAIN,
     ControlRecordError,
     CutoverSafetyError,
+    InMemoryControlRecordCAS,
     advance_synapse_retirement,
     commit_synapse_activation,
+    fetch_verified_control,
     prepare_synapse_retirement,
     sign_control_record,
     validate_synapse_request,
@@ -30,16 +36,30 @@ from tools.memflow_absorption.inventory import (
     SYNAPSE_RETIREMENT_DOMAIN,
 )
 from tools.memflow_absorption.manifest import CAPABILITY_MANIFEST_DOMAIN
-from tools.memflow_absorption.safety import verify_synapse_retired
+from tools.memflow_absorption.runtime_gate import (
+    before_fallback,
+    before_listener_start,
+    before_worker_start,
+    before_write,
+)
+from tools.memflow_absorption.safety import (
+    SYNAPSE_INDEPENDENCE_SCAN_DOMAIN,
+    independence_receipt_from_dict,
+    verify_independence_receipt,
+    verify_synapse_retired,
+)
 from tools.memflow_absorption.schemas import (
     CapabilityManifest,
     ConsumerInventory,
-    ConsumerInventoryRow,
     ConsumerReplacementPlan,
     CutoverControlRecord,
     CutoverState,
+    IndependenceObservation,
+    IndependenceScanReceipt,
+    SynapsePeerVote,
     SynapseRetirementManifest,
     SynapseRetirementState,
+    VerifiedControlRecord,
 )
 
 SURFACES = (
@@ -57,23 +77,30 @@ def authority(
     tmp_path: Path,
 ) -> tuple[DeviceKeyStore, VerificationRoster, OperationalSigner]:
     keys = DeviceKeyStore.in_memory()
-    key = keys.generate(device_id="device-a")
+    mac_a = keys.generate(device_id="mac-a")
     pins = AuthorityPinStore._for_test(
-        tmp_path,
+        tmp_path / "authority",
         provider=InMemoryAuthorityPinProvider(),
     )
     roster = VerificationRoster.bootstrap(
-        device_id="device-a",
-        key=key,
-        root=tmp_path,
+        device_id="mac-a",
+        key=mac_a,
+        root=tmp_path / "authority",
+        pin_store=pins,
+    )
+    mac_b = keys.generate(device_id="mac-b", roles=("origin",), enrollment_sequence=2)
+    roster = roster.with_keys(
+        version=2,
+        peers=("mac-a", "mac-b"),
+        keys=(mac_a, mac_b),
+        signer=OperationalSigner(keys, roster_version=1),
+        root=tmp_path / "authority",
         pin_store=pins,
     )
     return keys, roster, OperationalSigner(keys, roster_version=roster.version)
 
 
-def _signed_control(
-    authority: tuple[DeviceKeyStore, VerificationRoster, OperationalSigner],
-) -> CutoverControlRecord:
+def _signed_control(authority) -> CutoverControlRecord:
     _keys, roster, signer = authority
     return sign_control_record(
         CutoverControlRecord(
@@ -84,7 +111,7 @@ def _signed_control(
             previous_control_oid="",
             attempt_id="attempt-123",
             roster_version=roster.version,
-            signer_device_id="device-a",
+            signer_device_id=roster.local_device_id,
             signer_key_id=roster.local_key_id,
             issued_at="2026-07-30T00:00:00Z",
             signature="",
@@ -93,20 +120,8 @@ def _signed_control(
     )
 
 
-def _signed_capability_manifest(
-    authority: tuple[DeviceKeyStore, VerificationRoster, OperationalSigner],
-) -> CapabilityManifest:
+def _signed_manifest(authority) -> CapabilityManifest:
     _keys, roster, signer = authority
-    operation_map_sha256 = hashlib.sha256(
-        canonical_json_bytes(
-            {
-                "mappings": [],
-                "registry_authority_sha256": "",
-                "fixture_authority_sha256": "",
-            }
-        )
-    ).hexdigest()
-    slo_baseline_sha256 = hashlib.sha256(canonical_json_bytes([])).hexdigest()
     unsigned = CapabilityManifest(
         schema="memo.cutover_capability_manifest.v1",
         frozen_at="2026-07-30T00:00:00Z",
@@ -117,11 +132,19 @@ def _signed_capability_manifest(
         capabilities=(),
         operation_mappings=(),
         slo_baselines=(),
-        operation_map_sha256=operation_map_sha256,
-        slo_baseline_sha256=slo_baseline_sha256,
+        operation_map_sha256=hashlib.sha256(
+            canonical_json_bytes(
+                {
+                    "mappings": [],
+                    "registry_authority_sha256": "",
+                    "fixture_authority_sha256": "",
+                }
+            )
+        ).hexdigest(),
+        slo_baseline_sha256=hashlib.sha256(canonical_json_bytes([])).hexdigest(),
         blockers=(),
         frozen=True,
-        signer_device_id="device-a",
+        signer_device_id=roster.local_device_id,
         signer_key_id=roster.local_key_id,
         roster_version=roster.version,
         signature="",
@@ -134,17 +157,100 @@ def _signed_capability_manifest(
     return replace(unsigned, signature=envelope.signature)
 
 
-def _consumer_plan() -> ConsumerReplacementPlan:
-    return ConsumerReplacementPlan(
+def _observations() -> dict[str, tuple[str, ...]]:
+    return {surface: (f"scan:{surface}",) for surface in SURFACES}
+
+
+def _signed_inventory(
+    authority,
+    *,
+    scan_digests: tuple[str, ...] = (),
+) -> ConsumerInventory:
+    _keys, roster, signer = authority
+    source_digest = (
+        hashlib.sha256(canonical_json_bytes(list(scan_digests))).hexdigest()
+        if scan_digests
+        else "e" * 64
+    )
+    unsigned = ConsumerInventory(
+        schema="memo.cutover_consumer_inventory.v1",
         rows=(),
-        digest=hashlib.sha256(canonical_json_bytes([])).hexdigest(),
-        covered_surfaces={surface: (f"synapse:{surface}",) for surface in SURFACES},
+        blockers=(),
+        source_scan_sha256=source_digest,
+        signer_device_id=roster.local_device_id,
+        signer_key_id=roster.local_key_id,
+        roster_version=roster.version,
+        signature="",
+        covered_surfaces=SURFACES if scan_digests else (),
+        surface_observations=_observations(),
+        scan_receipt_sha256=scan_digests,
+    )
+    envelope = signer.sign(
+        domain=CONSUMER_INVENTORY_DOMAIN,
+        payload=unsigned.signed_bytes(),
+        key_id=roster.local_key_id,
+    )
+    return replace(unsigned, signature=envelope.signature)
+
+
+def _real_plan(authority, tmp_path: Path) -> tuple[
+    CapabilityManifest,
+    ConsumerInventory,
+    ConsumerReplacementPlan,
+]:
+    memo_bin = tmp_path / "runtime" / "memo"
+    memo_bin.parent.mkdir(exist_ok=True)
+    memo_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    memo_bin.chmod(0o755)
+    manifest = _signed_manifest(authority)
+    inventory = _signed_inventory(authority)
+    plan = build_consumer_replacement_plan(
+        inventory,
+        manifest,
+        roster=authority[1],
+        memo_bin=memo_bin,
+    )
+    return manifest, inventory, plan
+
+
+def _initial(authority) -> tuple[InMemoryControlRecordCAS, VerifiedControlRecord]:
+    record = _signed_control(authority)
+    cas = InMemoryControlRecordCAS(record)
+    return cas, fetch_verified_control(
+        cas,
+        expected_oid=record.control_oid,
+        roster=authority[1],
     )
 
 
-def _signed_retirement_manifest(
-    authority: tuple[DeviceKeyStore, VerificationRoster, OperationalSigner],
-) -> SynapseRetirementManifest:
+def _vote(
+    authority,
+    control: VerifiedControlRecord,
+    device_id: str,
+) -> SynapsePeerVote:
+    keys, roster, signer = authority
+    key_id = next(key.key_id for key in roster.keys if key.device_id == device_id)
+    unsigned = SynapsePeerVote(
+        schema="memo.synapse_peer_vote.v1",
+        attempt_id=control.attempt_id,
+        control_oid=control.control_oid,
+        authority_sha256=control.synapse_authority_sha256,
+        target_state="QUIESCED",
+        signer_device_id=device_id,
+        signer_key_id=key_id,
+        roster_version=roster.version,
+        signature="",
+    )
+    envelope = signer.sign(
+        domain=SYNAPSE_PEER_VOTE_DOMAIN,
+        payload=unsigned.signed_bytes(),
+        key_id=key_id,
+    )
+    assert keys.algorithm_for_key_id(key_id) == "ed25519"
+    return replace(unsigned, signature=envelope.signature)
+
+
+def _retirement_manifest(authority) -> SynapseRetirementManifest:
     _keys, roster, signer = authority
     unsigned = SynapseRetirementManifest(
         schema="memo.synapse_retirement.v2",
@@ -165,288 +271,464 @@ def _signed_retirement_manifest(
     return replace(unsigned, signature=envelope.signature)
 
 
-def _signed_inventory(
-    authority: tuple[DeviceKeyStore, VerificationRoster, OperationalSigner],
-    *,
-    rows: tuple[ConsumerInventoryRow, ...] = (),
-    phases: tuple[str, ...] = ("post_stop", "post_reboot"),
-) -> ConsumerInventory:
+def _committed(authority, tmp_path: Path):
+    manifest, inventory, plan = _real_plan(authority, tmp_path)
+    cas, initial = _initial(authority)
+    ready = prepare_synapse_retirement(
+        cas,
+        initial,
+        manifest,
+        inventory,
+        plan,
+        roster=authority[1],
+        signer=authority[2],
+        next_control_oid="c" * 40,
+    )
+    votes = (_vote(authority, ready, "mac-a"), _vote(authority, ready, "mac-b"))
+    quiesced = advance_synapse_retirement(
+        cas,
+        ready,
+        SynapseRetirementState.QUIESCED,
+        roster=authority[1],
+        signer=authority[2],
+        next_control_oid="d" * 40,
+        peer_votes=votes,
+    )
+    retirement = _retirement_manifest(authority)
+    staged = advance_synapse_retirement(
+        cas,
+        quiesced,
+        SynapseRetirementState.STAGED,
+        roster=authority[1],
+        signer=authority[2],
+        next_control_oid="e" * 40,
+        active_state_receipt_sha256="3" * 64,
+        synapse_manifest=retirement,
+    )
+    committed = commit_synapse_activation(
+        cas,
+        staged,
+        epoch=8,
+        roster=authority[1],
+        signer=authority[2],
+        next_control_oid="f" * 40,
+    )
+    return cas, committed, retirement
+
+
+def _scan(authority, phase: str, *, active: bool = False) -> IndependenceScanReceipt:
     _keys, roster, signer = authority
-    unsigned = ConsumerInventory(
-        schema="memo.cutover_consumer_inventory.v1",
-        rows=rows,
-        blockers=(),
-        source_scan_sha256="e" * 64,
-        signer_device_id="device-a",
+    observations = tuple(
+        IndependenceObservation(
+            surface=surface,  # type: ignore[arg-type]
+            identifier=f"scan:{surface}",
+            active=active and surface == "process",
+            references=("synapse",) if active and surface == "process" else (),
+        )
+        for surface in SURFACES
+    )
+    unsigned = IndependenceScanReceipt(
+        schema="memo.synapse_independence_scan.v1",
+        phase=phase,  # type: ignore[arg-type]
+        boot_id="boot-before" if phase == "post_stop" else "boot-after",
+        captured_at=(
+            "2026-07-30T01:00:00Z"
+            if phase == "post_stop"
+            else "2026-07-30T02:00:00Z"
+        ),
+        source_scan_sha256=hashlib.sha256(
+            canonical_json_bytes([row.to_dict() for row in observations])
+        ).hexdigest(),
+        observations=observations,
+        signer_device_id=roster.local_device_id,
         signer_key_id=roster.local_key_id,
         roster_version=roster.version,
         signature="",
-        verification_phases=phases,  # type: ignore[arg-type]
-        covered_surfaces=SURFACES,
     )
     envelope = signer.sign(
-        domain=CONSUMER_INVENTORY_DOMAIN,
+        domain=SYNAPSE_INDEPENDENCE_SCAN_DOMAIN,
         payload=unsigned.signed_bytes(),
         key_id=roster.local_key_id,
     )
     return replace(unsigned, signature=envelope.signature)
 
 
-def _sign_transition(
-    record: CutoverControlRecord,
-    authority: tuple[DeviceKeyStore, VerificationRoster, OperationalSigner],
-) -> CutoverControlRecord:
-    return sign_control_record(record, signer=authority[2])
+def test_real_consumer_builder_populates_verified_authority(authority, tmp_path) -> None:
+    manifest, inventory, plan = _real_plan(authority, tmp_path)
+
+    assert dict(plan.covered_surfaces) == _observations()
+    assert plan.inventory_sha256 == hashlib.sha256(inventory.signed_bytes()).hexdigest()
+    assert plan.capability_manifest_sha256 == hashlib.sha256(
+        manifest.signed_bytes()
+    ).hexdigest()
 
 
-def _staged_control(
-    authority: tuple[DeviceKeyStore, VerificationRoster, OperationalSigner],
-) -> tuple[CutoverControlRecord, SynapseRetirementManifest]:
-    ready = prepare_synapse_retirement(
-        _signed_control(authority),
-        _signed_capability_manifest(authority),
-        _consumer_plan(),
-    )
-    quiesced = advance_synapse_retirement(
-        _sign_transition(ready, authority),
-        SynapseRetirementState.QUIESCED,
-        peer_vote_sha256=("1" * 64, "2" * 64),
-    )
-    retirement_manifest = _signed_retirement_manifest(authority)
-    staged = advance_synapse_retirement(
-        _sign_transition(quiesced, authority),
-        SynapseRetirementState.STAGED,
-        active_state_receipt_sha256="3" * 64,
-        synapse_manifest_sha256=hashlib.sha256(
-            retirement_manifest.signed_bytes()
-        ).hexdigest(),
-    )
-    return _sign_transition(staged, authority), retirement_manifest
-
-
-def test_retired_synapse_refuses_startup_before_listener(authority) -> None:
-    staged, _manifest = _staged_control(authority)
-    committed = replace(
-        staged,
-        state=CutoverState.EPOCH_COMMITTED,
-        synapse_state=SynapseRetirementState.COMMITTED,
-        retirement_epoch=8,
-    )
-
-    with pytest.raises(CutoverSafetyError, match=r"synapse\.cutover\.retired"):
-        prepare_synapse_retirement(
-            committed,
-            _signed_capability_manifest(authority),
-            _consumer_plan(),
-        )
-
-
-def test_stale_synapse_epoch_cannot_write_after_memo_commit(authority) -> None:
-    staged, _manifest = _staged_control(authority)
-    committed = commit_synapse_activation(staged, epoch=8)
-
-    with pytest.raises(CutoverSafetyError, match="stale activation epoch"):
-        validate_synapse_request(committed, epoch=7)
-    with pytest.raises(CutoverSafetyError, match=r"synapse\.cutover\.retired"):
-        validate_synapse_request(committed, epoch=8, kind="startup")
-    validate_synapse_request(committed, epoch=7, kind="status")
-
-
-def test_state_machine_rejects_offline_peer_skips_digest_change_and_second_epoch(
-    authority,
-) -> None:
-    ready = prepare_synapse_retirement(
-        _signed_control(authority),
-        _signed_capability_manifest(authority),
-        _consumer_plan(),
-    )
-    signed_ready = _sign_transition(ready, authority)
-    with pytest.raises(CutoverSafetyError, match="two distinct peer"):
-        advance_synapse_retirement(
-            signed_ready,
-            SynapseRetirementState.QUIESCED,
-            peer_vote_sha256=("1" * 64,),
-        )
-    with pytest.raises(CutoverSafetyError, match="stale or skipped"):
-        advance_synapse_retirement(
-            signed_ready,
-            SynapseRetirementState.STAGED,
-            active_state_receipt_sha256="3" * 64,
-            synapse_manifest_sha256="4" * 64,
-        )
-    with pytest.raises(ControlRecordError, match="authority digests changed"):
-        _sign_transition(replace(ready, consumer_plan_sha256="f" * 64), authority)
-
-    staged, _manifest = _staged_control(authority)
-    with pytest.raises(CutoverSafetyError, match="second Synapse activation epoch"):
-        commit_synapse_activation(replace(staged, retirement_epoch=7), epoch=8)
-
-
-def test_abort_is_the_only_precommit_failure_branch(authority) -> None:
-    ready = prepare_synapse_retirement(
-        _signed_control(authority),
-        _signed_capability_manifest(authority),
-        _consumer_plan(),
-    )
-    aborted = advance_synapse_retirement(
-        _sign_transition(ready, authority),
-        SynapseRetirementState.ABORTED,
-    )
-    signed_aborted = _sign_transition(aborted, authority)
-
-    assert signed_aborted.state is CutoverState.ABORTED
-    with pytest.raises(CutoverSafetyError, match="stale or skipped"):
-        advance_synapse_retirement(
-            signed_aborted,
-            SynapseRetirementState.QUIESCED,
-            peer_vote_sha256=("1" * 64, "2" * 64),
-        )
-
-
-@pytest.mark.parametrize("kind", ["process", "launchd"])
-def test_final_independence_rejects_resurrected_runtime(authority, kind: str) -> None:
-    staged, retirement_manifest = _staged_control(authority)
-    committed = commit_synapse_activation(staged, epoch=8)
-    row = ConsumerInventoryRow(
-        kind=kind,  # type: ignore[arg-type]
-        location=f"live:{kind}",
-        references=("synapse",),
-        active=True,
-    )
-
-    with pytest.raises(CutoverSafetyError, match="active reference resurrected"):
-        verify_synapse_retired(
-            committed,
-            _signed_inventory(authority, rows=(row,)),
-            retirement_manifest,
-        )
-
-
-def test_final_independence_requires_both_scans_and_returns_bound_receipt(
-    authority,
-) -> None:
-    staged, retirement_manifest = _staged_control(authority)
-    committed = commit_synapse_activation(staged, epoch=8)
-    with pytest.raises(CutoverSafetyError, match="post-stop and post-reboot"):
-        verify_synapse_retired(
-            committed,
-            _signed_inventory(authority, phases=("post_stop",)),
-            retirement_manifest,
-        )
-
-    receipt = verify_synapse_retired(
-        committed,
-        _signed_inventory(authority),
-        retirement_manifest,
-    )
-
-    assert receipt.attempt_id == "attempt-123"
-    assert receipt.retirement_epoch == 8
-    assert receipt.verification_phases == ("post_stop", "post_reboot")
-    assert len(receipt.sha256) == 64
-
-
-def test_cli_preflight_verifies_signatures_and_never_applies(
+@pytest.mark.parametrize("forgery", ["plan", "inventory", "manifest"])
+def test_preflight_rejects_every_authority_forgery(
     authority,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    forgery: str,
+) -> None:
+    manifest, inventory, plan = _real_plan(authority, tmp_path)
+    if forgery == "plan":
+        plan = replace(plan, inventory_sha256="0" * 64)
+    elif forgery == "inventory":
+        inventory = replace(inventory, surface_observations={"process": ("fake",)})
+    else:
+        manifest = replace(manifest, machine_ids=("mac-a", "mac-c"))
+    cas, initial = _initial(authority)
+
+    with pytest.raises(CutoverSafetyError):
+        prepare_synapse_retirement(
+            cas,
+            initial,
+            manifest,
+            inventory,
+            plan,
+            roster=authority[1],
+            signer=authority[2],
+            next_control_oid="c" * 40,
+        )
+
+
+def test_advance_requires_fresh_cas_and_two_bound_signed_peer_votes(
+    authority,
+    tmp_path: Path,
+) -> None:
+    manifest, inventory, plan = _real_plan(authority, tmp_path)
+    cas, initial = _initial(authority)
+    ready = prepare_synapse_retirement(
+        cas,
+        initial,
+        manifest,
+        inventory,
+        plan,
+        roster=authority[1],
+        signer=authority[2],
+        next_control_oid="c" * 40,
+    )
+    mac_a = _vote(authority, ready, "mac-a")
+    with pytest.raises(CutoverSafetyError, match="both authority devices"):
+        advance_synapse_retirement(
+            cas,
+            ready,
+            SynapseRetirementState.QUIESCED,
+            roster=authority[1],
+            signer=authority[2],
+            next_control_oid="d" * 40,
+            peer_votes=(mac_a, mac_a),
+        )
+    forged = replace(_vote(authority, ready, "mac-b"), control_oid="9" * 40)
+    with pytest.raises(CutoverSafetyError, match="not bound"):
+        advance_synapse_retirement(
+            cas,
+            ready,
+            SynapseRetirementState.QUIESCED,
+            roster=authority[1],
+            signer=authority[2],
+            next_control_oid="d" * 40,
+            peer_votes=(mac_a, forged),
+        )
+    with pytest.raises(CutoverSafetyError, match="CAS OID is stale"):
+        prepare_synapse_retirement(
+            cas,
+            initial,
+            manifest,
+            inventory,
+            plan,
+            roster=authority[1],
+            signer=authority[2],
+            next_control_oid="d" * 40,
+        )
+
+
+def test_signing_requires_exact_predecessor_sequence_and_legal_transition(
+    authority,
+) -> None:
+    cas, initial = _initial(authority)
+    _ = cas
+    malformed = CutoverControlRecord(
+        schema="memo.cutover_control_record.v1",
+        control_oid="c" * 40,
+        state=CutoverState.QUIESCED,
+        sequence=initial.sequence + 2,
+        previous_control_oid="9" * 40,
+        attempt_id=initial.attempt_id,
+        roster_version=initial.roster_version,
+        signer_device_id=initial.signer_device_id,
+        signer_key_id=initial.signer_key_id,
+        issued_at="2026-07-30T01:00:00Z",
+        signature="",
+        synapse_state=SynapseRetirementState.QUIESCED,
+    )
+    with pytest.raises(ControlRecordError, match="exact sequence"):
+        sign_control_record(malformed, signer=authority[2], predecessor=initial)
+
+
+def test_commit_is_atomic_one_time_and_record_is_roster_verified(
+    authority,
+    tmp_path: Path,
+) -> None:
+    cas, committed, _retirement = _committed(authority, tmp_path)
+
+    assert committed.synapse_state is SynapseRetirementState.COMMITTED
+    refetched = fetch_verified_control(
+        cas,
+        expected_oid=committed.control_oid,
+        roster=authority[1],
+    )
+    assert refetched.canonical_payload == committed.canonical_payload
+    assert refetched.control_oid == committed.control_oid
+    with pytest.raises(CutoverSafetyError):
+        commit_synapse_activation(
+            cas,
+            committed,
+            epoch=9,
+            roster=authority[1],
+            signer=authority[2],
+            next_control_oid="1" * 40,
+        )
+
+
+@pytest.mark.parametrize("failure", ["same_boot", "missing_surface", "active", "signature"])
+def test_final_scan_receipts_fail_closed(
+    authority,
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    _cas, committed, retirement = _committed(authority, tmp_path)
+    stop = _scan(authority, "post_stop")
+    reboot = _scan(authority, "post_reboot", active=failure == "active")
+    if failure == "same_boot":
+        reboot = replace(reboot, boot_id=stop.boot_id)
+    elif failure == "missing_surface":
+        reboot = replace(reboot, observations=reboot.observations[:-1])
+    elif failure == "signature":
+        reboot = replace(reboot, signature=stop.signature)
+    digests = (
+        hashlib.sha256(stop.signed_bytes()).hexdigest(),
+        hashlib.sha256(reboot.signed_bytes()).hexdigest(),
+    )
+    inventory = _signed_inventory(authority, scan_digests=digests)
+
+    with pytest.raises(CutoverSafetyError):
+        verify_synapse_retired(
+            committed,
+            inventory,
+            retirement,
+            stop,
+            reboot,
+            roster=authority[1],
+            signer=authority[2],
+            signer_key_id=authority[1].local_key_id,
+        )
+
+
+def test_signed_independence_receipt_parses_verifies_and_rejects_tamper(
+    authority,
+    tmp_path: Path,
+) -> None:
+    _cas, committed, retirement = _committed(authority, tmp_path)
+    stop = _scan(authority, "post_stop")
+    reboot = _scan(authority, "post_reboot")
+    digests = (
+        hashlib.sha256(stop.signed_bytes()).hexdigest(),
+        hashlib.sha256(reboot.signed_bytes()).hexdigest(),
+    )
+    inventory = _signed_inventory(authority, scan_digests=digests)
+    receipt = verify_synapse_retired(
+        committed,
+        inventory,
+        retirement,
+        stop,
+        reboot,
+        roster=authority[1],
+        signer=authority[2],
+        signer_key_id=authority[1].local_key_id,
+    )
+
+    parsed = independence_receipt_from_dict(receipt.to_dict())
+    verify_independence_receipt(
+        parsed,
+        committed,
+        inventory,
+        retirement,
+        stop,
+        reboot,
+        roster=authority[1],
+    )
+    with pytest.raises(CutoverSafetyError):
+        verify_independence_receipt(
+            replace(parsed, retirement_epoch=9),
+            committed,
+            inventory,
+            retirement,
+            stop,
+            reboot,
+            roster=authority[1],
+        )
+
+
+def test_final_verification_rejects_manifest_and_inventory_signature_forgery(
+    authority,
+    tmp_path: Path,
+) -> None:
+    _cas, committed, retirement = _committed(authority, tmp_path)
+    stop = _scan(authority, "post_stop")
+    reboot = _scan(authority, "post_reboot")
+    digests = (
+        hashlib.sha256(stop.signed_bytes()).hexdigest(),
+        hashlib.sha256(reboot.signed_bytes()).hexdigest(),
+    )
+    inventory = _signed_inventory(authority, scan_digests=digests)
+    for bad_inventory, bad_manifest in (
+        (replace(inventory, signer_device_id="mac-b"), retirement),
+        (inventory, replace(retirement, active_reference_sha256="0" * 64)),
+    ):
+        with pytest.raises(CutoverSafetyError, match="signature is invalid"):
+            verify_synapse_retired(
+                committed,
+                bad_inventory,
+                bad_manifest,
+                stop,
+                reboot,
+                roster=authority[1],
+                signer=authority[2],
+                signer_key_id=authority[1].local_key_id,
+            )
+
+
+@pytest.mark.parametrize(
+    "adapter",
+    [before_listener_start, before_worker_start, before_write, before_fallback],
+)
+def test_runtime_adapters_fence_before_callback(
+    authority,
+    tmp_path: Path,
+    adapter,
+) -> None:
+    _cas, committed, _retirement = _committed(authority, tmp_path)
+    called = False
+
+    def callback() -> None:
+        nonlocal called
+        called = True
+
+    with pytest.raises(CutoverSafetyError, match=r"synapse\.cutover\.retired"):
+        adapter(committed, 8, callback)
+    assert called is False
+    validate_synapse_request(committed, 7, kind="status")
+
+
+def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
+    authority,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(
         "tools.memflow_absorption.__main__._verification_roster",
         lambda _path: authority[1],
     )
-    control = _signed_control(authority)
-    manifest = _signed_capability_manifest(authority)
-    plan = _consumer_plan()
-    paths = {
-        "control": tmp_path / "control.json",
-        "manifest": tmp_path / "manifest.json",
+    manifest, preflight_inventory, plan = _real_plan(authority, tmp_path)
+    _initial_cas, initial = _initial(authority)
+    initial_record = _signed_control(authority)
+    plan_dict = {
+        "rows": [row.to_dict() for row in plan.rows],
+        "digest": plan.digest,
+        "covered_surfaces": {
+            key: list(values) for key, values in sorted(plan.covered_surfaces.items())
+        },
+        "inventory_sha256": plan.inventory_sha256,
+        "capability_manifest_sha256": plan.capability_manifest_sha256,
+    }
+    preflight_paths = {
+        "control": tmp_path / "preflight-control.json",
+        "manifest": tmp_path / "capability.json",
+        "inventory": tmp_path / "preflight-inventory.json",
         "plan": tmp_path / "plan.json",
     }
-    paths["control"].write_bytes(canonical_json_bytes(control.to_dict()))
-    paths["manifest"].write_bytes(canonical_json_bytes(manifest.to_dict()))
-    paths["plan"].write_bytes(
-        canonical_json_bytes(
-            {
-                "rows": [],
-                "digest": plan.digest,
-                "covered_surfaces": {
-                    key: list(values)
-                    for key, values in sorted(plan.covered_surfaces.items())
-                },
-            }
-        )
+    preflight_paths["control"].write_bytes(
+        canonical_json_bytes(initial_record.to_dict())
     )
-    command = [
+    preflight_paths["manifest"].write_bytes(canonical_json_bytes(manifest.to_dict()))
+    preflight_paths["inventory"].write_bytes(
+        canonical_json_bytes(preflight_inventory.to_dict())
+    )
+    preflight_paths["plan"].write_bytes(canonical_json_bytes(plan_dict))
+    preflight_command = [
         "synapse-preflight",
         "--control-record",
-        str(paths["control"]),
+        str(preflight_paths["control"]),
         "--capability-manifest",
-        str(paths["manifest"]),
+        str(preflight_paths["manifest"]),
+        "--consumer-inventory",
+        str(preflight_paths["inventory"]),
         "--consumer-plan",
-        str(paths["plan"]),
+        str(preflight_paths["plan"]),
         "--roster-root",
         str(tmp_path),
     ]
-
-    assert main(command) == 0
+    assert initial.synapse_state is SynapseRetirementState.PREPARING
+    assert main(preflight_command) == 0
     assert json.loads(capsys.readouterr().out)["preflight_passed"] is True
-    with pytest.raises(SystemExit, match="inspection-only"):
-        main([*command, "--apply"])
 
-    tampered = manifest.to_dict()
-    tampered["machine_ids"] = ["mac-a", "mac-c"]
-    paths["manifest"].write_bytes(canonical_json_bytes(tampered))
-    with pytest.raises(SystemExit, match="signature is invalid"):
-        main(command)
-
-
-def test_cli_verify_fails_closed_on_loaded_launchagent(
-    authority,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "tools.memflow_absorption.__main__._verification_roster",
-        lambda _path: authority[1],
+    cas, committed, retirement = _committed(authority, tmp_path)
+    stop = _scan(authority, "post_stop")
+    reboot = _scan(authority, "post_reboot")
+    scan_digests = (
+        hashlib.sha256(stop.signed_bytes()).hexdigest(),
+        hashlib.sha256(reboot.signed_bytes()).hexdigest(),
     )
-    staged, retirement_manifest = _staged_control(authority)
-    committed = sign_control_record(
-        replace(
-            staged,
-            state=CutoverState.EPOCH_COMMITTED,
-            synapse_state=SynapseRetirementState.COMMITTED,
-            retirement_epoch=8,
-            signature="",
-        ),
+    inventory = _signed_inventory(authority, scan_digests=scan_digests)
+    receipt = verify_synapse_retired(
+        committed,
+        inventory,
+        retirement,
+        stop,
+        reboot,
+        roster=authority[1],
         signer=authority[2],
+        signer_key_id=authority[1].local_key_id,
     )
-    loaded = ConsumerInventoryRow(
-        kind="launchd",
-        location="com.synapse.gateway:/Library/LaunchAgents/com.synapse.gateway.plist",
-        references=("synapse",),
-        active=True,
-    )
-    inventory = _signed_inventory(authority, rows=(loaded,))
-    control_path = tmp_path / "committed.json"
-    inventory_path = tmp_path / "inventory.json"
-    manifest_path = tmp_path / "retirement.json"
-    control_path.write_bytes(canonical_json_bytes(committed.to_dict()))
-    inventory_path.write_bytes(canonical_json_bytes(inventory.to_dict()))
-    manifest_path.write_bytes(canonical_json_bytes(retirement_manifest.to_dict()))
-
-    with pytest.raises(SystemExit, match="active reference resurrected"):
+    committed_record = cas.read()[1]
+    verify_paths = {
+        "control": tmp_path / "committed.json",
+        "manifest": tmp_path / "retirement.json",
+        "inventory": tmp_path / "final-inventory.json",
+        "stop": tmp_path / "post-stop.json",
+        "reboot": tmp_path / "post-reboot.json",
+        "receipt": tmp_path / "independence.json",
+    }
+    for key, payload in (
+        ("control", committed_record.to_dict()),
+        ("manifest", retirement.to_dict()),
+        ("inventory", inventory.to_dict()),
+        ("stop", stop.to_dict()),
+        ("reboot", reboot.to_dict()),
+        ("receipt", receipt.to_dict()),
+    ):
+        verify_paths[key].write_bytes(canonical_json_bytes(payload))
+    assert (
         main(
             [
                 "synapse-verify",
                 "--control-record",
-                str(control_path),
+                str(verify_paths["control"]),
                 "--inventory",
-                str(inventory_path),
+                str(verify_paths["inventory"]),
                 "--retirement-manifest",
-                str(manifest_path),
+                str(verify_paths["manifest"]),
+                "--post-stop-scan",
+                str(verify_paths["stop"]),
+                "--post-reboot-scan",
+                str(verify_paths["reboot"]),
+                "--independence-receipt",
+                str(verify_paths["receipt"]),
                 "--roster-root",
                 str(tmp_path),
             ]
         )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["independent"] is True

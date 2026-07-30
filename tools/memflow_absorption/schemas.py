@@ -387,6 +387,8 @@ class ConsumerInventory:
     signature: str = ""
     verification_phases: tuple[Literal["post_stop", "post_reboot"], ...] = ()
     covered_surfaces: tuple[str, ...] = ()
+    surface_observations: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    scan_receipt_sha256: tuple[str, ...] = ()
 
     def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
         return {
@@ -400,6 +402,11 @@ class ConsumerInventory:
             "signature": "" if blank_signature else self.signature,
             "verification_phases": list(self.verification_phases),
             "covered_surfaces": list(self.covered_surfaces),
+            "surface_observations": {
+                key: list(values)
+                for key, values in sorted(self.surface_observations.items())
+            },
+            "scan_receipt_sha256": list(self.scan_receipt_sha256),
         }
 
     def signed_bytes(self) -> bytes:
@@ -464,6 +471,8 @@ class ConsumerReplacementPlan:
     rows: tuple[ConsumerReplacement, ...]
     digest: str
     covered_surfaces: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    inventory_sha256: str = ""
+    capability_manifest_sha256: str = ""
 
     def by_old_label(self, label: str) -> ConsumerReplacement:
         for row in self.rows:
@@ -482,6 +491,8 @@ class ConsumerReplacementPlan:
                     key: list(values)
                     for key, values in sorted(self.covered_surfaces.items())
                 },
+                "inventory_sha256": self.inventory_sha256,
+                "capability_manifest_sha256": self.capability_manifest_sha256,
             }
         )
 
@@ -580,6 +591,43 @@ class SynapseRetirementState(StrEnum):
     COMMITTED = "COMMITTED"
     VERIFIED = "VERIFIED"
     ABORTED = "ABORTED"
+
+
+@dataclass(frozen=True)
+class SynapsePeerVote:
+    schema: Literal["memo.synapse_peer_vote.v1"]
+    attempt_id: str
+    control_oid: str
+    authority_sha256: str
+    target_state: Literal["QUIESCED"]
+    signer_device_id: str
+    signer_key_id: str
+    roster_version: int
+    signature: str
+
+    def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "attempt_id": self.attempt_id,
+            "control_oid": self.control_oid,
+            "authority_sha256": self.authority_sha256,
+            "target_state": self.target_state,
+            "signer_device_id": self.signer_device_id,
+            "signer_key_id": self.signer_key_id,
+            "roster_version": self.roster_version,
+            "signature": "" if blank_signature else self.signature,
+        }
+
+    def signed_bytes(self) -> bytes:
+        return canonical_json_bytes(self.to_dict(blank_signature=True))
+
+    def signature_envelope(self) -> SignatureEnvelope:
+        return SignatureEnvelope(
+            algorithm="ed25519",
+            key_id=self.signer_key_id,
+            roster_version=self.roster_version,
+            signature=self.signature,
+        )
 
 
 @dataclass(frozen=True)
@@ -695,6 +743,7 @@ class CutoverControlRecord:
     synapse_authority_sha256: str = ""
     active_state_receipt_sha256: str = ""
     peer_vote_sha256: tuple[str, ...] = ()
+    peer_device_ids: tuple[str, ...] = ()
     retirement_epoch: int = 0
     independence_receipt_sha256: str = ""
 
@@ -718,6 +767,7 @@ class CutoverControlRecord:
             "synapse_authority_sha256": self.synapse_authority_sha256,
             "active_state_receipt_sha256": self.active_state_receipt_sha256,
             "peer_vote_sha256": list(self.peer_vote_sha256),
+            "peer_device_ids": list(self.peer_device_ids),
             "retirement_epoch": self.retirement_epoch,
             "independence_receipt_sha256": self.independence_receipt_sha256,
         }
@@ -754,13 +804,71 @@ class VerifiedControlRecord:
     synapse_authority_sha256: str = ""
     active_state_receipt_sha256: str = ""
     peer_vote_sha256: tuple[str, ...] = ()
+    peer_device_ids: tuple[str, ...] = ()
     retirement_epoch: int = 0
     independence_receipt_sha256: str = ""
 
 
 @dataclass(frozen=True)
+class IndependenceObservation:
+    surface: Literal[
+        "launchagent",
+        "mcp_gateway_route",
+        "port",
+        "process",
+        "shell_config_path",
+        "state_root",
+    ]
+    identifier: str
+    active: bool
+    references: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class IndependenceScanReceipt:
+    schema: Literal["memo.synapse_independence_scan.v1"]
+    phase: Literal["post_stop", "post_reboot"]
+    boot_id: str
+    captured_at: str
+    source_scan_sha256: str
+    observations: tuple[IndependenceObservation, ...]
+    signer_device_id: str
+    signer_key_id: str
+    roster_version: int
+    signature: str
+
+    def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "phase": self.phase,
+            "boot_id": self.boot_id,
+            "captured_at": self.captured_at,
+            "source_scan_sha256": self.source_scan_sha256,
+            "observations": [row.to_dict() for row in self.observations],
+            "signer_device_id": self.signer_device_id,
+            "signer_key_id": self.signer_key_id,
+            "roster_version": self.roster_version,
+            "signature": "" if blank_signature else self.signature,
+        }
+
+    def signed_bytes(self) -> bytes:
+        return canonical_json_bytes(self.to_dict(blank_signature=True))
+
+    def signature_envelope(self) -> SignatureEnvelope:
+        return SignatureEnvelope(
+            algorithm="ed25519",
+            key_id=self.signer_key_id,
+            roster_version=self.roster_version,
+            signature=self.signature,
+        )
+
+
+@dataclass(frozen=True)
 class IndependenceReceipt:
-    """Read-only proof that both negative scans found no Synapse authority."""
+    """Signed proof binding the final negative scans to committed authority."""
 
     schema: Literal["memo.synapse_independence_receipt.v1"]
     attempt_id: str
@@ -768,16 +876,43 @@ class IndependenceReceipt:
     retirement_epoch: int
     synapse_manifest_sha256: str
     consumer_inventory_sha256: str
-    verification_phases: tuple[Literal["post_stop", "post_reboot"], ...]
-    covered_surfaces: tuple[str, ...]
+    scan_receipt_sha256: tuple[str, str]
     verified_at: str
+    signer_device_id: str
+    signer_key_id: str
+    roster_version: int
+    signature: str
 
-    def to_dict(self) -> dict[str, object]:
-        return asdict(self)
+    def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "attempt_id": self.attempt_id,
+            "control_oid": self.control_oid,
+            "retirement_epoch": self.retirement_epoch,
+            "synapse_manifest_sha256": self.synapse_manifest_sha256,
+            "consumer_inventory_sha256": self.consumer_inventory_sha256,
+            "scan_receipt_sha256": list(self.scan_receipt_sha256),
+            "verified_at": self.verified_at,
+            "signer_device_id": self.signer_device_id,
+            "signer_key_id": self.signer_key_id,
+            "roster_version": self.roster_version,
+            "signature": "" if blank_signature else self.signature,
+        }
+
+    def signed_bytes(self) -> bytes:
+        return canonical_json_bytes(self.to_dict(blank_signature=True))
+
+    def signature_envelope(self) -> SignatureEnvelope:
+        return SignatureEnvelope(
+            algorithm="ed25519",
+            key_id=self.signer_key_id,
+            roster_version=self.roster_version,
+            signature=self.signature,
+        )
 
     @property
     def sha256(self) -> str:
-        return hashlib.sha256(canonical_json_bytes(self.to_dict())).hexdigest()
+        return hashlib.sha256(self.signed_bytes()).hexdigest()
 
 
 JsonObject = dict[str, Any]

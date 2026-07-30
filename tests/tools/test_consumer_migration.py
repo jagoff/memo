@@ -301,6 +301,17 @@ def inventory(
         ),
         blockers=(),
         source_scan_sha256="a" * 64,
+        surface_observations={
+            surface: (f"signed-scan:{surface}",)
+            for surface in (
+                "process",
+                "port",
+                "launchagent",
+                "mcp_gateway_route",
+                "shell_config_path",
+                "state_root",
+            )
+        },
     )
     return _resign_inventory(unsigned, keys, roster)
 

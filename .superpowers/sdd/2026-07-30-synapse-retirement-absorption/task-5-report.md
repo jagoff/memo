@@ -62,3 +62,77 @@ passed
   fixtures.
 - Concurrent transform-registry/source-receipt work was preserved and excluded
   from this task's files and commit.
+
+## Correction round 1 — end-to-end cutover authority
+
+The first independent review found that the original helpers represented
+evidence but did not prove the authority chain. This correction closes all
+eleven findings:
+
+- The real consumer replacement builder now requires complete signed surface
+  observations and populates `covered_surfaces` itself. Its plan binds the
+  exact roster-verified inventory and capability-manifest signed bytes; a
+  caller-created self-hash is insufficient.
+- Capability and retirement manifests are cryptographically verified against
+  the supplied roster before their digests enter a control transition.
+- Peer votes are separate roster-signed envelopes from the exact two manifest
+  devices, bound to attempt ID, freshly fetched control OID, combined authority
+  digest, and `QUIESCED`.
+- `prepare_synapse_retirement`, `advance_synapse_retirement`, and
+  `commit_synapse_activation` now consume a freshly fetched
+  `VerifiedControlRecord` plus a CAS adapter, roster, signer, and next OID.
+  Every transition signs `sequence + 1` with the exact predecessor OID and
+  commits via compare-and-swap. A stale reader or concurrent writer loses
+  before state changes.
+- `sign_control_record` validates the exact predecessor, next sequence, legal
+  state edge, unchanged attempt/roster authority, immutable post-preflight
+  digests, and a distinct next OID. The activation epoch is committed only by
+  the atomic `STAGED -> COMMITTED` path and is roster-verified after CAS.
+- Final independence requires two distinct signed scan receipts: `post_stop`
+  and `post_reboot`. Each binds boot ID, timezone-aware capture time, complete
+  six-surface observations, and their source digest. Reuse of one boot,
+  missing/duplicated observations, active references, digest mutation, or
+  signature mutation fails closed.
+- The final inventory cryptographically binds both scan receipt digests. The
+  resulting independence receipt is itself signed, strictly parseable, and
+  verified against the committed control, final inventory, retirement
+  manifest, and both scans.
+- `synapse-preflight` now requires the signed source inventory used to derive
+  the plan. `synapse-verify` now requires both scan receipts and the signed
+  independence receipt. Both CLI paths verify the complete serialized
+  authority chain against the pinned roster.
+- Because this repository has no Synapse listener or worker implementation,
+  no production call site can be modified here. Tooling-only adapters were
+  added for listener start, worker start, writes, and fallback. Each invokes
+  the retirement fence before its callback; tests prove a retired callback is
+  never entered. No service, LaunchAgent, configuration, or real state was
+  touched.
+
+### Deliberate API incompatibility
+
+The original brief's three-argument Python interfaces could not prove roster
+authority, freshness, predecessor lineage, or atomic CAS. They were
+intentionally replaced by security-complete contracts requiring verified
+control, roster, signer, CAS, explicit next OID, and the relevant signed
+artifacts. This is a tooling API change only; there are no production Synapse
+callers in this repository.
+
+### Correction verification
+
+```text
+uv run --no-sync pytest tests/tools/test_synapse_cutover.py tests/tools/test_absorption_control_record.py tests/tools/test_absorption_safety.py tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py -q
+73 passed
+
+uv run --no-sync ruff check src/memo/operational_signing.py tools/memflow_absorption tests/tools
+All checks passed!
+
+uv run --no-sync mypy tools/memflow_absorption
+Success: no issues found in 15 source files
+
+git diff --check
+passed
+```
+
+The broader `tests/tools` result after this correction is 123 passed and the
+same 3 unrelated `test_synapse_data.py` failures from the concurrent
+authenticated-epoch requirement.

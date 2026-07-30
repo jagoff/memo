@@ -613,6 +613,30 @@ def build_consumer_replacement_plan(
         verify_capability_manifest(manifest, roster=roster)
     except (InventoryError, ManifestError) as exc:
         raise ConsumerMigrationError("consumer staging authority is invalid") from exc
+    required_surfaces = {
+        "process",
+        "port",
+        "launchagent",
+        "mcp_gateway_route",
+        "shell_config_path",
+        "state_root",
+    }
+    observations = {
+        key: tuple(values)
+        for key, values in inventory.surface_observations.items()
+    }
+    if (
+        set(observations) != required_surfaces
+        or any(
+            not values
+            or values != tuple(sorted(set(values)))
+            or any(not value for value in values)
+            for values in observations.values()
+        )
+    ):
+        raise ConsumerMigrationError(
+            "signed consumer inventory lacks complete Synapse surface observations"
+        )
 
     stable_memo_bin = _stable_memo_binary(memo_bin)
     active_jobs = {
@@ -723,7 +747,13 @@ def build_consumer_replacement_plan(
             )
         )
     rows = tuple(sorted(replacements, key=lambda replacement: replacement.old_label))
-    return ConsumerReplacementPlan(rows=rows, digest=_plan_digest(rows))
+    return ConsumerReplacementPlan(
+        rows=rows,
+        digest=_plan_digest(rows),
+        covered_surfaces=observations,
+        inventory_sha256=hashlib.sha256(inventory.signed_bytes()).hexdigest(),
+        capability_manifest_sha256=hashlib.sha256(manifest.signed_bytes()).hexdigest(),
+    )
 
 
 def _plist_bytes(row: ConsumerReplacement) -> bytes:

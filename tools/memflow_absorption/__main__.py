@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,6 +30,8 @@ from tools.memflow_absorption.manifest import (
     verify_usage_proof,
 )
 from tools.memflow_absorption.safety import (
+    SYNAPSE_INDEPENDENCE_RECEIPT_DOMAIN,
+    SYNAPSE_INDEPENDENCE_SCAN_DOMAIN,
     assert_safe_attempt_root,
     resolve_under_attempt,
 )
@@ -84,6 +87,7 @@ def _parser() -> argparse.ArgumentParser:
     synapse_preflight = commands.add_parser("synapse-preflight")
     synapse_preflight.add_argument("--control-record", type=Path, required=True)
     synapse_preflight.add_argument("--capability-manifest", type=Path, required=True)
+    synapse_preflight.add_argument("--consumer-inventory", type=Path, required=True)
     synapse_preflight.add_argument("--consumer-plan", type=Path, required=True)
     synapse_preflight.add_argument("--roster-root", type=Path, required=True)
     synapse_preflight.add_argument("--apply", action="store_true")
@@ -91,6 +95,9 @@ def _parser() -> argparse.ArgumentParser:
     synapse_verify.add_argument("--control-record", type=Path, required=True)
     synapse_verify.add_argument("--inventory", type=Path, required=True)
     synapse_verify.add_argument("--retirement-manifest", type=Path, required=True)
+    synapse_verify.add_argument("--post-stop-scan", type=Path, required=True)
+    synapse_verify.add_argument("--post-reboot-scan", type=Path, required=True)
+    synapse_verify.add_argument("--independence-receipt", type=Path, required=True)
     synapse_verify.add_argument("--roster-root", type=Path, required=True)
     synapse_verify.add_argument("--apply", action="store_true")
     return parser
@@ -247,6 +254,18 @@ def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _iso_timestamp(value: object, description: str) -> datetime:
+    if not isinstance(value, str):
+        raise SystemExit(f"{description} timestamp is invalid")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SystemExit(f"{description} timestamp is invalid") from exc
+    if parsed.tzinfo is None:
+        raise SystemExit(f"{description} timestamp lacks timezone")
+    return parsed.astimezone(UTC)
+
+
 def _verification_roster(path: Path) -> VerificationRoster:
     try:
         return VerificationRoster.load(path)
@@ -301,6 +320,7 @@ def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
         raise SystemExit("synapse-preflight is inspection-only and never applies changes")
     control = _read_canonical_object(args.control_record, "cutover control record")
     manifest = _read_canonical_object(args.capability_manifest, "capability manifest")
+    inventory = _read_canonical_object(args.consumer_inventory, "consumer inventory")
     plan = _read_canonical_object(args.consumer_plan, "consumer replacement plan")
     roster = _verification_roster(args.roster_root)
     _verify_raw_signature(
@@ -313,6 +333,12 @@ def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
         manifest,
         description="capability manifest",
         domain=CAPABILITY_MANIFEST_DOMAIN,
+        roster=roster,
+    )
+    _verify_raw_signature(
+        inventory,
+        description="consumer inventory",
+        domain=CONSUMER_INVENTORY_DOMAIN,
         roster=roster,
     )
     if control.get("synapse_state") in {"COMMITTED", "VERIFIED"}:
@@ -374,11 +400,21 @@ def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
         )
     ):
         raise SystemExit("Synapse preflight surface coverage is incomplete")
+    manifest_sha256 = _sha256_bytes(_blank_signature(manifest))
+    inventory_sha256 = _sha256_bytes(_blank_signature(inventory))
+    if (
+        plan.get("capability_manifest_sha256") != manifest_sha256
+        or plan.get("inventory_sha256") != inventory_sha256
+        or surfaces != inventory.get("surface_observations")
+    ):
+        raise SystemExit(
+            "Synapse consumer plan is not derived from verified inventory and manifest"
+        )
     return {
         "command": "synapse-preflight",
         "dry_run": True,
         "preflight_passed": True,
-        "capability_manifest_sha256": _sha256_bytes(_blank_signature(manifest)),
+        "capability_manifest_sha256": manifest_sha256,
         "consumer_plan_sha256": _sha256_bytes(canonical_json_bytes(plan)),
         "peer_count": 2,
         "covered_surfaces": sorted(required),
@@ -393,6 +429,9 @@ def _synapse_verify(args: argparse.Namespace) -> dict[str, object]:
     control = _read_canonical_object(args.control_record, "cutover control record")
     inventory = _read_canonical_object(args.inventory, "consumer inventory")
     manifest = _read_canonical_object(args.retirement_manifest, "retirement manifest")
+    post_stop = _read_canonical_object(args.post_stop_scan, "post-stop scan")
+    post_reboot = _read_canonical_object(args.post_reboot_scan, "post-reboot scan")
+    receipt = _read_canonical_object(args.independence_receipt, "independence receipt")
     roster = _verification_roster(args.roster_root)
     _verify_raw_signature(
         control,
@@ -412,6 +451,22 @@ def _synapse_verify(args: argparse.Namespace) -> dict[str, object]:
         domain=SYNAPSE_RETIREMENT_DOMAIN,
         roster=roster,
         roster_version=roster.version,
+    )
+    for description, scan in (
+        ("post-stop scan", post_stop),
+        ("post-reboot scan", post_reboot),
+    ):
+        _verify_raw_signature(
+            scan,
+            description=description,
+            domain=SYNAPSE_INDEPENDENCE_SCAN_DOMAIN,
+            roster=roster,
+        )
+    _verify_raw_signature(
+        receipt,
+        description="independence receipt",
+        domain=SYNAPSE_INDEPENDENCE_RECEIPT_DOMAIN,
+        roster=roster,
     )
     if control.get("schema") != "memo.cutover_control_record.v1":
         raise SystemExit("cutover control record schema is invalid")
@@ -437,8 +492,6 @@ def _synapse_verify(args: argparse.Namespace) -> dict[str, object]:
         or inventory.get("blockers") != []
     ):
         raise SystemExit("Synapse independence inventory is blocked or unsigned")
-    if inventory.get("verification_phases") != ["post_stop", "post_reboot"]:
-        raise SystemExit("Synapse independence requires post-stop and post-reboot scans")
     required = [
         "launchagent",
         "mcp_gateway_route",
@@ -447,21 +500,68 @@ def _synapse_verify(args: argparse.Namespace) -> dict[str, object]:
         "shell_config_path",
         "state_root",
     ]
-    if inventory.get("covered_surfaces") != required:
-        raise SystemExit("Synapse independence surface coverage is incomplete")
-    rows = inventory.get("rows")
-    if not isinstance(rows, list) or any(
-        not isinstance(row, dict) or row.get("active", True) or row.get("references")
-        for row in rows
+    for phase, scan in (("post_stop", post_stop), ("post_reboot", post_reboot)):
+        observations = scan.get("observations")
+        observed_surfaces = (
+            [row.get("surface") for row in observations if isinstance(row, dict)]
+            if isinstance(observations, list)
+            else []
+        )
+        if (
+            scan.get("schema") != "memo.synapse_independence_scan.v1"
+            or scan.get("phase") != phase
+            or not scan.get("boot_id")
+            or not isinstance(observations, list)
+            or any(not isinstance(surface, str) for surface in observed_surfaces)
+            or sorted(cast(list[str], observed_surfaces)) != required
+            or any(
+                not isinstance(row, dict)
+                or not row.get("identifier")
+                or row.get("active") is not False
+                or row.get("references") != []
+                for row in observations
+            )
+            or scan.get("source_scan_sha256")
+            != _sha256_bytes(canonical_json_bytes(observations))
+        ):
+            raise SystemExit(f"Synapse {phase} scan is incomplete or active")
+    if post_stop["boot_id"] == post_reboot["boot_id"]:
+        raise SystemExit("Synapse post-reboot scan did not cross a boot boundary")
+    if _iso_timestamp(
+        post_reboot.get("captured_at"),
+        "post-reboot scan",
+    ) <= _iso_timestamp(post_stop.get("captured_at"), "post-stop scan"):
+        raise SystemExit("Synapse post-reboot scan capture time is not later")
+    scan_digests = [
+        _sha256_bytes(_blank_signature(post_stop)),
+        _sha256_bytes(_blank_signature(post_reboot)),
+    ]
+    if (
+        inventory.get("covered_surfaces") != required
+        or inventory.get("scan_receipt_sha256") != scan_digests
+        or inventory.get("source_scan_sha256")
+        != _sha256_bytes(canonical_json_bytes(scan_digests))
     ):
-        raise SystemExit("Synapse active reference resurrected")
+        raise SystemExit("Synapse independence inventory does not bind both scans")
+    inventory_sha256 = _sha256_bytes(_blank_signature(inventory))
+    if (
+        receipt.get("schema") != "memo.synapse_independence_receipt.v1"
+        or receipt.get("attempt_id") != control.get("attempt_id")
+        or receipt.get("control_oid") != control.get("control_oid")
+        or receipt.get("retirement_epoch") != control.get("retirement_epoch")
+        or receipt.get("synapse_manifest_sha256") != manifest_sha256
+        or receipt.get("consumer_inventory_sha256") != inventory_sha256
+        or receipt.get("scan_receipt_sha256") != scan_digests
+    ):
+        raise SystemExit("Synapse independence receipt is not bound to final authority")
     return {
         "command": "synapse-verify",
         "dry_run": True,
         "independent": True,
         "retirement_epoch": control["retirement_epoch"],
         "synapse_manifest_sha256": manifest_sha256,
-        "consumer_inventory_sha256": _sha256_bytes(_blank_signature(inventory)),
+        "consumer_inventory_sha256": inventory_sha256,
+        "independence_receipt_sha256": _sha256_bytes(_blank_signature(receipt)),
     }
 
 
