@@ -62,6 +62,7 @@ class SynapseDataBundle:
     feedback: tuple[FeedbackImport, ...]
     eval_fixtures: tuple[EvalFixture, ...]
     input_sha256: str
+    skipped_feedback_ids: tuple[str, ...] = ()
 
 
 def _normal_id(value: object) -> str:
@@ -165,8 +166,9 @@ def _feedback_from_rows(
     ledger: Iterable[Mapping[str, Any]],
     trace_queries: Mapping[str, str],
     seen_ids: set[str],
-) -> tuple[FeedbackImport, ...]:
+) -> tuple[tuple[FeedbackImport, ...], tuple[str, ...]]:
     out: list[FeedbackImport] = []
+    skipped: list[str] = []
     observed = set(seen_ids)
     for row in ledger:
         if row.get("action") != "chat_feedback":
@@ -181,12 +183,13 @@ def _feedback_from_rows(
         sources = metadata.get("source_ids")
         if not base_id or rating not in {"up", "down"} or not query or not isinstance(sources, list):
             continue
-        normalized_sources = tuple(dict.fromkeys(_normal_id(item) for item in sources))
+        normalized_sources = tuple(
+            dict.fromkeys(source for source in map(_normal_id, sources) if source)
+        )
         for source_id in normalized_sources:
-            if not source_id:
-                continue
             feedback_id = base_id if len(normalized_sources) == 1 else f"{base_id}:{source_id}"
             if base_id in observed or feedback_id in observed:
+                skipped.append(feedback_id)
                 continue
             observed.add(feedback_id)
             out.append(
@@ -197,7 +200,10 @@ def _feedback_from_rows(
                     rating=rating,
                 )
             )
-    return tuple(sorted(out, key=lambda item: item.feedback_id))
+    return (
+        tuple(sorted(out, key=lambda item: item.feedback_id)),
+        tuple(sorted(dict.fromkeys(skipped))),
+    )
 
 
 def _fixtures_from_value(value: object) -> tuple[EvalFixture, ...]:
@@ -243,10 +249,14 @@ def build_synapse_data_bundle(
     """Extract exactly the bounded evidence surface and bind its input digest."""
     ledger, chat_traces, pipeline_traces, corpus, input_sha256 = _load_state(state_dir)
     trace_queries = _queries_by_trace((*chat_traces, *pipeline_traces))
+    feedback, skipped_feedback_ids = _feedback_from_rows(
+        ledger, trace_queries, seen_ids or set()
+    )
     return SynapseDataBundle(
-        feedback=_feedback_from_rows(ledger, trace_queries, seen_ids or set()),
+        feedback=feedback,
         eval_fixtures=_fixtures_from_value(corpus),
         input_sha256=input_sha256,
+        skipped_feedback_ids=skipped_feedback_ids,
     )
 
 
@@ -276,6 +286,7 @@ def _receipt_from_event(event: Any) -> SynapseDataReceipt | None:
             eval_fixture_count=int(metadata["eval_fixture_count"]),
             event_ids=(str(event.event_id),),
             status="applied",
+            skipped_feedback_ids=tuple(str(item) for item in metadata.get("skipped_feedback_ids", [])),
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -377,6 +388,55 @@ def _existing_operation_keys(memory: Memory, source_id: str) -> set[str]:
     return keys
 
 
+def _feedback_has_operation_key(memory: Memory, feedback_id: str, operation_key: str) -> bool:
+    """Confirm a returned feedback id belongs to this import before rollback."""
+    try:
+        rows = memory.feedback_list(limit=500)
+    except ValueError:
+        return False
+    for row in rows:
+        if str(row.get("id") or "") != feedback_id:
+            continue
+        try:
+            extra = json.loads(str(row.get("extra_json") or "{}"))
+        except json.JSONDecodeError:
+            return False
+        return isinstance(extra, dict) and extra.get("synapse_operation_key") == operation_key
+    return False
+
+
+def _rollback_imported_feedback(memory: Memory, feedback: dict[str, str]) -> None:
+    """Delete only rows proven to have been created by this failed attempt."""
+    if not feedback:
+        return
+    try:
+        with memory.store._tx() as cursor:
+            removable: list[str] = []
+            for feedback_id, operation_key in feedback.items():
+                row = cursor.execute(
+                    "SELECT extra_json FROM source_feedback WHERE id = ?", (feedback_id,)
+                ).fetchone()
+                if row is None:
+                    continue
+                try:
+                    extra = json.loads(str(row["extra_json"] or "{}"))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(extra, dict) and extra.get("synapse_operation_key") == operation_key:
+                    removable.append(feedback_id)
+            if not removable:
+                return
+            placeholders = ",".join("?" for _ in removable)
+            cursor.execute(
+                f"DELETE FROM source_feedback_vec WHERE feedback_id IN ({placeholders})", removable  # noqa: S608
+            )
+            cursor.execute(
+                f"DELETE FROM source_feedback WHERE id IN ({placeholders})", removable  # noqa: S608
+            )
+    except Exception as exc:
+        raise SynapseDataError("could not roll back failed Synapse feedback import") from exc
+
+
 def apply_synapse_data(
     memory: Memory, data: SynapseDataBundle, *, attempt_id: str
 ) -> SynapseDataReceipt:
@@ -420,7 +480,8 @@ def apply_synapse_data(
     previous_staging, staged = _staging_payload(memory, data)
     _write_staging(memory, staged)
     imported = 0
-    skipped_ids: list[str] = []
+    skipped_ids: list[str] = list(data.skipped_feedback_ids)
+    imported_feedback: dict[str, str] = {}
     try:
         for feedback in data.feedback:
             operation_key = hashlib.sha256(
@@ -440,24 +501,38 @@ def apply_synapse_data(
             if any(str(row.get("query_text") or "") == feedback.query for row in rows):
                 skipped_ids.append(feedback.feedback_id)
                 continue
-            memory.feedback_record(
+            # Supply the stable key as the stored feedback id too.  It makes
+            # compensation safe even for an implementation that persists then
+            # raises before returning a result.
+            imported_feedback[operation_key] = operation_key
+            result = memory.feedback_record(
                 feedback.source_id,
                 query_text=feedback.query,
                 rating=feedback.rating,
+                feedback_id=operation_key,
                 only_if_absent=True,
                 extra={
                     "origin": "synapse_data_import",
                     "synapse_operation_key": operation_key,
                 },
             )
+            result_id = str(result.get("feedback_id") or "")
+            if (
+                result_id != operation_key
+                or not _feedback_has_operation_key(memory, result_id, operation_key)
+            ):
+                imported_feedback.pop(operation_key, None)
+                skipped_ids.append(feedback.feedback_id)
+                continue
             imported += 1
+        canonical_skipped_ids = tuple(sorted(dict.fromkeys(skipped_ids)))
         metadata = {
             "schema": _RECEIPT_SCHEMA,
             "attempt_id": attempt_id,
             "input_sha256": data.input_sha256,
             "feedback_imported": imported,
-            "feedback_skipped": len(skipped_ids),
-            "skipped_feedback_ids": sorted(skipped_ids),
+            "feedback_skipped": len(canonical_skipped_ids),
+            "skipped_feedback_ids": list(canonical_skipped_ids),
             "eval_fixture_count": len(data.eval_fixtures),
         }
         event = memory.operational.receipt(
@@ -467,16 +542,20 @@ def apply_synapse_data(
             metadata=metadata,
         )
     except Exception:
-        _restore_staging(memory, previous_staging)
+        try:
+            _rollback_imported_feedback(memory, imported_feedback)
+        finally:
+            _restore_staging(memory, previous_staging)
         raise
     return SynapseDataReceipt(
         attempt_id=attempt_id,
         input_sha256=data.input_sha256,
         feedback_imported=imported,
-        feedback_skipped=len(skipped_ids),
+        feedback_skipped=len(canonical_skipped_ids),
         eval_fixture_count=len(data.eval_fixtures),
         event_ids=(event.receipt_id,),
         status="applied",
+        skipped_feedback_ids=canonical_skipped_ids,
     )
 
 

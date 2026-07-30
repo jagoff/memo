@@ -202,6 +202,7 @@ def _synapse_data(args: argparse.Namespace) -> dict[str, object]:
         "dry_run": not args.apply,
         "input_sha256": bundle.input_sha256,
         "feedback_count": len(bundle.feedback),
+        "feedback_skipped": len(bundle.skipped_feedback_ids),
         "eval_fixture_count": len(bundle.eval_fixtures),
     }
     if not args.apply:

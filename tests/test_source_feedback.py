@@ -79,6 +79,19 @@ def test_idempotent_same_vote(mem_with_stub: Memory):
     assert len(rows) == 1
 
 
+def test_feedback_record_preserves_caller_id(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="alpha body", title="Alpha")
+    supplied_id = "a" * 64
+    out = mem_with_stub.feedback_record(
+        rec.id,
+        query_text="alpha",
+        rating="up",
+        feedback_id=supplied_id,
+    )
+    assert out["feedback_id"] == supplied_id
+    assert mem_with_stub.feedback_list(source_id=rec.id)[0]["id"] == supplied_id
+
+
 def test_flip_rating_replaces_row(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="alpha body", title="Alpha")
     mem_with_stub.feedback_record(rec.id, query_text="alpha", rating="up")

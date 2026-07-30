@@ -60,6 +60,7 @@ class _RerankOpsMixin(_MemoryBase):
         *,
         query_text: str,
         rating: str,
+        feedback_id: str | None = None,
         only_if_absent: bool = False,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -90,6 +91,7 @@ class _RerankOpsMixin(_MemoryBase):
             query_text=query_text,
             query_emb=list(emb),
             rating=rating_norm,
+            feedback_id=feedback_id,
             extra={**(extra or {}), "signal": signal},
             only_if_absent=only_if_absent,
         )

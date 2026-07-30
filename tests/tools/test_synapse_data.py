@@ -59,6 +59,10 @@ def state_dir(tmp_path: Path) -> Path:
         root / "observability" / "chat-traces.jsonl",
         [
             {
+                "trace_id": "trace-old",
+                "query": "old feedback query",
+            },
+            {
                 "trace_id": "trace-new",
                 "query": "  how   does  feedback work? ",
                 "answer": "private answer that must not be copied",
@@ -100,6 +104,17 @@ def test_feedback_extraction_is_idempotent_and_does_not_copy_answers(state_dir: 
     assert bundle[0].query == "how does feedback work?"
 
 
+def test_bundle_preserves_seen_and_duplicate_feedback_ids(state_dir: Path) -> None:
+    ledger = state_dir / "ledger.jsonl"
+    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    rows.append(rows[1])
+    _write_jsonl(ledger, rows)
+
+    bundle = build_synapse_data_bundle(state_dir, {"already-seen"})
+    assert [item.feedback_id for item in bundle.feedback] == ["new-feedback"]
+    assert bundle.skipped_feedback_ids == ("already-seen", "new-feedback")
+
+
 def test_eval_extraction_keeps_fixture_metadata_only(state_dir: Path) -> None:
     fixture = extract_synapse_eval_fixtures(state_dir)[0]
     assert fixture.source_ids
@@ -127,6 +142,8 @@ def test_apply_is_replay_safe_and_stages_eval_only(
     first = apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-1")
     assert first.status == "applied"
     assert first.feedback_imported == 1
+    assert first.feedback_skipped == 1
+    assert first.skipped_feedback_ids == ("already-seen",)
     assert len(mem_with_stub.feedback_list(source_id=record.id)) == 1
     staging = mem_with_stub.cfg.state_dir / "operator-staging" / "synapse-eval-fixtures.json"
     staged = staging.read_text(encoding="utf-8")
@@ -157,3 +174,54 @@ def test_invalid_fixture_leaves_no_partial_feedback_or_receipt(mem_with_stub: Me
         for event in mem_with_stub.operational.ledger.validated_events()
         if event.op == "receipt.synapse-data"
     ]
+
+
+def test_late_feedback_failure_rolls_back_all_imported_feedback(mem_with_stub: Memory, monkeypatch) -> None:
+    first = mem_with_stub.save(content="first source", title="First")
+    second = mem_with_stub.save(content="second source", title="Second")
+    data = SynapseDataBundle(
+        feedback=(
+            FeedbackImport("feedback-one", first.id, "first query", "up"),
+            FeedbackImport("feedback-two", second.id, "second query", "down"),
+        ),
+        eval_fixtures=(),
+        input_sha256="b" * 64,
+    )
+    original = mem_with_stub.feedback_record
+    calls = 0
+
+    def fail_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = original(*args, **kwargs)
+        if calls == 2:
+            raise RuntimeError("late feedback failure after write")
+        return result
+
+    monkeypatch.setattr(mem_with_stub, "feedback_record", fail_second)
+    with pytest.raises(RuntimeError, match="late feedback failure after write"):
+        apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-3")
+    assert mem_with_stub.feedback_list(source_id=first.id) == []
+    assert mem_with_stub.feedback_list(source_id=second.id) == []
+    assert not [
+        event
+        for event in mem_with_stub.operational.ledger.validated_events()
+        if event.op == "receipt.synapse-data"
+    ]
+
+
+def test_receipt_failure_rolls_back_imported_feedback(mem_with_stub: Memory, monkeypatch) -> None:
+    record = mem_with_stub.save(content="known source", title="Source")
+    data = SynapseDataBundle(
+        feedback=(FeedbackImport("feedback-one", record.id, "query", "up"),),
+        eval_fixtures=(),
+        input_sha256="c" * 64,
+    )
+
+    def fail_receipt(*args, **kwargs):
+        raise RuntimeError("receipt failure")
+
+    monkeypatch.setattr(mem_with_stub.operational, "receipt", fail_receipt)
+    with pytest.raises(RuntimeError, match="receipt failure"):
+        apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-4")
+    assert mem_with_stub.feedback_list(source_id=record.id) == []

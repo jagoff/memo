@@ -36,6 +36,7 @@ class SynapseDataReceipt:
     eval_fixture_count: int
     event_ids: tuple[str, ...]
     status: Literal["applied", "reused"]
+    skipped_feedback_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
