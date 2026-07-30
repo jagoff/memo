@@ -89,6 +89,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   antes de reconstruir derivados locales; explicit-input drift sigue en
   conflicto. Segundo re-review detectó la key default aún no recuperada;
   follow-up final deriva la key bajo lock. Matriz `134 passed`, Ruff/mypy.
+- [x] `P01-T06` re-revisión final de `3fc4bf88` + `f79427bf` + `e84da0b3`:
+  `PASS`; gate ampliado `141 passed`, sin hallazgos materiales.
 - [x] `P01-T03` re-revisión final: `PASS`; backfill global y upgrade v1
   fail-closed cerrados, `20 + 55 passed`, Ruff y mypy limpios.
 - [x] `P01-T04` segunda corrección técnica: rename exclusivo sin clobber bajo
@@ -337,7 +339,7 @@ Estado: **1/7 aceptadas**.
 - [x] Follow-up final: `turn_count` y key explícita/default se fijan bajo el
   session lock antes del replay/commit.
 - [x] Matriz sesiones/adapters: `134 passed`; Ruff y mypy limpios.
-- [ ] Revisión independiente y `PASS`.
+- [x] Revisión independiente final: `PASS`; gate ampliado `141 passed`.
 
 ### Tarea 7 — Activar facade operacional v2 tras paridad completa
 
