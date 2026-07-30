@@ -9,14 +9,24 @@ fixture as an explicit blocker.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from statistics import quantiles
-from typing import Literal
+from typing import Any, Literal
 
 from memo.contracts import AnswerStatus
 from memo.memory import Memory
-from tools.memflow_absorption.schemas import CapabilityManifest, OperationMappingRow
+from memo.operational_roster import VerificationRoster
+from tools.memflow_absorption.manifest import ManifestError, verify_capability_manifest
+from tools.memflow_absorption.schemas import (
+    CapabilityManifest,
+    OperationMappingRow,
+    OperationRoute,
+)
+
+
+class ParityManifestError(RuntimeError):
+    """The parity authority cannot be verified before executing fixtures."""
 
 
 @dataclass(frozen=True)
@@ -26,6 +36,7 @@ class ParityFixture:
     query: str
     expected_status: str
     expected_source_ids: tuple[str, ...]
+    parameters: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -134,45 +145,126 @@ def _fixture_expects_status(expected: str, actual: str) -> bool:
     normalized = expected.strip().casefold()
     if normalized in {"abstain", "abstained", "insufficient_evidence"}:
         return actual == AnswerStatus.INSUFFICIENT_EVIDENCE.value
+    if normalized in {"conflict", "conflicted"}:
+        return actual == AnswerStatus.CONFLICTED.value
     if normalized in {"answer", "answered", "pass"}:
         return actual == AnswerStatus.ANSWERED.value
     return actual == normalized
 
 
 def _source_ids(value: object) -> tuple[str, ...]:
-    rows = value.get("sources", ()) if isinstance(value, dict) else getattr(value, "items", ())
-    if not isinstance(rows, Sequence):
-        return ()
+    """Extract only native provenance/source identifiers from a result payload."""
+
+    if isinstance(value, Mapping):
+        rows = value.get("sources", value.get("items", ()))
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        rows = value
+    else:
+        rows = getattr(value, "items", ())
     ids: list[object] = []
-    for row in rows:
-        if isinstance(row, dict):
-            ids.append(row.get("id"))
-        else:
-            ids.append(getattr(row, "id", None))
+    if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes)):
+        for row in rows:
+            if isinstance(row, Mapping):
+                ids.append(row.get("id"))
+            else:
+                ids.append(getattr(row, "id", None))
+    if isinstance(value, Mapping):
+        for row in value.get("conflicts", ()):
+            if isinstance(row, Mapping):
+                ids.extend(row.get("evidence_uris", ()))
+        ids.extend(value.get("source_ids", ()))
     return _canonical_ids(ids)
+
+
+def _native_status(value: object) -> str:
+    if value is None:
+        return AnswerStatus.INSUFFICIENT_EVIDENCE.value
+    if isinstance(value, Mapping):
+        raw = str(value.get("status") or "").casefold()
+        if raw in {status.value for status in AnswerStatus}:
+            return raw
+        if value.get("error"):
+            return AnswerStatus.ERROR.value
+        if value.get("conflicts") or value.get("conflict"):
+            return AnswerStatus.CONFLICTED.value
+        if value.get("available") is False or value.get("found") is False:
+            return AnswerStatus.INSUFFICIENT_EVIDENCE.value
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return AnswerStatus.ANSWERED.value if value else AnswerStatus.INSUFFICIENT_EVIDENCE.value
+    return AnswerStatus.ANSWERED.value
+
+
+def _route_input(fixture: ParityFixture) -> dict[str, object]:
+    values = dict(fixture.parameters)
+    values.setdefault("query", fixture.query)
+    return values
+
+
+def _route_applies(route: OperationRoute, values: Mapping[str, object]) -> bool:
+    for name, matcher in route.predicate.items():
+        if not isinstance(matcher, Mapping):
+            return False
+        operator, operand = next(iter(matcher.items()))
+        present = name in values and values[name] is not None
+        value = values.get(name)
+        if operator == "present" and present != operand:
+            return False
+        if operator == "eq" and (not present or value != operand):
+            return False
+        if operator == "in" and (not present or value not in operand):
+            return False
+    return True
+
+
+def _route_arguments(route: OperationRoute, values: Mapping[str, object]) -> dict[str, object]:
+    arguments = dict(route.defaults)
+    for source_name, memo_name in route.parameter_mapping.items():
+        if source_name in values:
+            arguments[memo_name] = values[source_name]
+    return arguments
+
+
+def _verified_manifest(manifest: CapabilityManifest, memo: Memory, roster: VerificationRoster | None) -> None:
+    resolved_roster = roster or getattr(memo, "capability_manifest_roster", None)
+    if not isinstance(resolved_roster, VerificationRoster):
+        raise ParityManifestError("a verification roster is required for Synapse parity")
+    try:
+        verify_capability_manifest(manifest, roster=resolved_roster)
+    except ManifestError as exc:
+        raise ParityManifestError(f"unverifiable capability manifest: {exc}") from exc
 
 
 class _MemoFacade:
     """Small adapter over Memo's public memory operations.
 
     The facade keeps the runner independent from server registration while
-    exercising the same native operations exposed through MCP.  Methods such
-    as briefing/session/conflict/health are intentionally not synthesized:
-    their manifest routes must name a callable Memo facade method, or parity is
-    blocked instead of silently falling back.
+    exercising the same native operations exposed through MCP.  It implements
+    the read-only operational surfaces directly from Memo modules; retired
+    Synapse is never imported as a fallback.
     """
 
     def __init__(self, memory: Memory) -> None:
         self.memory = memory
 
-    def call(self, method: str, query: str) -> tuple[str, tuple[str, ...]]:
+    def call(
+        self, method: str, arguments: Mapping[str, object]
+    ) -> tuple[str, tuple[str, ...]]:
         method = {
             "memo_ask": "ask",
             "memo_search": "search",
             "memo_evidence_pack": "evidence_pack",
+            "memo_unified_briefing": "unified_briefing",
+            "memo_operational_state": "conflict",
+            "memo_session_list": "session_list",
+            "memo_session_get": "session_get",
+            "memo_health_summary": "health",
+            "memo_health_report": "health",
         }.get(method, method.removeprefix("Memory."))
+        kwargs: dict[str, Any] = dict(arguments)
         if method == "ask":
-            answer = self.memory.ask(query, include_repos=False)
+            question = str(kwargs.pop("question", kwargs.pop("query", "")))
+            kwargs.setdefault("include_repos", False)
+            answer = self.memory.ask(question, **kwargs)
             return (
                 AnswerStatus.ANSWERED.value
                 if answer.get("sources")
@@ -180,7 +272,8 @@ class _MemoFacade:
                 _source_ids(answer),
             )
         if method == "search":
-            records = self.memory.search(query, limit=8, quality_rerank=True)
+            query = str(kwargs.pop("query", kwargs.pop("question", "")))
+            records = self.memory.search(query, **kwargs)
             return (
                 AnswerStatus.ANSWERED.value
                 if records
@@ -188,19 +281,78 @@ class _MemoFacade:
                 _source_ids({"sources": records}),
             )
         if method == "evidence_pack":
-            pack = self.memory.evidence_pack(query)
+            question = str(kwargs.pop("question", kwargs.pop("query", "")))
+            pack = self.memory.evidence_pack(question, **kwargs)
             return str(pack.status), _source_ids(pack)
+        if method == "unified_briefing":
+            target = getattr(self.memory, "unified_briefing", None)
+            if callable(target):
+                result = target(**kwargs)
+            else:
+                from memo.briefing import (
+                    compact_text,
+                    memo_native_briefing_lines,
+                    operational_briefing_lines,
+                )
+
+                cwd = kwargs.get("cwd")
+                cwd_value = cwd if isinstance(cwd, str) else None
+                lines = [
+                    *memo_native_briefing_lines(self.memory),
+                    *operational_briefing_lines(self.memory, cwd_value),
+                ]
+                result = {
+                    "available": bool(lines),
+                    "markdown": compact_text("\n".join(lines), max_chars=900),
+                    "lines": lines,
+                }
+            return _native_status(result), _source_ids(result)
+        if method == "conflict":
+            target = getattr(self.memory, "conflict", None)
+            if callable(target):
+                result = target(**kwargs)
+            else:
+                project = kwargs.get("project")
+                result = self.memory.operational.state(
+                    project if isinstance(project, str) else None
+                )
+            return _native_status(result), _source_ids(result)
+        if method in {"session_list", "session_get"}:
+            target = getattr(self.memory, method, None)
+            if callable(target):
+                result = target(**kwargs)
+            else:
+                from memo.session import get_session, list_sessions
+
+                if method == "session_list":
+                    result = list_sessions(self.memory.cfg.state_dir, **kwargs)
+                else:
+                    session_id = str(kwargs.pop("session_id", kwargs.pop("id", "")))
+                    result = get_session(self.memory.cfg.state_dir, session_id)
+            return _native_status(result), _source_ids(result)
+        if method == "health":
+            target = getattr(self.memory, "health", None)
+            if callable(target):
+                result = target(**kwargs)
+            else:
+                from memo.health_report import build_health_report
+
+                probe = bool(kwargs.pop("probe_embedder", False))
+                result = build_health_report(self.memory, probe_embedder=probe)
+            return _native_status(result), _source_ids(result)
         target = getattr(self.memory, method, None)
         if not callable(target):
             raise LookupError(f"Memo facade has no native method: {method}")
-        result = target(query)
-        return AnswerStatus.ANSWERED.value, _source_ids(result)
+        result = target(**kwargs)
+        return _native_status(result), _source_ids(result)
 
 
 def run_synapse_parity(
     manifest: CapabilityManifest,
     memo: Memory,
     fixtures: Sequence[ParityFixture],
+    *,
+    roster: VerificationRoster | None = None,
 ) -> ParityReport:
     """Compare admitted fixtures with their signed Memo-native routes.
 
@@ -210,6 +362,7 @@ def run_synapse_parity(
     fallback to retired Synapse code.
     """
 
+    _verified_manifest(manifest, memo, roster)
     facade = _MemoFacade(memo)
     rows: list[ParityRow] = []
     gaps: list[str] = []
@@ -235,11 +388,12 @@ def run_synapse_parity(
             )
             gaps.append(fixture.fixture_id)
             continue
-        methods = tuple(
-            method
-            for route in mapping.routes
-            for method in (route.memo_methods or route.memo_mcp)
+        values = _route_input(fixture)
+        route = next(
+            (item for item in mapping.routes if _route_applies(item, values)),
+            None,
         )
+        methods = (route.memo_methods or route.memo_mcp) if route is not None else ()
         if not methods:
             elapsed = (time.perf_counter() - started) * 1000
             rows.append(
@@ -249,13 +403,18 @@ def run_synapse_parity(
                     latency_ms=round(elapsed, 3),
                     memo_source_ids=(),
                     provenance_ok=False,
-                    error="mapping has no Memo method",
+                    error=(
+                        "no signed route predicate applies to fixture"
+                        if route is None
+                        else "mapping has no Memo method"
+                    ),
                 )
             )
             gaps.append(fixture.fixture_id)
             continue
         try:
-            status, source_ids = facade.call(methods[0], fixture.query)
+            assert route is not None
+            status, source_ids = facade.call(methods[0], _route_arguments(route, values))
             expected_ids = _canonical_ids(fixture.expected_source_ids)
             provenance_ok = expected_ids == source_ids
             status_ok = _fixture_expects_status(fixture.expected_status, status)

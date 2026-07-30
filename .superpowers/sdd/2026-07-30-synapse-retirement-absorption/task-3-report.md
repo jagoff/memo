@@ -35,3 +35,22 @@ undocumented fallback API.
 ## Concerns
 
 None.  Pre-existing changes to unrelated SDD ledgers/reports were preserved.
+
+## Correction round 1
+
+- The facade now resolves `memo_unified_briefing` through Memo-native briefing
+  helpers (or a supplied Memo facade implementation) without importing
+  Synapse.  It also evaluates native conflict, session, and health surfaces,
+  preserving their `answered`, `insufficient_evidence`, `conflicted`, and
+  `error` statuses plus native source/provenance IDs.
+- Routes are no longer flattened: the runner evaluates each signed closed
+  predicate against fixture parameters, maps only the selected route's
+  parameters, applies its defaults, and blocks when no route matches.
+- Before a fixture timer starts, the runner now requires a real
+  `VerificationRoster` and calls `verify_capability_manifest`.  Missing roster,
+  unfrozen/blocking authority, a digest mismatch, or an invalid signature raise
+  `ParityManifestError`; no parity report is emitted for an unverifiable
+  manifest.
+
+Correction verification: focused parity plus ask/evidence regressions 34
+passed; Ruff passed; Mypy passed for 464 source files.
