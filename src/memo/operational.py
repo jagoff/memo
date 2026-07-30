@@ -12,7 +12,7 @@ import json
 import re
 import secrets
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -252,7 +252,7 @@ def _conflict_matches_query(row: dict[str, Any], query_cf: str) -> bool:
 class OperationalStore:
     ledger: Any
     views: OperationalViewStore
-    epoch_fence: EpochFence
+    epoch_fence: EpochFence | None
     transaction_root: Path
 
     def __init__(self, state_dir: Path, *, device_id: str, context_provider: Callable[[], CommitContext] | None = None, epoch_fence: EpochFence | None = None) -> None:
@@ -375,12 +375,19 @@ class OperationalStore:
         # allowing a stale writer to append under the old epoch.
         # ``verified`` owns the admission/write locks; do not wrap it in a
         # second authority lock (the file lock is intentionally non-reentrant).
-        if hasattr(self.epoch_fence, "verified"):
-            admission = self.epoch_fence.verified(context)
+        fence = self.epoch_fence
+        if fence is None:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational epoch fence is unavailable",
+                retryable=False,
+            )
+        if hasattr(fence, "verified"):
+            admission: AbstractContextManager[None] = fence.verified(context)
         else:
             # Test doubles and older injected fences expose only verify();
             # retain compatibility while still checking before append.
-            self.epoch_fence.verify(context)
+            fence.verify(context)
             admission = nullcontext()
         with admission:
             self.views.catch_up(ledger)
