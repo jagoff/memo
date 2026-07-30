@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from memo.errors import MemoError
 from memo.model_pins import PINNED_MODEL_REVISIONS, ModelPinError, default_revision, model_spec
+from memo.operational_epoch import CommitContext, EpochFence
 from memo.platform_detect import is_apple_silicon
 
 _log = logging.getLogger(__name__)
@@ -494,6 +496,19 @@ class Config(BaseModel):
     state_dir: Path = Field(
         default=_DEFAULT_STATE_DIR,
         description="Where sqlite-vec DB + transient state live. Created if missing.",
+    )
+    # Authenticated operational write context.  These are deliberately unset
+    # by default: production entrypoints must compose an epoch-bound provider
+    # and fence explicitly once operational authority is activated.  Keeping
+    # them optional preserves the pre-activation fail-closed behavior while
+    # making the contract typed and transport-agnostic.
+    operational_context_provider: Callable[[], CommitContext] | None = Field(
+        default=None,
+        description="Provider for the current authenticated operational epoch context.",
+    )
+    operational_epoch_fence: EpochFence | None = Field(
+        default=None,
+        description="Durable epoch fence used to admit operational writes.",
     )
     memories_in_vault: bool = Field(
         default=False,
