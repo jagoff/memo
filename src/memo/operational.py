@@ -267,15 +267,15 @@ def _conflict_matches_query(row: dict[str, Any], query_cf: str) -> bool:
 
 class OperationalStore:
     ledger: Any
-    _ledger: Any
+    __ledger: Any
     views: OperationalViewStore
     epoch_fence: EpochFence | None
     transaction_root: Path
 
     def __init__(self, state_dir: Path, *, device_id: str, context_provider: Callable[[], CommitContext] | None = None, epoch_fence: EpochFence | None = None) -> None:
         self.state_dir = Path(state_dir)
-        self._ledger = OperationLedger(self.state_dir, device_id=device_id)
-        self.ledger = _LedgerView(self._ledger)
+        self.__ledger = OperationLedger(self.state_dir, device_id=device_id)
+        self.ledger = _LedgerView(self.__ledger)
         self.snapshot_path = self.state_dir / "operational-state.json"
         self._v2_enabled = False
         # Legacy writers are fail-closed unless an authenticated epoch context
@@ -296,7 +296,6 @@ class OperationalStore:
         instance = cls.__new__(cls)
         instance.state_dir = Path(transaction_root).parent
         instance.ledger = ledger
-        instance._ledger = ledger
         instance.views = views
         instance.epoch_fence = epoch_fence
         instance.transaction_root = Path(transaction_root)
@@ -512,7 +511,7 @@ class OperationalStore:
             )
         with authority_write_lock(self.snapshot_path):
             self.epoch_fence.verify(authenticated)
-            event = self._ledger.append(
+            event = self.__ledger.append(
                 op,
                 subject_uri=subject_uri,
                 actor=actor,
@@ -523,7 +522,7 @@ class OperationalStore:
                 state = json.loads(self.snapshot_path.read_text(encoding="utf-8"))
             except (FileNotFoundError, OSError, json.JSONDecodeError):
                 state = {}
-            current_heads = self._ledger.head_hashes()
+            current_heads = self.__ledger.head_hashes()
             snapshot_heads = state.get("journal_heads")
             expected_heads = dict(current_heads)
             if event.previous_hash:
