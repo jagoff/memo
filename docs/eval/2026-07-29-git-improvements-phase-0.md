@@ -130,3 +130,17 @@ would be a wrapper around live schedulers and fail the consolidation gate.
 
 Re-entry gate: two existing paths must be shown scheduling the same or incompatible work,
 with before/after code and execution counts that a single task descriptor can reduce.
+
+## Final Phase 0 decisions
+
+| Transfer | Decision | Next artifact |
+| --- | --- | --- |
+| Atomic mutation/quarantine | Admit, narrowed | federation final-state rollback plan |
+| Immutable revisions/refs/fsck | Admit exact-delete snapshot; defer archive | exact historical delete plan |
+| Explicit context/plumbing | Defer | none |
+| Retrieval planner/pushdown | Admit, narrowed | BM25/fuzzy common-filter plan |
+| Structured Trace2/perf/fuzz | Defer runtime; use test discipline | none |
+| Need-driven maintenance | Defer | none |
+
+No public command, flag, database, daemon, context wrapper, planner class, revision archive,
+or maintenance registry was added in Phase 0.
