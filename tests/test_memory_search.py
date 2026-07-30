@@ -382,6 +382,7 @@ def test_search_uses_query_prefix(tmp_cfg: Config, monkeypatch):
         vault_path=tmp_cfg.vault_path,
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
+        reranker_enabled=False,
     )
     with closing(Memory(cfg)) as mem:
         mem.save(content="cuerpo del doc", title="X")
