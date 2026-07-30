@@ -6,7 +6,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 10:52 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 12:02 America/Argentina/Cordoba
 
 ### En curso
 
@@ -16,13 +16,15 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
   nuevo — agente `constant_code_reviewer`; `P01-T04 FAIL HIGH` cerrado y
   `P03-T03 FAIL BLOCKER` confirmado; Secure Enclave `23a64ccb` FAIL HIGH;
-  re-review de `ce608c42` en curso.
+  `ce608c42` re-review encontró HIGH de boundary desplazable.
 - [x] Auditoría read-only cross-repo de Plan 03 T3/T4: ambos lotes corregidos
   siguen presentes sin commit y no se solapan con Secure Enclave.
 - [ ] Corregir el prerrequisito productivo de Plan 01 Tarea 7: helper
   precompilado/estable sin `swiftc` en runtime y ACL/upgrade de Keychain.
   `23a64ccb` tuvo `236 passed / 1 skipped`, pero revisión independiente
-  encontró 2 HIGH.
+  encontró 2 HIGH. Fix de helper precompilado pasó disponibilidad, pero
+  upgrade Keychain entre helpers ad-hoc falló de forma reproducible;
+  `DONE_WITH_CONCERNS`, sin commit.
 - [x] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
   multi-origen puede divergir del rebuild por orden global. Agregar regresión
   `newest(a) -> older(b)` y re-reducción transaccional determinista. Revisión
@@ -35,9 +37,10 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   firma/destruye, pero su helper depende de `swiftc` en runtime y su ACL
   queda ligada al cdhash ad-hoc. Fix de helper precompilado/estable y upgrade
   de Keychain en curso antes de habilitar activación.
-- [ ] Re-review `P01-T04` de `ce608c42`: el fix ya liga parent
-  descriptor-relative y re-resuelve parent+target antes de éxito; PASS
-  independiente pendiente.
+- [ ] Fix round 2 `P01-T04`: `ce608c42` corrigió ambos parent-swap, pero el
+  reviewer reprodujo HIGH al desplazar el grandparent/boundary. El mismo
+  implementador está anclando y revalidando toda la cadena root→boundary→
+  parent→target.
 - [x] Corrección técnica `P01-T06 HIGH/MEDIUM`: replay del evento/resultado
   canónico por idempotency key, validación de identidad explícita y derivación
   de key default bajo el lock de sesión. Revisión final: `PASS`, `141 passed`.
