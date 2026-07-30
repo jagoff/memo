@@ -16,7 +16,7 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from memo.atomic_io import open_secure_directory
 from memo.memory import Memory
@@ -169,7 +169,9 @@ def _feedback_from_rows(
 ) -> tuple[tuple[FeedbackImport, ...], tuple[str, ...]]:
     out: list[FeedbackImport] = []
     skipped: list[str] = []
-    observed = set(seen_ids)
+    # Callers may restore seen ids from a case-insensitive receipt.  Invalid
+    # values are not admission controls and must not affect the result.
+    observed = {normalized for item in seen_ids if (normalized := _normal_id(item))}
     for row in ledger:
         if row.get("action") != "chat_feedback":
             continue
@@ -278,17 +280,20 @@ def _receipt_from_event(event: Any) -> SynapseDataReceipt | None:
     if not isinstance(metadata, dict) or metadata.get("schema") != _RECEIPT_SCHEMA:
         return None
     try:
+        skipped = _canonical_skipped_feedback_ids(metadata.get("skipped_feedback_ids", []))
+        if int(metadata["feedback_skipped"]) != len(skipped):
+            return None
         return SynapseDataReceipt(
             attempt_id=str(metadata["attempt_id"]),
             input_sha256=str(metadata["input_sha256"]),
             feedback_imported=int(metadata["feedback_imported"]),
-            feedback_skipped=int(metadata["feedback_skipped"]),
+            feedback_skipped=len(skipped),
             eval_fixture_count=int(metadata["eval_fixture_count"]),
             event_ids=(str(event.event_id),),
             status="applied",
-            skipped_feedback_ids=tuple(str(item) for item in metadata.get("skipped_feedback_ids", [])),
+            skipped_feedback_ids=skipped,
         )
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, SynapseDataError):
         return None
 
 
@@ -388,21 +393,39 @@ def _existing_operation_keys(memory: Memory, source_id: str) -> set[str]:
     return keys
 
 
-def _feedback_has_operation_key(memory: Memory, feedback_id: str, operation_key: str) -> bool:
-    """Confirm a returned feedback id belongs to this import before rollback."""
+def _feedback_operation_key_state(
+    memory: Memory, feedback_id: str, operation_key: str
+) -> Literal["owned", "not_owned", "unknown"]:
+    """Look up one primary-keyed feedback row without a bounded global scan."""
     try:
-        rows = memory.feedback_list(limit=500)
-    except ValueError:
-        return False
-    for row in rows:
-        if str(row.get("id") or "") != feedback_id:
-            continue
-        try:
-            extra = json.loads(str(row.get("extra_json") or "{}"))
-        except json.JSONDecodeError:
-            return False
-        return isinstance(extra, dict) and extra.get("synapse_operation_key") == operation_key
-    return False
+        row = memory.store._conn.execute(
+            "SELECT extra_json FROM source_feedback WHERE id = ?", (feedback_id,)
+        ).fetchone()
+    except Exception:
+        return "unknown"
+    if row is None:
+        return "unknown"
+    try:
+        extra = json.loads(str(row["extra_json"] or "{}"))
+    except json.JSONDecodeError:
+        return "unknown"
+    if not isinstance(extra, dict):
+        return "not_owned"
+    return "owned" if extra.get("synapse_operation_key") == operation_key else "not_owned"
+
+
+def _canonical_skipped_feedback_ids(values: object) -> tuple[str, ...]:
+    if not isinstance(values, (tuple, list)):
+        raise SynapseDataError("skipped_feedback_ids must be a list or tuple of IDs")
+    normalized: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise SynapseDataError("skipped_feedback_ids contains a non-string ID")
+        feedback_id = _normal_id(value)
+        if not feedback_id:
+            raise SynapseDataError("skipped_feedback_ids contains an invalid ID")
+        normalized.append(feedback_id)
+    return tuple(sorted(dict.fromkeys(normalized)))
 
 
 def _rollback_imported_feedback(memory: Memory, feedback: dict[str, str]) -> None:
@@ -450,6 +473,9 @@ def apply_synapse_data(
         raise SynapseDataError("attempt id is unsafe")
     if not re.fullmatch(r"[0-9a-f]{64}", data.input_sha256):
         raise SynapseDataError("input_sha256 must be a lowercase SHA-256")
+    canonical_bundle_skipped_ids = _canonical_skipped_feedback_ids(
+        data.skipped_feedback_ids
+    )
     prior = _prior_receipt(memory, attempt_id)
     if prior is not None:
         if prior.input_sha256 != data.input_sha256:
@@ -480,7 +506,7 @@ def apply_synapse_data(
     previous_staging, staged = _staging_payload(memory, data)
     _write_staging(memory, staged)
     imported = 0
-    skipped_ids: list[str] = list(data.skipped_feedback_ids)
+    skipped_ids: list[str] = list(canonical_bundle_skipped_ids)
     imported_feedback: dict[str, str] = {}
     try:
         for feedback in data.feedback:
@@ -517,13 +543,20 @@ def apply_synapse_data(
                 },
             )
             result_id = str(result.get("feedback_id") or "")
-            if (
-                result_id != operation_key
-                or not _feedback_has_operation_key(memory, result_id, operation_key)
-            ):
+            ownership = _feedback_operation_key_state(memory, operation_key, operation_key)
+            if ownership == "not_owned":
                 imported_feedback.pop(operation_key, None)
                 skipped_ids.append(feedback.feedback_id)
                 continue
+            if ownership == "unknown":
+                # Keep the candidate in ``imported_feedback`` so the exception
+                # path performs an exact compensating lookup/delete.  Writing
+                # a receipt while ownership is uncertain could orphan a signal.
+                raise SynapseDataError("cannot verify imported Synapse feedback ownership")
+            if result_id != operation_key:
+                # The row is ours despite an incoherent return value: retain it
+                # and count it as imported, so the receipt remains its witness.
+                pass
             imported += 1
         canonical_skipped_ids = tuple(sorted(dict.fromkeys(skipped_ids)))
         metadata = {

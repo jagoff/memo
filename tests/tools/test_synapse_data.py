@@ -13,6 +13,7 @@ from tools.memflow_absorption.synapse_data import (
     FeedbackImport,
     SynapseDataBundle,
     SynapseDataError,
+    _feedback_operation_key_state,
     apply_synapse_data,
     build_synapse_data_bundle,
     extract_synapse_eval_fixtures,
@@ -113,6 +114,12 @@ def test_bundle_preserves_seen_and_duplicate_feedback_ids(state_dir: Path) -> No
     bundle = build_synapse_data_bundle(state_dir, {"already-seen"})
     assert [item.feedback_id for item in bundle.feedback] == ["new-feedback"]
     assert bundle.skipped_feedback_ids == ("already-seen", "new-feedback")
+
+
+def test_seen_ids_are_casefolded_and_invalid_values_are_ignored(state_dir: Path) -> None:
+    bundle = build_synapse_data_bundle(state_dir, {"ALREADY-SEEN", "not an id!"})
+    assert [item.feedback_id for item in bundle.feedback] == ["new-feedback"]
+    assert bundle.skipped_feedback_ids == ("already-seen",)
 
 
 def test_eval_extraction_keeps_fixture_metadata_only(state_dir: Path) -> None:
@@ -225,3 +232,45 @@ def test_receipt_failure_rolls_back_imported_feedback(mem_with_stub: Memory, mon
     with pytest.raises(RuntimeError, match="receipt failure"):
         apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-4")
     assert mem_with_stub.feedback_list(source_id=record.id) == []
+
+
+def test_feedback_ownership_lookup_is_direct_not_limited_to_500(mem_with_stub: Memory) -> None:
+    record = mem_with_stub.save(content="known source", title="Source")
+    target_id = "f" * 64
+    for index in range(501):
+        mem_with_stub.feedback_record(
+            record.id,
+            query_text=f"query {index}",
+            rating="up",
+            feedback_id=target_id if index == 0 else f"{index:064x}",
+            extra={"synapse_operation_key": target_id},
+        )
+    assert _feedback_operation_key_state(mem_with_stub, target_id, target_id) == "owned"
+
+
+def test_caller_skipped_ids_are_canonicalized_before_receipt(mem_with_stub: Memory) -> None:
+    data = SynapseDataBundle(
+        feedback=(),
+        eval_fixtures=(),
+        input_sha256="d" * 64,
+        skipped_feedback_ids=("FEEDBACK-ONE", "feedback-one"),
+    )
+    receipt = apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-5")
+    assert receipt.feedback_skipped == 1
+    assert receipt.skipped_feedback_ids == ("feedback-one",)
+
+
+def test_invalid_caller_skipped_id_is_rejected_before_receipt(mem_with_stub: Memory) -> None:
+    data = SynapseDataBundle(
+        feedback=(),
+        eval_fixtures=(),
+        input_sha256="e" * 64,
+        skipped_feedback_ids=("invalid id!",),
+    )
+    with pytest.raises(SynapseDataError, match="skipped_feedback_ids contains an invalid ID"):
+        apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-6")
+    assert not [
+        event
+        for event in mem_with_stub.operational.ledger.validated_events()
+        if event.op == "receipt.synapse-data"
+    ]
