@@ -2013,10 +2013,12 @@ def test_canonical_session_runtime_writes_only_a_derived_json_cache(
     assert cache == snapshot
 
 
-def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
+@pytest.mark.parametrize("explicit_idempotency_key", (True, False))
+def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_request(
     tmp_path,
     fake_git,
     monkeypatch,
+    explicit_idempotency_key,
 ) -> None:
     from memo.identity import PrincipalIdentity
     from memo.operational_sessions import OperationalSession
@@ -2107,6 +2109,11 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
         service=service,  # type: ignore[arg-type]
         identity_factory=lambda: identity,
     )
+    checkpoint_kwargs = (
+        {"idempotency_key": "checkpoint-1"}
+        if explicit_idempotency_key
+        else {}
+    )
     try:
         with pytest.raises(OSError, match="simulated crash"):
             checkpoint(
@@ -2114,8 +2121,8 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
                 session_id="session-a",
                 cwd=str(tmp_path),
                 source_event_id="source-1",
-                idempotency_key="checkpoint-1",
                 lru_cap=10,
+                **checkpoint_kwargs,
             )
         assert not (tmp_path / "sessions" / "session-a.json").exists()
         git_state["head_commit"] = "bbb222 changed-after-canonical-commit"
@@ -2125,14 +2132,21 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
             session_id="session-a",
             cwd=str(tmp_path),
             source_event_id="source-1",
-            idempotency_key="checkpoint-1",
             lru_cap=10,
+            **checkpoint_kwargs,
         )
     finally:
         remove_operational_session_runtime(tmp_path)
 
     assert [call["checkpointed_at"] for call in service.calls] == [None]
     assert len(service.replay_calls) == 2
+    expected_key = (
+        "checkpoint-1"
+        if explicit_idempotency_key
+        else "session-checkpoint/session-a/1"
+    )
+    assert service.calls[0]["idempotency_key"] == expected_key
+    assert service.replay_calls[-1]["idempotency_key"] == expected_key
     assert snapshot["head_commit"] == canonical.head
     assert snapshot["created"] == canonical.checkpointed_at
     assert snapshot["updated"] == canonical.checkpointed_at

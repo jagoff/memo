@@ -380,10 +380,13 @@ def checkpoint(
     # while that work ran are not clobbered.
     with _session_write_lock(state_dir, session_id):
         existing = _load(state_dir, session_id) or {}
+        turn_count = int(existing.get("turn_count") or 0) + 1
+        operation_key = idempotency_key or (
+            f"session-checkpoint/{session_id}/{turn_count}"
+        )
         if (
             runtime is not None
             and runtime_identity is not None
-            and idempotency_key
             and callable(
                 getattr(type(runtime.service), "replay_checkpoint", None)
             )
@@ -395,7 +398,7 @@ def checkpoint(
                 workspace=str(cwd_path),
                 source_event_id=source_event_id,
                 checkpointed_at=checkpointed_at,
-                idempotency_key=idempotency_key,
+                idempotency_key=operation_key,
             )
 
         # prompt_trail: ring buffer of last N user prompts, crash-resilient
@@ -437,12 +440,11 @@ def checkpoint(
             ),
             "created": existing.get("created") or now,
             "updated": now,
-            "turn_count": int(existing.get("turn_count") or 0) + 1,
+            "turn_count": turn_count,
             "last_recall_turn": existing.get("last_recall_turn"),
             "last_recap_turn": existing.get("last_recap_turn"),
         }
         if runtime is not None:
-            turn_count = int(snapshot["turn_count"])
             source_id = source_event_id or (
                 "local-session/"
                 + hashlib.sha256(
@@ -459,7 +461,6 @@ def checkpoint(
                     ).encode("utf-8")
                 ).hexdigest()
             )
-            operation_key = idempotency_key or f"session-checkpoint/{session_id}/{turn_count}"
             canonical = replayed_checkpoint
             if canonical is None:
                 if runtime_identity is None:

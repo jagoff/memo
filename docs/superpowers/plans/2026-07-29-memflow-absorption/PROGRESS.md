@@ -87,7 +87,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   lecturas con artifacts locales; `118 passed`, Ruff y mypy limpios.
 - [x] `P01-T06` follow-up: recupera evento/result canónicos por idempotency key
   antes de reconstruir derivados locales; explicit-input drift sigue en
-  conflicto. Matriz final `133 passed`, Ruff y mypy limpios.
+  conflicto. Segundo re-review detectó la key default aún no recuperada;
+  follow-up final deriva la key bajo lock. Matriz `134 passed`, Ruff/mypy.
 - [x] `P01-T03` re-revisión final: `PASS`; backfill global y upgrade v1
   fail-closed cerrados, `20 + 55 passed`, Ruff y mypy limpios.
 - [x] `P01-T04` segunda corrección técnica: rename exclusivo sin clobber bajo
@@ -331,7 +332,11 @@ Estado: **1/7 aceptadas**.
   crash cambiaba el request hash con la misma idempotency key.
 - [x] Follow-up: replay del checkpoint original desde ledger+idempotency,
   validando identidad/session/project/workspace/source/timestamp explícitos.
-- [x] Matriz sesiones/adapters: `133 passed`; Ruff y mypy limpios.
+- [x] Segundo re-review: `FAIL MEDIUM`; faltaba replay cuando la idempotency key
+  era derivada por Memo.
+- [x] Follow-up final: `turn_count` y key explícita/default se fijan bajo el
+  session lock antes del replay/commit.
+- [x] Matriz sesiones/adapters: `134 passed`; Ruff y mypy limpios.
 - [ ] Revisión independiente y `PASS`.
 
 ### Tarea 7 — Activar facade operacional v2 tras paridad completa
