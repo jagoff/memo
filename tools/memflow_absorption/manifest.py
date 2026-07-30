@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,8 @@ from memo.errors import SignatureError
 from memo.operational_event import canonical_json_bytes
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner, OperationalVerifier
+from memo.atomic_io import open_secure_directory
+import stat
 from tools.memflow_absorption.schemas import (
     AuditExclusions,
     CapabilityManifest,
@@ -41,9 +44,42 @@ class ManifestError(RuntimeError):
 
 def _load_json(path: Path) -> Any:
     try:
-        encoded = path.read_bytes()
+        absolute = Path(os.path.abspath(os.fspath(path)))
+        receipt_name = f"{absolute.name}.receipt.json"
+        with open_secure_directory(absolute.parent) as directory:
+            encoded, observed = directory.read_bytes_snapshot(absolute.name)
+            receipt_encoded, receipt_stat = directory.read_bytes_snapshot(receipt_name)
+        receipt = json.loads(receipt_encoded)
+        if canonical_json_bytes(receipt) != receipt_encoded or receipt.get("schema") != "memo.cutover_snapshot_receipt.v2":
+            raise ManifestError(f"invalid snapshot receipt: {path}")
+        if receipt.get("target") != str(absolute) or receipt.get("target_size") != len(encoded):
+            raise ManifestError(f"snapshot receipt target mismatch: {path}")
+        fields = {
+            "target_mtime_ns": observed.st_mtime_ns,
+            "target_mode": stat.S_IMODE(observed.st_mode),
+            "target_device": observed.st_dev,
+            "target_inode": observed.st_ino,
+        }
+        if any(receipt.get(key) != value for key, value in fields.items()):
+            raise ManifestError(f"snapshot receipt metadata mismatch: {path}")
+        source_path = Path(receipt.get("source", ""))
+        if not source_path.is_absolute():
+            raise ManifestError(f"snapshot receipt source is not absolute: {path}")
+        with open_secure_directory(source_path.parent) as source_directory:
+            source_stat = source_directory.stat(source_path.name)
+        source_fields = {
+            "source_size": source_stat.st_size,
+            "source_mtime_ns": source_stat.st_mtime_ns,
+            "source_mode": stat.S_IMODE(source_stat.st_mode),
+            "source_device": source_stat.st_dev,
+            "source_inode": source_stat.st_ino,
+        }
+        if any(receipt.get(key) != value for key, value in source_fields.items()):
+            raise ManifestError(f"snapshot receipt source metadata mismatch: {path}")
+        if receipt.get("sha256") != hashlib.sha256(encoded).hexdigest():
+            raise ManifestError(f"snapshot receipt digest mismatch: {path}")
         value = json.loads(encoded)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         raise ManifestError(f"invalid snapshot input: {path}") from exc
     if canonical_json_bytes(value) != encoded:
         raise ManifestError(f"snapshot input is not canonical JSON: {path}")

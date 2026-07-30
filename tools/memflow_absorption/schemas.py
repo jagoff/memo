@@ -13,12 +13,19 @@ from memo.operational_signing import SignatureEnvelope
 
 @dataclass(frozen=True)
 class SnapshotReceipt:
-    schema: Literal["memo.cutover_snapshot_receipt.v1"]
+    schema: Literal["memo.cutover_snapshot_receipt.v2"]
     source: str
     target: str
     source_size: int
     source_mtime_ns: int
     source_mode: int
+    source_device: int
+    source_inode: int
+    target_size: int
+    target_mtime_ns: int
+    target_mode: int
+    target_device: int
+    target_inode: int
     sha256: str
 
     def to_dict(self) -> dict[str, object]:
@@ -331,6 +338,12 @@ class ConsumerInventoryRow:
     kind: Literal["source", "process", "launchd"]
     location: str
     references: tuple[str, ...]
+    # ``location`` predates consumer migration and remains the canonical
+    # human-readable provenance.  Keep the machine-actionable launchd label
+    # and active state separately so a staged plan never mistakes an unloaded
+    # historical plist for a live consumer.
+    label: str = ""
+    active: bool = True
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -369,6 +382,44 @@ class ConsumerInventory:
             roster_version=self.roster_version,
             signature=self.signature,
         )
+
+
+@dataclass(frozen=True)
+class ConsumerReplacement:
+    """One operator-staged replacement for a retired consumer."""
+
+    old_label: str
+    new_label: str
+    command: tuple[str, ...]
+    owner: str
+    restart_required: bool
+    config_sha256: str
+    rollback_action: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "old_label": self.old_label,
+            "new_label": self.new_label,
+            "command": list(self.command),
+            "owner": self.owner,
+            "restart_required": self.restart_required,
+            "config_sha256": self.config_sha256,
+            "rollback_action": self.rollback_action,
+        }
+
+
+@dataclass(frozen=True)
+class ConsumerReplacementPlan:
+    """Deterministic, reviewable set of consumer replacements."""
+
+    rows: tuple[ConsumerReplacement, ...]
+    digest: str
+
+    def by_old_label(self, label: str) -> ConsumerReplacement:
+        for row in self.rows:
+            if row.old_label == label:
+                return row
+        raise KeyError(f"consumer replacement is not present: {label}")
 
 
 @dataclass(frozen=True)

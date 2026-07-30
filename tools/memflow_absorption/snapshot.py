@@ -56,24 +56,38 @@ def create_readonly_snapshot(source: Path, target: Path) -> SnapshotReceipt:
     source_path = Path(os.path.abspath(os.fspath(source)))
     target_path = Path(os.path.abspath(os.fspath(target)))
     data, observed = _read_regular_file(source_path)
+    target_mode = stat.S_IMODE(observed.st_mode) & 0o444
+    if target_mode == 0:
+        target_mode = 0o400
     receipt = SnapshotReceipt(
-        schema="memo.cutover_snapshot_receipt.v1",
+        schema="memo.cutover_snapshot_receipt.v2",
         source=str(source_path),
         target=str(target_path),
         source_size=observed.st_size,
         source_mtime_ns=observed.st_mtime_ns,
         source_mode=stat.S_IMODE(observed.st_mode),
+        source_device=observed.st_dev,
+        source_inode=observed.st_ino,
+        target_size=len(data),
+        target_mtime_ns=observed.st_mtime_ns,
+        target_mode=target_mode,
+        target_device=0,
+        target_inode=0,
         sha256=hashlib.sha256(data).hexdigest(),
     )
     receipt_name = f"{target_path.name}.receipt.json"
-    target_mode = stat.S_IMODE(observed.st_mode) & 0o444
-    if target_mode == 0:
-        target_mode = 0o400
     try:
         with open_secure_directory(target_path.parent, create=True) as directory:
             if directory.exists(target_path.name) or directory.exists(receipt_name):
                 raise SnapshotError("snapshot destination already exists")
             directory.create_bytes_exclusive(target_path.name, data, mode=target_mode)
+            target_stat = directory.stat(target_path.name)
+            receipt = SnapshotReceipt(
+                **{**receipt.to_dict(), "target_size": target_stat.st_size,
+                   "target_mtime_ns": target_stat.st_mtime_ns,
+                   "target_mode": stat.S_IMODE(target_stat.st_mode),
+                   "target_device": target_stat.st_dev, "target_inode": target_stat.st_ino}
+            )
             try:
                 directory.create_bytes_exclusive(
                     receipt_name,
