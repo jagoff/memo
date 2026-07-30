@@ -7,14 +7,44 @@ agent-memory projects. For the complete live flag registry, run
 `memo config flags`.
 
 - [Install detail](#install-detail)
+- [Use cases](#use-cases)
 - [MCP setup](#mcp-setup)
 - [MCP tools](#mcp-tools)
 - [Ambient memory](#ambient-memory)
-- [Surfaces](#surfaces) — session briefing, semantic map, time-machine
+- [Surfaces](#surfaces) — briefing, resume, dream, sync, temporal facts, health, ingestion, secrets
 - [CLI reference](#cli-reference)
 - [Configuration](#configuration)
 - [Design and comparison](#design-and-comparison)
 - [Information flow diagram](#information-flow-diagram)
+
+---
+
+## Use cases
+
+- **Continuity across sessions.** Decide "we use Postgres, not Mongo" today;
+  tomorrow, in a fresh session, the agent recalls it on its own. Recall injects
+  the decision before the agent answers, so you do not have to re-explain it.
+- **Shared memory across agents.** Save something while working in Claude Code;
+  Codex, Cursor, Cline, Devin, or OpenCode can pick it up later from the same
+  local store over MCP.
+- **Memory that follows you across Macs.** Start on a laptop and continue on a
+  desktop. The corpus travels over serverless git sync and the agent starts with
+  the same context on both.
+- **Preferences and conventions that stick.** "Tests first", "commit messages
+  in English", and "don't touch the auth module" become durable instructions
+  that can be retrieved in later sessions.
+- **Contradiction radar.** Change your mind about an old decision and memo flags
+  the now-stale version instead of quietly serving both.
+- **Time-machine and audit.** Ask "what did we know about this bug last month?"
+  and reconstruct the state of the corpus at that date.
+- **Instant project onboarding.** A cold agent receives durable decisions,
+  facts, preferences, open loops, and crash-recovery context in its
+  session-start briefing.
+- **Exact transcript lookup (opt-in).** `memo verbatim search` finds the precise
+  wording of past local transcript turns through a private, lexical-only FTS5
+  index that never enters ambient recall.
+- **Fewer tokens, not more.** Recall injects the relevant answer on a bounded
+  budget, and the default MCP surface exposes 38 tools instead of the full 159.
 
 ---
 
@@ -156,6 +186,33 @@ memo doctor --strict-runtime
 A healthy isolated install prints a single `memo` path, resolves `memo` and
 `memo-mcp` from the same environment, and passes `memo doctor --strict-runtime`.
 
+### Requirements
+
+| Platform | Support |
+|---|---|
+| **macOS, Apple Silicon (M1–M4)** | Full MLX path: embedder, reranker, `ask`, `synthesize`, and `dream`. |
+| **Linux / Ubuntu** | Standalone CPU backend for search, recall, and save. Install with `pipx install "mlx-memo[cpu]"`; see [ubuntu.md](ubuntu.md). |
+| **Intel Mac** | The CPU path is currently unsupported because current PyTorch releases do not ship Python 3.13 wheels for that platform. |
+| **Docker** | Cross-platform CPU backend; see [docker.md](docker.md). |
+
+Python 3.13 or newer is required when installing without `uv`; the one-line
+installer uses a managed Python automatically when necessary. Allow roughly
+8 GB for the default model set. An Obsidian vault is optional — without one,
+memo stores Markdown under `~/Documents/memo/`.
+
+### Measured results
+
+These are command outputs from the author's live corpus of roughly 4,900
+memories, measured 2026-07-20. The methodology, reproduction commands,
+limitations, and adversarial review live in [BENCHMARK.md](BENCHMARK.md).
+
+| Metric | Result | Command |
+|---|---|---|
+| LongMemEval oracle (retrieval-only, 60 stratified questions) — recall@5 | 0.746 weighted micro | `memo eval bench` |
+| Curated regression set — noise@5 (unfiltered config) | 0.00 | `memo eval recall` |
+| Live recall hit rate (~1,230 hook fires, log window ~31 days) | 99% (97% strong) | `memo stats` |
+| Tokens saved — estimated usage ledger, all-time | 1.21M (constants disclosed) | `memo tokens` |
+
 ---
 
 ## MCP setup
@@ -191,9 +248,10 @@ Released wheels include the Claude/Codex/Devin agent assets, so a normal
 checkout, pass `--repo /path/to/memo` to test uncommitted plugin changes.
 
 Tools surface inside the agent as `mcp__memo__memo_*`. Agent installs default to
-a 30-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
-`search`, `unified_briefing`, `version`, session/capture notifications, and
-Memo-native evidence, operational-continuity, and outcome-learning helpers) so
+a 38-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
+`search`, `unified_briefing`, `version`, lifecycle, session/capture
+notifications, and Memo-native evidence, operational-continuity, and
+outcome-learning helpers) so
 administrative schemas don't consume model context — set
 `MEMO_MCP_PROFILE=core`/`slim` (55 tools) or `full`/`default` (159 tools) only
 for clients that genuinely need the larger administrative surface.
@@ -329,11 +387,11 @@ are intentionally absent from the default agent profile:
 
 The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 
-| Profile | Tool count | Use |
-|---|---:|---|
-| `agent` (default) | 38 | Essential memory, evidence, continuity, lifecycle, and outcome-learning surface. |
-| `core` / `slim` | 55 | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
-| `full` / `default` | 159 | Every advanced domain module and diagnostic tool. |
+| Profile | Tool count | Schema tokens | Use |
+|---|---:|---:|---|
+| `agent` (default) | 38 | ~3.8k | Essential memory, evidence, continuity, lifecycle, and outcome-learning surface. |
+| `core` / `slim` | 55 | ~5.0k | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
+| `full` / `default` | 159 | ~18k | Every advanced domain module and diagnostic tool. |
 
 Mutating MCP calls pass through a bounded process-local FIFO by default
 (`MEMO_MCP_WRITE_QUEUE_SIZE=32`); read-only calls bypass it. The
@@ -348,13 +406,19 @@ metadata. Use the full profile's `mem_relation_reviews`, `mem_judge`, and
 `MEMO_RELATION_CANDIDATES_ENABLED=0` and
 `MEMO_RELATION_ANNOTATIONS_ENABLED=0` flags remain rollback controls.
 
-The default `agent` profile exposes exactly:
+The default `agent` profile exposes exactly 38 tools:
 
-`memo_ask`, `memo_context`, `memo_get`, `memo_graph`, `memo_idle_capture`,
-`memo_profile`,
-`memo_offload`, `memo_pop_notification`, `memo_rename`, `memo_save`,
-`memo_save_text`, `memo_search`, `memo_start_session`, `memo_unified_briefing`,
-`memo_version`, `memo_write_queue_status`.
+`memo_ask`, `memo_attention_ack`, `memo_attention_add`, `memo_conflict_open`,
+`memo_conflict_resolve`, `memo_context`, `memo_delete`, `memo_evidence_pack`,
+`memo_federation_preview`, `memo_focus_clear`, `memo_focus_set`, `memo_get`,
+`memo_graph`, `memo_handoff_consume`, `memo_handoff_create`,
+`memo_history`, `memo_idle_capture`, `memo_invalidate`, `memo_journal_verify`,
+`memo_mark_reviewed`, `memo_offload`, `memo_operational_state`,
+`memo_outcome_record`, `memo_pop_notification`, `memo_procedure_candidates`,
+`memo_procedure_promote`, `memo_profile`, `memo_rename`, `memo_review_due`,
+`memo_save`, `memo_save_text`, `memo_search`, `memo_start_session`,
+`memo_supersede`, `memo_unified_briefing`, `memo_update`, `memo_version`,
+`memo_write_queue_status`.
 
 The `core` / `slim` profile adds CRUD/admin-lite tools:
 
@@ -385,6 +449,31 @@ Core tool behavior:
 | `memo_offload(content, title?)` | Content-addressed offload for large text that should not be inlined into model context. |
 | `memo_idle_capture(dry_run?)`, `memo_pop_notification()`, `memo_start_session(cwd?)`, `memo_save_text(text, title?)` | MCP-only capture/session plumbing for clients without Claude Code hooks. |
 | `memo_version()` | Installed package version plus backend protocol version. |
+
+### Local HTTP API
+
+Non-MCP clients can use `memo http-api`, which serves the same operations as a
+localhost REST API with plain JSON. Every `/api/*` route requires
+`Authorization: Bearer <token>`; only `/health` is public. The first run creates
+a private token at `$MEMO_STATE_DIR/http-api-token` (normally
+`~/.local/share/memo/http-api-token`), or you can provide a 32+ character
+`MEMO_HTTP_API_TOKEN`.
+
+```bash
+memo http-api
+curl -H "Authorization: Bearer $(tr -d '\n' < ~/.local/share/memo/http-api-token)" \
+  http://127.0.0.1:8080/api/stats
+```
+
+Both REST and MCP HTTP reject non-loopback binds unless explicitly
+acknowledged, never allow unauthenticated non-loopback exposure, add defensive
+response headers, and limit each source to 300 requests per minute per process.
+For an authenticated network bind, use
+`memo http-api --host 0.0.0.0 --allow-non-loopback`; for MCP set
+`MEMO_MCP_TRANSPORT=http`, `MEMO_MCP_HOST=0.0.0.0`, and
+`MEMO_MCP_ALLOW_NON_LOOPBACK=1`. Use TLS or a trusted reverse proxy whenever
+traffic leaves the machine. `--allow-no-auth` / `MEMO_MCP_ALLOW_NO_AUTH=1`
+exist only for explicit loopback development.
 
 ---
 
@@ -469,12 +558,23 @@ session start if macOS killed it under memory pressure.
 | `MEMO_RECALL_GLOBAL_BOOST` | `0.10` | Additive boost for global preferences/feedback and memories without a project tag |
 | `MEMO_RECALL_MIN_BODY_CHARS` | `40` | Filter out stub memories (empty or near-empty bodies) |
 | `MEMO_RECALL_FORCE_MODE` | unset | Set to `1` to disable the warm-signal cold-start check |
+| `MEMO_RECALL_FORMAT` | `auto` | Choose `full` or one-line `compact` rendering automatically; set `compact` explicitly for the smallest block |
+| `MEMO_RECALL_TRIVIAL_BAIL` | `1` | Skip recall for ≤3-word confirmations such as “yes”, “ok”, “sí”, or “dale” |
 | `MEMO_RECALL_DEBUG` | unset | Print failure reasons to stderr |
 
 The default floor is intentionally below the older `0.6` setting because recall
 now applies recency, health, project/global, and optional graph/synthesis
 signals after raw vector similarity. Tune higher for precision-only corpora or
-lower on very sparse corpora.
+lower on very sparse corpora. The installed Claude Code hook overrides the
+general 600-token budget with `MEMO_RECALL_TOKEN_BUDGET=160` and
+`MEMO_RECALL_TOP_K=1`.
+
+### Visible memory context
+
+`memo context "<question>"` and the `memo_context` MCP tool show exactly what
+memory would be injected before an agent answers, without making an LLM call.
+Use `memo search "<query>" --explain` to inspect the vector, keyword, recency,
+health, graph, and other available ranking reasons for each hit.
 
 ### Curated graph retrieval
 
@@ -671,6 +771,31 @@ _Continue with: `give me loop N` · `/memo get <id>` · `/memo ask <question>`_
 | `MEMO_BRIEFING_LOOPS_DAYS` | `7` | Recency window for open loops |
 | `MEMO_BRIEFING_DEBUG` | unset | Print failures to stderr |
 
+### Resume any session — `memo resume`
+
+`memo resume` opens one arrow-key picker over every recent coding session on the
+machine — Claude Code, Codex, Devin, Gemini, and OpenCode — merged with memo's
+own recall-grounded snapshots. If a terminal crashed, a session was closed, or
+you switched agents mid-task, reopen the project and continue from the original
+agent session.
+
+![memo resume picker across Claude, Codex, Devin, Gemini, and OpenCode](resume-screenshot.png)
+
+```bash
+memo resume                                # ↑/↓ browse, type to search, Enter resumes
+memo resume --all-cwd                      # widen beyond the current project
+memo resume 019f51e9                       # jump to one session by id or prefix
+memo episodes search "vec0 timeout bug"    # find a past session by meaning
+```
+
+Each row resumes natively in its own agent — `claude --resume`,
+`codex resume`, `devin -r`, `gemini --session-file`, or
+`opencode --session` — so control returns to the real session rather than a
+copy. Type-to-search reranks over full session history using episodic memory;
+`Tab` toggles current-directory/all-directory filtering and updated/created
+sorting. Any supported agent that writes a local transcript is discovered
+automatically.
+
 ### Semantic map — `memo map`
 
 `memo map` reads all embeddings in `memvec.db`, projects them to 2D via **UMAP**
@@ -707,9 +832,235 @@ Use cases: debugging agent regressions, reproducible AI behaviour (serve a past
 snapshot as an alternate MCP), personal audit, and compliance ("what did the
 model know when it took action X?").
 
+### Contradiction radar
+
+```bash
+memo contradict scan
+memo contradict triage
+memo review due
+```
+
+The corpus scanner identifies conflicting facts, while interactive triage can
+fuse them, prefer the newer statement, or dismiss the candidate. Explicit
+freshness obligations never auto-invalidate records.
+
+Eligible decision, preference, policy, configuration, and architecture saves
+also generate up to three namespace-safe relation candidates by default without
+an LLM call. Judged relations attach to normal search/ask results; pending
+candidates stay confined to review surfaces. The full MCP profile exposes
+`mem_relation_reviews`, `mem_judge`, and `mem_compare`. Disable candidate
+generation or result annotations independently with
+`MEMO_RELATION_CANDIDATES_ENABLED=0` and
+`MEMO_RELATION_ANNOTATIONS_ENABLED=0`.
+
+The optional LLM-backed scanner can classify additional pairs. Results persist
+as canonical relations in the main rebuildable index; legacy
+`contradictions.db` data is imported once and remains readable during the
+compatibility window.
+
+### Dream — autonomous maintenance
+
+Run `memo synthesize` directly to generate LLM-backed cross-cluster insights.
+With `MEMO_SYNTHESIS_ENABLED=1`, scheduled maintenance can create
+`type=synthesis` memories that cite their source clusters.
+
+`memo dream` runs nightly at 03:00 by default as a seven-phase autonomous
+maintenance pipeline:
+
+1. **Orientation** inventories the corpus.
+2. **Signal gather** mines new transcript labels and usage signals.
+3. **Heal** resolves conflicts and consolidates duplicates.
+4. **Prune** archives stale records, applies decay, and removes low-quality
+   entries.
+5. **Enrich** synthesizes cross-cluster insights and extracts entities.
+6. **Optimize** evicts or compresses when necessary and refreshes derived
+   quality signals.
+7. **Prewarm** caches the top query embeddings so the next warm recall remains
+   under 200 ms.
+
+```bash
+memo dream run                 # run once in the foreground
+memo dream status              # show the latest receipt and changes
+memo dream if-due              # no-op unless the daily interval elapsed
+```
+
+Every run writes an auditable receipt to
+`$MEMO_STATE_DIR/dream/last.json` (normally
+`~/.local/share/memo/dream/last.json`) with timestamp, duration, phase counts,
+changes, and errors. A failed pass is recorded and later passes continue.
+
+![memo dream autonomous maintenance pipeline](diagram-dream.svg)
+
+Optional self-improvement passes are independently gated and default off:
+
+- **Tuner** (`MEMO_DREAM_TUNE_ENABLED=1`) mines ground-truth usage labels,
+  tunes `MEMO_RECALL_MIN_SIM`, and reverts when the eval baseline regresses.
+  Run it directly with `memo dream tune`.
+- **Episode consolidation**
+  (`MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED=1`) abstracts recurring
+  cross-session work into synthesis memories. Run
+  `memo dream consolidate-episodes`.
+- **Anticipation** (`MEMO_DREAM_ANTICIPATE_ENABLED=1`) surfaces unmet gaps and
+  hot queries, then prewarms their embeddings. Run `memo dream anticipate`.
+
+The current pipeline also has separately gated passes for model calibration,
+graph tuning, profiles, chronicle, code drift, graph communities/bridges,
+validity extraction, recall evaluation, and other experimental maintenance.
+Their enabled/disabled status and failures are always represented in the same
+receipt.
+
+### Cross-Mac git sync
+
+```bash
+memo sync bootstrap git@github.com:yourname/memo-sync.git
+memo sync once
+```
+
+Sync uses pull-with-rebase before push, a lock-guarded single owner per machine,
+and async debounced hooks so the corpus stays current without blocking normal
+agent work. The remote is one you own; memo does not host the corpus.
+
+### Obsidian vault as source of truth
+
+```bash
+MEMO_MEMORIES_IN_VAULT=1 memo init
+memo migrate --into-vault
+```
+
+Every memory remains a plain Markdown file. Human edits in Obsidian win on the
+next `memo reindex`, while SQLite is a derived search index that can be rebuilt
+from those files. `memo migrate --into-vault` is non-destructive. A normal
+delete removes the index entry before removing the source file, preventing a
+failed index operation from silently orphaning the canonical state.
+
+### Temporal facts
+
+```bash
+memo temporal facts add postgres is "primary datastore" --valid-at 2026-01-01
+memo temporal facts list --as-of 2026-03-01
+```
+
+memo extracts subject–predicate–object fact edges and can fuse a temporal
+fact-edge leg into hybrid retrieval through RRF
+(`MEMO_FACT_RETRIEVAL_ENABLED`, on by default; weight
+`MEMO_FACT_RETRIEVAL_WEIGHT=0.6`). Query-relevant facts can attach to
+search/ask results (`MEMO_FACT_SURFACE_ENABLED`) and appear in the session
+briefing. Validity windows (`--valid-at`, `--invalid-at`, `--expired-at`) make
+`list --as-of <date>` return only facts that were live at that date. Disable
+the retrieval leg with `MEMO_FACT_RETRIEVAL_ENABLED=0`.
+
+### Health scoring and eval gates
+
+```bash
+memo health
+memo eval recall --labels eval/regression_labels.json --k 5
+memo eval recall --gate
+memo eval recall --update-baseline
+memo eval memory --labels eval/regression_labels.json
+```
+
+`memo health` reports grounded rate, ROI, and usefulness. Wire
+`memo eval recall --gate` into CI or a pre-commit hook to fail when retrieval
+precision regresses. Recall evaluation also reports graph diagnostics
+(`graph_recall_gain`, `graph_noise_rate`, `graph_explanation_coverage`,
+`hub_noise_rate`, `latency_ms_graph`) when graph attribution is present, while
+the hard gate remains precision/noise. `memo feedback` records per-source
+positive or negative votes that can influence future retrieval.
+
+### Multi-modal ingestion
+
+```bash
+memo ocr-image screenshot.png
+MEMO_VLM_CAPTION_ENABLED=1 memo ingest ~/Vault --include-orphan-images
+memo ingest ~/Vault --include-audio
+memo search "whiteboard diagram"
+```
+
+Images and audio become searchable by sending local Vision OCR, optional VLM
+captions, and `mlx-whisper` transcripts through the normal text index. The old
+placeholder `memo multimodal` store has been removed.
+
+### Secret storage
+
+```bash
+export MEMO_SECRET_STORAGE_ENABLED=1
+memo secret save --name openai-api-key --kind api_token   # reads value from stdin
+memo secret get --name openai-api-key
+memo secret list
+```
+
+Secret storage is off by default. Values are sealed with AES-256-GCM plus
+authenticated name/kind metadata under a random 256-bit master key at
+`$MEMO_STATE_DIR/secret-master.key`; memo enforces a `0700` state directory and
+`0600` key/database permissions. Credentials live only in the isolated
+`secret_store` table: no Markdown marker is created, and secret values are
+never indexed, embedded, recalled, added to generated context, backed up as
+memory Markdown, or committed by memo's git sync. `memo secret list` exposes
+metadata only. Treat `memo secret get` and `memo secret export` as explicit
+plaintext disclosure operations.
+
 ---
 
 ## CLI reference
+
+### Background daemons
+
+| Daemon | Command | Purpose |
+|---|---|---|
+| recall-daemon | `memo recall-daemon start` | Keep the MLX embedder warm over a local socket for sub-200 ms recall. |
+| idle-daemon | auto-started by `memo-mcp` | Auto-capture for MCP-only clients such as Devin and OpenCode. |
+| ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion. |
+| maint-daemon | `memo maint-daemon start` | Background cleanup and synthesis. |
+
+### All 137 top-level CLI commands
+
+<details>
+<summary>Complete command inventory</summary>
+
+**Core:** `save` `search` `ask` `get` `edit` `rename` `delete` `list`
+
+**Recall & Hooks:** `recall` `recall-hook` `context` `briefing` `continuity`
+`prewarm` `capture-tick` `capture-stop` `interject` `ask-gaps` `guard` `digest`
+
+**Session & History:** `history` `as-of` `diff` `record-history` `session`
+`resume` `reflect` `mine-history` `episodes` `chronicle`
+
+**Maintenance:** `reindex` `maintain` `review` `dream` `consolidate`
+`synthesize` `dedupe` `retier` `contradict` `invalidate` `temporal`
+`compress-context`
+
+**Analysis & Quality:** `health` `stats` `doctor` `journey-check` `lint`
+`drift` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps`
+`outcome` `profile` `confidence` `graduation` `hype` `definitive` `evidence`
+
+**Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links`
+`version` `related`
+
+**Advanced Search:** `embed` `rerank` `contextual` `retrieve` `context-pack`
+`chat` `chat-ask` `repo`
+
+**Import / Export / Sync:** `import` `export` `backup` `restore` `sync`
+`ingest` `federation`
+
+**Visualization:** `tui` `dashboard` `map` `logs` `hook-log`
+
+**Setup & Config:** `init` `setup` `config` `install-mcp` `install-watcher`
+`uninstall-watcher` `install-slash` `install-statusline`
+`install-recall-hook` `install-shell-wrapper` `install-shims` `startup-banner`
+`migrate` `migrate-vault` `migrate-independence` `update` `upgrade`
+`self-update` `watch` `release` `onboard`
+
+**Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon`
+`idle-daemon`
+
+**Other:** `backend-native` `collaborative` `feedback` `query` `mandate`
+`drift` `sleep-cycle` `operational` `ocr-image` `provenance` `secret`
+`verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git`
+`token-gate` `fix` `undo` `code-facts` `code-nudge` `code-health`
+
+</details>
+
+### Command examples
 
 ```bash
 # ── Core CRUD ──────────────────────────────────────────────────────────────
@@ -869,6 +1220,29 @@ outside the edited TOML table, and keep transaction manifests/backups under
 transaction was interrupted, the TUI opens a conflict/recovery screen with
 read-only, `$EDITOR`, and backup restore paths.
 
+### Token economy
+
+The default MCP profile exposes 38 tools (~3.8k schema tokens), compared with
+159 tools (~18k) on the full profile. The bundled Claude Code recall hook also
+pins `MEMO_RECALL_TOP_K=1` and `MEMO_RECALL_TOKEN_BUDGET=160`; the general
+runtime default remains 600 tokens for clients that do not use that hook.
+
+| Technique | How to enable | Typical effect |
+|---|---|---|
+| Compact recall format | `MEMO_RECALL_FORMAT=compact` | About 65% smaller per injection |
+| Trivial prompt gate | `MEMO_RECALL_TRIVIAL_BAIL=1` (default) | Avoids recall for short confirmations such as “yes”, “ok”, or “dale” |
+| Hook recall cap | Installed hook pins `MEMO_RECALL_TOKEN_BUDGET=160` and `MEMO_RECALL_TOP_K=1` | One tightly bounded ambient memory |
+| Context file compression | `memo compress-context CLAUDE.md` | Rule-based removal of redundant context; supports `--dry-run` and `--backup` |
+
+`memo roi` does not infer value from corpus size. It reads the actual
+recall/grounding/re-ask ledgers and reports accumulated estimates using
+disclosed, configurable defaults: 350 tokens per grounded recall and 900 tokens
+per avoided re-ask (`MEMO_ROI_TOKENS_PER_GROUNDED` and
+`MEMO_ROI_TOKENS_PER_REASK`). `memo tokens` reports the separate usage-savings
+ledger.
+
+![memo tokens usage-savings ledger](tokens-screenshot.png)
+
 **Storage & paths**
 
 | Env var | Default | What |
@@ -984,6 +1358,14 @@ model's hidden size, and `memo doctor` validates it at load.
 - **No Ollama dependency, anywhere.** `pyproject.toml` doesn't declare it;
   `doctor` doesn't probe `:11434`.
 
+### Retrieval architecture
+
+A vector leg (MLX on Apple Silicon or `sentence-transformers` on CPU) and a
+keyword leg (FTS5/Tantivy with Spanish diacritic folding) run in parallel.
+Their rankings fuse through Reciprocal Rank Fusion, then an optional MLX
+cross-encoder reranks the candidate set. Markdown remains canonical and SQLite
+is the rebuildable retrieval index.
+
 ### How memo compares
 
 memo's neighbours diverge on the things that matter day-to-day: where the model
@@ -1005,6 +1387,31 @@ own memory in plain text.
 
 > Projects move fast — cells reflect the public state of each repo at the time of
 > writing. PR a correction if any is stale.
+
+#### Capability matrix
+
+This expanded matrix preserves the feature-level comparison used by the project
+in mid-2026.
+
+| Capability | memo | [mem0](https://github.com/mem0ai/mem0) | [letta](https://github.com/letta-ai/letta) | [cognee](https://github.com/topoteretes/cognee) | [engram](https://github.com/Gentleman-Programming/engram) | [basic-memory](https://github.com/basicmachines-co/basic-memory) | [cipher](https://github.com/campfirein/cipher) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| 100% local (no cloud API) | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ |
+| **Time-machine** (rewind corpus to any date) | ✅ | ❌ | ⚠️ | ❌ | ❌ | ⚠️ | ⚠️ |
+| **Contradiction radar** (detect + resolve conflicts) | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ | ❌ |
+| **Synthesis pipeline** (auto-infer cross-cluster insights) | ✅ | ❌ | ✅ | ⚠️ | ❌ | ❌ | ⚠️ |
+| **Cross-Mac git sync** (shared corpus, no server) | ✅ | ❌ | ⚠️ | ❌ | ✅ | ✅ | ⚠️ |
+| Cloud sync (opt-in replication) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **TUI** (terminal UI) | ✅ | ❌ | ⚠️ | ❌ | ✅ | ❌ | ✅ |
+| Obsidian as source of truth | ✅ | ❌ | ⚠️ | ❌ | ❌ | ✅ | ❌ |
+| Knowledge graph + entity extraction | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ⚠️ |
+| Eval regression gate (pre-commit wireable) | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ | ❌ | ❌ |
+| Multi-modal (images, audio OCR) | ✅ | ⚠️ | ⚠️ | ✅ | ❌ | ❌ | ❌ |
+| MCP surface profiles (token economy) | ✅ | ❌ | ❌ | ⚠️ | ⚠️ | ✅ | ❌ |
+| **Passive capture** (auto-extract from transcripts) | ✅ | ⚠️ | ✅ | ✅ | ✅ | ❌ | ⚠️ |
+| Session timeline (context before/after) | ✅ | ❌ | ❌ | ❌ | ✅ | ⚠️ | ⚠️ |
+
+<sub>✅ first-class · ⚠️ partial, config-gated, or add-on · ❌ absent.
+Corrections with links to current project documentation are welcome.</sub>
 
 **The differentiators in plain terms:**
 
@@ -1055,12 +1462,38 @@ EvidencePacks, operational continuity, conflict/write policy, outcome learning,
 and signed federation. None of these surfaces imports or launches another
 memory product or a private contract package.
 
+- Every operational mutation enters a tamper-evident, hash-chained journal.
+- `memo evidence "<question>"` returns a bounded `EvidencePack` or explicitly
+  abstains when support is insufficient.
+- `memo operational outcome record` connects task results to the memories used;
+  repeated evidence can promote reusable procedures and failure patterns.
+- `memo federation` exports only records visible to the named recipient and
+  verifies signed bundles before importing them.
+- `memo definitive check` audits those guarantees, while
+  `memo definitive benchmark` gates journal throughput.
+
+Existing vaults remain Markdown-compatible. Legacy operational metadata is
+translated one way into Memo-native contracts and is never required at runtime.
+See [memo-4-independence.md](memo-4-independence.md).
+
 | Surface | Doc | Default |
 |---|---|---|
 | Native focus, handoffs, attention, and briefing | [briefing.md](briefing.md) | ON |
 | Native contradiction and conflict lifecycle | [contradict-loop.md](contradict-loop.md) | ON |
 | Independence model and legacy migration | [memo-4-independence.md](memo-4-independence.md) | ON |
 | Embedder daemon — Memo-owned MLX sidecar protocol | [embedder-daemon.md](embedder-daemon.md) | ON via `SessionStart` |
+
+### License and provenance
+
+memo is MIT licensed; see [LICENSE](../LICENSE). It was forked philosophically
+from [`mem-vault`](https://github.com/jagoff/mem-vault) for the storage layout
+and frontmatter schema. The original MLX backend pieces were ported from
+[`obsidian-rag`](https://github.com/jagoff/rag-obsidian).
+
+Memo is now a standalone system: runtime, state, trust, recovery, federation,
+and the complete memory loop are owned within this repository. Earlier
+Memflow/Synapse integration and private contract packages are provenance, not
+runtime dependencies.
 
 ## Information flow diagram
 
