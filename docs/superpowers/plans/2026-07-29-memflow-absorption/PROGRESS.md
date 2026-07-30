@@ -6,7 +6,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 10:25 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 10:41 America/Argentina/Cordoba
 
 ### En curso
 
@@ -15,12 +15,13 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   `T5 PASS`, `T6 PASS`.
 - [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
   nuevo — agente `constant_code_reviewer`; `P01-T04 FAIL HIGH` cerrado y
-  auditoría de `P03-T03` en curso.
+  `P03-T03 FAIL BLOCKER` confirmado; Secure Enclave `23a64ccb` en revisión.
 - [x] Auditoría read-only cross-repo de Plan 03 T3/T4: ambos lotes corregidos
   siguen presentes sin commit y no se solapan con Secure Enclave.
 - [ ] Cerrar el prerrequisito productivo de Plan 01 Tarea 7: proveedor
-  Secure Enclave P-256, compatibilidad Ed25519 y lifecycle completo — agente
-  `secure_enclave_provider`.
+  Secure Enclave P-256, compatibilidad Ed25519 y lifecycle completo —
+  implementación `23a64ccb`, `236 passed / 1 skipped`, smoke productivo M3
+  `1 passed`; revisión independiente en curso.
 - [x] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
   multi-origen puede divergir del rebuild por orden global. Agregar regresión
   `newest(a) -> older(b)` y re-reducción transaccional determinista. Revisión
@@ -35,25 +36,29 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   habilitar activación.
 - [ ] Corregir `P01-T04 HIGH`: si el parent se renombra después de abrir su FD,
   la publicación puede completar en el directorio desplazado mientras el
-  target solicitado no existe. Agregar regresión, ligar el FD al pathname
-  solicitado durante todo el publish y obtener re-review.
+  target solicitado no existe. Implementador `p01_t04_parent_binding_fix`
+  escribiendo las dos regresiones y binding descriptor-relative.
 - [x] Corrección técnica `P01-T06 HIGH/MEDIUM`: replay del evento/resultado
   canónico por idempotency key, validación de identidad explícita y derivación
   de key default bajo el lock de sesión. Revisión final: `PASS`, `141 passed`.
 - [ ] Completar el gate diferido `P01-T03 MEDIUM`: stale/missing epoch por
   MCP/CLI/daemon/Memory/direct store queda bloqueante de T7.
 - [ ] Corregir `P03-T01`: manifest fail-closed ante symlinks y receipts stale;
-  validar snapshot bytes/target/mode, cobertura/fixtures y transform allowlist.
+  validar snapshot bytes/target/mode, cobertura/freshness estructurada,
+  predicates/fixtures y transform allowlist con digest.
 - [ ] Corregir `P03-T02/T03`: cubrir todos los writers CLI/auxiliares y
-  reverificar criptográficamente el control OID durante drain.
+  autoridad descriptor-relative. Auditoría confirmó writers sin fence en
+  chat delete, dream, homeostasis, autopilot, kernel, user_signal, lookup,
+  quality_feedback y cursor de extract.
 - [ ] Corregir `P03-T04 HIGH`: construir desde snapshot/commit inmutable o
   revalidar el repo después del build antes de publicar runtime. Corrección
   no commiteada cubre snapshot kernel-read-only, digest externo y árbol
   completo; gate actual `31 passed`, mypy/Ruff limpios.
-- [ ] Finalizar `P03-T03`: corrección no commiteada reemplaza el JSON de
-  entorno autoritativo por un commit Git exacto con `control.json` canónico
-  firmado. Gate actual con el intérprete del repo: `214 passed`, mypy/Ruff
-  limpios; revisión independiente en curso.
+- [ ] Corregir `P03-T03 BLOCKER`: aunque el control ya proviene de un commit
+  Git exacto, `GIT_DIR` heredado puede desviar el gate fresh a otro state root,
+  ocultar el ledger real (`inflight=1`) y devolver falsamente `clean=True`.
+  Fijar la autoridad del root, sanear entorno/ejecutable Git y agregar la
+  regresión. La matriz nominal previa fue `214 passed`, mypy/Ruff limpios.
 - [ ] Reemplazar expiries fijas de tests P03 que ya vencieron; matriz actual
   `221 passed, 3 failed` por tiempo de fixture.
 
@@ -63,6 +68,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   indispensables; eliminar capacidades sin uso junto con Memflow.
 - [x] Estrategia fijada: revisores y subagentes paralelos con ownership no
   superpuesto.
+- [x] Auditoría read-only P03-T01/T02 completada: `T01` tiene 1 `BLOCKER` +
+  3 `HIGH`; `T02` tiene 1 `BLOCKER` + 1 `HIGH`, con paths y briefs mínimos
+  congelados para el próximo fix-loop.
 - [x] P03-T03 drenaje observable inicial entregado en Memflow `a3a6070912`;
   el control Git-autoritativo exacto permanece abierto.
 - [x] Evidencia P03-T03 registrada en Memo `e4de56db`.
