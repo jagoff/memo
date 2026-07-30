@@ -25,7 +25,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Corrección técnica `P01-T02 HIGH`: TOCTOU entre verificación del ledger v1 y la
   relectura usada por manifest/anchor. Capturar una sola instantánea
   descriptor-relative con `O_NOFOLLOW` y derivar de ella bytes, eventos, heads
-  y manifest. Focused `70 passed`; Ruff y mypy limpios; re-revisión pendiente.
+  y manifest. Re-review de `0b2e3c9d`: `FAIL MEDIUM` por carrera al crear root;
+  follow-up técnico listo con `79 passed`; nueva re-revisión pendiente.
 - [ ] Resolver `P01-T07 BLOCKER`: `MacOSKeychainProvider` es un placeholder
   fail-closed; el fresh install v2 productivo no puede crear la clave,
   roster y epoch-0. Implementar un provider productivo no exportable antes de
@@ -75,6 +76,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] `P01-T02` GREEN: snapshot descriptor-relative único, identidad exacta
   del descriptor, detección de reemplazo same-size y un solo consumo en
   plan/anclaje; `70 passed`, Ruff y mypy limpios.
+- [x] `P01-T02` follow-up: lock estable por path absoluto antes del lock por
+  identidad, incluso si se crean ancestros; device vacío ligado al manifest.
+  Matriz atomic+ledger+migration `79 passed`, Ruff y mypy limpios.
 - [x] `P01-T06` GREEN técnico: timestamps canónicos estables en retry y
   lecturas con artifacts locales; `118 passed`, Ruff y mypy limpios.
 - [x] `P01-T03` re-revisión final: `PASS`; backfill global y upgrade v1
@@ -235,6 +239,11 @@ Estado: **1/7 aceptadas**.
   eventos, heads y manifest; rechaza drift de identidad, metadata o paths.
 - [x] Regresiones de mezcla verify/reread y reemplazo same-size.
 - [x] Focused ledger+migration: `70 passed`; Ruff y mypy limpios.
+- [x] Re-revisión de `0b2e3c9d`: `FAIL MEDIUM`; el primer append podía crear
+  ancestros y adquirir una identidad de lock distinta.
+- [x] Follow-up: doble exclusión estable-path + descriptor-identity y binding
+  de devices persistentes sin segmentos/head.
+- [x] Atomic I/O + ledger + migration: `79 passed`; Ruff y mypy limpios.
 - [ ] Revisión independiente y `PASS`.
 
 ### Tarea 3 — Vistas SQLite transaccionales e idempotencia

@@ -817,6 +817,23 @@ def test_memo_v1_snapshot_rejects_same_size_path_replacement(
         OperationLedgerV2.verified_legacy_snapshot(legacy)
 
 
+def test_memo_v1_snapshot_binds_an_empty_persistent_device_directory(
+    tmp_path: Path,
+) -> None:
+    legacy = LegacyOperationLedger(tmp_path / "legacy", device_id="device-empty")
+    (legacy.root / "events" / "device-empty").mkdir(mode=0o700, parents=True)
+    empty = LegacyOperationLedger(tmp_path / "empty", device_id="device-empty")
+
+    manifest, events, heads = OperationLedgerV2.verified_legacy_snapshot(legacy)
+
+    assert events == []
+    assert heads == {"device-empty": ""}
+    assert manifest["heads"] == {"device-empty": ""}
+    assert OperationLedgerV2.legacy_manifest_sha256(
+        legacy
+    ) != OperationLedgerV2.legacy_manifest_sha256(empty)
+
+
 def test_compaction_anchor_advances_only_from_current_anchor_and_keeps_raw_checkpoint(
     tmp_path: Path,
 ) -> None:

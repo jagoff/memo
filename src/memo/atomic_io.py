@@ -468,6 +468,42 @@ def _local_lock(key: str) -> threading.RLock:
 
 
 @contextmanager
+def _exclusive_lock(lock_key: str) -> Iterator[None]:
+    local = _local_lock(lock_key)
+    with local:
+        held = getattr(_HELD_LOCKS, "locks", None)
+        if held is None:
+            held = {}
+            _HELD_LOCKS.locks = held
+        if lock_key in held:
+            held[lock_key] += 1
+            try:
+                yield
+            finally:
+                held[lock_key] -= 1
+            return
+        lock_root = Path(tempfile.gettempdir()) / f"memo-{os.getuid()}-locks"
+        lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with contextlib.suppress(OSError):
+            lock_root.chmod(0o700)
+        lock_path = lock_root / f"{lock_key}.lock"
+        descriptor = os.open(
+            lock_path,
+            os.O_CREAT | os.O_RDWR | _NOFOLLOW,
+            0o600,
+        )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            held[lock_key] = 1
+            yield
+        finally:
+            held.pop(lock_key, None)
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+
+@contextmanager
 def _directory_lock(
     root: Path,
     *,
@@ -515,38 +551,8 @@ def _directory_lock(
         relative_target = "/".join(target_parts) or "."
         identity = f"{namespace}:{device}:{inode}:{relative_target}"
         lock_key = hashlib.sha256(identity.encode("ascii")).hexdigest()
-        local = _local_lock(lock_key)
-        with local:
-            held = getattr(_HELD_LOCKS, "locks", None)
-            if held is None:
-                held = {}
-                _HELD_LOCKS.locks = held
-            if lock_key in held:
-                held[lock_key] += 1
-                try:
-                    yield
-                finally:
-                    held[lock_key] -= 1
-                return
-            lock_root = Path(tempfile.gettempdir()) / f"memo-{os.getuid()}-locks"
-            lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-            with contextlib.suppress(OSError):
-                lock_root.chmod(0o700)
-            lock_path = lock_root / f"{lock_key}.lock"
-            descriptor = os.open(
-                lock_path,
-                os.O_CREAT | os.O_RDWR | _NOFOLLOW,
-                0o600,
-            )
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
-                held[lock_key] = 1
-                yield
-            finally:
-                held.pop(lock_key, None)
-                with contextlib.suppress(OSError):
-                    fcntl.flock(descriptor, fcntl.LOCK_UN)
-                os.close(descriptor)
+        with _exclusive_lock(lock_key):
+            yield
 
 
 @contextmanager
@@ -581,8 +587,15 @@ def authority_admission_lock(root: Path) -> Iterator[SecureDirectory]:
 @contextmanager
 def authority_write_lock(root: Path) -> Iterator[None]:
     """Cross-process journal lock keyed by a trusted directory inode."""
-    with _directory_lock(
-        root,
+    target = Path(os.path.abspath(os.fspath(root)))
+    stable_key = hashlib.sha256(
+        b"authority-write-path-v1\0" + os.fsencode(target)
+    ).hexdigest()
+    # The stable absolute-path lock closes the creation race where the nearest
+    # existing ancestor changes between two contenders. The descriptor-derived
+    # lock still aliases paths that resolve to the same retained authority.
+    with _exclusive_lock(stable_key), _directory_lock(
+        target,
         namespace="authority-write-v2",
         reject_ancestor_symlinks=False,
     ):

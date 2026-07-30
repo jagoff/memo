@@ -1473,6 +1473,7 @@ class OperationLedgerV2:
                             raise LedgerIntegrityError(
                                 f"legacy journal device is not a directory: {device}"
                             )
+                        event_paths.setdefault(device, [])
                         segment_names[device] = names(device_relative)
                         for segment in segment_names[device]:
                             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.jsonl", segment):

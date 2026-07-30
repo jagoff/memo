@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -85,3 +86,27 @@ def test_authority_admission_lock_retains_opened_root_across_path_swap(
 
     assert (retained_path / "marker.json").read_bytes() == b"retained"
     assert list(outside.iterdir()) == []
+
+
+def test_authority_write_lock_identity_is_stable_when_nested_root_is_created(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "missing-parent" / "journal"
+    attempted = threading.Event()
+    entered = threading.Event()
+
+    def create_then_lock() -> None:
+        root.mkdir(mode=0o700, parents=True)
+        attempted.set()
+        with atomic_io.authority_write_lock(root):
+            entered.set()
+
+    writer = threading.Thread(target=create_then_lock)
+    with atomic_io.authority_write_lock(root):
+        writer.start()
+        assert attempted.wait(timeout=2)
+        assert not entered.wait(timeout=0.25)
+
+    assert entered.wait(timeout=2)
+    writer.join(timeout=2)
+    assert not writer.is_alive()
