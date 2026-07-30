@@ -11,5 +11,7 @@
 - Task 2: hardening round 2 delivered — BASE `123cd8f6`; technical commit
   `ed454393`; Task 1 + Task 2 `200 passed`; non-slow `6009 passed, 18
   skipped`; independent re-review still required before acceptance.
-- Task 3: brief generated at `c9127f39`; RED-first implementation may proceed
-  without activating the v2 facade.
+- Task 3: technical implementation delivered at `daf3bf36`; focused `22
+  passed`; Task 1 + Task 2 + Task 3 + legacy operational contracts `256
+  passed`; non-slow `6032 passed, 18 skipped`; Ruff/mypy/frozen-v1 clean;
+  independent review still required before acceptance.

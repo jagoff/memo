@@ -1,7 +1,7 @@
 # Checklist vivo — absorción completa de Memflow en Memo
 
-Última actualización: 2026-07-29  
-Branch: `feat/memflow-absorption`  
+Última actualización: 2026-07-30
+Branch: `feat/memflow-absorption`
 Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Estado global
@@ -10,8 +10,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; hardening ronda 2
-  de Tarea 2 implementado y verde, pendiente de re-revisión independiente**.
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tareas 2 y 3
+  implementadas y verdes, pendientes de revisión independiente**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -136,11 +136,16 @@ Estado: **1/7 aceptadas**.
 ### Tarea 3 — Vistas SQLite transaccionales e idempotencia
 
 - [x] Generar brief y registrar BASE `c9127f39`.
-- [ ] RED de transacción, replay, crash window e idempotency conflict.
-- [ ] Implementar schema, reducers, catch-up, rebuild y commit de nueve pasos.
-- [ ] Probar bypass de epoch en CLI, MCP, daemon y librería.
-- [ ] Focused pytest, ruff y mypy.
-- [ ] Commit, revisión independiente y `PASS`.
+- [x] RED de transacción, replay, crash window e idempotency conflict.
+- [x] Implementar schema, reducers, catch-up, rebuild y commit de nueve pasos.
+- [x] Probar bypass directo, integración ledger/fence real, epoch
+  stale/future, control OID, contexto ausente y actor incorrecto.
+- [x] Focused `22 passed`, acumulado `256 passed`, ruff y mypy limpios.
+- [x] Non-slow: `6032 passed, 18 skipped`.
+- [x] Commit técnico: `daf3bf36`.
+- [ ] Activar propagación autenticada y probar bypass en CLI/MCP/daemon al
+  seleccionar v2 en Tarea 7.
+- [ ] Revisión independiente y `PASS`.
 
 ### Tarea 4 — Migración genesis v1 determinista y gate de paridad
 

@@ -2,9 +2,10 @@
 
 BASE: `c9127f39`
 
-Status: ready for RED-first implementation. Task 2 implementation is green
-but still awaits independent acceptance; Task 3 must not activate v2 in the
-production facade or mutate v1 bytes.
+Status: implementation delivered in `daf3bf36` and all gates are green;
+independent acceptance is still required. Task 2 also awaits independent
+acceptance. Task 3 did not activate v2 in the production facade or mutate v1
+bytes.
 
 ## Owned paths
 
