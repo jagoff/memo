@@ -20,6 +20,7 @@ from tools.memflow_absorption.schemas import (
     ConsumerInventory,
     ConsumerInventoryRow,
     LaunchdSnapshot,
+    ProcessRecord,
     ProcessSnapshot,
     SynapseOperation,
     SynapseRetirementManifest,
@@ -120,6 +121,20 @@ def _consumer_references(text: str) -> tuple[str, ...]:
     return tuple(sorted(set(match.group(0) for match in _CONSUMER_REFERENCE_RE.finditer(text))))
 
 
+def _process_launchd_matches(
+    process: ProcessRecord,
+    launchd_snapshot: LaunchdSnapshot,
+) -> tuple[str, ...]:
+    candidates = {(process.executable, *process.argv), process.argv}
+    return tuple(
+        sorted(
+            job.label
+            for job in launchd_snapshot.records
+            if job.loaded and job.program_arguments in candidates
+        )
+    )
+
+
 def build_consumer_inventory(
     roots: tuple[Path, ...] | list[Path],
     process_snapshot: ProcessSnapshot,
@@ -175,12 +190,17 @@ def build_consumer_inventory(
         text = "\n".join((process.executable, *process.argv))
         references = _consumer_references(text)
         if references:
+            correlated = _process_launchd_matches(process, launchd_snapshot)
+            if len(correlated) > 1:
+                blockers.add(f"ambiguous-process-launchd-correlation:pid:{process.pid}")
             rows.append(
                 ConsumerInventoryRow(
                     kind="process",
                     location=f"pid:{process.pid}:{process.executable}",
                     references=references,
                     label=text,
+                    program_arguments=(process.executable, *process.argv),
+                    correlated_launchd_label=correlated[0] if len(correlated) == 1 else "",
                 )
             )
     for job in sorted(launchd_snapshot.records, key=lambda row: row.label):
@@ -201,6 +221,13 @@ def build_consumer_inventory(
                     references=references,
                     label=job.label,
                     active=job.loaded,
+                    program_arguments=job.program_arguments,
+                    run_at_load=job.run_at_load,
+                    keep_alive=job.keep_alive,
+                    start_interval_seconds=job.start_interval_seconds,
+                    start_calendar_interval=job.start_calendar_interval,
+                    watch_paths=job.watch_paths,
+                    throttle_interval_seconds=job.throttle_interval_seconds,
                 )
             )
     if (signer is None) != (roster is None) or (signer is None) != (signer_key_id == ""):

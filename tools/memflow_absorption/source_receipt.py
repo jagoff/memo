@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -76,7 +77,8 @@ def sign_source_receipt(receipt: SourceReceiptV2, signer: OperationalSigner) -> 
     return SourceReceiptV2(**{**receipt.__dict__, "signature": env})
 
 def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoster, frozen_at: str | None = None,
-                          window_start: str | None = None, window_end: str | None = None) -> None:
+                          window_start: str | None = None, window_end: str | None = None,
+                          authoritative_events: list[dict[str, Any]] | None = None) -> None:
     if receipt.schema != "memo.cutover_source_receipt.v2" or receipt.signature is None:
         raise SignatureError("source receipt is unsigned or has invalid schema")
     key = roster.key(receipt.key_id)
@@ -108,6 +110,11 @@ def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoste
         previous_end = be
     if previous_end != end:
         raise SignatureError("hourly buckets do not cover receipt window")
+    if authoritative_events is not None:
+        ordered = sorted(authoritative_events, key=lambda e: json.dumps(e, sort_keys=True, separators=(",", ":")))
+        digest = hashlib.sha256(json.dumps(ordered, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        if digest != receipt.raw_event_set_sha256 or sum(b.count for b in receipt.hourly_buckets) != len(ordered):
+            raise SignatureError("source receipt aggregate does not match authoritative events")
     if not receipt.cursor or not receipt.extraction_complete:
         raise SignatureError("source extraction is incomplete")
     OperationalVerifier().verify(domain=DOMAIN, payload=receipt.signed_bytes(), envelope=receipt.signature, roster=roster)

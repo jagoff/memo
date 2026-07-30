@@ -657,7 +657,8 @@ def build_capability_manifest(
                 extraction_complete=receipt["extraction_complete"], hourly_buckets=tuple(SourceBucket(**b) for b in buckets),
                 frozen_at=receipt.get("frozen_at"), signature=env)
             verify_source_receipt(model, roster=roster, frozen_at=frozen_at,
-                                  window_start=window_started_at, window_end=window_ended_at)
+                                  window_start=window_started_at, window_end=window_ended_at,
+                                  authoritative_events=_objects(events_by_device.get(device), f"events for {device}"))
         except Exception as exc:
             raise ManifestError("source receipt signature verification failed") from exc
         seen_devices.add(device)
