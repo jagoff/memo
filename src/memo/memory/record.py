@@ -13,11 +13,13 @@ from __future__ import annotations
 import base64
 import concurrent.futures as _futures
 import contextlib
+import contextvars
 import hashlib
 import logging
 import re
 import threading
 import time
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -359,35 +361,48 @@ _CHAT_ACTIVE: _futures.Future[dict[str, Any]] | None = None
 _CHAT_ACTIVE_TIMED_OUT = False
 
 
-def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, Any] | None:
-    """Run ``chat.chat(**kwargs)`` with a hard wall-clock timeout.
+def _run_chat_call(chat: Any, timeout: float, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Invoke chat with the matching GPU-lock deadline in the worker."""
+    try:
+        from memo.mlx_gpu import _gpu_tl
 
-    Returns the result dict, or ``None`` if it exceeds ``timeout``. MLX work
-    cannot be interrupted mid-flight, so a timed-out worker continues in one
-    daemon thread. Calls made while that worker is still alive fail closed
-    immediately instead of starting competing model loads. A daemon is used
-    deliberately: unlike ``ThreadPoolExecutor`` workers, it does not get joined
-    by ``concurrent.futures`` during interpreter shutdown.
+        _gpu_tl.timeout = timeout
+    except Exception:  # noqa: S110
+        pass
+    return chat.chat(**kwargs)
 
-    Errors raised by ``chat.chat`` propagate (caller's try/except handles them).
-    """
+
+def _chat_worker(
+    fut: _futures.Future[dict[str, Any]],
+    context: contextvars.Context,
+    run: Callable[[], dict[str, Any]],
+) -> None:
+    """Complete one reserved chat future and release the global slot."""
     global _CHAT_ACTIVE, _CHAT_ACTIVE_TIMED_OUT
 
-    _timeout = timeout
+    if not fut.set_running_or_notify_cancel():
+        return
+    try:
+        result = context.run(run)
+    except BaseException as exc:
+        fut.set_exception(exc)
+    else:
+        fut.set_result(result)
+    finally:
+        with _CHAT_WORKER_CONDITION:
+            if _CHAT_ACTIVE is fut:
+                _CHAT_ACTIVE = None
+                _CHAT_ACTIVE_TIMED_OUT = False
+            _CHAT_WORKER_CONDITION.notify_all()
 
-    def _run() -> dict[str, Any]:
-        # Set thread-local GPU timeout so gpu_guard() in this thread uses a
-        # matching deadline instead of blocking indefinitely.
-        try:
-            from memo.mlx_gpu import _gpu_tl
 
-            _gpu_tl.timeout = _timeout
-        except Exception:  # noqa: S110
-            pass
-        return chat.chat(**kwargs)
-
-    deadline = time.monotonic() + timeout
-    import contextvars
+def _reserve_chat_worker(
+    run: Callable[[], dict[str, Any]],
+    *,
+    deadline: float,
+) -> tuple[_futures.Future[dict[str, Any]], float] | None:
+    """Wait for and reserve the single chat slot within ``deadline``."""
+    global _CHAT_ACTIVE, _CHAT_ACTIVE_TIMED_OUT
 
     with _CHAT_WORKER_CONDITION:
         while _CHAT_ACTIVE is not None:
@@ -406,32 +421,49 @@ def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, 
         _CHAT_ACTIVE = fut
         _CHAT_ACTIVE_TIMED_OUT = False
         context = contextvars.copy_context()
+        threading.Thread(
+            target=_chat_worker,
+            args=(fut, context, run),
+            name="chat-timeout",
+            daemon=True,
+        ).start()
+        return fut, remaining
 
-        def _worker() -> None:
-            global _CHAT_ACTIVE, _CHAT_ACTIVE_TIMED_OUT
-            if not fut.set_running_or_notify_cancel():
-                return
-            try:
-                result = context.run(_run)
-            except BaseException as exc:
-                fut.set_exception(exc)
-            else:
-                fut.set_result(result)
-            finally:
-                with _CHAT_WORKER_CONDITION:
-                    if _CHAT_ACTIVE is fut:
-                        _CHAT_ACTIVE = None
-                        _CHAT_ACTIVE_TIMED_OUT = False
-                    _CHAT_WORKER_CONDITION.notify_all()
 
-        threading.Thread(target=_worker, name="chat-timeout", daemon=True).start()
+def _mark_chat_worker_timed_out(fut: _futures.Future[dict[str, Any]]) -> None:
+    """Keep later calls from competing with an abandoned MLX operation."""
+    global _CHAT_ACTIVE_TIMED_OUT
+
+    with _CHAT_WORKER_CONDITION:
+        if _CHAT_ACTIVE is fut:
+            _CHAT_ACTIVE_TIMED_OUT = True
+
+
+def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, Any] | None:
+    """Run ``chat.chat(**kwargs)`` with a hard wall-clock timeout.
+
+    Returns the result dict, or ``None`` if it exceeds ``timeout``. MLX work
+    cannot be interrupted mid-flight, so a timed-out worker continues in one
+    daemon thread. Calls made while that worker is still alive fail closed
+    immediately instead of starting competing model loads. A daemon is used
+    deliberately: unlike ``ThreadPoolExecutor`` workers, it does not get joined
+    by ``concurrent.futures`` during interpreter shutdown.
+
+    Errors raised by ``chat.chat`` propagate (caller's try/except handles them).
+    """
+    deadline = time.monotonic() + timeout
+    reservation = _reserve_chat_worker(
+        lambda: _run_chat_call(chat, timeout, kwargs),
+        deadline=deadline,
+    )
+    if reservation is None:
+        return None
+    fut, remaining = reservation
 
     try:
         return fut.result(timeout=remaining)
     except _futures.TimeoutError:
-        with _CHAT_WORKER_CONDITION:
-            if _CHAT_ACTIVE is fut:
-                _CHAT_ACTIVE_TIMED_OUT = True
+        _mark_chat_worker_timed_out(fut)
         return None
 
 

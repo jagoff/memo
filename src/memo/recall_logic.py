@@ -796,6 +796,8 @@ def _apply_code_proximity_boost(
     hits: list[Any],
     explain: dict[str, dict[str, Any]] | None = None,
     cwd: str | None = None,
+    *,
+    enabled: bool = True,
 ) -> list[Any]:
     """Code-proximity stage of ``rank_hits`` (MEMO_RECALL_CODE_PROXIMITY_BOOST).
 
@@ -805,6 +807,8 @@ def _apply_code_proximity_boost(
     once (in the render ``cwd`` when given) and every matching hit gains
     +flag, re-sorted like the other additive boost stages (new list — the
     caller's is never mutated)."""
+    if not enabled:
+        return hits
     boost = flag_float("MEMO_RECALL_CODE_PROXIMITY_BOOST") or 0.0
     if boost <= 0:
         return hits
@@ -1258,8 +1262,12 @@ def rank_hits(
     # default 0.0 = OFF ⇒ the stage returns `raw` untouched with zero extra
     # work. Offline evals also disable it explicitly because they have no
     # trustworthy render cwd from which to resolve a working-tree diff.
-    if knobs.code_proximity:
-        raw = _apply_code_proximity_boost(raw, explain, cwd=knobs.cwd)
+    raw = _apply_code_proximity_boost(
+        raw,
+        explain,
+        knobs.cwd,
+        enabled=knobs.code_proximity,
+    )
 
     def _passes(h: Any) -> bool:
         # bm25-mode `h.score` is on the BM25 relevance scale, NOT cosine — applying
