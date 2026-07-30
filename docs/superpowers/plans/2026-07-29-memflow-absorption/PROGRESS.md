@@ -10,7 +10,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tareas 2, 3 y 4
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tareas 2–5
   implementadas y verdes, pendientes de revisión independiente**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
@@ -167,11 +167,17 @@ Estado: **1/7 aceptadas**.
 
 - [x] Generar brief y registrar BASE `20e16ba4`.
 - [x] Consultar Memo y Codegraph antes de editar producción.
-- [ ] RED de crash antes/después de save, retry y collision.
-- [ ] Implementar identidad estable, reconciliación y provenance.
-- [ ] Probar rebuild entre requested/completed y cero duplicados.
-- [ ] Focused pytest, ruff y mypy.
-- [ ] Commit, revisión independiente y `PASS`.
+- [x] RED real: 2 errores de colección por `memo.durable_outbox` ausente.
+- [x] RED de crash antes/después de save, retry y collision.
+- [x] Implementar identidad estable, reconciliación y provenance.
+- [x] Probar rebuild entre requested/completed y cero duplicados.
+- [x] Focused `490 passed`; matriz requerida `500 passed`; acumulado `676
+  passed`.
+- [x] Ruff y mypy limpios; frozen-v1 sin diff.
+- [x] Non-slow: `6079 passed, 18 skipped`.
+- [x] Commit técnico: `24f7a406`.
+- [x] Reporte de implementación generado.
+- [ ] Revisión independiente y `PASS`.
 
 ### Tarea 6 — Sesiones canónicas sobre ledger v2
 
@@ -292,7 +298,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P01-T02 | Anchors, append y bundles | implementadores + revisores especializados | `8e85662b`; hardening `0b1c859d`; ronda 2 `123cd8f6` | inicial + hardening `36 failed, 76 passed`; ronda 2 pendiente | contracts `186`; full `5995` | `5a80c74d` + `815307ac` | **FAIL** ronda 2: 3H/2M | — |
 | P01-T03 | Vistas SQLite e idempotencia | Codex | `c9127f39` | import RED | focused `22`; acumulado `256`; full `6032` | `daf3bf36` | pendiente | — |
 | P01-T04 | Migración genesis y paridad | Codex | `42f458c0` | import RED | focused `10`; matriz `100`; acumulado `276`; full `6043` | `78764d74` | pendiente | — |
-| P01-T05 | Outbox durable exactly-once | — | — | — | — | — | — | — |
+| P01-T05 | Outbox durable exactly-once | Codex | `20e16ba4` | import RED | focused `490`; matriz `500`; acumulado `676`; full `6079` | `24f7a406` | pendiente | — |
 | P01-T06 | Sesiones canónicas | — | — | — | — | — | — | — |
 | P01-T07 | Activación facade v2 | — | — | — | — | — | — | — |
 | P02-T01 | Fixtures de paridad Memflow | — | — | — | — | — | — | — |

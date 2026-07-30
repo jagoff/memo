@@ -22,7 +22,10 @@
   verified v1 origin receives a genesis anchor, replay requires an exact plan,
   and no production activation or Memflow mutation occurred. Independent
   review is still required before acceptance.
-- Task 5: brief frozen at BASE `20e16ba4`; no production edits, activation, or
-  Memflow mutation yet. The brief replaces the preliminary two-event outbox
-  projection with the approved four-event monotonic authority and preserves a
-  staged v1 compatibility boundary until Task 7 installs v2.
+- Task 5: technical implementation delivered at `24f7a406`; focused `490
+  passed`; required matrix `500 passed`; Task 1–5 cumulative `676 passed`;
+  non-slow `6079 passed, 18 skipped`; Ruff/mypy/frozen-v1 clean. The approved
+  four-event outbox is implemented with exactly-once Markdown identity and
+  deterministic recovery, but remains dormant until Task 7. No production
+  activation or Memflow mutation occurred. Independent review is still
+  required before acceptance.

@@ -2,9 +2,11 @@
 
 BASE: `20e16ba4`
 
-Status: brief frozen; production edits and RED execution have not started.
-Tasks 2, 3, and 4 remain technically green but independently unaccepted. v1
-remains the production authority, v2 remains dormant, and Memflow remains live.
+Status: technical implementation delivered at `24f7a406`; independent
+specification, durability, and quality review is still required before
+acceptance. Tasks 2, 3, and 4 also remain technically green but independently
+unaccepted. v1 remains the production authority, v2 remains dormant, and
+Memflow remains live.
 
 ## Owned paths
 
