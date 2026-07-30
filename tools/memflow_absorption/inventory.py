@@ -324,20 +324,19 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
     absolute = Path(os.path.abspath(os.fspath(root)))
     _reject_symlink_components(absolute)
     try:
-        observed = absolute.stat()
+        observed_root = absolute.lstat()
     except OSError as exc:
         raise InventoryError(f"inventory root is unavailable: {root}") from exc
-    if not stat.S_ISDIR(observed.st_mode):
+    if not stat.S_ISDIR(observed_root.st_mode):
         raise InventoryError(f"inventory root is not a directory: {root}")
 
-    def traversal_error(error: OSError) -> None:
-        raise InventoryError(f"inventory traversal failed below {absolute}: {error}") from error
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
-    def entry_kind(path: Path) -> str:
-        try:
-            mode = path.lstat().st_mode
-        except OSError as exc:
-            raise InventoryError(f"cannot classify inventory entry: {path}") from exc
+    def identity(observed: os.stat_result) -> tuple[int, int, int]:
+        return observed.st_dev, observed.st_ino, stat.S_IFMT(observed.st_mode)
+
+    def entry_kind(path: Path, observed: os.stat_result) -> str:
+        mode = observed.st_mode
         if stat.S_ISLNK(mode):
             return "symlink"
         if stat.S_ISDIR(mode):
@@ -346,33 +345,64 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
             return "file"
         raise InventoryError(f"unsupported inventory entry type: {path}")
 
-    for directory, directory_names, file_names in os.walk(
-        absolute,
-        topdown=True,
-        followlinks=False,
-        onerror=traversal_error,
-    ):
-        parent = Path(directory)
-        retained: list[str] = []
-        for name in sorted(directory_names):
-            child = parent / name
-            kind = entry_kind(child)
-            if kind == "symlink":
-                yield child, "symlink"
-                continue
-            if kind != "directory":
-                raise InventoryError(f"inventory entry changed type during traversal: {child}")
-            retained.append(name)
-        directory_names[:] = retained
-        for name in sorted(file_names):
+    def walk_directory(descriptor: int, parent: Path) -> Iterator[tuple[Path, str]]:
+        try:
+            names = sorted(os.listdir(descriptor))
+        except OSError as exc:
+            raise InventoryError(f"inventory traversal failed below {parent}: {exc}") from exc
+        entries: list[tuple[str, Path, os.stat_result, str]] = []
+        for name in names:
             path = parent / name
-            kind = entry_kind(path)
+            try:
+                observed = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as exc:
+                raise InventoryError(f"cannot classify inventory entry: {path}") from exc
+            entries.append((name, path, observed, entry_kind(path, observed)))
+
+        for name, path, observed, kind in entries:
             if kind == "symlink":
                 yield path, "symlink"
                 continue
-            if kind != "file":
-                raise InventoryError(f"inventory entry changed type during traversal: {path}")
-            yield path, "file"
+            if kind == "file":
+                yield path, "file"
+                continue
+            try:
+                child_descriptor = os.open(
+                    name,
+                    directory_flags,
+                    dir_fd=descriptor,
+                )
+            except OSError as exc:
+                raise InventoryError(f"cannot descend safely into inventory entry: {path}") from exc
+            try:
+                try:
+                    opened = os.fstat(child_descriptor)
+                except OSError as exc:
+                    raise InventoryError(
+                        f"cannot validate inventory directory descriptor: {path}"
+                    ) from exc
+                if not stat.S_ISDIR(opened.st_mode) or identity(opened) != identity(observed):
+                    raise InventoryError(f"inventory directory changed identity: {path}")
+                yield from walk_directory(child_descriptor, path)
+            finally:
+                os.close(child_descriptor)
+
+    try:
+        root_descriptor = os.open(absolute, directory_flags)
+    except OSError as exc:
+        raise InventoryError(f"cannot open inventory root safely: {absolute}") from exc
+    try:
+        try:
+            opened_root = os.fstat(root_descriptor)
+        except OSError as exc:
+            raise InventoryError(f"cannot validate inventory root descriptor: {absolute}") from exc
+        if not stat.S_ISDIR(opened_root.st_mode) or identity(opened_root) != identity(
+            observed_root
+        ):
+            raise InventoryError(f"inventory root changed identity: {absolute}")
+        yield from walk_directory(root_descriptor, absolute)
+    finally:
+        os.close(root_descriptor)
 
 
 def _read_text(path: Path) -> tuple[bytes, str]:

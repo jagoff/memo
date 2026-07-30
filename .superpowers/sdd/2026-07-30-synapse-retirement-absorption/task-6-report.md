@@ -192,3 +192,53 @@ passed
 
 Cleanup remains refusal-only. No runtime, service, LaunchAgent,
 configuration, state, repository, release, or cleanup mutation was performed.
+
+## Correction round 3 — descriptor-bound directory descent
+
+The third review found a remaining TOCTOU window between classifying a
+directory entry and `os.walk` descending through its pathname. `_safe_files`
+no longer uses pathname-based `os.walk`:
+
+- The root and every child directory are opened with `O_DIRECTORY |
+  O_NOFOLLOW`.
+- Entry classification uses `os.stat(..., dir_fd=descriptor,
+  follow_symlinks=False)`, and directory descent uses
+  `os.open(..., dir_fd=descriptor)`.
+- Before recursion, the opened descriptor's `(st_dev, st_ino, S_IFMT)` is
+  compared with the entry observed relative to its parent descriptor.
+  Open/stat/list failures, type changes, and identity changes all become
+  `InventoryError`.
+- The race regression swaps a classified directory first to a symlink and
+  then, in a separate parameterized case, to a different directory. The
+  former is rejected by `O_NOFOLLOW`; the latter is rejected by the inode
+  identity comparison.
+
+Correction-round-3 verification:
+
+```text
+uv run --no-sync pytest tests/tools/test_retirement_audit.py -q
+22 passed
+
+uv run --no-sync pytest tests/tools/test_retirement_audit.py tests/tools/test_absorption_*.py -q
+61 passed
+
+uv run --no-sync pytest tests/tools -q
+162 passed
+
+uv run --no-sync ruff check tools/memflow_absorption tests/tools/test_retirement_audit.py
+All checks passed!
+
+uv run --no-sync ruff format --check tools/memflow_absorption/inventory.py tests/tools/test_retirement_audit.py
+2 files already formatted
+
+uv run --no-sync mypy tools/memflow_absorption
+Success: no issues found in 15 source files
+
+git diff --check
+passed
+```
+
+The production audit remains read-only and cleanup remains refusal-only. The
+race exists only inside the isolated regression fixture; no runtime, service,
+LaunchAgent, configuration, state, repository, release, or cleanup mutation
+was performed.

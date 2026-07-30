@@ -274,20 +274,10 @@ def test_retirement_audit_propagates_walk_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def denied_walk(
-        _root: Path,
-        *,
-        topdown: bool,
-        followlinks: bool,
-        onerror: object,
-    ) -> list[tuple[str, list[str], list[str]]]:
-        assert topdown is True
-        assert followlinks is False
-        assert callable(onerror)
-        onerror(PermissionError("denied"))  # type: ignore[operator]
-        return []
+    def denied_listdir(_descriptor: int) -> list[str]:
+        raise PermissionError("denied")
 
-    monkeypatch.setattr(os, "walk", denied_walk)
+    monkeypatch.setattr(os, "listdir", denied_listdir)
 
     with pytest.raises(InventoryError, match="traversal failed"):
         build_independence_receipt((tmp_path,), manifest=_manifest())
@@ -306,21 +296,26 @@ def test_retirement_audit_scans_ascii_references_inside_non_utf8_files(
     "failure",
     [FileNotFoundError("vanished"), PermissionError("denied")],
 )
-def test_retirement_audit_rejects_entry_lstat_failure(
+def test_retirement_audit_rejects_entry_descriptor_stat_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     failure: OSError,
 ) -> None:
     target = tmp_path / "listed.txt"
     target.write_text("clean", encoding="utf-8")
-    original_lstat = Path.lstat
+    original_stat = os.stat
 
-    def failing_lstat(path: Path) -> os.stat_result:
-        if path == target:
+    def failing_stat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes] | int,
+        *,
+        dir_fd: int | None = None,
+        follow_symlinks: bool = True,
+    ) -> os.stat_result:
+        if path == target.name and dir_fd is not None and follow_symlinks is False:
             raise failure
-        return original_lstat(path)
+        return original_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
 
-    monkeypatch.setattr(Path, "lstat", failing_lstat)
+    monkeypatch.setattr(os, "stat", failing_stat)
 
     with pytest.raises(InventoryError, match="cannot classify inventory entry"):
         build_independence_receipt((tmp_path,), manifest=_manifest())
@@ -331,6 +326,48 @@ def test_retirement_audit_rejects_special_files(tmp_path: Path) -> None:
 
     with pytest.raises(InventoryError, match="unsupported inventory entry type"):
         build_independence_receipt((tmp_path,), manifest=_manifest())
+
+
+@pytest.mark.parametrize("replacement_kind", ["symlink", "directory"])
+def test_retirement_audit_rejects_directory_swap_before_descent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement_kind: str,
+) -> None:
+    scan_root = tmp_path / "installed"
+    child = scan_root / "runtime"
+    child.mkdir(parents=True)
+    (child / "clean.txt").write_text("clean", encoding="utf-8")
+    parked = tmp_path / "parked-runtime"
+    outside = tmp_path / "outside-runtime"
+    outside.mkdir()
+    (outside / "active.txt").write_text("SYNAPSE_TOKEN=active", encoding="utf-8")
+    original_open = os.open
+    swapped = False
+
+    def swapping_open(
+        path: str | bytes,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if not swapped and path == child.name and dir_fd is not None and flags & os.O_DIRECTORY:
+            child.rename(parked)
+            if replacement_kind == "symlink":
+                child.symlink_to(outside, target_is_directory=True)
+            else:
+                child.mkdir()
+            swapped = True
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", swapping_open)
+
+    with pytest.raises(InventoryError, match=r"cannot descend safely|changed identity"):
+        build_independence_receipt((scan_root,), manifest=_manifest())
+
+    assert swapped is True
 
 
 def test_roster_loader_is_strictly_read_only_and_rejects_pending_recovery(
