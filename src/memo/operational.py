@@ -27,6 +27,19 @@ from memo.contracts import (
 from memo.operation_ledger import OperationLedger
 from memo.util import utc_now_iso
 
+
+class _LedgerView:
+    """Read-only ledger facade; writes require the authorized store path."""
+
+    def __init__(self, ledger: OperationLedger) -> None:
+        self._ledger = ledger
+
+    def append(self, *args: Any, **kwargs: Any) -> Any:
+        raise PermissionError("operational ledger appends require store authorization")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ledger, name)
+
 if TYPE_CHECKING:
     from memo.operation_ledger_v2 import OperationLedgerV2
     from memo.operation_views import OperationalViewStore
@@ -251,13 +264,15 @@ def _conflict_matches_query(row: dict[str, Any], query_cf: str) -> bool:
 
 class OperationalStore:
     ledger: Any
+    _ledger: Any
     views: OperationalViewStore
     epoch_fence: EpochFence | None
     transaction_root: Path
 
     def __init__(self, state_dir: Path, *, device_id: str, context_provider: Callable[[], CommitContext] | None = None, epoch_fence: EpochFence | None = None) -> None:
         self.state_dir = Path(state_dir)
-        self.ledger = OperationLedger(self.state_dir, device_id=device_id)
+        self._ledger = OperationLedger(self.state_dir, device_id=device_id)
+        self.ledger = _LedgerView(self._ledger)
         self.snapshot_path = self.state_dir / "operational-state.json"
         self._v2_enabled = False
         # Legacy writers are fail-closed unless an authenticated epoch context
@@ -278,6 +293,7 @@ class OperationalStore:
         instance = cls.__new__(cls)
         instance.state_dir = Path(transaction_root).parent
         instance.ledger = ledger
+        instance._ledger = ledger
         instance.views = views
         instance.epoch_fence = epoch_fence
         instance.transaction_root = Path(transaction_root)
@@ -491,20 +507,20 @@ class OperationalStore:
                 "authenticated epoch fence is required for operational writes",
                 retryable=False,
             )
-        self.epoch_fence.verify(authenticated)
-        event = self.ledger.append(
-            op,
-            subject_uri=subject_uri,
-            actor=actor,
-            trace_id=trace_id,
-            payload=payload,
-        )
         with authority_write_lock(self.snapshot_path):
+            self.epoch_fence.verify(authenticated)
+            event = self._ledger.append(
+                op,
+                subject_uri=subject_uri,
+                actor=actor,
+                trace_id=trace_id,
+                payload=payload,
+            )
             try:
                 state = json.loads(self.snapshot_path.read_text(encoding="utf-8"))
             except (FileNotFoundError, OSError, json.JSONDecodeError):
                 state = {}
-            current_heads = self.ledger.head_hashes()
+            current_heads = self._ledger.head_hashes()
             snapshot_heads = state.get("journal_heads")
             expected_heads = dict(current_heads)
             if event.previous_hash:
