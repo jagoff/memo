@@ -402,7 +402,7 @@ Gate del plan:
 
 ## Plan 03 — Readiness para corte
 
-Estado: **4/6 aceptadas; Tareas 1–4 aceptadas; Tareas 5–6 siguen abiertas**.
+Estado: **5/6 aceptadas; Tarea 6 sigue abierta**.
 
 - [x] Tarea 1 — Snapshot seguro, capability manifest e inventario.
   Receipts v2, cobertura horaria firmada, registry/fixtures ejecutables y
@@ -417,7 +417,9 @@ Estado: **4/6 aceptadas; Tareas 1–4 aceptadas; Tareas 5–6 siguen abiertas**.
   `933445fd` + hardening `f32e789` + provenance `8600800`; focused final
   `45 passed`; Ruff, mypy y diff-check limpios. Re-review independiente:
   `ADDRESSED/PASS`. Sin activación de servicio.
-- [ ] Tarea 5 — Reemplazar el contrato Memflow de Synapse por registry Memo.
+- [x] Tarea 5 — Reemplazar el contrato Memflow de Synapse por registry Memo.
+  Registry, routing, CLI/MCP y dashboard operan en modo Memo-only; proxies y
+  endpoints legacy de Memflow devuelven 410 antes de cualquier conexión.
 - [ ] Tarea 6 — Stagear configuración de consumidores y readiness report.
 
 Gate del plan:
