@@ -48,3 +48,28 @@ typed and fail-closed; no second transaction framework or daemon is introduced.
 
 Rollback: revert the federation-only rail; current Markdown remains readable and no schema
 downgrade is required.
+
+## 2. Immutable revisions, refs, verifier, and recovery
+
+Decision: **Admit only the exact-delete-history slice; Defer the revision archive**
+
+Observed gap: time-machine reconstruction before a later delete returns the record but marks
+its body unavailable. Memo already has `HistoryStore`, `VersionStore`, and
+`ContentAddressedArtifactStore`; adding a fourth historical authority before convergence
+would violate the maintainability gate. The existing concurrent save/update/store baseline
+passes (`3 passed`), so no general CAS rewrite is justified by Phase 0.
+
+Smallest admitted slice: preserve the canonical pre-delete body and tags in the existing
+append-only delete event and teach `time_machine.reconstruct` to consume that snapshot.
+
+Primary gate: reconstruction immediately before a later delete returns the exact body and
+tags, while old history rows without snapshots remain explicitly unavailable.
+
+Guardrails: current Markdown authority is unchanged; no new database or public command;
+legacy rows remain readable; hard-delete behavior and portable backup remain compatible.
+
+Deferred slice: immutable revision envelopes, heads, reflog, `fsck`, lost-found, and
+historical-store retirement require a separate shadow-write/storage-amplification plan.
+
+Rollback: readers ignore the additive delete-event fields; old and new history databases
+remain readable.
