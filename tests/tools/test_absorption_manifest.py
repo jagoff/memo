@@ -128,12 +128,8 @@ def _fixture_tree(
     memo_snapshot = tmp_path / "memo-snapshot"
     memflow_snapshot = tmp_path / "memflow-snapshot"
     usage_snapshot = tmp_path / "usage-snapshot"
-    for root, digest in (
-        (memo_snapshot, "1" * 64),
-        (memflow_snapshot, "2" * 64),
-        (usage_snapshot, "3" * 64),
-    ):
-
+    for root, digest in ((memo_snapshot, "1" * 64), (memflow_snapshot, "2" * 64), (usage_snapshot, "3" * 64)):
+        _publish_snapshot(root / "snapshot-receipt.json", {"sha256": digest}, tmp_path)
     operations = [
         {
             "source_operation": "flow_continuity",
