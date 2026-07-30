@@ -23,6 +23,7 @@ from tools.memflow_absorption.schemas import (
     CutoverState,
     DrainSnapshot,
     FenceMarker,
+    SynapseRetirementState,
 )
 
 
@@ -85,6 +86,15 @@ def test_shared_cutover_states_and_marker_bytes_are_canonical() -> None:
         "quiescing",
         "retired",
     )
+    assert tuple(state.value for state in SynapseRetirementState) == (
+        "PREPARING",
+        "READY",
+        "QUIESCED",
+        "STAGED",
+        "COMMITTED",
+        "VERIFIED",
+        "ABORTED",
+    )
     marker = FenceMarker(
         schema="memo.cutover_fence.v1",
         attempt_id="attempt-123",
@@ -140,6 +150,9 @@ def test_control_record_requires_fresh_oid_and_valid_signature(tmp_path: Path) -
     assert verified.signer_key_id == roster.local_key_id
     assert verified.canonical_payload
     assert verified.verified_at.endswith("Z")
+    assert verified.attempt_id == "attempt-123"
+    assert verified.synapse_state is SynapseRetirementState.PREPARING
+    assert b'"retirement_epoch":0' in verified.canonical_payload
 
 
 def test_control_record_rejects_stale_fetch_tamper_and_bad_sequence(tmp_path: Path) -> None:

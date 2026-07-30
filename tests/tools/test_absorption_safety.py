@@ -9,6 +9,7 @@ import pytest
 
 from tools.memflow_absorption.safety import (
     ATTEMPT_SENTINEL,
+    CutoverSafetyError,
     SafetyError,
     assert_safe_attempt_root,
     initialize_attempt_root,
@@ -16,6 +17,11 @@ from tools.memflow_absorption.safety import (
 )
 
 MANIFEST_SHA256 = "a" * 64
+
+
+def test_synapse_cutover_error_is_a_runtime_safety_boundary() -> None:
+    assert issubclass(CutoverSafetyError, RuntimeError)
+    assert not issubclass(CutoverSafetyError, SafetyError)
 
 
 @pytest.mark.parametrize("bad", [Path("/"), Path.home()])

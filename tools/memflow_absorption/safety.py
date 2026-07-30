@@ -2,18 +2,44 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import stat
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from memo.atomic_io import open_secure_directory
 from memo.operational_event import canonical_json_bytes
+from tools.memflow_absorption.control_record import (
+    CutoverSafetyError,
+    prepare_synapse_retirement,
+)
+from tools.memflow_absorption.schemas import (
+    ConsumerInventory,
+    IndependenceReceipt,
+    SynapseRetirementManifest,
+    SynapseRetirementState,
+    VerifiedControlRecord,
+)
 
 ATTEMPT_SENTINEL = ".memo-cutover-attempt.json"
 _ATTEMPT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_INDEPENDENCE_PHASES: tuple[Literal["post_stop", "post_reboot"], ...] = (
+    "post_stop",
+    "post_reboot",
+)
+_INDEPENDENCE_SURFACES = (
+    "launchagent",
+    "mcp_gateway_route",
+    "port",
+    "process",
+    "shell_config_path",
+    "state_root",
+)
 
 
 class SafetyError(RuntimeError):
@@ -145,3 +171,75 @@ def resolve_under_attempt(
     except ValueError as exc:
         raise SafetyError("requested path escapes cutover attempt authority") from exc
     return target
+
+
+def verify_synapse_retired(
+    control: VerifiedControlRecord,
+    inventory: ConsumerInventory,
+    manifest: SynapseRetirementManifest,
+) -> IndependenceReceipt:
+    """Prove retirement from signed, post-stop and post-reboot negative scans."""
+
+    if control.synapse_state not in {
+        SynapseRetirementState.COMMITTED,
+        SynapseRetirementState.VERIFIED,
+    }:
+        raise CutoverSafetyError("Synapse retirement is not committed")
+    if control.retirement_epoch < 1:
+        raise CutoverSafetyError("Synapse retirement epoch is missing")
+    if manifest.schema != "memo.synapse_retirement.v2" or not manifest.signature:
+        raise CutoverSafetyError("Synapse retirement manifest is unsigned")
+    if (
+        not _SHA256_RE.fullmatch(manifest.active_reference_sha256)
+        or not manifest.signer_key_id
+    ):
+        raise CutoverSafetyError("Synapse retirement manifest authority is malformed")
+    manifest_sha256 = hashlib.sha256(manifest.signed_bytes()).hexdigest()
+    if manifest_sha256 != control.synapse_manifest_sha256:
+        raise CutoverSafetyError("Synapse retirement manifest digest mismatch")
+    if (
+        inventory.schema != "memo.cutover_consumer_inventory.v1"
+        or not inventory.signature
+        or inventory.blockers
+        or not _SHA256_RE.fullmatch(inventory.source_scan_sha256)
+        or not inventory.signer_device_id
+        or not inventory.signer_key_id
+        or inventory.roster_version < 1
+    ):
+        raise CutoverSafetyError("Synapse independence inventory is blocked or unsigned")
+    if inventory.verification_phases != _INDEPENDENCE_PHASES:
+        raise CutoverSafetyError(
+            "Synapse independence requires post-stop and post-reboot scans"
+        )
+    if inventory.covered_surfaces != _INDEPENDENCE_SURFACES:
+        raise CutoverSafetyError("Synapse independence surface coverage is incomplete")
+    active_rows = tuple(row for row in inventory.rows if row.active or row.references)
+    if active_rows:
+        kinds = ",".join(
+            sorted({f"{row.kind}:{row.location}" for row in active_rows})
+        )
+        raise CutoverSafetyError(f"Synapse active reference resurrected: {kinds}")
+    inventory_sha256 = hashlib.sha256(inventory.signed_bytes()).hexdigest()
+    return IndependenceReceipt(
+        schema="memo.synapse_independence_receipt.v1",
+        attempt_id=control.attempt_id,
+        control_oid=control.control_oid,
+        retirement_epoch=control.retirement_epoch,
+        synapse_manifest_sha256=manifest_sha256,
+        consumer_inventory_sha256=inventory_sha256,
+        verification_phases=_INDEPENDENCE_PHASES,
+        covered_surfaces=_INDEPENDENCE_SURFACES,
+        verified_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    )
+
+
+__all__ = [
+    "ATTEMPT_SENTINEL",
+    "CutoverSafetyError",
+    "SafetyError",
+    "assert_safe_attempt_root",
+    "initialize_attempt_root",
+    "prepare_synapse_retirement",
+    "resolve_under_attempt",
+    "verify_synapse_retired",
+]

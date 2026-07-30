@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -384,6 +385,8 @@ class ConsumerInventory:
     signer_key_id: str = ""
     roster_version: int = 0
     signature: str = ""
+    verification_phases: tuple[Literal["post_stop", "post_reboot"], ...] = ()
+    covered_surfaces: tuple[str, ...] = ()
 
     def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
         return {
@@ -395,6 +398,8 @@ class ConsumerInventory:
             "signer_key_id": self.signer_key_id,
             "roster_version": self.roster_version,
             "signature": "" if blank_signature else self.signature,
+            "verification_phases": list(self.verification_phases),
+            "covered_surfaces": list(self.covered_surfaces),
         }
 
     def signed_bytes(self) -> bytes:
@@ -458,12 +463,27 @@ class ConsumerReplacementPlan:
 
     rows: tuple[ConsumerReplacement, ...]
     digest: str
+    covered_surfaces: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def by_old_label(self, label: str) -> ConsumerReplacement:
         for row in self.rows:
             if row.old_label == label:
                 return row
         raise KeyError(f"consumer replacement is not present: {label}")
+
+    def authority_bytes(self) -> bytes:
+        """Bind the rendered rows and the complete preflight surface inventory."""
+
+        return canonical_json_bytes(
+            {
+                "rows": [row.to_dict() for row in self.rows],
+                "digest": self.digest,
+                "covered_surfaces": {
+                    key: list(values)
+                    for key, values in sorted(self.covered_surfaces.items())
+                },
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -548,6 +568,18 @@ class CutoverMode(StrEnum):
     ACTIVE = "active"
     QUIESCING = "quiescing"
     RETIRED = "retired"
+
+
+class SynapseRetirementState(StrEnum):
+    """Monotonic Synapse-specific state nested in the coordinated cutover."""
+
+    PREPARING = "PREPARING"
+    READY = "READY"
+    QUIESCED = "QUIESCED"
+    STAGED = "STAGED"
+    COMMITTED = "COMMITTED"
+    VERIFIED = "VERIFIED"
+    ABORTED = "ABORTED"
 
 
 @dataclass(frozen=True)
@@ -656,6 +688,15 @@ class CutoverControlRecord:
     signer_key_id: str
     issued_at: str
     signature: str
+    synapse_state: SynapseRetirementState = SynapseRetirementState.PREPARING
+    capability_manifest_sha256: str = ""
+    synapse_manifest_sha256: str = ""
+    consumer_plan_sha256: str = ""
+    synapse_authority_sha256: str = ""
+    active_state_receipt_sha256: str = ""
+    peer_vote_sha256: tuple[str, ...] = ()
+    retirement_epoch: int = 0
+    independence_receipt_sha256: str = ""
 
     def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
         return {
@@ -670,6 +711,15 @@ class CutoverControlRecord:
             "signer_key_id": self.signer_key_id,
             "issued_at": self.issued_at,
             "signature": "" if blank_signature else self.signature,
+            "synapse_state": self.synapse_state.value,
+            "capability_manifest_sha256": self.capability_manifest_sha256,
+            "synapse_manifest_sha256": self.synapse_manifest_sha256,
+            "consumer_plan_sha256": self.consumer_plan_sha256,
+            "synapse_authority_sha256": self.synapse_authority_sha256,
+            "active_state_receipt_sha256": self.active_state_receipt_sha256,
+            "peer_vote_sha256": list(self.peer_vote_sha256),
+            "retirement_epoch": self.retirement_epoch,
+            "independence_receipt_sha256": self.independence_receipt_sha256,
         }
 
     @property
@@ -696,6 +746,38 @@ class VerifiedControlRecord:
     verified_at: str
     signer_device_id: str
     signer_key_id: str
+    attempt_id: str = ""
+    synapse_state: SynapseRetirementState = SynapseRetirementState.PREPARING
+    capability_manifest_sha256: str = ""
+    synapse_manifest_sha256: str = ""
+    consumer_plan_sha256: str = ""
+    synapse_authority_sha256: str = ""
+    active_state_receipt_sha256: str = ""
+    peer_vote_sha256: tuple[str, ...] = ()
+    retirement_epoch: int = 0
+    independence_receipt_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class IndependenceReceipt:
+    """Read-only proof that both negative scans found no Synapse authority."""
+
+    schema: Literal["memo.synapse_independence_receipt.v1"]
+    attempt_id: str
+    control_oid: str
+    retirement_epoch: int
+    synapse_manifest_sha256: str
+    consumer_inventory_sha256: str
+    verification_phases: tuple[Literal["post_stop", "post_reboot"], ...]
+    covered_surfaces: tuple[str, ...]
+    verified_at: str
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(canonical_json_bytes(self.to_dict())).hexdigest()
 
 
 JsonObject = dict[str, Any]
