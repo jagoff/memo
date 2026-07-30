@@ -972,6 +972,7 @@ def build_synapse_capability_manifest(
     signer: OperationalSigner,
     signer_key_id: str,
     roster: VerificationRoster,
+    transform_registry: FrozenTransformRegistry,
 ) -> CapabilityManifest:
     """Build capability authority over the canonical, pinned Synapse catalog.
 
@@ -1006,6 +1007,7 @@ def build_synapse_capability_manifest(
         roster=roster,
         source_operation_records=operations,
         fixture_root=snapshot,
+        transform_registry=transform_registry,
     )
 
 
