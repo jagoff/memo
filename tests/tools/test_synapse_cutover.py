@@ -523,6 +523,25 @@ def test_invalid_replacement_signature_never_poison_cas(
     assert cas.read() == (before_oid, before_record)
 
 
+def test_control_verification_binds_claimed_signer_to_roster(authority) -> None:
+    record = _signed_control(authority)
+    unsigned = replace(record, signer_device_id="mac-b", signature="")
+    envelope = authority[2].sign(
+        domain="memo.cutover.control_record.v1",
+        payload=unsigned.canonical_payload,
+        key_id=authority[1].local_key_id,
+    )
+    forged = replace(unsigned, signature=envelope.signature)
+    cas = InMemoryControlRecordCAS(forged)
+
+    with pytest.raises(ControlRecordError, match="signature is invalid"):
+        fetch_verified_control(
+            cas,
+            expected_oid=forged.control_oid,
+            roster=authority[1],
+        )
+
+
 def test_advance_requires_fresh_cas_and_two_bound_signed_peer_votes(
     authority,
     tmp_path: Path,

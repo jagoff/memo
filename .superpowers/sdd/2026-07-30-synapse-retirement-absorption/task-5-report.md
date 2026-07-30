@@ -200,7 +200,7 @@ LaunchAgent, configuration, or live state was inspected or changed here.
 
 ```text
 uv run --no-sync pytest tests/tools/test_synapse_cutover.py tests/tools/test_absorption_control_record.py tests/tools/test_absorption_safety.py tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py -q
-84 passed
+85 passed
 
 uv run --no-sync ruff check tools/memflow_absorption tests/tools/test_synapse_cutover.py
 All checks passed!
@@ -209,7 +209,7 @@ uv run --no-sync mypy tools/memflow_absorption
 Success: no issues found in 15 source files
 
 uv run --no-sync pytest tests/tools -q
-138 passed
+139 passed
 
 git diff --check
 passed
