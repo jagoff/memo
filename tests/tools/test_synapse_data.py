@@ -1,0 +1,159 @@
+"""Bounded Synapse feedback/eval absorption."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from memo.memory import Memory
+from tools.memflow_absorption.synapse_data import (
+    EvalFixture,
+    FeedbackImport,
+    SynapseDataBundle,
+    SynapseDataError,
+    apply_synapse_data,
+    build_synapse_data_bundle,
+    extract_synapse_eval_fixtures,
+    extract_synapse_feedback,
+)
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+@pytest.fixture
+def state_dir(tmp_path: Path) -> Path:
+    root = tmp_path / "synapse-state"
+    _write_jsonl(
+        root / "ledger.jsonl",
+        [
+            {
+                "action": "chat_feedback",
+                "action_id": "already-seen",
+                "trace_id": "trace-old",
+                "metadata": {
+                    "feedback_id": "already-seen",
+                    "rating": "up",
+                    "source_ids": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+                },
+            },
+            {
+                "action": "chat_feedback",
+                "action_id": "new-feedback",
+                "trace_id": "trace-new",
+                "metadata": {
+                    "feedback_id": "new-feedback",
+                    "rating": "down",
+                    "source_ids": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                    "arbitrary": {"answer": "must never escape"},
+                },
+            },
+            {"action": "runtime_loop", "metadata": {"answer": "never import"}},
+        ],
+    )
+    _write_jsonl(
+        root / "observability" / "chat-traces.jsonl",
+        [
+            {
+                "trace_id": "trace-new",
+                "query": "  how   does  feedback work? ",
+                "answer": "private answer that must not be copied",
+            }
+        ],
+    )
+    _write_jsonl(
+        root / "observability" / "chat_pipeline_trace.jsonl",
+        [{"trace_id": "trace-new", "query_preview": "not selected over full query"}],
+    )
+    (root / "eval").mkdir(parents=True)
+    (root / "eval" / "corpus.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "fixture-one",
+                    "question": "where is the runbook?",
+                    "expected_source_ids": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                    "answer": "private eval answer",
+                    "needs_review": False,
+                },
+                {
+                    "id": "not-high-signal",
+                    "question": "discard me",
+                    "expected_source_ids": ["cccccccccccccccccccccccccccccccc"],
+                    "needs_review": True,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_feedback_extraction_is_idempotent_and_does_not_copy_answers(state_dir: Path) -> None:
+    bundle = extract_synapse_feedback(state_dir, seen_ids={"already-seen"})
+    assert {item.feedback_id for item in bundle} == {"new-feedback"}
+    assert all(item.answer == "" for item in bundle)
+    assert bundle[0].query == "how does feedback work?"
+
+
+def test_eval_extraction_keeps_fixture_metadata_only(state_dir: Path) -> None:
+    fixture = extract_synapse_eval_fixtures(state_dir)[0]
+    assert fixture.source_ids
+    assert fixture.query
+    assert fixture.answer == ""
+    assert fixture.content_sha256
+
+
+def test_apply_is_replay_safe_and_stages_eval_only(
+    state_dir: Path, mem_with_stub: Memory
+) -> None:
+    record = mem_with_stub.save(content="known source", title="Source")
+    # The fixture state uses this canonical source id; rewrite it to the real
+    # test memory rather than allowing an orphan feedback signal.
+    ledger = state_dir / "ledger.jsonl"
+    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    rows[1]["metadata"]["source_ids"] = [record.id]
+    _write_jsonl(ledger, rows)
+    corpus = state_dir / "eval" / "corpus.json"
+    fixture_rows = json.loads(corpus.read_text(encoding="utf-8"))
+    fixture_rows[0]["expected_source_ids"] = [record.id]
+    corpus.write_text(json.dumps(fixture_rows), encoding="utf-8")
+
+    data = build_synapse_data_bundle(state_dir, {"already-seen"})
+    first = apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-1")
+    assert first.status == "applied"
+    assert first.feedback_imported == 1
+    assert len(mem_with_stub.feedback_list(source_id=record.id)) == 1
+    staging = mem_with_stub.cfg.state_dir / "operator-staging" / "synapse-eval-fixtures.json"
+    staged = staging.read_text(encoding="utf-8")
+    assert "private" not in staged
+    assert "fixture-one" in staged
+
+    replay = apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-1")
+    assert replay.status == "reused"
+    changed = SynapseDataBundle(data.feedback, data.eval_fixtures, "0" * 64)
+    with pytest.raises(SynapseDataError, match="different input bundle"):
+        apply_synapse_data(mem_with_stub, changed, attempt_id="synapse-import-1")
+
+
+def test_invalid_fixture_leaves_no_partial_feedback_or_receipt(mem_with_stub: Memory) -> None:
+    record = mem_with_stub.save(content="known source", title="Source")
+    data = SynapseDataBundle(
+        feedback=(FeedbackImport("feedback-one", record.id, "query", "up"),),
+        eval_fixtures=(
+            EvalFixture("fixture-one", "query", (record.id,), "f" * 64, answer="secret"),
+        ),
+        input_sha256="a" * 64,
+    )
+    with pytest.raises(SynapseDataError, match="non-redacted eval fixture"):
+        apply_synapse_data(mem_with_stub, data, attempt_id="synapse-import-2")
+    assert mem_with_stub.feedback_list(source_id=record.id) == []
+    assert not [
+        event
+        for event in mem_with_stub.operational.ledger.validated_events()
+        if event.op == "receipt.synapse-data"
+    ]

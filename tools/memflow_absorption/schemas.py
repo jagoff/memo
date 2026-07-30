@@ -26,6 +26,22 @@ class SnapshotReceipt:
 
 
 @dataclass(frozen=True)
+class SynapseDataReceipt:
+    """Auditable outcome of one bounded Synapse data import attempt."""
+
+    attempt_id: str
+    input_sha256: str
+    feedback_imported: int
+    feedback_skipped: int
+    eval_fixture_count: int
+    event_ids: tuple[str, ...]
+    status: Literal["applied", "reused"]
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class AuditExclusions:
     schema: Literal["memo.cutover_audit_exclusions.v1"]
     event_ids: tuple[str, ...]

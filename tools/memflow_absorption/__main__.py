@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from memo.config import Config
+from memo.memory import Memory
 from memo.operational_event import canonical_json_bytes
 from memo.operational_roster import VerificationRoster
 from tools.memflow_absorption.manifest import (
@@ -24,6 +26,10 @@ from tools.memflow_absorption.safety import (
 )
 from tools.memflow_absorption.snapshot import create_readonly_snapshot
 from tools.memflow_absorption.synapse_catalog import discover_synapse_operations
+from tools.memflow_absorption.synapse_data import (
+    apply_synapse_data,
+    build_synapse_data_bundle,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -55,6 +61,18 @@ def _parser() -> argparse.ArgumentParser:
     synapse_manifest.add_argument("--exclusion", type=Path, action="append", default=[])
     synapse_manifest.add_argument("--roster-root", type=Path, required=True)
     synapse_manifest.add_argument("--apply", action="store_true")
+    synapse_data = commands.add_parser("synapse-data")
+    synapse_data.add_argument("--attempt-id", required=True)
+    synapse_data.add_argument(
+        "--state-dir",
+        "--synapse-state-dir",
+        dest="state_dir",
+        type=Path,
+        required=True,
+        help="Synapse state directory containing ledger.jsonl and eval/corpus.json",
+    )
+    synapse_data.add_argument("--seen-id", action="append", default=[])
+    synapse_data.add_argument("--apply", action="store_true")
     return parser
 
 
@@ -177,6 +195,27 @@ def _synapse_manifest(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _synapse_data(args: argparse.Namespace) -> dict[str, object]:
+    bundle = build_synapse_data_bundle(args.state_dir, set(args.seen_id))
+    result: dict[str, object] = {
+        "command": "synapse-data",
+        "dry_run": not args.apply,
+        "input_sha256": bundle.input_sha256,
+        "feedback_count": len(bundle.feedback),
+        "eval_fixture_count": len(bundle.eval_fixtures),
+    }
+    if not args.apply:
+        return result
+    memory = Memory(Config.from_env())
+    try:
+        receipt = apply_synapse_data(memory, bundle, attempt_id=args.attempt_id)
+    finally:
+        memory.close()
+    result["receipt"] = receipt.to_dict()
+    result["dry_run"] = False
+    return result
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "snapshot":
@@ -185,6 +224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = _synapse_catalog(args)
     elif args.command == "synapse-manifest":
         result = _synapse_manifest(args)
+    elif args.command == "synapse-data":
+        result = _synapse_data(args)
     else:
         root = assert_safe_attempt_root(args.attempt_root, args.attempt_id)
         if args.apply:
