@@ -150,7 +150,11 @@ SPECS: tuple[FlagSpec, ...] = (
         "MEMO_REPO_MAX_FILE_BYTES", "int", None, "repo", "Skip repo files larger than this (bytes)."
     ),
     _spec(
-        "MEMO_REPO_EMBED_BATCH", "int", None, "repo", "Chunks per embed batch during repo index."
+        "MEMO_REPO_EMBED_BATCH",
+        "int",
+        None,
+        "repo",
+        "Chunks per embed batch during repo index (default 16).",
     ),
     _spec("MEMO_REPO_FLUSH_BATCH", "int", None, "repo", "Rows per DB flush during repo index."),
     _spec(

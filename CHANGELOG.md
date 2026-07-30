@@ -9,6 +9,34 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Changed
+
+- Normal MCP startup is fully offline again: remote update checks and
+  background auto-update now require explicit opt-in with
+  `MEMO_UPDATE_CHECK_ENABLED=1` or `MEMO_AUTO_UPDATE=1`.
+- Graph-enriched repo search now uses CodeGraph's indexed identifier-segment
+  vocabulary instead of scanning every symbol once per query term, ranks
+  multi-term identifier matches first, and ignores generic test/repo boilerplate
+  that previously crowded specific results out of the top ten. Unified fusion
+  also caps each file at two chunks so one verbose file cannot consume the
+  entire result window, and uses a stable candidate floor so increasing the
+  requested limit does not reveal candidates that should already rank in a
+  smaller window.
+- Repository embeddings now default to 16 chunks per MLX batch (configurable
+  with `MEMO_REPO_EMBED_BATCH`) after a real self-index run showed the previous
+  batch of 64 exceeding 19 GiB.
+- Repository watchers now observe a local source checkout (when the indexed URL
+  is local) and accept Git branch-ref events, so a commit reliably triggers an
+  incremental refresh instead of watching an otherwise idle managed clone.
+- Tantivy shutdown now commits pending writes, joins background merge threads,
+  and is idempotent, preventing immediate index-directory cleanup from racing
+  live merge files.
+
+### Security
+
+- Release workflow contracts now pin all platform smoke jobs as mandatory and
+  prohibit downstream publishing from bypassing skipped prerequisites.
+
 ## [4.5.0] - 2026-07-29
 
 ### Changed

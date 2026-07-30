@@ -110,7 +110,10 @@ class _RepoIntelligenceMixin:
             return simple
 
         query_terms = _extract_query_terms(query)
-        input_k = max(limit * 3, 40)
+        # Keep the candidate pool stable for normal result windows (5-20).
+        # A smaller pool made a relevant file appear at limit=20 but disappear
+        # at limit=10 because RRF never saw its lower-ranked vector/graph hit.
+        input_k = max(limit * 3, 60)
         bm_hits = self.store.search_repo_bm25(
             query,
             limit=input_k,
@@ -251,7 +254,7 @@ class _RepoIntelligenceMixin:
                 Path(str(source["clone_path"])),
                 query,
                 scope=scope,
-                limit=max(limit * 4, 40),
+                limit=max(limit * 4, 80),
             )
             structural_entries = [
                 {**entry, "match_type": "codegraph"}
@@ -262,7 +265,7 @@ class _RepoIntelligenceMixin:
                 self.store.repo_chunks_for_paths(
                     source_id,
                     structural_entries,
-                    limit=max(limit * 3, 30),
+                    limit=max(limit * 3, 60),
                 )
             )
             provider_diagnostics["codegraph"].append(
@@ -283,7 +286,7 @@ class _RepoIntelligenceMixin:
             )[:20]
             signals, signal_status = self._load_change_signals(source)
             expanded = (
-                expand_cochange_paths(signals, seed_paths, limit=max(limit * 4, 40))
+                expand_cochange_paths(signals, seed_paths, limit=max(limit * 4, 80))
                 if signals is not None
                 else []
             )
@@ -310,7 +313,7 @@ class _RepoIntelligenceMixin:
                 self.store.repo_chunks_for_paths(
                     source_id,
                     change_entries,
-                    limit=max(limit * 3, 30),
+                    limit=max(limit * 3, 60),
                 )
             )
             provider_diagnostics["cochange"].append(
@@ -332,6 +335,7 @@ class _RepoIntelligenceMixin:
             channel_names=[channel for channel, _rows in named_channels],
             limit=max(limit * 3, 40),
             query_terms=query_terms,
+            max_per_path=2,
         )
         self.last_search_diagnostics = {
             "schema": "memo.repo_search_diagnostics.v1",

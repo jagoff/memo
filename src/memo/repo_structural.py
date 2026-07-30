@@ -137,6 +137,35 @@ def _direct_nodes(
     *,
     limit: int,
 ) -> list[sqlite3.Row]:
+    # Current CodeGraph indexes expose a segment vocabulary for snake_case and
+    # CamelCase identifiers. Prefix lookups use its primary key and the nodes
+    # name index; this avoids one full nodes-table scan per query term. Keep the
+    # LIKE fallback for older/minimal provider schemas.
+    has_segment_vocab = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'name_segment_vocab'"
+    ).fetchone()
+    if has_segment_vocab is not None:
+        segment_predicates = ["vocab.segment GLOB ?" for _term in terms]
+        segment_params: list[Any] = [f"{term.lower()}*" for term in terms]
+        sql = (
+            "WITH matching_names AS ("  # noqa: S608 — fixed placeholders; bound terms.
+            "  SELECT vocab.name, COUNT(DISTINCT vocab.segment) AS match_count "
+            "  FROM name_segment_vocab AS vocab WHERE "
+            + " OR ".join(segment_predicates)
+            + "  GROUP BY vocab.name"
+            ") "
+            "SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, "
+            "       nodes.file_path, nodes.start_line, nodes.end_line, "
+            "       nodes.signature, nodes.is_exported, matching_names.match_count "
+            "FROM matching_names "
+            "JOIN nodes ON nodes.name = matching_names.name "
+            "ORDER BY matching_names.match_count DESC, nodes.is_exported DESC, "
+            "         length(nodes.name) ASC, "
+            "         nodes.file_path ASC LIMIT ?"
+        )
+        segment_params.append(limit)
+        return connection.execute(sql, segment_params).fetchall()
+
     predicates: list[str] = []
     params: list[Any] = []
     for term in terms:
@@ -193,6 +222,8 @@ def _node_score(row: sqlite3.Row, terms: list[str]) -> float:
             score = max(score, 0.76)
         elif term in qualified:
             score = max(score, 0.64)
+    if "match_count" in row.keys():  # noqa: SIM118 — sqlite3.Row checks values.
+        score = max(score, 0.55 + min(0.4, 0.12 * int(row["match_count"] or 0)))
     if int(row["is_exported"] or 0):
         score += 0.04
     return min(score, 1.0)

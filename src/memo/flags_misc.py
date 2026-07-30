@@ -48,13 +48,12 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_AUTO_UPDATE",
         "bool",
-        True,
+        False,
         "update",
         "On memo-mcp start, check for a newer git TAG and update in the "
-        "background (takes effect next start). Default ON: memo keeps itself "
-        "current across every install. This is the one default-on outbound "
-        "call (a throttled `git ls-remote` to the memo repo); set =0 to opt out "
-        "and keep startup fully offline.",
+        "background (takes effect next start). Default off: normal startup is "
+        "fully offline; set =1 to opt in to the throttled remote tag check and "
+        "background install.",
     ),
     _spec(
         "MEMO_AUTO_UPDATE_INTERVAL_S",

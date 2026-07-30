@@ -14,6 +14,11 @@ from typing import Any
 from memo.errors import MemoError
 
 
+def _is_git_commit_signal(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return "/.git/refs/heads/" in normalized or normalized.endswith("/.git/HEAD")
+
+
 class DebouncedRepoRefresh:
     """Coalesce repository file events into one hash-incremental refresh."""
 
@@ -36,7 +41,8 @@ class DebouncedRepoRefresh:
 
     def schedule(self, path: Path) -> None:
         value = str(path)
-        if "/.git/" in value.replace("\\", "/"):
+        normalized = value.replace("\\", "/")
+        if "/.git/" in normalized and not _is_git_commit_signal(normalized):
             return
         with self._lock:
             self._pending_paths.add(value)
@@ -111,6 +117,9 @@ class DebouncedRepoRefresh:
 def _watch_target(source: dict[str, Any] | None, repo: str) -> Path:
     if source is None:
         raise SystemExit(f"repo not found: {repo}")
+    source_url = Path(str(source.get("url") or "")).expanduser()
+    if source_url.is_dir():
+        return source_url.resolve()
     target = Path(str(source["clone_path"]))
     if not target.is_dir():
         raise SystemExit(f"managed clone is missing: {target}")
@@ -127,7 +136,14 @@ def _watch_handler(base: Any, target: Path, refresh: DebouncedRepoRefresh) -> An
                 relative = path.relative_to(target)
             except ValueError:
                 return
-            if relative.parts and relative.parts[0] == ".git":
+            relative_text = relative.as_posix()
+            if (
+                relative.parts
+                and relative.parts[0] == ".git"
+                and not (
+                    relative_text.startswith(".git/refs/heads/") or relative_text == ".git/HEAD"
+                )
+            ):
                 return
             refresh.schedule(path)
 
