@@ -503,7 +503,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P03-T02 | Fencing de requests Memflow | Codex + agente especializado | Memflow `5426e8e5` | writers directos y dominios/compatibilidad | `131` focused; Ruff/mypy/diff-check | `c0ae3a0779` + `4b3f99348` + `ab252b7bc` + `303c6a4ad` + `b15cf9570` + `3cb254dc3` | **PASS final** | revisión independiente PASS |
 | P03-T03 | Drain y startup refusal | Codex + agentes especializados | Memflow `2c643863` | Git env/root, `.git` symlink/swap, descriptor ABA | focused `79`; integrated `312` | `a3a6070912` + `45b22d6c64` + `8ebc663091` + `7193be2a0` | **PASS final** | revisión independiente PASS |
 | P03-T04 | Aislamiento de Synapse | Codex + agentes especializados | Synapse `45c146d5` | regresiones Git-object, attestation, submódulos y mounts | focused `45`; re-review subset `14` | `933445fd` + `f32e789` + `8600800` | **PASS final** | — |
-| P03-T05 | Registry backend de Memo | — | — | — | — | — | — | — |
+| P03-T05 | Registry backend de Memo | Synapse | `f45ca47`, `2f78569`, `e4162e3`, `7461ec5`, `7592813`, `6228d0b`, `f1e16ea`, `a7569e8`, `eeb2c88`, `e0cc14b`, `8b2e05a` | memo-only registry, routing, CLI/MCP guards, dashboard legacy routes 410 | 121 focused + runtime review | final independent review | **PASS** | historical parity oracle tests remain separate |
 | P03-T06 | Configuración y readiness | — | — | — | — | — | — | — |
 | P04-T01 | Probar inputs de migración | — | — | — | — | — | — | — |
 | P04-T02 | Import durable por política | — | — | — | — | — | — | — |
