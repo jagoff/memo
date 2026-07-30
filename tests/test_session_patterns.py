@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -208,6 +209,43 @@ class TestMCPSessionTools:
             "SELECT summary FROM sessions WHERE id = 'stable-abc'"
         ).fetchone()
         assert row["summary"] == "the summary"
+
+    def test_canonical_start_and_end_retries_leave_timestamps_to_service(
+        self,
+        session_mem,
+        monkeypatch,
+    ):
+        monkeypatch.setenv("MEMO_SESSION_ID", "stable-canonical")
+        canonical = type("CanonicalSessions", (), {})()
+        canonical.checkpoint = MagicMock()
+        canonical.terminate = MagicMock()
+        canonical.checkpoint.return_value.to_dict.return_value = {
+            "session_id": "stable-canonical",
+            "checkpointed_at": "2026-07-30T12:00:00.000000Z",
+        }
+        canonical.terminate.return_value.to_dict.return_value = {
+            "session_id": "stable-canonical",
+            "terminated_at": "2026-07-30T12:01:00.000000Z",
+        }
+        session_mem._capabilities["operational_sessions"] = canonical
+        mock = _MockServer()
+        register(mock, session_mem)
+
+        first_start = mock._tools["memo_session_start"]()
+        retried_start = mock._tools["memo_session_start"]()
+        first_end = mock._tools["memo_session_end"](summary="done")
+        retried_end = mock._tools["memo_session_end"](summary="done")
+
+        assert first_start == retried_start
+        assert first_end == retried_end
+        assert canonical.checkpoint.call_count == 2
+        assert canonical.terminate.call_count == 2
+        assert all(
+            call.kwargs["checkpointed_at"] is None for call in canonical.checkpoint.call_args_list
+        )
+        assert all(
+            call.kwargs["terminated_at"] is None for call in canonical.terminate.call_args_list
+        )
 
     def test_legacy_session_lifecycle_aliases_are_not_registered(self):
         mock = _MockServer()

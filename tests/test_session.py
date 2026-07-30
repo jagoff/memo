@@ -2013,6 +2013,115 @@ def test_canonical_session_runtime_writes_only_a_derived_json_cache(
     assert cache == snapshot
 
 
+def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
+    tmp_path,
+    fake_git,
+    monkeypatch,
+) -> None:
+    from memo.identity import PrincipalIdentity
+    from memo.operational_sessions import OperationalSession
+    from memo.session import (
+        install_operational_session_runtime,
+        remove_operational_session_runtime,
+    )
+
+    identity = PrincipalIdentity(
+        principal_id="device-a:session-a",
+        actor_id="agent-a",
+        kind="agent",
+        device_id="device-a",
+        session_id="session-a",
+        source_client="codex",
+    )
+    canonical = OperationalSession(
+        session_id="session-a",
+        principal_id=identity.principal_id,
+        project=tmp_path.name,
+        workspace=str(tmp_path),
+        status="active",
+        branch="master",
+        head="abc1234 fix(thing): something",
+        summary="",
+        checkpointed_at="2026-07-30T12:00:00.000000Z",
+        source_event_id="source-1",
+        recoverable_at="",
+        terminated_at="",
+        recoverable_reason="",
+        updated_event_id="event-1",
+    )
+
+    class _Views:
+        def __init__(self) -> None:
+            self.replace_calls = 0
+            self.artifacts: dict[str, object] = {}
+
+        def replace_session_local_artifacts(
+            self,
+            _session_id: str,
+            artifacts: dict[str, object],
+        ) -> None:
+            self.replace_calls += 1
+            if self.replace_calls == 1:
+                raise OSError("simulated crash before derived cache write")
+            self.artifacts = dict(artifacts)
+
+        def session_local_artifacts(self, _session_id: str) -> dict[str, object]:
+            return dict(self.artifacts)
+
+    class _Service:
+        def __init__(self) -> None:
+            self.views = _Views()
+            self.calls: list[dict[str, object]] = []
+
+        def checkpoint(self, **kwargs):
+            if self.calls and kwargs != self.calls[0]:
+                raise AssertionError("idempotent retry changed the canonical request")
+            self.calls.append(dict(kwargs))
+            return canonical
+
+    service = _Service()
+    generated_times = iter(
+        (
+            "2026-07-30T12:00:01+00:00",
+            "2026-07-30T12:00:02+00:00",
+        )
+    )
+    monkeypatch.setattr(session_mod, "_now_iso", lambda: next(generated_times))
+    install_operational_session_runtime(
+        tmp_path,
+        service=service,  # type: ignore[arg-type]
+        identity_factory=lambda: identity,
+    )
+    try:
+        with pytest.raises(OSError, match="simulated crash"):
+            checkpoint(
+                tmp_path,
+                session_id="session-a",
+                cwd=str(tmp_path),
+                source_event_id="source-1",
+                idempotency_key="checkpoint-1",
+                lru_cap=10,
+            )
+        assert not (tmp_path / "sessions" / "session-a.json").exists()
+
+        snapshot = checkpoint(
+            tmp_path,
+            session_id="session-a",
+            cwd=str(tmp_path),
+            source_event_id="source-1",
+            idempotency_key="checkpoint-1",
+            lru_cap=10,
+        )
+    finally:
+        remove_operational_session_runtime(tmp_path)
+
+    assert [call["checkpointed_at"] for call in service.calls] == [None, None]
+    assert snapshot["created"] == canonical.checkpointed_at
+    assert snapshot["updated"] == canonical.checkpointed_at
+    cache = json.loads((tmp_path / "sessions" / "session-a.json").read_text())
+    assert cache == snapshot
+
+
 def test_canonical_session_runtime_drives_list_and_get_without_json_authority(
     tmp_path,
 ) -> None:

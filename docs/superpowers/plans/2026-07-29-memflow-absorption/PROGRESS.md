@@ -31,11 +31,12 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   habilitar activación.
 - [ ] Re-revisar `P01-T04 MEDIUM`: implementación técnica lista; fsync del
   staging antes del rename, crash pre-publish y retry verificados.
-- [ ] Corregir `P01-T06 HIGH`: adapters públicos deben propagar timestamp
+- [x] Corrección técnica `P01-T06 HIGH`: adapters públicos propagan timestamp
   `None` y reutilizar el resultado canónico para retry idempotente después de
-  crash — agente `review_plan01_spec` reasignado como implementador.
-- [ ] Corregir `P01-T06 MEDIUM`: preservar get por prefijo/ambigüedad y
-  artifacts locales en reads canónicos locales, sin federarlos — mismo agente.
+  crash. Re-revisión pendiente.
+- [x] Corrección técnica `P01-T06 MEDIUM`: preservar get por prefijo y
+  artifacts locales en reads canónicos locales, sin federarlos. Focused
+  `118 passed`; Ruff y mypy limpios; re-revisión pendiente.
 - [ ] Completar el gate diferido `P01-T03 MEDIUM`: stale/missing epoch por
   MCP/CLI/daemon/Memory/direct store queda bloqueante de T7.
 - [ ] Corregir `P03-T01`: manifest fail-closed ante symlinks y receipts stale;
@@ -72,6 +73,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] `P01-T02` GREEN: snapshot descriptor-relative único, identidad exacta
   del descriptor, detección de reemplazo same-size y un solo consumo en
   plan/anclaje; `70 passed`, Ruff y mypy limpios.
+- [x] `P01-T06` GREEN técnico: timestamps canónicos estables en retry y
+  lecturas con artifacts locales; `118 passed`, Ruff y mypy limpios.
 
 ### Próximos gates
 
@@ -284,6 +287,11 @@ Estado: **1/7 aceptadas**.
   limpios.
 - [x] Commit técnico: `ecf2b951`.
 - [x] Reporte de implementación generado.
+- [x] Corrección técnica de retry: adapters envían timestamps `None` y el
+  cache derivado reutiliza el timestamp retornado por el servicio canónico.
+- [x] Lecturas públicas canónicas preservan prefijos y artifacts locales sin
+  incorporarlos al evento portable.
+- [x] Focused adapters/sesiones: `118 passed`; Ruff y mypy limpios.
 - [ ] Revisión independiente y `PASS`.
 
 ### Tarea 7 — Activar facade operacional v2 tras paridad completa

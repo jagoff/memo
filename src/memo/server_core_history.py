@@ -135,14 +135,18 @@ def register(server: Any, memory: Memory) -> None:
         project context for capture or inspection. `project` narrows results
         and `limit` caps the number of sessions returned.
         """
-        from memo.session import list_sessions
+        from memo.session import _list_canonical_sessions, list_sessions
 
         capabilities = getattr(memory, "_capabilities", {})
         canonical = (
             capabilities.get("operational_sessions") if isinstance(capabilities, dict) else None
         )
         if canonical is not None:
-            return [session.to_dict() for session in canonical.list(limit=limit, project=project)]
+            return _list_canonical_sessions(
+                canonical,
+                limit=limit,
+                project=project,
+            )
         return list_sessions(memory.cfg.state_dir, limit=limit, project=project)
 
     @annotated_tool(server, **READ_ONLY)
@@ -162,15 +166,14 @@ def register(server: Any, memory: Memory) -> None:
         need the stored transcript path, project, checkpoints, or other session
         details. Returns None when the session id is unknown.
         """
-        from memo.session import get_session
+        from memo.session import _get_canonical_session, get_session
 
         capabilities = getattr(memory, "_capabilities", {})
         canonical = (
             capabilities.get("operational_sessions") if isinstance(capabilities, dict) else None
         )
         if canonical is not None:
-            session = canonical.get(session_id)
-            return session.to_dict() if session is not None else None
+            return _get_canonical_session(canonical, session_id)
         return get_session(memory.cfg.state_dir, session_id)
 
     @annotated_tool(server, **READ_ONLY)

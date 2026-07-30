@@ -207,12 +207,48 @@ def _canonical_session_snapshot(
     }
 
 
-def _runtime_snapshot(
-    runtime: _OperationalSessionRuntime,
+def _service_snapshot(
+    service: OperationalSessionService,
     session: OperationalSession,
 ) -> dict[str, Any]:
-    local = runtime.service.views.session_local_artifacts(session.session_id)
+    local = service.views.session_local_artifacts(session.session_id)
     return _canonical_session_snapshot(session, local)
+
+
+def _list_canonical_sessions(
+    service: OperationalSessionService,
+    *,
+    limit: int,
+    project: str | None,
+    workspace: str | None = None,
+) -> list[dict[str, Any]]:
+    sessions = service.list(
+        limit=max(0, limit),
+        project=project,
+        workspace=workspace,
+    )
+    return [_service_snapshot(service, session) for session in sessions]
+
+
+def _get_canonical_session(
+    service: OperationalSessionService,
+    session_id_or_prefix: str,
+) -> dict[str, Any] | None:
+    if not session_id_or_prefix or len(session_id_or_prefix) < 4:
+        return None
+    try:
+        session_id_or_prefix = validate_session_id(session_id_or_prefix)
+    except ValueError:
+        return None
+    canonical = service.get(session_id_or_prefix)
+    if canonical is not None:
+        return _service_snapshot(service, canonical)
+    matches = [
+        session
+        for session in service.list(limit=10_000)
+        if session.session_id.startswith(session_id_or_prefix)
+    ]
+    return _service_snapshot(service, matches[0]) if matches else None
 
 
 def validate_session_id(session_id: str) -> str:
@@ -350,7 +386,7 @@ def checkpoint(
                 trail.append(clean_prompt[:_PROMPT_TRAIL_CHARS])
                 trail = trail[-_PROMPT_TRAIL_MAX:]
 
-        now = checkpointed_at or _now_iso()
+        now = checkpointed_at or (_now_iso() if runtime is None else "")
         snapshot: dict[str, Any] = {
             **existing,
             "session_id": session_id,
@@ -412,9 +448,11 @@ def checkpoint(
                 branch=str(snapshot.get("branch") or ""),
                 head=str(snapshot.get("head_commit") or ""),
                 source_event_id=source_id,
-                checkpointed_at=now,
+                checkpointed_at=checkpointed_at,
                 idempotency_key=operation_key,
             )
+            snapshot["created"] = existing.get("created") or canonical.checkpointed_at
+            snapshot["updated"] = canonical.checkpointed_at
             local_artifacts = {
                 key: value for key, value in snapshot.items() if key not in _CANONICAL_SESSION_KEYS
             }
@@ -537,12 +575,12 @@ def list_sessions(
     cwd_resolved = _resolve_session_cwd(cwd) if cwd else None
     runtime = _operational_session_runtime(state_dir)
     if runtime is not None:
-        sessions = runtime.service.list(
-            limit=max(0, limit),
+        return _list_canonical_sessions(
+            runtime.service,
+            limit=limit,
             project=project,
             workspace=cwd_resolved,
         )
-        return [_runtime_snapshot(runtime, session) for session in sessions]
 
     out: list[dict[str, Any]] = []
     d = sessions_dir(state_dir)
@@ -580,15 +618,7 @@ def get_session(state_dir: Path, session_id_or_prefix: str) -> dict[str, Any] | 
         return None
     runtime = _operational_session_runtime(state_dir)
     if runtime is not None:
-        canonical = runtime.service.get(session_id_or_prefix)
-        if canonical is not None:
-            return _runtime_snapshot(runtime, canonical)
-        matches = [
-            session
-            for session in runtime.service.list(limit=10_000)
-            if session.session_id.startswith(session_id_or_prefix)
-        ]
-        return _runtime_snapshot(runtime, matches[0]) if matches else None
+        return _get_canonical_session(runtime.service, session_id_or_prefix)
     d = sessions_dir(state_dir)
     # Fast path: exact filename hit.
     exact = _session_path(state_dir, session_id_or_prefix)

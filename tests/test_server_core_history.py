@@ -376,39 +376,104 @@ def test_memo_session_get_none_when_missing(tmp_cfg) -> None:
 
 
 def test_memo_session_list_reads_canonical_runtime_when_installed(tmp_cfg) -> None:
+    from memo.operational_sessions import OperationalSession
     from memo.server_core_history import register
 
     mem = _make_mem(tmp_cfg)
     canonical = MagicMock()
-    canonical.list.return_value = [MagicMock(to_dict=lambda: {"session_id": "canonical-1"})]
+    row = OperationalSession(
+        session_id="canonical-1",
+        principal_id="device-a:session-a",
+        project="memo",
+        workspace="/work/memo",
+        status="active",
+        branch="main",
+        head="abc123",
+        summary="working",
+        checkpointed_at="2026-07-30T12:00:00.000000Z",
+        source_event_id="source-1",
+        recoverable_at="",
+        terminated_at="",
+        recoverable_reason="",
+        updated_event_id="event-1",
+    )
+    canonical.list.return_value = [row]
+    canonical.views.session_local_artifacts.return_value = {
+        "transcript_path": "/private/canonical-1.jsonl"
+    }
     mem._capabilities["operational_sessions"] = canonical
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    with patch("memo.session.list_sessions") as legacy:
-        result = tools["memo_session_list"](limit=5, project="memo")
+    result = tools["memo_session_list"](limit=5, project="memo")
 
-    assert result == [{"session_id": "canonical-1"}]
-    canonical.list.assert_called_once_with(limit=5, project="memo")
-    legacy.assert_not_called()
+    assert len(result) == 1
+    assert result[0]["session_id"] == "canonical-1"
+    assert result[0]["transcript_path"] == "/private/canonical-1.jsonl"
+    assert result[0]["cwd"] == "/work/memo"
+    canonical.list.assert_called_once_with(limit=5, project="memo", workspace=None)
+    assert "transcript_path" not in row.to_dict()
 
 
-def test_memo_session_get_reads_canonical_runtime_when_installed(tmp_cfg) -> None:
+def test_memo_session_get_resolves_ambiguous_prefix_and_merges_local_artifacts(
+    tmp_cfg,
+) -> None:
+    from memo.operational_sessions import OperationalSession
     from memo.server_core_history import register
 
     mem = _make_mem(tmp_cfg)
+    first = OperationalSession(
+        session_id="canonical-first",
+        principal_id="device-a:session-a",
+        project="memo",
+        workspace="/work/memo",
+        status="active",
+        branch="main",
+        head="abc123",
+        summary="first",
+        checkpointed_at="2026-07-30T12:00:00.000000Z",
+        source_event_id="source-1",
+        recoverable_at="",
+        terminated_at="",
+        recoverable_reason="",
+        updated_event_id="event-1",
+    )
+    second = OperationalSession(
+        session_id="canonical-second",
+        principal_id="device-a:session-a",
+        project="memo",
+        workspace="/work/memo",
+        status="active",
+        branch="main",
+        head="def456",
+        summary="second",
+        checkpointed_at="2026-07-30T11:00:00.000000Z",
+        source_event_id="source-2",
+        recoverable_at="",
+        terminated_at="",
+        recoverable_reason="",
+        updated_event_id="event-2",
+    )
     canonical = MagicMock()
-    canonical.get.return_value = MagicMock(to_dict=lambda: {"session_id": "canonical-1"})
+    canonical.get.return_value = None
+    canonical.list.return_value = [first, second]
+    canonical.views.session_local_artifacts.return_value = {
+        "transcript_path": "/private/first.jsonl",
+        "prompt_trail": ["local only"],
+    }
     mem._capabilities["operational_sessions"] = canonical
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    with patch("memo.session.get_session") as legacy:
-        result = tools["memo_session_get"](session_id="canonical-1")
+    result = tools["memo_session_get"](session_id="canonical-")
 
-    assert result == {"session_id": "canonical-1"}
-    canonical.get.assert_called_once_with("canonical-1")
-    legacy.assert_not_called()
+    assert result is not None
+    assert result["session_id"] == "canonical-first"
+    assert result["transcript_path"] == "/private/first.jsonl"
+    assert result["prompt_trail"] == ["local only"]
+    canonical.get.assert_called_once_with("canonical-")
+    canonical.list.assert_called_once_with(limit=10_000)
+    assert "transcript_path" not in first.to_dict()
 
 
 # ---------------------------------------------------------------------------

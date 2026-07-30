@@ -258,7 +258,6 @@ def register(server: Any, memory: Any) -> None:
         dir_override = directory or cwd
         project = _project_from_cwd()
         session_id = _effective_session_id()
-        now = datetime.datetime.now(datetime.UTC).isoformat()
         resolved_directory = dir_override or _session_directory()
         canonical = _canonical_sessions()
         if canonical is not None:
@@ -271,10 +270,11 @@ def register(server: Any, memory: Any) -> None:
                 branch="",
                 head="",
                 source_event_id=f"memo-mcp/session-start/{session_id}",
-                checkpointed_at=now,
+                checkpointed_at=None,
                 idempotency_key=f"memo-mcp/session-start/{session_id}",
             ).to_dict()
 
+        now = datetime.datetime.now(datetime.UTC).isoformat()
         _ensure_session_table(memory)
 
         with memory.store._tx() as cx:
@@ -313,17 +313,17 @@ def register(server: Any, memory: Any) -> None:
         Returns session ended confirmation.
         """
         session_id = _effective_session_id()
-        now = datetime.datetime.now(datetime.UTC).isoformat()
         canonical = _canonical_sessions()
         if canonical is not None:
             return canonical.terminate(
                 identity=_principal(),
                 session_id=session_id,
                 summary=summary or "",
-                terminated_at=now,
+                terminated_at=None,
                 idempotency_key=f"memo-mcp/session-end/{session_id}",
             ).to_dict()
 
+        now = datetime.datetime.now(datetime.UTC).isoformat()
         _ensure_session_table(memory)
 
         with memory.store._tx() as cx:
