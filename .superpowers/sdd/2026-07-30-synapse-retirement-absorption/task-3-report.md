@@ -54,3 +54,18 @@ None.  Pre-existing changes to unrelated SDD ledgers/reports were preserved.
 
 Correction verification: focused parity plus ask/evidence regressions 34
 passed; Ruff passed; Mypy passed for 464 source files.
+
+## Correction round 2
+
+- `memo_ask` parity now derives its status from Memo's native result before
+  inspecting source IDs: explicit errors remain `error`; an explicit
+  `abstained="disputed"` result remains `conflicted`; other abstentions remain
+  `insufficient_evidence`.  Sources are still retained as provenance and never
+  upgrade either state to `answered`.
+- The real-Memory unified-briefing fallback now returns full, structured native
+  `source_ids` alongside its Markdown and lines.  This keeps briefing
+  provenance available to `_source_ids` even when no injected
+  `unified_briefing` facade method exists.
+
+Correction verification: 37 focused parity/ask/evidence tests passed; Ruff
+passed; Mypy passed for 464 source files.

@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from statistics import quantiles
 from typing import Any, Literal
 
@@ -194,6 +195,42 @@ def _native_status(value: object) -> str:
     return AnswerStatus.ANSWERED.value
 
 
+def _ask_status(value: Mapping[str, object]) -> str:
+    """Keep Memo's explicit abstention/error semantics ahead of source count."""
+
+    status = _native_status(value)
+    if status != AnswerStatus.ANSWERED.value:
+        return status
+    abstained = value.get("abstained")
+    if abstained:
+        return (
+            AnswerStatus.CONFLICTED.value
+            if str(abstained).casefold() == "disputed"
+            else AnswerStatus.INSUFFICIENT_EVIDENCE.value
+        )
+    return status
+
+
+def _briefing_source_ids(memory: Memory) -> tuple[str, ...]:
+    """Return full native record IDs used by the durable briefing inputs."""
+
+    try:
+        cutoff = (datetime.now(tz=UTC) - timedelta(days=7)).isoformat()
+        records = memory.store.list_recent(
+            limit=20,
+            exclude_types={"reference", "secret"},
+        )
+    except Exception:
+        return ()
+    return _canonical_ids(
+        [
+            row.get("id")
+            for row in records
+            if isinstance(row, Mapping) and str(row.get("updated") or "") >= cutoff
+        ]
+    )
+
+
 def _route_input(fixture: ParityFixture) -> dict[str, object]:
     values = dict(fixture.parameters)
     values.setdefault("query", fixture.query)
@@ -265,12 +302,7 @@ class _MemoFacade:
             question = str(kwargs.pop("question", kwargs.pop("query", "")))
             kwargs.setdefault("include_repos", False)
             answer = self.memory.ask(question, **kwargs)
-            return (
-                AnswerStatus.ANSWERED.value
-                if answer.get("sources")
-                else AnswerStatus.INSUFFICIENT_EVIDENCE.value,
-                _source_ids(answer),
-            )
+            return _ask_status(answer), _source_ids(answer)
         if method == "search":
             query = str(kwargs.pop("query", kwargs.pop("question", "")))
             records = self.memory.search(query, **kwargs)
@@ -305,6 +337,7 @@ class _MemoFacade:
                     "available": bool(lines),
                     "markdown": compact_text("\n".join(lines), max_chars=900),
                     "lines": lines,
+                    "source_ids": list(_briefing_source_ids(self.memory)) if lines else [],
                 }
             return _native_status(result), _source_ids(result)
         if method == "conflict":

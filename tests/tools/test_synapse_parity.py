@@ -34,6 +34,21 @@ class _Hit:
 
 
 class _Memory:
+    def ask(self, question: str, **_: Any) -> dict[str, object]:
+        if question == "disputed query":
+            return {
+                "answer": "withheld",
+                "abstained": "disputed",
+                "sources": [{"id": "SOURCE-A"}],
+            }
+        if question == "error query":
+            return {
+                "answer": "backend failed",
+                "error": "backend failed",
+                "sources": [{"id": "SOURCE-A"}],
+            }
+        return {"answer": "answered", "sources": [{"id": "SOURCE-A"}]}
+
     def search(self, query: str, **_: Any) -> list[_Hit]:
         return [_Hit("SOURCE-A")] if query == "native query" else []
 
@@ -261,6 +276,59 @@ def test_parity_resolves_unified_briefing_without_synapse_import(
     report = run_synapse_parity(signed, memory, [case])
 
     assert report.status == "pass"
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_status"),
+    [("disputed query", "conflicted"), ("error query", "error")],
+)
+def test_memo_ask_preserves_native_abstention_and_error_before_sources(
+    manifest, memory, authority, roster, query, expected_status
+) -> None:
+    route = replace(
+        manifest.operation_mappings[0].routes[0],
+        memo_methods=("ask",),
+        parameter_mapping={"query": "question"},
+    )
+    signed = _resign(_with_route(manifest, route), authority[0], roster)
+    case = replace(
+        fixture("native"),
+        query=query,
+        expected_status=expected_status,
+    )
+
+    report = run_synapse_parity(signed, memory, [case])
+
+    assert report.status == "pass"
+    assert report.rows[0].memo_source_ids == ("source-a",)
+
+
+def test_unified_briefing_fallback_emits_native_structured_source_ids(
+    manifest, authority, roster, mem_with_stub, monkeypatch
+) -> None:
+    record = mem_with_stub.save(
+        title="Briefing provenance",
+        content="A native briefing source.",
+        auto_project=False,
+    )
+    mem_with_stub.capability_manifest_roster = roster
+    monkeypatch.setattr(
+        "memo.briefing.memo_native_briefing_lines",
+        lambda *_args, **_kwargs: ["### Open loops", "- source"],
+    )
+    monkeypatch.setattr("memo.briefing.operational_briefing_lines", lambda *_args, **_kwargs: [])
+    route = replace(
+        manifest.operation_mappings[0].routes[0],
+        memo_methods=("unified_briefing",),
+        parameter_mapping={},
+    )
+    signed = _resign(_with_route(manifest, route), authority[0], roster)
+    case = replace(fixture("native"), expected_source_ids=(record.id,))
+
+    report = run_synapse_parity(signed, mem_with_stub, [case])
+
+    assert report.status == "pass"
+    assert report.rows[0].memo_source_ids == (record.id,)
 
 
 @pytest.mark.parametrize(
