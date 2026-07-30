@@ -109,6 +109,7 @@ def _write_json(path: Path, payload: object) -> None:
 
 def _publish_snapshot(path: Path, payload: object, source_root: Path) -> None:
     """Publish a descriptor-safe snapshot plus its adjacent v2 receipt."""
+    source_root.mkdir(parents=True, exist_ok=True)
     encoded = canonical_json_bytes(payload)
     source = source_root / f"{path.parent.name}-{path.name}.source"
     source.write_bytes(encoded)
@@ -374,7 +375,7 @@ def _signed_inputs(
             issued_at=FROZEN_AT,
             collected_at=FROZEN_AT,
             cursor=f"cursor-{device_id}-final",
-            extraction_complete=True,
+            extraction_complete=not bool(usage.get("coverage_gaps")),
             hourly_buckets=tuple(buckets),
             frozen_at=FROZEN_AT,
         )
