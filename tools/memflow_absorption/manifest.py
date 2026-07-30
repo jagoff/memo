@@ -36,6 +36,7 @@ from tools.memflow_absorption.synapse_catalog import (
     SynapseCatalogError,
     discover_synapse_operations,
 )
+from tools.memflow_absorption.transforms import FrozenTransformRegistry, verify_route_fixtures
 
 AUDIT_EXCLUSIONS_DOMAIN = "memo.cutover.audit_exclusions.v1"
 USAGE_PROOF_DOMAIN = "memo.cutover.usage_proof.v1"
@@ -623,7 +624,6 @@ def build_capability_manifest(
         raise ManifestError("every source operation must have exactly one disposition")
     routes = tuple(r for m in mappings for r in m.routes)
     if routes:
-        from tools.memflow_absorption.transforms import FrozenTransformRegistry, verify_route_fixtures
         if fixture_root is None or not isinstance(transform_registry, FrozenTransformRegistry):
             raise ManifestError("non-empty routes require fixture_root and FrozenTransformRegistry")
         _verify_fixture_bindings(mappings, fixture_root)
@@ -894,8 +894,12 @@ def build_capability_manifest(
             )
         )
 
-    registry_authority_sha256 = transform_registry.digest() if routes else ""
-    fixture_authority_sha256 = _sha256(canonical_json_bytes(sorted({p: d for m in mappings for r in m.routes for p, d in zip(r.fixture_paths, r.fixture_sha256)}.items())))
+    registry_authority_sha256 = (
+        transform_registry.digest()
+        if routes and isinstance(transform_registry, FrozenTransformRegistry)
+        else ""
+    )
+    fixture_authority_sha256 = _sha256(canonical_json_bytes(sorted({p: d for m in mappings for r in m.routes for p, d in zip(r.fixture_paths, r.fixture_sha256, strict=True)}.items())))
     operation_map = canonical_json_bytes({"mappings": [row.to_dict() for row in mappings], "registry_authority_sha256": registry_authority_sha256, "fixture_authority_sha256": fixture_authority_sha256})
     slo_baseline = canonical_json_bytes([row.to_dict() for row in slos])
     signer_key = roster.key(signer_key_id)

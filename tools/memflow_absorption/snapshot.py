@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+from dataclasses import replace
 from pathlib import Path
 
 from memo.atomic_io import open_secure_directory
@@ -88,11 +89,13 @@ def create_readonly_snapshot(source: Path, target: Path) -> SnapshotReceipt:
                 raise SnapshotError("snapshot destination already exists")
             directory.create_bytes_exclusive(target_path.name, data, mode=target_mode)
             target_stat = directory.stat(target_path.name)
-            receipt = SnapshotReceipt(
-                **{**receipt.to_dict(), "target_size": target_stat.st_size,
-                   "target_mtime_ns": target_stat.st_mtime_ns,
-                   "target_mode": stat.S_IMODE(target_stat.st_mode),
-                   "target_device": target_stat.st_dev, "target_inode": target_stat.st_ino}
+            receipt = replace(
+                receipt,
+                target_size=target_stat.st_size,
+                target_mtime_ns=target_stat.st_mtime_ns,
+                target_mode=stat.S_IMODE(target_stat.st_mode),
+                target_device=target_stat.st_dev,
+                target_inode=target_stat.st_ino,
             )
             try:
                 directory.create_bytes_exclusive(
@@ -104,7 +107,7 @@ def create_readonly_snapshot(source: Path, target: Path) -> SnapshotReceipt:
                 directory.unlink(target_path.name, missing_ok=True)
                 raise
             # Reopen both artifacts descriptor-relative and verify publication.
-            published, published_stat = directory.read_bytes_snapshot(target_path.name)
+            published, _published_stat = directory.read_bytes_snapshot(target_path.name)
             receipt_bytes, _ = directory.read_bytes_snapshot(receipt_name)
             if published != data or hashlib.sha256(published).hexdigest() != receipt.sha256:
                 raise SnapshotError("published snapshot changed during publication")
