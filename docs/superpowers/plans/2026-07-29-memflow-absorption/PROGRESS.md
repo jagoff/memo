@@ -6,7 +6,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 10:20 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 10:25 America/Argentina/Cordoba
 
 ### En curso
 
@@ -14,10 +14,10 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   Tareas 2–6 — `T2 PASS`, `T3 PASS`, `T4 FAIL HIGH`,
   `T5 PASS`, `T6 PASS`.
 - [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
-  nuevo — agente `constant_code_reviewer`; auditando `P01-T04`.
-- [ ] Revisión independiente cross-repo de Plan 03 Tareas 1–4 — agente
-  `plan03_readiness_audit`; verificando estado real de T3/T4 antes de la
-  próxima asignación.
+  nuevo — agente `constant_code_reviewer`; `P01-T04 FAIL HIGH` cerrado y
+  auditoría de `P03-T03` en curso.
+- [x] Auditoría read-only cross-repo de Plan 03 T3/T4: ambos lotes corregidos
+  siguen presentes sin commit y no se solapan con Secure Enclave.
 - [ ] Cerrar el prerrequisito productivo de Plan 01 Tarea 7: proveedor
   Secure Enclave P-256, compatibilidad Ed25519 y lifecycle completo — agente
   `secure_enclave_provider`.
@@ -47,7 +47,13 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Corregir `P03-T02/T03`: cubrir todos los writers CLI/auxiliares y
   reverificar criptográficamente el control OID durante drain.
 - [ ] Corregir `P03-T04 HIGH`: construir desde snapshot/commit inmutable o
-  revalidar el repo después del build antes de publicar runtime.
+  revalidar el repo después del build antes de publicar runtime. Corrección
+  no commiteada cubre snapshot kernel-read-only, digest externo y árbol
+  completo; gate actual `31 passed`, mypy/Ruff limpios.
+- [ ] Finalizar `P03-T03`: corrección no commiteada reemplaza el JSON de
+  entorno autoritativo por un commit Git exacto con `control.json` canónico
+  firmado. Gate actual con el intérprete del repo: `214 passed`, mypy/Ruff
+  limpios; revisión independiente en curso.
 - [ ] Reemplazar expiries fijas de tests P03 que ya vencieron; matriz actual
   `221 passed, 3 failed` por tiempo de fixture.
 
