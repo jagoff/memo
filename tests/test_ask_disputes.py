@@ -343,3 +343,59 @@ def test_ask_stream_verbatim_done_includes_disputed_map(mock_memory, monkeypatch
     done = next(e for e in events if e.get("event") == "done")
     assert done["answer"] == "verbatim body [a1b2c3d4]"
     assert done["disputed"] == {ID_A: [ID_B]}
+
+
+# ---- unified abstention vocabulary: disputed / low_confidence / no_evidence ----
+
+
+def test_ask_judge_abstention_marks_low_confidence(mock_memory, monkeypatch):
+    # The grounding-judge abstention must be machine-readable like the
+    # disputed one — consumers should never have to sniff the fallback text.
+    monkeypatch.setenv("MEMO_GROUNDING_ASK_MIN", "0.85")
+    monkeypatch.setenv("MEMO_ASK_FALLBACK_MSG", "I couldn't find that.")
+    monkeypatch.setattr(ask_ops, "score_grounding", lambda *a, **k: 0.1)
+    sources = [_src(ID_A), _src(ID_C)]
+    _prep_gate(mock_memory, monkeypatch, answer="Port is 1234.", sources=sources)
+    out = mock_memory.ask("what port?")
+    assert out["answer"] == "I couldn't find that."
+    assert out["abstained"] == "low_confidence"
+
+
+def test_ask_stream_judge_abstention_marks_low_confidence(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_GROUNDING_ASK_MIN", "0.85")
+    monkeypatch.setenv("MEMO_ASK_FALLBACK_MSG", "I couldn't find that.")
+    monkeypatch.setattr(ask_ops, "score_grounding", lambda *a, **k: 0.1)
+    sources = [_src(ID_A), _src(ID_C)]
+    _prep_gate(mock_memory, monkeypatch, answer="Port is 1234.", sources=sources)
+    events = list(mock_memory.ask_stream("what port?"))
+    done = next(e for e in events if e.get("event") == "done")
+    assert done["answer"] == "I couldn't find that."
+    assert done["abstained"] == "low_confidence"
+
+
+def test_ask_no_sources_marks_no_evidence(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_ASK_FALLBACK_MSG", "I couldn't find that.")
+    _prep_gate(mock_memory, monkeypatch, answer="unused", sources=[])
+    out = mock_memory.ask("what port?")
+    assert out["answer"] == "I couldn't find that."
+    assert out["sources"] == []
+    assert out["abstained"] == "no_evidence"
+
+
+def test_ask_stream_no_sources_marks_no_evidence(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_ASK_FALLBACK_MSG", "I couldn't find that.")
+    _prep_gate(mock_memory, monkeypatch, answer="unused", sources=[])
+    events = list(mock_memory.ask_stream("what port?"))
+    done = next(e for e in events if e.get("event") == "done")
+    assert done["answer"] == "I couldn't find that."
+    assert done["abstained"] == "no_evidence"
+
+
+def test_ask_grounded_answer_not_marked_abstained(mock_memory, monkeypatch):
+    # Judge passes: no abstained field at all (same shape as before).
+    monkeypatch.setenv("MEMO_GROUNDING_ASK_MIN", "0.85")
+    monkeypatch.setattr(ask_ops, "score_grounding", lambda *a, **k: 0.95)
+    sources = [_src(ID_A), _src(ID_C)]
+    _prep_gate(mock_memory, monkeypatch, answer=f"Port is 8765 [{ID_A[:8]}].", sources=sources)
+    out = mock_memory.ask("what port?")
+    assert "abstained" not in out

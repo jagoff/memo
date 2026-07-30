@@ -276,6 +276,37 @@ def _filter_verbatim_hits(
     return [hit for hit in hits if hit.id in allowed_ids]
 
 
+def _apply_abstention_policy(
+    chat: Any, llm_model: str, answer: str, sources: list[dict[str, Any]]
+) -> tuple[str, str | None]:
+    """The single abstention gate shared by ``ask`` and ``ask_stream``.
+
+    Returns ``(answer, abstained)`` where ``abstained`` is one of the unified
+    vocabulary: ``"disputed"`` (every citation contested — deterministic, the
+    grounding judge is skipped since nothing is left to entail-check),
+    ``"low_confidence"`` (grounding judge scored the answer below
+    ``MEMO_GROUNDING_ASK_MIN`` — answer replaced with ``MEMO_ASK_FALLBACK_MSG``),
+    or ``None`` (grounded answer; the partial-dispute caveat is appended).
+    The third reason, ``"no_evidence"``, is set by the callers' empty-sources
+    early returns — retrieval that found nothing never reaches this gate.
+    """
+    from memo.flags import flag_float
+    from memo.memory.ask_disputes import append_dispute_caveat, contested_or_none
+
+    contested = contested_or_none(answer, sources)
+    if contested is not None:
+        return contested, "disputed"
+    ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
+    if ask_min > 0.0 and answer:
+        src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
+        entail = score_grounding(grounding_chat(chat), llm_model, source=src_text, claim=answer)
+        if entail is not None and entail < ask_min:
+            from memo.flags import flag_str
+
+            return flag_str("MEMO_ASK_FALLBACK_MSG"), "low_confidence"
+    return append_dispute_caveat(answer, sources), None
+
+
 class _AskOpsMixin(_MemoryBase):
     # -- chat ask -----------------------------------------------------------
 
@@ -927,6 +958,7 @@ class _AskOpsMixin(_MemoryBase):
                 "question": norm_question,
                 "answer": flag_str("MEMO_ASK_FALLBACK_MSG"),
                 "sources": [],
+                "abstained": "no_evidence",
             }
 
         # Verbatim short-circuit: literal phrase lookups bypass the LLM
@@ -955,11 +987,7 @@ class _AskOpsMixin(_MemoryBase):
 
         # Lazy-construct the chat client (same instance used by auto_derive).
         chat = self._ensure_chat()
-        from memo.memory.ask_disputes import (
-            DISPUTE_PROMPT_SUFFIX,
-            append_dispute_caveat,
-            contested_or_none,
-        )
+        from memo.memory.ask_disputes import DISPUTE_PROMPT_SUFFIX
 
         _system_prompt = _resolved_ask_system_prompt(self.cfg.state_dir)
         if any(s.get("disputed_by") for s in sources):
@@ -981,35 +1009,15 @@ class _AskOpsMixin(_MemoryBase):
             answer = f"(error querying the model: {type(exc).__name__})"
             _llm_errored = True
 
-        from memo.flags import flag_float
-
         abstained: str | None = None
         # An LLM-error sentinel has no citations, so with all sources disputed
         # `contested_or_none` would fire and mislabel the error as a dispute
         # abstention — skip the whole dispute+judge gate and return the error
         # sentinel untouched, as before this feature existed.
         if not _llm_errored:
-            _contested = contested_or_none(answer, sources)
-            if _contested is not None:
-                # Answer rests only on disputed evidence: deterministic abstention;
-                # skip the (LLM) grounding judge — nothing left to entail-check.
-                answer = _contested
-                abstained = "disputed"
-            else:
-                _judge_abstained = False
-                _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
-                if _ask_min > 0.0 and answer:
-                    _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
-                    _entail = score_grounding(
-                        grounding_chat(chat), self.cfg.llm_model, source=_src_text, claim=answer
-                    )
-                    if _entail is not None and _entail < _ask_min:
-                        from memo.flags import flag_str
-
-                        answer = flag_str("MEMO_ASK_FALLBACK_MSG")
-                        _judge_abstained = True
-                if not _judge_abstained:
-                    answer = append_dispute_caveat(answer, sources)
+            answer, abstained = _apply_abstention_policy(
+                chat, self.cfg.llm_model, answer, sources
+            )
 
         result: dict[str, Any] = {
             "question": norm_question,
@@ -1079,6 +1087,7 @@ class _AskOpsMixin(_MemoryBase):
                 "event": "done",
                 "answer": flag_str("MEMO_ASK_FALLBACK_MSG"),
                 "sources": [],
+                "abstained": "no_evidence",
             }
             return
 
@@ -1111,11 +1120,7 @@ class _AskOpsMixin(_MemoryBase):
             return
 
         chat = self._ensure_chat()
-        from memo.memory.ask_disputes import (
-            DISPUTE_PROMPT_SUFFIX,
-            append_dispute_caveat,
-            contested_or_none,
-        )
+        from memo.memory.ask_disputes import DISPUTE_PROMPT_SUFFIX
 
         _system_prompt = _resolved_ask_system_prompt(self.cfg.state_dir)
         if any(s.get("disputed_by") for s in sources):
@@ -1142,30 +1147,7 @@ class _AskOpsMixin(_MemoryBase):
             return
 
         answer = "".join(accum_parts).strip()
-        from memo.flags import flag_float
-
-        abstained: str | None = None
-        _contested = contested_or_none(answer, sources)
-        if _contested is not None:
-            # Answer rests only on disputed evidence: deterministic abstention;
-            # skip the (LLM) grounding judge — nothing left to entail-check.
-            answer = _contested
-            abstained = "disputed"
-        else:
-            _judge_abstained = False
-            _ask_min = flag_float("MEMO_GROUNDING_ASK_MIN") or 0.0
-            if _ask_min > 0.0 and answer:
-                _src_text = "\n\n".join(str(s.get("snippet") or "") for s in sources)
-                _entail = score_grounding(
-                    grounding_chat(chat), self.cfg.llm_model, source=_src_text, claim=answer
-                )
-                if _entail is not None and _entail < _ask_min:
-                    from memo.flags import flag_str
-
-                    answer = flag_str("MEMO_ASK_FALLBACK_MSG")
-                    _judge_abstained = True
-            if not _judge_abstained:
-                answer = append_dispute_caveat(answer, sources)
+        answer, abstained = _apply_abstention_policy(chat, self.cfg.llm_model, answer, sources)
 
         done: dict[str, Any] = {
             "event": "done",

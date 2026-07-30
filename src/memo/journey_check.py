@@ -382,7 +382,14 @@ def check_uses_memory(ctx: JourneyContext) -> CheckResult:
         "n't find",
         "no information",
     )
-    abstained = any(m in lowered for m in _abstain_markers) or not ab.get("sources")
+    # Structural signal first (the unified `abstained` field: disputed /
+    # low_confidence / no_evidence); text markers remain as fallback for
+    # models that phrase the refusal without tripping the judge.
+    abstained = (
+        bool(ab.get("abstained"))
+        or any(m in lowered for m in _abstain_markers)
+        or not ab.get("sources")
+    )
 
     ok = contains_value and cites_id and abstained
     status = PASS if ok else FAIL

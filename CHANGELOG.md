@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Changed
+
+- Unified abstention vocabulary across the ask path: `ask`/`ask_stream` now
+  share one abstention gate and every abstention is machine-readable in the
+  result envelope — `abstained: "disputed"` (all citations contested),
+  `"low_confidence"` (grounding judge below `MEMO_GROUNDING_ASK_MIN`; previously
+  unmarked), or `"no_evidence"` (retrieval found nothing; previously unmarked).
+  `memo journey-check` now reads the structural field before falling back to
+  text markers.
+
 ## [4.5.0] - 2026-07-29
 
 ### Changed
