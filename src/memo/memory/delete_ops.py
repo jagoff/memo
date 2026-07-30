@@ -98,9 +98,10 @@ class _DeleteOpsMixin(_MemoryBase):
         r = self.store.get(id_)
         if not r:
             return False
+        canonical_body = self._read_body(str(r["path"]))
         decision = self.write_policy.preflight(
             title=str(r["title"]),
-            content=self._read_body(str(r["path"])),
+            content=canonical_body,
             tags=list(r.get("tags") or ()),
             extra=dict(r.get("extra") or {}),
             actor=actor
@@ -233,6 +234,8 @@ class _DeleteOpsMixin(_MemoryBase):
                 record_id=id_,
                 title=r["title"],
                 type_=r["type"],
+                tags=list(r.get("tags") or ()),
+                body=canonical_body,
             )
 
         # Step 4: drop graph edges (derived; rebuildable via reindex). Runs

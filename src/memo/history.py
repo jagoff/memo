@@ -191,15 +191,31 @@ class HistoryStore:
             self._error_count += 1
             _log.warning("history log_update failed (id=%s): %s", record_id[:8], exc)
 
-    def log_delete(self, *, ts: str, record_id: str, title: str, type_: str) -> None:
+    def log_delete(
+        self,
+        *,
+        ts: str,
+        record_id: str,
+        title: str,
+        type_: str,
+        tags: list[str] | None = None,
+        body: str | None = None,
+    ) -> None:
+        snapshot = None
+        if tags is not None or body is not None:
+            snapshot = json.dumps(
+                {"_snapshot": {"tags": list(tags or []), "body": body}},
+                ensure_ascii=False,
+            )
         try:
             with self._tx() as cx:
                 cx.execute(
-                    "INSERT INTO events (ts, op, record_id, title, type, device_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (ts, "delete", record_id, title, type_, self.device_id),
+                    "INSERT INTO events "
+                    "(ts, op, record_id, title, type, delta_json, device_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (ts, "delete", record_id, title, type_, snapshot, self.device_id),
                 )
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, TypeError, ValueError) as exc:
             self._error_count += 1
             _log.warning("history log_delete failed (id=%s): %s", record_id[:8], exc)
 

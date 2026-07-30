@@ -27,6 +27,25 @@ def test_log_and_list_recent(tmp_path: Path) -> None:
     assert [r["op"] for r in rows] == ["delete", "update", "save"]  # newest first
 
 
+def test_log_delete_preserves_optional_snapshot(tmp_path: Path) -> None:
+    history = HistoryStore(tmp_path / "history.db", device_id="local")
+    try:
+        history.log_delete(
+            ts="2026-01-01T00:00:00Z",
+            record_id="r1",
+            title="Deleted",
+            type_="decision",
+            tags=["one", "dos"],
+            body="cuerpo exacto",
+        )
+        event = history.list_recent(record_id="r1")[0]
+        assert event["delta"] == {
+            "_snapshot": {"tags": ["one", "dos"], "body": "cuerpo exacto"}
+        }
+    finally:
+        history.close()
+
+
 def test_list_recent_filters(tmp_path: Path) -> None:
     h = _store(tmp_path)
     h.log_save(ts="2026-01-01T00:00:00Z", record_id="r1", title="A", type_="note")
