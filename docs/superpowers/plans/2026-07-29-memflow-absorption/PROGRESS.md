@@ -165,7 +165,8 @@ Estado: **1/7 aceptadas**.
 
 ### Tarea 5 — Outbox durable exactly-once
 
-- [ ] Generar brief y registrar BASE.
+- [x] Generar brief y registrar BASE `20e16ba4`.
+- [x] Consultar Memo y Codegraph antes de editar producción.
 - [ ] RED de crash antes/después de save, retry y collision.
 - [ ] Implementar identidad estable, reconciliación y provenance.
 - [ ] Probar rebuild entre requested/completed y cero duplicados.

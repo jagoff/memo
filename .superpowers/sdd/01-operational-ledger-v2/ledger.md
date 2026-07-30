@@ -22,3 +22,7 @@
   verified v1 origin receives a genesis anchor, replay requires an exact plan,
   and no production activation or Memflow mutation occurred. Independent
   review is still required before acceptance.
+- Task 5: brief frozen at BASE `20e16ba4`; no production edits, activation, or
+  Memflow mutation yet. The brief replaces the preliminary two-event outbox
+  projection with the approved four-event monotonic authority and preserves a
+  staged v1 compatibility boundary until Task 7 installs v2.
