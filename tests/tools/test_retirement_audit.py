@@ -370,6 +370,145 @@ def test_retirement_audit_rejects_directory_swap_before_descent(
     assert swapped is True
 
 
+@pytest.mark.parametrize("change_kind", ["membership", "identity"])
+def test_retirement_audit_rejects_directory_change_after_listing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change_kind: str,
+) -> None:
+    scan_root = tmp_path / "installed"
+    scan_root.mkdir()
+    target = scan_root / "a-clean.txt"
+    target.write_text("clean", encoding="utf-8")
+    (scan_root / "z-trigger.txt").write_text("clean", encoding="utf-8")
+    parked = tmp_path / "parked-clean.txt"
+    original_read = os.read
+    changed = False
+    data_reads = 0
+
+    def changing_read(descriptor: int, length: int) -> bytes:
+        nonlocal changed, data_reads
+        data = original_read(descriptor, length)
+        if data:
+            data_reads += 1
+        should_change = change_kind == "membership" or data_reads == 2
+        if data and not changed and should_change:
+            if change_kind == "membership":
+                (scan_root / "late.txt").write_text(
+                    "SYNAPSE_TOKEN=active",
+                    encoding="utf-8",
+                )
+            else:
+                target.rename(parked)
+                target.write_text("clean", encoding="utf-8")
+            changed = True
+        return data
+
+    monkeypatch.setattr(os, "read", changing_read)
+
+    with pytest.raises(InventoryError, match=r"membership changed|changed identity"):
+        build_independence_receipt((scan_root,), manifest=_manifest())
+
+    assert changed is True
+
+
+def test_retirement_audit_rejects_file_swap_before_descriptor_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scan_root = tmp_path / "installed"
+    scan_root.mkdir()
+    target = scan_root / "runtime.txt"
+    target.write_text("SYNAPSE_TOKEN=active", encoding="utf-8")
+    parked = tmp_path / "parked-runtime.txt"
+    original_open = os.open
+    swapped = False
+
+    def swapping_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if (
+            not swapped
+            and path == target.name
+            and dir_fd is not None
+            and not flags & os.O_DIRECTORY
+        ):
+            target.rename(parked)
+            target.write_text("clean", encoding="utf-8")
+            swapped = True
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", swapping_open)
+
+    with pytest.raises(InventoryError, match="inventory file changed identity"):
+        build_independence_receipt((scan_root,), manifest=_manifest())
+
+    assert swapped is True
+
+
+def test_retirement_audit_rejects_file_metadata_change_while_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "runtime.txt"
+    target.write_text("clean", encoding="utf-8")
+    original_read = os.read
+    changed = False
+
+    def changing_read(descriptor: int, length: int) -> bytes:
+        nonlocal changed
+        data = original_read(descriptor, length)
+        if data and not changed:
+            target.write_text("SYNAPSE_TOKEN=active", encoding="utf-8")
+            changed = True
+        return data
+
+    monkeypatch.setattr(os, "read", changing_read)
+
+    with pytest.raises(InventoryError, match="inventory file changed while reading"):
+        build_independence_receipt((tmp_path,), manifest=_manifest())
+
+    assert changed is True
+
+
+def test_retirement_audit_rejects_root_ancestor_swap_during_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ancestor = tmp_path / "authority"
+    scan_root = ancestor / "installed"
+    scan_root.mkdir(parents=True)
+    (scan_root / "clean.txt").write_text("clean", encoding="utf-8")
+    replacement = tmp_path / "replacement-authority"
+    replacement_root = replacement / "installed"
+    replacement_root.mkdir(parents=True)
+    (replacement_root / "clean.txt").write_text("clean", encoding="utf-8")
+    parked = tmp_path / "parked-authority"
+    original_read = os.read
+    swapped = False
+
+    def swapping_read(descriptor: int, length: int) -> bytes:
+        nonlocal swapped
+        data = original_read(descriptor, length)
+        if data and not swapped:
+            ancestor.rename(parked)
+            replacement.rename(ancestor)
+            swapped = True
+        return data
+
+    monkeypatch.setattr(os, "read", swapping_read)
+
+    with pytest.raises(InventoryError, match="root component changed identity"):
+        build_independence_receipt((scan_root,), manifest=_manifest())
+
+    assert swapped is True
+
+
 def test_roster_loader_is_strictly_read_only_and_rejects_pending_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

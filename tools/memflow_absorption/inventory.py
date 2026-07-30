@@ -307,33 +307,21 @@ def synapse_retirement_manifest_from_dict(
     )
 
 
-def _reject_symlink_components(path: Path) -> None:
-    absolute = Path(os.path.abspath(os.fspath(path)))
-    current = Path(absolute.anchor)
-    for part in absolute.parts[1:]:
-        current /= part
-        try:
-            observed = current.lstat()
-        except FileNotFoundError:
-            continue
-        if stat.S_ISLNK(observed.st_mode):
-            raise InventoryError(f"inventory root contains symlink component: {current}")
-
-
-def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
+def _safe_files(root: Path) -> Iterator[tuple[Path, str, bytes | None]]:
     absolute = Path(os.path.abspath(os.fspath(root)))
-    _reject_symlink_components(absolute)
-    try:
-        observed_root = absolute.lstat()
-    except OSError as exc:
-        raise InventoryError(f"inventory root is unavailable: {root}") from exc
-    if not stat.S_ISDIR(observed_root.st_mode):
-        raise InventoryError(f"inventory root is not a directory: {root}")
-
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
 
     def identity(observed: os.stat_result) -> tuple[int, int, int]:
         return observed.st_dev, observed.st_ino, stat.S_IFMT(observed.st_mode)
+
+    def metadata(observed: os.stat_result) -> tuple[int, int, int, int, int, int]:
+        return (
+            *identity(observed),
+            observed.st_size,
+            observed.st_mtime_ns,
+            observed.st_ctime_ns,
+        )
 
     def entry_kind(path: Path, observed: os.stat_result) -> str:
         mode = observed.st_mode
@@ -345,7 +333,43 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
             return "file"
         raise InventoryError(f"unsupported inventory entry type: {path}")
 
-    def walk_directory(descriptor: int, parent: Path) -> Iterator[tuple[Path, str]]:
+    def read_regular_file(
+        descriptor: int,
+        name: str,
+        path: Path,
+        observed: os.stat_result,
+    ) -> bytes:
+        try:
+            file_descriptor = os.open(name, file_flags, dir_fd=descriptor)
+        except OSError as exc:
+            raise InventoryError(f"cannot open inventory file safely: {path}") from exc
+        try:
+            try:
+                opened = os.fstat(file_descriptor)
+            except OSError as exc:
+                raise InventoryError(f"cannot validate inventory file descriptor: {path}") from exc
+            if not stat.S_ISREG(opened.st_mode) or identity(opened) != identity(observed):
+                raise InventoryError(f"inventory file changed identity: {path}")
+            if metadata(opened) != metadata(observed):
+                raise InventoryError(f"inventory file changed before reading: {path}")
+            chunks: list[bytes] = []
+            try:
+                while chunk := os.read(file_descriptor, 1024 * 1024):
+                    chunks.append(chunk)
+                final = os.fstat(file_descriptor)
+            except OSError as exc:
+                raise InventoryError(f"inventory file is unreadable: {path}") from exc
+            data = b"".join(chunks)
+            if metadata(final) != metadata(opened) or final.st_size != len(data):
+                raise InventoryError(f"inventory file changed while reading: {path}")
+            return data
+        finally:
+            os.close(file_descriptor)
+
+    def walk_directory(
+        descriptor: int,
+        parent: Path,
+    ) -> Iterator[tuple[Path, str, bytes | None]]:
         try:
             names = sorted(os.listdir(descriptor))
         except OSError as exc:
@@ -361,10 +385,10 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
 
         for name, path, observed, kind in entries:
             if kind == "symlink":
-                yield path, "symlink"
+                yield path, "symlink", None
                 continue
             if kind == "file":
-                yield path, "file"
+                yield path, "file", read_regular_file(descriptor, name, path, observed)
                 continue
             try:
                 child_descriptor = os.open(
@@ -387,22 +411,95 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
             finally:
                 os.close(child_descriptor)
 
-    try:
-        root_descriptor = os.open(absolute, directory_flags)
-    except OSError as exc:
-        raise InventoryError(f"cannot open inventory root safely: {absolute}") from exc
-    try:
         try:
-            opened_root = os.fstat(root_descriptor)
+            final_names = sorted(os.listdir(descriptor))
         except OSError as exc:
-            raise InventoryError(f"cannot validate inventory root descriptor: {absolute}") from exc
-        if not stat.S_ISDIR(opened_root.st_mode) or identity(opened_root) != identity(
-            observed_root
-        ):
-            raise InventoryError(f"inventory root changed identity: {absolute}")
+            raise InventoryError(f"inventory traversal failed below {parent}: {exc}") from exc
+        if final_names != names:
+            raise InventoryError(f"inventory directory membership changed: {parent}")
+        for name, path, observed, kind in entries:
+            try:
+                final = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as exc:
+                raise InventoryError(f"inventory entry changed identity: {path}") from exc
+            if identity(final) != identity(observed):
+                raise InventoryError(f"inventory entry changed identity: {path}")
+            if kind == "file" and metadata(final) != metadata(observed):
+                raise InventoryError(f"inventory file changed after reading: {path}")
+
+    descriptors: list[int] = []
+    component_links: list[tuple[int, str, Path, os.stat_result]] = []
+    try:
+        root_descriptor = os.open(os.sep, directory_flags)
+    except OSError as exc:
+        raise InventoryError("cannot open filesystem root safely") from exc
+    descriptors.append(root_descriptor)
+    try:
+        current = Path(absolute.anchor)
+        for part in absolute.parts[1:]:
+            current /= part
+            parent_descriptor = descriptors[-1]
+            try:
+                observed = os.stat(
+                    part,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise InventoryError(f"inventory root is unavailable: {current}") from exc
+            if stat.S_ISLNK(observed.st_mode):
+                raise InventoryError(f"inventory root contains symlink component: {current}")
+            if not stat.S_ISDIR(observed.st_mode):
+                raise InventoryError(f"inventory root component is not a directory: {current}")
+            try:
+                child_descriptor = os.open(
+                    part,
+                    directory_flags,
+                    dir_fd=parent_descriptor,
+                )
+            except OSError as exc:
+                raise InventoryError(
+                    f"cannot open inventory root component safely: {current}"
+                ) from exc
+            descriptors.append(child_descriptor)
+            try:
+                opened = os.fstat(child_descriptor)
+            except OSError as exc:
+                raise InventoryError(
+                    f"cannot validate inventory root component: {current}"
+                ) from exc
+            if not stat.S_ISDIR(opened.st_mode) or identity(opened) != identity(observed):
+                raise InventoryError(f"inventory root component changed identity: {current}")
+            component_links.append((parent_descriptor, part, current, opened))
+
+        root_descriptor = descriptors[-1]
         yield from walk_directory(root_descriptor, absolute)
+
+        for parent_descriptor, part, current, opened in component_links:
+            try:
+                final = os.stat(
+                    part,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise InventoryError(
+                    f"inventory root component changed identity: {current}"
+                ) from exc
+            if identity(final) != identity(opened):
+                raise InventoryError(f"inventory root component changed identity: {current}")
     finally:
-        os.close(root_descriptor)
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _decode_inventory_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        # Preserve every ASCII byte for the retirement/source regexes instead
+        # of turning a mixed binary file into an empty-text false negative.
+        return data.decode("utf-8", errors="surrogateescape")
 
 
 def _read_text(path: Path) -> tuple[bytes, str]:
@@ -411,12 +508,7 @@ def _read_text(path: Path) -> tuple[bytes, str]:
             data = directory.read_bytes(path.name)
     except (OSError, ValueError) as exc:
         raise InventoryError(f"inventory file is unreadable: {path}") from exc
-    try:
-        return data, data.decode("utf-8")
-    except UnicodeDecodeError:
-        # Preserve every ASCII byte for the retirement/source regexes instead
-        # of turning a mixed binary file into an empty-text false negative.
-        return data, data.decode("utf-8", errors="surrogateescape")
+    return data, _decode_inventory_text(data)
 
 
 def _references(text: str) -> tuple[str, ...]:
@@ -509,11 +601,12 @@ def build_independence_receipt(
     file_count = 0
     for role, scan_roots in (("installed", installed), ("archive", archives)):
         for root_index, root in enumerate(scan_roots):
-            for path, kind in _safe_files(root):
+            for path, kind, data in _safe_files(root):
                 relative = path.relative_to(root).as_posix()
                 if kind == "symlink":
                     raise InventoryError(f"retirement audit cannot prove a symlink: {path}")
-                data, text = _read_text(path)
+                assert data is not None
+                text = _decode_inventory_text(data)
                 file_count += 1
                 references = _retirement_references(relative + "\n" + text)
                 allowed = (
@@ -588,7 +681,7 @@ def build_consumer_inventory(
     scan_records: list[dict[str, str]] = []
     for root_index, root in enumerate(roots):
         absolute = Path(os.path.abspath(os.fspath(root)))
-        for path, kind in _safe_files(root):
+        for path, kind, data in _safe_files(root):
             relative = path.relative_to(absolute).as_posix()
             if kind == "symlink":
                 blockers.add(f"symlink-skipped:{relative}")
@@ -600,7 +693,8 @@ def build_consumer_inventory(
                     }
                 )
                 continue
-            data, text = _read_text(path)
+            assert data is not None
+            text = _decode_inventory_text(data)
             scan_records.append(
                 {
                     "root_index": str(root_index),
@@ -741,11 +835,12 @@ def build_synapse_retirement_manifest(
     tests: set[str] = set()
     goldens: set[str] = set()
     scan_records: list[dict[str, str]] = []
-    for path, kind in _safe_files(root):
+    for path, kind, data in _safe_files(root):
         relative = path.relative_to(root).as_posix()
         if kind == "symlink":
             raise InventoryError(f"Synapse snapshot contains symlink: {relative}")
-        data, text = _read_text(path)
+        assert data is not None
+        text = _decode_inventory_text(data)
         scan_records.append({"path": relative, "sha256": hashlib.sha256(data).hexdigest()})
         if not _references(relative + "\n" + text):
             continue
