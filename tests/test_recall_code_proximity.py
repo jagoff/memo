@@ -129,6 +129,28 @@ def test_flag_off_is_zero_work_and_ranking_identical(monkeypatch: pytest.MonkeyP
     assert [h.score for h in baseline] == [h.score for h in out] == [0.8, 0.7]
 
 
+def test_eval_knob_disables_repo_io_even_when_live_flag_is_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MEMO_RECALL_CODE_PROXIMITY_BOOST", "0.3")
+    monkeypatch.setattr(subprocess, "run", _boom)
+    hits = [
+        _mk("far", 0.8),
+        _citing("near", 0.7, {"file_path": "src/memo/c.py", "kind": "function", "label": "gamma"}),
+    ]
+    knobs = RankKnobs(
+        top_k=5,
+        min_sim=0.0,
+        min_body_chars=0,
+        code_proximity=False,
+    )
+
+    out = rl.rank_hits(hits, knobs)
+
+    assert [h.id for h in out] == ["far", "near"]
+    assert [h.score for h in out] == [0.8, 0.7]
+
+
 # --- flag on: boost + reorder ---------------------------------------------------------
 
 

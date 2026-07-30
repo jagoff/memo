@@ -713,12 +713,19 @@ def _run_config_inner(
     # No base project_tag/cwd: per-label project (when a label carries one)
     # is applied per prompt inside the loop; project-less labels rank with
     # project_tag=None (tiers stay inert).
+    # Code proximity is render-cwd-dependent, but eval labels only carry a
+    # project tag. Letting rank_hits fall back to the evaluator's ambient cwd
+    # both measures the wrong repository and spawns one `git diff` per prompt
+    # (multiplied by every tuner candidate). Keep every scalar ranking knob
+    # live/pinnable while disabling only that unmeasurable I/O stage.
+    knob_overrides = dict(cfg.knob_overrides or {})
+    knob_overrides["code_proximity"] = False
     knobs = knobs_from_flags(
         top_k=k,
         min_sim=cfg.floor,
         min_body_chars=0,
         mode=cfg.mode,
-        overrides=cfg.knob_overrides,
+        overrides=knob_overrides,
     )
     # Recall-faithful candidate pool: the hook SQL-excludes the bulk
     # `reference` tier (MEMO_RECALL_EXCLUDE_REFERENCE, default on) but the
