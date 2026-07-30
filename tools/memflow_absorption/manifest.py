@@ -885,7 +885,9 @@ def build_capability_manifest(
             )
         )
 
-    operation_map = canonical_json_bytes([row.to_dict() for row in mappings])
+    registry_authority_sha256 = _sha256(canonical_json_bytes(sorted({r.transform_id for m in mappings for r in m.routes})))
+    fixture_authority_sha256 = _sha256(canonical_json_bytes(sorted({p: d for m in mappings for r in m.routes for p, d in zip(r.fixture_paths, r.fixture_sha256, strict=True)}.items())))
+    operation_map = canonical_json_bytes({"mappings": [row.to_dict() for row in mappings], "registry_authority_sha256": registry_authority_sha256, "fixture_authority_sha256": fixture_authority_sha256})
     slo_baseline = canonical_json_bytes([row.to_dict() for row in slos])
     signer_key = roster.key(signer_key_id)
     sorted_blockers = tuple(sorted(blockers))
@@ -911,6 +913,8 @@ def build_capability_manifest(
         signer_key_id=signer_key_id,
         roster_version=roster.version,
         signature="",
+        registry_authority_sha256=registry_authority_sha256,
+        fixture_authority_sha256=fixture_authority_sha256,
     )
     if not unsigned.frozen:
         return unsigned

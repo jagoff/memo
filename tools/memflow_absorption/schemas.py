@@ -261,12 +261,18 @@ class CapabilityManifest:
     signer_key_id: str
     roster_version: int
     signature: str
+    registry_authority_sha256: str = ""
+    fixture_authority_sha256: str = ""
 
     def by_name(self, name: str) -> CapabilityRow | None:
         return next((row for row in self.capabilities if row.name == name), None)
 
     def operation_map_bytes(self) -> bytes:
-        return canonical_json_bytes([row.to_dict() for row in self.operation_mappings])
+        return canonical_json_bytes({
+            "mappings": [row.to_dict() for row in self.operation_mappings],
+            "registry_authority_sha256": self.registry_authority_sha256,
+            "fixture_authority_sha256": self.fixture_authority_sha256,
+        })
 
     def slo_baseline_bytes(self) -> bytes:
         return canonical_json_bytes([row.to_dict() for row in self.slo_baselines])
@@ -290,6 +296,8 @@ class CapabilityManifest:
             "signer_key_id": self.signer_key_id,
             "roster_version": self.roster_version,
             "signature": "" if blank_signature else self.signature,
+            "registry_authority_sha256": self.registry_authority_sha256,
+            "fixture_authority_sha256": self.fixture_authority_sha256,
         }
         return body
 
