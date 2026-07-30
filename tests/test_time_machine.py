@@ -77,8 +77,30 @@ def test_snapshot_between_save_and_delete_includes_record(mem: Memory) -> None:
     time.sleep(0.01)
     # Existed between save and delete.
     assert rec.id in snap.records
-    # Body unavailable because record was later deleted.
-    assert snap.records[rec.id].body_unavailable
+    restored = snap.records[rec.id]
+    assert restored.body == "bye"
+    assert restored.tags == []
+    assert restored.body_unavailable is False
+
+
+def test_snapshot_legacy_delete_without_snapshot_stays_unavailable(mem: Memory) -> None:
+    rec = mem.save(content="legacy body", title="Legacy", type_="note")
+    middle = _now()
+    time.sleep(0.01)
+    mem.history.log_delete(
+        ts=_now().isoformat(),
+        record_id=rec.id,
+        title=rec.title,
+        type_=rec.type,
+    )
+    rec_path = mem.cfg.memory_dir / rec.path
+    rec_path.unlink()
+    mem.store.delete(rec.id)
+
+    restored = reconstruct(mem, as_of=middle).records[rec.id]
+
+    assert restored.body is None
+    assert restored.body_unavailable is True
 
 
 def test_snapshot_reverts_title_update(mem: Memory) -> None:

@@ -15,9 +15,9 @@ Given a target timestamp `T`:
 2. Pull every `events` row whose `ts > T`, sorted newest-first.
 3. Walk the events in reverse:
    - `save` after T  → record was created after T, drop from snapshot.
-   - `delete` after T → record was deleted after T, re-insert minimal
-     stub (title + type from the event row; body unavailable unless we
-     cached one in the `versions` table).
+   - `delete` after T → record was deleted after T, restore the exact
+     body + tags from the event snapshot when present; legacy events
+     without that snapshot remain explicitly unavailable.
    - `update` after T → revert each `{field: [old, new]}` pair in
      `delta_json`: set the field back to `old`.
 
@@ -25,11 +25,10 @@ End-of-walk: the surviving rows describe the corpus as it stood at T.
 
 ## Limitations (v1)
 
-- **Body is best-effort.** `events.delta_json` carries body diffs when
-  the body changed during an update, so we can revert body edits. But
-  if a record was deleted after T and no `versions` row was saved
-  separately, we can't reconstruct its body. We mark such rows
-  `_body_unavailable=True` and the search/ask helpers skip them.
+- **Legacy deletes remain best-effort.** New delete events carry an
+  exact body + tags snapshot in `events.delta_json`. Older events may
+  lack it; those rows are marked `_body_unavailable=True` and the
+  search/ask helpers skip them.
 - **Embeddings are current.** We don't re-embed historical bodies — a
   search-as-of uses current embeddings to find candidates, then
   filters to the snapshot set. This means semantic recall reflects the
@@ -260,18 +259,25 @@ def reconstruct(memory: Any, *, as_of: str | datetime) -> CorpusSnapshot:
             snap.pop(rid, None)
         elif op == "delete":
             # Deleted after as_of → record DID exist at as_of.
-            # Reconstruct from the event snapshot (title/type captured
-            # at delete time). Body is gone unless versions.db has it.
+            # New events carry an exact body/tags snapshot. Legacy
+            # events still reconstruct a metadata-only unavailable row.
             ts = ev.get("ts")
+            delta = ev.get("delta")
+            delete_snapshot = delta.get("_snapshot") if isinstance(delta, dict) else None
+            delete_snapshot = delete_snapshot if isinstance(delete_snapshot, dict) else {}
+            body = delete_snapshot.get("body")
+            has_body = isinstance(body, str)
+            raw_tags = delete_snapshot.get("tags")
+            tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
             snap[rid] = SnapshotRecord(
                 id=rid,
                 title=ev.get("title") or "(deleted)",
                 type=ev.get("type") or "note",
-                tags=[],
+                tags=tags,
                 created=None,
                 updated=None,
-                body=None,
-                body_unavailable=True,
+                body=body if has_body else None,
+                body_unavailable=not has_body,
                 _deleted_after=ts,
             )
         elif op == "update":
