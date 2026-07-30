@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 
 from memo.errors import SignatureError
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner, OperationalVerifier
-from tools.memflow_absorption.schemas import CutoverControlRecord
+from tools.memflow_absorption.schemas import (
+    CutoverControlRecord,
+    VerifiedControlRecord,
+)
 
 CONTROL_RECORD_DOMAIN = "memo.cutover.control_record.v1"
 
@@ -55,7 +59,7 @@ def verify_control_record(
     roster: VerificationRoster,
     record: CutoverControlRecord,
     fetched_oid: str,
-) -> CutoverControlRecord:
+) -> VerifiedControlRecord:
     """Require an exact freshly fetched record before trusting its state."""
 
     if not _valid_oid(expected_oid) or not _valid_oid(fetched_oid):
@@ -81,7 +85,17 @@ def verify_control_record(
         )
     except SignatureError as exc:
         raise ControlRecordError("control record signature is invalid") from exc
-    return record
+    return VerifiedControlRecord(
+        control_oid=record.control_oid,
+        canonical_payload=record.canonical_payload,
+        state=record.state,
+        sequence=record.sequence,
+        previous_control_oid=record.previous_control_oid,
+        roster_version=record.roster_version,
+        verified_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        signer_device_id=record.signer_device_id,
+        signer_key_id=record.signer_key_id,
+    )
 
 
 __all__ = [

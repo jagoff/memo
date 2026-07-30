@@ -385,10 +385,115 @@ class SynapseRetirementManifest:
 class CutoverState(StrEnum):
     PREPARING = "PREPARING"
     READY = "READY"
-    CUTTING_OVER = "CUTTING_OVER"
-    OBSERVING = "OBSERVING"
-    ROLLED_BACK = "ROLLED_BACK"
-    COMPLETE = "COMPLETE"
+    QUIESCING = "QUIESCING"
+    QUIESCED = "QUIESCED"
+    STAGED = "STAGED"
+    ACTIVATION_READY = "ACTIVATION_READY"
+    EPOCH_COMMITTED = "EPOCH_COMMITTED"
+    ACTIVATED = "ACTIVATED"
+    VERIFIED = "VERIFIED"
+    ABORTING = "ABORTING"
+    ABORTED = "ABORTED"
+    RETIRED = "RETIRED"
+
+
+class CutoverMode(StrEnum):
+    ACTIVE = "active"
+    QUIESCING = "quiescing"
+    RETIRED = "retired"
+
+
+@dataclass(frozen=True)
+class FenceMarker:
+    schema: Literal["memo.cutover_fence.v1"]
+    attempt_id: str
+    mode: CutoverMode
+    epoch: int
+    expected_commit: str
+    runtime_digest: str
+    device_id: str
+    key_id: str
+    issued_at: str
+    expires_at: str
+    control_oid: str
+    control_sequence: int
+    previous_control_oid: str
+    signature: str
+
+    def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "attempt_id": self.attempt_id,
+            "mode": self.mode.value,
+            "epoch": self.epoch,
+            "expected_commit": self.expected_commit,
+            "runtime_digest": self.runtime_digest,
+            "device_id": self.device_id,
+            "key_id": self.key_id,
+            "issued_at": self.issued_at,
+            "expires_at": self.expires_at,
+            "control_oid": self.control_oid,
+            "control_sequence": self.control_sequence,
+            "previous_control_oid": self.previous_control_oid,
+            "signature": "" if blank_signature else self.signature,
+        }
+
+    def signed_bytes(self) -> bytes:
+        return canonical_json_bytes(self.to_dict(blank_signature=True))
+
+
+@dataclass(frozen=True)
+class DrainSnapshot:
+    schema: Literal["memo.cutover_drain_snapshot.v1"]
+    captured_at: str
+    requests: int
+    event_append: int
+    delivery: int
+    ack: int
+    cursor: int
+    sync: int
+    git_push: int
+    autonomous_loops: int
+    writable_handles: int
+    inflight_total: int
+    clean: bool
+    last_fsync_at: str
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class FinalFenceProof:
+    schema: Literal["memo.cutover_final_fence_proof.v1"]
+    attempt_id: str
+    control_oid: str
+    zero_drain_at: str
+    memflow_remote_commit_oid: str
+    origin_heads: Mapping[str, Mapping[str, object]]
+    source_snapshot_sha256: Mapping[str, str]
+    signer_device_id: str
+    signer_key_id: str
+    roster_version: int
+    signature: str
+
+    def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
+        return {
+            "schema": self.schema,
+            "attempt_id": self.attempt_id,
+            "control_oid": self.control_oid,
+            "zero_drain_at": self.zero_drain_at,
+            "memflow_remote_commit_oid": self.memflow_remote_commit_oid,
+            "origin_heads": {key: dict(value) for key, value in self.origin_heads.items()},
+            "source_snapshot_sha256": dict(self.source_snapshot_sha256),
+            "signer_device_id": self.signer_device_id,
+            "signer_key_id": self.signer_key_id,
+            "roster_version": self.roster_version,
+            "signature": "" if blank_signature else self.signature,
+        }
+
+    def signed_bytes(self) -> bytes:
+        return canonical_json_bytes(self.to_dict(blank_signature=True))
 
 
 @dataclass(frozen=True)
@@ -431,6 +536,19 @@ class CutoverControlRecord:
             roster_version=self.roster_version,
             signature=self.signature,
         )
+
+
+@dataclass(frozen=True)
+class VerifiedControlRecord:
+    control_oid: str
+    canonical_payload: bytes
+    state: CutoverState
+    sequence: int
+    previous_control_oid: str
+    roster_version: int
+    verified_at: str
+    signer_device_id: str
+    signer_key_id: str
 
 
 JsonObject = dict[str, Any]

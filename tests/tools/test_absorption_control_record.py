@@ -17,7 +17,13 @@ from tools.memflow_absorption.control_record import (
     sign_control_record,
     verify_control_record,
 )
-from tools.memflow_absorption.schemas import CutoverControlRecord, CutoverState
+from tools.memflow_absorption.schemas import (
+    CutoverControlRecord,
+    CutoverMode,
+    CutoverState,
+    DrainSnapshot,
+    FenceMarker,
+)
 
 
 def _authority(tmp_path: Path) -> tuple[DeviceKeyStore, VerificationRoster]:
@@ -59,6 +65,64 @@ def _record(
     )
 
 
+def test_shared_cutover_states_and_marker_bytes_are_canonical() -> None:
+    assert tuple(state.value for state in CutoverState) == (
+        "PREPARING",
+        "READY",
+        "QUIESCING",
+        "QUIESCED",
+        "STAGED",
+        "ACTIVATION_READY",
+        "EPOCH_COMMITTED",
+        "ACTIVATED",
+        "VERIFIED",
+        "ABORTING",
+        "ABORTED",
+        "RETIRED",
+    )
+    assert tuple(mode.value for mode in CutoverMode) == (
+        "active",
+        "quiescing",
+        "retired",
+    )
+    marker = FenceMarker(
+        schema="memo.cutover_fence.v1",
+        attempt_id="attempt-123",
+        mode=CutoverMode.QUIESCING,
+        epoch=7,
+        expected_commit="a" * 40,
+        runtime_digest="b" * 64,
+        device_id="device-a",
+        key_id="key-a",
+        issued_at="2026-07-30T00:00:00Z",
+        expires_at="2026-07-30T01:00:00Z",
+        control_oid="c" * 40,
+        control_sequence=2,
+        previous_control_oid="d" * 40,
+        signature="signed",
+    )
+    drain = DrainSnapshot(
+        schema="memo.cutover_drain_snapshot.v1",
+        captured_at="2026-07-30T00:01:00Z",
+        requests=0,
+        event_append=0,
+        delivery=0,
+        ack=0,
+        cursor=0,
+        sync=0,
+        git_push=0,
+        autonomous_loops=0,
+        writable_handles=0,
+        inflight_total=0,
+        clean=True,
+        last_fsync_at="2026-07-30T00:01:00Z",
+    )
+
+    assert b'"mode":"quiescing"' in marker.signed_bytes()
+    assert b'"signature":""' in marker.signed_bytes()
+    assert drain.to_dict()["clean"] is True
+
+
 def test_control_record_requires_fresh_oid_and_valid_signature(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path)
     record = _record(keys, roster)
@@ -75,6 +139,7 @@ def test_control_record_requires_fresh_oid_and_valid_signature(tmp_path: Path) -
     assert verified.sequence == 1
     assert verified.signer_key_id == roster.local_key_id
     assert verified.canonical_payload
+    assert verified.verified_at.endswith("Z")
 
 
 def test_control_record_rejects_stale_fetch_tamper_and_bad_sequence(tmp_path: Path) -> None:
