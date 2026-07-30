@@ -199,6 +199,10 @@ def _verify_exclusions(
 ) -> None:
     window_end = _timestamp(window_ended_at, "exclusion window end")
     issued_at = _timestamp(exclusions.issued_at, "exclusion issuance")
+    try:
+        signer_device_id = roster.key(exclusions.signer_key_id).device_id
+    except SignatureError as exc:
+        raise ManifestError("audit exclusion signer is unknown") from exc
     if (
         exclusions.schema != "memo.cutover_audit_exclusions.v1"
         or exclusions.window_started_at != window_started_at
@@ -206,6 +210,7 @@ def _verify_exclusions(
         or not window_end <= issued_at <= window_end + timedelta(hours=24)
         or tuple(sorted(set(exclusions.event_ids))) != exclusions.event_ids
         or tuple(sorted(set(exclusions.attempt_ids))) != exclusions.attempt_ids
+        or signer_device_id != exclusions.signer_device_id
     ):
         raise ManifestError("audit exclusion signature/window/provenance is invalid")
     try:

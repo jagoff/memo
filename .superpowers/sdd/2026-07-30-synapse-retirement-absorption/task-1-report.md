@@ -34,11 +34,19 @@
   removed fabricated manifest digest, blocker, disposition, and readiness
   claims. Full readiness authority remains the Python manifest builder.
 
+## Correction round 2
+
+- Catalog preflight now reads the canonical Synapse `source.json` and rejects
+  every otherwise-valid signed usage proof whose `snapshot_commit_oid` does
+  not exactly match the pinned source commit.
+- Audit-exclusion verification now proves that `signer_device_id` belongs to
+  `signer_key_id` in the verification roster before accepting its signature.
+
 ## Verification
 
 ```text
 uv run --no-sync pytest tests/tools/test_synapse_catalog.py tests/tools/test_absorption_inventory.py tests/tools/test_absorption_manifest.py -q
-23 passed
+25 passed
 
 uv run --no-sync ruff check tools/memflow_absorption tests/tools
 All checks passed!

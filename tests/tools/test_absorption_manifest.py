@@ -24,6 +24,7 @@ from tools.memflow_absorption.manifest import (
     build_capability_manifest,
     sign_audit_exclusions,
     sign_usage_proof,
+    verify_audit_exclusions,
     verify_capability_manifest,
 )
 from tools.memflow_absorption.schemas import AuditExclusions, UsageProof
@@ -553,7 +554,7 @@ def test_catalog_preflight_requires_canonical_signed_two_mac_receipts(tmp_path: 
     _write_json(exclusion_path, exclusions.to_dict())
     args = SimpleNamespace(usage_proof=proof_paths, exclusion=[exclusion_path])
 
-    proof_ids, exclusion_ids = _verified_receipt_ids(args, roster)
+    proof_ids, exclusion_ids = _verified_receipt_ids(args, roster, SOURCE_COMMIT)
 
     assert proof_ids == sorted(proof_ids)
     assert {proof_id.split(":")[0] for proof_id in proof_ids} == {"mac-a", "mac-b"}
@@ -563,4 +564,40 @@ def test_catalog_preflight_requires_canonical_signed_two_mac_receipts(tmp_path: 
     tampered["signature"] = "invalid"
     _write_json(proof_paths[0], tampered)
     with pytest.raises(SystemExit, match="receipt validation"):
-        _verified_receipt_ids(args, roster)
+        _verified_receipt_ids(args, roster, SOURCE_COMMIT)
+
+
+def test_catalog_preflight_rejects_signed_proof_for_another_commit(tmp_path: Path) -> None:
+    keys, roster = _authority(tmp_path / "authority")
+    _memo, _memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
+    usage_record = json.loads((usage / "usage.json").read_text(encoding="utf-8"))
+    proof_paths = []
+    for index, value in enumerate(usage_record["proofs"]):
+        proof = UsageProof(**value)
+        if index == 0:
+            proof = sign_usage_proof(
+                replace(proof, snapshot_commit_oid="e" * 40, signature=""),
+                signer=OperationalSigner(keys, roster_version=roster.version),
+            )
+        path = tmp_path / f"proof-{index}.json"
+        _write_json(path, proof.to_dict())
+        proof_paths.append(path)
+    exclusion_path = tmp_path / "exclusions.json"
+    _write_json(exclusion_path, exclusions.to_dict())
+    args = SimpleNamespace(usage_proof=proof_paths, exclusion=[exclusion_path])
+
+    with pytest.raises(SystemExit, match="snapshot commit"):
+        _verified_receipt_ids(args, roster, SOURCE_COMMIT)
+
+
+def test_audit_exclusion_rejects_forged_signer_device_id(tmp_path: Path) -> None:
+    keys, roster = _authority(tmp_path / "authority")
+    _memo, _memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
+
+    with pytest.raises(ManifestError, match="provenance"):
+        verify_audit_exclusions(
+            replace(exclusions, signer_device_id="mac-b"),
+            roster=roster,
+        )

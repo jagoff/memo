@@ -115,7 +115,11 @@ def _read_canonical_object(path: Path, description: str) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
-def _verified_receipt_ids(args: argparse.Namespace, roster: VerificationRoster) -> tuple[list[str], list[str]]:
+def _verified_receipt_ids(
+    args: argparse.Namespace,
+    roster: VerificationRoster,
+    source_commit: str,
+) -> tuple[list[str], list[str]]:
     try:
         proofs = [
             _usage_proof(_read_canonical_object(path, "usage proof"))
@@ -129,6 +133,8 @@ def _verified_receipt_ids(args: argparse.Namespace, roster: VerificationRoster) 
         ]
         for proof in proofs:
             verify_usage_proof(proof, roster=roster)
+            if proof.snapshot_commit_oid != source_commit:
+                raise ManifestError("usage proof snapshot commit does not match Synapse source")
         for receipt in exclusions:
             verify_audit_exclusions(receipt, roster=roster)
     except (ManifestError, TypeError) as exc:
@@ -148,7 +154,11 @@ def _synapse_manifest(args: argparse.Namespace) -> dict[str, object]:
         roster = VerificationRoster.load(args.roster_root)
     except Exception as exc:  # roster failures are deliberately fail-closed at the CLI boundary.
         raise SystemExit("synapse catalog preflight cannot load verification roster") from exc
-    proof_ids, exclusion_ids = _verified_receipt_ids(args, roster)
+    source = _read_canonical_object(args.snapshot / "source.json", "Synapse source record")
+    source_commit = source.get("source_commit")
+    if not isinstance(source_commit, str):
+        raise SystemExit("Synapse source record lacks a source commit")
+    proof_ids, exclusion_ids = _verified_receipt_ids(args, roster, source_commit)
     if args.apply:
         raise SystemExit("synapse catalog preflight is inspection-only and never writes")
     encoded = json.dumps(
