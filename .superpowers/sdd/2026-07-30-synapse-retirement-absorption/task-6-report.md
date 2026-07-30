@@ -93,3 +93,58 @@ authority; none was performed in this task:
 No cleanup Step 4 action, reboot, service stop, LaunchAgent/config/state change,
 Synapse repository modification/removal, documentation change, or release
 manifest change was executed. Concurrent work was preserved.
+
+## Correction round 1 — read-only and negative-proof hardening
+
+The first review found five ways an inspection-only audit could overclaim
+authority or completeness. All five now fail closed:
+
+- `retirement-audit` compares the typed manifest digest from its second read
+  and the completed negative-scan receipt's manifest digest to the manifest
+  digest already proven by the terminal signed authority chain. A mismatch or
+  concurrent manifest replacement is rejected.
+- Every CLI roster read now uses a strictly read-only loader. It does not call
+  `VerificationRoster.load`, because that API performs crash recovery and can
+  write roster files or finish a pending pin. The replacement reads the
+  existing Keychain binding without creating one, rejects pending roster/epoch
+  recovery, verifies the complete signed roster history, compares pin state
+  before and after, and rejects a concurrent authority change. Tests compare
+  both the authority files and pin snapshot before/after successful and
+  pending-recovery reads.
+- `_safe_files` supplies an `os.walk` error callback and converts traversal
+  permission/I/O failures into `InventoryError`; an omitted subtree can no
+  longer produce `verified`.
+- Mixed/binary files retain ASCII bytes via surrogate-escape decoding.
+  `SYNAPSE_*`, Synapse, and Memflow-runtime references embedded beside invalid
+  UTF-8 bytes remain visible to the negative scan.
+- Cleanup now requires an explicit absolute authority root before validating
+  candidate paths. Broad roots, missing/non-directory authorities,
+  repository descendants, paths outside the boundary, missing targets,
+  symlinks, FIFOs/sockets/devices, duplicates, and overlaps are rejected before
+  the deliberate runtime-gate blocker.
+
+Correction-round-1 verification:
+
+```text
+uv run --no-sync pytest tests/tools/test_retirement_audit.py -q
+17 passed
+
+uv run --no-sync pytest tests/tools/test_retirement_audit.py tests/tools/test_absorption_*.py -q
+56 passed
+
+uv run --no-sync pytest tests/tools -q
+157 passed
+
+uv run --no-sync ruff check tools/memflow_absorption tests/tools
+All checks passed!
+
+uv run --no-sync mypy tools/memflow_absorption
+Success: no issues found in 15 source files
+
+git diff --check
+passed
+```
+
+The operational blockers and refusal-only behavior are unchanged. No runtime,
+service, LaunchAgent, configuration, state, repository, release, or cleanup
+mutation was performed.

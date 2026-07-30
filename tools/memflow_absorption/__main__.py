@@ -46,6 +46,7 @@ from tools.memflow_absorption.safety import (
     assert_safe_attempt_root,
     independence_receipt_from_dict,
     independence_scan_from_dict,
+    load_verification_roster_readonly,
     resolve_under_attempt,
     verify_independence_receipt,
 )
@@ -150,6 +151,11 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
     )
     retirement_cleanup.add_argument("--roster-root", type=Path, required=True)
+    retirement_cleanup.add_argument(
+        "--cleanup-authority-root",
+        type=Path,
+        required=True,
+    )
     retirement_cleanup.add_argument("--cleanup-path", type=Path, action="append", required=True)
     for artifact in (
         "control-record",
@@ -312,9 +318,11 @@ def _sha256_bytes(payload: bytes) -> str:
 
 def _verification_roster(path: Path) -> VerificationRoster:
     try:
-        return VerificationRoster.load(path)
+        return load_verification_roster_readonly(path)
     except Exception as exc:
-        raise SystemExit("Synapse cutover cannot load verification roster") from exc
+        raise SystemExit(
+            "Synapse cutover cannot load verification roster read-only"
+        ) from exc
 
 
 def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
@@ -457,6 +465,11 @@ def _retirement_audit(args: argparse.Namespace) -> dict[str, object]:
     manifest = synapse_retirement_manifest_from_dict(
         _read_canonical_object(args.retirement_manifest, "retirement manifest")
     )
+    manifest_sha256 = hashlib.sha256(manifest.signed_bytes()).hexdigest()
+    if manifest_sha256 != authority["synapse_manifest_sha256"]:
+        raise SystemExit(
+            "retirement manifest changed after verification"
+        )
     try:
         roster = _verification_roster(args.roster_root) if args.archive_root else None
         receipt = build_independence_receipt(
@@ -467,6 +480,10 @@ def _retirement_audit(args: argparse.Namespace) -> dict[str, object]:
         )
     except InventoryError as exc:
         raise SystemExit(f"Synapse retirement negative scan failed: {exc}") from exc
+    if receipt.manifest_sha256 != authority["synapse_manifest_sha256"]:
+        raise SystemExit(
+            "retirement manifest changed during negative scan"
+        )
     return {
         "command": "retirement-audit",
         "dry_run": True,
@@ -562,6 +579,7 @@ def _retirement_cleanup(args: argparse.Namespace) -> dict[str, object]:
             control,
             expected_digests=expected,
             observed_digests=observed,
+            authority_root=args.cleanup_authority_root,
             cleanup_paths=args.cleanup_path,
         )
     except CutoverSafetyError as exc:

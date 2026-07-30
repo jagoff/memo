@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import uuid
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -16,7 +17,16 @@ from typing import Any, cast
 from memo.atomic_io import open_secure_directory
 from memo.errors import SignatureError
 from memo.operational_event import canonical_json_bytes
-from memo.operational_roster import VerificationRoster
+from memo.operational_key_store import (
+    AuthorityPinStore,
+    KeyStoreError,
+    MacOSAuthorityPinProvider,
+)
+from memo.operational_roster import (
+    RosterError,
+    VerificationRoster,
+    _load_roster_history,
+)
 from memo.operational_signing import OperationalSigner, OperationalVerifier
 from tools.memflow_absorption.control_record import (
     CutoverSafetyError,
@@ -89,6 +99,100 @@ def _is_repository(path: Path) -> bool:
     return (path / ".git").exists() or (
         (path / "pyproject.toml").is_file() and (path / "src").is_dir()
     )
+
+
+def _repository_ancestor(path: Path) -> Path | None:
+    for candidate in (path, *path.parents):
+        if _is_repository(candidate):
+            return candidate
+    return None
+
+
+def _readonly_production_pin_store(root: Path) -> AuthorityPinStore:
+    """Resolve an existing Keychain pin binding without creating one."""
+
+    location_path = Path(root).expanduser().absolute()
+    try:
+        canonical_root = location_path.resolve(strict=True)
+    except OSError as exc:
+        raise CutoverSafetyError(
+            "verification roster authority root is unavailable"
+        ) from exc
+    provider = MacOSAuthorityPinProvider()
+    location_binding = hashlib.sha256(
+        b"memo-authority-root-v1\0" + os.fsencode(canonical_root)
+    ).hexdigest()
+    binding_digest = hashlib.sha256(location_binding.encode("utf-8")).hexdigest()
+    try:
+        raw = provider._read_account(f"binding:{binding_digest}")
+    except KeyStoreError as exc:
+        raise CutoverSafetyError(
+            "verification roster authority pin is unavailable"
+        ) from exc
+    if raw is None:
+        raise CutoverSafetyError(
+            "verification roster authority pin binding is missing"
+        )
+    try:
+        installation_id = str(uuid.UUID(raw.decode("ascii")))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise CutoverSafetyError(
+            "verification roster authority pin binding is invalid"
+        ) from exc
+    store = object.__new__(AuthorityPinStore)
+    store._root = canonical_root
+    store._location_path = location_path
+    store._provider = provider
+    store._installation_id = installation_id
+    store._lock_path = (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "Memo"
+        / "authority-pin-locks"
+        / f"pin-{installation_id}"
+    )
+    return store
+
+
+def load_verification_roster_readonly(
+    root: Path,
+    *,
+    pin_store: AuthorityPinStore | None = None,
+) -> VerificationRoster:
+    """Load pinned roster history without invoking crash recovery or writes."""
+
+    try:
+        store = pin_store or _readonly_production_pin_store(root)
+        before = store._read_unlocked()
+        if (
+            before.pending_roster_version is not None
+            or before.pending_epoch is not None
+        ):
+            raise CutoverSafetyError(
+                "verification roster has pending recovery; read-only audit refuses"
+            )
+        history = _load_roster_history(root)
+        after = store._read_unlocked()
+    except CutoverSafetyError:
+        raise
+    except (KeyStoreError, OSError, RosterError, ValueError) as exc:
+        raise CutoverSafetyError(
+            "verification roster read-only load failed"
+        ) from exc
+    if before != after:
+        raise CutoverSafetyError(
+            "verification roster authority changed during read-only load"
+        )
+    latest = history[-1]
+    if (
+        before.roster_version != latest.version
+        or before.roster_hash != latest.roster_hash
+    ):
+        raise CutoverSafetyError(
+            "verification roster rollback or substitution detected"
+        )
+    return latest
 
 
 def assert_safe_attempt_root(
@@ -200,6 +304,7 @@ def assert_retirement_cleanup_authority(
     *,
     expected_digests: Mapping[str, str],
     observed_digests: Mapping[str, str],
+    authority_root: Path,
     cleanup_paths: tuple[Path, ...] | list[Path],
 ) -> None:
     """Reject cleanup until all exact authority and runtime blockers are closed.
@@ -253,6 +358,40 @@ def assert_retirement_cleanup_authority(
         raise CutoverSafetyError(
             "retirement cleanup digest mismatch with VERIFIED control authority"
         )
+    raw_authority = os.fspath(authority_root)
+    authority = Path(os.path.abspath(raw_authority))
+    if _contains_unresolved(raw_authority) or not Path(raw_authority).is_absolute():
+        raise CutoverSafetyError(
+            "retirement cleanup authority root is unresolved or relative"
+        )
+    if (
+        authority == Path(authority.anchor)
+        or authority == Path.home()
+        or len(authority.parts) <= 3
+    ):
+        raise CutoverSafetyError(
+            f"retirement cleanup authority root is too broad: {authority}"
+        )
+    try:
+        _reject_symlink_components(authority)
+        authority_mode = authority.stat().st_mode
+    except FileNotFoundError as exc:
+        raise CutoverSafetyError(
+            "retirement cleanup authority root does not exist"
+        ) from exc
+    except (OSError, SafetyError) as exc:
+        raise CutoverSafetyError(
+            "retirement cleanup authority root is unsafe"
+        ) from exc
+    if not stat.S_ISDIR(authority_mode):
+        raise CutoverSafetyError(
+            "retirement cleanup authority root is not a directory"
+        )
+    repository = _repository_ancestor(authority)
+    if repository is not None:
+        raise CutoverSafetyError(
+            f"retirement cleanup authority is inside a repository: {repository}"
+        )
     if not cleanup_paths:
         raise CutoverSafetyError("retirement cleanup requires exact cleanup paths")
     normalized: list[Path] = []
@@ -263,20 +402,41 @@ def assert_retirement_cleanup_authority(
                 f"retirement cleanup path is unresolved or relative: {raw}"
             )
         candidate = Path(os.path.abspath(raw))
-        if (
-            candidate == Path(candidate.anchor)
-            or candidate == Path.home()
-            or _is_repository(candidate)
-        ):
+        if candidate == Path(candidate.anchor) or candidate == Path.home():
             raise CutoverSafetyError(
-                f"retirement cleanup path is broad or a repository: {candidate}"
+                f"retirement cleanup path is too broad: {candidate}"
             )
         try:
             _reject_symlink_components(candidate)
-        except SafetyError as exc:
+            observed = candidate.stat()
+        except FileNotFoundError as exc:
+            raise CutoverSafetyError(
+                f"retirement cleanup path does not exist: {candidate}"
+            ) from exc
+        except (OSError, SafetyError) as exc:
             raise CutoverSafetyError(
                 f"retirement cleanup path is unsafe: {candidate}"
             ) from exc
+        if not (stat.S_ISREG(observed.st_mode) or stat.S_ISDIR(observed.st_mode)):
+            raise CutoverSafetyError(
+                "retirement cleanup path is not a regular file or directory: "
+                f"{candidate}"
+            )
+        try:
+            relative = candidate.relative_to(authority)
+        except ValueError as exc:
+            raise CutoverSafetyError(
+                f"retirement cleanup path is outside cleanup authority: {candidate}"
+            ) from exc
+        if not relative.parts:
+            raise CutoverSafetyError(
+                "retirement cleanup path must be below cleanup authority"
+            )
+        repository = _repository_ancestor(candidate)
+        if repository is not None:
+            raise CutoverSafetyError(
+                f"retirement cleanup path is inside a repository: {repository}"
+            )
         normalized.append(candidate)
     if len(normalized) != len(set(normalized)):
         raise CutoverSafetyError("retirement cleanup paths are duplicated")
@@ -660,6 +820,7 @@ __all__ = [
     "independence_receipt_from_dict",
     "independence_scan_from_dict",
     "initialize_attempt_root",
+    "load_verification_roster_readonly",
     "prepare_synapse_retirement",
     "resolve_under_attempt",
     "verify_independence_receipt",

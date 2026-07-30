@@ -43,6 +43,10 @@ class _LedgerView:
     def head_hashes(self) -> Any:
         return self.__ledger.head_hashes()
 
+    def verify(self) -> dict[str, Any]:
+        """Expose integrity verification without exposing ledger mutation."""
+        return self.__ledger.verify()
+
 if TYPE_CHECKING:
     from memo.operation_ledger_v2 import OperationLedgerV2
     from memo.operation_views import OperationalViewStore

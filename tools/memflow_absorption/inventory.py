@@ -347,10 +347,16 @@ def _safe_files(root: Path) -> Iterator[tuple[Path, str]]:
         raise InventoryError(f"inventory root is unavailable: {root}") from exc
     if not stat.S_ISDIR(observed.st_mode):
         raise InventoryError(f"inventory root is not a directory: {root}")
+    def traversal_error(error: OSError) -> None:
+        raise InventoryError(
+            f"inventory traversal failed below {absolute}: {error}"
+        ) from error
+
     for directory, directory_names, file_names in os.walk(
         absolute,
         topdown=True,
         followlinks=False,
+        onerror=traversal_error,
     ):
         parent = Path(directory)
         retained: list[str] = []
@@ -382,7 +388,9 @@ def _read_text(path: Path) -> tuple[bytes, str]:
     try:
         return data, data.decode("utf-8")
     except UnicodeDecodeError:
-        return data, ""
+        # Preserve every ASCII byte for the retirement/source regexes instead
+        # of turning a mixed binary file into an empty-text false negative.
+        return data, data.decode("utf-8", errors="surrogateescape")
 
 
 def _references(text: str) -> tuple[str, ...]:

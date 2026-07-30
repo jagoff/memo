@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from memo.operational_key_store import (
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner
 from tools.memflow_absorption import __main__ as absorption_cli
+from tools.memflow_absorption import safety as safety_module
 from tools.memflow_absorption.inventory import (
     SYNAPSE_RETIREMENT_DOMAIN,
     InventoryError,
@@ -25,6 +27,7 @@ from tools.memflow_absorption.inventory import (
 from tools.memflow_absorption.safety import (
     CutoverSafetyError,
     assert_retirement_cleanup_authority,
+    load_verification_roster_readonly,
 )
 from tools.memflow_absorption.schemas import (
     CutoverState,
@@ -149,13 +152,14 @@ def test_retirement_audit_cli_report_combines_terminal_authority_and_scan(
         "[project]\nname = 'memo'\n",
         encoding="utf-8",
     )
+    manifest_sha256 = hashlib.sha256(_manifest().signed_bytes()).hexdigest()
     monkeypatch.setattr(
         absorption_cli,
         "_synapse_verify",
         lambda _args: {
             "independent": True,
             "retirement_epoch": 7,
-            "synapse_manifest_sha256": "1" * 64,
+            "synapse_manifest_sha256": manifest_sha256,
             "consumer_inventory_sha256": "2" * 64,
             "independence_receipt_sha256": "3" * 64,
         },
@@ -172,6 +176,7 @@ def test_retirement_audit_cli_report_combines_terminal_authority_and_scan(
     assert result["command"] == "retirement-audit"
     assert result["status"] == "verified"
     assert result["independent"] is True
+    assert result["synapse_manifest_sha256"] == manifest_sha256
     assert {
         "source",
         "runtime",
@@ -184,6 +189,36 @@ def test_retirement_audit_cli_report_combines_terminal_authority_and_scan(
         "state_root",
         "package_metadata",
     } <= set(result["covered_surfaces"])
+
+
+def test_retirement_audit_rejects_manifest_changed_after_authority_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(canonical_json_bytes(_manifest().to_dict()))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    monkeypatch.setattr(
+        absorption_cli,
+        "_synapse_verify",
+        lambda _args: {
+            "independent": True,
+            "retirement_epoch": 7,
+            "synapse_manifest_sha256": "0" * 64,
+            "consumer_inventory_sha256": "2" * 64,
+            "independence_receipt_sha256": "3" * 64,
+        },
+    )
+
+    with pytest.raises(SystemExit, match="changed after verification"):
+        absorption_cli._retirement_audit(
+            SimpleNamespace(
+                retirement_manifest=manifest_path,
+                scan_root=[installed],
+                archive_root=[],
+            )
+        )
 
 
 def test_retirement_audit_allows_only_manifest_listed_archived_provenance(
@@ -235,6 +270,139 @@ def test_retirement_audit_rejects_symlink_blind_spot(tmp_path: Path) -> None:
         build_independence_receipt((installed,), manifest=_manifest())
 
 
+def test_retirement_audit_propagates_walk_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def denied_walk(
+        _root: Path,
+        *,
+        topdown: bool,
+        followlinks: bool,
+        onerror: object,
+    ) -> list[tuple[str, list[str], list[str]]]:
+        assert topdown is True
+        assert followlinks is False
+        assert callable(onerror)
+        onerror(PermissionError("denied"))  # type: ignore[operator]
+        return []
+
+    monkeypatch.setattr(os, "walk", denied_walk)
+
+    with pytest.raises(InventoryError, match="traversal failed"):
+        build_independence_receipt((tmp_path,), manifest=_manifest())
+
+
+def test_retirement_audit_scans_ascii_references_inside_non_utf8_files(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "runtime.bin").write_bytes(b"\xff\x00SYNAPSE_TOKEN=active\xfe")
+
+    with pytest.raises(InventoryError, match="unlisted active reference"):
+        build_independence_receipt((tmp_path,), manifest=_manifest())
+
+
+def test_roster_loader_is_strictly_read_only_and_rejects_pending_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keys = DeviceKeyStore.in_memory()
+    key = keys.generate(device_id="device-a")
+    provider = InMemoryAuthorityPinProvider()
+    pins = AuthorityPinStore._for_test(tmp_path, provider=provider)
+    roster = VerificationRoster.bootstrap(
+        device_id="device-a",
+        key=key,
+        root=tmp_path,
+        pin_store=pins,
+    )
+    before_files = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    before_pin = pins._snapshot_for_test()
+    loaded = load_verification_roster_readonly(tmp_path, pin_store=pins)
+    after_files = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    assert loaded == roster
+    assert after_files == before_files
+    assert pins._snapshot_for_test() == before_pin
+
+    installation_id = next(iter(provider._installations.values()))
+    pin_bytes = provider._values[installation_id]
+
+    class ReadOnlyProductionProvider:
+        def _read_account(self, account: str) -> bytes | None:
+            if account.startswith("binding:"):
+                return installation_id.encode("ascii")
+            if account == f"pin:{installation_id}":
+                return pin_bytes
+            return None
+
+        def _read_pin(self, requested_installation_id: str) -> bytes | None:
+            assert requested_installation_id == installation_id
+            return pin_bytes
+
+        def _write_account(self, _account: str, _value: bytes) -> None:
+            raise AssertionError("read-only roster loader attempted a Keychain write")
+
+        def _write_pin(self, _installation_id: str, _value: bytes) -> None:
+            raise AssertionError("read-only roster loader attempted a pin write")
+
+    monkeypatch.setattr(
+        safety_module,
+        "MacOSAuthorityPinProvider",
+        ReadOnlyProductionProvider,
+    )
+    assert load_verification_roster_readonly(tmp_path) == roster
+    assert {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    } == before_files
+
+    second_key = keys.generate(
+        device_id="device-b",
+        roles=("origin",),
+        enrollment_sequence=2,
+    )
+
+    def leave_pending(_root: Path, _record: bytes) -> None:
+        raise RuntimeError("simulated crash after roster staging")
+
+    monkeypatch.setattr(pins, "_finish_roster", leave_pending)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        roster.with_keys(
+            version=2,
+            peers=("device-a", "device-b"),
+            keys=(key, second_key),
+            signer=OperationalSigner(keys, roster_version=roster.version),
+            root=tmp_path,
+            pin_store=pins,
+        )
+    pending_files = {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    pending_pin = pins._snapshot_for_test()
+
+    with pytest.raises(CutoverSafetyError, match="pending recovery"):
+        load_verification_roster_readonly(tmp_path, pin_store=pins)
+
+    assert {
+        path.relative_to(tmp_path).as_posix(): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    } == pending_files
+    assert pins._snapshot_for_test() == pending_pin
+
+
 def test_cleanup_authority_rejects_non_verified_control(tmp_path: Path) -> None:
     manifest_sha256 = "1" * 64
     independence_sha256 = "2" * 64
@@ -258,6 +426,7 @@ def test_cleanup_authority_rejects_non_verified_control(tmp_path: Path) -> None:
                 manifest_sha256=manifest_sha256,
                 independence_sha256=independence_sha256,
             ),
+            authority_root=tmp_path,
             cleanup_paths=(tmp_path / "synapse-state",),
         )
 
@@ -292,6 +461,7 @@ def test_cleanup_authority_requires_all_exact_artifact_digests(
             control,
             expected_digests=expected,
             observed_digests=observed,
+            authority_root=tmp_path,
             cleanup_paths=(tmp_path / "synapse-state",),
         )
 
@@ -302,6 +472,7 @@ def test_cleanup_authority_requires_all_exact_artifact_digests(
             control,
             expected_digests=expected,
             observed_digests=observed,
+            authority_root=tmp_path,
             cleanup_paths=(tmp_path / "synapse-state",),
         )
 
@@ -316,13 +487,95 @@ def test_cleanup_authority_rejects_broad_or_unresolved_paths(
         manifest_sha256=expected["retirement_manifest"],
         independence_sha256=expected["independence_receipt"],
     )
+    authority_root = tmp_path / "cleanup-authority"
+    authority_root.mkdir()
 
     with pytest.raises(CutoverSafetyError, match="cleanup path"):
         assert_retirement_cleanup_authority(
             control,
             expected_digests=expected,
             observed_digests=expected,
+            authority_root=authority_root,
             cleanup_paths=(unsafe_path,),
+        )
+
+
+def test_cleanup_authority_rejects_missing_special_and_repository_paths(
+    tmp_path: Path,
+) -> None:
+    expected = _expected_digests()
+    control = _verified_control(
+        manifest_sha256=expected["retirement_manifest"],
+        independence_sha256=expected["independence_receipt"],
+    )
+    authority_root = tmp_path / "cleanup-authority"
+    authority_root.mkdir()
+
+    with pytest.raises(CutoverSafetyError, match="does not exist"):
+        assert_retirement_cleanup_authority(
+            control,
+            expected_digests=expected,
+            observed_digests=expected,
+            authority_root=authority_root,
+            cleanup_paths=(authority_root / "missing",),
+        )
+
+    special = authority_root / "pipe"
+    os.mkfifo(special)
+    with pytest.raises(CutoverSafetyError, match="regular file or directory"):
+        assert_retirement_cleanup_authority(
+            control,
+            expected_digests=expected,
+            observed_digests=expected,
+            authority_root=authority_root,
+            cleanup_paths=(special,),
+        )
+
+    repository = tmp_path / "repo"
+    (repository / ".git").mkdir(parents=True)
+    repository_authority = repository / "cleanup-authority"
+    repository_authority.mkdir()
+    target = repository_authority / "state"
+    target.mkdir()
+    with pytest.raises(CutoverSafetyError, match="repository"):
+        assert_retirement_cleanup_authority(
+            control,
+            expected_digests=expected,
+            observed_digests=expected,
+            authority_root=repository_authority,
+            cleanup_paths=(target,),
+        )
+
+
+def test_cleanup_authority_rejects_broad_or_outside_authority_boundary(
+    tmp_path: Path,
+) -> None:
+    expected = _expected_digests()
+    control = _verified_control(
+        manifest_sha256=expected["retirement_manifest"],
+        independence_sha256=expected["independence_receipt"],
+    )
+    target = tmp_path / "target"
+    target.mkdir()
+
+    with pytest.raises(CutoverSafetyError, match="authority root is too broad"):
+        assert_retirement_cleanup_authority(
+            control,
+            expected_digests=expected,
+            observed_digests=expected,
+            authority_root=Path("/Users"),
+            cleanup_paths=(target,),
+        )
+
+    authority_root = tmp_path / "cleanup-authority"
+    authority_root.mkdir()
+    with pytest.raises(CutoverSafetyError, match="outside cleanup authority"):
+        assert_retirement_cleanup_authority(
+            control,
+            expected_digests=expected,
+            observed_digests=expected,
+            authority_root=authority_root,
+            cleanup_paths=(target,),
         )
 
 
@@ -344,6 +597,7 @@ def test_cleanup_remains_blocked_without_runtime_gate_and_signed_path_plan(
             control,
             expected_digests=expected,
             observed_digests=expected,
+            authority_root=tmp_path,
             cleanup_paths=(cleanup_target,),
         )
 
@@ -432,6 +686,7 @@ def test_cleanup_cli_is_refusal_only_even_with_exact_inputs(
         "bounded_data_receipt": paths["data"],
         "independence_receipt": paths["independence"],
         "roster_root": tmp_path,
+        "cleanup_authority_root": tmp_path,
         "cleanup_path": [cleanup_target],
     }
     arguments.update({f"{key}_sha256": value for key, value in expected.items()})
