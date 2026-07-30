@@ -354,33 +354,24 @@ def _recency_key(rec: MemoryRecord) -> str:
 
 # -- LLM-call helpers (shared by the maintain/consolidate/synthesize loops) ----
 
-_CHAT_EXECUTOR: _futures.ThreadPoolExecutor | None = None
-_EXECUTOR_LOCK = threading.Lock()
-
-
-def _get_chat_executor() -> _futures.ThreadPoolExecutor:
-    global _CHAT_EXECUTOR
-    with _EXECUTOR_LOCK:
-        if _CHAT_EXECUTOR is None:
-            _CHAT_EXECUTOR = _futures.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="chat-timeout"
-            )
-        return _CHAT_EXECUTOR
+_CHAT_WORKER_CONDITION = threading.Condition()
+_CHAT_ACTIVE: _futures.Future[dict[str, Any]] | None = None
+_CHAT_ACTIVE_TIMED_OUT = False
 
 
 def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, Any] | None:
     """Run ``chat.chat(**kwargs)`` with a hard wall-clock timeout.
 
-    Returns the result dict, or ``None`` if it exceeds ``timeout``. On timeout
-    the executor is shut down (``shutdown(wait=False)``) and replaced with a
-    fresh one — an MLX forward pass can't be interrupted mid-flight, but the
-    next caller gets a full timeout budget instead of queueing behind the
-    abandoned thread.  The submitted thread sets ``_gpu_tl.timeout`` so
-    ``gpu_guard()`` imposes a deadline on the GPU lock rather than blocking
-    forever.
+    Returns the result dict, or ``None`` if it exceeds ``timeout``. MLX work
+    cannot be interrupted mid-flight, so a timed-out worker continues in one
+    daemon thread. Calls made while that worker is still alive fail closed
+    immediately instead of starting competing model loads. A daemon is used
+    deliberately: unlike ``ThreadPoolExecutor`` workers, it does not get joined
+    by ``concurrent.futures`` during interpreter shutdown.
 
     Errors raised by ``chat.chat`` propagate (caller's try/except handles them).
     """
+    global _CHAT_ACTIVE, _CHAT_ACTIVE_TIMED_OUT
 
     _timeout = timeout
 
@@ -395,30 +386,52 @@ def chat_with_timeout(chat: Any, *, timeout: float, **kwargs: Any) -> dict[str, 
             pass
         return chat.chat(**kwargs)
 
-    ex = _get_chat_executor()
-    if getattr(ex, "_shutdown", False):
-        with _EXECUTOR_LOCK:
-            _CHAT_EXECUTOR = None
-            _CHAT_EXECUTOR = _futures.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="chat-timeout"
-            )
-            ex = _CHAT_EXECUTOR
-    # copy_context: the sampling contextvar (memo.sampling) must survive the
-    # executor hop or client-sampling silently degrades to MLX mid-request.
+    deadline = time.monotonic() + timeout
     import contextvars
 
-    fut = ex.submit(contextvars.copy_context().run, _run)
+    with _CHAT_WORKER_CONDITION:
+        while _CHAT_ACTIVE is not None:
+            if _CHAT_ACTIVE_TIMED_OUT:
+                return None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            _CHAT_WORKER_CONDITION.wait(timeout=remaining)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+
+        fut: _futures.Future[dict[str, Any]] = _futures.Future()
+        _CHAT_ACTIVE = fut
+        _CHAT_ACTIVE_TIMED_OUT = False
+        context = contextvars.copy_context()
+
+        def _worker() -> None:
+            global _CHAT_ACTIVE, _CHAT_ACTIVE_TIMED_OUT
+            if not fut.set_running_or_notify_cancel():
+                return
+            try:
+                result = context.run(_run)
+            except BaseException as exc:
+                fut.set_exception(exc)
+            else:
+                fut.set_result(result)
+            finally:
+                with _CHAT_WORKER_CONDITION:
+                    if _CHAT_ACTIVE is fut:
+                        _CHAT_ACTIVE = None
+                        _CHAT_ACTIVE_TIMED_OUT = False
+                    _CHAT_WORKER_CONDITION.notify_all()
+
+        threading.Thread(target=_worker, name="chat-timeout", daemon=True).start()
+
     try:
-        return fut.result(timeout=timeout)
+        return fut.result(timeout=remaining)
     except _futures.TimeoutError:
-        # Shutdown the executor so the next caller doesn't queue behind
-        # the abandoned MLX thread.  An MLX forward pass can't be
-        # interrupted in-flight, so the old thread runs to completion in
-        # the background, but the next call gets a fresh executor+worker
-        # and its full timeout budget instead of cascading.
-        with _EXECUTOR_LOCK:
-            ex.shutdown(wait=False)
-            _CHAT_EXECUTOR = None
+        with _CHAT_WORKER_CONDITION:
+            if _CHAT_ACTIVE is fut:
+                _CHAT_ACTIVE_TIMED_OUT = True
         return None
 
 
