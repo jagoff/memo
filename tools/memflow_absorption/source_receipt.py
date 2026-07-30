@@ -112,7 +112,7 @@ def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoste
         raise SignatureError("hourly buckets do not cover receipt window")
     if authoritative_events is not None:
         digest = hashlib.sha256(json.dumps(authoritative_events, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-        if digest != receipt.raw_event_set_sha256 or sum(b.count for b in receipt.hourly_buckets) != len(ordered):
+        if digest != receipt.raw_event_set_sha256 or sum(b.count for b in receipt.hourly_buckets) != len(authoritative_events):
             raise SignatureError("source receipt aggregate does not match authoritative events")
     if not receipt.cursor or not receipt.extraction_complete:
         raise SignatureError("source extraction is incomplete")
