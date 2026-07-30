@@ -254,11 +254,14 @@ class OperationalStore:
     epoch_fence: EpochFence
     transaction_root: Path
 
-    def __init__(self, state_dir: Path, *, device_id: str) -> None:
+    def __init__(self, state_dir: Path, *, device_id: str, context_provider: Callable[[], CommitContext] | None = None) -> None:
         self.state_dir = Path(state_dir)
         self.ledger = OperationLedger(self.state_dir, device_id=device_id)
         self.snapshot_path = self.state_dir / "operational-state.json"
         self._v2_enabled = False
+        # Legacy writers are fail-closed unless an authenticated epoch context
+        # provider is explicitly composed (tests may inject an in-memory one).
+        self._context_provider = context_provider
 
     @classmethod
     def for_v2(
@@ -455,7 +458,19 @@ class OperationalStore:
         subject_uri: str,
         actor: ActorIdentity | None = None,
         trace_id: str = "",
+        context: CommitContext | None = None,
     ) -> dict[str, Any]:
+        from memo.errors import OperationalError, OperationalErrorCode
+        from memo.operational_epoch import CommitContext
+        authenticated = context or (self._context_provider() if self._context_provider else None)
+        if not isinstance(authenticated, CommitContext):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "authenticated epoch context is required for operational writes",
+                retryable=False,
+            )
+        if self._v2_enabled:
+            self.epoch_fence.verify(authenticated)
         event = self.ledger.append(
             op,
             subject_uri=subject_uri,
