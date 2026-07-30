@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import json
 from pathlib import Path
 from typing import Literal
 
@@ -29,6 +30,41 @@ _SYSTEM_SWIFTC = Path("/usr/bin/swiftc")
 _SYSTEM_CODESIGN = Path("/usr/bin/codesign")
 _MAX_HELPER_SOURCE_BYTES = 256 * 1024
 _MAX_HELPER_BINARY_BYTES = 16 * 1024 * 1024
+_SERVICE_NAMESPACE = "com.memo.operational-signing.v2"
+_BINDING_SCHEMA = "memo.secure_enclave_helper_binding.v1"
+_BINDING_PREFIX = b"memo.secure-enclave-binding.v1\0"
+_BINDING_STATES = frozenset({"generating", "active", "destroying"})
+
+
+def binding_digest(service: str, key_id: str) -> str:
+    """Return the immutable descriptor used for a key/helper binding."""
+    SecureEnclaveP256Backend._validate_service(service)
+    SecureEnclaveP256Backend._validate_key_id(key_id)
+    return hashlib.sha256(_BINDING_PREFIX + service.encode() + b"\0" + key_id.encode()).hexdigest()
+
+
+def canonical_binding(*, service: str, key_id: str, helper_sha256: str, state: str) -> bytes:
+    SecureEnclaveP256Backend._validate_service(service)
+    SecureEnclaveP256Backend._validate_key_id(key_id)
+    if not re.fullmatch(r"[0-9a-f]{64}", helper_sha256) or state not in _BINDING_STATES:
+        raise KeyStoreError("Secure Enclave binding is invalid")
+    return json.dumps({"helper_sha256": helper_sha256, "key_id": key_id,
+                       "schema": _BINDING_SCHEMA, "service": service, "state": state},
+                      sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+
+def validate_binding(raw: bytes, *, service: str, key_id: str, expected_name: str | None = None) -> dict[str, str]:
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise KeyStoreError("Secure Enclave binding is not canonical JSON") from None
+    if not isinstance(value, dict) or set(value) != {"helper_sha256", "key_id", "schema", "service", "state"}:
+        raise KeyStoreError("Secure Enclave binding fields are invalid")
+    encoded = canonical_binding(service=service, key_id=key_id,
+                                helper_sha256=value["helper_sha256"], state=value["state"])
+    if raw != encoded or value["schema"] != _BINDING_SCHEMA or (expected_name and expected_name != binding_digest(service, key_id) + ".json"):
+        raise KeyStoreError("Secure Enclave binding is not canonical")
+    return value
 
 
 class SecureEnclaveP256Backend:
@@ -44,6 +80,8 @@ class SecureEnclaveP256Backend:
         if sys.platform != "darwin":
             raise KeyStoreError("macOS Secure Enclave signing is unavailable")
         self._validate_service(service)
+        if not service.startswith(_SERVICE_NAMESPACE):
+            raise KeyStoreError("Secure Enclave Keychain service must use operational v2 namespace")
         self._service = service
         self._helper, self._helper_sha256 = self._install_helper()
         self._verify_helper()
@@ -185,6 +223,34 @@ class SecureEnclaveP256Backend:
 
     @classmethod
     def _install_helper(cls) -> tuple[Path, str]:
+        # Production never compiles Swift at runtime.  The platform wheel must
+        # carry this immutable, ad-hoc-signed arm64 helper asset.
+        packaged = Path(__file__).parent / "native" / "darwin-arm64" / "memo-secure-enclave-helper"
+        if not packaged.is_file():
+            raise KeyStoreError("packaged Secure Enclave helper is unavailable")
+        candidate = cls._read_regular_snapshot(
+            packaged, description="packaged Memo Secure Enclave helper",
+            maximum_bytes=_MAX_HELPER_BINARY_BYTES,
+            allowed_owners=frozenset({0, os.getuid()}), required_mode=0o500,
+        )
+        helper_sha256 = hashlib.sha256(candidate).hexdigest()
+        root = Path.home() / "Library" / "Application Support" / "Memo" / "native-tools"
+        with authority_write_lock(root):
+            with open_secure_directory(root, create=True) as directory:
+                target_name = f"helpers-v1/{helper_sha256}"
+                # Keep compatibility with the existing secure-directory API;
+                # callers may provide a pre-created cache root in tests.
+                target = root / helper_sha256
+                if directory.exists(target.name):
+                    existing, observed = directory.read_bytes_snapshot(target.name)
+                    if existing != candidate or observed.st_uid != os.getuid() or observed.st_nlink != 1 or stat.S_IMODE(observed.st_mode) != 0o500:
+                        raise KeyStoreError("cached Secure Enclave helper failed content-address verification")
+                else:
+                    directory.create_bytes_exclusive(target.name, candidate, mode=0o500)
+        cls._verify_code_signature(target)
+        return target, helper_sha256
+
+        # Unreachable legacy source compiler retained below for provenance only.
         _, source_bytes = cls._source_snapshot()
         source_sha256 = hashlib.sha256(source_bytes).hexdigest()
         root = Path.home() / "Library" / "Application Support" / "Memo" / "native-tools"

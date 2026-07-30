@@ -741,7 +741,7 @@ class MacOSKeychainProvider:
     def __init__(
         self,
         *,
-        service: str = "com.memo.operational-signing",
+        service: str = "com.memo.operational-signing.v2",
         backend: _PrivateKeyProvider | None = None,
     ) -> None:
         if not _SECURE_ENCLAVE_SERVICE_RE.fullmatch(service):
