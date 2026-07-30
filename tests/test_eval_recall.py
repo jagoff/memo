@@ -771,6 +771,7 @@ def test_run_config_pins_eval_fields_and_inherits_live_flags(monkeypatch):
     assert knobs.min_body_chars == 0
     assert knobs.mode == "vec"
     assert knobs.project_tag is None  # labels carry no project yet
+    assert knobs.code_proximity is False  # no render cwd: never spawn git per prompt
     # everything else inherits the LIVE flag/overlay resolution
     assert knobs.mmr_lambda == 0.4
     assert knobs.synthesis_boost == 0.07

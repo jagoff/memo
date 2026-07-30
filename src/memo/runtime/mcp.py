@@ -38,10 +38,9 @@ _MCP_ENV_FORWARD_KEYS = (
     "MEMO_RERANKER_REVISION",
     "MEMO_RERANK_INPUT_K",
     "MEMO_RERANK_FUSION_ALPHA",
-    # auto-update: default ON (resolved from the built-in default when unset, so a
-    # fresh install auto-updates without any injected env). Forwarded only when set
-    # at install time, letting a machine pin a value — e.g. opt out with
-    # `MEMO_AUTO_UPDATE=0 memo install-mcp --write`.
+    # Update checks and auto-update are opt-in. Forward explicit values only so
+    # an operator can enable them without turning normal MCP startup into an
+    # implicit network operation.
     "MEMO_UPDATE_CHECK_ENABLED",
     "MEMO_AUTO_UPDATE",
     "MEMO_AUTO_UPDATE_INTERVAL_S",

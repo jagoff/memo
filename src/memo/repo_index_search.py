@@ -187,6 +187,14 @@ _QUERY_TERM_STOPWORDS = frozenset(
         "cuando",
         "este",
         "esta",
+        # Structural/search-domain boilerplate. Keeping these terms gives every
+        # test or repo module the same filename boost and lets generic symbols
+        # crowd out the query-specific identifiers.
+        "test",
+        "tests",
+        "code",
+        "repo",
+        "repository",
     }
 )
 
@@ -273,6 +281,7 @@ def _rrf_fuse_repo(
     k: int = 60,
     query_terms: list[str] | None = None,
     channel_names: list[str] | None = None,
+    max_per_path: int | None = None,
 ) -> list[dict[str, Any]]:
     fused: dict[str, float] = {}
     canon: dict[str, dict[str, Any]] = {}
@@ -306,7 +315,12 @@ def _rrf_fuse_repo(
             if boost:
                 fused[rid] = score * (1.0 + boost)
                 path_boosts[rid] = boost
-    ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    ranked = _select_ranked_with_path_cap(
+        fused,
+        canon,
+        limit=limit,
+        max_per_path=max_per_path,
+    )
     out: list[dict[str, Any]] = []
     for rid, score in ranked:
         d = dict(canon[rid])
@@ -325,7 +339,31 @@ def _rrf_fuse_repo(
             "channel_ranks": dict(sorted(ranks[rid].items())),
             "path_name_boost": path_boosts.get(rid, 0.0),
             "channel_details": channel_details.get(rid, {}),
+            "max_per_path": max_per_path,
         }
         d["scope"] = classify_repo_path(str(d.get("path") or ""))
         out.append(d)
     return out
+
+
+def _select_ranked_with_path_cap(
+    fused: dict[str, float],
+    canon: dict[str, dict[str, Any]],
+    *,
+    limit: int,
+    max_per_path: int | None,
+) -> list[tuple[str, float]]:
+    ranked_all = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
+    if max_per_path is None:
+        return ranked_all[:limit]
+    ranked: list[tuple[str, float]] = []
+    path_counts: dict[str, int] = {}
+    for rid, score in ranked_all:
+        hit_path = str(canon[rid].get("path") or "")
+        if path_counts.get(hit_path, 0) >= max_per_path:
+            continue
+        ranked.append((rid, score))
+        path_counts[hit_path] = path_counts.get(hit_path, 0) + 1
+        if len(ranked) >= limit:
+            break
+    return ranked

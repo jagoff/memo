@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from memo.repo_watcher import DebouncedRepoRefresh
+from memo.repo_watcher import DebouncedRepoRefresh, _watch_target
 from memo.watcher import _PLIST_LABEL, _DebouncedReindex, render_plist
 
 
@@ -99,3 +99,40 @@ def test_repo_debounce_refreshes_incrementally_and_ignores_git(tmp_path: Path) -
     assert url == source["url"]
     assert kwargs["refresh"] is True
     assert kwargs["include"] == ["*.py"]
+
+
+def test_repo_debounce_accepts_git_commit_ref_signal(tmp_path: Path) -> None:
+    class RepoSpy:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def repo_index(self, url: str, **kwargs: Any) -> dict[str, Any]:
+            del url, kwargs
+            self.calls += 1
+            return {"indexed_files": 0, "deleted_files": 0, "unchanged_files": 3}
+
+    spy = RepoSpy()
+    debounce = DebouncedRepoRefresh(
+        spy,
+        {"url": str(tmp_path), "name": "repo", "ref": "HEAD", "extra": {}},
+        delay=0.05,
+    )
+    debounce.schedule(tmp_path / ".git" / "index")
+    debounce.schedule(tmp_path / ".git" / "refs" / "heads" / "master")
+    time.sleep(0.2)
+
+    assert spy.calls == 1
+
+
+def test_repo_watcher_prefers_local_source_checkout(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    clone = tmp_path / "managed-clone"
+    source.mkdir()
+    clone.mkdir()
+
+    target = _watch_target(
+        {"url": str(source), "clone_path": str(clone), "name": "repo"},
+        "repo",
+    )
+
+    assert target == source.resolve()

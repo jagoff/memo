@@ -89,7 +89,10 @@ DEFAULT_CHUNK_OVERLAP_LINES = 8
 MIN_CHUNK_CHARS = 60
 _LINK_RE = re.compile(r"\[\[.+?\]\]|\[.+?\]\(.+?\)|https?://\S+")
 
-DEFAULT_EMBED_BATCH = 64
+# A 64-chunk Qwen3/MLX batch can exceed 19 GiB on real repositories even when
+# individual chunks are bounded. Sixteen keeps peak memory practical on common
+# Apple Silicon machines; operators with more headroom can still override it.
+DEFAULT_EMBED_BATCH = 16
 MIN_EMBED_BATCH = 1
 DEFAULT_FLUSH_BATCH = 25
 MIN_FLUSH_BATCH = 1

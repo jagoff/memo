@@ -6,7 +6,7 @@ from pathlib import Path
 
 from memo.config import Config
 from memo.memory import Memory
-from memo.repo_index_search import classify_repo_path
+from memo.repo_index_search import _rrf_fuse_repo, classify_repo_path
 from memo.repo_signals import (
     collect_git_change_signals,
     expand_cochange_paths,
@@ -74,6 +74,21 @@ def test_scope_classification() -> None:
     assert classify_repo_path("third_party/lib/x.cc") == "vendor"
 
 
+def test_unified_fusion_can_bound_chunks_per_path() -> None:
+    rows = [
+        {"id": "a1", "path": "src/a.py"},
+        {"id": "a2", "path": "src/a.py"},
+        {"id": "a3", "path": "src/a.py"},
+        {"id": "b1", "path": "src/b.py"},
+        {"id": "c1", "path": "src/c.py"},
+    ]
+
+    fused = _rrf_fuse_repo([rows], limit=3, max_per_path=1)
+
+    assert [row["path"] for row in fused] == ["src/a.py", "src/b.py", "src/c.py"]
+    assert all(row["rank_explanation"]["max_per_path"] == 1 for row in fused)
+
+
 def test_structural_provider_reads_codegraph_and_one_hop(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     db_path = root / ".codegraph" / "codegraph.db"
@@ -105,6 +120,51 @@ def test_structural_provider_reads_codegraph_and_one_hop(tmp_path: Path) -> None
     assert "src/alpha.py" in paths
     assert "services/beta/worker.py" in paths
     assert paths["src/alpha.py"]["evidence"][0]["kind"] == "symbol_match"
+
+
+def test_structural_provider_uses_codegraph_segment_vocabulary(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    db_path = root / ".codegraph" / "codegraph.db"
+    db_path.parent.mkdir(parents=True)
+    connection = sqlite3.connect(db_path)
+    connection.executescript(
+        """
+        CREATE TABLE nodes (
+          id TEXT PRIMARY KEY, kind TEXT, name TEXT, qualified_name TEXT,
+          file_path TEXT, start_line INTEGER, end_line INTEGER,
+          signature TEXT, is_exported INTEGER
+        );
+        CREATE INDEX idx_nodes_name ON nodes(name);
+        CREATE TABLE edges (source TEXT, target TEXT, kind TEXT);
+        CREATE TABLE name_segment_vocab (
+          segment TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (segment, name)
+        ) WITHOUT ROWID;
+        INSERT INTO nodes VALUES
+          ('a', 'class', 'ContentAddressedArtifactStore',
+           'memo.artifact_store.ContentAddressedArtifactStore',
+           'src/memo/artifact_store.py', 53, 280,
+           'class ContentAddressedArtifactStore', 1),
+          ('b', 'class', 'AddressBook',
+           'memo.contacts.AddressBook',
+           'src/memo/contacts.py', 1, 20,
+           'class AddressBook', 1);
+        INSERT INTO name_segment_vocab VALUES
+          ('addressed', 'ContentAddressedArtifactStore'),
+          ('artifact', 'ContentAddressedArtifactStore'),
+          ('content', 'ContentAddressedArtifactStore'),
+          ('store', 'ContentAddressedArtifactStore'),
+          ('address', 'AddressBook'),
+          ('book', 'AddressBook');
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    result = search_codegraph_paths(root, "addressed artifact", limit=10)
+
+    assert result["status"] == "available"
+    assert result["paths"][0]["path"] == "src/memo/artifact_store.py"
+    assert result["paths"][0]["evidence"][0]["score"] == 0.83
 
 
 def test_unified_search_scopes_artifacts_cochange_and_atomic_visibility(

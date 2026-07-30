@@ -120,7 +120,7 @@ A 7-phase nightly pipeline: inventory → mine signals → resolve conflicts →
 
 **Markdown is the source of truth.** Every memory is a plain `.md` file you can read, grep, and version-control. SQLite is a derived index that rebuilds from the files at any time — hand-edit in Obsidian and your edit wins on the next `memo reindex`. Nothing is locked in a database you can't open.
 
-**Prompts and memories stay on your machine.** Embedder, reranker, and LLM all run in-process. No telemetry. Memory travels only if *you* point `memo sync` at a git remote you own. A throttled update tag check is on by default; set `MEMO_AUTO_UPDATE=0` for fully offline startup. → **[Privacy and network policy](PRIVACY.md)**
+**Prompts and memories stay on your machine.** Embedder, reranker, and LLM all run in-process. No telemetry. Memory travels only if *you* point `memo sync` at a git remote you own. Normal startup is fully offline; remote update checks and auto-update require an explicit opt-in. → **[Privacy and network policy](PRIVACY.md)**
 
 Also in the box: cross-agent `memo resume` (reopen any session from any agent), cross-Mac git sync, a knowledge graph with optional codegraph symbol edges, encrypted secret storage, OCR/audio ingestion, evidence packs, outcome learning, and signed federation. → **[Full feature reference](docs/reference.md)**
 

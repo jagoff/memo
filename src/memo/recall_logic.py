@@ -796,6 +796,8 @@ def _apply_code_proximity_boost(
     hits: list[Any],
     explain: dict[str, dict[str, Any]] | None = None,
     cwd: str | None = None,
+    *,
+    enabled: bool = True,
 ) -> list[Any]:
     """Code-proximity stage of ``rank_hits`` (MEMO_RECALL_CODE_PROXIMITY_BOOST).
 
@@ -805,6 +807,8 @@ def _apply_code_proximity_boost(
     once (in the render ``cwd`` when given) and every matching hit gains
     +flag, re-sorted like the other additive boost stages (new list — the
     caller's is never mutated)."""
+    if not enabled:
+        return hits
     boost = flag_float("MEMO_RECALL_CODE_PROXIMITY_BOOST") or 0.0
     if boost <= 0:
         return hits
@@ -1036,6 +1040,10 @@ class RankKnobs:
     mmr_lambda: float = 0.0
     synthesis_boost: float = 0.0
     altitude: float = 0.0  # Phase 2: boost distilled hits on a BROAD query (0.0 = OFF)
+    # Eval runs have project tags but no trustworthy render cwd. They disable
+    # this stage so an ambient process cwd cannot trigger one `git diff`
+    # subprocess per evaluated prompt.
+    code_proximity: bool = True
     # Render cwd (the hook payload's cwd, NOT the daemon's process cwd): drives
     # the code-proximity stage's git diff + .codegraph discovery. None keeps
     # process-cwd behavior (the direct CLI path, where they coincide).
@@ -1250,9 +1258,16 @@ def rank_hits(
         raw = _apply_altitude_boost(raw, knobs.altitude, broad=_is_broad_query(query))
         if explain is not None:
             _explain_stage(explain, raw, "altitude")
-    # Live flag (not a knob): MEMO_RECALL_CODE_PROXIMITY_BOOST default 0.0 = OFF
-    # ⇒ the stage returns `raw` untouched with zero extra work.
-    raw = _apply_code_proximity_boost(raw, explain, cwd=knobs.cwd)
+    # Live flag (not a tunable scalar): MEMO_RECALL_CODE_PROXIMITY_BOOST
+    # default 0.0 = OFF ⇒ the stage returns `raw` untouched with zero extra
+    # work. Offline evals also disable it explicitly because they have no
+    # trustworthy render cwd from which to resolve a working-tree diff.
+    raw = _apply_code_proximity_boost(
+        raw,
+        explain,
+        knobs.cwd,
+        enabled=knobs.code_proximity,
+    )
 
     def _passes(h: Any) -> bool:
         # bm25-mode `h.score` is on the BM25 relevance scale, NOT cosine — applying

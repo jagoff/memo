@@ -16,6 +16,7 @@ from memo.repo_index import (
     _extract_query_terms,
     _path_name_boost,
 )
+from memo.repo_index_helpers import _repo_embed_batch_size
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -298,6 +299,12 @@ def test_repo_embed_sorts_batches_by_input_length(tmp_path: Path, monkeypatch):
 
     assert len(seen_lengths) == 3
     assert seen_lengths == sorted(seen_lengths)
+
+
+def test_repo_embed_default_batch_is_memory_safe(monkeypatch):
+    monkeypatch.delenv("MEMO_REPO_EMBED_BATCH", raising=False)
+
+    assert _repo_embed_batch_size() == 16
 
 
 def test_repo_embed_reduces_batch_size_after_runtime_error(tmp_path: Path, monkeypatch):
