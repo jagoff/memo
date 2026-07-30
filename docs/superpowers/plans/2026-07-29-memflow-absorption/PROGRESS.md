@@ -10,7 +10,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tareas 2–5
+- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tareas 2–6
   implementadas y verdes, pendientes de revisión independiente**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
@@ -183,11 +183,14 @@ Estado: **1/7 aceptadas**.
 
 - [x] Generar brief y registrar BASE `6b68a260`.
 - [x] Consultar Memo y Codegraph antes de editar producción.
-- [ ] RED de lifecycle monotónico, merge y artifacts locales.
-- [ ] Implementar servicio de sesiones y cache JSON derivado.
-- [ ] Reemplazar nombres públicos `mem_session_*` por `memo_session_*`.
-- [ ] Focused pytest, ruff y mypy.
-- [ ] Commit, revisión independiente y `PASS`.
+- [x] RED de lifecycle monotónico, merge y artifacts locales.
+- [x] Implementar servicio de sesiones y cache JSON derivado.
+- [x] Reemplazar nombres públicos `mem_session_*` por `memo_session_*`.
+- [x] Focused `586 passed`; acumulado Plan 01 `817 passed`; Ruff y mypy
+  limpios.
+- [x] Commit técnico: `ecf2b951`.
+- [x] Reporte de implementación generado.
+- [ ] Revisión independiente y `PASS`.
 
 ### Tarea 7 — Activar facade operacional v2 tras paridad completa
 
@@ -225,12 +228,15 @@ Gate del plan:
 
 ## Plan 03 — Readiness para corte
 
-Estado: **0/6 aceptadas**.
+Estado: **0/6 aceptadas; Tarea 4 implementada y verde, pendiente de revisión
+independiente**.
 
 - [ ] Tarea 1 — Snapshot seguro, capability manifest e inventario.
 - [ ] Tarea 2 — Fencing de requests Memflow en todo boundary de mutación.
 - [ ] Tarea 3 — Drain observable y startup refusal.
-- [ ] Tarea 4 — Aislar Synapse del runtime Memflow.
+- [ ] Tarea 4 — Aislar Synapse del runtime Memflow. Implementación técnica:
+  `933445fd`; focused `18 passed`; suite completa `2326 passed, 5 skipped`;
+  build real e idempotente verificado. Falta revisión independiente y `PASS`.
 - [ ] Tarea 5 — Reemplazar el contrato Memflow de Synapse por registry Memo.
 - [ ] Tarea 6 — Stagear configuración de consumidores y readiness report.
 
