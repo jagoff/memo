@@ -97,6 +97,17 @@ class ConflictRecord:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class OperationalSignal:
+    """Durable watcher marker, fenced by monotonically increasing epoch."""
+
+    marker: str
+    epoch: int
+    fence: str
+    payload: dict[str, Any]
+    created_at: str
+
+
 def _id(prefix: str) -> str:
     return f"{prefix}-{secrets.token_hex(8)}"
 
@@ -151,6 +162,15 @@ def _apply_conflict_resolve(state: ProjectionState, payload: dict[str, Any]) -> 
 
 def _apply_outcome_record(state: ProjectionState, payload: dict[str, Any]) -> None:
     state["outcomes"][payload["task_id"]] = dict(payload)
+
+
+def _apply_signal_remember(state: ProjectionState, payload: dict[str, Any]) -> None:
+    marker = str(payload["marker"])
+    current = state["signals"].get(marker)
+    # Epoch fencing makes delayed watcher writes harmless.
+    if current is not None and int(payload["epoch"]) < int(current.get("epoch", 0)):
+        return
+    state["signals"][marker] = dict(payload)
 
 
 def _resolved_anomaly_patch(payload: dict[str, Any]) -> dict[str, str]:
@@ -220,6 +240,7 @@ _PROJECTION_HANDLERS: dict[str, ProjectionHandler] = {
     "conflict.resolve": _apply_conflict_resolve,
     "outcome.record": _apply_outcome_record,
     "anomaly.record": _apply_anomaly_record,
+    "signal.remember": _apply_signal_remember,
 }
 
 
@@ -312,6 +333,7 @@ class OperationalStore:
             "attention": {},
             "conflicts": {},
             "outcomes": {},
+            "signals": {},
             "last_event_hash": "",
             "journal_heads": {},
         }
@@ -780,6 +802,61 @@ class OperationalStore:
                 actor=ActorIdentity(actor_id=actor_id, actor_kind="agent"),
             )
             return payload
+
+    def remember_signal(
+        self,
+        *,
+        marker: str,
+        payload: dict[str, Any] | None = None,
+        epoch: int = 0,
+        fence: str = "",
+        actor_id: str = "memo",
+    ) -> OperationalSignal:
+        """Record an idempotent watcher marker in the native journal.
+
+        A marker is the idempotency key. Writes from an older epoch are rejected;
+        callers should rotate ``fence`` when leadership changes.
+        """
+        marker = str(marker).strip()
+        if not marker:
+            raise ValueError("signal marker must not be empty")
+        if int(epoch) < 0:
+            raise ValueError("signal epoch must be non-negative")
+        with authority_write_lock(self.state_dir / "operational-transactions"):
+            state = self._read_snapshot()
+            existing = state["signals"].get(marker)
+            if existing is not None:
+                if int(epoch) < int(existing.get("epoch", 0)):
+                    raise ValueError("stale signal epoch")
+                if int(epoch) == int(existing.get("epoch", 0)):
+                    return OperationalSignal(
+                        marker=marker,
+                        epoch=int(existing["epoch"]),
+                        fence=str(existing.get("fence", "")),
+                        payload=dict(existing.get("payload") or {}),
+                        created_at=str(existing.get("created_at", "")),
+                    )
+            item = OperationalSignal(marker, int(epoch), str(fence), dict(payload or {}), utc_now_iso())
+            self._commit(
+                "signal.remember",
+                asdict(item),
+                subject_uri=f"memo://signal/{marker}",
+                actor=ActorIdentity(actor_id=actor_id, actor_kind="agent"),
+            )
+            return item
+
+    def list_signals(
+        self, *, marker: str | None = None, min_epoch: int | None = None, limit: int = 100
+    ) -> list[OperationalSignal]:
+        rows = self._read_snapshot().get("signals", {})
+        out: list[OperationalSignal] = []
+        for key, row in rows.items():
+            if marker and key != marker:
+                continue
+            if min_epoch is not None and int(row.get("epoch", 0)) < min_epoch:
+                continue
+            out.append(OperationalSignal(key, int(row.get("epoch", 0)), str(row.get("fence", "")), dict(row.get("payload") or {}), str(row.get("created_at", ""))))
+        return sorted(out, key=lambda item: (item.epoch, item.created_at), reverse=True)[: max(1, min(limit, 1000))]
 
     def receipt(
         self,
