@@ -126,6 +126,11 @@ def test_mcp_http_auth_protects_protocol_endpoint(
     }
     accept = {"Accept": "application/json, text/event-stream"}
 
+    # Flush resources left unreachable by earlier tests before attributing
+    # warnings to this server.  Under xdist the worker is shared, so collecting
+    # only inside the capture block can report an unrelated SQLite connection
+    # as an HTTP resource leak.
+    gc.collect()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
         with TestClient(app) as client:
