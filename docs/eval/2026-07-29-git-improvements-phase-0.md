@@ -73,3 +73,23 @@ historical-store retirement require a separate shadow-write/storage-amplificatio
 
 Rollback: readers ignore the additive delete-event fields; old and new history databases
 remain readable.
+
+## 4. Retrieval planning and backend filter pushdown
+
+Decision: **Admit, narrowed**
+
+Observed gap: BM25/exact/fuzzy candidate generation spends its limit before applying common
+date and excluded-tag filters. Both adversarial `limit=1` cases reproduced the crowd-out,
+while vector search already widens or pushes the same predicates.
+
+Smallest admitted slice: extend existing BM25/fuzzy store methods with the two common
+predicates and over-fetch only when a backend cannot execute them before its own limit.
+Do not add `SearchPlan`, `SearchFilter`, or a planner class.
+
+Primary gate: all affected modes return the same eligible record in the adversarial matrix
+at `limit=1`; candidate count remains bounded.
+
+Guardrails: committed recall labels lose no expected ID; ranking is unchanged when filters
+are absent; warm p50 is within 5% of baseline; no new flag is needed for a correctness fix.
+
+Rollback: revert the extra store parameters; no data migration exists.
