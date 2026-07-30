@@ -29,6 +29,7 @@ from tools.memflow_absorption.schemas import AuditExclusions, UsageProof
 FROZEN_AT = "2026-07-30T00:00:00Z"
 WINDOW_STARTED_AT = "2026-05-01T00:00:00Z"
 SOURCE_COMMIT = "f" * 40
+SANITIZED_FIXTURES = Path(__file__).parents[1] / "fixtures" / "memflow_absorption"
 
 
 def _authority(tmp_path: Path) -> tuple[DeviceKeyStore, VerificationRoster]:
@@ -54,6 +55,16 @@ def _authority(tmp_path: Path) -> tuple[DeviceKeyStore, VerificationRoster]:
         pin_store=pins,
     )
     return keys, updated
+
+
+def test_sanitized_route_fixture_digest_is_executable_authority() -> None:
+    result = (SANITIZED_FIXTURES / "result.json").read_bytes()
+    mappings = json.loads(
+        (SANITIZED_FIXTURES / "mapping-candidates.json").read_text(encoding="utf-8")
+    )
+
+    assert canonical_json_bytes(json.loads(result)) + b"\n" == result
+    assert mappings[0]["routes"][0]["fixture_sha256"] == [hashlib.sha256(result).hexdigest()]
 
 
 def _route(operation: str, fixture_digest: str) -> dict[str, Any]:
