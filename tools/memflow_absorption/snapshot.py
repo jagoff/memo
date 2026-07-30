@@ -103,6 +103,13 @@ def create_readonly_snapshot(source: Path, target: Path) -> SnapshotReceipt:
             except BaseException:
                 directory.unlink(target_path.name, missing_ok=True)
                 raise
+            # Reopen both artifacts descriptor-relative and verify publication.
+            published, published_stat = directory.read_bytes_snapshot(target_path.name)
+            receipt_bytes, _ = directory.read_bytes_snapshot(receipt_name)
+            if published != data or hashlib.sha256(published).hexdigest() != receipt.sha256:
+                raise SnapshotError("published snapshot changed during publication")
+            if canonical_json_bytes(receipt.to_dict()) != receipt_bytes:
+                raise SnapshotError("published receipt changed during publication")
     except SnapshotError:
         raise
     except (FileExistsError, OSError, ValueError) as exc:
