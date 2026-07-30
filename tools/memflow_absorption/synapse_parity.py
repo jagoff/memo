@@ -224,13 +224,15 @@ def _briefing_source_ids(
     memory: Memory,
     cwd: str | None,
     *,
-    native_rendered: bool,
+    native_lines: Sequence[str],
     operational_rendered: bool,
 ) -> tuple[str, ...]:
     """Return precisely the native record IDs rendered by briefing sections."""
 
     ids: list[object] = []
-    if native_rendered:
+    open_loops_rendered = any(line.startswith("### Open loops") for line in native_lines)
+    memory_of_day_rendered = "### Memory of the day" in native_lines
+    if open_loops_rendered:
         try:
             cutoff = (datetime.now(tz=UTC) - timedelta(days=7)).isoformat()
             recent = memory.store.list_recent(
@@ -243,7 +245,10 @@ def _briefing_source_ids(
                 if isinstance(row, Mapping) and str(row.get("updated") or "") >= cutoff
             ][:5]
             ids.extend(row.get("id") for row in open_loops)
-
+        except Exception:  # noqa: S110 - the other rendered section can still supply provenance
+            pass
+    if memory_of_day_rendered:
+        try:
             pool = memory.store.list_recent(
                 limit=500,
                 exclude_types={"reference", "secret"},
@@ -409,7 +414,7 @@ class _MemoFacade:
                         _briefing_source_ids(
                             self.memory,
                             cwd_value,
-                            native_rendered=bool(native_lines),
+                            native_lines=native_lines,
                             operational_rendered=bool(operational_lines),
                         )
                     ),
