@@ -6,12 +6,12 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 10:16 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 10:20 America/Argentina/Cordoba
 
 ### En curso
 
 - [x] Revisión independiente de especificación, APIs y tests de Plan 01
-  Tareas 2–6 — `T2 PASS`, `T3 PASS`, `T4 corrección en re-review`,
+  Tareas 2–6 — `T2 PASS`, `T3 PASS`, `T4 FAIL HIGH`,
   `T5 PASS`, `T6 PASS`.
 - [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
   nuevo — agente `constant_code_reviewer`; auditando `P01-T04`.
@@ -33,9 +33,10 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   fail-closed; el fresh install v2 productivo no puede crear la clave,
   roster y epoch-0. Implementar un provider productivo no exportable antes de
   habilitar activación.
-- [ ] Re-revisar `P01-T04 MEDIUM`: publicación reforzada con parent FD
-  retenido, rename exclusivo descriptor-relative, verificación de identidad y
-  recovery post-rename/pre-fsync. Corrección técnica lista; PASS pendiente.
+- [ ] Corregir `P01-T04 HIGH`: si el parent se renombra después de abrir su FD,
+  la publicación puede completar en el directorio desplazado mientras el
+  target solicitado no existe. Agregar regresión, ligar el FD al pathname
+  solicitado durante todo el publish y obtener re-review.
 - [x] Corrección técnica `P01-T06 HIGH/MEDIUM`: replay del evento/resultado
   canónico por idempotency key, validación de identidad explícita y derivación
   de key default bajo el lock de sesión. Revisión final: `PASS`, `141 passed`.
@@ -103,7 +104,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cerrar `P01-T02 HIGH` y obtener re-revisión PASS del revisor continuo.
 - [ ] Cerrar el provider productivo de claves y obtener revisión de seguridad
   antes de escribir cualquier activation stamp.
-- [ ] Obtener re-revisión PASS de `P01-T04 MEDIUM`.
+- [ ] Corregir el nuevo `P01-T04 HIGH` de parent desplazado y obtener
+  re-revisión PASS.
 - [x] Cerrar ambos hallazgos `P01-T06` y obtener re-revisión PASS.
 - [ ] Asignar correcciones BLOCKER/HIGH/MEDIUM a agentes con archivos
   separados.
