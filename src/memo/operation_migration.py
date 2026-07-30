@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from memo.atomic_io import atomic_write_text, authority_write_lock
+from memo.atomic_io import atomic_write_text, authority_write_lock, open_secure_directory
 from memo.contracts import MemoEvent
 from memo.errors import OperationalError, OperationalErrorCode
 from memo.identity import PrincipalIdentity
@@ -857,12 +857,14 @@ def _assert_source_unchanged(plan: V1MigrationPlan) -> None:
 def _install_prepared(staging: Path, target: Path) -> None:
     if target.exists() or target.is_symlink():
         raise FileExistsError(target)
+    # The generation marker is the final authority file written in staging.
+    # Persist its directory entry before publishing the directory itself so a
+    # crash cannot make the target rename durable while losing the marker.
+    with open_secure_directory(staging) as directory:
+        os.fsync(directory.descriptor)
     os.rename(staging, target)
-    descriptor = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    with open_secure_directory(target.parent) as directory:
+        os.fsync(directory.descriptor)
 
 
 def apply_v1_migration(

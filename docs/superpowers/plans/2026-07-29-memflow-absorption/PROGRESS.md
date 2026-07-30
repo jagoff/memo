@@ -6,17 +6,16 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 09:10 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 09:34 America/Argentina/Cordoba
 
 ### En curso
 
-- [ ] Revisión independiente de especificación, APIs y tests de Plan 01
-  Tareas 2–6 — agente `review_plan01_spec`.
-- [ ] Revisión independiente de seguridad, durabilidad y crash recovery de
-  Plan 01 Tareas 2–6 — agente `review_plan01_security`. Al terminar esta
-  pasada queda asignado como revisor continuo de cada lote nuevo.
+- [x] Revisión independiente de especificación, APIs y tests de Plan 01
+  Tareas 2–6 — `T2 PASS`, `T3 FAIL`, `T4 FAIL`, `T5 PASS`, `T6 FAIL`.
+- [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
+  nuevo — agente `review_plan01_security`.
 - [ ] Revisión independiente cross-repo de Plan 03 Tareas 1–4 — agente
-  `review_plan03`.
+  `review_plan03`; preliminar: T1/T2/T3 `FAIL`, T4 `HIGH`.
 - [ ] Preparar TDD de Plan 01 Tarea 7: selector fail-closed v1/v2, fresh
   install v2 y activation stamp firmado — agente principal.
 - [ ] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
@@ -30,6 +29,23 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   fail-closed; el fresh install v2 productivo no puede crear la clave,
   roster y epoch-0. Implementar un provider productivo no exportable antes de
   habilitar activación.
+- [ ] Re-revisar `P01-T04 MEDIUM`: implementación técnica lista; fsync del
+  staging antes del rename, crash pre-publish y retry verificados.
+- [ ] Corregir `P01-T06 HIGH`: adapters públicos deben propagar timestamp
+  `None` y reutilizar el resultado canónico para retry idempotente después de
+  crash — agente `review_plan01_spec` reasignado como implementador.
+- [ ] Corregir `P01-T06 MEDIUM`: preservar get por prefijo/ambigüedad y
+  artifacts locales en reads canónicos locales, sin federarlos — mismo agente.
+- [ ] Completar el gate diferido `P01-T03 MEDIUM`: stale/missing epoch por
+  MCP/CLI/daemon/Memory/direct store queda bloqueante de T7.
+- [ ] Corregir `P03-T01`: manifest fail-closed ante symlinks y receipts stale;
+  validar snapshot bytes/target/mode, cobertura/fixtures y transform allowlist.
+- [ ] Corregir `P03-T02/T03`: cubrir todos los writers CLI/auxiliares y
+  reverificar criptográficamente el control OID durante drain.
+- [ ] Corregir `P03-T04 HIGH`: construir desde snapshot/commit inmutable o
+  revalidar el repo después del build antes de publicar runtime.
+- [ ] Reemplazar expiries fijas de tests P03 que ya vencieron; matriz actual
+  `221 passed, 3 failed` por tiempo de fixture.
 
 ### Completado en esta ejecución
 
@@ -49,6 +65,10 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   checkout principal y se contrastó con el worktree mediante lectura local.
 - [x] Brief de `P01-T07` congelado con BASE `e4de56db`, selector cerrado,
   fresh-install transaccional, activation binding y RED contracts.
+- [x] Revisión de especificación P01-T2–T6: `107 passed`; fallas semánticas
+  adversariales registradas aunque la suite cubierta esté verde.
+- [x] `P01-T04` RED confirmado por falta de fsync pre-rename; GREEN:
+  regresión `1 passed`, migración+definitive `33 passed`, Ruff y mypy limpios.
 
 ### Próximos gates
 
@@ -57,6 +77,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Cerrar `P01-T02 HIGH` y obtener re-revisión PASS del revisor continuo.
 - [ ] Cerrar el provider productivo de claves y obtener revisión de seguridad
   antes de escribir cualquier activation stamp.
+- [ ] Obtener re-revisión PASS de `P01-T04 MEDIUM`.
+- [ ] Cerrar ambos hallazgos `P01-T06` y obtener re-revisión PASS.
 - [ ] Asignar correcciones BLOCKER/HIGH/MEDIUM a agentes con archivos
   separados.
 - [ ] Obtener PASS de re-revisión para cada tarea corregida.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
@@ -602,6 +604,70 @@ def test_parity_failure_writes_no_prepared_or_activation_stamp(
     assert not target.exists()
     assert not list(tmp_path.glob("v2*/migration-v1.json"))
     assert not list(tmp_path.glob("v2*/operational-v2-activated.json"))
+
+
+def test_prepared_generation_is_fsynced_before_publish_and_retry_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "v1"
+    target = tmp_path / "v2"
+    _populate_v1(source)
+    authority = _authority(tmp_path / "authority")
+    plan = plan_v1_migration(source, device_id=_LOCAL)
+    real_fsync = operation_migration.os.fsync
+    real_rename = operation_migration.os.rename
+    real_open_secure_directory = operation_migration.open_secure_directory
+    opened: dict[int, Path] = {}
+    fsynced: list[Path] = []
+
+    @contextmanager
+    def tracked_open_secure_directory(path: Path) -> Iterator[object]:
+        with real_open_secure_directory(path) as directory:
+            opened[directory.descriptor] = Path(path)
+            yield directory
+
+    def tracked_fsync(descriptor: int) -> None:
+        path = opened.get(descriptor)
+        if path is not None:
+            fsynced.append(path)
+        real_fsync(descriptor)
+
+    def crash_before_publish(
+        source_path: object,
+        target_path: object,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        if args or kwargs:
+            real_rename(source_path, target_path, *args, **kwargs)
+            return
+        staging = Path(source_path)
+        assert staging in fsynced
+        assert (staging / "migration-v1.json").is_file()
+        assert not Path(target_path).exists()
+        raise OSError("simulated crash before prepared-generation publish")
+
+    monkeypatch.setattr(
+        operation_migration,
+        "open_secure_directory",
+        tracked_open_secure_directory,
+    )
+    monkeypatch.setattr(operation_migration.os, "fsync", tracked_fsync)
+    monkeypatch.setattr(operation_migration.os, "rename", crash_before_publish)
+
+    with pytest.raises(OSError, match="simulated crash"):
+        apply_v1_migration(plan, target, authority=authority)
+
+    assert not target.exists()
+    assert not list(tmp_path.glob(".v2.staging-*"))
+
+    monkeypatch.setattr(operation_migration.os, "rename", real_rename)
+    report = apply_v1_migration(plan, target, authority=authority)
+
+    assert report.parity.equal is True
+    assert (target / "migration-v1.json").is_file()
+    assert not (target / "operational-v2-activated.json").exists()
 
 
 def test_verify_v1_parity_rejects_a_tampered_derived_view(tmp_path: Path) -> None:
