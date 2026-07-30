@@ -625,7 +625,7 @@ def build_capability_manifest(
     if not isinstance(receipts, list) or len(receipts) != len(machine_ids):
         raise ManifestError("signed hourly source receipts v2 are required")
     seen_devices: set[str] = set()
-    expected_hours = int((end - start).total_seconds() // 3600) + 1
+    expected_hours = int((end - start).total_seconds() // 3600)
     for receipt in receipts:
         if not isinstance(receipt, dict) or receipt.get("schema") != "memo.cutover_source_receipt.v2":
             raise ManifestError("invalid source receipt schema")
