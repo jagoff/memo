@@ -16,3 +16,11 @@
   plists, and returned the same digest on idempotent retry. No LaunchAgent was
   loaded/unloaded/replaced, and Memflow remained live and untouched.
   Independent review is still required before acceptance.
+- Task 1: safe snapshot, signed capability-manifest, consumer-inventory,
+  Synapse-retirement, and fresh-control-record tooling delivered at
+  `f6ca3fff..3c31a033`. Focused tooling `30 passed`; signing/roster/atomic
+  regression `58 passed`; full Memo non-slow `6136 passed, 18 skipped`; Ruff
+  and mypy clean; frozen v1 hashes unchanged. Only temporary roots,
+  in-memory keys, and sanitized fixtures were used. No live state changed and
+  Memflow remains active. Independent review is still required before
+  acceptance or any production evidence capture.
