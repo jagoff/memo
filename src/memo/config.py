@@ -758,6 +758,16 @@ class Config(BaseModel):
         return self.state_dir / "memvec.db"
 
     @property
+    def operational_root(self) -> Path:
+        """Dormant v2 operational generation root until activation succeeds."""
+        return self.state_dir / "operational-v2"
+
+    @property
+    def operational_db(self) -> Path:
+        """Rebuildable SQLite projections for the v2 operational ledger."""
+        return self.operational_root / "operational.db"
+
+    @property
     def history_db(self) -> Path:
         """History/audit DB. Separate file by default (vec writes don't share
         its WAL); collapses onto `db_path` when `single_db` is set."""

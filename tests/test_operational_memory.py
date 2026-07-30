@@ -592,6 +592,15 @@ def test_conditional_operational_transitions_are_serialized(tmp_path):
     assert len(consumes) == 1
 
 
+def test_legacy_store_does_not_create_or_write_dormant_v2_generation(tmp_path):
+    store = OperationalStore(tmp_path, device_id="device-a")
+
+    store.set_focus(project="memo", summary="legacy remains authoritative")
+
+    assert store.state()["focus"]["memo"]["summary"] == "legacy remains authoritative"
+    assert not (tmp_path / "operational-v2").exists()
+
+
 def test_mcp_surfaces_do_not_expose_human_override_or_owner_impersonation():
     memory = MagicMock()
     memory.cfg = SimpleNamespace(device_id="device-owner")

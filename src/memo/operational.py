@@ -7,13 +7,14 @@ agent work.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.contracts import (
@@ -24,6 +25,12 @@ from memo.contracts import (
 )
 from memo.operation_ledger import OperationLedger
 from memo.util import utc_now_iso
+
+if TYPE_CHECKING:
+    from memo.operation_ledger_v2 import OperationLedgerV2
+    from memo.operation_views import OperationalViewStore
+    from memo.operational_epoch import CommitContext, EpochFence
+    from memo.operational_event import CommandResult, OperationalCommand
 
 
 @dataclass(frozen=True)
@@ -242,10 +249,36 @@ def _conflict_matches_query(row: dict[str, Any], query_cf: str) -> bool:
 
 
 class OperationalStore:
+    ledger: Any
+    views: OperationalViewStore
+    epoch_fence: EpochFence
+    transaction_root: Path
+
     def __init__(self, state_dir: Path, *, device_id: str) -> None:
         self.state_dir = Path(state_dir)
         self.ledger = OperationLedger(self.state_dir, device_id=device_id)
         self.snapshot_path = self.state_dir / "operational-state.json"
+        self._v2_enabled = False
+
+    @classmethod
+    def for_v2(
+        cls,
+        *,
+        ledger: OperationLedgerV2,
+        views: OperationalViewStore,
+        epoch_fence: EpochFence,
+        transaction_root: Path,
+    ) -> OperationalStore:
+        """Construct the dormant v2 service without activating the public facade."""
+        instance = cls.__new__(cls)
+        instance.state_dir = Path(transaction_root).parent
+        instance.ledger = ledger
+        instance.views = views
+        instance.epoch_fence = epoch_fence
+        instance.transaction_root = Path(transaction_root)
+        instance.snapshot_path = instance.state_dir / "operational-state.json"
+        instance._v2_enabled = True
+        return instance
 
     @staticmethod
     def _empty() -> dict[str, Any]:
@@ -281,6 +314,118 @@ class OperationalStore:
             self.snapshot_path,
             json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
         )
+
+    def commit(
+        self,
+        command: OperationalCommand,
+        *,
+        context: CommitContext,
+    ) -> CommandResult:
+        """Commit one authenticated v2 command through ledger and derived views."""
+        from memo.errors import OperationalError, OperationalErrorCode
+        from memo.operational_epoch import CommitContext
+        from memo.operational_event import (
+            CommandResult,
+            OperationalCommand,
+            canonical_json_bytes,
+        )
+
+        if not self._v2_enabled:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational v2 is not active for this store",
+                retryable=False,
+            )
+        if not isinstance(command, OperationalCommand):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational command is required",
+                retryable=False,
+            )
+        if not isinstance(context, CommitContext):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "authenticated commit context is required",
+                retryable=False,
+            )
+        if not command.idempotency_key:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational v2 idempotency key is required",
+                retryable=False,
+            )
+        if command.actor != context.identity:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational command actor differs from authenticated principal",
+                retryable=False,
+            )
+        request_hash = hashlib.sha256(
+            canonical_json_bytes(asdict(command))
+        ).hexdigest()
+        ledger = cast("OperationLedgerV2", self.ledger)
+        with authority_write_lock(self.transaction_root):
+            self.epoch_fence.verify(context)
+            self.views.catch_up(ledger)
+            if not self.views.supports(command.event_type):
+                raise OperationalError(
+                    OperationalErrorCode.INVALID_EVENT,
+                    (
+                        "operational event type has no active view reducer: "
+                        f"{command.event_type}"
+                    ),
+                    retryable=False,
+                )
+            existing = self.views.idempotency(
+                command.project,
+                command.idempotency_key,
+            )
+            if existing is not None:
+                if existing.request_hash != request_hash:
+                    raise OperationalError(
+                        OperationalErrorCode.IDEMPOTENCY_CONFLICT,
+                        (
+                            "operational idempotency key identifies a different request: "
+                            f"{command.project}/{command.idempotency_key}"
+                        ),
+                        retryable=False,
+                    )
+                event = next(
+                    (
+                        candidate
+                        for candidate in ledger.validated_events()
+                        if candidate.event_id == existing.event_id
+                    ),
+                    None,
+                )
+                if event is None:
+                    raise OperationalError(
+                        OperationalErrorCode.STORAGE_UNAVAILABLE,
+                        "idempotency record references a missing ledger event",
+                        retryable=False,
+                    )
+                return CommandResult(
+                    event=event,
+                    replayed=True,
+                    result=existing.result,
+                )
+            event = ledger.append(command, context=context)
+            self.views.catch_up(ledger)
+            persisted = self.views.idempotency(
+                command.project,
+                command.idempotency_key,
+            )
+            if persisted is None or persisted.event_id != event.event_id:
+                raise OperationalError(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    "operational view commit did not persist idempotency result",
+                    retryable=False,
+                )
+            return CommandResult(
+                event=event,
+                replayed=False,
+                result=persisted.result,
+            )
 
     def rebuild(self, *, events: list[Any] | None = None) -> dict[str, Any]:
         state = self._empty()
