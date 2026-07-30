@@ -6,7 +6,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 09:34 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 10:08 America/Argentina/Cordoba
 
 ### En curso
 
@@ -21,10 +21,10 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
   multi-origen puede divergir del rebuild por orden global. Agregar regresión
   `newest(a) -> older(b)` y re-reducción transaccional determinista.
-- [ ] Corregir `P01-T02 HIGH`: TOCTOU entre verificación del ledger v1 y la
+- [x] Corrección técnica `P01-T02 HIGH`: TOCTOU entre verificación del ledger v1 y la
   relectura usada por manifest/anchor. Capturar una sola instantánea
   descriptor-relative con `O_NOFOLLOW` y derivar de ella bytes, eventos, heads
-  y manifest.
+  y manifest. Focused `70 passed`; Ruff y mypy limpios; re-revisión pendiente.
 - [ ] Resolver `P01-T07 BLOCKER`: `MacOSKeychainProvider` es un placeholder
   fail-closed; el fresh install v2 productivo no puede crear la clave,
   roster y epoch-0. Implementar un provider productivo no exportable antes de
@@ -69,6 +69,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   adversariales registradas aunque la suite cubierta esté verde.
 - [x] `P01-T04` RED confirmado por falta de fsync pre-rename; GREEN:
   regresión `1 passed`, migración+definitive `33 passed`, Ruff y mypy limpios.
+- [x] `P01-T02` GREEN: snapshot descriptor-relative único, identidad exacta
+  del descriptor, detección de reemplazo same-size y un solo consumo en
+  plan/anclaje; `70 passed`, Ruff y mypy limpios.
 
 ### Próximos gates
 
@@ -218,6 +221,10 @@ Estado: **1/7 aceptadas**.
 - [x] Ruff y mypy: limpios.
 - [x] Non-slow completo: `6009 passed, 18 skipped`.
 - [x] Reporte de implementación generado.
+- [x] Corrección técnica del `HIGH` TOCTOU: una captura verificada alimenta
+  eventos, heads y manifest; rechaza drift de identidad, metadata o paths.
+- [x] Regresiones de mezcla verify/reread y reemplazo same-size.
+- [x] Focused ledger+migration: `70 passed`; Ruff y mypy limpios.
 - [ ] Revisión independiente y `PASS`.
 
 ### Tarea 3 — Vistas SQLite transaccionales e idempotencia

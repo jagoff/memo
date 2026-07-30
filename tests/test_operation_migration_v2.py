@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import memo.operation_migration as operation_migration
+from memo.contracts import MemoEvent
 from memo.errors import OperationalError
 from memo.operation_ledger_v1 import LegacyOperationLedger
 from memo.operation_ledger_v2 import OperationLedgerV2
@@ -531,6 +532,35 @@ def test_changed_source_after_plan_is_hard_manifest_failure(tmp_path: Path) -> N
         )
 
     assert not target.exists()
+
+
+def test_plan_uses_one_verified_legacy_snapshot_without_rereading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "v1"
+    _populate_v1(source)
+    legacy = LegacyOperationLedger(source, device_id=_LOCAL)
+    expected_manifest = OperationLedgerV2.legacy_manifest_sha256(legacy)
+    segment = next((legacy.root / "events" / _LOCAL).glob("*.jsonl"))
+    original_bytes = segment.read_bytes()
+    validated_events = LegacyOperationLedger.validated_events
+
+    def mutate_after_validation(instance: LegacyOperationLedger) -> list[MemoEvent]:
+        events = validated_events(instance)
+        segment.write_bytes(original_bytes + b"{}\n")
+        return events
+
+    monkeypatch.setattr(
+        LegacyOperationLedger,
+        "validated_events",
+        mutate_after_validation,
+    )
+
+    plan = plan_v1_migration(source, device_id=_LOCAL)
+
+    assert plan.source_manifest_sha256 == expected_manifest
+    assert segment.read_bytes() == original_bytes
 
 
 def test_tampered_plan_is_rederived_and_rejected_before_target_write(

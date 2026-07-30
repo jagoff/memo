@@ -182,6 +182,32 @@ class SecureDirectory:
                 os.close(descriptor)
             os.close(parent)
 
+    def read_bytes_snapshot(
+        self,
+        relative: Path | str,
+    ) -> tuple[bytes, os.stat_result]:
+        """Read one regular file and return the identity of that exact descriptor."""
+        parent, name = self._parent(relative, create=False)
+        descriptor = -1
+        try:
+            descriptor = os.open(name, os.O_RDONLY | _NOFOLLOW, dir_fd=parent)
+            observed = _require_regular_file(descriptor, f"authority file {relative}")
+            encoded = _read_all(descriptor)
+            final = os.fstat(descriptor)
+            if (
+                (observed.st_dev, observed.st_ino)
+                != (final.st_dev, final.st_ino)
+                or final.st_size != len(encoded)
+                or observed.st_mtime_ns != final.st_mtime_ns
+                or observed.st_ctime_ns != final.st_ctime_ns
+            ):
+                raise OSError(f"authority file changed while reading: {relative}")
+            return encoded, final
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            os.close(parent)
+
     def atomic_write_bytes(
         self,
         relative: Path | str,

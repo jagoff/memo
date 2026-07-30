@@ -326,10 +326,8 @@ def plan_v1_migration(
     source_root = Path(source).expanduser().absolute()
     legacy = LegacyOperationLedger(source_root, device_id=device_id)
     try:
-        manifest_before = OperationLedgerV2.legacy_manifest_sha256(legacy)
-        events = legacy.validated_events()
-        heads = legacy.head_hashes()
-        manifest_sha256 = OperationLedgerV2.legacy_manifest_sha256(legacy)
+        manifest, events, heads = OperationLedgerV2.verified_legacy_snapshot(legacy)
+        manifest_sha256 = hashlib.sha256(canonical_json_bytes(manifest)).hexdigest()
     except OperationalError:
         raise
     except (LedgerIntegrityError, OSError, TypeError, ValueError) as exc:
@@ -337,11 +335,6 @@ def plan_v1_migration(
             f"v1 verification failed: {exc}",
             code=OperationalErrorCode.ANCHOR_CONFLICT,
         ) from exc
-    if manifest_before != manifest_sha256:
-        raise _failure(
-            "v1 source manifest changed while migration planning was in progress",
-            code=OperationalErrorCode.ANCHOR_CONFLICT,
-        )
     if events and device_id not in heads:
         raise _failure(
             "non-empty v1 migration requires the enrolled local source origin",

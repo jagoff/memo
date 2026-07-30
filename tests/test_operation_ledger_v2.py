@@ -14,6 +14,7 @@ import pytest
 
 import memo.operation_ledger_v2 as operation_ledger_v2
 from memo.atomic_io import authority_admission_lock
+from memo.contracts import MemoEvent
 from memo.errors import OperationalError
 from memo.identity import PrincipalIdentity
 from memo.operation_ledger_v1 import LegacyOperationLedger
@@ -737,6 +738,83 @@ def test_memo_v1_builder_attests_verified_bytes_and_source_head(tmp_path: Path) 
             migration_attestor=authority.signer,
             attestor_key_id=attestor.key_id,
         )
+
+
+def test_memo_v1_anchor_never_mixes_verified_events_with_reread_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    attestor = _add_attestor(authority)
+    legacy = LegacyOperationLedger(tmp_path / "legacy", device_id="device-a")
+    source = legacy.append(
+        "focus_set",
+        subject_uri="memo://focus/demo",
+        payload={"project": "demo"},
+        content_hash="c" * 64,
+        ts=_STAMP,
+    )
+    ledger = _ledger(tmp_path / "operational", authority)
+    expected_manifest = ledger.legacy_manifest_sha256(legacy)
+    segment = next((legacy.root / "events" / "device-a").glob("*.jsonl"))
+    original_bytes = segment.read_bytes()
+    validated_events = legacy.validated_events
+
+    def mutate_after_validation() -> list[MemoEvent]:
+        events = validated_events()
+        segment.write_bytes(original_bytes + b"{}\n")
+        return events
+
+    monkeypatch.setattr(legacy, "validated_events", mutate_after_validation)
+
+    anchor = ledger.ensure_anchor_from_v1(
+        legacy,
+        source_head_hash=source.event_hash,
+        migration_attestor=authority.signer,
+        attestor_key_id=attestor.key_id,
+    )
+
+    assert anchor.source_manifest_sha256 == expected_manifest
+    assert segment.read_bytes() == original_bytes
+
+
+def test_memo_v1_snapshot_rejects_same_size_path_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    legacy = LegacyOperationLedger(tmp_path / "legacy", device_id="device-a")
+    legacy.append(
+        "focus_set",
+        subject_uri="memo://focus/demo",
+        payload={"project": "demo"},
+        content_hash="c" * 64,
+        ts=_STAMP,
+    )
+    read_bytes_snapshot = operation_ledger_v2.SecureDirectory.read_bytes_snapshot
+    replaced = False
+
+    def replace_after_read(
+        directory: operation_ledger_v2.SecureDirectory,
+        relative: Path | str,
+    ) -> tuple[bytes, os.stat_result]:
+        nonlocal replaced
+        encoded, observed = read_bytes_snapshot(directory, relative)
+        if not replaced and str(relative).startswith("events/"):
+            replaced = True
+            target = directory.path / relative
+            replacement = target.with_name(f"{target.name}.replacement")
+            replacement.write_bytes(b"x" * len(encoded))
+            os.replace(replacement, target)
+        return encoded, observed
+
+    monkeypatch.setattr(
+        operation_ledger_v2.SecureDirectory,
+        "read_bytes_snapshot",
+        replace_after_read,
+    )
+
+    with pytest.raises(OperationalError, match="legacy source changed"):
+        OperationLedgerV2.verified_legacy_snapshot(legacy)
 
 
 def test_compaction_anchor_advances_only_from_current_anchor_and_keeps_raw_checkpoint(

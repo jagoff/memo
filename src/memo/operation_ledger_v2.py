@@ -31,7 +31,7 @@ from memo.atomic_io import (
 from memo.contracts import MemoEvent
 from memo.errors import OperationalError, OperationalErrorCode
 from memo.identity import PrincipalIdentity
-from memo.operation_ledger_v1 import LegacyOperationLedger
+from memo.operation_ledger_v1 import LedgerIntegrityError, LegacyOperationLedger
 from memo.operational_epoch import CommitContext, EpochFence
 from memo.operational_event import (
     EMPTY_REDUCER_STATE_BYTES,
@@ -1430,67 +1430,249 @@ class OperationLedgerV2:
             return self._ensure_anchor_locked(anchor, checkpoint=checkpoint)
 
     @staticmethod
-    def _legacy_snapshot(
+    def verified_legacy_snapshot(
         legacy_ledger: LegacyOperationLedger,
     ) -> tuple[dict[str, object], list[MemoEvent], dict[str, str]]:
-        """Freeze verified v1 authority into a content-addressed file manifest."""
+        """Freeze and verify one descriptor-retained snapshot of v1 authority."""
         with authority_write_lock(legacy_ledger.root):
-            report = legacy_ledger.verify()
-            if not bool(report.get("ok")):
+            root = legacy_ledger.root.absolute()
+            try:
+                directory = open_secure_directory(root)
+            except FileNotFoundError:
+                manifest: dict[str, object] = {
+                    "schema": "memo.operational_v1_manifest.v1",
+                    "files": [],
+                    "heads": {},
+                }
+                return manifest, [], {}
+            except (OSError, ValueError) as exc:
                 raise _failure(
                     OperationalErrorCode.ANCHOR_CONFLICT,
-                    "legacy ledger verification failed",
-                    details={"report": report},
-                )
-            events = legacy_ledger.validated_events()
-            heads = legacy_ledger.head_hashes()
-            paths = {
-                legacy_ledger.root
-                / "events"
-                / event.device_id
-                / f"{_parse_timestamp(event.ts, 'legacy event timestamp').date().isoformat()}.jsonl"
-                for event in events
-            }
-            paths.update(legacy_ledger.root / "heads" / f"{origin}.json" for origin in heads)
-            files: list[dict[str, object]] = []
-            root = legacy_ledger.root.absolute()
-            for path in sorted(paths, key=lambda item: item.as_posix()):
-                target = path.absolute()
+                    f"cannot retain legacy journal root: {root}",
+                ) from exc
+
+            with directory:
+                captured: dict[str, bytes] = {}
+                captured_identity: dict[str, tuple[int, int, int, int, int]] = {}
+                event_paths: dict[str, list[str]] = {}
+                head_paths: dict[str, str] = {}
+
+                def names(relative: str) -> tuple[str, ...]:
+                    try:
+                        return directory.list_names(relative)
+                    except FileNotFoundError:
+                        return ()
+
                 try:
-                    relative = target.relative_to(root)
-                except ValueError as exc:
-                    raise _failure(
-                        OperationalErrorCode.ANCHOR_CONFLICT,
-                        f"legacy manifest path escapes journal root: {target}",
-                    ) from exc
-                current = root
-                for part in relative.parts:
-                    current /= part
-                    if current.is_symlink():
-                        raise _failure(
-                            OperationalErrorCode.ANCHOR_CONFLICT,
-                            f"legacy manifest contains a symlink: {current}",
+                    event_devices = names("events")
+                    segment_names: dict[str, tuple[str, ...]] = {}
+                    for device in event_devices:
+                        legacy_ledger._validate_device_id(device)
+                        device_relative = f"events/{device}"
+                        if not stat.S_ISDIR(directory.stat(device_relative).st_mode):
+                            raise LedgerIntegrityError(
+                                f"legacy journal device is not a directory: {device}"
+                            )
+                        segment_names[device] = names(device_relative)
+                        for segment in segment_names[device]:
+                            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.jsonl", segment):
+                                raise LedgerIntegrityError(
+                                    f"unsafe legacy journal segment name: {segment}"
+                                )
+                            relative = f"{device_relative}/{segment}"
+                            if not stat.S_ISREG(directory.stat(relative).st_mode):
+                                raise LedgerIntegrityError(
+                                    f"legacy journal segment is not a regular file: {relative}"
+                                )
+                            encoded, observed = directory.read_bytes_snapshot(relative)
+                            captured[relative] = encoded
+                            captured_identity[relative] = (
+                                observed.st_dev,
+                                observed.st_ino,
+                                observed.st_size,
+                                observed.st_mtime_ns,
+                                observed.st_ctime_ns,
+                            )
+                            event_paths.setdefault(device, []).append(relative)
+
+                    head_names = names("heads")
+                    for name in head_names:
+                        if not name.endswith(".json"):
+                            raise LedgerIntegrityError(
+                                f"unsafe legacy journal head name: {name}"
+                            )
+                        device = name.removesuffix(".json")
+                        legacy_ledger._validate_device_id(device)
+                        relative = f"heads/{name}"
+                        if not stat.S_ISREG(directory.stat(relative).st_mode):
+                            raise LedgerIntegrityError(
+                                f"legacy journal head is not a regular file: {relative}"
+                            )
+                        encoded, observed = directory.read_bytes_snapshot(relative)
+                        captured[relative] = encoded
+                        captured_identity[relative] = (
+                            observed.st_dev,
+                            observed.st_ino,
+                            observed.st_size,
+                            observed.st_mtime_ns,
+                            observed.st_ctime_ns,
                         )
-                try:
-                    encoded = target.read_bytes()
-                except OSError as exc:
+                        head_paths[device] = relative
+                except (
+                    FileNotFoundError,
+                    LedgerIntegrityError,
+                    OSError,
+                    ValueError,
+                ) as exc:
                     raise _failure(
                         OperationalErrorCode.ANCHOR_CONFLICT,
-                        f"cannot retain verified legacy bytes: {target}",
+                        f"cannot capture verified legacy bytes: {exc}",
                     ) from exc
-                files.append(
+
+                events_by_device: dict[str, list[MemoEvent]] = {}
+                heads: dict[str, str] = {}
+                devices = sorted(set(event_paths) | set(head_paths))
+                try:
+                    for device in devices:
+                        device_events: list[MemoEvent] = []
+                        expected_sequence = 1
+                        expected_previous = ""
+                        previous_dt: datetime | None = None
+                        for relative in sorted(event_paths.get(device, ())):
+                            path = root / relative
+                            try:
+                                text = captured[relative].decode("utf-8")
+                            except UnicodeDecodeError as exc:
+                                raise LedgerIntegrityError(
+                                    f"cannot decode legacy journal segment: {relative}"
+                                ) from exc
+                            for line_number, line in enumerate(
+                                text.splitlines(),
+                                start=1,
+                            ):
+                                if not line.strip():
+                                    continue
+                                event = legacy_ledger._decode_journal_row(
+                                    path,
+                                    line_number,
+                                    line,
+                                )
+                                previous_dt = legacy_ledger._validate_device_event(
+                                    event,
+                                    device=device,
+                                    path=path,
+                                    line_number=line_number,
+                                    expected_sequence=expected_sequence,
+                                    expected_previous=expected_previous,
+                                    previous_dt=previous_dt,
+                                )
+                                device_events.append(event)
+                                expected_sequence += 1
+                                expected_previous = event.event_hash
+
+                        head_relative = head_paths.get(device)
+                        if head_relative is None:
+                            head_sequence, head_hash = 0, ""
+                        else:
+                            try:
+                                raw_head = json.loads(captured[head_relative])
+                                if not isinstance(raw_head, dict):
+                                    raise TypeError
+                                head_sequence = int(raw_head.get("sequence") or 0)
+                                head_hash = str(raw_head.get("event_hash") or "")
+                            except (
+                                TypeError,
+                                ValueError,
+                                json.JSONDecodeError,
+                                UnicodeDecodeError,
+                            ) as exc:
+                                raise LedgerIntegrityError(
+                                    f"invalid legacy journal head: {head_relative}"
+                                ) from exc
+
+                        expected_head = device_events[-1] if device_events else None
+                        if (head_sequence, head_hash) != (
+                            expected_head.sequence if expected_head else 0,
+                            expected_head.event_hash if expected_head else "",
+                        ):
+                            raise LedgerIntegrityError(
+                                f"legacy head does not match final event: {device}"
+                            )
+                        events_by_device[device] = device_events
+                        heads[device] = head_hash
+                except LedgerIntegrityError as exc:
+                    raise _failure(
+                        OperationalErrorCode.ANCHOR_CONFLICT,
+                        "legacy ledger verification failed",
+                        details={"error": str(exc)},
+                    ) from exc
+
+                # A path replacement after capture cannot redirect any read
+                # above; reject it as concurrent source drift before signing.
+                try:
+                    for relative, encoded in captured.items():
+                        observed = directory.stat(relative)
+                        if (
+                            not stat.S_ISREG(observed.st_mode)
+                            or (
+                                observed.st_dev,
+                                observed.st_ino,
+                                observed.st_size,
+                                observed.st_mtime_ns,
+                                observed.st_ctime_ns,
+                            )
+                            != captured_identity[relative]
+                            or observed.st_size != len(encoded)
+                        ):
+                            raise LedgerIntegrityError(
+                                f"legacy source changed during capture: {relative}"
+                            )
+                    if names("events") != event_devices or names("heads") != head_names:
+                        raise LedgerIntegrityError(
+                            "legacy source paths changed during capture"
+                        )
+                    for device, expected_names in segment_names.items():
+                        if names(f"events/{device}") != expected_names:
+                            raise LedgerIntegrityError(
+                                f"legacy source paths changed during capture: {device}"
+                            )
+                except (FileNotFoundError, LedgerIntegrityError, OSError, ValueError) as exc:
+                    if isinstance(exc, LedgerIntegrityError):
+                        message = str(exc)
+                    else:
+                        message = f"legacy source changed during capture: {exc}"
+                    raise _failure(
+                        OperationalErrorCode.ANCHOR_CONFLICT,
+                        message,
+                    ) from exc
+
+                events = [
+                    event
+                    for device_events in events_by_device.values()
+                    for event in device_events
+                ]
+                events.sort(key=lambda event: (event.ts, event.device_id, event.sequence))
+                files = [
                     {
-                        "path": relative.as_posix(),
+                        "path": relative,
                         "size": len(encoded),
                         "sha256": hashlib.sha256(encoded).hexdigest(),
                     }
-                )
-            manifest: dict[str, object] = {
-                "schema": "memo.operational_v1_manifest.v1",
-                "files": files,
-                "heads": heads,
-            }
-            return manifest, events, heads
+                    for relative, encoded in sorted(captured.items())
+                ]
+                manifest = {
+                    "schema": "memo.operational_v1_manifest.v1",
+                    "files": files,
+                    "heads": heads,
+                }
+                return manifest, events, heads
+
+    @classmethod
+    def _legacy_snapshot(
+        cls,
+        legacy_ledger: LegacyOperationLedger,
+    ) -> tuple[dict[str, object], list[MemoEvent], dict[str, str]]:
+        return cls.verified_legacy_snapshot(legacy_ledger)
 
     @classmethod
     def _legacy_manifest(cls, legacy_ledger: LegacyOperationLedger) -> dict[str, object]:
