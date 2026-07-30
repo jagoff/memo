@@ -29,7 +29,10 @@
   deterministic recovery, but remains dormant until Task 7. No production
   activation or Memflow mutation occurred. Independent review is still
   required before acceptance.
-- Task 6: brief frozen at BASE `6b68a260`; no production edits, activation, or
-  Memflow mutation yet. The brief defines three monotonic portable session
-  events, preserves local artifacts outside the ledger, and keeps the v1
-  session adapter active until Task 7 explicitly installs the v2 runtime.
+- Task 6: technical implementation delivered at `ecf2b951`; focused `586
+  passed`; Task 1–6 cumulative `817 passed`; non-slow `6106 passed, 18
+  skipped`; Ruff/format/mypy/frozen-v1 clean. Three monotonic portable session
+  events are canonical, local artifacts remain outside ledger/state hashes,
+  and append-before-view plus omitted-timestamp replay are sealed. v2 remains
+  dormant, the v1 adapter remains default, and Memflow remains live and
+  untouched. Independent review is still required before acceptance.
