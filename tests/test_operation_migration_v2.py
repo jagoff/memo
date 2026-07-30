@@ -733,6 +733,75 @@ def test_retry_recovers_after_crash_between_publish_and_parent_fsync(
     assert not (target / "operational-v2-activated.json").exists()
 
 
+def test_publish_rejects_parent_swap_before_exclusive_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "v1"
+    requested_parent = tmp_path / "requested"
+    requested_parent.mkdir()
+    target = requested_parent / "v2"
+    displaced_parent = tmp_path / "requested-displaced"
+    _populate_v1(source)
+    authority = _authority(tmp_path / "authority")
+    plan = plan_v1_migration(source, device_id=_LOCAL)
+    publish = operation_migration._renameat_exclusive
+
+    def swap_parent_before_publish(
+        parent_descriptor: int,
+        source_name: str,
+        target_name: str,
+    ) -> None:
+        requested_parent.rename(displaced_parent)
+        requested_parent.mkdir(mode=0o700)
+        publish(parent_descriptor, source_name, target_name)
+
+    monkeypatch.setattr(
+        operation_migration,
+        "_renameat_exclusive",
+        swap_parent_before_publish,
+    )
+
+    with pytest.raises(OSError, match="parent namespace identity changed"):
+        apply_v1_migration(plan, target, authority=authority)
+
+    assert not target.exists()
+    assert (displaced_parent / "v2" / "migration-v1.json").is_file()
+    assert not (target / "operational-v2-activated.json").exists()
+
+
+def test_publish_rejects_parent_swap_after_rename_before_parent_fsync(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "v1"
+    requested_parent = tmp_path / "requested"
+    requested_parent.mkdir()
+    target = requested_parent / "v2"
+    displaced_parent = tmp_path / "requested-displaced"
+    _populate_v1(source)
+    authority = _authority(tmp_path / "authority")
+    plan = plan_v1_migration(source, device_id=_LOCAL)
+
+    def swap_parent_after_publish(label: str) -> None:
+        assert label == "after-rename-before-parent-fsync"
+        requested_parent.rename(displaced_parent)
+        requested_parent.mkdir(mode=0o700)
+
+    monkeypatch.setattr(
+        operation_migration,
+        "_migration_publish_failpoint",
+        swap_parent_after_publish,
+    )
+
+    with pytest.raises(OSError, match="parent namespace identity changed"):
+        apply_v1_migration(plan, target, authority=authority)
+
+    assert not target.exists()
+    assert (displaced_parent / "v2" / "migration-v1.json").is_file()
+    assert not (target / "operational-v2-activated.json").exists()
+
+
 def test_publish_rejects_replacement_generation_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

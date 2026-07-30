@@ -7,8 +7,9 @@ import errno
 import hashlib
 import json
 import os
+import secrets
 import shutil
-import tempfile
+import stat
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -16,7 +17,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from memo.atomic_io import atomic_write_text, authority_write_lock, open_secure_directory
+from memo.atomic_io import (
+    SecureDirectory,
+    atomic_write_text,
+    authority_write_lock,
+    open_secure_directory,
+)
 from memo.contracts import MemoEvent
 from memo.errors import OperationalError, OperationalErrorCode
 from memo.identity import PrincipalIdentity
@@ -63,6 +69,10 @@ _EVENT_TYPES = {
 }
 _RENAME_EXCL = 0x00000004
 _RENAME_NOREPLACE = 0x00000001
+_DIRECTORY_FLAGS = (
+    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+)
+_PARENT_NAMESPACE_CHANGED = "prepared parent namespace identity changed"
 
 
 def _failure(
@@ -851,6 +861,204 @@ def _assert_source_unchanged(plan: V1MigrationPlan) -> None:
         )
 
 
+@dataclass
+class _BoundPreparedParent:
+    """Retained authority for one requested prepared-generation parent."""
+
+    path: Path
+    name: str | None
+    boundary: SecureDirectory
+    descriptor: int
+    identity: os.stat_result
+
+    def close(self) -> None:
+        if self.descriptor >= 0:
+            os.close(self.descriptor)
+            self.descriptor = -1
+        self.boundary.close()
+
+
+def _safe_path_component(value: str) -> bool:
+    return bool(value) and value not in {".", ".."} and os.sep not in value
+
+
+def _open_bound_prepared_parent(target: Path) -> _BoundPreparedParent:
+    """Bind target.parent to its no-follow name below a retained boundary."""
+    parent = target.parent.absolute()
+    boundary_path = parent.parent
+    boundary = open_secure_directory(boundary_path)
+    parent_descriptor = -1
+    try:
+        if parent == boundary_path:
+            parent_name: str | None = None
+            parent_descriptor = os.dup(boundary.descriptor)
+            named_parent = os.fstat(boundary.descriptor)
+        else:
+            parent_name = parent.name
+            if not _safe_path_component(parent_name):
+                raise ValueError(
+                    "prepared parent must have a safe path component name"
+                )
+            parent_descriptor = os.open(
+                parent_name,
+                _DIRECTORY_FLAGS,
+                dir_fd=boundary.descriptor,
+            )
+            named_parent = os.stat(
+                parent_name,
+                dir_fd=boundary.descriptor,
+                follow_symlinks=False,
+            )
+        parent_identity = os.fstat(parent_descriptor)
+        if (
+            not stat.S_ISDIR(named_parent.st_mode)
+            or not stat.S_ISDIR(parent_identity.st_mode)
+            or not os.path.samestat(parent_identity, named_parent)
+        ):
+            raise OSError(_PARENT_NAMESPACE_CHANGED)
+        return _BoundPreparedParent(
+            path=parent,
+            name=parent_name,
+            boundary=boundary,
+            descriptor=parent_descriptor,
+            identity=parent_identity,
+        )
+    except BaseException:
+        if parent_descriptor >= 0:
+            os.close(parent_descriptor)
+        boundary.close()
+        raise
+
+
+def _resolve_bound_parent(parent: _BoundPreparedParent) -> int:
+    """Re-open the requested parent no-follow and require its bound identity."""
+    resolved_descriptor = -1
+    try:
+        if parent.name is None:
+            resolved_descriptor = os.dup(parent.boundary.descriptor)
+        else:
+            resolved_descriptor = os.open(
+                parent.name,
+                _DIRECTORY_FLAGS,
+                dir_fd=parent.boundary.descriptor,
+            )
+        resolved = os.fstat(resolved_descriptor)
+        retained = os.fstat(parent.descriptor)
+        if (
+            not stat.S_ISDIR(resolved.st_mode)
+            or not os.path.samestat(parent.identity, retained)
+            or not os.path.samestat(parent.identity, resolved)
+        ):
+            raise OSError(_PARENT_NAMESPACE_CHANGED)
+        return resolved_descriptor
+    except OSError as exc:
+        if resolved_descriptor >= 0:
+            os.close(resolved_descriptor)
+        if exc.args == (_PARENT_NAMESPACE_CHANGED,):
+            raise
+        raise OSError(_PARENT_NAMESPACE_CHANGED) from exc
+    except BaseException:
+        if resolved_descriptor >= 0:
+            os.close(resolved_descriptor)
+        raise
+
+
+def _require_bound_parent(parent: _BoundPreparedParent) -> None:
+    resolved_descriptor = _resolve_bound_parent(parent)
+    os.close(resolved_descriptor)
+
+
+def _stat_bound_child(
+    parent: _BoundPreparedParent,
+    name: str,
+) -> os.stat_result | None:
+    try:
+        return os.stat(
+            name,
+            dir_fd=parent.descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return None
+
+
+def _require_requested_target(
+    parent: _BoundPreparedParent,
+    target_name: str,
+    expected_identity: os.stat_result,
+) -> None:
+    """Freshly resolve parent+target from the retained namespace boundary."""
+    resolved_parent = _resolve_bound_parent(parent)
+    try:
+        try:
+            resolved_target = os.stat(
+                target_name,
+                dir_fd=resolved_parent,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise OSError(
+                "prepared target identity changed in requested namespace"
+            ) from exc
+        if (
+            not stat.S_ISDIR(expected_identity.st_mode)
+            or not stat.S_ISDIR(resolved_target.st_mode)
+            or not os.path.samestat(expected_identity, resolved_target)
+        ):
+            raise OSError(
+                "prepared target identity changed in requested namespace"
+            )
+    finally:
+        os.close(resolved_parent)
+
+
+def _create_bound_staging(
+    parent: _BoundPreparedParent,
+    *,
+    target_name: str,
+    manifest_sha256: str,
+) -> tuple[Path, os.stat_result]:
+    """Create a private staging directory relative to the bound parent FD."""
+    prefix = f".{target_name}.staging-{manifest_sha256[:12]}-"
+    _require_bound_parent(parent)
+    for _attempt in range(128):
+        staging_name = f"{prefix}{secrets.token_hex(8)}"
+        try:
+            os.mkdir(
+                staging_name,
+                mode=0o700,
+                dir_fd=parent.descriptor,
+            )
+        except FileExistsError:
+            continue
+        identity = os.stat(
+            staging_name,
+            dir_fd=parent.descriptor,
+            follow_symlinks=False,
+        )
+        if not stat.S_ISDIR(identity.st_mode):
+            raise OSError("prepared staging is not a directory")
+        try:
+            _require_bound_parent(parent)
+        except BaseException:
+            os.rmdir(staging_name, dir_fd=parent.descriptor)
+            raise
+        return parent.path / staging_name, identity
+    raise FileExistsError("could not allocate a private prepared staging directory")
+
+
+def _remove_bound_staging(
+    parent: _BoundPreparedParent,
+    staging: Path,
+    expected_identity: os.stat_result,
+) -> None:
+    """Remove only the still-named task-owned staging directory."""
+    observed = _stat_bound_child(parent, staging.name)
+    if observed is None or not os.path.samestat(expected_identity, observed):
+        return
+    shutil.rmtree(staging.name, dir_fd=parent.descriptor)
+
+
 def _renameat_exclusive(
     parent_descriptor: int,
     source_name: str,
@@ -897,63 +1105,77 @@ def _migration_publish_failpoint(_label: str) -> None:
     """Test hook for process-crash boundaries in generation publication."""
 
 
-def _install_prepared(staging: Path, target: Path) -> None:
-    parent = target.parent.absolute()
-    if staging.parent.absolute() != parent:
+def _install_prepared(
+    staging: Path,
+    target: Path,
+    *,
+    parent: _BoundPreparedParent,
+    staging_identity: os.stat_result,
+) -> None:
+    if parent.path != target.parent.absolute():
+        raise ValueError("bound prepared parent differs from requested target")
+    if staging.parent.absolute() != parent.path:
         raise ValueError("prepared staging and target must share one parent")
-    if not staging.name or not target.name or staging.name in {".", ".."}:
+    if not _safe_path_component(staging.name):
         raise ValueError("prepared generation names must be safe path components")
-    if target.name in {".", ".."}:
+    if not _safe_path_component(target.name):
         raise ValueError("prepared generation names must be safe path components")
 
     staging_descriptor = -1
-    with open_secure_directory(parent) as directory:
-        try:
-            staging_descriptor = os.open(
-                staging.name,
-                os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=directory.descriptor,
+    try:
+        staging_descriptor = os.open(
+            staging.name,
+            _DIRECTORY_FLAGS,
+            dir_fd=parent.descriptor,
+        )
+        prepared_identity = os.fstat(staging_descriptor)
+        if not os.path.samestat(staging_identity, prepared_identity):
+            raise OSError("prepared staging identity changed before publication")
+        # The generation marker is the final authority file written in
+        # staging. Persist its directory entry before publishing the
+        # directory itself.
+        os.fsync(staging_descriptor)
+        named_staging = os.stat(
+            staging.name,
+            dir_fd=parent.descriptor,
+            follow_symlinks=False,
+        )
+        if not os.path.samestat(prepared_identity, named_staging):
+            raise OSError("prepared staging identity changed before publication")
+        _require_bound_parent(parent)
+        _renameat_exclusive(
+            parent.descriptor,
+            staging.name,
+            target.name,
+        )
+        _migration_publish_failpoint("after-rename-before-parent-fsync")
+        published = os.stat(
+            target.name,
+            dir_fd=parent.descriptor,
+            follow_symlinks=False,
+        )
+        if not os.path.samestat(prepared_identity, published):
+            raise OSError(
+                "prepared generation identity changed during publication"
             )
-            prepared_identity = os.fstat(staging_descriptor)
-            # The generation marker is the final authority file written in
-            # staging. Persist its directory entry before publishing the
-            # directory itself.
-            os.fsync(staging_descriptor)
-            named_staging = os.stat(
-                staging.name,
-                dir_fd=directory.descriptor,
-                follow_symlinks=False,
+        os.fsync(parent.descriptor)
+        durable = os.stat(
+            target.name,
+            dir_fd=parent.descriptor,
+            follow_symlinks=False,
+        )
+        if not os.path.samestat(prepared_identity, durable):
+            raise OSError(
+                "prepared generation identity changed after publication"
             )
-            if not os.path.samestat(prepared_identity, named_staging):
-                raise OSError("prepared staging identity changed before publication")
-            _renameat_exclusive(
-                directory.descriptor,
-                staging.name,
-                target.name,
-            )
-            _migration_publish_failpoint("after-rename-before-parent-fsync")
-            published = os.stat(
-                target.name,
-                dir_fd=directory.descriptor,
-                follow_symlinks=False,
-            )
-            if not os.path.samestat(prepared_identity, published):
-                raise OSError(
-                    "prepared generation identity changed during publication"
-                )
-            os.fsync(directory.descriptor)
-            durable = os.stat(
-                target.name,
-                dir_fd=directory.descriptor,
-                follow_symlinks=False,
-            )
-            if not os.path.samestat(prepared_identity, durable):
-                raise OSError(
-                    "prepared generation identity changed after publication"
-                )
-        finally:
-            if staging_descriptor >= 0:
-                os.close(staging_descriptor)
+        _require_requested_target(
+            parent,
+            target.name,
+            prepared_identity,
+        )
+    finally:
+        if staging_descriptor >= 0:
+            os.close(staging_descriptor)
 
 
 def apply_v1_migration(
@@ -974,23 +1196,38 @@ def apply_v1_migration(
     source_root = Path(plan.source_root).expanduser().absolute()
     if target_root == source_root or source_root in target_root.parents:
         raise _failure("prepared target must be outside the v1 source root")
-    if target_root.exists() or target_root.is_symlink():
-        with authority_write_lock(Path(plan.source_root) / "journal"):
-            return _report_existing(
-                plan,
-                target_root,
-                authority=authority,
-            )
 
     target_root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{target_root.name}.staging-{plan.source_manifest_sha256[:12]}-",
-            dir=target_root.parent,
-        )
-    )
+    bound_parent = _open_bound_prepared_parent(target_root)
+    staging: Path | None = None
+    staging_identity: os.stat_result | None = None
     installed = False
     try:
+        existing_identity = _stat_bound_child(bound_parent, target_root.name)
+        if existing_identity is not None:
+            _require_requested_target(
+                bound_parent,
+                target_root.name,
+                existing_identity,
+            )
+            with authority_write_lock(Path(plan.source_root) / "journal"):
+                report = _report_existing(
+                    plan,
+                    target_root,
+                    authority=authority,
+                )
+            _require_requested_target(
+                bound_parent,
+                target_root.name,
+                existing_identity,
+            )
+            return report
+
+        staging, staging_identity = _create_bound_staging(
+            bound_parent,
+            target_name=target_root.name,
+            manifest_sha256=plan.source_manifest_sha256,
+        )
         ledger = _ledger(staging, plan=plan, authority=authority)
         for origin, head_hash in plan.source_heads:
             legacy = LegacyOperationLedger(Path(plan.source_root), device_id=origin)
@@ -1016,6 +1253,7 @@ def apply_v1_migration(
                 code=OperationalErrorCode.ANCHOR_CONFLICT,
                 details={"errors": list(verification.errors)},
             )
+        _require_bound_parent(bound_parent)
         _verify_generation_matches_plan(
             plan,
             ledger,
@@ -1028,6 +1266,7 @@ def apply_v1_migration(
                 "prepared v2 view quarantined migration events",
                 details={"quarantined": rebuild.quarantined},
             )
+        _require_bound_parent(bound_parent)
         with authority_write_lock(Path(plan.source_root) / "journal"):
             parity = verify_v1_parity(plan, staging, authority=authority)
             if not parity.equal:
@@ -1048,16 +1287,40 @@ def apply_v1_migration(
             )
             if (staging / _ACTIVATION_FILE).exists():
                 raise _failure("prepared migration created an activation marker")
+            _require_bound_parent(bound_parent)
             try:
-                _install_prepared(staging, target_root)
-                installed = True
+                _install_prepared(
+                    staging,
+                    target_root,
+                    parent=bound_parent,
+                    staging_identity=staging_identity,
+                )
             except FileExistsError:
-                return _report_existing(
+                existing_identity = _stat_bound_child(
+                    bound_parent,
+                    target_root.name,
+                )
+                if existing_identity is None:
+                    raise OSError(
+                        "prepared target identity changed during publication"
+                    ) from None
+                _require_requested_target(
+                    bound_parent,
+                    target_root.name,
+                    existing_identity,
+                )
+                report = _report_existing(
                     plan,
                     target_root,
                     authority=authority,
                 )
-        return MigrationReport(
+                _require_requested_target(
+                    bound_parent,
+                    target_root.name,
+                    existing_identity,
+                )
+                return report
+        report = MigrationReport(
             source_manifest_sha256=plan.source_manifest_sha256,
             target_generation_sha256=generation_sha256,
             events_inserted=len(plan.seeds),
@@ -1067,9 +1330,27 @@ def apply_v1_migration(
             parity=parity,
             prepared_stamp=stamp,
         )
+        _require_requested_target(
+            bound_parent,
+            target_root.name,
+            staging_identity,
+        )
+        installed = True
+        return report
     finally:
-        if not installed and staging.exists() and not staging.is_symlink():
-            shutil.rmtree(staging)
+        try:
+            if (
+                not installed
+                and staging is not None
+                and staging_identity is not None
+            ):
+                _remove_bound_staging(
+                    bound_parent,
+                    staging,
+                    staging_identity,
+                )
+        finally:
+            bound_parent.close()
 
 
 def migrate_v1(
