@@ -71,6 +71,37 @@ def _create_authority_file(path: Path, data: bytes) -> None:
         directory.create_bytes_exclusive(path.name, data)
 
 
+def _authority_relative(root: Path, path: Path) -> Path:
+    try:
+        relative = Path(path).absolute().relative_to(Path(root).absolute())
+    except ValueError as exc:
+        raise RosterError(f"verification roster path escapes authority root: {path}") from exc
+    if not relative.parts:
+        raise RosterError("verification roster file path is required")
+    return relative
+
+
+def _read_authority_bytes(root: Path, path: Path) -> bytes:
+    with open_secure_directory(root) as directory:
+        return directory.read_bytes(_authority_relative(root, path))
+
+
+def _optional_authority_bytes(root: Path, path: Path) -> bytes | None:
+    try:
+        return _read_authority_bytes(root, path)
+    except FileNotFoundError:
+        return None
+
+
+def _authority_json_paths(root: Path, directory_path: Path) -> list[Path]:
+    try:
+        with open_secure_directory(root) as directory:
+            names = directory.list_names(_authority_relative(root, directory_path))
+    except FileNotFoundError:
+        return []
+    return sorted(directory_path / name for name in names if Path(name).suffix == ".json")
+
+
 class RosterError(SignatureError):
     """A verification roster is structurally or cryptographically invalid."""
 
@@ -215,8 +246,8 @@ class VerificationRoster:
             except KeyStoreError as exc:
                 raise RosterError("verification roster authority pin rejected bootstrap") from exc
             with authority_write_lock(root / "verification-rosters"):
-                history_bytes = history.read_bytes() if history.exists() else None
-                current_bytes = current.read_bytes() if current.exists() else None
+                history_bytes = _optional_authority_bytes(root, history)
+                current_bytes = _optional_authority_bytes(root, current)
                 if history_bytes not in {None, encoded} or current_bytes not in {
                     None,
                     encoded,
@@ -313,8 +344,9 @@ class VerificationRoster:
                     pin_store._stage_roster(root, encoded)
                 except KeyStoreError as exc:
                     raise RosterError("verification roster authority pin rejected update") from exc
-                if history.exists():
-                    if history.read_bytes() != encoded:
+                history_bytes = _optional_authority_bytes(root, history)
+                if history_bytes is not None:
+                    if history_bytes != encoded:
                         raise RosterError("verification roster history already exists")
                 else:
                     _create_authority_file(history, encoded)
@@ -379,7 +411,7 @@ def _recover_prepared_roster(root: Path, pin_store: AuthorityPinStore) -> None:
     current_path = root / "verification-roster.json"
     target_path = history_root / f"{prepared.version:08d}.json"
     with authority_write_lock(history_root):
-        paths = sorted(history_root.glob("*.json"))
+        paths = _authority_json_paths(root, history_root)
         expected_predecessor_names = [
             f"{version:08d}.json" for version in range(1, prepared.version)
         ]
@@ -393,7 +425,7 @@ def _recover_prepared_roster(root: Path, pin_store: AuthorityPinStore) -> None:
         for path in paths:
             if path.name == target_path.name:
                 continue
-            roster = _decode_roster(path)
+            roster = _decode_roster(path, root=root)
             _verify_roster(roster, previous=previous)
             previous = roster
         if previous is None:
@@ -404,8 +436,8 @@ def _recover_prepared_roster(root: Path, pin_store: AuthorityPinStore) -> None:
         _verify_roster(prepared, previous=previous)
 
         try:
-            target_bytes = target_path.read_bytes() if target_path.exists() else None
-            current_bytes = current_path.read_bytes() if current_path.exists() else None
+            target_bytes = _optional_authority_bytes(root, target_path)
+            current_bytes = _optional_authority_bytes(root, current_path)
         except OSError as exc:
             raise RosterError("prepared verification roster destination is invalid") from exc
         previous_bytes = _canonical(previous.to_dict()) if previous is not None else None
@@ -435,7 +467,7 @@ def _load_roster_history(root: Path) -> tuple[VerificationRoster, ...]:
     root = Path(root)
     history_root = root / "verification-rosters"
     current_path = root / "verification-roster.json"
-    paths = sorted(history_root.glob("*.json"))
+    paths = _authority_json_paths(root, history_root)
     if not paths:
         raise RosterError("verification roster history is missing")
     previous: VerificationRoster | None = None
@@ -443,13 +475,13 @@ def _load_roster_history(root: Path) -> tuple[VerificationRoster, ...]:
     for expected, path in enumerate(paths, start=1):
         if path.name != f"{expected:08d}.json":
             raise RosterError("verification roster history has a version gap")
-        roster = _decode_roster(path)
+        roster = _decode_roster(path, root=root)
         _verify_roster(roster, previous=previous)
         previous = roster
         history.append(roster)
     assert previous is not None
     try:
-        current_bytes: bytes | None = current_path.read_bytes()
+        current_bytes: bytes | None = _read_authority_bytes(root, current_path)
     except FileNotFoundError:
         current_bytes = None
     except OSError as exc:
@@ -460,9 +492,9 @@ def _load_roster_history(root: Path) -> tuple[VerificationRoster, ...]:
     return tuple(history)
 
 
-def _decode_roster(path: Path) -> VerificationRoster:
+def _decode_roster(path: Path, *, root: Path) -> VerificationRoster:
     try:
-        encoded = path.read_bytes()
+        encoded = _read_authority_bytes(root, path)
     except OSError as exc:
         raise RosterError(f"invalid verification roster: {path}") from exc
     return _decode_roster_bytes(encoded, str(path))

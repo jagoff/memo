@@ -12,6 +12,8 @@ from typing import cast
 
 import pytest
 
+import memo.operation_ledger_v2 as operation_ledger_v2
+from memo.atomic_io import authority_admission_lock
 from memo.errors import OperationalError
 from memo.identity import PrincipalIdentity
 from memo.operation_ledger_v1 import LegacyOperationLedger
@@ -591,6 +593,52 @@ def test_constructor_is_usable_without_authority_but_sensitive_operations_fail_c
     assert not (tmp_path / "operational" / "journal").exists()
 
 
+def test_constructor_rejects_crossed_roster_and_epoch_authority_roots(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    crossed_root = tmp_path / "crossed-authority"
+    crossed_root.mkdir()
+
+    with pytest.raises(ValueError, match="authority root"):
+        OperationLedgerV2(
+            tmp_path / "operational",
+            device_id=authority.device_id,
+            clock=_clock,
+            signer=authority.signer,
+            verifier=authority.verifier,
+            roster=authority.roster,
+            roster_root=crossed_root,
+            pin_store=authority.pin_store,
+            epoch_fence=authority.fence,
+        )
+
+
+def test_roster_and_epoch_reads_reuse_retained_authority_after_path_swap(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "authority"
+    authority = _authority(root)
+    retained_path = tmp_path / "retained-authority"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    with authority_admission_lock(root):
+        root.rename(retained_path)
+        root.symlink_to(outside, target_is_directory=True)
+
+        assert VerificationRoster.load(
+            root,
+            pin_store=authority.pin_store,
+        ) == authority.roster
+        context = authority.context()
+        authority.fence.verify(context)
+
+    assert (retained_path / "verification-roster.json").exists()
+    assert (retained_path / "authority-epoch.json").exists()
+    assert list(outside.iterdir()) == []
+
+
 def test_unpinned_unsigned_roster_cannot_admit_an_anchor(tmp_path: Path) -> None:
     keys = DeviceKeyStore.in_memory()
     key = keys.generate(device_id="device-a", roles=("origin",))
@@ -1071,6 +1119,94 @@ def test_legacy_compaction_crash_after_anchor_before_head_recovers_on_restart(
     assert restarted.anchor() == compacted
     assert restarted.position().sequence == event.origin_sequence
     assert restarted.verify().ok is True
+
+
+def test_legacy_compaction_recovery_rejects_regressing_ledger_epoch(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    operational = tmp_path / "operational"
+    ledger = _ledger(operational, authority)
+    genesis = ledger.ensure_anchor()
+    event = ledger.append(_command(), context=authority.context())
+    state_v5 = canonical_json_bytes({"epoch": 5})
+    checkpoint_v5 = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=event.origin_sequence,
+        through_hash=event.event_hash,
+        state=state_v5,
+    )
+    anchor_v5 = _signed_anchor(
+        authority,
+        origin="device-a",
+        kind="compaction",
+        checkpoint=checkpoint_v5,
+        base_sequence=event.origin_sequence,
+        base_hash=event.event_hash,
+        previous_anchor_hash=genesis.anchor_hash,
+        ledger_epoch=5,
+        state_sha256=hashlib.sha256(state_v5).hexdigest(),
+    )
+    ledger.ensure_anchor(anchor_v5, checkpoint=checkpoint_v5)
+
+    state_v4 = canonical_json_bytes({"epoch": 4})
+    checkpoint_v4 = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=event.origin_sequence,
+        through_hash=event.event_hash,
+        state=state_v4,
+    )
+    anchor_v4 = _signed_anchor(
+        authority,
+        origin="device-a",
+        kind="compaction",
+        checkpoint=checkpoint_v4,
+        base_sequence=event.origin_sequence,
+        base_hash=event.event_hash,
+        previous_anchor_hash=anchor_v5.anchor_hash,
+        ledger_epoch=4,
+        state_sha256=hashlib.sha256(state_v4).hexdigest(),
+    )
+    ledger._atomic_write_bytes(ledger._checkpoint_path(anchor_v4), checkpoint_v4)
+    ledger._atomic_write_json(ledger._anchor_path("device-a"), anchor_v4)
+
+    with pytest.raises(OperationalError, match=r"epoch|regression"):
+        _ledger(operational, authority).recover()
+
+
+def test_legacy_compaction_recovery_requires_predecessor_anchor_history(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    operational = tmp_path / "operational"
+    ledger = _ledger(operational, authority)
+    genesis = ledger.ensure_anchor()
+    event = ledger.append(_command(), context=authority.context())
+    state = canonical_json_bytes({"epoch": 1})
+    checkpoint = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=event.origin_sequence,
+        through_hash=event.event_hash,
+        state=state,
+    )
+    compacted = _signed_anchor(
+        authority,
+        origin="device-a",
+        kind="compaction",
+        checkpoint=checkpoint,
+        base_sequence=event.origin_sequence,
+        base_hash=event.event_hash,
+        previous_anchor_hash=genesis.anchor_hash,
+        ledger_epoch=1,
+        state_sha256=hashlib.sha256(state).hexdigest(),
+    )
+    predecessor = ledger.anchor_history_dir / "device-a" / f"{genesis.anchor_hash}.json"
+    predecessor.unlink()
+    ledger._atomic_write_bytes(ledger._checkpoint_path(compacted), checkpoint)
+    ledger._atomic_write_json(ledger._anchor_path("device-a"), compacted)
+
+    with pytest.raises(OperationalError, match=r"history|predecessor"):
+        _ledger(operational, authority).recover()
 
 
 def test_append_holds_epoch_fence_through_event_and_head_fsync(
@@ -1672,6 +1808,189 @@ def test_multi_bundle_transaction_recovers_process_loss_at_every_publish_boundar
                 str(target["relative_target"]).startswith("heads/")
                 for target in targets[first_head:]
             )
+
+
+def test_transaction_marker_phase_cannot_be_replayed_at_applied_path(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    operational = tmp_path / "operational"
+    bundle = _bundle(authority, origin="device-a")
+
+    def lose_power() -> None:
+        crashing = _crash_ledger(operational, authority, crash_at="after_commit")
+        crashing.import_bundles((bundle,), context=authority.context())
+        raise AssertionError("after_commit failpoint was not reached")
+
+    _fork_process_loss(lose_power)
+    transaction = next((operational / "journal" / "transactions").iterdir())
+    (transaction / "APPLIED.json").write_bytes((transaction / "COMMITTED.json").read_bytes())
+
+    with pytest.raises(OperationalError, match="phase"):
+        _ledger(operational, authority).recover()
+
+
+def test_applied_transaction_verifies_every_target_before_finalization(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    operational = tmp_path / "operational"
+    bundle = _bundle(authority, origin="device-a")
+
+    def lose_power() -> None:
+        crashing = _crash_ledger(operational, authority, crash_at="after_applied")
+        crashing.import_bundles((bundle,), context=authority.context())
+        raise AssertionError("after_applied failpoint was not reached")
+
+    _fork_process_loss(lose_power)
+    transaction = next((operational / "journal" / "transactions").iterdir())
+    manifest = json.loads((transaction / "manifest.json").read_bytes())
+    first_target = operational / "journal" / manifest["targets"][0]["relative_target"]
+    first_target.write_bytes(b"tampered after applied")
+
+    with pytest.raises(OperationalError, match=r"target|digest|verification"):
+        _ledger(operational, authority).recover()
+
+
+def test_successful_transaction_retires_stage_blobs_to_bounded_receipt(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    ledger = _ledger(tmp_path / "operational", authority)
+
+    report = ledger.import_bundles(
+        (_bundle(authority, origin="device-a"),),
+        context=authority.context(),
+    )
+
+    assert report.events_inserted == 2
+    assert list(ledger.transactions_dir.iterdir()) == []
+    receipts = list((ledger.recovery_dir / "transactions").glob("*.json"))
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_bytes())
+    assert receipt["schema"] == "memo.operational_transaction_receipt.v1"
+    assert receipt["origins"] == ["device-a"]
+    assert not list(ledger.root.rglob("stage/*.bin"))
+
+
+def test_transaction_cleanup_restarts_idempotently_after_receipt(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    operational = tmp_path / "operational"
+    bundle = _bundle(authority, origin="device-a")
+
+    def lose_power() -> None:
+        crashing = _crash_ledger(operational, authority, crash_at="after_receipt")
+        crashing.import_bundles((bundle,), context=authority.context())
+        raise AssertionError("after_receipt failpoint was not reached")
+
+    _fork_process_loss(lose_power)
+    transaction = next((operational / "journal" / "transactions").iterdir())
+    receipt = operational / "journal" / "recovery" / "transactions" / (
+        f"{transaction.name}.json"
+    )
+    assert receipt.exists()
+
+    restarted = _ledger(operational, authority)
+    restarted.recover()
+
+    assert list(restarted.transactions_dir.iterdir()) == []
+    assert receipt.exists()
+    assert restarted.position("device-a").sequence == 2
+    assert restarted.verify().ok is True
+
+
+def test_transaction_receipts_and_stages_remain_bounded_across_incremental_imports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(operation_ledger_v2, "_MAX_TRANSACTION_RECEIPTS", 2)
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    ledger = _ledger(tmp_path / "operational", authority)
+
+    for sequences in ((1,), (1, 2), (1, 2, 3)):
+        report = ledger.import_bundles(
+            (_bundle(authority, origin="device-a", sequences=sequences),),
+            context=authority.context(),
+        )
+        assert report.events_inserted == 1
+
+    assert len(list(ledger.transaction_receipts_dir.glob("*.json"))) == 2
+    assert list(ledger.transactions_dir.iterdir()) == []
+    assert not list(ledger.root.rglob("stage/*.bin"))
+
+
+def test_compaction_transaction_stages_exact_predecessor_anchor_history(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    operational = tmp_path / "operational"
+    ledger = _ledger(operational, authority)
+    genesis = ledger.ensure_anchor()
+    event = ledger.append(_command(), context=authority.context())
+    state = canonical_json_bytes({"focus": "compacted"})
+    checkpoint = _state_checkpoint_bytes(
+        origin="device-a",
+        through_sequence=event.origin_sequence,
+        through_hash=event.event_hash,
+        state=state,
+    )
+    compacted = _signed_anchor(
+        authority,
+        origin="device-a",
+        kind="compaction",
+        checkpoint=checkpoint,
+        base_sequence=event.origin_sequence,
+        base_hash=event.event_hash,
+        previous_anchor_hash=genesis.anchor_hash,
+        ledger_epoch=1,
+        state_sha256=hashlib.sha256(state).hexdigest(),
+    )
+
+    def lose_power() -> None:
+        crashing = _crash_ledger(operational, authority, crash_at="after_commit")
+        crashing.ensure_anchor(compacted, checkpoint=checkpoint)
+        raise AssertionError("after_commit failpoint was not reached")
+
+    _fork_process_loss(lose_power)
+    transaction = next(ledger.transactions_dir.iterdir())
+    manifest = json.loads((transaction / "manifest.json").read_bytes())
+    predecessor_relative = (
+        f"anchor-history/device-a/{genesis.anchor_hash}.json"
+    )
+    predecessor_target = next(
+        target
+        for target in manifest["targets"]
+        if target["relative_target"] == predecessor_relative
+    )
+    assert predecessor_target["after_sha256"] == hashlib.sha256(
+        canonical_json_bytes(genesis)
+    ).hexdigest()
+
+    restarted = _ledger(operational, authority)
+    restarted.recover()
+    assert restarted.anchor().anchor_hash == compacted.anchor_hash
 
 
 def test_import_requires_exact_checkpoint_and_reducer_version(tmp_path: Path) -> None:

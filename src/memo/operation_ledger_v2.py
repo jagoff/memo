@@ -82,6 +82,8 @@ _QUARANTINE_SCHEMA = "memo.operational_quarantine.v1"
 _RECOVERY_SCHEMA = "memo.operational_recovery.v1"
 _TRANSACTION_SCHEMA = "memo.operational_transaction.v1"
 _TRANSACTION_MARKER_SCHEMA = "memo.operational_transaction_marker.v1"
+_TRANSACTION_RECEIPT_SCHEMA = "memo.operational_transaction_receipt.v1"
+_MAX_TRANSACTION_RECEIPTS = 256
 _TRANSACTION_FIELDS = frozenset(
     {
         "schema",
@@ -104,6 +106,22 @@ _TRANSACTION_TARGET_FIELDS = frozenset(
         "after_sha256",
         "size",
         "stage_blob",
+    }
+)
+_TRANSACTION_MARKER_FIELDS = frozenset(
+    {"schema", "transaction_id", "manifest_sha256", "phase", "recorded_at"}
+)
+_TRANSACTION_RECEIPT_FIELDS = frozenset(
+    {
+        "schema",
+        "transaction_id",
+        "transaction_sha256",
+        "request_sha256",
+        "kind",
+        "origins",
+        "after_positions",
+        "applied_marker_sha256",
+        "finalized_at",
     }
 )
 
@@ -212,11 +230,16 @@ class OperationLedgerV2:
         self.signer = signer
         self.verifier = verifier
         self.roster = roster
-        self.roster_root = (
-            Path(roster_root).absolute()
-            if roster_root is not None
-            else (Path(epoch_fence.root).absolute() if epoch_fence is not None else None)
-        )
+        explicit_roster_root = Path(roster_root).absolute() if roster_root is not None else None
+        epoch_root = Path(epoch_fence.root).absolute() if epoch_fence is not None else None
+        if explicit_roster_root is not None and epoch_root is not None:
+            try:
+                same_authority = os.path.samefile(explicit_roster_root, epoch_root)
+            except FileNotFoundError:
+                same_authority = explicit_roster_root == epoch_root
+            if not same_authority:
+                raise ValueError("roster and epoch fence must share one authority root")
+        self.roster_root = explicit_roster_root if explicit_roster_root is not None else epoch_root
         self.pin_store = pin_store
         self.epoch_fence = epoch_fence
         self.reducer_version = reducer_version
@@ -254,6 +277,14 @@ class OperationLedgerV2:
     @property
     def recovery_dir(self) -> Path:
         return self.root / "recovery"
+
+    @property
+    def transaction_receipts_dir(self) -> Path:
+        return self.recovery_dir / "transactions"
+
+    @property
+    def anchor_history_dir(self) -> Path:
+        return self.root / "anchor-history"
 
     def _now(self) -> str:
         value = self.clock()
@@ -584,6 +615,17 @@ class OperationLedgerV2:
         self._validate_safe_id(anchor.origin_device, "origin device")
         self._validate_safe_id(anchor.anchor_id, "anchor id")
         path = self.checkpoints_dir / anchor.origin_device / f"{anchor.anchor_id}.json"
+        self._assert_safe_path(path)
+        return path
+
+    def _anchor_history_path(self, origin: str, anchor_hash: str) -> Path:
+        self._validate_safe_id(origin, "origin device")
+        if not isinstance(anchor_hash, str) or not _SHA256_RE.fullmatch(anchor_hash):
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                f"invalid predecessor anchor history digest: {anchor_hash!r}",
+            )
+        path = self.anchor_history_dir / origin / f"{anchor_hash}.json"
         self._assert_safe_path(path)
         return path
 
@@ -1111,6 +1153,30 @@ class OperationLedgerV2:
         self._validate_anchor_authority(anchor, checkpoint)
         return anchor, checkpoint
 
+    def _read_anchor_history(self, origin: str, anchor_hash: str) -> ChainAnchor:
+        path = self._anchor_history_path(origin, anchor_hash)
+        try:
+            encoded = self._read_bytes(path, "operational predecessor anchor history")
+        except OperationalError as exc:
+            if exc.code == OperationalErrorCode.NOT_FOUND:
+                raise _failure(
+                    OperationalErrorCode.ANCHOR_CONFLICT,
+                    f"predecessor anchor history is unavailable: {origin}/{anchor_hash}",
+                ) from exc
+            raise
+        anchor = self._decode_anchor_bytes(encoded, str(path))
+        if anchor.origin_device != origin or anchor.anchor_hash != anchor_hash:
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                f"predecessor anchor history identity mismatch: {origin}/{anchor_hash}",
+            )
+        checkpoint = self._read_bytes(
+            self._checkpoint_path(anchor),
+            "historical operational checkpoint",
+        )
+        self._validate_anchor_authority(anchor, checkpoint)
+        return anchor
+
     def anchor(self, origin_device: str | None = None) -> ChainAnchor:
         origin = origin_device or self.device_id
         with self._authority_operation(recover=False):
@@ -1185,9 +1251,25 @@ class OperationLedgerV2:
             },
         )
 
+    def _persist_anchor_history(self, anchor: ChainAnchor) -> None:
+        history_path = self._anchor_history_path(
+            anchor.origin_device,
+            anchor.anchor_hash,
+        )
+        history_bytes = canonical_json_bytes(anchor)
+        existing_history = self._optional_bytes(history_path)
+        if existing_history is None:
+            self._create_bytes_exclusive(history_path, history_bytes)
+        elif existing_history != history_bytes:
+            raise _failure(
+                OperationalErrorCode.ANCHOR_CONFLICT,
+                f"immutable anchor history changed: {anchor.anchor_hash}",
+            )
+
     def _persist_anchor(self, anchor: ChainAnchor, checkpoint: bytes) -> None:
         self._validate_anchor_authority(anchor, checkpoint)
         self._atomic_write_bytes(self._checkpoint_path(anchor), checkpoint)
+        self._persist_anchor_history(anchor)
         self._atomic_write_json(self._anchor_path(anchor.origin_device), asdict(anchor))
         self._write_head(
             origin=anchor.origin_device,
@@ -1280,6 +1362,16 @@ class OperationLedgerV2:
             self._validate_anchor_transition(current, anchor, position)
         self._assert_current_anchor_authority(anchor, latest)
         if current is not None and position is not None and anchor.kind == "compaction":
+            current_history_path = self._anchor_history_path(origin, current.anchor_hash)
+            current_history_bytes = canonical_json_bytes(current)
+            existing_history = self._optional_bytes(current_history_path)
+            if existing_history is None:
+                self._persist_anchor_history(current)
+            elif existing_history != current_history_bytes:
+                raise _failure(
+                    OperationalErrorCode.ANCHOR_CONFLICT,
+                    f"immutable predecessor anchor history changed: {current.anchor_hash}",
+                )
             after = OriginPosition(
                 origin_device=origin,
                 sequence=anchor.base_sequence,
@@ -1304,6 +1396,11 @@ class OperationLedgerV2:
                 after_positions=(self._position_wire(after, origin=origin),),
                 target_bytes=(
                     (self._checkpoint_path(anchor), checkpoint),
+                    (current_history_path, current_history_bytes),
+                    (
+                        self._anchor_history_path(origin, anchor.anchor_hash),
+                        canonical_json_bytes(anchor),
+                    ),
                     (path, canonical_json_bytes(anchor)),
                     (
                         self._head_path(origin),
@@ -1870,7 +1967,8 @@ class OperationLedgerV2:
         *,
         transaction_id: str,
         manifest_sha256: str,
-    ) -> None:
+        expected_phase: str,
+    ) -> dict[str, Any]:
         encoded = self._read_bytes(path, "operational transaction marker")
         try:
             value = json.loads(encoded.decode("utf-8"))
@@ -1881,16 +1979,26 @@ class OperationLedgerV2:
             ) from exc
         if (
             not isinstance(value, dict)
-            or set(value) != {"schema", "transaction_id", "manifest_sha256", "recorded_at"}
+            or set(value) != _TRANSACTION_MARKER_FIELDS
             or canonical_json_bytes(value) != encoded
             or value["schema"] != _TRANSACTION_MARKER_SCHEMA
             or value["transaction_id"] != transaction_id
             or value["manifest_sha256"] != manifest_sha256
+            or value["phase"] != expected_phase
+            or not isinstance(value["recorded_at"], str)
         ):
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
-                f"transaction marker does not match its manifest: {path}",
+                f"transaction marker phase or manifest does not match: {path}",
             )
+        try:
+            _parse_timestamp(value["recorded_at"], "transaction marker recorded_at")
+        except OperationalError as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction marker timestamp is invalid: {path}",
+            ) from exc
+        return cast(dict[str, Any], value)
 
     def _apply_transaction_manifest(
         self,
@@ -1940,15 +2048,208 @@ class OperationLedgerV2:
         *,
         transaction_id: str,
         manifest_sha256: str,
+        phase: str,
     ) -> bytes:
+        if phase not in {"committed", "applied"}:
+            raise ValueError(f"unsupported transaction marker phase: {phase}")
         return canonical_json_bytes(
             {
                 "schema": _TRANSACTION_MARKER_SCHEMA,
                 "transaction_id": transaction_id,
                 "manifest_sha256": manifest_sha256,
+                "phase": phase,
                 "recorded_at": self._now(),
             }
         )
+
+    def _verify_transaction_targets(
+        self,
+        manifest: Mapping[str, Any],
+        *,
+        transaction_root: Path,
+    ) -> None:
+        targets = cast(list[dict[str, Any]], manifest["targets"])
+        for target in targets:
+            stage_path = transaction_root / cast(str, target["stage_blob"])
+            staged = self._read_bytes(stage_path, "operational transaction stage")
+            expected_sha256 = cast(str, target["after_sha256"])
+            expected_size = cast(int, target["size"])
+            if (
+                len(staged) != expected_size
+                or hashlib.sha256(staged).hexdigest() != expected_sha256
+            ):
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"transaction stage digest verification failed: {stage_path}",
+                )
+            target_path = self.root / cast(str, target["relative_target"])
+            published = self._read_bytes(
+                target_path,
+                "published operational transaction target",
+            )
+            if (
+                len(published) != expected_size
+                or hashlib.sha256(published).hexdigest() != expected_sha256
+            ):
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"transaction target digest verification failed: {target_path}",
+                )
+
+    def _transaction_receipt_bytes(
+        self,
+        manifest: Mapping[str, Any],
+        *,
+        applied_marker_bytes: bytes,
+        applied_marker: Mapping[str, Any],
+    ) -> bytes:
+        return canonical_json_bytes(
+            {
+                "schema": _TRANSACTION_RECEIPT_SCHEMA,
+                "transaction_id": manifest["transaction_id"],
+                "transaction_sha256": manifest["transaction_sha256"],
+                "request_sha256": manifest["request_sha256"],
+                "kind": manifest["kind"],
+                "origins": manifest["origins"],
+                "after_positions": manifest["after_positions"],
+                "applied_marker_sha256": hashlib.sha256(applied_marker_bytes).hexdigest(),
+                "finalized_at": applied_marker["recorded_at"],
+            }
+        )
+
+    def _validate_transaction_receipt(
+        self,
+        encoded: bytes,
+        *,
+        transaction_id: str,
+        manifest: Mapping[str, Any] | None = None,
+        applied_marker_bytes: bytes | None = None,
+    ) -> dict[str, Any]:
+        try:
+            value = json.loads(encoded.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction receipt is invalid: {transaction_id}",
+            ) from exc
+        if (
+            not isinstance(value, dict)
+            or set(value) != _TRANSACTION_RECEIPT_FIELDS
+            or canonical_json_bytes(value) != encoded
+            or value["schema"] != _TRANSACTION_RECEIPT_SCHEMA
+            or value["transaction_id"] != transaction_id
+            or not isinstance(value["transaction_sha256"], str)
+            or not _SHA256_RE.fullmatch(value["transaction_sha256"])
+            or not isinstance(value["request_sha256"], str)
+            or not _SHA256_RE.fullmatch(value["request_sha256"])
+            or not isinstance(value["applied_marker_sha256"], str)
+            or not _SHA256_RE.fullmatch(value["applied_marker_sha256"])
+            or not isinstance(value["finalized_at"], str)
+            or not isinstance(value["kind"], str)
+            or not value["kind"]
+            or not isinstance(value["origins"], list)
+            or not all(
+                isinstance(origin, str) and _SAFE_ID_RE.fullmatch(origin)
+                for origin in value["origins"]
+            )
+            or value["origins"] != sorted(set(value["origins"]))
+            or not isinstance(value["after_positions"], list)
+        ):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction receipt is not canonical: {transaction_id}",
+            )
+        try:
+            _parse_timestamp(value["finalized_at"], "transaction receipt finalized_at")
+        except OperationalError as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction receipt timestamp is invalid: {transaction_id}",
+            ) from exc
+        if manifest is not None and (
+            value["transaction_sha256"] != manifest["transaction_sha256"]
+            or value["request_sha256"] != manifest["request_sha256"]
+            or value["kind"] != manifest["kind"]
+            or value["origins"] != manifest["origins"]
+            or value["after_positions"] != manifest["after_positions"]
+        ):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction receipt does not match its manifest: {transaction_id}",
+            )
+        if (
+            applied_marker_bytes is not None
+            and value["applied_marker_sha256"]
+            != hashlib.sha256(applied_marker_bytes).hexdigest()
+        ):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction receipt applied marker digest mismatch: {transaction_id}",
+            )
+        return cast(dict[str, Any], value)
+
+    def _prune_transaction_receipts(self) -> None:
+        names = self._list_names(self.transaction_receipts_dir)
+        for name in names:
+            self._validate_safe_id(Path(name).stem, "transaction receipt id")
+            if Path(name).suffix != ".json":
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    f"unexpected transaction receipt path: {name}",
+                )
+        excess = len(names) - _MAX_TRANSACTION_RECEIPTS
+        if excess <= 0:
+            return
+        try:
+            with self._secure_io(create=False) as directory:
+                for name in names[:excess]:
+                    directory.unlink(self._relative(self.transaction_receipts_dir / name))
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                "cannot prune operational transaction receipts",
+            ) from exc
+
+    def _finalize_transaction(
+        self,
+        manifest: Mapping[str, Any],
+        *,
+        transaction_root: Path,
+        applied_marker_bytes: bytes,
+        applied_marker: Mapping[str, Any],
+        invoke_failpoints: bool,
+    ) -> None:
+        transaction_id = cast(str, manifest["transaction_id"])
+        self._verify_transaction_targets(manifest, transaction_root=transaction_root)
+        receipt_path = self.transaction_receipts_dir / f"{transaction_id}.json"
+        receipt_bytes = self._transaction_receipt_bytes(
+            manifest,
+            applied_marker_bytes=applied_marker_bytes,
+            applied_marker=applied_marker,
+        )
+        existing = self._optional_bytes(receipt_path)
+        if existing is None:
+            self._create_bytes_exclusive(receipt_path, receipt_bytes)
+        elif existing != receipt_bytes:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"transaction receipt changed across recovery: {transaction_id}",
+            )
+        if invoke_failpoints:
+            self._transaction_failpoint("after_receipt")
+        try:
+            with self._secure_io(create=False) as directory:
+                directory.remove_tree(self._relative(transaction_root), missing_ok=True)
+        except OperationalError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"cannot retire operational transaction: {transaction_id}",
+            ) from exc
+        self._prune_transaction_receipts()
 
     def _recover_transactions_locked(self) -> LedgerRecoveryReport:
         recovered: list[str] = []
@@ -1962,6 +2263,54 @@ class OperationLedgerV2:
                     OperationalErrorCode.STORAGE_UNAVAILABLE,
                     f"unexpected transaction path: {transaction_root}",
                 )
+            receipt_path = self.transaction_receipts_dir / f"{transaction_id}.json"
+            receipt_bytes = self._optional_bytes(receipt_path)
+            if receipt_bytes is not None:
+                manifest_for_receipt: dict[str, Any] | None = None
+                manifest_path = transaction_root / "manifest.json"
+                manifest_bytes = self._optional_bytes(manifest_path)
+                applied_for_receipt: bytes | None = None
+                if manifest_bytes is not None:
+                    manifest_for_receipt = self._decode_transaction_manifest(
+                        manifest_bytes,
+                        transaction_id=transaction_id,
+                    )
+                    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+                    committed_for_receipt = self._optional_bytes(
+                        transaction_root / "COMMITTED.json"
+                    )
+                    if committed_for_receipt is not None:
+                        self._validate_transaction_marker(
+                            transaction_root / "COMMITTED.json",
+                            transaction_id=transaction_id,
+                            manifest_sha256=manifest_sha256,
+                            expected_phase="committed",
+                        )
+                    applied_for_receipt = self._optional_bytes(
+                        transaction_root / "APPLIED.json"
+                    )
+                    if applied_for_receipt is not None:
+                        self._validate_transaction_marker(
+                            transaction_root / "APPLIED.json",
+                            transaction_id=transaction_id,
+                            manifest_sha256=manifest_sha256,
+                            expected_phase="applied",
+                        )
+                self._validate_transaction_receipt(
+                    receipt_bytes,
+                    transaction_id=transaction_id,
+                    manifest=manifest_for_receipt,
+                    applied_marker_bytes=applied_for_receipt,
+                )
+                try:
+                    with self._secure_io(create=False) as directory:
+                        directory.remove_tree(self._relative(transaction_root), missing_ok=True)
+                except (OSError, ValueError) as exc:
+                    raise _failure(
+                        OperationalErrorCode.STORAGE_UNAVAILABLE,
+                        f"cannot finish retiring transaction: {transaction_id}",
+                    ) from exc
+                continue
             committed_path = transaction_root / "COMMITTED.json"
             applied_path = transaction_root / "APPLIED.json"
             committed = self._exists(committed_path)
@@ -2001,12 +2350,25 @@ class OperationLedgerV2:
                 committed_path,
                 transaction_id=transaction_id,
                 manifest_sha256=manifest_sha256,
+                expected_phase="committed",
             )
             if applied:
-                self._validate_transaction_marker(
+                applied_marker_bytes = self._read_bytes(
+                    applied_path,
+                    "operational transaction applied marker",
+                )
+                applied_marker = self._validate_transaction_marker(
                     applied_path,
                     transaction_id=transaction_id,
                     manifest_sha256=manifest_sha256,
+                    expected_phase="applied",
+                )
+                self._finalize_transaction(
+                    manifest,
+                    transaction_root=transaction_root,
+                    applied_marker_bytes=applied_marker_bytes,
+                    applied_marker=applied_marker,
+                    invoke_failpoints=False,
                 )
                 continue
             published += self._apply_transaction_manifest(
@@ -2014,12 +2376,27 @@ class OperationLedgerV2:
                 transaction_root=transaction_root,
                 invoke_failpoints=False,
             )
+            applied_marker_bytes = self._marker_bytes(
+                transaction_id=transaction_id,
+                manifest_sha256=manifest_sha256,
+                phase="applied",
+            )
             self._create_bytes_exclusive(
                 applied_path,
-                self._marker_bytes(
-                    transaction_id=transaction_id,
-                    manifest_sha256=manifest_sha256,
-                ),
+                applied_marker_bytes,
+            )
+            applied_marker = self._validate_transaction_marker(
+                applied_path,
+                transaction_id=transaction_id,
+                manifest_sha256=manifest_sha256,
+                expected_phase="applied",
+            )
+            self._finalize_transaction(
+                manifest,
+                transaction_root=transaction_root,
+                applied_marker_bytes=applied_marker_bytes,
+                applied_marker=applied_marker,
+                invoke_failpoints=False,
             )
             recovered.append(transaction_id)
             origins = cast(list[str], manifest["origins"])
@@ -2066,6 +2443,22 @@ class OperationLedgerV2:
                 and cached[0] == anchor.base_sequence
                 and cached[1] == anchor.base_event_hash
             )
+            if legacy_compaction:
+                assert cached is not None
+                predecessor = self._read_anchor_history(
+                    origin,
+                    anchor.previous_anchor_hash,
+                )
+                self._validate_anchor_transition(
+                    predecessor,
+                    anchor,
+                    OriginPosition(
+                        origin_device=origin,
+                        sequence=cached[0],
+                        event_hash=cached[1],
+                        anchor_hash=cached[2],
+                    ),
+                )
             if not current_prefix and not legacy_compaction:
                 raise _failure(
                     OperationalErrorCode.ANCHOR_CONFLICT,
@@ -2748,6 +3141,7 @@ class OperationLedgerV2:
             self._marker_bytes(
                 transaction_id=transaction_id,
                 manifest_sha256=manifest_sha256,
+                phase="committed",
             ),
         )
         self._transaction_failpoint("after_commit")
@@ -2760,12 +3154,29 @@ class OperationLedgerV2:
             transaction_root=transaction_root,
             invoke_failpoints=True,
         )
+        applied_path = transaction_root / "APPLIED.json"
+        applied_marker_bytes = self._marker_bytes(
+            transaction_id=transaction_id,
+            manifest_sha256=manifest_sha256,
+            phase="applied",
+        )
         self._create_bytes_exclusive(
-            transaction_root / "APPLIED.json",
-            self._marker_bytes(
-                transaction_id=transaction_id,
-                manifest_sha256=manifest_sha256,
-            ),
+            applied_path,
+            applied_marker_bytes,
+        )
+        self._transaction_failpoint("after_applied")
+        applied_marker = self._validate_transaction_marker(
+            applied_path,
+            transaction_id=transaction_id,
+            manifest_sha256=manifest_sha256,
+            expected_phase="applied",
+        )
+        self._finalize_transaction(
+            decoded,
+            transaction_root=transaction_root,
+            applied_marker_bytes=applied_marker_bytes,
+            applied_marker=applied_marker,
+            invoke_failpoints=True,
         )
         return transaction_id
 
@@ -2814,9 +3225,27 @@ class OperationLedgerV2:
             )
             after_positions.append(self._position_wire(after_position, origin=origin))
             if anchor_changed:
+                if existing_anchor is not None:
+                    existing_history_path = self._anchor_history_path(
+                        origin,
+                        existing_anchor.anchor_hash,
+                    )
+                    existing_history_bytes = canonical_json_bytes(existing_anchor)
+                    if self._optional_bytes(existing_history_path) is None:
+                        self._persist_anchor_history(existing_anchor)
+                    target_bytes.append(
+                        (existing_history_path, existing_history_bytes),
+                    )
                 target_bytes.extend(
                     (
                         (self._checkpoint_path(bundle.anchor), bundle.checkpoint),
+                        (
+                            self._anchor_history_path(
+                                origin,
+                                bundle.anchor.anchor_hash,
+                            ),
+                            canonical_json_bytes(bundle.anchor),
+                        ),
                         (
                             anchor_path,
                             canonical_json_bytes(bundle.anchor),

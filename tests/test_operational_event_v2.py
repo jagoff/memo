@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -99,6 +99,26 @@ def test_ordinary_v2_hash_and_wire_omit_new_migration_defaults() -> None:
     assert b'"migration_origin_sha256"' not in encoded
     assert b'"migration_origin"' not in signed
     assert b'"migration_origin_sha256"' not in signed
+
+
+def test_canonical_dataclass_and_public_mapping_have_identical_bytes() -> None:
+    ordinary = _event()
+    migration = MigrationOrigin(
+        schema="memo.operational_migration_origin.v1",
+        attempt_id="attempt-1",
+        migration_device_id="migration-device",
+        source_manifest_sha256="a" * 64,
+        capability_manifest_sha256="b" * 64,
+        attestor_device_id="device-a",
+        attestor_key_id="key-1",
+        roster_version=1,
+        issued_at="2026-07-29T12:00:00Z",
+        expires_at="2026-07-29T13:00:00Z",
+        signature="sig",
+    )
+
+    assert canonical_json_bytes(ordinary) == canonical_json_bytes(asdict(ordinary))
+    assert canonical_json_bytes(migration) == canonical_json_bytes(asdict(migration))
 
 
 def _source_proof(sequence: int, *, origin: str = "source-device") -> SourceProof:

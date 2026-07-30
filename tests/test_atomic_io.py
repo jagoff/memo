@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -37,4 +38,50 @@ def test_secure_directory_survives_directory_to_symlink_swap(tmp_path: Path) -> 
         authority.atomic_write_bytes(Path("nested") / "value.bin", b"retained")
 
     assert (retained / "nested" / "value.bin").read_bytes() == b"retained"
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("marker_name", ("COMMITTED.json", "APPLIED.json"))
+def test_create_bytes_exclusive_never_exposes_partial_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    marker_name: str,
+) -> None:
+    root = tmp_path / "authority"
+    root.mkdir()
+    destination = root / marker_name
+    real_write_all = atomic_io._write_all
+
+    def fail_after_partial_write(descriptor: int, data: bytes) -> None:
+        os.write(descriptor, data[: max(1, len(data) // 2)])
+        raise OSError("simulated process loss during marker write")
+
+    monkeypatch.setattr(atomic_io, "_write_all", fail_after_partial_write)
+    with atomic_io.open_secure_directory(root) as directory:
+        with pytest.raises(OSError, match="simulated process loss"):
+            directory.create_bytes_exclusive(destination.name, b'{"phase":"committed"}')
+
+    assert destination.exists() is False
+
+    monkeypatch.setattr(atomic_io, "_write_all", real_write_all)
+    with atomic_io.open_secure_directory(root) as directory:
+        directory.create_bytes_exclusive(destination.name, b'{"phase":"committed"}')
+    assert destination.read_bytes() == b'{"phase":"committed"}'
+
+
+def test_authority_admission_lock_retains_opened_root_across_path_swap(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "authority"
+    root.mkdir()
+    retained_path = tmp_path / "retained"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    with atomic_io.authority_admission_lock(root) as authority:
+        root.rename(retained_path)
+        root.symlink_to(outside, target_is_directory=True)
+        authority.atomic_write_bytes("marker.json", b"retained")
+
+    assert (retained_path / "marker.json").read_bytes() == b"retained"
     assert list(outside.iterdir()) == []

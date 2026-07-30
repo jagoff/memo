@@ -242,24 +242,35 @@ class SecureDirectory:
         mode: int = 0o600,
     ) -> None:
         parent, name = self._parent(relative, create=True)
+        temporary = f".{name}.{secrets.token_hex(16)}.tmp"
         descriptor = -1
         try:
             descriptor = os.open(
-                name,
+                temporary,
                 os.O_CREAT | os.O_EXCL | os.O_WRONLY | _NOFOLLOW,
                 mode,
                 dir_fd=parent,
             )
-            _require_regular_file(descriptor, f"authority file {relative}")
+            _require_regular_file(descriptor, f"temporary authority file {temporary}")
             _write_all(descriptor, bytes(data))
             os.fchmod(descriptor, mode)
             os.fsync(descriptor)
             os.close(descriptor)
             descriptor = -1
+            os.link(
+                temporary,
+                name,
+                src_dir_fd=parent,
+                dst_dir_fd=parent,
+                follow_symlinks=False,
+            )
+            os.unlink(temporary, dir_fd=parent)
             os.fsync(parent)
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=parent)
             os.close(parent)
 
     def append_bytes(
@@ -375,13 +386,42 @@ class SecureDirectory:
 
 def open_secure_directory(root: Path, *, create: bool = False) -> SecureDirectory:
     """Open an absolute directory without following any path component."""
-    absolute, descriptor = _open_absolute_directory(Path(root), create=create)
+    absolute = Path(os.path.abspath(os.fspath(root)))
+    retained = getattr(_HELD_LOCKS, "authorities", {})
+    candidates = [
+        (authority_root, directory)
+        for authority_root, (directory, _depth) in retained.items()
+        if absolute == authority_root or authority_root in absolute.parents
+    ]
+    if candidates:
+        authority_root, directory = max(
+            candidates,
+            key=lambda item: len(item[0].parts),
+        )
+        relative = absolute.relative_to(authority_root)
+        descriptor = directory._open_directory(relative.parts, create=create)
+        return SecureDirectory(path=absolute, descriptor=descriptor)
+    absolute, descriptor = _open_absolute_directory(absolute, create=create)
     return SecureDirectory(path=absolute, descriptor=descriptor)
 
 
 def _open_compatible_directory(root: Path, *, create: bool) -> SecureDirectory:
     """Retain a directory fd while preserving legacy ancestor-symlink behavior."""
     absolute = Path(os.path.abspath(os.fspath(root)))
+    retained = getattr(_HELD_LOCKS, "authorities", {})
+    candidates = [
+        (authority_root, directory)
+        for authority_root, (directory, _depth) in retained.items()
+        if absolute == authority_root or authority_root in absolute.parents
+    ]
+    if candidates:
+        authority_root, directory = max(
+            candidates,
+            key=lambda item: len(item[0].parts),
+        )
+        relative = absolute.relative_to(authority_root)
+        descriptor = directory._open_directory(relative.parts, create=create)
+        return SecureDirectory(path=absolute, descriptor=descriptor)
     if create:
         os.makedirs(absolute, mode=0o700, exist_ok=True)
     descriptor = os.open(
@@ -440,7 +480,11 @@ def _directory_lock(
                 )
             except FileNotFoundError:
                 observed = None
-            if observed is not None and stat.S_ISLNK(observed.st_mode):
+            if (
+                reject_ancestor_symlinks
+                and observed is not None
+                and stat.S_ISLNK(observed.st_mode)
+            ):
                 raise ValueError(f"unsafe authority lock target: {target}")
         relative_target = "/".join(target_parts) or "."
         identity = f"{namespace}:{device}:{inode}:{relative_target}"
@@ -480,14 +524,32 @@ def _directory_lock(
 
 
 @contextmanager
-def authority_admission_lock(root: Path) -> Iterator[None]:
+def authority_admission_lock(root: Path) -> Iterator[SecureDirectory]:
     """Serialize admission against roster and epoch changes for one authority."""
+    target = Path(os.path.abspath(os.fspath(root)))
+    retained = getattr(_HELD_LOCKS, "authorities", None)
+    if retained is None:
+        retained = {}
+        _HELD_LOCKS.authorities = retained
+    existing = retained.get(target)
+    if existing is not None:
+        directory, depth = existing
+        retained[target] = (directory, depth + 1)
+        try:
+            yield directory
+        finally:
+            retained[target] = (directory, depth)
+        return
     with _directory_lock(
-        root,
+        target,
         namespace="authority-admission-v1",
         reject_ancestor_symlinks=True,
-    ):
-        yield
+    ), open_secure_directory(target, create=True) as directory:
+        retained[target] = (directory, 1)
+        try:
+            yield directory
+        finally:
+            retained.pop(target, None)
 
 
 @contextmanager

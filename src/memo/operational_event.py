@@ -47,7 +47,34 @@ def _json_value(value: object) -> object:
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("canonical operational mappings require string keys")
-        return {key: _json_value(item) for key, item in value.items()}
+        body = {key: _json_value(item) for key, item in value.items()}
+        schema = body.get("schema")
+        if schema == "memo.operational_event.v2":
+            if body.get("migration_origin") is None:
+                body.pop("migration_origin", None)
+            if not body.get("migration_origin_sha256"):
+                body.pop("migration_origin_sha256", None)
+        elif schema == "memo.operational_migration_origin.v1":
+            if not body.get("source_proof_root_sha256"):
+                body.pop("source_proof_root_sha256", None)
+            if body.get("source_proof_count") == 0:
+                body.pop("source_proof_count", None)
+        elif set(body) == {
+            "source_system",
+            "source_event_id",
+            "source_schema",
+            "source_origin",
+            "source_sequence",
+            "source_previous_hash",
+            "source_event_hash",
+            "source_content_hash",
+            "source_actor",
+            "source_subject_uri",
+            "authentication",
+        }:
+            if body.get("authentication") is None:
+                body.pop("authentication", None)
+        return body
     if isinstance(value, (tuple, list)):
         return [_json_value(item) for item in value]
     return value

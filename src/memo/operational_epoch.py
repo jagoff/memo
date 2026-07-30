@@ -158,6 +158,16 @@ def atomic_write_text(destination: Path, text: str) -> None:
         )
 
 
+def _authority_relative(root: Path, path: Path) -> Path:
+    try:
+        relative = Path(path).absolute().relative_to(Path(root).absolute())
+    except ValueError as exc:
+        raise AuthorityEpochError(f"authority epoch path escapes root: {path}") from exc
+    if not relative.parts:
+        raise AuthorityEpochError("authority epoch file path is required")
+    return relative
+
+
 def _canonical_text(value: object) -> str:
     return canonical_json_bytes(value).decode("utf-8")
 
@@ -175,7 +185,7 @@ def _is_sha256(value: object) -> bool:
 
 
 def _authority_root_sha256(fence: EpochFence) -> str:
-    canonical_root = fence.root.expanduser().resolve()
+    canonical_root = fence.root.expanduser().absolute()
     return hashlib.sha256(
         b"memo-operational-authority-root-v1\0" + os.fsencode(canonical_root)
     ).hexdigest()
@@ -621,7 +631,10 @@ class EpochFence:
 
     def _read_json(self, path: Path, description: str) -> dict[str, Any]:
         try:
-            text = path.read_text(encoding="utf-8")
+            with open_secure_directory(self.root) as directory:
+                text = directory.read_bytes(
+                    _authority_relative(self.root, path),
+                ).decode("utf-8")
             value = json.loads(text)
         except FileNotFoundError:
             raise
@@ -630,6 +643,13 @@ class EpochFence:
         if not isinstance(value, dict) or _canonical_text(value) != text:
             raise AuthorityEpochError(f"authority epoch {description} must be canonical")
         return value
+
+    def _authority_exists(self, path: Path) -> bool:
+        try:
+            with open_secure_directory(self.root) as directory:
+                return directory.exists(_authority_relative(self.root, path))
+        except FileNotFoundError:
+            return False
 
     def _recover_prepared_authority(self) -> None:
         try:
@@ -673,7 +693,7 @@ class EpochFence:
             ]
             present = 0
             for path, description, document_index in existing:
-                if not path.exists():
+                if not self._authority_exists(path):
                     continue
                 present += 1
                 body = self._read_json(path, description)
@@ -715,8 +735,8 @@ class EpochFence:
                 raise AuthorityEpochError("authority epoch pin commit failed") from exc
 
     def _read_authority(self, *, required: bool = True) -> EpochMarkerAuthorization | None:
-        marker_exists = self.marker_path.exists()
-        high_watermark_exists = self.high_watermark_path.exists()
+        marker_exists = self._authority_exists(self.marker_path)
+        high_watermark_exists = self._authority_exists(self.high_watermark_path)
         if not marker_exists and not high_watermark_exists:
             try:
                 pin = self.pin_store._read(self.root)

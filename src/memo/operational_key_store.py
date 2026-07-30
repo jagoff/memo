@@ -214,6 +214,7 @@ class AuthorityPinStore:
     """Root-bound crash-recoverable pins for roster and authority epochs."""
 
     _root: Path
+    _location_path: Path
     _provider: _AuthorityPinProvider
     _installation_id: str
     _lock_path: Path
@@ -229,7 +230,8 @@ class AuthorityPinStore:
         *,
         provider: _AuthorityPinProvider,
     ) -> AuthorityPinStore:
-        canonical_root = Path(root).expanduser().resolve()
+        location_path = Path(root).expanduser().absolute()
+        canonical_root = location_path.resolve()
         location_binding = hashlib.sha256(
             b"memo-authority-root-v1\0" + os.fsencode(canonical_root)
         ).hexdigest()
@@ -240,6 +242,7 @@ class AuthorityPinStore:
             raise KeyStoreError("authority installation binding is invalid") from None
         instance = object.__new__(cls)
         instance._root = canonical_root
+        instance._location_path = location_path
         instance._provider = provider
         instance._installation_id = installation_id
         instance._lock_path = (
@@ -273,7 +276,10 @@ class AuthorityPinStore:
         return self._installation_id
 
     def _assert_bound(self, root: Path) -> None:
-        if Path(root).expanduser().resolve() != self._root:
+        candidate = Path(root).expanduser()
+        if candidate.absolute() == self._location_path:
+            return
+        if candidate.resolve() != self._root:
             raise KeyStoreError("authority pin store is bound to a different root")
 
     @staticmethod
