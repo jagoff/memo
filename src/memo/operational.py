@@ -32,13 +32,16 @@ class _LedgerView:
     """Read-only ledger facade; writes require the authorized store path."""
 
     def __init__(self, ledger: OperationLedger) -> None:
-        self._ledger = ledger
+        self.__ledger = ledger
 
     def append(self, *args: Any, **kwargs: Any) -> Any:
         raise PermissionError("operational ledger appends require store authorization")
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._ledger, name)
+    def validated_events(self) -> Any:
+        return self.__ledger.validated_events()
+
+    def head_hashes(self) -> Any:
+        return self.__ledger.head_hashes()
 
 if TYPE_CHECKING:
     from memo.operation_ledger_v2 import OperationLedgerV2
