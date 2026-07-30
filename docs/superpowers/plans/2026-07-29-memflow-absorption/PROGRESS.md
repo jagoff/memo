@@ -44,9 +44,11 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   de key default bajo el lock de sesión. Revisión final: `PASS`, `141 passed`.
 - [ ] Completar el gate diferido `P01-T03 MEDIUM`: stale/missing epoch por
   MCP/CLI/daemon/Memory/direct store queda bloqueante de T7.
-- [ ] Corregir `P03-T01`: manifest fail-closed ante symlinks y receipts stale;
-  validar snapshot bytes/target/mode, cobertura/freshness estructurada,
-  predicates/fixtures y transform allowlist con digest.
+- [x] Corregir `P03-T01`: manifest fail-closed ante symlinks y receipts stale;
+  snapshot post-publication reverified, receipts v2 firmados con buckets
+  horarios y agregados por evento, y transforms/fixtures canónicos con
+  registry obligatorio y digest en operation-map. Commits `d14755bc`..`86d87e91`,
+  `42` pruebas focalizadas, Ruff/mypy limpios y revisiones independientes PASS.
 - [x] Corregir `P03-T02/T03`: cubrir todos los writers CLI/auxiliares y
   autoridad descriptor-relative. Auditoría confirmó writers sin fence en
   chat delete, dream, homeostasis, autopilot, kernel, user_signal, lookup,
@@ -501,7 +503,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P02-T09 | Writer, daemon y health | — | — | — | — | — | — | — |
 | P02-T10 | APIs exclusivamente Memo | — | — | — | — | — | — | — |
 | P02-T11 | Runtime distribuido E2E | — | — | — | — | — | — | — |
-| P03-T01 | Snapshot, manifest e inventario | Codex | `90a7144e` | import RED | focused `32`; matriz `60`; full `6138` | `f6ca3fff`…`7858d540` | pendiente | — |
+| P03-T01 | Snapshot, manifest e inventario | Codex + agentes especializados | `90a7144e` | receipts stale, cobertura declarativa, transforms arbitrarios | `42` focused; Ruff/mypy/diff-check | `d14755bc` + `e5320f96` + `14cf56f4` + `a4dc2ae8` + `ee6a0c7f` + `6b7b83a9` + `f331798f` + `1c0e8af5` + `4187276a` + `785155cc` + `f968c923` + `647fc1d1` + `e3152027` + `eac18e20` + `c7c39f05` + `1b2ef7c2` + `ded0ca3c` + `86d87e91` | **PASS final** | revisiones independientes PASS; Synapse registry threaded |
 | P03-T02 | Fencing de requests Memflow | Codex + agente especializado | Memflow `5426e8e5` | writers directos y dominios/compatibilidad | `131` focused; Ruff/mypy/diff-check | `c0ae3a0779` + `4b3f99348` + `ab252b7bc` + `303c6a4ad` + `b15cf9570` + `3cb254dc3` | **PASS final** | revisión independiente PASS |
 | P03-T03 | Drain y startup refusal | Codex + agentes especializados | Memflow `2c643863` | Git env/root, `.git` symlink/swap, descriptor ABA | focused `79`; integrated `312` | `a3a6070912` + `45b22d6c64` + `8ebc663091` + `7193be2a0` | **PASS final** | revisión independiente PASS |
 | P03-T04 | Aislamiento de Synapse | Codex + agentes especializados | Synapse `45c146d5` | regresiones Git-object, attestation, submódulos y mounts | focused `45`; re-review subset `14` | `933445fd` + `f32e789` + `8600800` | **PASS final** | — |
