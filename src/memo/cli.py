@@ -35,6 +35,7 @@ from memo.cli_banner import codex_badge_cmd, startup_banner_cmd
 from memo.cli_briefing import briefing
 from memo.cli_capture import capture_stop, capture_tick, episodes_group, resume
 from memo.cli_chat import chat_group
+from memo.cli_chat_session import chat_session_group
 from memo.cli_chronicle import chronicle_cmd
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
@@ -460,6 +461,7 @@ cli.add_command(context_pack_cmd)
 cli.add_command(embed_cmd)
 cli.add_command(chat_ask)
 cli.add_command(chat_group)
+cli.add_command(chat_session_group)
 cli.add_command(rerank_cmd)
 cli.add_command(list_cmd)
 cli.add_command(get)
