@@ -822,6 +822,20 @@ class OperationalStore:
             raise ValueError("signal marker must not be empty")
         if int(epoch) < 0:
             raise ValueError("signal epoch must be non-negative")
+        from memo.errors import OperationalError, OperationalErrorCode
+        from memo.operational_epoch import CommitContext
+
+        context = self._context_provider() if self._context_provider else None
+        if not isinstance(context, CommitContext):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "authenticated epoch context is required for operational signals",
+                retryable=False,
+            )
+        if context.authority_epoch != int(epoch):
+            raise ValueError("signal epoch does not match authenticated context")
+        if fence and fence != context.control_oid:
+            raise ValueError("signal fence does not match authenticated control")
         with authority_write_lock(self.state_dir / "operational-transactions"):
             state = self._read_snapshot()
             existing = state["signals"].get(marker)
@@ -842,6 +856,7 @@ class OperationalStore:
                 asdict(item),
                 subject_uri=f"memo://signal/{marker}",
                 actor=ActorIdentity(actor_id=actor_id, actor_kind="agent"),
+                context=context,
             )
             return item
 
