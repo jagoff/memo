@@ -407,6 +407,13 @@ def _register_outcome_tools(server: Any, memory: Any) -> None:
             str,
             Field(description="Title of the new procedure or failure-pattern memory."),
         ],
+        idempotency_key: Annotated[
+            str,
+            Field(
+                min_length=1,
+                description="Stable caller key for exactly-once durable promotion.",
+            ),
+        ],
         kind: Annotated[
             str,
             Field(
@@ -442,6 +449,7 @@ def _register_outcome_tools(server: Any, memory: Any) -> None:
             content=content,
             reason=reason,
             actor_id=actor_id,
+            idempotency_key=idempotency_key,
         ).to_dict()
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import memo.operation_views as operation_views
+from memo.durable_outbox import canonical_save_request_hash, promotion_operation_key
 from memo.errors import OperationalError
 from memo.identity import PrincipalIdentity
 from memo.operation_view_schema import connect_operational_db, ensure_operational_schema
@@ -19,6 +20,9 @@ from memo.operational_event_types import (
     CONFLICT_RESOLVED,
     COORDINATION_CREATED,
     DURABLE_PROMOTION_COMPLETED,
+    DURABLE_PROMOTION_REJECTED,
+    DURABLE_PROMOTION_REQUESTED,
+    DURABLE_PROMOTION_RETRY_SCHEDULED,
     FOCUS_CLEARED,
     FOCUS_SET,
     HANDOFF_CONSUMED,
@@ -27,6 +31,15 @@ from memo.operational_event_types import (
     SESSION_CHECKPOINTED,
     SESSION_STATUS_CHANGED,
 )
+
+_PROMOTION_SAVE_KWARGS = {
+    "content": "body",
+    "title": "title",
+    "extra": {"provenance": {"source_event_ids": ["outcome-event-1"]}},
+}
+_PROMOTION_REQUEST_HASH = canonical_save_request_hash(_PROMOTION_SAVE_KWARGS)
+_PROMOTION_OPERATION_KEY = promotion_operation_key("promotion-1")
+_PROMOTION_ID = _PROMOTION_OPERATION_KEY.removeprefix("promotion/")
 
 
 def _identity() -> PrincipalIdentity:
@@ -425,7 +438,12 @@ def test_durable_completion_without_intent_rolls_back(tmp_path: Path) -> None:
     completion = _event(
         1,
         DURABLE_PROMOTION_COMPLETED,
-        {"promotion_id": "promotion-1", "memory_id": "memory-1"},
+        {
+            "promotion_id": _PROMOTION_ID,
+            "operation_key": _PROMOTION_OPERATION_KEY,
+            "request_hash": _PROMOTION_REQUEST_HASH,
+            "memory_id": "memory-1",
+        },
     )
 
     with pytest.raises(OperationalError, match="no intent"):
@@ -434,3 +452,148 @@ def test_durable_completion_without_intent_rolls_back(tmp_path: Path) -> None:
     with connect_operational_db(store.path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM applied_events").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM durable_outbox").fetchone()[0] == 0
+
+
+def _promotion_request(
+    *,
+    request_hash: str = _PROMOTION_REQUEST_HASH,
+) -> dict[str, object]:
+    return {
+        "promotion_id": _PROMOTION_ID,
+        "idempotency_key": "promotion-1",
+        "operation_key": _PROMOTION_OPERATION_KEY,
+        "request_hash": request_hash,
+        "save_kwargs": _PROMOTION_SAVE_KWARGS,
+        "source_event_ids": ["outcome-event-1"],
+        "created_at": "2026-07-30T12:00:00Z",
+    }
+
+
+def test_durable_outbox_reducer_is_monotonic_and_rebuildable(tmp_path: Path) -> None:
+    events = (
+        _event(1, DURABLE_PROMOTION_REQUESTED, _promotion_request()),
+        _event(
+            2,
+            DURABLE_PROMOTION_RETRY_SCHEDULED,
+            {
+                "promotion_id": _PROMOTION_ID,
+                "operation_key": _PROMOTION_OPERATION_KEY,
+                "request_hash": _PROMOTION_REQUEST_HASH,
+                "attempt_number": 1,
+                "failure_class": "RuntimeError",
+                "retry_at": "2026-07-30T12:00:01Z",
+            },
+        ),
+        _event(
+            3,
+            DURABLE_PROMOTION_REQUESTED,
+            _promotion_request(),
+        ),
+        _event(
+            4,
+            DURABLE_PROMOTION_COMPLETED,
+            {
+                "promotion_id": _PROMOTION_ID,
+                "operation_key": _PROMOTION_OPERATION_KEY,
+                "request_hash": _PROMOTION_REQUEST_HASH,
+                "memory_id": "memory-1",
+            },
+        ),
+    )
+    first = OperationalViewStore(tmp_path / "first.db")
+    rebuilt = OperationalViewStore(tmp_path / "rebuilt.db")
+
+    first.apply_events(events)
+    rebuilt.rebuild(events)
+
+    assert first.outbox_report() == rebuilt.outbox_report()
+    assert first.state()["durable_outbox"] == rebuilt.state()["durable_outbox"]
+    assert first.outbox_report().completed == 1
+    assert first.outbox_report().pending == 0
+    assert first.state()["durable_outbox"][_PROMOTION_ID]["attempts"] == 1
+    assert first.pending_outbox(limit=10, now="2026-07-30T12:00:02Z") == []
+
+
+def test_durable_retry_attempt_gap_rolls_back(tmp_path: Path) -> None:
+    store = OperationalViewStore(tmp_path / "operational.db")
+    store.apply_events((_event(1, DURABLE_PROMOTION_REQUESTED, _promotion_request()),))
+
+    with pytest.raises(OperationalError, match="attempt"):
+        store.apply_events(
+            (
+                _event(
+                    2,
+                    DURABLE_PROMOTION_RETRY_SCHEDULED,
+                    {
+                        "promotion_id": _PROMOTION_ID,
+                        "operation_key": _PROMOTION_OPERATION_KEY,
+                        "request_hash": _PROMOTION_REQUEST_HASH,
+                        "attempt_number": 2,
+                        "failure_class": "RuntimeError",
+                        "retry_at": "2026-07-30T12:00:02Z",
+                    },
+                ),
+            )
+        )
+
+    assert store.outbox_report().retried == 0
+    assert store.outbox_report().pending == 1
+
+
+def test_changed_durable_request_never_overwrites_existing_row(tmp_path: Path) -> None:
+    store = OperationalViewStore(tmp_path / "operational.db")
+    store.apply_events((_event(1, DURABLE_PROMOTION_REQUESTED, _promotion_request()),))
+
+    with pytest.raises(OperationalError, match=r"request|identity|conflict"):
+        store.apply_events(
+            (
+                _event(
+                    2,
+                    DURABLE_PROMOTION_REQUESTED,
+                    _promotion_request(request_hash="c" * 64),
+                ),
+            )
+        )
+
+    pending = store.pending_outbox(limit=10, now="2026-07-30T12:00:00Z")
+    assert len(pending) == 1
+    assert pending[0].request_hash == _PROMOTION_REQUEST_HASH
+
+
+def test_durable_rejection_is_terminal(tmp_path: Path) -> None:
+    store = OperationalViewStore(tmp_path / "operational.db")
+    store.apply_events(
+        (
+            _event(1, DURABLE_PROMOTION_REQUESTED, _promotion_request()),
+            _event(
+                2,
+                DURABLE_PROMOTION_REJECTED,
+                {
+                    "promotion_id": _PROMOTION_ID,
+                    "operation_key": _PROMOTION_OPERATION_KEY,
+                    "request_hash": _PROMOTION_REQUEST_HASH,
+                    "failure_class": "IdentityConflictError",
+                    "reason": "durable operation identity conflict",
+                },
+            ),
+        )
+    )
+
+    assert store.outbox_report().quarantined == 1
+    assert store.outbox_report().pending == 0
+    with pytest.raises(OperationalError, match="terminal"):
+        store.apply_events(
+            (
+                _event(
+                    3,
+                    DURABLE_PROMOTION_COMPLETED,
+                    {
+                        "promotion_id": _PROMOTION_ID,
+                        "operation_key": _PROMOTION_OPERATION_KEY,
+                        "request_hash": _PROMOTION_REQUEST_HASH,
+                        "memory_id": "memory-after-rejection",
+                    },
+                ),
+            )
+        )
+    assert store.outbox_report().quarantined == 1

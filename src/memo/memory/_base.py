@@ -28,6 +28,7 @@ class _MemoryBase:
     fact_edges: Any
     operational: Any
     write_policy: Any
+    _capabilities: dict[str, Any]
     _chat: Any
     _cache: Any
     _reranker: Any
@@ -62,6 +63,8 @@ class _MemoryBase:
     # Ellipsis-body stubs so a mixin that calls a method owned by another
     # mixin type-checks standalone; the real impl wins via MRO.
     def save(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def save_operation(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def find_by_operation_key(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def search(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def list(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def get(self, id_: str) -> MemoryRecord | None: ...  # type: ignore[empty-body]

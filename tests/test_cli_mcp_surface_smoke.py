@@ -11,6 +11,7 @@ import ast
 import asyncio
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click import Command, Group
@@ -71,6 +72,23 @@ def test_cli_command_help_smoke(command_path: tuple[str, ...], tmp_path: Path) -
     assert "Usage:" in result.output
 
 
+def test_procedure_promote_cli_requires_idempotency_key() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "operational",
+            "procedure",
+            "promote",
+            "Procedure title",
+            "--memory",
+            "memory-1",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Missing option '--idempotency-key'" in result.output
+
+
 def _decorated_server_tool_names() -> set[str]:
     names: set[str] = set()
     for path in sorted(Path("src/memo").glob("server*.py")):
@@ -90,7 +108,11 @@ def _decorated_server_tool_names() -> set[str]:
     return names
 
 
-def _mcp_tool_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str) -> set[str]:
+def _mcp_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+) -> list[Any]:
     monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
     monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / profile / "data"))
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / profile / "state"))
@@ -111,10 +133,26 @@ def _mcp_tool_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: st
     try:
         mem.embedder.embed = lambda inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
         server = build_server(memory=mem)
-        tools = asyncio.run(server.list_tools())
-        return {tool.name for tool in tools}
+        return list(asyncio.run(server.list_tools()))
     finally:
         mem.close()
+
+
+def _mcp_tool_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str) -> set[str]:
+    return {tool.name for tool in _mcp_tools(tmp_path, monkeypatch, profile)}
+
+
+def test_procedure_promote_mcp_requires_idempotency_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = next(
+        item
+        for item in _mcp_tools(tmp_path, monkeypatch, "full")
+        if item.name == "memo_procedure_promote"
+    )
+
+    assert "idempotency_key" in tool.parameters["required"]
 
 
 def test_mcp_full_profile_registers_every_decorated_server_tool(

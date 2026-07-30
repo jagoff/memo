@@ -12,7 +12,7 @@ import pytest
 from memo.config import Config
 from memo.contracts import AnswerStatus
 from memo.definitive import definitive_check
-from memo.errors import FederationError, MemoError, NotFoundError
+from memo.errors import FederationError, IdentityConflictError, MemoError, NotFoundError
 from memo.memory import Memory
 from memo.operation_ledger import LedgerIntegrityError, OperationLedger
 from memo.operational_event import MigrationPreparedStamp, canonical_json_bytes
@@ -285,11 +285,26 @@ def test_promote_learning_creates_grounded_procedure(mem_with_stub) -> None:
         [source.id],
         title="Verify journal before sync",
         kind="procedure",
+        idempotency_key="promote-journal-gate",
+    )
+    replay = mem_with_stub.promote_learning(
+        [source.id],
+        title="Verify journal before sync",
+        kind="procedure",
+        idempotency_key="promote-journal-gate",
+    )
+    source_event_ids = sorted(
+        event.event_id
+        for event in mem_with_stub.operational.ledger.validated_events()
+        if event.op == "outcome.record" and source.id in event.payload["memory_ids"]
     )
 
+    assert replay.id == procedure.id
     assert procedure.type == "procedure"
     assert procedure.extra["learning"]["source_memory_ids"] == [source.id]
     assert procedure.extra["provenance"]["evidence_uris"] == [f"memo://memoria/{source.id}"]
+    assert procedure.extra["provenance"]["source_event_ids"] == source_event_ids
+    assert procedure.extra["_memo_operation"]["operation_key"].startswith("promotion/")
 
 
 def test_promote_learning_rejects_unqualified_agent_claim(mem_with_stub) -> None:
@@ -305,18 +320,58 @@ def test_promote_learning_rejects_unqualified_agent_claim(mem_with_stub) -> None
         mem_with_stub.promote_learning(
             [source.id],
             title="Do not promote this",
+            idempotency_key="unqualified-promotion",
         )
 
 
 def test_promote_learning_rejects_unknown_kind(mem_with_stub) -> None:
     # Validation must be a MemoError so the MCP coordinator surfaces the reason.
     with pytest.raises(MemoError, match="kind must be"):
-        mem_with_stub.promote_learning(["whatever"], title="x", kind="bogus")
+        mem_with_stub.promote_learning(
+            ["whatever"],
+            title="x",
+            kind="bogus",
+            idempotency_key="bogus-kind",
+        )
 
 
 def test_promote_learning_rejects_empty_source_ids(mem_with_stub) -> None:
     with pytest.raises(MemoError, match="at least one source memory"):
-        mem_with_stub.promote_learning([], title="x")
+        mem_with_stub.promote_learning([], title="x", idempotency_key="empty-sources")
+
+
+def test_promote_learning_rejects_changed_payload_for_same_key(mem_with_stub) -> None:
+    source = mem_with_stub.save(
+        content="Use the verified source before promotion.",
+        title="Verified source",
+        auto_project=False,
+    )
+    for index in range(2):
+        mem_with_stub.record_task_outcome(
+            task_id=f"verified-source-{index}",
+            status="success",
+            memory_ids=[source.id],
+            idempotency_key=f"verified-source-outcome-{index}",
+        )
+    mem_with_stub.promote_learning(
+        [source.id],
+        title="Promoted procedure",
+        content="Original procedure.",
+        idempotency_key="stable-promotion-key",
+    )
+
+    with pytest.raises(IdentityConflictError):
+        mem_with_stub.promote_learning(
+            [source.id],
+            title="Promoted procedure",
+            content="Changed procedure.",
+            idempotency_key="stable-promotion-key",
+        )
+
+
+def test_promote_learning_rejects_empty_idempotency_key(mem_with_stub) -> None:
+    with pytest.raises(MemoError, match="idempotency_key"):
+        mem_with_stub.promote_learning([], title="x", idempotency_key="   ")
 
 
 def test_record_task_outcome_rejects_empty_task_id(mem_with_stub) -> None:

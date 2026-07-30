@@ -10,6 +10,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from memo.contracts import MEMO_OPERATIONAL_SCHEMA
 from memo.errors import OperationalError, OperationalErrorCode
@@ -25,7 +26,9 @@ from memo.operational_event_types import (
     CONFLICT_OPENED,
     CONFLICT_RESOLVED,
     DURABLE_PROMOTION_COMPLETED,
-    DURABLE_PROMOTION_ENQUEUED,
+    DURABLE_PROMOTION_REJECTED,
+    DURABLE_PROMOTION_REQUESTED,
+    DURABLE_PROMOTION_RETRY_SCHEDULED,
     FOCUS_CLEARED,
     FOCUS_SET,
     HANDOFF_CONSUMED,
@@ -34,6 +37,9 @@ from memo.operational_event_types import (
     SESSION_CHECKPOINTED,
     SESSION_STATUS_CHANGED,
 )
+
+if TYPE_CHECKING:
+    from memo.durable_outbox import FrozenPromotionIntent, OutboxRunReport
 
 
 @dataclass(frozen=True)
@@ -403,50 +409,161 @@ def _session_status_changed(
     return row
 
 
-def _promotion_enqueued(
+def _promotion_row(
+    connection: sqlite3.Connection,
+    promotion_id: str,
+) -> dict[str, object] | None:
+    return _read_row(
+        connection,
+        "SELECT row_json FROM durable_outbox WHERE promotion_id = ?",
+        promotion_id,
+        description="durable_outbox",
+    )
+
+
+def _assert_promotion_binding(
+    row: Mapping[str, object],
+    payload: Mapping[str, object],
+) -> None:
+    if (
+        row.get("operation_key") != payload.get("operation_key")
+        or row.get("request_hash") != payload.get("request_hash")
+    ):
+        raise _failure(
+            OperationalErrorCode.IDEMPOTENCY_CONFLICT,
+            "durable promotion event identifies a different request",
+        )
+
+
+def _assert_promotion_active(
+    row: Mapping[str, object],
+    promotion_id: str,
+) -> None:
+    if row.get("status") in {"completed", "rejected"}:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"durable promotion is already terminal: {promotion_id}",
+        )
+
+
+def _promotion_requested(
     connection: sqlite3.Connection,
     event: OperationalEventV2,
 ) -> Mapping[str, object]:
     payload = _payload(event)
     promotion_id = str(payload["promotion_id"])
-    attempt_count = payload.get("attempt_count", 0)
-    if isinstance(attempt_count, bool) or not isinstance(attempt_count, int):
-        raise _failure(
-            OperationalErrorCode.INVALID_EVENT,
-            "durable promotion attempt_count must be an integer",
-        )
+    created_at = _canonical_timestamp(str(payload["created_at"]))
     row = {
         **payload,
+        "created_at": created_at,
         "status": "pending",
-        "attempt_count": attempt_count,
-        "retry_at": str(payload.get("retry_at") or ""),
+        "attempts": 0,
+        "retry_at": "",
         "memory_id": "",
+        "failure_class": "",
+        "reason": "",
     }
+    existing = _promotion_row(connection, promotion_id)
+    if existing is not None:
+        immutable_fields = (
+            "promotion_id",
+            "idempotency_key",
+            "operation_key",
+            "request_hash",
+            "save_kwargs",
+            "source_event_ids",
+            "created_at",
+        )
+        if all(existing.get(field) == row.get(field) for field in immutable_fields):
+            return existing
+        raise _failure(
+            OperationalErrorCode.IDEMPOTENCY_CONFLICT,
+            f"durable promotion request identity conflict: {promotion_id}",
+        )
+    operation_collision = connection.execute(
+        """
+        SELECT promotion_id FROM durable_outbox
+        WHERE operation_key = ? AND promotion_id != ?
+        """,
+        (str(payload["operation_key"]), promotion_id),
+    ).fetchone()
+    if operation_collision is not None:
+        raise _failure(
+            OperationalErrorCode.IDEMPOTENCY_CONFLICT,
+            "durable promotion operation key collision",
+        )
     connection.execute(
         """
         INSERT INTO durable_outbox(
           promotion_id, operation_key, status, attempt_count, retry_at,
           memory_id, row_json, updated_event_id
         ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(promotion_id) DO UPDATE SET
-          operation_key = excluded.operation_key,
-          status = excluded.status,
-          attempt_count = excluded.attempt_count,
-          retry_at = excluded.retry_at,
-          memory_id = excluded.memory_id,
-          row_json = excluded.row_json,
-          updated_event_id = excluded.updated_event_id
         """,
         (
             promotion_id,
             str(payload["operation_key"]),
             "pending",
-            row["attempt_count"],
-            row["retry_at"],
+            0,
+            "",
             "",
             _json(row),
             event.event_id,
         ),
+    )
+    return row
+
+
+def _promotion_retry_scheduled(
+    connection: sqlite3.Connection,
+    event: OperationalEventV2,
+) -> Mapping[str, object]:
+    from memo.durable_outbox import deterministic_retry_at
+
+    payload = _payload(event)
+    promotion_id = str(payload["promotion_id"])
+    row = _promotion_row(connection, promotion_id)
+    if row is None:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"durable promotion retry has no intent: {promotion_id}",
+        )
+    _assert_promotion_binding(row, payload)
+    _assert_promotion_active(row, promotion_id)
+    attempts = row.get("attempts")
+    if isinstance(attempts, bool) or not isinstance(attempts, int):
+        raise _failure(
+            OperationalErrorCode.STORAGE_UNAVAILABLE,
+            f"durable promotion attempts are invalid: {promotion_id}",
+        )
+    requested_attempt = payload["attempt_number"]
+    if requested_attempt != attempts + 1:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"durable promotion retry attempt is not monotonic: {promotion_id}",
+        )
+    retry_at = _canonical_timestamp(str(payload["retry_at"]))
+    expected_retry_at = deterministic_retry_at(str(row["created_at"]), requested_attempt)
+    if retry_at != expected_retry_at:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"durable promotion retry timing is not deterministic: {promotion_id}",
+        )
+    row.update(
+        {
+            "status": "retry_scheduled",
+            "attempts": requested_attempt,
+            "retry_at": retry_at,
+            "failure_class": payload["failure_class"],
+        }
+    )
+    connection.execute(
+        """
+        UPDATE durable_outbox
+        SET status = 'retry_scheduled', attempt_count = ?, retry_at = ?,
+            row_json = ?, updated_event_id = ?
+        WHERE promotion_id = ?
+        """,
+        (requested_attempt, retry_at, _json(row), event.event_id, promotion_id),
     )
     return row
 
@@ -457,26 +574,57 @@ def _promotion_completed(
 ) -> Mapping[str, object]:
     payload = _payload(event)
     promotion_id = str(payload["promotion_id"])
-    row = connection.execute(
-        "SELECT row_json FROM durable_outbox WHERE promotion_id = ?",
-        (promotion_id,),
-    ).fetchone()
+    row = _promotion_row(connection, promotion_id)
     if row is None:
         raise _failure(
             OperationalErrorCode.INVALID_EVENT,
             f"durable promotion completion has no intent: {promotion_id}",
         )
-    body: dict[str, object] = json.loads(row["row_json"])
-    body.update({"status": "completed", "memory_id": payload["memory_id"]})
+    _assert_promotion_binding(row, payload)
+    _assert_promotion_active(row, promotion_id)
+    row.update({"status": "completed", "memory_id": payload["memory_id"], "retry_at": ""})
     connection.execute(
         """
         UPDATE durable_outbox
         SET status = 'completed', memory_id = ?, row_json = ?, updated_event_id = ?
         WHERE promotion_id = ?
         """,
-        (str(payload["memory_id"]), _json(body), event.event_id, promotion_id),
+        (str(payload["memory_id"]), _json(row), event.event_id, promotion_id),
     )
-    return body
+    return row
+
+
+def _promotion_rejected(
+    connection: sqlite3.Connection,
+    event: OperationalEventV2,
+) -> Mapping[str, object]:
+    payload = _payload(event)
+    promotion_id = str(payload["promotion_id"])
+    row = _promotion_row(connection, promotion_id)
+    if row is None:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"durable promotion rejection has no intent: {promotion_id}",
+        )
+    _assert_promotion_binding(row, payload)
+    _assert_promotion_active(row, promotion_id)
+    row.update(
+        {
+            "status": "rejected",
+            "failure_class": payload["failure_class"],
+            "reason": payload["reason"],
+            "retry_at": "",
+        }
+    )
+    connection.execute(
+        """
+        UPDATE durable_outbox
+        SET status = 'rejected', retry_at = '', row_json = ?, updated_event_id = ?
+        WHERE promotion_id = ?
+        """,
+        (_json(row), event.event_id, promotion_id),
+    )
+    return row
 
 
 EVENT_REDUCERS: dict[str, EventReducer] = {
@@ -491,8 +639,10 @@ EVENT_REDUCERS: dict[str, EventReducer] = {
     OUTCOME_RECORDED: _outcome_recorded,
     SESSION_CHECKPOINTED: _session_checkpointed,
     SESSION_STATUS_CHANGED: _session_status_changed,
-    DURABLE_PROMOTION_ENQUEUED: _promotion_enqueued,
+    DURABLE_PROMOTION_REQUESTED: _promotion_requested,
+    DURABLE_PROMOTION_RETRY_SCHEDULED: _promotion_retry_scheduled,
     DURABLE_PROMOTION_COMPLETED: _promotion_completed,
+    DURABLE_PROMOTION_REJECTED: _promotion_rejected,
 }
 
 
@@ -799,6 +949,11 @@ class OperationalViewStore:
                 "SELECT session_id, row_json FROM sessions",
                 "session_id",
             ),
+            "durable_outbox": self._rows(
+                connection,
+                "SELECT promotion_id, row_json FROM durable_outbox",
+                "promotion_id",
+            ),
             "last_event_hash": str(last["event_hash"]) if last is not None else "",
             "journal_heads": {
                 str(row["origin_device"]): str(row["event_hash"]) for row in cursors
@@ -809,6 +964,91 @@ class OperationalViewStore:
         with closing(connect_operational_db(self.path)) as connection:
             ensure_operational_schema(connection)
             return self._state(connection, project=project)
+
+    def outbox_intent(self, promotion_id: str) -> FrozenPromotionIntent | None:
+        from memo.durable_outbox import frozen_intent_from_row
+
+        body = self.outbox_status(promotion_id)
+        return frozen_intent_from_row(body) if body is not None else None
+
+    def outbox_status(self, promotion_id: str) -> dict[str, object] | None:
+        with closing(connect_operational_db(self.path)) as connection:
+            ensure_operational_schema(connection)
+            row = connection.execute(
+                "SELECT row_json FROM durable_outbox WHERE promotion_id = ?",
+                (promotion_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        body = json.loads(row["row_json"])
+        if not isinstance(body, dict):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"stored durable promotion row is invalid: {promotion_id}",
+            )
+        return body
+
+    def pending_outbox(
+        self,
+        *,
+        limit: int,
+        now: str | None = None,
+    ) -> list[FrozenPromotionIntent]:
+        from memo.durable_outbox import frozen_intent_from_row
+        from memo.util import utc_now_iso
+
+        if isinstance(limit, bool) or limit < 1:
+            raise ValueError("limit must be >= 1")
+        canonical_now = _canonical_timestamp(now or utc_now_iso())
+        with closing(connect_operational_db(self.path)) as connection:
+            ensure_operational_schema(connection)
+            rows = connection.execute(
+                """
+                SELECT row_json FROM durable_outbox
+                WHERE status = 'pending'
+                   OR (status = 'retry_scheduled' AND retry_at <= ?)
+                ORDER BY
+                  CASE
+                    WHEN retry_at = '' THEN json_extract(row_json, '$.created_at')
+                    ELSE retry_at
+                  END,
+                  json_extract(row_json, '$.created_at'),
+                  promotion_id
+                LIMIT ?
+                """,
+                (canonical_now, limit),
+            ).fetchall()
+        intents: list[FrozenPromotionIntent] = []
+        for row in rows:
+            body = json.loads(row["row_json"])
+            if not isinstance(body, dict):
+                raise _failure(
+                    OperationalErrorCode.STORAGE_UNAVAILABLE,
+                    "stored durable promotion row is invalid",
+                )
+            intents.append(frozen_intent_from_row(body))
+        return intents
+
+    def outbox_report(self) -> OutboxRunReport:
+        from memo.durable_outbox import OutboxRunReport
+
+        with closing(connect_operational_db(self.path)) as connection:
+            ensure_operational_schema(connection)
+            rows = connection.execute(
+                """
+                SELECT status, COUNT(*) AS count
+                FROM durable_outbox
+                GROUP BY status
+                """
+            ).fetchall()
+        counts = {str(row["status"]): int(row["count"]) for row in rows}
+        return OutboxRunReport(
+            examined=sum(counts.values()),
+            completed=counts.get("completed", 0),
+            retried=counts.get("retry_scheduled", 0),
+            quarantined=counts.get("rejected", 0),
+            pending=counts.get("pending", 0) + counts.get("retry_scheduled", 0),
+        )
 
     def idempotency(
         self,

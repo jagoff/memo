@@ -314,6 +314,7 @@ def procedure_candidates(
 @click.option("--content", default=None)
 @click.option("--reason", default="outcome-backed promotion")
 @click.option("--actor", default="memo")
+@click.option("--idempotency-key", required=True)
 @_with_memory
 def procedure_promote(
     memory: Any,
@@ -323,6 +324,7 @@ def procedure_promote(
     content: str | None,
     reason: str,
     actor: str,
+    idempotency_key: str,
 ) -> None:
     _json(
         memory.promote_learning(
@@ -332,6 +334,7 @@ def procedure_promote(
             content=content,
             reason=reason,
             actor_id=actor,
+            idempotency_key=idempotency_key,
         ).to_dict()
     )
 

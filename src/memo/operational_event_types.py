@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Callable, Mapping
+from datetime import datetime
 
 from memo.errors import OperationalError, OperationalErrorCode
 
@@ -34,8 +37,12 @@ TERMINAL_COMMAND_FINISHED = "memo.operational.terminal.command_finished.v1"
 HEALTH_REPORTED = "memo.operational.health.reported.v1"
 ROSTER_UPDATED = "memo.operational.roster.updated.v1"
 COMPACTION_COMPLETED = "memo.operational.compaction.completed.v1"
-DURABLE_PROMOTION_ENQUEUED = "memo.operational.durable_promotion.enqueued.v1"
-DURABLE_PROMOTION_COMPLETED = "memo.operational.durable_promotion.completed.v1"
+DURABLE_PROMOTION_REQUESTED = "memo.operational.durable.promotion.requested.v1"
+DURABLE_PROMOTION_RETRY_SCHEDULED = (
+    "memo.operational.durable.promotion.retry_scheduled.v1"
+)
+DURABLE_PROMOTION_COMPLETED = "memo.operational.durable.promotion.completed.v1"
+DURABLE_PROMOTION_REJECTED = "memo.operational.durable.promotion.rejected.v1"
 
 
 def _invalid(message: str) -> OperationalError:
@@ -106,6 +113,58 @@ def _string_list(payload: Mapping[str, object], field: str) -> tuple[str, ...]:
     ):
         raise _invalid(f"payload field {field} must be a list of non-empty strings")
     return tuple(value)
+
+
+def _unique_string_list(payload: Mapping[str, object], field: str) -> tuple[str, ...]:
+    values = _string_list(payload, field)
+    if len(set(values)) != len(values):
+        raise _invalid(f"payload field {field} must not contain duplicates")
+    if values != tuple(sorted(values)):
+        raise _invalid(f"payload field {field} must use canonical sorted order")
+    return values
+
+
+def _timestamp(payload: Mapping[str, object], field: str) -> str:
+    value = _string(payload, field)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise _invalid(f"payload field {field} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise _invalid(f"payload field {field} must include a timezone")
+    return value
+
+
+def _json_value(value: object, *, field: str) -> None:
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return
+    if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            raise _invalid(f"payload field {field} must use string mapping keys")
+        for key, item in value.items():
+            _json_value(item, field=f"{field}.{key}")
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _json_value(item, field=f"{field}[]")
+        return
+    raise _invalid(f"payload field {field} must contain only JSON values")
+
+
+def _exact_fields(
+    payload: Mapping[str, object],
+    fields: frozenset[str],
+) -> None:
+    actual = set(payload)
+    if actual != fields:
+        missing = sorted(fields.difference(actual))
+        unknown = sorted(actual.difference(fields))
+        details = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if unknown:
+            details.append(f"unknown {', '.join(unknown)}")
+        raise _invalid(f"durable promotion payload fields are invalid: {'; '.join(details)}")
 
 
 def _focus_set(payload: Mapping[str, object]) -> None:
@@ -263,14 +322,119 @@ def _compaction_completed(payload: Mapping[str, object]) -> None:
     _sha256(payload, "anchor_hash")
 
 
-def _promotion_enqueued(payload: Mapping[str, object]) -> None:
-    _string(payload, "promotion_id")
-    _string(payload, "operation_key")
+def _promotion_binding(payload: Mapping[str, object]) -> None:
+    promotion_id = _sha256(payload, "promotion_id")
+    operation_key = _string(payload, "operation_key")
+    if operation_key != f"promotion/{promotion_id}":
+        raise _invalid("payload field operation_key must match promotion_id")
+    _sha256(payload, "request_hash")
+
+
+def _promotion_requested(payload: Mapping[str, object]) -> None:
+    _exact_fields(
+        payload,
+        frozenset(
+            {
+                "promotion_id",
+                "idempotency_key",
+                "operation_key",
+                "request_hash",
+                "save_kwargs",
+                "source_event_ids",
+                "created_at",
+            }
+        ),
+    )
+    _promotion_binding(payload)
+    idempotency_key = _string(payload, "idempotency_key")
+    if idempotency_key != idempotency_key.strip():
+        raise _invalid("payload field idempotency_key must be normalized")
+    expected_id = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    if payload.get("promotion_id") != expected_id:
+        raise _invalid("payload field promotion_id must match idempotency_key")
+    save_kwargs = _mapping(payload, "save_kwargs")
+    _json_value(save_kwargs, field="save_kwargs")
+    try:
+        encoded = json.dumps(
+            save_kwargs,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise _invalid("payload field save_kwargs must be canonical JSON") from exc
+    if hashlib.sha256(encoded).hexdigest() != payload.get("request_hash"):
+        raise _invalid("payload field request_hash does not match save_kwargs")
+    source_event_ids = _unique_string_list(payload, "source_event_ids")
+    if not source_event_ids:
+        raise _invalid("payload field source_event_ids must not be empty")
+    extra = save_kwargs.get("extra")
+    provenance = extra.get("provenance") if isinstance(extra, Mapping) else None
+    stored_source_ids = (
+        provenance.get("source_event_ids")
+        if isinstance(provenance, Mapping)
+        else None
+    )
+    if stored_source_ids != list(source_event_ids):
+        raise _invalid(
+            "save_kwargs provenance source_event_ids must match the requested intent"
+        )
+    _timestamp(payload, "created_at")
+
+
+def _promotion_retry_scheduled(payload: Mapping[str, object]) -> None:
+    _exact_fields(
+        payload,
+        frozenset(
+            {
+                "promotion_id",
+                "operation_key",
+                "request_hash",
+                "attempt_number",
+                "failure_class",
+                "retry_at",
+            }
+        ),
+    )
+    _promotion_binding(payload)
+    _integer(payload, "attempt_number", minimum=1)
+    _string(payload, "failure_class")
+    _timestamp(payload, "retry_at")
 
 
 def _promotion_completed(payload: Mapping[str, object]) -> None:
-    _string(payload, "promotion_id")
+    _exact_fields(
+        payload,
+        frozenset(
+            {
+                "promotion_id",
+                "operation_key",
+                "request_hash",
+                "memory_id",
+            }
+        ),
+    )
+    _promotion_binding(payload)
     _string(payload, "memory_id")
+
+
+def _promotion_rejected(payload: Mapping[str, object]) -> None:
+    _exact_fields(
+        payload,
+        frozenset(
+            {
+                "promotion_id",
+                "operation_key",
+                "request_hash",
+                "failure_class",
+                "reason",
+            }
+        ),
+    )
+    _promotion_binding(payload)
+    _string(payload, "failure_class")
+    _string(payload, "reason")
 
 
 EVENT_TYPES: dict[str, PayloadValidator] = {
@@ -298,8 +462,10 @@ EVENT_TYPES: dict[str, PayloadValidator] = {
     HEALTH_REPORTED: _health_reported,
     ROSTER_UPDATED: _roster_updated,
     COMPACTION_COMPLETED: _compaction_completed,
-    DURABLE_PROMOTION_ENQUEUED: _promotion_enqueued,
+    DURABLE_PROMOTION_REQUESTED: _promotion_requested,
+    DURABLE_PROMOTION_RETRY_SCHEDULED: _promotion_retry_scheduled,
     DURABLE_PROMOTION_COMPLETED: _promotion_completed,
+    DURABLE_PROMOTION_REJECTED: _promotion_rejected,
 }
 
 
@@ -325,7 +491,9 @@ __all__ = [
     "DELIVERY_ACKNOWLEDGED",
     "DELIVERY_ENQUEUED",
     "DURABLE_PROMOTION_COMPLETED",
-    "DURABLE_PROMOTION_ENQUEUED",
+    "DURABLE_PROMOTION_REJECTED",
+    "DURABLE_PROMOTION_REQUESTED",
+    "DURABLE_PROMOTION_RETRY_SCHEDULED",
     "EVENT_TYPES",
     "FOCUS_CLEARED",
     "FOCUS_SET",

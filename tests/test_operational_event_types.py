@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from memo.contracts import ActorIdentity
+from memo.durable_outbox import canonical_save_request_hash, promotion_operation_key
 from memo.error_contract import OperationalError, OperationalErrorCode
 from memo.operational import OperationalStore
 from memo.operational_event_types import (
@@ -18,7 +19,9 @@ from memo.operational_event_types import (
     DELIVERY_ACKNOWLEDGED,
     DELIVERY_ENQUEUED,
     DURABLE_PROMOTION_COMPLETED,
-    DURABLE_PROMOTION_ENQUEUED,
+    DURABLE_PROMOTION_REJECTED,
+    DURABLE_PROMOTION_REQUESTED,
+    DURABLE_PROMOTION_RETRY_SCHEDULED,
     EVENT_TYPES,
     FOCUS_CLEARED,
     FOCUS_SET,
@@ -128,6 +131,16 @@ REAL_V1_PAYLOADS = {
 }
 
 
+_PROMOTION_SAVE_KWARGS = {
+    "content": "body",
+    "title": "title",
+    "extra": {"provenance": {"source_event_ids": ["event-1"]}},
+}
+_PROMOTION_REQUEST_HASH = canonical_save_request_hash(_PROMOTION_SAVE_KWARGS)
+_PROMOTION_OPERATION_KEY = promotion_operation_key("promotion-1")
+_PROMOTION_ID = _PROMOTION_OPERATION_KEY.removeprefix("promotion/")
+
+
 V2_NATIVE_PAYLOADS = {
     SESSION_CHECKPOINTED: {
         "session_id": "s1",
@@ -167,13 +180,35 @@ V2_NATIVE_PAYLOADS = {
         "through_sequence": 4,
         "anchor_hash": "d" * 64,
     },
-    DURABLE_PROMOTION_ENQUEUED: {
-        "promotion_id": "pr1",
-        "operation_key": "op1",
+    DURABLE_PROMOTION_REQUESTED: {
+        "promotion_id": _PROMOTION_ID,
+        "idempotency_key": "promotion-1",
+        "operation_key": _PROMOTION_OPERATION_KEY,
+        "request_hash": _PROMOTION_REQUEST_HASH,
+        "save_kwargs": _PROMOTION_SAVE_KWARGS,
+        "source_event_ids": ["event-1"],
+        "created_at": "2026-07-29T12:09:00Z",
+    },
+    DURABLE_PROMOTION_RETRY_SCHEDULED: {
+        "promotion_id": _PROMOTION_ID,
+        "operation_key": _PROMOTION_OPERATION_KEY,
+        "request_hash": _PROMOTION_REQUEST_HASH,
+        "attempt_number": 1,
+        "failure_class": "RuntimeError",
+        "retry_at": "2026-07-29T12:09:01Z",
     },
     DURABLE_PROMOTION_COMPLETED: {
-        "promotion_id": "pr1",
+        "promotion_id": _PROMOTION_ID,
+        "operation_key": _PROMOTION_OPERATION_KEY,
+        "request_hash": _PROMOTION_REQUEST_HASH,
         "memory_id": "mem1",
+    },
+    DURABLE_PROMOTION_REJECTED: {
+        "promotion_id": _PROMOTION_ID,
+        "operation_key": _PROMOTION_OPERATION_KEY,
+        "request_hash": _PROMOTION_REQUEST_HASH,
+        "failure_class": "IdentityConflictError",
+        "reason": "durable operation identity conflict",
     },
 }
 
@@ -259,6 +294,34 @@ def test_each_registered_event_rejects_empty_payload(event_type: str) -> None:
         (CURSOR_ADVANCED, {"cursor": "delivery", "position": -1}),
         (PRESENCE_UPDATED, {**V2_NATIVE_PAYLOADS[PRESENCE_UPDATED], "status": "maybe"}),
         (TERMINAL_COMMAND_FINISHED, {"command_id": "cmd1", "exit_code": True}),
+        (
+            DURABLE_PROMOTION_REQUESTED,
+            {
+                **V2_NATIVE_PAYLOADS[DURABLE_PROMOTION_REQUESTED],
+                "request_hash": "not-a-hash",
+            },
+        ),
+        (
+            DURABLE_PROMOTION_RETRY_SCHEDULED,
+            {
+                **V2_NATIVE_PAYLOADS[DURABLE_PROMOTION_RETRY_SCHEDULED],
+                "attempt_number": 0,
+            },
+        ),
+        (
+            DURABLE_PROMOTION_REQUESTED,
+            {
+                **V2_NATIVE_PAYLOADS[DURABLE_PROMOTION_REQUESTED],
+                "source_event_ids": ["event-1", "event-1"],
+            },
+        ),
+        (
+            DURABLE_PROMOTION_COMPLETED,
+            {
+                **V2_NATIVE_PAYLOADS[DURABLE_PROMOTION_COMPLETED],
+                "ignored_extra": "must fail closed",
+            },
+        ),
     ],
 )
 def test_payload_validators_reject_wrong_types_enums_and_invariants(

@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 from memo.atomic_io import authority_write_lock
 from memo.contracts import TrustTier
+from memo.durable_outbox import (
+    DurableOutboxWorker,
+    canonical_save_request_hash,
+    promotion_operation_key,
+)
 from memo.errors import NotFoundError, ValidationError
 from memo.memory._base import _MemoryBase
+from memo.memory.record import MemoryRecord
+from memo.operational_event_types import OUTCOME_RECORDED
 from memo.util import utc_now_iso
 
 _LEARNING_TYPES = {"procedure", "failure_pattern"}
@@ -68,6 +77,59 @@ def _validated_task_id(task_id: str) -> str:
     if not normalized:
         raise ValidationError("task_id cannot be empty")
     return normalized
+
+
+def _canonical_timestamp(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValidationError("source outcome has an invalid recorded_at timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValidationError("source outcome recorded_at timestamp has no timezone")
+    return (
+        parsed.astimezone(UTC)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _source_outcome_evidence(
+    memory: Any,
+    memory_ids: list[str],
+) -> tuple[tuple[str, ...], str]:
+    ledger = getattr(memory.operational, "ledger", None)
+    validated_events = getattr(ledger, "validated_events", None)
+    if not callable(validated_events):
+        raise ValidationError("verified operational outcome events are unavailable")
+    source_ids = set(memory_ids)
+    covered_ids: set[str] = set()
+    evidence: list[tuple[str, str]] = []
+    for event in validated_events():
+        if (
+            getattr(event, "op", None) != "outcome.record"
+            and getattr(event, "event_type", None) != OUTCOME_RECORDED
+        ):
+            continue
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, Mapping):
+            continue
+        raw_ids = payload.get("memory_ids")
+        cited = {str(value) for value in raw_ids} if isinstance(raw_ids, (list, tuple)) else set()
+        relevant_ids = cited.intersection(source_ids)
+        if not relevant_ids:
+            continue
+        covered_ids.update(relevant_ids)
+        recorded_at = str(
+            payload.get("recorded_at")
+            or getattr(event, "created_at", None)
+            or getattr(event, "ts", "")
+        )
+        evidence.append((str(getattr(event, "event_id", "")), _canonical_timestamp(recorded_at)))
+    evidence = sorted({item for item in evidence if item[0]})
+    if not evidence or covered_ids != source_ids:
+        raise ValidationError("source memories have no verified outcome event provenance")
+    latest = max(timestamp for _event_id, timestamp in evidence)
+    return tuple(event_id for event_id, _timestamp in evidence), latest
 
 
 def _semantic_outcome_payload(
@@ -237,8 +299,10 @@ class _OutcomeFeedbackOpsMixin(_MemoryBase):
         content: str | None = None,
         reason: str = "outcome-backed promotion",
         actor_id: str = "memo",
-    ) -> Any:
+        idempotency_key: str,
+    ) -> MemoryRecord:
         """Create a procedure or failure pattern grounded in source memories."""
+        operation_key = promotion_operation_key(idempotency_key)
         if kind not in _LEARNING_TYPES:
             raise ValidationError("kind must be procedure|failure_pattern")
         ids = list(dict.fromkeys(value.strip() for value in memory_ids if value.strip()))
@@ -263,6 +327,7 @@ class _OutcomeFeedbackOpsMixin(_MemoryBase):
             )
             if not qualifies:
                 raise ValidationError(f"memory {record.id[:12]} lacks outcome evidence for {kind}")
+        source_event_ids, promoted_at = _source_outcome_evidence(self, ids)
         body = (content or "").strip()
         if not body:
             parts = [f"## {record.title}\n\n{str(record.body or '').strip()}" for record in sources]
@@ -282,22 +347,51 @@ class _OutcomeFeedbackOpsMixin(_MemoryBase):
                 "actor_id": actor_id,
                 "route_reason": "procedural_promotion",
                 "evidence_uris": [f"memo://memoria/{memory_id}" for memory_id in ids],
+                "source_event_ids": list(source_event_ids),
             },
             "learning": {
                 "kind": kind,
                 "source_memory_ids": ids,
                 "reason": reason,
-                "promoted_at": utc_now_iso(),
+                "promoted_at": promoted_at,
             },
             "priority": "high",
         }
-        return self.save(
-            content=body,
-            title=title,
-            type_=kind,
-            tags=["procedural", "outcome-backed"],
-            extra=extra,
-            topic_key=f"{kind}/{title}",
+        save_kwargs: dict[str, object] = {
+            "content": body,
+            "title": title,
+            "type_": kind,
+            "type": None,
+            "tags": ["procedural", "outcome-backed"],
+            "extra": extra,
+            "auto_derive": False,
+            "auto_project": True,
+            "cwd": None,
+            "created": None,
+            "defer_embed": False,
+            "enforce_write_policy": True,
+            "allow_conflict_override": False,
+            "override_reason": "",
+            "topic_key": f"{kind}/{title}",
+            "normalized_hash": None,
+            "valid_at": None,
+            "invalid_at": None,
+            "actor": None,
+        }
+        capability = self._capabilities.get("durable_outbox")
+        if isinstance(capability, DurableOutboxWorker):
+            intent = capability.enqueue(
+                idempotency_key=idempotency_key,
+                save_kwargs=save_kwargs,
+                source_event_ids=source_event_ids,
+                created_at=utc_now_iso(),
+            )
+            return capability.reconcile(intent)
+        request_hash = canonical_save_request_hash(save_kwargs)
+        return self.save_operation(
+            operation_key=operation_key,
+            request_hash=request_hash,
+            save_kwargs=save_kwargs,
         )
 
 

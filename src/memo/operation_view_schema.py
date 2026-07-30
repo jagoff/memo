@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS durable_outbox (
     updated_event_id TEXT NOT NULL
 ) STRICT;
 
+CREATE INDEX IF NOT EXISTS durable_outbox_ready
+ON durable_outbox(status, retry_at, promotion_id);
+
 CREATE TABLE IF NOT EXISTS quarantined_events (
     event_id TEXT PRIMARY KEY,
     event_type TEXT NOT NULL,

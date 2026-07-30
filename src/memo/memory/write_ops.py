@@ -13,9 +13,10 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import tempfile
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -28,7 +29,7 @@ from memo.contracts import (
     ActorIdentity,
     normalize_provenance,
 )
-from memo.errors import IdentityConflictError, StorageError
+from memo.errors import IdentityConflictError, StorageError, ValidationError
 from memo.fact_extraction import upsert_declared_fact_edges
 from memo.flags import flag_bool
 from memo.identity import (
@@ -50,8 +51,10 @@ from memo.memory.record import (
     _slugify,
     bump_support_if_enabled,
     in_derived_save_scope,
+    is_canonical_memory_id,
     is_reference_noise,
     markdown_body,
+    record_from_row,
 )
 from memo.memory.update_ops import _PreparedUpdateEmbedding, _RetryPreparedUpdate
 from memo.prompt_overrides import resolve_prompt
@@ -302,6 +305,317 @@ class _WriteOpsMixin(_MemoryBase):
         if isinstance(t_tags, list):
             derived["tags"] = _normalise_tags([t for t in t_tags if isinstance(t, str)])
         return derived
+
+    @staticmethod
+    def _validated_operation_identity(
+        operation_key: str,
+        request_hash: str,
+    ) -> tuple[str, str]:
+        normalized_key = str(operation_key).strip()
+        normalized_hash = str(request_hash).strip()
+        if re.fullmatch(r"promotion/[0-9a-f]{64}", normalized_key) is None:
+            raise ValidationError(
+                "operation_key must use the promotion/<lowercase-sha256> namespace"
+            )
+        if re.fullmatch(r"[0-9a-f]{64}", normalized_hash) is None:
+            raise ValidationError("request_hash must be a lowercase SHA-256")
+        return normalized_key, normalized_hash
+
+    def _operation_claims_locked(
+        self,
+        operation_key: str,
+    ) -> list[tuple[Path, frontmatter.Post]]:
+        claims: list[tuple[Path, frontmatter.Post]] = []
+        for candidate in sorted(self.cfg.memory_dir.rglob("*.md")):
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            try:
+                text = candidate.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise StorageError(
+                    f"cannot inspect durable operation Markdown: {candidate.name}"
+                ) from exc
+            try:
+                post = frontmatter.loads(text)
+                extra = post.metadata.get("extra")
+                if not isinstance(extra, dict):
+                    continue
+                marker = extra.get("_memo_operation")
+                if not isinstance(marker, dict):
+                    continue
+                if marker.get("operation_key") != operation_key:
+                    continue
+                claims.append((candidate, post))
+            except (ValueError, TypeError) as exc:
+                if "_memo_operation" in text and operation_key in text:
+                    raise StorageError(
+                        f"cannot parse durable operation Markdown: {candidate.name}"
+                    ) from exc
+                continue
+        return claims
+
+    @staticmethod
+    def _operation_conflict(
+        *,
+        operation_key: str,
+        request_hash: str,
+        claims: list[tuple[Path, frontmatter.Post]],
+        memory_dir: Path,
+    ) -> IdentityConflictError:
+        conflicts: list[dict[str, Any]] = []
+        for path, post in claims:
+            extra = post.metadata.get("extra")
+            marker = extra.get("_memo_operation") if isinstance(extra, dict) else {}
+            conflicts.append(
+                {
+                    "id": str(post.metadata.get("id") or ""),
+                    "path": str(path.relative_to(memory_dir)),
+                    "operation_key": operation_key,
+                    "request_hash": (
+                        str(marker.get("request_hash") or "")
+                        if isinstance(marker, dict)
+                        else ""
+                    ),
+                }
+            )
+        return IdentityConflictError(
+            kind="durable_operation",
+            incoming={
+                "operation_key": operation_key,
+                "request_hash": request_hash,
+            },
+            conflicts=conflicts,
+        )
+
+    def _recover_operation_claim_locked(
+        self,
+        candidate: Path,
+        post: frontmatter.Post,
+    ) -> MemoryRecord:
+        """Rebuild a disk-only operation record without creating Markdown."""
+        from memo.redact import sanitize_memory_input
+
+        rel = str(candidate.relative_to(self.cfg.memory_dir))
+        candidate_id = str(post.metadata.get("id") or "")
+        if not is_canonical_memory_id(candidate_id):
+            raise StorageError(
+                f"durable operation Markdown has an invalid memory id: {rel}"
+            )
+        raw_tags = post.metadata.get("tags") or []
+        if isinstance(raw_tags, str):
+            tags = [raw_tags]
+        elif isinstance(raw_tags, list):
+            tags = [str(tag) for tag in raw_tags]
+        else:
+            tags = []
+        candidate_tags = _normalise_tags(tags)
+        raw_topic = post.metadata.get("topic_key")
+        topic_key = (
+            canonical_topic_key(str(raw_topic)) if raw_topic is not None else None
+        )
+        namespace = namespace_for_index(candidate_tags, path=rel)
+        body = markdown_body(post)
+        title = str(post.metadata.get("title") or _derive_title(body) or "untitled")
+        type_ = str(post.metadata.get("type") or "note")
+        if type_ not in _VALID_TYPES:
+            type_ = "note"
+        extra = post.metadata.get("extra")
+        sanitized = sanitize_memory_input(
+            content=body,
+            title=title,
+            tags=candidate_tags,
+            topic_key=topic_key,
+            normalized_hash=(
+                str(post.metadata["normalized_hash"])
+                if post.metadata.get("normalized_hash") is not None
+                else None
+            ),
+            extra=extra if isinstance(extra, dict) else {},
+            entropy=flag_bool("MEMO_REDACT_ENTROPY"),
+            allow_empty_content=True,
+        )
+        recovered_identity = identity_keys(
+            title=sanitized.title or "untitled",
+            content=sanitized.content,
+            tags=sanitized.tags,
+            topic_key=topic_key,
+            auto_project=namespace != "_global",
+        )
+        try:
+            self.store.upsert_text_only(
+                id_=candidate_id,
+                path=rel,
+                title=sanitized.title or "untitled",
+                type_=type_,
+                tags=_normalise_tags(sanitized.tags),
+                created=str(post.metadata.get("created") or _now_iso()),
+                updated=str(post.metadata.get("updated") or _now_iso()),
+                body_hash=_sha256_short(sanitized.content),
+                extra=sanitized.extra,
+                body_text=sanitized.content,
+                topic_key=topic_key,
+                normalized_hash=sanitized.normalized_hash,
+                namespace=namespace,
+                normalized_title=recovered_identity.normalized_title,
+                normalized_content_hash=recovered_identity.normalized_content_hash,
+                valid_at=(
+                    str(post.metadata["valid_at"])
+                    if post.metadata.get("valid_at") is not None
+                    else None
+                ),
+                invalid_at=(
+                    str(post.metadata["invalid_at"])
+                    if post.metadata.get("invalid_at") is not None
+                    else None
+                ),
+            )
+        except (StorageError, sqlite3.Error) as exc:
+            raise StorageError(
+                f"failed to recover durable operation for {candidate_id[:8]}"
+            ) from exc
+        row = self.store.get(candidate_id)
+        if row is None:
+            raise StorageError(
+                f"durable operation recovery did not restore {candidate_id[:8]}"
+            )
+        recovered = record_from_row(row, body=sanitized.content)
+        return replace(
+            recovered,
+            index_pending=bool(sanitized.extra.get("_memo_embed_pending")),
+        )
+
+    def _find_by_operation_key_locked(
+        self,
+        operation_key: str,
+        request_hash: str,
+    ) -> MemoryRecord | None:
+        claims = self._operation_claims_locked(operation_key)
+        if len(claims) > 1:
+            raise self._operation_conflict(
+                operation_key=operation_key,
+                request_hash=request_hash,
+                claims=claims,
+                memory_dir=self.cfg.memory_dir,
+            )
+        if not claims:
+            return None
+        candidate, post = claims[0]
+        extra = post.metadata.get("extra")
+        marker = extra.get("_memo_operation") if isinstance(extra, dict) else None
+        stored_hash = marker.get("request_hash") if isinstance(marker, dict) else None
+        if stored_hash != request_hash:
+            raise self._operation_conflict(
+                operation_key=operation_key,
+                request_hash=request_hash,
+                claims=claims,
+                memory_dir=self.cfg.memory_dir,
+            )
+        candidate_id = str(post.metadata.get("id") or "")
+        row = self.store.get(candidate_id) if is_canonical_memory_id(candidate_id) else None
+        if row is None:
+            return self._recover_operation_claim_locked(candidate, post)
+        relative = str(candidate.relative_to(self.cfg.memory_dir))
+        if row.get("path") != relative:
+            raise StorageError(
+                f"durable operation index path mismatch for {candidate_id[:8]}"
+            )
+        row_extra = row.get("extra")
+        row_marker = (
+            row_extra.get("_memo_operation")
+            if isinstance(row_extra, dict)
+            else None
+        )
+        if row_marker != marker:
+            return self._recover_operation_claim_locked(candidate, post)
+        record = record_from_row(row, body=markdown_body(post))
+        return replace(
+            record,
+            index_pending=bool(record.extra.get("_memo_embed_pending")),
+        )
+
+    def find_by_operation_key(
+        self,
+        operation_key: str,
+        request_hash: str,
+    ) -> MemoryRecord | None:
+        """Find and repair the unique Markdown claim for an operation."""
+        normalized_key, normalized_hash = self._validated_operation_identity(
+            operation_key,
+            request_hash,
+        )
+        with self._data_dir_write_lock():
+            return self._find_by_operation_key_locked(normalized_key, normalized_hash)
+
+    def save_operation(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        save_kwargs: Mapping[str, object],
+    ) -> MemoryRecord:
+        """Save once for one durable operation key and canonical request."""
+        from memo.durable_outbox import (
+            canonical_save_request,
+            canonical_save_request_hash,
+        )
+
+        normalized_key, normalized_hash = self._validated_operation_identity(
+            operation_key,
+            request_hash,
+        )
+        canonical_kwargs = canonical_save_request(save_kwargs)
+        calculated_hash = canonical_save_request_hash(canonical_kwargs)
+        if calculated_hash != normalized_hash:
+            raise ValidationError(
+                "request_hash does not match the complete canonical save_kwargs"
+            )
+        allowed_keys = {
+            "content",
+            "title",
+            "type_",
+            "type",
+            "tags",
+            "extra",
+            "auto_derive",
+            "auto_project",
+            "cwd",
+            "created",
+            "defer_embed",
+            "enforce_write_policy",
+            "allow_conflict_override",
+            "override_reason",
+            "topic_key",
+            "normalized_hash",
+            "valid_at",
+            "invalid_at",
+            "actor",
+        }
+        unsupported = sorted(set(canonical_kwargs).difference(allowed_keys))
+        if unsupported:
+            raise ValidationError(
+                f"save_kwargs contains unsupported fields: {', '.join(unsupported)}"
+            )
+        if not isinstance(canonical_kwargs.get("content"), str):
+            raise ValidationError("save_kwargs.content must be a string")
+        extra_raw = canonical_kwargs.get("extra")
+        if extra_raw is not None and not isinstance(extra_raw, dict):
+            raise ValidationError("save_kwargs.extra must be a mapping")
+        extra = dict(extra_raw or {})
+        if "_memo_operation" in extra:
+            raise ValidationError("save_kwargs.extra._memo_operation is reserved")
+        extra["_memo_operation"] = {
+            "operation_key": normalized_key,
+            "request_hash": normalized_hash,
+        }
+        canonical_kwargs["extra"] = extra
+        with self._data_dir_write_lock():
+            existing = self._find_by_operation_key_locked(
+                normalized_key,
+                normalized_hash,
+            )
+            if existing is not None:
+                return existing
+            return self.save(**canonical_kwargs)
 
     def save(
         self,
