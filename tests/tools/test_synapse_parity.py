@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -47,6 +49,11 @@ class _Memory:
                 "error": "backend failed",
                 "sources": [{"id": "SOURCE-A"}],
             }
+        if question == "model error query":
+            return {
+                "answer": "(error querying the model: RuntimeError)",
+                "sources": [{"id": "SOURCE-A"}],
+            }
         return {"answer": "answered", "sources": [{"id": "SOURCE-A"}]}
 
     def search(self, query: str, **_: Any) -> list[_Hit]:
@@ -63,6 +70,24 @@ class _Memory:
 
     def health(self, **_: Any) -> dict[str, object]:
         return {"source_ids": ["health-a"]}
+
+
+class _BriefingStore:
+    def __init__(self, recent: list[dict[str, str]], pool: list[dict[str, str]]) -> None:
+        self.recent = recent
+        self.pool = pool
+
+    def list_recent(self, *, limit: int, **_: Any) -> list[dict[str, str]]:
+        return self.recent if limit == 20 else self.pool
+
+
+class _BriefingMemory:
+    def __init__(self, store: _BriefingStore, roster: VerificationRoster) -> None:
+        self.store = store
+        self.capability_manifest_roster = roster
+
+    def get(self, memory_id: str) -> SimpleNamespace | None:
+        return SimpleNamespace(id=memory_id) if memory_id else None
 
 
 def fixture(name: str) -> ParityFixture:
@@ -229,7 +254,7 @@ def test_parity_report_blocks_unmapped_admitted_operation(manifest, memory) -> N
 
 def test_parity_compares_canonicalized_provenance_and_latency(manifest, memory) -> None:
     report = run_synapse_parity(manifest, memory, [fixture("native")])
-    assert report.status == "pass"
+    assert report.status == "pass", report.rows
     assert report.rows[0].memo_source_ids == ("source-a",)
     assert report.rows[0].provenance_ok is True
     assert report.p50_ms >= 0 and report.p95_ms >= report.p50_ms
@@ -280,7 +305,11 @@ def test_parity_resolves_unified_briefing_without_synapse_import(
 
 @pytest.mark.parametrize(
     ("query", "expected_status"),
-    [("disputed query", "conflicted"), ("error query", "error")],
+    [
+        ("disputed query", "conflicted"),
+        ("error query", "error"),
+        ("model error query", "error"),
+    ],
 )
 def test_memo_ask_preserves_native_abstention_and_error_before_sources(
     manifest, memory, authority, roster, query, expected_status
@@ -329,6 +358,45 @@ def test_unified_briefing_fallback_emits_native_structured_source_ids(
 
     assert report.status == "pass"
     assert report.rows[0].memo_source_ids == (record.id,)
+
+
+def test_unified_briefing_fallback_returns_only_rendered_open_loop_and_day_ids(
+    manifest, authority, roster, monkeypatch
+) -> None:
+    now = datetime.now(tz=UTC).isoformat()
+    recent = [{"id": f"open-{index}", "updated": now} for index in range(6)]
+    recent.append({"id": "stale", "updated": "2020-01-01T00:00:00+00:00"})
+    pool = [
+        {"id": f"pool-{index}", "updated": f"2025-01-{(index % 28) + 1:02d}T00:00:00+00:00"}
+        for index in range(500)
+    ]
+    seed = int(
+        hashlib.sha256(datetime.now(tz=UTC).strftime("%Y-%m-%d").encode()).hexdigest(),
+        16,
+    )
+    day_id = sorted(pool, key=lambda row: row["updated"])[seed % len(pool)]["id"]
+    memory = _BriefingMemory(_BriefingStore(recent, pool), roster)
+    monkeypatch.setattr(
+        "memo.briefing.memo_native_briefing_lines",
+        lambda *_args, **_kwargs: ["### Open loops", "### Memory of the day"],
+    )
+    monkeypatch.setattr("memo.briefing.operational_briefing_lines", lambda *_args, **_kwargs: [])
+    route = replace(
+        manifest.operation_mappings[0].routes[0],
+        memo_methods=("unified_briefing",),
+        parameter_mapping={},
+    )
+    signed = _resign(_with_route(manifest, route), authority[0], roster)
+    case = replace(
+        fixture("native"),
+        expected_source_ids=tuple([*(f"open-{index}" for index in range(5)), day_id]),
+    )
+
+    report = run_synapse_parity(signed, memory, [case])
+
+    assert report.status == "pass", report.rows
+    assert "open-5" not in report.rows[0].memo_source_ids
+    assert "stale" not in report.rows[0].memo_source_ids
 
 
 @pytest.mark.parametrize(

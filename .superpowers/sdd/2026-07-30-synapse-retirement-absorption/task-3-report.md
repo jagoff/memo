@@ -69,3 +69,18 @@ passed; Ruff passed; Mypy passed for 464 source files.
 
 Correction verification: 37 focused parity/ask/evidence tests passed; Ruff
 passed; Mypy passed for 464 source files.
+
+## Correction round 3
+
+- The parity facade now recognizes Memo's own model-failure answer sentinel
+  (`(error querying the model: …)`) before source classification.  A response
+  retaining retrieved sources therefore remains native `error`, never
+  `answered`.
+- Briefing fallback provenance now mirrors the rendered native selection: the
+  five current open-loop rows from the 20-row pool plus the date-seeded
+  memory-of-day record selected from the sorted 500-row pool.  It verifies that
+  the daily record still resolves before emitting its full ID, and excludes
+  stale, sixth-loop, and unrelated pool entries.
+
+Correction verification: 39 focused parity/ask/evidence tests passed; Ruff
+passed; Mypy passed for 464 source files.
