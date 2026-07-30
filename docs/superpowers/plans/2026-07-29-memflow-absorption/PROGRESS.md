@@ -6,7 +6,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 12:02 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 12:12 America/Argentina/Cordoba
 
 ### En curso
 
@@ -37,10 +37,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   firma/destruye, pero su helper depende de `swiftc` en runtime y su ACL
   queda ligada al cdhash ad-hoc. Fix de helper precompilado/estable y upgrade
   de Keychain en curso antes de habilitar activación.
-- [ ] Fix round 2 `P01-T04`: `ce608c42` corrigió ambos parent-swap, pero el
-  reviewer reprodujo HIGH al desplazar el grandparent/boundary. El mismo
-  implementador está anclando y revalidando toda la cadena root→boundary→
-  parent→target.
+- [ ] Re-review `P01-T04` commit `6e54600f`: la ronda 2 ya ancla y
+  revalida root→boundary→parent→target con FD/no-follow/dev-ino. GREEN
+  focal `21 passed`, matriz `125 passed`; PASS independiente pendiente.
 - [x] Corrección técnica `P01-T06 HIGH/MEDIUM`: replay del evento/resultado
   canónico por idempotency key, validación de identidad explícita y derivación
   de key default bajo el lock de sesión. Revisión final: `PASS`, `141 passed`.
