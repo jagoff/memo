@@ -360,6 +360,11 @@ def checkpoint(
         raise ValueError("session_id required")
 
     cwd_path = Path(cwd).expanduser().resolve()
+    runtime = _operational_session_runtime(state_dir)
+    runtime_identity: PrincipalIdentity | None = None
+    replayed_checkpoint: OperationalSession | None = None
+    if runtime is not None:
+        runtime_identity = runtime.identity_factory()
     git_state = gather_git_state(cwd_path)
 
     transcript_fields: dict[str, str | None] = {}
@@ -373,9 +378,25 @@ def checkpoint(
     # Git/transcript inspection above can be slow. Re-load only after acquiring
     # the per-session lock, then merge onto the latest snapshot so stamps made
     # while that work ran are not clobbered.
-    runtime = _operational_session_runtime(state_dir)
     with _session_write_lock(state_dir, session_id):
         existing = _load(state_dir, session_id) or {}
+        if (
+            runtime is not None
+            and runtime_identity is not None
+            and idempotency_key
+            and callable(
+                getattr(type(runtime.service), "replay_checkpoint", None)
+            )
+        ):
+            replayed_checkpoint = runtime.service.replay_checkpoint(
+                identity=runtime_identity,
+                session_id=session_id,
+                project=cwd_path.name,
+                workspace=str(cwd_path),
+                source_event_id=source_event_id,
+                checkpointed_at=checkpointed_at,
+                idempotency_key=idempotency_key,
+            )
 
         # prompt_trail: ring buffer of last N user prompts, crash-resilient
         # because it's updated on UserPromptSubmit (not just Stop).
@@ -439,18 +460,22 @@ def checkpoint(
                 ).hexdigest()
             )
             operation_key = idempotency_key or f"session-checkpoint/{session_id}/{turn_count}"
-            canonical = runtime.service.checkpoint(
-                identity=runtime.identity_factory(),
-                session_id=session_id,
-                project=cwd_path.name,
-                workspace=str(cwd_path),
-                summary=str(snapshot.get("summary") or ""),
-                branch=str(snapshot.get("branch") or ""),
-                head=str(snapshot.get("head_commit") or ""),
-                source_event_id=source_id,
-                checkpointed_at=checkpointed_at,
-                idempotency_key=operation_key,
-            )
+            canonical = replayed_checkpoint
+            if canonical is None:
+                if runtime_identity is None:
+                    raise RuntimeError("operational session identity is unavailable")
+                canonical = runtime.service.checkpoint(
+                    identity=runtime_identity,
+                    session_id=session_id,
+                    project=cwd_path.name,
+                    workspace=str(cwd_path),
+                    summary=str(snapshot.get("summary") or ""),
+                    branch=str(snapshot.get("branch") or ""),
+                    head=str(snapshot.get("head_commit") or ""),
+                    source_event_id=source_id,
+                    checkpointed_at=checkpointed_at,
+                    idempotency_key=operation_key,
+                )
             snapshot["created"] = existing.get("created") or canonical.checkpointed_at
             snapshot["updated"] = canonical.checkpointed_at
             local_artifacts = {

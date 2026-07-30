@@ -36,7 +36,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   recovery post-rename/pre-fsync. Corrección técnica lista; PASS pendiente.
 - [x] Corrección técnica `P01-T06 HIGH`: adapters públicos propagan timestamp
   `None` y reutilizar el resultado canónico para retry idempotente después de
-  crash. Re-revisión pendiente.
+  crash. Re-review de `3fc4bf88`: `FAIL MEDIUM` porque HEAD/summary podían
+  cambiar el resto del request; follow-up de replay canónico listo.
 - [x] Corrección técnica `P01-T06 MEDIUM`: preservar get por prefijo y
   artifacts locales en reads canónicos locales, sin federarlos. Focused
   `118 passed`; Ruff y mypy limpios; re-revisión pendiente.
@@ -84,6 +85,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   `FINAL PASS`, matriz final `80 passed`, sin hallazgos materiales.
 - [x] `P01-T06` GREEN técnico: timestamps canónicos estables en retry y
   lecturas con artifacts locales; `118 passed`, Ruff y mypy limpios.
+- [x] `P01-T06` follow-up: recupera evento/result canónicos por idempotency key
+  antes de reconstruir derivados locales; explicit-input drift sigue en
+  conflicto. Matriz final `133 passed`, Ruff y mypy limpios.
 - [x] `P01-T03` re-revisión final: `PASS`; backfill global y upgrade v1
   fail-closed cerrados, `20 + 55 passed`, Ruff y mypy limpios.
 - [x] `P01-T04` segunda corrección técnica: rename exclusivo sin clobber bajo
@@ -323,6 +327,11 @@ Estado: **1/7 aceptadas**.
 - [x] Lecturas públicas canónicas preservan prefijos y artifacts locales sin
   incorporarlos al evento portable.
 - [x] Focused adapters/sesiones: `118 passed`; Ruff y mypy limpios.
+- [x] Re-review de `3fc4bf88`: `FAIL MEDIUM`; un HEAD/transcript nuevo tras
+  crash cambiaba el request hash con la misma idempotency key.
+- [x] Follow-up: replay del checkpoint original desde ledger+idempotency,
+  validando identidad/session/project/workspace/source/timestamp explícitos.
+- [x] Matriz sesiones/adapters: `133 passed`; Ruff y mypy limpios.
 - [ ] Revisión independiente y `PASS`.
 
 ### Tarea 7 — Activar facade operacional v2 tras paridad completa

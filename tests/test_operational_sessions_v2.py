@@ -185,6 +185,50 @@ def _checkpoint(
     )
 
 
+def test_checkpoint_replay_recovers_original_request_but_rejects_explicit_drift(
+    tmp_path: Path,
+) -> None:
+    service, operational, _views, _clock = _service(tmp_path)
+    original = _checkpoint(service)
+
+    replayed = service.replay_checkpoint(
+        identity=_identity(),
+        session_id="session-a",
+        project="memo",
+        workspace="/work/memo",
+        source_event_id="source-checkpoint-1",
+        checkpointed_at="2026-07-30T12:00:00Z",
+        idempotency_key="checkpoint-1",
+    )
+
+    assert replayed == original
+    assert len(operational.events) == 1
+
+    with pytest.raises(OperationalError) as source_conflict:
+        service.replay_checkpoint(
+            identity=_identity(),
+            session_id="session-a",
+            project="memo",
+            workspace="/work/memo",
+            source_event_id="different-explicit-source",
+            checkpointed_at="2026-07-30T12:00:00Z",
+            idempotency_key="checkpoint-1",
+        )
+    assert source_conflict.value.code == OperationalErrorCode.IDEMPOTENCY_CONFLICT
+
+    with pytest.raises(OperationalError) as workspace_conflict:
+        service.replay_checkpoint(
+            identity=_identity(),
+            session_id="session-a",
+            project="memo",
+            workspace="/work/other",
+            source_event_id="source-checkpoint-1",
+            checkpointed_at="2026-07-30T12:00:00Z",
+            idempotency_key="checkpoint-1",
+        )
+    assert workspace_conflict.value.code == OperationalErrorCode.IDEMPOTENCY_CONFLICT
+
+
 def test_session_lifecycle_is_monotonic_and_terminal_is_final(
     tmp_path: Path,
 ) -> None:

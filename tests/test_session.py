@@ -2072,12 +2072,17 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
         def __init__(self) -> None:
             self.views = _Views()
             self.calls: list[dict[str, object]] = []
+            self.replay_calls: list[dict[str, object]] = []
 
         def checkpoint(self, **kwargs):
             if self.calls and kwargs != self.calls[0]:
                 raise AssertionError("idempotent retry changed the canonical request")
             self.calls.append(dict(kwargs))
             return canonical
+
+        def replay_checkpoint(self, **kwargs):
+            self.replay_calls.append(dict(kwargs))
+            return canonical if self.calls else None
 
     service = _Service()
     generated_times = iter(
@@ -2087,6 +2092,16 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
         )
     )
     monkeypatch.setattr(session_mod, "_now_iso", lambda: next(generated_times))
+    git_state = {
+        "branch": "master",
+        "head_commit": "aaa111 first",
+        "modified_files": [],
+    }
+    monkeypatch.setattr(
+        session_mod,
+        "gather_git_state",
+        lambda _cwd: dict(git_state),
+    )
     install_operational_session_runtime(
         tmp_path,
         service=service,  # type: ignore[arg-type]
@@ -2103,6 +2118,7 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
                 lru_cap=10,
             )
         assert not (tmp_path / "sessions" / "session-a.json").exists()
+        git_state["head_commit"] = "bbb222 changed-after-canonical-commit"
 
         snapshot = checkpoint(
             tmp_path,
@@ -2115,7 +2131,9 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_timestamp(
     finally:
         remove_operational_session_runtime(tmp_path)
 
-    assert [call["checkpointed_at"] for call in service.calls] == [None, None]
+    assert [call["checkpointed_at"] for call in service.calls] == [None]
+    assert len(service.replay_calls) == 2
+    assert snapshot["head_commit"] == canonical.head
     assert snapshot["created"] == canonical.checkpointed_at
     assert snapshot["updated"] == canonical.checkpointed_at
     cache = json.loads((tmp_path / "sessions" / "session-a.json").read_text())

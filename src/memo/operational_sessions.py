@@ -18,7 +18,11 @@ from memo.errors import (
     ValidationError,
 )
 from memo.identity import PrincipalIdentity
-from memo.operational_event import OperationalCommand, canonical_json_bytes
+from memo.operational_event import (
+    OperationalCommand,
+    OperationalEventV2,
+    canonical_json_bytes,
+)
 from memo.operational_event_types import (
     SESSION_CHECKPOINTED,
     SESSION_RECOVERABLE,
@@ -420,25 +424,9 @@ class OperationalSessionService:
         if value is not None:
             return _canonical_timestamp(value, field=field)
         normalized_key = _idempotency_key(idempotency_key)
-        existing = self.views.idempotency(project, normalized_key)
-        if existing is None:
-            return _canonical_timestamp(self.clock(), field=field)
-        ledger = getattr(self.operational, "ledger", None)
-        validated_events = getattr(ledger, "validated_events", None)
-        if not callable(validated_events):
-            raise StorageError("operational ledger cannot resolve an idempotent timestamp")
-        event = next(
-            (
-                candidate
-                for candidate in validated_events()
-                if candidate.event_id == existing.event_id
-            ),
-            None,
-        )
+        event = self._idempotent_event(project, normalized_key)
         if event is None:
-            raise StorageError(
-                f"idempotency record references a missing ledger event: {existing.event_id}"
-            )
+            return _canonical_timestamp(self.clock(), field=field)
         if event.event_type != event_type:
             raise OperationalError(
                 OperationalErrorCode.IDEMPOTENCY_CONFLICT,
@@ -452,6 +440,105 @@ class OperationalSessionService:
             _required(event.payload.get(field), field=field),
             field=field,
         )
+
+    def _idempotent_event(
+        self,
+        project: str,
+        idempotency_key: str,
+    ) -> OperationalEventV2 | None:
+        existing = self.views.idempotency(project, idempotency_key)
+        if existing is None:
+            return None
+        ledger = getattr(self.operational, "ledger", None)
+        validated_events = getattr(ledger, "validated_events", None)
+        if not callable(validated_events):
+            raise StorageError("operational ledger cannot resolve an idempotent request")
+        event = next(
+            (
+                candidate
+                for candidate in validated_events()
+                if candidate.event_id == existing.event_id
+            ),
+            None,
+        )
+        if event is None:
+            raise StorageError(
+                f"idempotency record references a missing ledger event: {existing.event_id}"
+            )
+        if event.content_hash != existing.request_hash:
+            raise OperationalError(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                "idempotency record request hash differs from its ledger event",
+                retryable=False,
+            )
+        return event
+
+    def replay_checkpoint(
+        self,
+        *,
+        identity: PrincipalIdentity,
+        session_id: str,
+        project: str,
+        workspace: str,
+        source_event_id: str | None,
+        checkpointed_at: str | None,
+        idempotency_key: str,
+    ) -> OperationalSession | None:
+        """Recover an already-committed checkpoint without rebuilding its request."""
+        normalized_id = _required(session_id, field="session_id")
+        normalized_project = _required(project, field="project")
+        normalized_workspace = _required(workspace, field="workspace")
+        normalized_key = _idempotency_key(idempotency_key)
+        if not isinstance(identity, PrincipalIdentity):
+            raise ValidationError("identity must be PrincipalIdentity")
+        with self._transaction():
+            self._catch_up()
+            record = self.views.idempotency(normalized_project, normalized_key)
+            if record is None:
+                return None
+            event = self._idempotent_event(normalized_project, normalized_key)
+            if event is None:
+                raise StorageError("idempotency record disappeared during replay")
+            expected_timestamp = (
+                _canonical_timestamp(checkpointed_at, field="checkpointed_at")
+                if checkpointed_at is not None
+                else None
+            )
+            mismatched = (
+                event.event_type != SESSION_CHECKPOINTED
+                or event.actor != identity
+                or event.target_id != normalized_id
+                or event.project != normalized_project
+                or event.workspace != normalized_workspace
+                or event.payload.get("session_id") != normalized_id
+                or event.payload.get("principal_id") != identity.principal_id
+                or event.payload.get("project") != normalized_project
+                or event.payload.get("workspace") != normalized_workspace
+                or (
+                    source_event_id is not None
+                    and event.payload.get("source_event_id") != source_event_id
+                )
+                or (
+                    expected_timestamp is not None
+                    and event.payload.get("checkpointed_at") != expected_timestamp
+                )
+            )
+            if mismatched:
+                raise OperationalError(
+                    OperationalErrorCode.IDEMPOTENCY_CONFLICT,
+                    (
+                        "operational idempotency key identifies a different "
+                        f"checkpoint request: {normalized_project}/{normalized_key}"
+                    ),
+                    retryable=False,
+                )
+            result = record.result.get("value")
+            if not isinstance(result, Mapping):
+                raise StorageError("checkpoint idempotency result is invalid")
+            replayed = operational_session_from_row(result)
+            if replayed.updated_event_id != event.event_id:
+                raise StorageError("checkpoint idempotency result event is inconsistent")
+            return replayed
 
     def _commit(
         self,
