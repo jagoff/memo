@@ -6,7 +6,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 12:19 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 14:25 America/Argentina/Cordoba
 
 ### En curso
 
@@ -14,9 +14,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   Tareas 2–6 — `T2 PASS`, `T3 PASS`, `T4 FAIL HIGH`,
   `T5 PASS`, `T6 PASS`.
 - [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
-  nuevo — agente `constant_code_reviewer`; `P01-T04 FAIL HIGH` cerrado y
-  `P03-T03 FAIL BLOCKER` confirmado; Secure Enclave `23a64ccb` FAIL HIGH;
-  `ce608c42` re-review encontró HIGH de boundary desplazable.
+  nuevo — agente `constant_code_reviewer`; `P01-T04 FAIL HIGH` cerrado,
+  `P03-T04` aceptado y `P03-T03 FAIL BLOCKER` confirmado; Secure Enclave
+  `23a64ccb` continúa `FAIL HIGH`.
 - [x] Auditoría read-only cross-repo de Plan 03 T3/T4: ambos lotes corregidos
   siguen presentes sin commit y no se solapan con Secure Enclave.
 - [ ] Corregir el prerrequisito productivo de Plan 01 Tarea 7: helper
@@ -52,11 +52,11 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   autoridad descriptor-relative. Auditoría confirmó writers sin fence en
   chat delete, dream, homeostasis, autopilot, kernel, user_signal, lookup,
   quality_feedback y cursor de extract.
-- [ ] Corregir `P03-T04 HIGH`: construir desde snapshot/commit inmutable o
-  revalidar el repo después del build antes de publicar runtime. Corrección
-  no commiteada cubre snapshot kernel-read-only y árbol completo; revisión
-  adversarial encontró 2 BLOCKER + 2 HIGH adicionales (Git-object snapshot,
-  attestation externa, submódulos y cleanup de mounts).
+- [x] Cerrar `P03-T04`: `f32e789` construye desde objetos Git exactos,
+  valida submódulos recursivos, digest completo, mount kernel-read-only,
+  attestation externa y cleanup de mounts; `8600800` exige provenance
+  privada para cada attestation. Re-review final `ADDRESSED/PASS`, focused
+  `45 passed`, Ruff/mypy/diff-check limpios, sin activar servicios.
 - [ ] Corregir `P03-T03 BLOCKER`: aunque el control ya proviene de un commit
   Git exacto, `GIT_DIR` heredado puede desviar el gate fresh a otro state root,
   ocultar el ledger real (`inflight=1`) y devolver falsamente `clean=True`.
@@ -121,8 +121,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cerrar `P01-T02 HIGH` y obtener re-revisión PASS del revisor continuo.
 - [ ] Cerrar el provider productivo de claves y obtener revisión de seguridad
   antes de escribir cualquier activation stamp.
-- [ ] Corregir el nuevo `P01-T04 HIGH` de parent desplazado y obtener
-  re-revisión PASS.
+- [x] Corregir el nuevo `P01-T04 HIGH` de namespace desplazado y obtener
+  re-revisión `PASS`.
 - [x] Cerrar ambos hallazgos `P01-T06` y obtener re-revisión PASS.
 - [ ] Asignar correcciones BLOCKER/HIGH/MEDIUM a agentes con archivos
   separados.
@@ -395,8 +395,8 @@ Gate del plan:
 
 ## Plan 03 — Readiness para corte
 
-Estado: **0/6 aceptadas; Tareas 1–4 implementadas y verdes, pendientes de
-revisión independiente**.
+Estado: **1/6 aceptadas; Tarea 4 aceptada; Tareas 1–3 siguen abiertas por
+hallazgos de revisión**.
 
 - [ ] Tarea 1 — Snapshot seguro, capability manifest e inventario.
   Implementación técnica: `f6ca3fff`…`7858d540`; focused `32 passed`;
@@ -410,9 +410,10 @@ revisión independiente**.
   `a3a6070912`; matriz requerida `224 passed`; suite completa `1906 passed`;
   Ruff, mypy, instalador y diff limpios. Falta revisión independiente y
   `PASS`.
-- [ ] Tarea 4 — Aislar Synapse del runtime Memflow. Implementación técnica:
-  `933445fd`; focused `18 passed`; suite completa `2326 passed, 5 skipped`;
-  build real e idempotente verificado. Falta revisión independiente y `PASS`.
+- [x] Tarea 4 — Aislar Synapse del runtime Memflow. Implementación técnica:
+  `933445fd` + hardening `f32e789` + provenance `8600800`; focused final
+  `45 passed`; Ruff, mypy y diff-check limpios. Re-review independiente:
+  `ADDRESSED/PASS`. Sin activación de servicio.
 - [ ] Tarea 5 — Reemplazar el contrato Memflow de Synapse por registry Memo.
 - [ ] Tarea 6 — Stagear configuración de consumidores y readiness report.
 
@@ -498,7 +499,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P03-T01 | Snapshot, manifest e inventario | Codex | `90a7144e` | import RED | focused `32`; matriz `60`; full `6138` | `f6ca3fff`…`7858d540` | pendiente | — |
 | P03-T02 | Fencing de requests Memflow | Codex | Memflow `5426e8e5` | import RED | focused `34`; paridad `211`; full `1888` | `22299647` + `2c643863` | pendiente | — |
 | P03-T03 | Drain y startup refusal | Codex | Memflow `2c643863` | pendiente | en curso | — | — | — |
-| P03-T04 | Aislamiento de Synapse | Codex | Synapse `45c146d5` | import RED | focused `20`; full `2326` | `933445fd` | pendiente | — |
+| P03-T04 | Aislamiento de Synapse | Codex + agentes especializados | Synapse `45c146d5` | regresiones Git-object, attestation, submódulos y mounts | focused `45`; re-review subset `14` | `933445fd` + `f32e789` + `8600800` | **PASS final** | — |
 | P03-T05 | Registry backend de Memo | — | — | — | — | — | — | — |
 | P03-T06 | Configuración y readiness | — | — | — | — | — | — | — |
 | P04-T01 | Probar inputs de migración | — | — | — | — | — | — | — |
