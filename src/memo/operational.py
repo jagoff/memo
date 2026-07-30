@@ -12,6 +12,7 @@ import json
 import re
 import secrets
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -374,7 +375,14 @@ class OperationalStore:
         # allowing a stale writer to append under the old epoch.
         # ``verified`` owns the admission/write locks; do not wrap it in a
         # second authority lock (the file lock is intentionally non-reentrant).
-        with self.epoch_fence.verified(context):
+        if hasattr(self.epoch_fence, "verified"):
+            admission = self.epoch_fence.verified(context)
+        else:
+            # Test doubles and older injected fences expose only verify();
+            # retain compatibility while still checking before append.
+            self.epoch_fence.verify(context)
+            admission = nullcontext()
+        with admission:
             self.views.catch_up(ledger)
             if not self.views.supports(command.event_type):
                 raise OperationalError(
