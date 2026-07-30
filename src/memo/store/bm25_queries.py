@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -23,11 +24,58 @@ _log = logging.getLogger(__name__)
 # (e.g. one type out of a dense, diverse top-K) can drop most candidates, so the
 # multiplier is generous to avoid silently under-filling below `limit`.
 _TYPE_FILTER_CANDIDATE_MULT = 20
+_FILTER_CANDIDATE_MULT = 64
+_FILTER_CANDIDATE_CAP = 1_000
 
 _META_SELECT_COLUMNS = (
     "id, path, title, type, tags, created, updated, body_hash, extra_json, "
     "review_after, verification_state, verified_at, valid_at, invalid_at"
 )
+
+
+def _parse_filter_ts(value: str | None) -> datetime | None:
+    """Parse one caller-supplied search boundary as a UTC instant."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _matches_common_filters(
+    row: dict[str, Any],
+    *,
+    date_from: datetime | None,
+    date_to: datetime | None,
+    exclude_tags: set[str],
+) -> bool:
+    """Apply offset-safe filters shared by lexical backends."""
+    if date_from is not None or date_to is not None:
+        updated = _parse_filter_ts(str(row.get("updated") or ""))
+        if updated is None:
+            return False
+        if date_from is not None and updated < date_from:
+            return False
+        if date_to is not None and updated > date_to:
+            return False
+    return not (exclude_tags & {str(tag) for tag in row.get("tags") or ()})
+
+
+def _candidate_limit(
+    limit: int,
+    *,
+    has_type_filter: bool,
+    has_common_filter: bool,
+) -> int:
+    if has_common_filter:
+        return min(max(limit, limit * _FILTER_CANDIDATE_MULT), _FILTER_CANDIDATE_CAP)
+    if has_type_filter:
+        return limit * _TYPE_FILTER_CANDIDATE_MULT
+    return limit
 
 
 def _now_iso_local() -> str:
@@ -158,6 +206,9 @@ class _BM25QueriesMixin(_StoreBase):
         field_boost: str | None = None,
         include_invalid: bool = False,
         as_of: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """BM25 keyword search. Dispatches to tantivy when available, FTS5 otherwise.
 
@@ -183,6 +234,9 @@ class _BM25QueriesMixin(_StoreBase):
                 field_boost="exact",
                 include_invalid=include_invalid,
                 as_of=as_of,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
             )
         t = self._get_tantivy()
         if t is not None:
@@ -194,6 +248,9 @@ class _BM25QueriesMixin(_StoreBase):
                 t,
                 include_invalid=include_invalid,
                 as_of=as_of,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
             )
         return self._search_bm25_fts5(
             query,
@@ -202,6 +259,9 @@ class _BM25QueriesMixin(_StoreBase):
             exclude_types,
             include_invalid=include_invalid,
             as_of=as_of,
+            date_from=date_from,
+            date_to=date_to,
+            exclude_tags=exclude_tags,
         )
 
     def _search_bm25_tantivy(
@@ -213,10 +273,18 @@ class _BM25QueriesMixin(_StoreBase):
         t: Any,
         include_invalid: bool = False,
         as_of: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        # Fetch more candidates when filtering by type so we can honour `limit`
-        # after post-filtering against the meta table.
-        candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
+        from_dt = _parse_filter_ts(date_from)
+        to_dt = _parse_filter_ts(date_to)
+        excluded = set(exclude_tags or ())
+        candidate_k = _candidate_limit(
+            limit,
+            has_type_filter=bool(type_ or exclude_types),
+            has_common_filter=bool(from_dt or to_dt or excluded),
+        )
         hits = t.search_bm25(query, candidate_k)
         if not hits:
             return []
@@ -239,6 +307,13 @@ class _BM25QueriesMixin(_StoreBase):
         out: list[dict[str, Any]] = []
         for r in rows:
             d = _row_to_dict(r)
+            if not _matches_common_filters(
+                d,
+                date_from=from_dt,
+                date_to=to_dt,
+                exclude_tags=excluded,
+            ):
+                continue
             d["score"] = id_score.get(d["id"], 0.0)
             out.append(d)
         out.sort(key=lambda x: x["score"], reverse=True)
@@ -253,6 +328,9 @@ class _BM25QueriesMixin(_StoreBase):
         field_boost: str | None = None,
         include_invalid: bool = False,
         as_of: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         # FTS5 needs an explicit MATCH expression. Pre-2026-05-07 we wrapped
         # the whole query in `"..."` (phrase match) to dodge FTS5 syntax
@@ -294,9 +372,17 @@ class _BM25QueriesMixin(_StoreBase):
             tags_w = _BM25_FTS_TAGS_WEIGHT
             body_w = _BM25_FTS_BODY_WEIGHT
 
+        from_dt = _parse_filter_ts(date_from)
+        to_dt = _parse_filter_ts(date_to)
+        excluded = set(exclude_tags or ())
+
         def _run(tokens: list[str], joiner: str) -> list[Any]:
             expr = joiner.join(f'"{t}"' for t in tokens)
-            candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
+            candidate_k = _candidate_limit(
+                limit,
+                has_type_filter=bool(type_ or exclude_types),
+                has_common_filter=bool(from_dt or to_dt or excluded),
+            )
             sql = (
                 "SELECT fts.id AS id, "
                 "       bm25(fts, ?, ?, ?, ?) AS bm25_score, "
@@ -320,6 +406,11 @@ class _BM25QueriesMixin(_StoreBase):
             if exclude_types:
                 sql += f"AND meta.type NOT IN ({','.join('?' for _ in exclude_types)}) "
                 params.extend(sorted(exclude_types))
+            for tag in sorted(excluded):
+                # Tags are stored as a JSON array. Searching for the encoded
+                # string token avoids LIKE wildcard and substring semantics.
+                sql += "AND instr(meta.tags, ?) = 0 "
+                params.append(json.dumps(tag))
             valid_sql, valid_params = _validity_filter("meta.", include_invalid, as_of)
             sql += valid_sql + " "
             params.extend(valid_params)
@@ -349,6 +440,13 @@ class _BM25QueriesMixin(_StoreBase):
         out: list[dict[str, Any]] = []
         for r in rows:
             d = _row_to_dict(r)
+            if not _matches_common_filters(
+                d,
+                date_from=from_dt,
+                date_to=to_dt,
+                exclude_tags=excluded,
+            ):
+                continue
             # bm25() returns a NEGATIVE score for sqlite-fts5 (lower =
             # better). Transform into [0, 1] where higher = better match:
             # 1 - 1/(1 + |bm|) — more negative BM25 → score near 1.0.
@@ -365,6 +463,9 @@ class _BM25QueriesMixin(_StoreBase):
         exclude_types: set[str] | None = None,
         include_invalid: bool = False,
         as_of: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Fuzzy (typo-tolerant) BM25 search via tantivy.
 
@@ -386,8 +487,18 @@ class _BM25QueriesMixin(_StoreBase):
                 exclude_types,
                 include_invalid=include_invalid,
                 as_of=as_of,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
             )
-        candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
+        from_dt = _parse_filter_ts(date_from)
+        to_dt = _parse_filter_ts(date_to)
+        excluded = set(exclude_tags or ())
+        candidate_k = _candidate_limit(
+            limit,
+            has_type_filter=bool(type_ or exclude_types),
+            has_common_filter=bool(from_dt or to_dt or excluded),
+        )
         hits = t.search_fuzzy(query, candidate_k)
         if not hits:
             return []
@@ -409,6 +520,13 @@ class _BM25QueriesMixin(_StoreBase):
         out: list[dict[str, Any]] = []
         for r in rows:
             d = _row_to_dict(r)
+            if not _matches_common_filters(
+                d,
+                date_from=from_dt,
+                date_to=to_dt,
+                exclude_tags=excluded,
+            ):
+                continue
             d["score"] = id_score.get(d["id"], 0.0)
             out.append(d)
         out.sort(key=lambda x: x["score"], reverse=True)

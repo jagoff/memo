@@ -39,6 +39,9 @@ class VecStoreBase:
         limit: int,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Top-k vector search by cosine similarity.
 
@@ -54,6 +57,9 @@ class VecStoreBase:
         limit: int,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Keyword search (FTS5 or tantivy). Same row dict shape as search()."""
         raise NotImplementedError
@@ -65,9 +71,20 @@ class VecStoreBase:
         limit: int,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        exclude_tags: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Fuzzy/typo-tolerant search via tantivy. Falls back to BM25 when unavailable."""
-        return self.search_bm25(query, limit=limit, type_=type_, exclude_types=exclude_types)
+        return self.search_bm25(
+            query,
+            limit=limit,
+            type_=type_,
+            exclude_types=exclude_types,
+            date_from=date_from,
+            date_to=date_to,
+            exclude_tags=exclude_tags,
+        )
 
     def upsert(
         self,

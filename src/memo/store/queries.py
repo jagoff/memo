@@ -19,7 +19,7 @@ from ..identity import (
 )
 from ..sqlite_compat import import_sqlite_vec
 from ..util import safe_operation
-from .bm25_queries import _BM25QueriesMixin, _validity_filter
+from .bm25_queries import _BM25QueriesMixin, _parse_filter_ts, _validity_filter
 from .rows import _row_to_dict
 from .signal_queries import _SignalQueriesMixin
 
@@ -32,19 +32,6 @@ META_SELECT_COLUMNS = (
     "review_after, verification_state, verified_at, valid_at, invalid_at, topic_key, normalized_hash, "
     "namespace, normalized_title, normalized_content_hash"
 )
-
-
-def _parse_filter_ts(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
-
 
 class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
     # -- public CRUD --------------------------------------------------------

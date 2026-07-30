@@ -223,7 +223,14 @@ class _SearchOpsMixin(_MemoryBase):
 
         if mode == "bm25":
             rows = self.store.search_bm25(
-                query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
+                query,
+                limit=limit,
+                type_=type_,
+                exclude_types=exclude_types,
+                as_of=as_of,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
             )
             _add_trace(
                 "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
@@ -239,13 +246,23 @@ class _SearchOpsMixin(_MemoryBase):
                 exclude_types=exclude_types,
                 field_boost="exact",
                 as_of=as_of,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
             )
             _add_trace(
                 "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
             )
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
-                query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
+                query,
+                limit=limit,
+                type_=type_,
+                exclude_types=exclude_types,
+                as_of=as_of,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
             )
             _add_trace(
                 "candidate_generation", mode=mode, fuzzy_count=len(rows), output_count=len(rows)
@@ -349,7 +366,14 @@ class _SearchOpsMixin(_MemoryBase):
                         input_k = max(limit + 5, 15)
                     # else: medium diversity → keep input_k unchanged
             bm_hits = self.store.search_bm25(
-                query, limit=k_each, type_=type_, exclude_types=exclude_types, as_of=as_of
+                query,
+                limit=k_each,
+                type_=type_,
+                exclude_types=exclude_types,
+                as_of=as_of,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
             )
             exact_hits = self.store.search_bm25(
                 query,
@@ -358,6 +382,9 @@ class _SearchOpsMixin(_MemoryBase):
                 exclude_types=exclude_types,
                 field_boost="exact",
                 as_of=as_of,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
             )
 
             fact_hits = (
