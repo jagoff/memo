@@ -80,6 +80,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   identidad para write y admission, incluso si se crean ancestros; device
   vacío ligado al manifest. Matriz `79 passed` + atomic focused `7 passed`,
   Ruff y mypy limpios.
+- [x] `P01-T02` re-revisión final de `0b2e3c9d` + `e032a775` + `396d13a8`:
+  `FINAL PASS`, matriz final `80 passed`, sin hallazgos materiales.
 - [x] `P01-T06` GREEN técnico: timestamps canónicos estables en retry y
   lecturas con artifacts locales; `118 passed`, Ruff y mypy limpios.
 - [x] `P01-T03` re-revisión final: `PASS`; backfill global y upgrade v1
@@ -92,7 +94,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 - [ ] Consolidar hallazgos de los tres revisores sin duplicados.
 - [x] Cerrar `P01-T03 HIGH` y obtener re-revisión PASS del revisor continuo.
-- [ ] Cerrar `P01-T02 HIGH` y obtener re-revisión PASS del revisor continuo.
+- [x] Cerrar `P01-T02 HIGH` y obtener re-revisión PASS del revisor continuo.
 - [ ] Cerrar el provider productivo de claves y obtener revisión de seguridad
   antes de escribir cualquier activation stamp.
 - [ ] Obtener re-revisión PASS de `P01-T04 MEDIUM`.
@@ -246,7 +248,7 @@ Estado: **1/7 aceptadas**.
   write/admission y binding de devices persistentes sin segmentos/head.
 - [x] Atomic I/O + ledger + migration: `79 passed`; atomic final `7 passed`;
   Ruff y mypy limpios.
-- [ ] Revisión independiente y `PASS`.
+- [x] Revisión independiente final y `PASS`.
 
 ### Tarea 3 — Vistas SQLite transaccionales e idempotencia
 
