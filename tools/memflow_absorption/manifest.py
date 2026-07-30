@@ -619,19 +619,23 @@ def build_capability_manifest(
         _verify_fixture_bindings(mappings, fixture_root)
 
     blockers: set[str] = set()
-    coverage_gaps = usage.get("coverage_gaps")
-    if not isinstance(coverage_gaps, list):
-        raise ManifestError("usage coverage gaps must be explicit")
-    if coverage_gaps:
-        blockers.add("usage:coverage-gap")
-    freshness = _object(
-        usage.get("fresh_source_receipts"),
-        "fresh source receipts",
-    )
-    if set(freshness) != set(machine_ids) or any(
-        freshness[device] is not True for device in machine_ids
-    ):
-        blockers.add("usage:stale-source-receipt")
+    receipts = usage.get("source_receipts_v2")
+    if not isinstance(receipts, list) or len(receipts) != len(machine_ids):
+        raise ManifestError("signed hourly source receipts v2 are required")
+    seen_devices: set[str] = set()
+    expected_hours = int((end - start).total_seconds() // 3600) + 1
+    for receipt in receipts:
+        if not isinstance(receipt, dict) or receipt.get("schema") != "memo.cutover_source_receipt.v2":
+            raise ManifestError("invalid source receipt schema")
+        device = receipt.get("device_id")
+        buckets = receipt.get("hourly_buckets")
+        if device not in machine_ids or device in seen_devices or not isinstance(buckets, list):
+            raise ManifestError("source receipt device/buckets invalid")
+        if len(buckets) != expected_hours or not receipt.get("extraction_complete"):
+            raise ManifestError("source receipt coverage incomplete")
+        seen_devices.add(device)
+    if seen_devices != set(machine_ids):
+        raise ManifestError("source receipts do not cover all devices")
 
     excluded_events = set(audit_exclusions.event_ids)
     excluded_attempts = set(audit_exclusions.attempt_ids)
