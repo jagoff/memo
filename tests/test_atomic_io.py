@@ -110,3 +110,26 @@ def test_authority_write_lock_identity_is_stable_when_nested_root_is_created(
     assert entered.wait(timeout=2)
     writer.join(timeout=2)
     assert not writer.is_alive()
+
+
+def test_authority_admission_lock_identity_is_stable_after_it_creates_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "missing-parent" / "authority"
+    attempted = threading.Event()
+    entered = threading.Event()
+
+    def contend() -> None:
+        attempted.set()
+        with atomic_io.authority_admission_lock(root):
+            entered.set()
+
+    contender = threading.Thread(target=contend)
+    with atomic_io.authority_admission_lock(root):
+        contender.start()
+        assert attempted.wait(timeout=2)
+        assert not entered.wait(timeout=0.25)
+
+    assert entered.wait(timeout=2)
+    contender.join(timeout=2)
+    assert not contender.is_alive()

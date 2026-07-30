@@ -572,7 +572,10 @@ def authority_admission_lock(root: Path) -> Iterator[SecureDirectory]:
         finally:
             retained[target] = (directory, depth)
         return
-    with _directory_lock(
+    stable_key = hashlib.sha256(
+        b"authority-admission-path-v1\0" + os.fsencode(target)
+    ).hexdigest()
+    with _exclusive_lock(stable_key), _directory_lock(
         target,
         namespace="authority-admission-v1",
         reject_ancestor_symlinks=True,
