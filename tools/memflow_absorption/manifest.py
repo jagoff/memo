@@ -631,8 +631,20 @@ def build_capability_manifest(
         buckets = receipt.get("hourly_buckets")
         if device not in machine_ids or device in seen_devices or not isinstance(buckets, list):
             raise ManifestError("source receipt device/buckets invalid")
+        required = ("key_id", "roster_id", "query", "extractor_version", "snapshot_commit",
+                    "raw_event_set_sha256", "window_start", "window_end", "issued_at",
+                    "collected_at", "cursor", "signature")
+        if any(not receipt.get(field) for field in required):
+            raise ManifestError("source receipt provenance/signature incomplete")
         if len(buckets) != expected_hours or not receipt.get("extraction_complete"):
             raise ManifestError("source receipt coverage incomplete")
+        previous = None
+        for bucket in buckets:
+            if not isinstance(bucket, dict) or any(key not in bucket for key in ("start", "end", "count", "digest")):
+                raise ManifestError("source receipt hourly bucket malformed")
+            if previous is not None and bucket["start"] <= previous:
+                raise ManifestError("source receipt buckets out of order")
+            previous = bucket["start"]
         seen_devices.add(device)
     if seen_devices != set(machine_ids):
         raise ManifestError("source receipts do not cover all devices")
