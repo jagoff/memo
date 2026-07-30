@@ -102,6 +102,8 @@ def test_inventory_combines_source_process_and_launchd_without_following_symlink
                 ),
                 environment_keys=("SYNAPSE_MEMFLOW_BIN",),
                 loaded=True,
+                run_at_load=True,
+                keep_alive=True,
             ),
         ),
     )
@@ -114,8 +116,45 @@ def test_inventory_combines_source_process_and_launchd_without_following_symlink
     launchd_row = next(row for row in inventory.rows if row.kind == "launchd")
     assert launchd_row.label == "com.synapse.dashboard"
     assert launchd_row.active is True
+    assert launchd_row.run_at_load is True
+    assert launchd_row.keep_alive is True
     assert inventory.blockers == ("symlink-skipped:linked.txt",)
     assert len(inventory.source_scan_sha256) == 64
+
+
+def test_inventory_correlates_live_process_to_exact_loaded_launchd_command() -> None:
+    command = ("/operator/synapse-runtime", "watch")
+    inventory = build_consumer_inventory(
+        (),
+        ProcessSnapshot(
+            captured_at="2026-07-30T00:00:00Z",
+            records=(
+                ProcessRecord(
+                    pid=42,
+                    executable=command[0],
+                    argv=command[1:],
+                ),
+            ),
+        ),
+        LaunchdSnapshot(
+            captured_at="2026-07-30T00:00:00Z",
+            records=(
+                LaunchdRecord(
+                    label="com.synapse.watcher",
+                    plist_path="/operator/archive/com.synapse.watcher.plist",
+                    program_arguments=command,
+                    environment_keys=(),
+                    loaded=True,
+                    run_at_load=True,
+                    keep_alive=True,
+                ),
+            ),
+        ),
+    )
+
+    process = next(row for row in inventory.rows if row.kind == "process")
+    assert process.correlated_launchd_label == "com.synapse.watcher"
+    assert process.program_arguments == command
 
 
 def test_inventory_rejects_symlink_root(tmp_path: Path) -> None:

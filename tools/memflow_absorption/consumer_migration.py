@@ -146,6 +146,14 @@ _WHATSAPP_VALUE_OPTIONS = {
 }
 _WHATSAPP_FLAG_OPTIONS = {"--all-chats", "--index", "--no-index", "--json"}
 _CALENDAR_KEYS = {"Month", "Day", "Weekday", "Hour", "Minute", "Second"}
+_CALENDAR_RANGES = {
+    "Month": (1, 12),
+    "Day": (1, 31),
+    "Weekday": (0, 7),
+    "Hour": (0, 23),
+    "Minute": (0, 59),
+    "Second": (0, 59),
+}
 
 
 def _mapping(label: str) -> _ReplacementSpec | None:
@@ -184,10 +192,16 @@ def _whatsapp_command(row: ConsumerInventoryRow, memo_bin: str) -> tuple[str, ..
     admitted: list[str] = []
     has_all_chats = False
     include_count = 0
+    singletons: set[str] = set()
     index = 0
     while index < len(source):
         option = source[index]
         if option in _WHATSAPP_FLAG_OPTIONS:
+            if option in singletons:
+                raise ConsumerMigrationError(
+                    f"WhatsApp authoritative option is repeated: {option}"
+                )
+            singletons.add(option)
             admitted.append(option)
             has_all_chats = has_all_chats or option == "--all-chats"
             index += 1
@@ -198,6 +212,10 @@ def _whatsapp_command(row: ConsumerInventoryRow, memo_bin: str) -> tuple[str, ..
                     f"WhatsApp authoritative option lacks a value: {option}"
                 )
             value = source[index + 1]
+            if option in {"--db", "--notes-dir"} and not Path(value).is_absolute():
+                raise ConsumerMigrationError(
+                    f"WhatsApp authoritative path must be absolute: {option}"
+                )
             admitted.extend((option, value))
             include_count += option == "--include-chat"
             index += 2
@@ -207,6 +225,8 @@ def _whatsapp_command(row: ConsumerInventoryRow, memo_bin: str) -> tuple[str, ..
         raise ConsumerMigrationError(
             "WhatsApp replacement requires exactly one authoritative chat scope"
         )
+    if {"--index", "--no-index"}.issubset(singletons):
+        raise ConsumerMigrationError("WhatsApp authoritative index policy conflicts")
     if "--json" not in admitted:
         admitted.append("--json")
     return (memo_bin, "import", "whatsapp", *admitted)
@@ -223,8 +243,19 @@ def _validate_schedule(row: ConsumerInventoryRow, spec: _ReplacementSpec) -> Non
         raise ConsumerMigrationError(f"consumer has a noncanonical calendar schedule: {row.label}")
     if any(key not in _CALENDAR_KEYS for key, _value in row.start_calendar_interval):
         raise ConsumerMigrationError(f"consumer has an unsupported calendar schedule: {row.label}")
+    if any(
+        not (_CALENDAR_RANGES[key][0] <= value <= _CALENDAR_RANGES[key][1])
+        for key, value in row.start_calendar_interval
+    ):
+        raise ConsumerMigrationError(f"consumer has an invalid calendar schedule: {row.label}")
     if any(not Path(path).is_absolute() for path in row.watch_paths):
         raise ConsumerMigrationError(f"consumer WatchPaths must be absolute: {row.label}")
+    if any(
+        retired in path.casefold()
+        for path in row.watch_paths
+        for retired in ("synapse", "memflow")
+    ):
+        raise ConsumerMigrationError(f"consumer WatchPaths retain a retired runtime: {row.label}")
 
     has_periodic_trigger = bool(
         row.start_interval_seconds is not None
@@ -337,8 +368,8 @@ def build_consumer_replacement_plan(
         raise ConsumerMigrationError("consumer staging authority is invalid") from exc
 
     stable_memo_bin = _stable_memo_binary(memo_bin)
-    active_labels = {
-        row.label
+    active_jobs = {
+        row.label: row
         for row in inventory.rows
         if row.kind == "launchd" and row.active
     }
@@ -349,9 +380,15 @@ def build_consumer_replacement_plan(
             raise ConsumerMigrationError(
                 f"live retired process requires manual correlation: {row.location}"
             )
-        if row.correlated_launchd_label not in active_labels:
+        launchd_row = active_jobs.get(row.correlated_launchd_label)
+        if launchd_row is None:
             raise ConsumerMigrationError(
                 f"live retired process references an inactive LaunchAgent: {row.location}"
+            )
+        process_commands = {row.program_arguments, row.program_arguments[1:]}
+        if launchd_row.program_arguments not in process_commands:
+            raise ConsumerMigrationError(
+                f"live retired process correlation is not exact: {row.location}"
             )
 
     manifest_sha256 = hashlib.sha256(manifest.signed_bytes()).hexdigest()
@@ -380,6 +417,14 @@ def build_consumer_replacement_plan(
                 else (stable_memo_bin, *spec.command_tail)
             )
         )
+        if spec.owner == "memo_native" and any(
+            retired in argument.casefold()
+            for argument in command
+            for retired in ("synapse", "memflow")
+        ):
+            raise ConsumerMigrationError(
+                f"Memo replacement command retains a retired runtime: {old_label}"
+            )
         payload = _replacement_payload(
             old_label=old_label,
             new_label=spec.new_label,
@@ -493,8 +538,9 @@ def render_memo_launch_agents(
             existing = set(directory.list_names())
             if existing - set(outputs):
                 raise ConsumerMigrationError("operator LaunchAgents staging contains stale output")
-            for name, encoded in sorted(outputs.items()):
+            for name in sorted(outputs):
                 _safe_existing_output(directory, name)
+            for name, encoded in sorted(outputs.items()):
                 directory.atomic_write_bytes(name, encoded, mode=0o644)
     except ConsumerMigrationError:
         raise
@@ -523,7 +569,7 @@ def verify_no_synapse_runtime_reference(
                 _safe_existing_output(directory, name)
                 encoded = directory.read_bytes(name)
                 lowered_name = name.casefold()
-                lowered = encoded.casefold()
+                lowered = encoded.lower()
                 if (
                     b"synapse" in lowered
                     or b"memflow" in lowered

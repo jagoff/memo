@@ -64,3 +64,68 @@ and was not included in this commit.
   contains only the remaining Task 4 implementation, tests, and report.
 - Concurrent unrelated snapshot/manifest tooling, secure-enclave work, and
   prior SDD ledgers/reports were preserved and excluded from this commit.
+
+## Correction round 1
+
+The consumer stage is now authority-bound and executable rather than a
+best-effort label translation:
+
+- `_mapping` is an exact reviewed-label table. Unknown labels, including names
+  that merely contain an admitted substring, block the plan.
+- `build_consumer_replacement_plan` requires a `VerificationRoster`, verifies
+  both inventory and capability-manifest signatures/digests, and requires one
+  admitted operation plus capability mapping (live evidence, parity route, and
+  Memo target) for every active row.
+- WhatsApp preserves only a signed allowlisted configuration. It requires
+  exactly one `--all-chats` or `--include-chat` scope, rejects unknown,
+  duplicate, conflicting, or relative-path options, and emits an executable
+  absolute Memo command.
+- Live process rows must correlate to the exact command of one active
+  LaunchAgent or the plan blocks for manual operator resolution.
+- Inventory and replacement rows now bind `RunAtLoad`, `KeepAlive`,
+  `StartInterval`, `StartCalendarInterval`, `WatchPaths`, and
+  `ThrottleInterval`. Periodic jobs without an authoritative trigger and
+  persistent jobs without `KeepAlive` block instead of receiving invented
+  defaults.
+- Rendered plists use a resolved absolute executable outside project virtual
+  environments and a Memo-owned environment containing only
+  `MEMO_NONINTERACTIVE=1`.
+- The renderer rejects `~/Library`, its ancestors/descendants, and a root named
+  `LaunchAgents`. It uses descriptor-relative `O_NOFOLLOW` directory access and
+  atomic writes, preflights hardlinks/symlinks before any write, and requires
+  the root and `LaunchAgents` directory to contain exactly the planned outputs.
+  Verification rereads those exact regular single-link files and byte-compares
+  each one to the plan.
+
+Correction verification:
+
+```text
+uv run --no-sync pytest tests/tools/test_consumer_migration.py tests/test_runtime_isolation.py tests/test_watcher.py tests/test_whatsapp_ingest.py -v
+58 passed
+
+uv run --no-sync pytest tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py -q
+22 passed
+
+uv run --no-sync mypy src/memo
+Success: no issues found in 463 source files
+
+uv run --no-sync mypy --follow-imports=skip tools/memflow_absorption/consumer_migration.py tools/memflow_absorption/inventory.py tools/memflow_absorption/schemas.py
+Success: no issues found in 3 source files
+
+uv run --no-sync ruff check tools/memflow_absorption/consumer_migration.py tools/memflow_absorption/inventory.py tools/memflow_absorption/schemas.py tests/tools/test_consumer_migration.py tests/tools/test_absorption_inventory.py src/memo/watcher.py tests/test_watcher.py
+All checks passed!
+
+git diff --check
+passed
+```
+
+The full Ruff scope remains red on concurrent, unrelated source-receipt and
+snapshot edits: unsorted imports and an unused descriptor snapshot in
+`manifest.py`, one unused descriptor snapshot in `snapshot.py`, and an unsorted
+`source_receipt.py.__all__`. The deduplicated full Mypy scope likewise reports
+three pre-existing dynamic `SnapshotReceipt(**dict[str, object])` loader errors
+in `snapshot.py`. Those files were not modified by Task 4. Shared-worktree
+commit `4187276a` incorporated the schema/inventory and most planner/renderer
+correction hunks while committing source-receipt work; this correction commit
+preserves that history and contains the remaining Task 4 hardening,
+regressions, and report.
