@@ -184,3 +184,8 @@ passed
 The brief's full Ruff scope remains red only on the concurrent, unrelated
 `published_stat` unused local in `tools/memflow_absorption/snapshot.py`.
 Task 4 does not modify that file.
+
+Shared-worktree commit `e3152027` incorporated the round-2 implementation,
+schemas, regressions, and this report while committing concurrent source
+receipt tests. History was not rewritten; the dedicated Task 4 correction
+commit records this handoff and verification outcome.
