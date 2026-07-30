@@ -354,6 +354,7 @@ def _signed_inputs(
                 1
                 for event in device_events
                 if cursor <= datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) < bucket_end
+                or (bucket_end == end and datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) == end)
             )
             buckets.append(
                 SourceBucket(
