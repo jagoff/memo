@@ -1,0 +1,1 @@
+{"coverage_gaps":[],"events":{"mac-a":[],"mac-b":[]},"fresh_source_receipts":{"mac-a":true,"mac-b":true},"frozen_at":"2026-07-30T00:00:00Z","machine_ids":["mac-a","mac-b"],"proofs":[],"slo_baselines":[],"window_ended_at":"2026-07-30T00:00:00Z","window_started_at":"2026-05-01T00:00:00Z"}

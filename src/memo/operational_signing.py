@@ -28,6 +28,12 @@ ALLOWED_SIGNATURE_DOMAINS = frozenset(
         "memo.operational.system_capability.v1",
         "memo.operational_epoch_authorization.v1",
         "memo.cutover.vote.v1",
+        "memo.cutover.audit_exclusions.v1",
+        "memo.cutover.usage_proof.v1",
+        "memo.cutover.capability_manifest.v1",
+        "memo.cutover.consumer_inventory.v1",
+        "memo.cutover.synapse_retirement.v1",
+        "memo.cutover.control_record.v1",
     }
 )
 
@@ -238,6 +244,23 @@ class OperationalVerifier:
             roster_hash = _claim_string(body, "roster_hash", required=True)
             if roster_hash != roster.roster_hash:
                 raise SignatureError("system capability roster hash mismatch")
+        elif domain == "memo.cutover.usage_proof.v1":
+            record_key_field = "key_id"
+            require_record_claims = True
+            expected_device = _claim_string(body, "device_id", required=True)
+        elif domain in {
+            "memo.cutover.audit_exclusions.v1",
+            "memo.cutover.capability_manifest.v1",
+            "memo.cutover.consumer_inventory.v1",
+            "memo.cutover.control_record.v1",
+        }:
+            record_key_field = "signer_key_id"
+            require_record_claims = True
+            expected_device = _claim_string(body, "signer_device_id", required=True)
+        elif domain == "memo.cutover.synapse_retirement.v1":
+            declared_key = _claim_string(body, "signer_key_id", required=True)
+            if declared_key != envelope.key_id:
+                raise SignatureError("signed record key id differs from envelope")
         elif domain in {
             "memo.operational.roster.v1",
             "memo.operational.roster.bootstrap.v1",

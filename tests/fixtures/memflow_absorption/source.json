@@ -1,0 +1,1 @@
+{"operations":[{"capability":"continuity","latency_sensitive":true,"source_operation":"flow_continuity","source_tests":["tests/test_continuity.py::test_packet"]}],"source_commit":"ffffffffffffffffffffffffffffffffffffffff"}
