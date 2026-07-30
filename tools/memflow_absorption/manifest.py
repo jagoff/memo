@@ -52,6 +52,13 @@ def _load_json(path: Path) -> Any:
         receipt = json.loads(receipt_encoded)
         if canonical_json_bytes(receipt) != receipt_encoded or receipt.get("schema") != "memo.cutover_snapshot_receipt.v2":
             raise ManifestError(f"invalid snapshot receipt: {path}")
+        required_receipt_keys = {
+            "schema", "source", "target", "source_size", "source_mtime_ns", "source_mode",
+            "source_device", "source_inode", "target_size", "target_mtime_ns", "target_mode",
+            "target_device", "target_inode", "sha256",
+        }
+        if set(receipt) != required_receipt_keys:
+            raise ManifestError(f"snapshot receipt schema is not exact: {path}")
         if receipt.get("target") != str(absolute) or receipt.get("target_size") != len(encoded):
             raise ManifestError(f"snapshot receipt target mismatch: {path}")
         fields = {
