@@ -32,10 +32,10 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   v1 y la relectura usada por manifest/anchor. Snapshot descriptor-relative
   único, locks estables antes/durante creación y devices vacíos ligados.
   Revisión final: `PASS`, `80 passed`.
-- [ ] Resolver `P01-T07 BLOCKER`: el provider productivo ya genera/reabre/
-  firma/destruye, pero su helper depende de `swiftc` en runtime y su ACL
-  queda ligada al cdhash ad-hoc. Fix de helper precompilado/estable y upgrade
-  de Keychain en curso antes de habilitar activación.
+- [x] Resolver el blocker del helper de `P01-T07`: `54acf447` fija namespace
+  productivo v2, helper precompilado/cache `helpers-v1/<sha256>`, bindings
+  canónicos y validación fail-closed sin Swift runtime/fallback. Revisión
+  independiente PASS; aún no se habilita ninguna activación productiva.
 - [x] Re-review `P01-T04` commit `6e54600f`: PASS/ADDRESSED desde archive
   exacto; cadena root→boundary→parent→target con FD/no-follow/dev-ino,
   re-resolve antes de éxito, `21 passed`, sin nuevos BLOCKER/HIGH/MEDIUM.
@@ -147,8 +147,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tareas 1–6 aceptadas; Tarea 7
-  bloqueada por el helper Secure Enclave versionado**.
+- [ ] Plan 01 — Operational Ledger v2: **Tareas 1–6 aceptadas; fix de helper
+  T7 aceptado, activación productiva aún pendiente de los gates de corte**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
