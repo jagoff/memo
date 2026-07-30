@@ -239,7 +239,8 @@ revisión independiente**.
   Implementación técnica: `22299647` + `2c643863`; focused `34 passed`;
   paridad `211 passed`; suite completa `1888 passed`. Falta revisión
   independiente y `PASS`.
-- [ ] Tarea 3 — Drain observable y startup refusal.
+- [ ] Tarea 3 — Drain observable y startup refusal. Implementación en curso
+  sobre Memflow `2c643863`.
 - [ ] Tarea 4 — Aislar Synapse del runtime Memflow. Implementación técnica:
   `933445fd`; focused `18 passed`; suite completa `2326 passed, 5 skipped`;
   build real e idempotente verificado. Falta revisión independiente y `PASS`.
@@ -327,7 +328,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P02-T11 | Runtime distribuido E2E | — | — | — | — | — | — | — |
 | P03-T01 | Snapshot, manifest e inventario | Codex | `90a7144e` | import RED | focused `32`; matriz `60`; full `6138` | `f6ca3fff`…`7858d540` | pendiente | — |
 | P03-T02 | Fencing de requests Memflow | Codex | Memflow `5426e8e5` | import RED | focused `34`; paridad `211`; full `1888` | `22299647` + `2c643863` | pendiente | — |
-| P03-T03 | Drain y startup refusal | — | — | — | — | — | — | — |
+| P03-T03 | Drain y startup refusal | Codex | Memflow `2c643863` | pendiente | en curso | — | — | — |
 | P03-T04 | Aislamiento de Synapse | Codex | Synapse `45c146d5` | import RED | focused `20`; full `2326` | `933445fd` | pendiente | — |
 | P03-T05 | Registry backend de Memo | — | — | — | — | — | — | — |
 | P03-T06 | Configuración y readiness | — | — | — | — | — | — | — |
