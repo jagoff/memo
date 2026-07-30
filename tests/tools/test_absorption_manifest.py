@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import os
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,6 +35,7 @@ from tools.memflow_absorption.source_receipt import (
     SourceReceiptV2,
     sign_source_receipt,
 )
+from tools.memflow_absorption.snapshot import create_readonly_snapshot
 
 FROZEN_AT = "2026-07-30T00:00:00Z"
 WINDOW_STARTED_AT = "2026-05-01T00:00:00Z"
@@ -95,7 +97,25 @@ def _route(operation: str, fixture_digest: str) -> dict[str, Any]:
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(canonical_json_bytes(payload))
+    if path.with_name(f"{path.name}.receipt.json").exists():
+        source = path.parent / f".{path.name}.source"
+        source.write_bytes(canonical_json_bytes(payload))
+        path.unlink()
+        path.with_name(f"{path.name}.receipt.json").unlink()
+        create_readonly_snapshot(source, path)
+        source.unlink(missing_ok=True)
+    else:
+        path.write_bytes(canonical_json_bytes(payload))
+
+
+def _publish_snapshot(path: Path, payload: object, source_root: Path) -> None:
+    """Publish a descriptor-safe snapshot plus its adjacent v2 receipt."""
+    encoded = canonical_json_bytes(payload)
+    source = source_root / f"{path.parent.name}-{path.name}.source"
+    source.write_bytes(encoded)
+    path.unlink(missing_ok=True)
+    path.with_name(f"{path.name}.receipt.json").unlink(missing_ok=True)
+    create_readonly_snapshot(source, path)
 
 
 def _fixture_tree(
@@ -136,10 +156,7 @@ def _fixture_tree(
             "latency_sensitive": False,
         },
     ]
-    _write_json(
-        memflow_snapshot / "source.json",
-        {"source_commit": SOURCE_COMMIT, "operations": operations},
-    )
+    _publish_snapshot(memflow_snapshot / "source.json", {"source_commit": SOURCE_COMMIT, "operations": operations}, tmp_path)
     fixture_digest = hashlib.sha256(canonical_json_bytes({"status": "ok"})).hexdigest()
     mappings = [
         {
@@ -176,7 +193,7 @@ def _fixture_tree(
             "deletion_proof": ["complete-zero-use-90d", "source-test-retired"],
         },
     ]
-    _write_json(memo_snapshot / "mapping-candidates.json", mappings)
+    _publish_snapshot(memo_snapshot / "mapping-candidates.json", mappings, tmp_path)
     events = {
         "mac-a": [
             {
@@ -229,7 +246,7 @@ def _fixture_tree(
             }
         ],
     }
-    _write_json(
+    _publish_snapshot(
         usage_snapshot / "usage.json",
         {
             "frozen_at": FROZEN_AT,
@@ -261,6 +278,7 @@ def _fixture_tree(
             "coverage_gaps": ["2026-06-01T03:00:00Z"] if coverage_gap else [],
             "fresh_source_receipts": {"mac-a": True, "mac-b": True},
         },
+        tmp_path,
     )
     return memo_snapshot, memflow_snapshot, usage_snapshot, events
 
