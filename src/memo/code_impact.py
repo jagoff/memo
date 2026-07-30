@@ -53,23 +53,13 @@ def _edge_rows(
     return out
 
 
-def code_change_impact(
-    cwd: str | Path,
-    changed_files: list[str] | tuple[str, ...],
+def _early_impact_result(
     *,
-    depth: int = 1,
-) -> dict[str, Any]:
-    """Trace changed files to directly connected symbols, with hard bounds."""
-    repo_root = _git_root(Path(cwd))
-    db_path = repo_root / ".codegraph" / "codegraph.db"
-    paths = tuple(sorted({normalize_code_path(path) for path in changed_files if path}))
-    repo_id = codegraph_repo_id(repo_root)
-    envelope = codegraph_evidence(
-        db_path=db_path,
-        repo_root=repo_root,
-        repo_id=repo_id,
-        paths=paths,
-    ).to_dict()
+    db_path: Path,
+    repo_root: Path,
+    paths: tuple[str, ...],
+    envelope: dict[str, Any],
+) -> dict[str, Any] | None:
     if not db_path.is_file():
         return {
             "available": False,
@@ -92,6 +82,34 @@ def code_change_impact(
             "code_evidence": envelope,
             "limitations": [],
         }
+    return None
+
+
+def code_change_impact(
+    cwd: str | Path,
+    changed_files: list[str] | tuple[str, ...],
+    *,
+    depth: int = 1,
+) -> dict[str, Any]:
+    """Trace changed files to directly connected symbols, with hard bounds."""
+    repo_root = _git_root(Path(cwd))
+    db_path = repo_root / ".codegraph" / "codegraph.db"
+    paths = tuple(sorted({normalize_code_path(path) for path in changed_files if path}))
+    repo_id = codegraph_repo_id(repo_root)
+    envelope = codegraph_evidence(
+        db_path=db_path,
+        repo_root=repo_root,
+        repo_id=repo_id,
+        paths=paths,
+    ).to_dict()
+    early = _early_impact_result(
+        db_path=db_path,
+        repo_root=repo_root,
+        paths=paths,
+        envelope=envelope,
+    )
+    if early is not None:
+        return early
 
     bounded_depth = max(0, min(int(depth), 3))
     limitations: list[str] = []

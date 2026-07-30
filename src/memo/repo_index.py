@@ -76,6 +76,30 @@ from memo.util import sha256_short as _short_hash
 _logger = logging.getLogger(__name__)
 
 
+def _previous_repo_state(
+    source: dict[str, Any] | None,
+) -> tuple[dict[str, Any], str]:
+    extra: dict[str, Any] = {}
+    if source is not None and isinstance(source.get("extra"), dict):
+        extra = dict(source["extra"])
+    evidence: dict[str, Any] = {}
+    if isinstance(extra.get("code_evidence"), dict):
+        evidence = dict(extra["code_evidence"])
+    generation = str(extra.get("active_generation") or evidence.get("index_generation") or "")
+    return extra, generation
+
+
+def _publish_embedding_status(
+    store: VecStore,
+    repo_id: str,
+    status: str,
+    *,
+    enabled: bool,
+) -> None:
+    if enabled:
+        store.update_repo_status(repo_id, status, indexed_at=_now_iso())
+
+
 class RepoCorpus(_RepoIntelligenceMixin):
     """Index and search Git repositories inside memo's sqlite-vec store."""
 
@@ -258,17 +282,7 @@ class RepoCorpus(_RepoIntelligenceMixin):
         )
         coverage_rows: list[dict[str, Any]] = []
         flush_batch = _repo_flush_batch_size()
-        previous_extra: dict[str, Any] = {}
-        if existing_source is not None and isinstance(existing_source.get("extra"), dict):
-            previous_extra = dict(existing_source["extra"])
-        previous_evidence: dict[str, Any] = {}
-        if isinstance(previous_extra.get("code_evidence"), dict):
-            previous_evidence = dict(previous_extra["code_evidence"])
-        previous_generation = str(
-            previous_extra.get("active_generation")
-            or previous_evidence.get("index_generation")
-            or ""
-        )
+        previous_extra, previous_generation = _previous_repo_state(existing_source)
 
         # Persist target commit + indexing status BEFORE the scan so a
         # partial run is recoverable: file-batch commits below remain on
@@ -566,8 +580,12 @@ class RepoCorpus(_RepoIntelligenceMixin):
         if not pending_rows:
             counts = self.store.repo_counts(repo_id)
             status = _semantic_status(source.get("status"), counts)
-            if publish_status:
-                self.store.update_repo_status(repo_id, status, indexed_at=_now_iso())
+            _publish_embedding_status(
+                self.store,
+                repo_id,
+                status,
+                enabled=publish_status,
+            )
             _emit(progress, "semantic_done", repo=source["name"], embedded=0, total=0)
             return {
                 "repo_id": repo_id,
@@ -625,7 +643,9 @@ class RepoCorpus(_RepoIntelligenceMixin):
                     assert_valid_embedding(
                         vector,
                         self.cfg.embedder_dims,
-                        context=f"repo chunk {chunk['path']}:{chunk['line_start']}-{chunk['line_end']}",
+                        context=(
+                            f"repo chunk {chunk['path']}:{chunk['line_start']}-{chunk['line_end']}"
+                        ),
                     )
                     embeddings.append((chunk["id"], vector))
                     new_cache_rows.append((item.input_hash, vector))
@@ -657,8 +677,12 @@ class RepoCorpus(_RepoIntelligenceMixin):
 
         counts = self.store.repo_counts(repo_id)
         status = _semantic_status("semantic_ready", counts)
-        if publish_status:
-            self.store.update_repo_status(repo_id, status, indexed_at=_now_iso())
+        _publish_embedding_status(
+            self.store,
+            repo_id,
+            status,
+            enabled=publish_status,
+        )
         _emit(
             progress,
             "semantic_done",

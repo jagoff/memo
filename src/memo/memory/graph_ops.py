@@ -23,6 +23,37 @@ class GraphRebuildResult:
     projection: ProjectionBuildResult
 
 
+def _collect_code_target(
+    value: Any,
+    stable_ids: set[str],
+    file_paths: set[str],
+) -> None:
+    if isinstance(value, dict):
+        stable_id = value.get("stable_symbol_id")
+        file_path = value.get("file_path")
+        if stable_id:
+            stable_ids.add(str(stable_id))
+        if file_path:
+            file_paths.add(str(file_path))
+        for child in value.values():
+            _collect_code_target(child, stable_ids, file_paths)
+    elif isinstance(value, list):
+        for child in value:
+            _collect_code_target(child, stable_ids, file_paths)
+
+
+def _context_code_targets(
+    findings: list[dict[str, Any]],
+) -> tuple[set[str], set[str], set[str]]:
+    stable_ids: set[str] = set()
+    file_paths: set[str] = set()
+    evidence_uris: set[str] = set()
+    for finding in findings:
+        _collect_code_target(finding.get("data") or {}, stable_ids, file_paths)
+        evidence_uris.update(str(uri) for uri in finding.get("evidence_uris") or [])
+    return stable_ids, file_paths, evidence_uris
+
+
 class _GraphOpsMixin(_MemoryBase):
     def _projection_memory_states(self) -> dict[str, ProjectionMemoryState]:
         resolver = None
@@ -258,27 +289,7 @@ class _GraphOpsMixin(_MemoryBase):
                 "memory_reason": model.skip_reason or "projection_unavailable",
             }
 
-        stable_ids: set[str] = set()
-        file_paths: set[str] = set()
-        evidence_uris: set[str] = set()
-
-        def _collect(value: Any) -> None:
-            if isinstance(value, dict):
-                stable_id = value.get("stable_symbol_id")
-                file_path = value.get("file_path")
-                if stable_id:
-                    stable_ids.add(str(stable_id))
-                if file_path:
-                    file_paths.add(str(file_path))
-                for child in value.values():
-                    _collect(child)
-            elif isinstance(value, list):
-                for child in value:
-                    _collect(child)
-
-        for finding in pack.get("findings") or []:
-            _collect(finding.get("data") or {})
-            evidence_uris.update(str(uri) for uri in finding.get("evidence_uris") or [])
+        stable_ids, file_paths, evidence_uris = _context_code_targets(pack.get("findings") or [])
 
         repo_id = str((pack.get("code_evidence") or {}).get("repo_id") or "")
         candidates: dict[str, dict[str, Any]] = {}

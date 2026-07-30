@@ -16,6 +16,80 @@ from memo.memory import Memory
 from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, annotated_tool
 
 
+def _repo_search_result(
+    memory: Memory,
+    query: str,
+    *,
+    limit: int,
+    repo: str | None,
+    path: str | None,
+    mode: str,
+    scope: str,
+    include_evidence: bool,
+) -> list[dict[str, Any]]:
+    search_kwargs: dict[str, Any] = {
+        "limit": limit,
+        "repo": repo,
+        "path": path,
+        "mode": mode,
+    }
+    if scope != "all":
+        search_kwargs["scope"] = scope
+    hits = memory.repo_search(query, **search_kwargs)
+    out: list[dict[str, Any]] = []
+    evidence_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    for hit in hits:
+        row = hit.to_dict()
+        if include_evidence:
+            repo_key = str(repo or row.get("repo_id") or row.get("repo_name") or "")
+            hit_path = str(row.get("path") or "")
+            cache_key = (repo_key, hit_path)
+            if cache_key not in evidence_cache:
+                evidence_cache[cache_key] = memory.repo_evidence(
+                    repo_key,
+                    paths=[hit_path] if hit_path else None,
+                )
+            row["code_evidence"] = evidence_cache[cache_key]
+        out.append(row)
+    return out
+
+
+def _repo_status_result(
+    memory: Memory,
+    repo: str,
+    paths: list[str] | None,
+    scopes: list[str] | None,
+) -> dict[str, Any] | None:
+    if paths is None and scopes is None:
+        return memory.repo_status(repo)
+    return memory.repo_status(repo, paths=paths, scopes=scopes)
+
+
+def _repo_index_kwargs(
+    *,
+    name: str | None,
+    ref: str | None,
+    force: bool,
+    refresh: bool,
+    with_embeddings: bool,
+    include: list[str] | None,
+    exclude: list[str] | None,
+    max_file_bytes: int | None,
+) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "name": name,
+        "ref": ref,
+        "force": force,
+        "with_embeddings": with_embeddings,
+        "include": include,
+        "exclude": exclude,
+        "max_file_bytes": max_file_bytes,
+    }
+    if refresh:
+        kwargs["refresh"] = True
+    return kwargs
+
+
 def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_repo_index(
@@ -92,17 +166,16 @@ def register(server: FastMCP, memory: Memory) -> None:
         private repos work when SSH agent / credential helpers / tokens
         already let `git clone <url>` succeed on this machine.
         """
-        kwargs: dict[str, Any] = {
-            "name": name,
-            "ref": ref,
-            "force": force,
-            "with_embeddings": with_embeddings,
-            "include": include,
-            "exclude": exclude,
-            "max_file_bytes": max_file_bytes,
-        }
-        if refresh:
-            kwargs["refresh"] = True
+        kwargs = _repo_index_kwargs(
+            name=name,
+            ref=ref,
+            force=force,
+            refresh=refresh,
+            with_embeddings=with_embeddings,
+            include=include,
+            exclude=exclude,
+            max_file_bytes=max_file_bytes,
+        )
         return memory.repo_index(url, **kwargs)
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
@@ -148,9 +221,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         ] = None,
     ) -> dict[str, Any] | None:
         """Return index counts plus coverage/freshness evidence for one repo."""
-        if paths is None and scopes is None:
-            return memory.repo_status(repo)
-        return memory.repo_status(repo, paths=paths, scopes=scopes)
+        return _repo_status_result(memory, repo, paths, scopes)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_repo_search(
@@ -200,31 +271,16 @@ def register(server: FastMCP, memory: Memory) -> None:
         vendored code without treating missing structural data as negative
         evidence.
         """
-        search_kwargs: dict[str, Any] = {
-            "limit": limit,
-            "repo": repo,
-            "path": path,
-            "mode": mode,
-        }
-        if scope != "all":
-            search_kwargs["scope"] = scope
-        hits = memory.repo_search(query, **search_kwargs)
-        out: list[dict[str, Any]] = []
-        evidence_cache: dict[tuple[str, str], dict[str, Any]] = {}
-        for hit in hits:
-            row = hit.to_dict()
-            if include_evidence:
-                repo_key = str(repo or row.get("repo_id") or row.get("repo_name") or "")
-                hit_path = str(row.get("path") or "")
-                cache_key = (repo_key, hit_path)
-                if cache_key not in evidence_cache:
-                    evidence_cache[cache_key] = memory.repo_evidence(
-                        repo_key,
-                        paths=[hit_path] if hit_path else None,
-                    )
-                row["code_evidence"] = evidence_cache[cache_key]
-            out.append(row)
-        return out
+        return _repo_search_result(
+            memory,
+            query,
+            limit=limit,
+            repo=repo,
+            path=path,
+            mode=mode,
+            scope=scope,
+            include_evidence=include_evidence,
+        )
 
     @annotated_tool(server, **READ_ONLY)
     def memo_repo_get_file(

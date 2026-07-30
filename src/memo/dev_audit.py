@@ -171,6 +171,8 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
 #   the latency-sensitive UserPromptSubmit hook;
 # - mandate sync: a nightly optional pass reports its error in the receipt and
 #   must not abort the rest of dream maintenance.
+# - repo-search evaluation: each strategy is an isolated trial; one provider
+#   failure is recorded in the report and must not suppress the paired trial.
 #
 # tests/test_dev_audit.py asserts that this inventory is exact and every key
 # still resolves to a real ``except Exception`` site, preventing stale or broad
@@ -179,6 +181,7 @@ BROAD_EXCEPTION_RATCHET_EXEMPTIONS: set[tuple[str, str, int]] = {
     ("briefing.py", "proactive_compact_line", 1),
     ("cli_recall_hook.py", "_proactive_urgent_line", 1),
     ("constitution.py", "run_mandate_sync_pass", 1),
+    ("repo_eval.py", "evaluate_repo_search", 1),
 }
 
 

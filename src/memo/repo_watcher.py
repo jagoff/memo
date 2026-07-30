@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import signal
+import sqlite3
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any
+
+from memo.errors import MemoError
 
 
 class DebouncedRepoRefresh:
@@ -73,7 +77,14 @@ class DebouncedRepoRefresh:
                 exclude=list(exclude) if isinstance(exclude, list) else None,
                 max_file_bytes=(int(max_file_bytes) if isinstance(max_file_bytes, int) else None),
             )
-        except Exception as exc:
+        except (
+            MemoError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            sqlite3.Error,
+            subprocess.SubprocessError,
+        ) as exc:
             print(f"# memo repo watch: refresh failed: {exc}", file=sys.stderr)
         finally:
             with self._lock:
@@ -97,6 +108,44 @@ class DebouncedRepoRefresh:
             )
 
 
+def _watch_target(source: dict[str, Any] | None, repo: str) -> Path:
+    if source is None:
+        raise SystemExit(f"repo not found: {repo}")
+    target = Path(str(source["clone_path"]))
+    if not target.is_dir():
+        raise SystemExit(f"managed clone is missing: {target}")
+    return target
+
+
+def _watch_handler(base: Any, target: Path, refresh: DebouncedRepoRefresh) -> Any:
+    class _Handler(base):
+        def _maybe(self, event: Any) -> None:
+            if event.is_directory:
+                return
+            path = Path(str(getattr(event, "dest_path", "") or event.src_path))
+            try:
+                relative = path.relative_to(target)
+            except ValueError:
+                return
+            if relative.parts and relative.parts[0] == ".git":
+                return
+            refresh.schedule(path)
+
+        def on_modified(self, event: Any) -> None:
+            self._maybe(event)
+
+        def on_created(self, event: Any) -> None:
+            self._maybe(event)
+
+        def on_deleted(self, event: Any) -> None:
+            self._maybe(event)
+
+        def on_moved(self, event: Any) -> None:
+            self._maybe(event)
+
+    return _Handler()
+
+
 def run_repo_watcher(repo: str, *, delay: float = 1.0, debug: bool = False) -> None:
     """Watch one managed clone and refresh only changed file payloads."""
     try:
@@ -113,40 +162,16 @@ def run_repo_watcher(repo: str, *, delay: float = 1.0, debug: bool = False) -> N
     memory = Memory(Config.from_env())
     try:
         source = memory.repo_status(repo)
-        if source is None:
-            raise SystemExit(f"repo not found: {repo}")
-        target = Path(str(source["clone_path"]))
-        if not target.is_dir():
-            raise SystemExit(f"managed clone is missing: {target}")
+        target = _watch_target(source, repo)
+        assert source is not None
         refresh = DebouncedRepoRefresh(memory, source, delay=delay, debug=debug)
 
-        class _Handler(FileSystemEventHandler):
-            def _maybe(self, event: Any) -> None:
-                if event.is_directory:
-                    return
-                path = Path(str(getattr(event, "dest_path", "") or event.src_path))
-                try:
-                    relative = path.relative_to(target)
-                except ValueError:
-                    return
-                if relative.parts and relative.parts[0] == ".git":
-                    return
-                refresh.schedule(path)
-
-            def on_modified(self, event: Any) -> None:
-                self._maybe(event)
-
-            def on_created(self, event: Any) -> None:
-                self._maybe(event)
-
-            def on_deleted(self, event: Any) -> None:
-                self._maybe(event)
-
-            def on_moved(self, event: Any) -> None:
-                self._maybe(event)
-
         observer = Observer()
-        observer.schedule(_Handler(), str(target), recursive=True)
+        observer.schedule(
+            _watch_handler(FileSystemEventHandler, target, refresh),
+            str(target),
+            recursive=True,
+        )
         observer.start()
         stop = threading.Event()
 

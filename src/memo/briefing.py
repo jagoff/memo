@@ -464,6 +464,43 @@ def profile_lines(cfg: Any, *, cwd: str | None = None) -> list[str]:
     return lines
 
 
+def code_impact_lines(mem: Any, cwd: str) -> list[str]:
+    """Render linked memories affected by working-tree changes."""
+    from memo.flags import flag_int
+
+    depth = flag_int("MEMO_CODE_IMPACT_DEPTH") or 1
+    limit = flag_int("MEMO_CODE_IMPACT_LIMIT") or 5
+    impact = mem.code_change_impact(cwd, depth=depth, limit=limit)
+    memories = impact.get("memories") or []
+    if not memories:
+        return []
+    lines = ["### Memories affected by local code changes", ""]
+    changed = ", ".join(f"`{path}`" for path in impact["changed_files"][:4])
+    lines.append(f"Changed: {changed}")
+    for item in memories:
+        lines.append(
+            f"- `{str(item['id'])[:8]}` **{item.get('type') or 'note'}** · "
+            f"{item.get('title') or '—'} "
+            f"(impact distance {int(item.get('distance') or 0)})"
+        )
+    evidence = impact.get("code_evidence") or {}
+    if evidence.get("coverage_status") != "complete" or evidence.get("freshness") == "stale":
+        lines.append(
+            "_Code evidence is incomplete or stale; inspect `memo_graph` "
+            'with `verb="impact"` before relying on absence._'
+        )
+    lines.append("")
+    return lines
+
+
+def maybe_code_impact_lines(mem: Any, cwd: str | None) -> list[str]:
+    from memo.flags import flag_bool
+
+    if not cwd or not flag_bool("MEMO_BRIEFING_CODE_IMPACT"):
+        return []
+    return code_impact_lines(mem, cwd)
+
+
 def memo_native_briefing_lines(
     mem: Any,
     *,
@@ -488,7 +525,7 @@ def memo_native_briefing_lines(
     import hashlib
     import json as _json
 
-    from memo.flags import flag_bool, flag_int
+    from memo.flags import flag_bool
 
     lines: list[str] = []
 
@@ -506,32 +543,8 @@ def memo_native_briefing_lines(
     if flag_bool("MEMO_FACT_SURFACE_ENABLED"):
         with contextlib.suppress(Exception):
             lines.extend(temporal_fact_lines(mem))
-    if cwd and flag_bool("MEMO_BRIEFING_CODE_IMPACT"):
-        with contextlib.suppress(Exception):
-            depth = flag_int("MEMO_CODE_IMPACT_DEPTH") or 1
-            limit = flag_int("MEMO_CODE_IMPACT_LIMIT") or 5
-            impact = mem.code_change_impact(cwd, depth=depth, limit=limit)
-            memories = impact.get("memories") or []
-            if memories:
-                lines.extend(["### Memories affected by local code changes", ""])
-                changed = ", ".join(f"`{path}`" for path in impact["changed_files"][:4])
-                lines.append(f"Changed: {changed}")
-                for item in memories:
-                    lines.append(
-                        f"- `{str(item['id'])[:8]}` **{item.get('type') or 'note'}** · "
-                        f"{item.get('title') or '—'} "
-                        f"(impact distance {int(item.get('distance') or 0)})"
-                    )
-                evidence = impact.get("code_evidence") or {}
-                if (
-                    evidence.get("coverage_status") != "complete"
-                    or evidence.get("freshness") == "stale"
-                ):
-                    lines.append(
-                        "_Code evidence is incomplete or stale; inspect `memo_graph` "
-                        'with `verb="impact"` before relying on absence._'
-                    )
-                lines.append("")
+    with contextlib.suppress(Exception):
+        lines.extend(maybe_code_impact_lines(mem, cwd))
 
     # ── Proactive engine: reliability/continuity/etc nudges (dark by default) ─
     if flag_bool("MEMO_PROACTIVE_ENABLED"):

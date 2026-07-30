@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from dataclasses import replace
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from memo.artifact_store import ContentAddressedArtifactStore
+from memo.artifact_store import ArtifactIntegrityError, ContentAddressedArtifactStore
 from memo.code_evidence import CodeEvidenceEnvelope, repo_corpus_evidence
 from memo.embedder import assert_valid_embedding
 from memo.repo_index_helpers import STATUS_INDEXING, _semantic_status
@@ -24,6 +25,16 @@ from memo.repo_signals import collect_git_change_signals, expand_cochange_paths
 from memo.repo_structural import search_codegraph_paths
 
 
+def _search_mode(value: str) -> str:
+    mode = str(value or "hybrid").strip().lower()
+    if mode not in {"hybrid", "lexical", "unified", "vec", "bm25", "line"}:
+        raise ValueError(
+            f"invalid repo search mode {mode!r}; expected hybrid, lexical, unified, "
+            "vec, bm25, or line"
+        )
+    return mode
+
+
 class _RepoIntelligenceMixin:
     """Provider-enriched read surface mixed into ``RepoCorpus``."""
 
@@ -34,6 +45,37 @@ class _RepoIntelligenceMixin:
 
     def _resolve_repo_id(self, repo: str | None) -> str | None:
         raise NotImplementedError
+
+    def _simple_search(
+        self,
+        mode: str,
+        query: str,
+        *,
+        limit: int,
+        oversample: int,
+        repo_id: str | None,
+        path: str | None,
+        scope: str,
+    ) -> list[RepoSearchHit] | None:
+        if mode == "line":
+            rows = self.store.search_repo_lines(
+                query,
+                limit=oversample,
+                repo_id=repo_id,
+                path_glob=path,
+                scope=scope,
+            )
+        elif mode == "bm25":
+            rows = self.store.search_repo_bm25(
+                query,
+                limit=oversample,
+                repo_id=repo_id,
+                path_glob=path,
+                scope=scope,
+            )
+        else:
+            return None
+        return _boost_and_resort(_hits_from_rows(rows), query=query, limit=limit)
 
     def search(
         self,
@@ -47,12 +89,7 @@ class _RepoIntelligenceMixin:
     ) -> list[RepoSearchHit]:
         if not query or not query.strip():
             return []
-        mode = str(mode or "hybrid").strip().lower()
-        if mode not in {"hybrid", "lexical", "unified", "vec", "bm25", "line"}:
-            raise ValueError(
-                f"invalid repo search mode {mode!r}; expected hybrid, lexical, unified, "
-                "vec, bm25, or line"
-            )
+        mode = _search_mode(mode)
         scope = str(scope or "all").strip().lower()
         path_in_repo_scope("", scope)
         repo_id = self._resolve_repo_id(repo) if repo else None
@@ -60,34 +97,17 @@ class _RepoIntelligenceMixin:
             return []
 
         oversample = max(limit * 4, 40)
-        if mode == "line":
-            return _boost_and_resort(
-                _hits_from_rows(
-                    self.store.search_repo_lines(
-                        query,
-                        limit=oversample,
-                        repo_id=repo_id,
-                        path_glob=path,
-                        scope=scope,
-                    )
-                ),
-                query=query,
-                limit=limit,
-            )
-        if mode == "bm25":
-            return _boost_and_resort(
-                _hits_from_rows(
-                    self.store.search_repo_bm25(
-                        query,
-                        limit=oversample,
-                        repo_id=repo_id,
-                        path_glob=path,
-                        scope=scope,
-                    )
-                ),
-                query=query,
-                limit=limit,
-            )
+        simple = self._simple_search(
+            mode,
+            query,
+            limit=limit,
+            oversample=oversample,
+            repo_id=repo_id,
+            path=path,
+            scope=scope,
+        )
+        if simple is not None:
+            return simple
 
         query_terms = _extract_query_terms(query)
         input_k = max(limit * 3, 40)
@@ -350,7 +370,7 @@ class _RepoIntelligenceMixin:
             return None, {"status": "unavailable", "reason": "artifact_missing"}
         try:
             payload = self._artifact_store().load_json(ref)
-        except Exception as exc:
+        except (ArtifactIntegrityError, OSError) as exc:
             return None, {
                 "status": "unavailable",
                 "reason": f"{type(exc).__name__}: {exc}",
@@ -398,7 +418,7 @@ class _RepoIntelligenceMixin:
                 "cochange_pairs": signals["cochange_pairs"],
                 "cross_service_pairs": signals["cross_service_pairs"],
             }
-        except Exception as exc:
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
             providers["git_history"] = {
                 "status": "unavailable",
                 "reason": f"{type(exc).__name__}: {exc}",

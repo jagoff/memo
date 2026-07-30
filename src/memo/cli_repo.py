@@ -414,12 +414,13 @@ def repo_search_cmd(
 @click.option("--json", "as_json", is_flag=True)
 def repo_artifact_cmd(repo: str, kind: str, destination: Path, as_json: bool) -> None:
     """Export a verified, content-addressed repo artifact."""
+    from memo.artifact_store import ArtifactIntegrityError
     from memo.memory import Memory
 
     mem = Memory(Config.from_env())
     try:
         out = mem.repo_export_artifact(repo, kind, destination)
-    except Exception as exc:
+    except (ArtifactIntegrityError, OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:
         mem.close()

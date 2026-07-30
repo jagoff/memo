@@ -110,6 +110,23 @@ def test_memo_repo_index_default_args(tmp_cfg) -> None:
     )
 
 
+def test_memo_repo_index_passes_refresh_only_when_enabled(tmp_cfg) -> None:
+    from memo.server_repo import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.repo_index.return_value = {"status": "ok"}
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    tools["memo_repo_index"](
+        url="https://github.com/example/repo.git",
+        refresh=True,
+    )
+
+    assert mem.repo_index.call_args.kwargs["refresh"] is True
+
+
 def test_memo_repo_embed_delegates_to_memory(tmp_cfg) -> None:
     """memo_repo_embed must delegate to memory.repo_embed and return its result."""
     from memo.server_repo import register

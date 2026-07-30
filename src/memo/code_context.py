@@ -124,6 +124,24 @@ class _Edge:
     kind: str
 
 
+@dataclass
+class _ArchitectureState:
+    by_id: dict[str, _Node]
+    focused: set[str]
+    relevant: set[str]
+    relevant_packages: set[str]
+    relevant_layers: set[str]
+    package_nodes: dict[str, list[_Node]]
+    layer_nodes: dict[str, list[_Node]]
+    degree: dict[str, int]
+    incoming: dict[str, int]
+    outgoing: dict[str, int]
+    boundary_counts: dict[tuple[str, str], dict[str, int]]
+    boundary_samples: dict[tuple[str, str], list[_Edge]]
+    package_adjacency: dict[str, set[str]]
+    route_edges: dict[str, list[_Edge]]
+
+
 def _git_root(cwd: Path) -> Path:
     try:
         result = subprocess.run(
@@ -305,16 +323,7 @@ def _relevant_nodes(focused: set[str], edges: list[_Edge], *, has_focus: bool) -
     return relevant
 
 
-def _strong_components(adjacency: dict[str, set[str]]) -> list[list[str]]:
-    """Return deterministic SCCs without recursion-depth risk."""
-    all_nodes = set(adjacency)
-    all_nodes.update(neighbor for values in adjacency.values() for neighbor in values)
-    reverse: dict[str, set[str]] = defaultdict(set)
-    for source, targets in adjacency.items():
-        reverse.setdefault(source, set())
-        for target in targets:
-            reverse[target].add(source)
-
+def _finish_order(adjacency: dict[str, set[str]], all_nodes: set[str]) -> list[str]:
     visited: set[str] = set()
     finish_order: list[str] = []
     for node in sorted(all_nodes):
@@ -333,7 +342,13 @@ def _strong_components(adjacency: dict[str, set[str]]) -> list[list[str]]:
             for neighbor in sorted(adjacency.get(current, ()), reverse=True):
                 if neighbor not in visited:
                     stack.append((neighbor, False))
+    return finish_order
 
+
+def _components_from_finish_order(
+    reverse: dict[str, set[str]],
+    finish_order: list[str],
+) -> list[list[str]]:
     components: list[list[str]] = []
     assigned: set[str] = set()
     for node in reversed(finish_order):
@@ -351,6 +366,18 @@ def _strong_components(adjacency: dict[str, set[str]]) -> list[list[str]]:
                     component_stack.append(neighbor)
         components.append(sorted(component))
     return components
+
+
+def _strong_components(adjacency: dict[str, set[str]]) -> list[list[str]]:
+    """Return deterministic SCCs without recursion-depth risk."""
+    all_nodes = set(adjacency)
+    all_nodes.update(neighbor for values in adjacency.values() for neighbor in values)
+    reverse: dict[str, set[str]] = defaultdict(set)
+    for source, targets in adjacency.items():
+        reverse.setdefault(source, set())
+        for target in targets:
+            reverse[target].add(source)
+    return _components_from_finish_order(reverse, _finish_order(adjacency, all_nodes))
 
 
 def _weak_components(adjacency: dict[str, set[str]]) -> list[list[str]]:
@@ -395,13 +422,11 @@ def _bounded_component(component: list[str], separator: str) -> tuple[str, dict[
     )
 
 
-def _architecture_findings(
-    *,
+def _architecture_state(
     nodes: list[_Node],
     edges: list[_Edge],
-    repo_id: str,
     focus: str | None,
-) -> list[CodeContextFinding]:
+) -> _ArchitectureState:
     by_id = {node.id: node for node in nodes}
     focused = _focus_nodes(nodes, focus)
     relevant = _relevant_nodes(focused, edges, has_focus=bool(focus))
@@ -438,77 +463,119 @@ def _architecture_findings(
         if len(boundary_samples[key]) < 3:
             boundary_samples[key].append(edge)
         package_adjacency[source_package].add(target_package)
+    return _ArchitectureState(
+        by_id=by_id,
+        focused=focused,
+        relevant=relevant,
+        relevant_packages=relevant_packages,
+        relevant_layers=relevant_layers,
+        package_nodes=package_nodes,
+        layer_nodes=layer_nodes,
+        degree=degree,
+        incoming=incoming,
+        outgoing=outgoing,
+        boundary_counts=boundary_counts,
+        boundary_samples=boundary_samples,
+        package_adjacency=package_adjacency,
+        route_edges=route_edges,
+    )
 
+
+def _hotspot_findings(
+    nodes: list[_Node],
+    state: _ArchitectureState,
+    repo_id: str,
+) -> list[CodeContextFinding]:
     findings: list[CodeContextFinding] = []
     for node in nodes:
-        if node.id not in relevant or degree[node.id] == 0:
+        if node.id not in state.relevant or state.degree[node.id] == 0:
             continue
         findings.append(
             CodeContextFinding(
                 kind="hotspot",
                 id=f"hotspot:{node.id}",
                 label=node.qualified_name or node.name,
-                score=float(degree[node.id]),
+                score=float(state.degree[node.id]),
                 data={
                     **_node_dict(node),
-                    "degree": degree[node.id],
-                    "incoming": incoming[node.id],
-                    "outgoing": outgoing[node.id],
+                    "degree": state.degree[node.id],
+                    "incoming": state.incoming[node.id],
+                    "outgoing": state.outgoing[node.id],
                 },
                 evidence_uris=(codegraph_uri(repo_id, node.id),),
             )
         )
+    return findings
 
-    if focus and focused:
-        dependent_ids = {
-            edge.source for edge in edges if edge.target in focused and edge.source not in focused
-        }
-        dependency_ids = {
-            edge.target for edge in edges if edge.source in focused and edge.target not in focused
-        }
-        dependent_nodes = sorted(
-            (by_id[node_id] for node_id in dependent_ids),
-            key=lambda node: (-degree[node.id], node.file_path, node.id),
-        )
-        dependency_nodes = sorted(
-            (by_id[node_id] for node_id in dependency_ids),
-            key=lambda node: (-degree[node.id], node.file_path, node.id),
-        )
-        focus_samples = sorted(
-            (by_id[node_id] for node_id in focused),
-            key=lambda node: (node.file_path, node.start_line, node.id),
-        )[:5]
-        radius_samples = [*dependent_nodes[:8], *dependency_nodes[:8]]
-        findings.append(
-            CodeContextFinding(
-                kind="blast_radius",
-                id="blast:"
-                + hashlib.sha256(
-                    "|".join(sorted(node.id for node in focus_samples)).encode()
-                ).hexdigest()[:16],
-                label=f"One-hop blast radius for {focus}",
-                score=float(len(dependent_nodes) + len(dependency_nodes)),
-                data={
-                    "focus": focus,
-                    "focus_symbols": [_node_dict(node) for node in focus_samples],
-                    "dependent_count": len(dependent_nodes),
-                    "dependents": [_node_dict(node) for node in dependent_nodes[:8]],
-                    "dependents_truncated": len(dependent_nodes) > 8,
-                    "dependency_count": len(dependency_nodes),
-                    "dependencies": [_node_dict(node) for node in dependency_nodes[:8]],
-                    "dependencies_truncated": len(dependency_nodes) > 8,
-                    "depth": 1,
-                },
-                evidence_uris=tuple(
-                    codegraph_uri(repo_id, node.id) for node in [*focus_samples, *radius_samples]
-                ),
-            )
-        )
 
-    for (source_package, target_package), kind_counts in boundary_counts.items():
-        if focus and not ({source_package, target_package} & relevant_packages):
+def _blast_radius_findings(
+    edges: list[_Edge],
+    state: _ArchitectureState,
+    repo_id: str,
+    focus: str | None,
+) -> list[CodeContextFinding]:
+    if not focus or not state.focused:
+        return []
+    dependent_ids = {
+        edge.source
+        for edge in edges
+        if edge.target in state.focused and edge.source not in state.focused
+    }
+    dependency_ids = {
+        edge.target
+        for edge in edges
+        if edge.source in state.focused and edge.target not in state.focused
+    }
+    dependent_nodes = sorted(
+        (state.by_id[node_id] for node_id in dependent_ids),
+        key=lambda node: (-state.degree[node.id], node.file_path, node.id),
+    )
+    dependency_nodes = sorted(
+        (state.by_id[node_id] for node_id in dependency_ids),
+        key=lambda node: (-state.degree[node.id], node.file_path, node.id),
+    )
+    focus_samples = sorted(
+        (state.by_id[node_id] for node_id in state.focused),
+        key=lambda node: (node.file_path, node.start_line, node.id),
+    )[:5]
+    radius_samples = [*dependent_nodes[:8], *dependency_nodes[:8]]
+    return [
+        CodeContextFinding(
+            kind="blast_radius",
+            id="blast:"
+            + hashlib.sha256(
+                "|".join(sorted(node.id for node in focus_samples)).encode()
+            ).hexdigest()[:16],
+            label=f"One-hop blast radius for {focus}",
+            score=float(len(dependent_nodes) + len(dependency_nodes)),
+            data={
+                "focus": focus,
+                "focus_symbols": [_node_dict(node) for node in focus_samples],
+                "dependent_count": len(dependent_nodes),
+                "dependents": [_node_dict(node) for node in dependent_nodes[:8]],
+                "dependents_truncated": len(dependent_nodes) > 8,
+                "dependency_count": len(dependency_nodes),
+                "dependencies": [_node_dict(node) for node in dependency_nodes[:8]],
+                "dependencies_truncated": len(dependency_nodes) > 8,
+                "depth": 1,
+            },
+            evidence_uris=tuple(
+                codegraph_uri(repo_id, node.id) for node in [*focus_samples, *radius_samples]
+            ),
+        )
+    ]
+
+
+def _boundary_findings(
+    state: _ArchitectureState,
+    repo_id: str,
+    focus: str | None,
+) -> list[CodeContextFinding]:
+    findings: list[CodeContextFinding] = []
+    for (source_package, target_package), kind_counts in state.boundary_counts.items():
+        if focus and not ({source_package, target_package} & state.relevant_packages):
             continue
-        samples = boundary_samples[(source_package, target_package)]
+        samples = state.boundary_samples[(source_package, target_package)]
         count = sum(kind_counts.values())
         findings.append(
             CodeContextFinding(
@@ -524,8 +591,8 @@ def _architecture_findings(
                     "samples": [
                         {
                             "kind": edge.kind,
-                            "source": _node_dict(by_id[edge.source]),
-                            "target": _node_dict(by_id[edge.target]),
+                            "source": _node_dict(state.by_id[edge.source]),
+                            "target": _node_dict(state.by_id[edge.target]),
                         }
                         for edge in samples
                     ],
@@ -537,13 +604,20 @@ def _architecture_findings(
                 ),
             )
         )
+    return findings
 
-    for component in _strong_components(package_adjacency):
-        if len(component) < 2 or (focus and not set(component) & relevant_packages):
+
+def _component_findings(
+    state: _ArchitectureState,
+    focus: str | None,
+) -> list[CodeContextFinding]:
+    findings: list[CodeContextFinding] = []
+    for component in _strong_components(state.package_adjacency):
+        if len(component) < 2 or (focus and not set(component) & state.relevant_packages):
             continue
         internal_edges = sum(
             sum(kind_counts.values())
-            for (source, target), kind_counts in boundary_counts.items()
+            for (source, target), kind_counts in state.boundary_counts.items()
             if source in component and target in component
         )
         label, component_data = _bounded_component(component, " ↔ ")
@@ -557,8 +631,8 @@ def _architecture_findings(
             )
         )
 
-    for component in _weak_components(package_adjacency):
-        if len(component) < 2 or (focus and not set(component) & relevant_packages):
+    for component in _weak_components(state.package_adjacency):
+        if len(component) < 2 or (focus and not set(component) & state.relevant_packages):
             continue
         label, component_data = _bounded_component(component, ", ")
         findings.append(
@@ -570,11 +644,19 @@ def _architecture_findings(
                 data=component_data,
             )
         )
+    return findings
 
+
+def _route_findings(
+    nodes: list[_Node],
+    state: _ArchitectureState,
+    repo_id: str,
+) -> list[CodeContextFinding]:
+    findings: list[CodeContextFinding] = []
     for node in nodes:
-        if node.kind != "route" or node.id not in relevant:
+        if node.kind != "route" or node.id not in state.relevant:
             continue
-        outgoing_edges = route_edges.get(node.id, [])
+        outgoing_edges = state.route_edges.get(node.id, [])
         findings.append(
             CodeContextFinding(
                 kind="route",
@@ -584,22 +666,30 @@ def _architecture_findings(
                 data={
                     **_node_dict(node),
                     "targets": [
-                        {"kind": edge.kind, **_node_dict(by_id[edge.target])}
+                        {"kind": edge.kind, **_node_dict(state.by_id[edge.target])}
                         for edge in outgoing_edges[:5]
                     ],
                 },
                 evidence_uris=(codegraph_uri(repo_id, node.id),),
             )
         )
+    return findings
 
-    for package, members in package_nodes.items():
-        if focus and package not in relevant_packages:
+
+def _package_findings(
+    state: _ArchitectureState,
+    repo_id: str,
+    focus: str | None,
+) -> list[CodeContextFinding]:
+    findings: list[CodeContextFinding] = []
+    for package, members in state.package_nodes.items():
+        if focus and package not in state.relevant_packages:
             continue
         file_paths = sorted({node.file_path for node in members})
         languages = sorted({node.language for node in members if node.language})
         package_samples = sorted(
             members,
-            key=lambda node: (-degree[node.id], node.file_path, node.id),
+            key=lambda node: (-state.degree[node.id], node.file_path, node.id),
         )[:3]
         findings.append(
             CodeContextFinding(
@@ -618,15 +708,23 @@ def _architecture_findings(
                 evidence_uris=tuple(codegraph_uri(repo_id, node.id) for node in package_samples),
             )
         )
+    return findings
 
-    for layer, members in layer_nodes.items():
-        if focus and layer not in relevant_layers:
+
+def _layer_findings(
+    state: _ArchitectureState,
+    repo_id: str,
+    focus: str | None,
+) -> list[CodeContextFinding]:
+    findings: list[CodeContextFinding] = []
+    for layer, members in state.layer_nodes.items():
+        if focus and layer not in state.relevant_layers:
             continue
         file_paths = sorted({node.file_path for node in members})
         packages = sorted({_package_for(node.file_path) for node in members})
         layer_samples = sorted(
             members,
-            key=lambda node: (-degree[node.id], node.file_path, node.id),
+            key=lambda node: (-state.degree[node.id], node.file_path, node.id),
         )[:3]
         findings.append(
             CodeContextFinding(
@@ -646,7 +744,10 @@ def _architecture_findings(
                 evidence_uris=tuple(codegraph_uri(repo_id, node.id) for node in layer_samples),
             )
         )
+    return findings
 
+
+def _interleave_findings(findings: list[CodeContextFinding]) -> list[CodeContextFinding]:
     grouped: dict[str, list[CodeContextFinding]] = defaultdict(list)
     for finding in findings:
         grouped[finding.kind].append(finding)
@@ -661,6 +762,26 @@ def _architecture_findings(
                 interleaved.append(values[index])
         index += 1
     return interleaved
+
+
+def _architecture_findings(
+    *,
+    nodes: list[_Node],
+    edges: list[_Edge],
+    repo_id: str,
+    focus: str | None,
+) -> list[CodeContextFinding]:
+    state = _architecture_state(nodes, edges, focus)
+    findings = [
+        *_hotspot_findings(nodes, state, repo_id),
+        *_blast_radius_findings(edges, state, repo_id, focus),
+        *_boundary_findings(state, repo_id, focus),
+        *_component_findings(state, focus),
+        *_route_findings(nodes, state, repo_id),
+        *_package_findings(state, repo_id, focus),
+        *_layer_findings(state, repo_id, focus),
+    ]
+    return _interleave_findings(findings)
 
 
 def _exact_focus_path(
@@ -814,6 +935,46 @@ def _decode_cursor(value: str | None, fingerprint: str) -> int:
         raise ValueError("cursor is invalid or belongs to another request") from exc
 
 
+def _strip_snippets(value: Any) -> None:
+    if isinstance(value, dict):
+        if "snippet" in value:
+            value["snippet"] = ""
+        for child in value.values():
+            _strip_snippets(child)
+    elif isinstance(value, list):
+        for child in value:
+            _strip_snippets(child)
+
+
+def _bounded_finding(finding: CodeContextFinding) -> tuple[dict[str, Any], str]:
+    item = finding.to_dict()
+    encoded = json.dumps(item, ensure_ascii=False, sort_keys=True)
+    if len(encoded) > _MAX_FINDING_CHARS:
+        item["data"]["detail_omitted"] = True
+        for key in (
+            "dependencies",
+            "dependents",
+            "focus_symbols",
+            "packages",
+            "sample_paths",
+            "samples",
+            "sample_symbols",
+            "targets",
+        ):
+            if key in item["data"]:
+                item["data"][key] = item["data"][key][:1]
+        item["evidence_uris"] = item["evidence_uris"][:6]
+        _strip_snippets(item["data"])
+        encoded = json.dumps(item, ensure_ascii=False, sort_keys=True)
+    if len(encoded) > _MAX_FINDING_CHARS:
+        item["data"] = {
+            key: value for key, value in item["data"].items() if not isinstance(value, (dict, list))
+        }
+        item["data"]["detail_omitted"] = True
+        encoded = json.dumps(item, ensure_ascii=False, sort_keys=True)
+    return item, encoded
+
+
 def _bounded_page(
     findings: tuple[CodeContextFinding, ...],
     *,
@@ -821,46 +982,10 @@ def _bounded_page(
     limit: int,
     max_chars: int,
 ) -> tuple[list[dict[str, Any]], int]:
-    def _strip_snippets(value: Any) -> None:
-        if isinstance(value, dict):
-            if "snippet" in value:
-                value["snippet"] = ""
-            for child in value.values():
-                _strip_snippets(child)
-        elif isinstance(value, list):
-            for child in value:
-                _strip_snippets(child)
-
     page: list[dict[str, Any]] = []
     used = 0
     for finding in findings[offset : offset + limit]:
-        item = finding.to_dict()
-        encoded = json.dumps(item, ensure_ascii=False, sort_keys=True)
-        if len(encoded) > _MAX_FINDING_CHARS:
-            item["data"]["detail_omitted"] = True
-            for key in (
-                "dependencies",
-                "dependents",
-                "focus_symbols",
-                "packages",
-                "sample_paths",
-                "samples",
-                "sample_symbols",
-                "targets",
-            ):
-                if key in item["data"]:
-                    item["data"][key] = item["data"][key][:1]
-            item["evidence_uris"] = item["evidence_uris"][:6]
-            _strip_snippets(item["data"])
-            encoded = json.dumps(item, ensure_ascii=False, sort_keys=True)
-        if len(encoded) > _MAX_FINDING_CHARS:
-            item["data"] = {
-                key: value
-                for key, value in item["data"].items()
-                if not isinstance(value, (dict, list))
-            }
-            item["data"]["detail_omitted"] = True
-            encoded = json.dumps(item, ensure_ascii=False, sort_keys=True)
+        item, encoded = _bounded_finding(finding)
         if page and used + len(encoded) > max_chars:
             break
         page.append(item)
@@ -903,6 +1028,72 @@ def _absence_reason(
     if not page_exhausted:
         return "additional findings remain; follow next_cursor"
     return "the requested source universe is not provably complete"
+
+
+def _context_omissions(
+    request: CodeContextRequest,
+    result: CodeContextProviderResult,
+    *,
+    next_cursor: str | None,
+    next_offset: int,
+    focus_resolved: bool,
+) -> list[dict[str, Any]]:
+    omissions: list[dict[str, Any]] = []
+    if next_cursor:
+        omissions.append(
+            {
+                "kind": "pagination",
+                "count": len(result.findings) - next_offset,
+                "reason": "bounded_page",
+            }
+        )
+    if not result.records_complete:
+        omissions.append(
+            {
+                "kind": "provider_records",
+                "count": None,
+                "reason": "scan_cap_or_incomplete_provider",
+            }
+        )
+    if request.focus and not focus_resolved:
+        omissions.append(
+            {
+                "kind": "focus",
+                "count": None,
+                "reason": "focus_not_resolved_in_provider_records",
+            }
+        )
+    if request.focus and request.scope != ".":
+        omissions.append(
+            {
+                "kind": "cross_scope_edges",
+                "count": None,
+                "reason": "blast_radius_scope_boundary",
+            }
+        )
+    return omissions
+
+
+def _context_limitations(
+    request: CodeContextRequest,
+    result: CodeContextProviderResult,
+    *,
+    normalized_mode: str,
+    source_complete: bool,
+) -> list[str]:
+    limitations = [*result.limitations, *result.code_evidence.get("limitations", [])]
+    if request.focus and request.scope != ".":
+        limitations.append(
+            "Blast radius only includes provider edges whose endpoints are inside "
+            f"{request.scope!r}; cross-scope callers and dependencies are omitted."
+        )
+    if normalized_mode == "scout":
+        limitations.append("Scout mode reports positive findings only; it cannot prove absence.")
+    elif not source_complete:
+        limitations.append(
+            "Absence claims are disabled because source-universe completeness is unproven."
+        )
+    return limitations
 
 
 def build_code_context_pack(
@@ -986,53 +1177,20 @@ def build_code_context_pack(
     focus_resolved = not request.focus or any(
         finding.kind == "blast_radius" for finding in result.findings
     )
-    omissions: list[dict[str, Any]] = []
-    if next_cursor:
-        omissions.append(
-            {
-                "kind": "pagination",
-                "count": len(result.findings) - next_offset,
-                "reason": "bounded_page",
-            }
-        )
-    if not result.records_complete:
-        omissions.append(
-            {
-                "kind": "provider_records",
-                "count": None,
-                "reason": "scan_cap_or_incomplete_provider",
-            }
-        )
-    if request.focus and not focus_resolved:
-        omissions.append(
-            {
-                "kind": "focus",
-                "count": None,
-                "reason": "focus_not_resolved_in_provider_records",
-            }
-        )
-    if request.focus and request.scope != ".":
-        omissions.append(
-            {
-                "kind": "cross_scope_edges",
-                "count": None,
-                "reason": "blast_radius_scope_boundary",
-            }
-        )
-
+    omissions = _context_omissions(
+        request,
+        result,
+        next_cursor=next_cursor,
+        next_offset=next_offset,
+        focus_resolved=focus_resolved,
+    )
     available = result.code_evidence.get("recording_status") not in {"missing", "unreadable"}
-    limitations = [*result.limitations, *result.code_evidence.get("limitations", [])]
-    if request.focus and request.scope != ".":
-        limitations.append(
-            "Blast radius only includes provider edges whose endpoints are inside "
-            f"{request.scope!r}; cross-scope callers and dependencies are omitted."
-        )
-    if normalized_mode == "scout":
-        limitations.append("Scout mode reports positive findings only; it cannot prove absence.")
-    elif not source_complete:
-        limitations.append(
-            "Absence claims are disabled because source-universe completeness is unproven."
-        )
+    limitations = _context_limitations(
+        request,
+        result,
+        normalized_mode=normalized_mode,
+        source_complete=source_complete,
+    )
     return {
         "schema": CODE_CONTEXT_SCHEMA,
         "available": available,

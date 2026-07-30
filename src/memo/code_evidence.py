@@ -173,6 +173,45 @@ def _sha256(path: Path) -> str | None:
         return None
 
 
+def _codegraph_freshness(
+    repo_root: Path,
+    files: dict[str, sqlite3.Row],
+    expanded: set[str],
+) -> tuple[list[CoverageGap], bool, bool]:
+    gaps: list[CoverageGap] = []
+    stale = False
+    checked = False
+    for path in sorted(expanded):
+        source_path = repo_root / path
+        row = files.get(path)
+        if row is None:
+            reason = "source_missing" if not source_path.is_file() else "not_indexed"
+            gaps.append(CoverageGap(path=path, reason=reason))
+            continue
+        if _has_errors(row["errors"]):
+            gaps.append(CoverageGap(path=path, reason="parse_partial"))
+        current_hash = _sha256(source_path)
+        if current_hash is None:
+            gaps.append(CoverageGap(path=path, reason="source_missing"))
+            continue
+        checked = True
+        if current_hash != str(row["content_hash"] or ""):
+            stale = True
+            gaps.append(CoverageGap(path=path, reason="stale_source"))
+    return gaps, stale, checked
+
+
+def _bounded_gaps(
+    gaps: list[CoverageGap],
+    limitations: list[str],
+) -> tuple[list[CoverageGap], list[str]]:
+    if len(gaps) <= _GAP_LIMIT:
+        return gaps, limitations
+    omitted = len(gaps) - _GAP_LIMIT
+    limitations.append(f"{omitted} additional coverage gaps were omitted from this envelope.")
+    return gaps[:_GAP_LIMIT], limitations
+
+
 def codegraph_evidence(
     *,
     db_path: Path,
@@ -234,26 +273,7 @@ def codegraph_evidence(
             if any(code_path_in_scope(indexed_path, scope) for scope in requested_scopes):
                 expanded.add(indexed_path)
 
-    gaps: list[CoverageGap] = []
-    stale = False
-    checked_freshness = False
-    for path in sorted(expanded):
-        source_path = repo_root / path
-        row = files.get(path)
-        if row is None:
-            reason = "source_missing" if not source_path.is_file() else "not_indexed"
-            gaps.append(CoverageGap(path=path, reason=reason))
-            continue
-        if _has_errors(row["errors"]):
-            gaps.append(CoverageGap(path=path, reason="parse_partial"))
-        current_hash = _sha256(source_path)
-        if current_hash is None:
-            gaps.append(CoverageGap(path=path, reason="source_missing"))
-            continue
-        checked_freshness = True
-        if current_hash != str(row["content_hash"] or ""):
-            stale = True
-            gaps.append(CoverageGap(path=path, reason="stale_source"))
+    gaps, stale, checked_freshness = _codegraph_freshness(repo_root, files, expanded)
 
     limitations: list[str] = []
     if requested_scopes:
@@ -265,10 +285,7 @@ def codegraph_evidence(
         limitations.append(
             "No path or scope was requested, so freshness was not checked against source bytes."
         )
-    if len(gaps) > _GAP_LIMIT:
-        omitted = len(gaps) - _GAP_LIMIT
-        gaps = gaps[:_GAP_LIMIT]
-        limitations.append(f"{omitted} additional coverage gaps were omitted from this envelope.")
+    gaps, limitations = _bounded_gaps(gaps, limitations)
 
     index_state = metadata.get("index_state", "")
     discovered = metadata.get("files_discovered")
@@ -299,6 +316,65 @@ def codegraph_evidence(
         gaps=tuple(gaps),
         limitations=tuple(limitations),
     )
+
+
+def _repo_coverage_gaps(
+    rows: list[dict[str, Any]],
+    requested_paths: tuple[str, ...],
+    requested_scopes: tuple[str, ...],
+) -> list[CoverageGap]:
+    selected = [
+        row
+        for row in rows
+        if (
+            (not requested_paths and not requested_scopes)
+            or row["path"] in requested_paths
+            or any(code_path_in_scope(row["path"], scope) for scope in requested_scopes)
+        )
+    ]
+    return [
+        CoverageGap(
+            path=str(row["path"]),
+            reason=str(row["reason"]),
+            detail=str(row.get("detail") or ""),
+            line_start=row.get("line_start"),
+            line_end=row.get("line_end"),
+        )
+        for row in selected
+    ]
+
+
+def _repo_freshness(
+    clone_path: Path,
+    file_hashes: dict[str, dict[str, Any]],
+    requested_paths: tuple[str, ...],
+    gaps: list[CoverageGap],
+) -> tuple[list[CoverageGap], bool, bool]:
+    stale = False
+    checked = False
+    gap_paths = {gap.path for gap in gaps}
+    for path in requested_paths:
+        if path in gap_paths:
+            continue
+        indexed = file_hashes.get(path)
+        current = clone_path / path
+        if indexed is None:
+            gaps.append(
+                CoverageGap(
+                    path=path,
+                    reason="not_indexed" if current.is_file() else "source_missing",
+                )
+            )
+            continue
+        digest = _sha256(current)
+        if digest is None:
+            gaps.append(CoverageGap(path=path, reason="source_missing"))
+            continue
+        checked = True
+        if digest != str(indexed["sha256"]):
+            stale = True
+            gaps.append(CoverageGap(path=path, reason="stale_source"))
+    return gaps, stale, checked
 
 
 def repo_corpus_evidence(
@@ -335,51 +411,15 @@ def repo_corpus_evidence(
     generation = evidence_meta.get("index_generation")
     recording = str(evidence_meta.get("recording_status") or "legacy_unknown")
     rows = store.list_repo_coverage(repo_id, str(generation)) if generation is not None else []
-    selected = [
-        row
-        for row in rows
-        if (
-            (not requested_paths and not requested_scopes)
-            or row["path"] in requested_paths
-            or any(code_path_in_scope(row["path"], scope) for scope in requested_scopes)
-        )
-    ]
-    gaps = [
-        CoverageGap(
-            path=str(row["path"]),
-            reason=str(row["reason"]),
-            detail=str(row.get("detail") or ""),
-            line_start=row.get("line_start"),
-            line_end=row.get("line_end"),
-        )
-        for row in selected
-    ]
+    gaps = _repo_coverage_gaps(rows, requested_paths, requested_scopes)
     file_hashes = store.repo_file_hashes(repo_id)
     clone_path = Path(str(source["clone_path"]))
-    stale = False
-    checked = False
-    gap_paths = {gap.path for gap in gaps}
-    for path in requested_paths:
-        if path in gap_paths:
-            continue
-        indexed = file_hashes.get(path)
-        current = clone_path / path
-        if indexed is None:
-            gaps.append(
-                CoverageGap(
-                    path=path,
-                    reason="not_indexed" if current.is_file() else "source_missing",
-                )
-            )
-            continue
-        digest = _sha256(current)
-        if digest is None:
-            gaps.append(CoverageGap(path=path, reason="source_missing"))
-            continue
-        checked = True
-        if digest != str(indexed["sha256"]):
-            stale = True
-            gaps.append(CoverageGap(path=path, reason="stale_source"))
+    gaps, stale, checked = _repo_freshness(
+        clone_path,
+        file_hashes,
+        requested_paths,
+        gaps,
+    )
 
     limitations: list[str] = []
     if generation is None:
@@ -394,10 +434,7 @@ def repo_corpus_evidence(
         limitations.append(
             "No path or scope was requested, so freshness was not checked against source bytes."
         )
-    if len(gaps) > _GAP_LIMIT:
-        omitted = len(gaps) - _GAP_LIMIT
-        gaps = gaps[:_GAP_LIMIT]
-        limitations.append(f"{omitted} additional coverage gaps were omitted from this envelope.")
+    gaps, limitations = _bounded_gaps(gaps, limitations)
     if source.get("status") == "indexing":
         recording = "indexing"
     coverage = "unknown" if recording != "complete" else ("known_gaps" if gaps else "complete")
