@@ -8,6 +8,8 @@ Technical commits:
 
 - `f6ca3fff3afb4d15ad44fa47bb0a76dee56d8ff4`
 - `3c31a033`
+- `26c90608a0401d82052a55ead8c12eb46e72f40c`
+- `7858d540a06f0f705fa2db623c7a397b1dadfb6e`
 
 Status: implementation delivered and green; independent specification,
 durability, security, and quality review is still required before acceptance.
@@ -23,6 +25,9 @@ durability, security, and quality review is still required before acceptance.
 - Added immutable schemas for exact audit exclusions, per-Mac usage proofs,
   operation routes/maps, SLO baselines, capability rows/manifests, consumer
   inventories, Synapse retirement manifests, and cutover control records.
+- Aligned the shared control schemas exactly with the normative cutover states
+  and modes, including immutable fence, drain, final-fence, and
+  verified-control-record types.
 - Extended Memo's permanent operational signing contract with
   domain-separated cutover records and device/key/roster claim binding.
 - Added a capability-manifest builder that joins a pinned Memflow source
@@ -41,11 +46,14 @@ durability, security, and quality review is still required before acceptance.
 - Added a signed Synapse retirement manifest that enumerates Memflow-specific
   files, identifiers, tests, and goldens at a pinned source commit while
   binding a full-tree reference-scan digest.
-- Added fresh-OID signed control-record verification with positive monotonic
-  sequence and predecessor-shape checks.
+- Added fresh-OID signed control-record verification that returns a typed
+  `VerifiedControlRecord`, with positive monotonic sequence and
+  predecessor-shape checks.
 - Added repository-local CLI commands for `snapshot`, `manifest`, and
   `inventory`. They default to dry-run; snapshot apply is confined to a
-  validated attempt root.
+  preexisting validated attempt root whose canonical sentinel is bound to the
+  exact supplied manifest SHA-256. Missing or mismatched authority fails before
+  any write.
 - Added sanitized, non-production fixtures with an executable fixture digest.
 
 ## RED evidence
@@ -62,10 +70,10 @@ ModuleNotFoundError: No module named 'tools'
 
 ```text
 Focused Task 1 tooling:
-30 passed
+32 passed
 
 Task 1 + operational signing/roster/atomic regression:
-58 passed
+60 passed
 
 Ruff over touched source and tests:
 All checks passed
@@ -74,7 +82,7 @@ Mypy over all Task 1 production modules and operational signing:
 Success: no issues found in 9 source files
 
 Full non-slow suite at technical HEAD:
-6136 passed, 18 skipped, 19 known fork/xdist warnings in 34.54s
+6138 passed, 18 skipped, 19 known fork/xdist warnings
 
 git diff --check:
 passed
@@ -114,7 +122,7 @@ The operational-v2 activation marker remains absent.
 Normative implementation range:
 
 ```text
-74ad2c5d..3c31a033
+74ad2c5d..7858d540
 ```
 
 Required independent checks:

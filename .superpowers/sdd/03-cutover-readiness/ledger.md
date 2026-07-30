@@ -18,9 +18,11 @@
   Independent review is still required before acceptance.
 - Task 1: safe snapshot, signed capability-manifest, consumer-inventory,
   Synapse-retirement, and fresh-control-record tooling delivered at
-  `f6ca3fff..3c31a033`. Focused tooling `30 passed`; signing/roster/atomic
-  regression `58 passed`; full Memo non-slow `6136 passed, 18 skipped`; Ruff
-  and mypy clean; frozen v1 hashes unchanged. Only temporary roots,
-  in-memory keys, and sanitized fixtures were used. No live state changed and
-  Memflow remains active. Independent review is still required before
-  acceptance or any production evidence capture.
+  `f6ca3fff..7858d540`. Shared states/modes and fence/drain/final-fence/control
+  schemas match the normative contract, and every CLI apply path is bound to a
+  preexisting sentinel with the exact manifest SHA-256. Focused tooling `32
+  passed`; signing/roster/atomic regression `60 passed`; full Memo non-slow
+  `6138 passed, 18 skipped`; Ruff and mypy clean; frozen v1 hashes unchanged.
+  Only temporary roots, in-memory keys, and sanitized fixtures were used. No
+  live state changed and Memflow remains active. Independent review is still
+  required before acceptance or any production evidence capture.
