@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from memo.memory import Memory
 from memo.identity import PrincipalIdentity
+from memo.memory import Memory
 from memo.operational_epoch import CommitContext
 from tools.memflow_absorption.synapse_data import (
     EvalFixture,
