@@ -133,7 +133,6 @@ def _fixture_tree(
         (memflow_snapshot, "2" * 64),
         (usage_snapshot, "3" * 64),
     ):
-        _write_json(root / "snapshot-receipt.json", {"sha256": digest})
 
     operations = [
         {
