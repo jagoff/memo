@@ -621,11 +621,16 @@ def build_capability_manifest(
     mapping_names = [row.source_operation for row in mappings]
     if len(mapping_names) != len(set(mapping_names)) or set(mapping_names) != set(source_by_name):
         raise ManifestError("every source operation must have exactly one disposition")
-    if fixture_root is not None:
+    routes = tuple(r for m in mappings for r in m.routes)
+    if routes:
+        from tools.memflow_absorption.transforms import FrozenTransformRegistry, verify_route_fixtures
+        if fixture_root is None or not isinstance(transform_registry, FrozenTransformRegistry):
+            raise ManifestError("non-empty routes require fixture_root and FrozenTransformRegistry")
         _verify_fixture_bindings(mappings, fixture_root)
-        if transform_registry is not None:
-            from tools.memflow_absorption.transforms import verify_route_fixtures
-            verify_route_fixtures(tuple(r for m in mappings for r in m.routes), transform_registry, fixture_root)
+        try:
+            verify_route_fixtures(routes, transform_registry, fixture_root)
+        except Exception as exc:
+            raise ManifestError("route transform fixture verification failed") from exc
 
     blockers: set[str] = set()
     receipts = usage.get("source_receipts_v2")
@@ -889,7 +894,7 @@ def build_capability_manifest(
             )
         )
 
-    registry_authority_sha256 = _sha256(canonical_json_bytes(sorted({r.transform_id for m in mappings for r in m.routes})))
+    registry_authority_sha256 = transform_registry.digest() if routes else ""
     fixture_authority_sha256 = _sha256(canonical_json_bytes(sorted({p: d for m in mappings for r in m.routes for p, d in zip(r.fixture_paths, r.fixture_sha256)}.items())))
     operation_map = canonical_json_bytes({"mappings": [row.to_dict() for row in mappings], "registry_authority_sha256": registry_authority_sha256, "fixture_authority_sha256": fixture_authority_sha256})
     slo_baseline = canonical_json_bytes([row.to_dict() for row in slos])

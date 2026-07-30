@@ -36,7 +36,9 @@ def implementation_digest(module: str) -> str:
 
 class FrozenTransformRegistry:
     def __init__(self, specs=()):
-        self._specs={s.transform_id:s for s in specs}
+        self._specs={}
+        for spec in specs:
+            self.register(spec)
     def register(self,spec:TransformSpec):
         if spec.transform_id in self._specs: raise TransformRegistryError('duplicate transform_id')
         if implementation_digest(spec.module)!=spec.implementation_sha256: raise TransformRegistryError('implementation digest mismatch')
@@ -61,16 +63,26 @@ def evaluate_predicate(predicate: dict[str,Any], request: dict[str,Any]) -> bool
     for key, matcher in predicate.items():
         value=request.get(key)
         if 'equals' in matcher and value!=matcher['equals']: return False
+        if 'eq' in matcher and value!=matcher['eq']: return False
         if 'in' in matcher and value not in matcher['in']: return False
         if 'exists' in matcher and (key in request)!=matcher['exists']: return False
+        if 'present' in matcher and (key in request)!=matcher['present']: return False
     return True
 
 def verify_route_fixtures(routes, registry: FrozenTransformRegistry, root: Path):
     seen=set()
     for route in routes:
+        if not route.fixture_paths or len(route.fixture_paths) != len(route.fixture_sha256):
+            raise TransformRegistryError('every route requires fixture authority')
         for rel in route.fixture_paths:
             if rel in seen: raise TransformRegistryError('fixture covered by multiple routes')
-            seen.add(rel); fixture=load_fixture(root/rel)
+            seen.add(rel)
+            path = (root / rel).resolve()
+            if root.resolve() not in (path, *path.parents) or (root / rel).is_symlink():
+                raise TransformRegistryError('fixture path is unsafe')
+            if hashlib.sha256(path.read_bytes()).hexdigest() != route.fixture_sha256[route.fixture_paths.index(rel)]:
+                raise TransformRegistryError('fixture digest mismatch')
+            fixture=load_fixture(path)
             if not evaluate_predicate(dict(route.predicate),fixture.request): raise TransformRegistryError('fixture predicate mismatch')
             fn=registry.resolve(route.transform_id)
             try: actual=fn(fixture.request)
