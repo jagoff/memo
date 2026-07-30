@@ -41,6 +41,7 @@ ALLOWED_SIGNATURE_DOMAINS = frozenset(
         "memo.cutover.capability_manifest.v1",
         "memo.cutover.consumer_inventory.v1",
         "memo.cutover.synapse_retirement.v1",
+        "memo.cutover.source_receipt.v2",
         "memo.cutover.control_record.v1",
         "memo.cutover.fence.v1",
     }

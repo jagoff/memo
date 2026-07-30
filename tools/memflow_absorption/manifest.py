@@ -27,6 +27,8 @@ from tools.memflow_absorption.schemas import (
     SynapseOperation,
     UsageProof,
 )
+from tools.memflow_absorption.source_receipt import SourceBucket, SourceReceiptV2, verify_source_receipt
+from memo.operational_signing import SignatureEnvelope
 from tools.memflow_absorption.synapse_catalog import (
     SynapseCatalogError,
     discover_synapse_operations,
@@ -645,6 +647,18 @@ def build_capability_manifest(
             if previous is not None and bucket["start"] <= previous:
                 raise ManifestError("source receipt buckets out of order")
             previous = bucket["start"]
+        try:
+            env = SignatureEnvelope(algorithm=receipt["algorithm"], key_id=receipt["key_id"],
+                                    roster_version=int(receipt["roster_version"]), signature=receipt["signature"])
+            model = SourceReceiptV2(device_id=device, key_id=receipt["key_id"], roster_id=receipt["roster_id"],
+                query=receipt["query"], extractor_version=receipt["extractor_version"], snapshot_commit=receipt["snapshot_commit"],
+                raw_event_set_sha256=receipt["raw_event_set_sha256"], window_start=receipt["window_start"], window_end=receipt["window_end"],
+                issued_at=receipt["issued_at"], collected_at=receipt["collected_at"], cursor=receipt["cursor"],
+                extraction_complete=receipt["extraction_complete"], hourly_buckets=tuple(SourceBucket(**b) for b in buckets),
+                frozen_at=receipt.get("frozen_at"), signature=env)
+            verify_source_receipt(model, roster=roster, frozen_at=frozen_at)
+        except Exception as exc:
+            raise ManifestError("source receipt signature verification failed") from exc
         seen_devices.add(device)
     if seen_devices != set(machine_ids):
         raise ManifestError("source receipts do not cover all devices")
