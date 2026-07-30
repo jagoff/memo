@@ -55,6 +55,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Eliminar configuración y auto-probe productivos de Memflow en Synapse;
   commits `8d9bcf9`, `60002e0`, `489b808`, `3d5c548`; suite de consumidores
   Memo-only `49 passed`.
+- [x] Añadir borrado seguro de sesiones en Memo (`19109499`) y conectarlo al
+  dashboard Synapse con backend Memo (`70525d5`); Memo `82` tests y Synapse
+  focused `52` tests verdes.
 - [x] Corregir `P03-T02/T03`: cubrir todos los writers CLI/auxiliares y
   autoridad descriptor-relative. Auditoría confirmó writers sin fence en
   chat delete, dream, homeostasis, autopilot, kernel, user_signal, lookup,
