@@ -368,7 +368,9 @@ class OperationalStore:
         # commit.  A one-shot ``verify`` here leaves a race where authority
         # activation can advance the marker between validation and fsync,
         # allowing a stale writer to append under the old epoch.
-        with authority_write_lock(self.transaction_root), self.epoch_fence.verified(context):
+        # ``verified`` owns the admission/write locks; do not wrap it in a
+        # second authority lock (the file lock is intentionally non-reentrant).
+        with self.epoch_fence.verified(context):
             self.views.catch_up(ledger)
             if not self.views.supports(command.event_type):
                 raise OperationalError(
