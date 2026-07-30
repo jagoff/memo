@@ -4,6 +4,71 @@
 Branch: `feat/memflow-absorption`
 Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
+## Ejecución en tiempo real
+
+Último checkpoint: 2026-07-30 09:10 America/Argentina/Cordoba
+
+### En curso
+
+- [ ] Revisión independiente de especificación, APIs y tests de Plan 01
+  Tareas 2–6 — agente `review_plan01_spec`.
+- [ ] Revisión independiente de seguridad, durabilidad y crash recovery de
+  Plan 01 Tareas 2–6 — agente `review_plan01_security`. Al terminar esta
+  pasada queda asignado como revisor continuo de cada lote nuevo.
+- [ ] Revisión independiente cross-repo de Plan 03 Tareas 1–4 — agente
+  `review_plan03`.
+- [ ] Preparar TDD de Plan 01 Tarea 7: selector fail-closed v1/v2, fresh
+  install v2 y activation stamp firmado — agente principal.
+- [ ] Corregir `P01-T03 HIGH`: una aplicación incremental con backfill
+  multi-origen puede divergir del rebuild por orden global. Agregar regresión
+  `newest(a) -> older(b)` y re-reducción transaccional determinista.
+- [ ] Corregir `P01-T02 HIGH`: TOCTOU entre verificación del ledger v1 y la
+  relectura usada por manifest/anchor. Capturar una sola instantánea
+  descriptor-relative con `O_NOFOLLOW` y derivar de ella bytes, eventos, heads
+  y manifest.
+- [ ] Resolver `P01-T07 BLOCKER`: `MacOSKeychainProvider` es un placeholder
+  fail-closed; el fresh install v2 productivo no puede crear la clave,
+  roster y epoch-0. Implementar un provider productivo no exportable antes de
+  habilitar activación.
+
+### Completado en esta ejecución
+
+- [x] Alcance fijado: absorber uso vivo de 90 días y dependencias
+  indispensables; eliminar capacidades sin uso junto con Memflow.
+- [x] Estrategia fijada: revisores y subagentes paralelos con ownership no
+  superpuesto.
+- [x] P03-T03 drenaje observable entregado en Memflow `a3a6070912`.
+- [x] Evidencia P03-T03 registrada en Memo `e4de56db`.
+- [x] Memflow productivo verificado sin mutaciones: PID `2046`, binario y
+  listener `127.0.0.1:18766` sin cambios.
+- [x] Gate fresco de Plan 01 foundation:
+  `187 passed in 24.08s`.
+- [x] Skills de implementación activas: `memo`, `python-testing` y
+  `python-patterns`.
+- [x] Codegraph consultado antes de preparar Tarea 7; el índice pertenece al
+  checkout principal y se contrastó con el worktree mediante lectura local.
+- [x] Brief de `P01-T07` congelado con BASE `e4de56db`, selector cerrado,
+  fresh-install transaccional, activation binding y RED contracts.
+
+### Próximos gates
+
+- [ ] Consolidar hallazgos de los tres revisores sin duplicados.
+- [ ] Cerrar `P01-T03 HIGH` y obtener re-revisión PASS del revisor continuo.
+- [ ] Cerrar `P01-T02 HIGH` y obtener re-revisión PASS del revisor continuo.
+- [ ] Cerrar el provider productivo de claves y obtener revisión de seguridad
+  antes de escribir cualquier activation stamp.
+- [ ] Asignar correcciones BLOCKER/HIGH/MEDIUM a agentes con archivos
+  separados.
+- [ ] Obtener PASS de re-revisión para cada tarea corregida.
+- [ ] Implementar y aceptar Plan 01 Tarea 7.
+- [ ] Ejecutar suite completa, Ruff, mypy y frozen-v1.
+- [ ] Congelar manifest firmado con evidencia real de ambas Macs.
+- [ ] Implementar Plan 02 Tareas 1–11.
+- [ ] Completar Plan 03 Tareas 5–6.
+- [ ] Ejecutar Plan 04: migración del estado activo.
+- [ ] Ejecutar Plan 05: cutover atómico, reinicios, VERIFIED y retiro.
+- [ ] Eliminar Memflow sólo después de la auditoría de independencia final.
+
 ## Estado global
 
 - [x] Diseño de producto y arquitectura aprobados.
@@ -194,7 +259,7 @@ Estado: **1/7 aceptadas**.
 
 ### Tarea 7 — Activar facade operacional v2 tras paridad completa
 
-- [ ] Generar brief y registrar BASE.
+- [x] Generar brief y registrar BASE `e4de56db`.
 - [ ] RED de activation stamp, fresh install y partial install.
 - [ ] Implementar selector de backend v1/v2 fail-closed.
 - [ ] Integrar facade, federation y errores MCP tipados.
