@@ -402,21 +402,17 @@ Gate del plan:
 
 ## Plan 03 — Readiness para corte
 
-Estado: **1/6 aceptadas; Tarea 4 aceptada; Tareas 1–3 siguen abiertas por
-hallazgos de revisión**.
+Estado: **4/6 aceptadas; Tareas 1–4 aceptadas; Tareas 5–6 siguen abiertas**.
 
-- [ ] Tarea 1 — Snapshot seguro, capability manifest e inventario.
-  Implementación técnica: `f6ca3fff`…`7858d540`; focused `32 passed`;
-  suite completa `6138 passed, 18 skipped`. Falta revisión independiente y
-  `PASS`.
-- [ ] Tarea 2 — Fencing de requests Memflow en todo boundary de mutación.
-  Implementación técnica: `22299647` + `2c643863`; focused `34 passed`;
-  paridad `211 passed`; suite completa `1888 passed`. Falta revisión
-  independiente y `PASS`.
-- [ ] Tarea 3 — Drain observable y startup refusal. Implementación técnica:
-  `a3a6070912`; matriz requerida `224 passed`; suite completa `1906 passed`;
-  Ruff, mypy, instalador y diff limpios. Falta revisión independiente y
-  `PASS`.
+- [x] Tarea 1 — Snapshot seguro, capability manifest e inventario.
+  Receipts v2, cobertura horaria firmada, registry/fixtures ejecutables y
+  operation-map enlazado; `42 focused`, Ruff/mypy limpios, revisión PASS.
+- [x] Tarea 2 — Fencing de requests Memflow en todo boundary de mutación.
+  Writers auditados fenced; `131 focused`, Ruff/mypy/diff-check limpios,
+  revisión PASS.
+- [x] Tarea 3 — Drain observable y startup refusal. Descriptor authority,
+  lock/ABA y Git trampoline endurecidos; `79 focused`, `312 integrated`,
+  Ruff/mypy limpios, revisión PASS.
 - [x] Tarea 4 — Aislar Synapse del runtime Memflow. Implementación técnica:
   `933445fd` + hardening `f32e789` + provenance `8600800`; focused final
   `45 passed`; Ruff, mypy y diff-check limpios. Re-review independiente:
