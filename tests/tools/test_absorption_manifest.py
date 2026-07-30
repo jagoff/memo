@@ -35,6 +35,11 @@ from tools.memflow_absorption.source_receipt import (
     SourceReceiptV2,
     sign_source_receipt,
 )
+from tools.memflow_absorption.transforms import (
+    FrozenTransformRegistry,
+    TransformSpec,
+    implementation_digest,
+)
 
 FROZEN_AT = "2026-07-30T00:00:00Z"
 WINDOW_STARTED_AT = "2026-05-01T00:00:00Z"
@@ -77,7 +82,7 @@ def test_sanitized_route_fixture_digest_is_executable_authority() -> None:
     assert mappings[0]["routes"][0]["fixture_sha256"] == [hashlib.sha256(result).hexdigest()]
 
 
-def _route(operation: str, fixture_digest: str) -> dict[str, Any]:
+def _route(operation: str, fixture_digest: str, fixture_path: str) -> dict[str, Any]:
     return {
         "route_id": f"{operation}-default",
         "predicate": {"mode": {"eq": "default"}},
@@ -90,6 +95,7 @@ def _route(operation: str, fixture_digest: str) -> dict[str, Any]:
         "error_mapping": {"invalid": "invalid"},
         "transform_id": f"{operation}-v1",
         "fixture_sha256": [fixture_digest],
+        "fixture_paths": [fixture_path],
         "atomic_group": None,
     }
 
@@ -124,11 +130,15 @@ def _fixture_tree(
     unknown_operation: bool = False,
     coverage_gap: bool = False,
     slo_samples: int = 100,
-) -> tuple[Path, Path, Path, dict[str, list[dict[str, Any]]]]:
+) -> tuple[Path, Path, Path, dict[str, list[dict[str, Any]]], Path]:
     memo_snapshot = tmp_path / "memo-snapshot"
     memflow_snapshot = tmp_path / "memflow-snapshot"
     usage_snapshot = tmp_path / "usage-snapshot"
-    for root, digest in ((memo_snapshot, "1" * 64), (memflow_snapshot, "2" * 64), (usage_snapshot, "3" * 64)):
+    for root, digest in (
+        (memo_snapshot, "1" * 64),
+        (memflow_snapshot, "2" * 64),
+        (usage_snapshot, "3" * 64),
+    ):
         _publish_snapshot(root / "snapshot-receipt.json", {"sha256": digest}, tmp_path)
     operations = [
         {
@@ -150,8 +160,23 @@ def _fixture_tree(
             "latency_sensitive": False,
         },
     ]
-    _publish_snapshot(memflow_snapshot / "source.json", {"source_commit": SOURCE_COMMIT, "operations": operations}, tmp_path)
-    fixture_digest = hashlib.sha256(canonical_json_bytes({"status": "ok"})).hexdigest()
+    _publish_snapshot(
+        memflow_snapshot / "source.json",
+        {"source_commit": SOURCE_COMMIT, "operations": operations},
+        tmp_path,
+    )
+    fixture_root = tmp_path / "route-fixtures"
+    fixture_root.mkdir()
+    fixture_bytes = canonical_json_bytes(
+        {
+            "fixture_id": "default",
+            "request": {"mode": "default", "value": "x"},
+            "expected_result": {"status": "ok"},
+        }
+    )
+    (fixture_root / "continuity.json").write_bytes(fixture_bytes)
+    (fixture_root / "tasks.json").write_bytes(fixture_bytes)
+    fixture_digest = hashlib.sha256(fixture_bytes).hexdigest()
     mappings = [
         {
             "source_operation": "flow_continuity",
@@ -160,7 +185,7 @@ def _fixture_tree(
             "evidence_ids": ["e-cont-a", "e-cont-b"],
             "capability": "continuity",
             "disposition": "absorb",
-            "routes": [_route("continuity", fixture_digest)],
+            "routes": [_route("continuity", fixture_digest, "continuity.json")],
             "parity_tests": ["tests/test_memflow_parity_fixtures.py::test_continuity"],
             "deletion_proof": [],
         },
@@ -171,7 +196,7 @@ def _fixture_tree(
             "evidence_ids": ["e-task-a"],
             "capability": "tasks",
             "disposition": "absorb",
-            "routes": [_route("tasks", fixture_digest)],
+            "routes": [_route("tasks", fixture_digest, "tasks.json")],
             "parity_tests": ["tests/test_memflow_parity_fixtures.py::test_tasks"],
             "deletion_proof": [],
         },
@@ -274,7 +299,26 @@ def _fixture_tree(
         },
         tmp_path,
     )
-    return memo_snapshot, memflow_snapshot, usage_snapshot, events
+    return memo_snapshot, memflow_snapshot, usage_snapshot, events, fixture_root
+
+
+def _transform_registry() -> FrozenTransformRegistry:
+    module = "tests.tools.transform_fixtures"
+    return FrozenTransformRegistry(
+        [
+            TransformSpec(
+                "continuity-v1",
+                module,
+                implementation_digest(module),
+                "request-v1",
+                "result-v1",
+                "1",
+            ),
+            TransformSpec(
+                "tasks-v1", module, implementation_digest(module), "request-v1", "result-v1", "1"
+            ),
+        ]
+    )
 
 
 def _signed_inputs(
@@ -339,7 +383,9 @@ def _signed_inputs(
     for device_id in ("mac-a", "mac-b"):
         device_events = events[device_id]
         digest = hashlib.sha256(
-            json.dumps(device_events, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            json.dumps(
+                device_events, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode()
         ).hexdigest()
         buckets: list[SourceBucket] = []
         cursor = start
@@ -348,13 +394,24 @@ def _signed_inputs(
             count = sum(
                 1
                 for event in device_events
-                if cursor <= datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) < bucket_end
-                or (bucket_end == end and datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) == end)
+                if cursor
+                <= datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00"))
+                < bucket_end
+                or (
+                    bucket_end == end
+                    and datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) == end
+                )
             )
             bucket_events = [
-                event for event in device_events
-                if cursor <= datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) < bucket_end
-                or (bucket_end == end and datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) == end)
+                event
+                for event in device_events
+                if cursor
+                <= datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00"))
+                < bucket_end
+                or (
+                    bucket_end == end
+                    and datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00")) == end
+                )
             ]
             buckets.append(
                 SourceBucket(
@@ -383,7 +440,11 @@ def _signed_inputs(
             hourly_buckets=tuple(buckets),
             frozen_at=FROZEN_AT,
         )
-        receipts.append(sign_source_receipt(receipt, signer=OperationalSigner(keys, roster_version=roster.version)).to_dict())
+        receipts.append(
+            sign_source_receipt(
+                receipt, signer=OperationalSigner(keys, roster_version=roster.version)
+            ).to_dict()
+        )
     usage["source_receipts_v2"] = receipts
     _write_json(usage_snapshot / "usage.json", usage)
     return exclusions
@@ -398,7 +459,7 @@ def _build(
     slo_samples: int = 100,
 ):
     keys, roster = _authority(tmp_path / "authority")
-    memo, memflow, usage, events = _fixture_tree(
+    memo, memflow, usage, events, fixture_root = _fixture_tree(
         tmp_path,
         ambiguous_task=ambiguous_task,
         unknown_operation=unknown_operation,
@@ -415,6 +476,8 @@ def _build(
         signer=signer,
         signer_key_id=roster.local_key_id,
         roster=roster,
+        fixture_root=fixture_root,
+        transform_registry=_transform_registry(),
     )
     return manifest, exclusions, signer, roster
 
@@ -480,7 +543,9 @@ def test_exclusion_tamper_or_window_mismatch_is_rejected(tmp_path: Path) -> None
     assert manifest.frozen
     tampered = replace(exclusions, event_ids=("evt-audit-1", "evt-live"))
 
-    memo, memflow, usage, _events = _fixture_tree(tmp_path / "retry", ambiguous_task=False)
+    memo, memflow, usage, _events, fixture_root = _fixture_tree(
+        tmp_path / "retry", ambiguous_task=False
+    )
     with pytest.raises(ManifestError, match="exclusion signature"):
         build_capability_manifest(
             memo,
@@ -490,12 +555,14 @@ def test_exclusion_tamper_or_window_mismatch_is_rejected(tmp_path: Path) -> None
             signer=signer,
             signer_key_id=roster.local_key_id,
             roster=roster,
+            fixture_root=fixture_root,
+            transform_registry=_transform_registry(),
         )
 
 
 def test_duplicate_operation_disposition_is_rejected(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path / "authority")
-    memo, memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    memo, memflow, usage, events, fixture_root = _fixture_tree(tmp_path, ambiguous_task=False)
     mappings = json.loads((memo / "mapping-candidates.json").read_text(encoding="utf-8"))
     mappings.append(mappings[0])
     _write_json(memo / "mapping-candidates.json", mappings)
@@ -510,12 +577,14 @@ def test_duplicate_operation_disposition_is_rejected(tmp_path: Path) -> None:
             signer=OperationalSigner(keys, roster_version=roster.version),
             signer_key_id=roster.local_key_id,
             roster=roster,
+            fixture_root=fixture_root,
+            transform_registry=_transform_registry(),
         )
 
 
 def test_signed_usage_proof_tamper_is_rejected(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path / "authority")
-    memo, memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    memo, memflow, usage, events, _fixture_root = _fixture_tree(tmp_path, ambiguous_task=False)
     exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
     usage_record = json.loads((usage / "usage.json").read_text(encoding="utf-8"))
     usage_record["events"]["mac-b"][0]["evidence_id"] = "tampered"
@@ -535,7 +604,7 @@ def test_signed_usage_proof_tamper_is_rejected(tmp_path: Path) -> None:
 
 def test_usage_on_delete_operation_blocks_freeze(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path / "authority")
-    memo, memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    memo, memflow, usage, events, fixture_root = _fixture_tree(tmp_path, ambiguous_task=False)
     events["mac-b"].append(
         {
             "event_id": "evt-unused-live",
@@ -564,6 +633,8 @@ def test_usage_on_delete_operation_blocks_freeze(tmp_path: Path) -> None:
         signer=OperationalSigner(keys, roster_version=roster.version),
         signer_key_id=roster.local_key_id,
         roster=roster,
+        fixture_root=fixture_root,
+        transform_registry=_transform_registry(),
     )
 
     assert "unused:deletion-proof" in manifest.blockers
@@ -573,7 +644,7 @@ def test_usage_on_delete_operation_blocks_freeze(tmp_path: Path) -> None:
 
 def test_route_predicates_use_closed_match_language(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path / "authority")
-    memo, memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    memo, memflow, usage, events, fixture_root = _fixture_tree(tmp_path, ambiguous_task=False)
     mappings = json.loads((memo / "mapping-candidates.json").read_text(encoding="utf-8"))
     mappings[0]["routes"][0]["predicate"] = {"mode": {"regex": ".*"}}
     _write_json(memo / "mapping-candidates.json", mappings)
@@ -588,12 +659,14 @@ def test_route_predicates_use_closed_match_language(tmp_path: Path) -> None:
             signer=OperationalSigner(keys, roster_version=roster.version),
             signer_key_id=roster.local_key_id,
             roster=roster,
+            fixture_root=fixture_root,
+            transform_registry=_transform_registry(),
         )
 
 
 def test_overlapping_route_predicates_block_freeze(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path / "authority")
-    memo, memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    memo, memflow, usage, events, fixture_root = _fixture_tree(tmp_path, ambiguous_task=False)
     mappings = json.loads((memo / "mapping-candidates.json").read_text(encoding="utf-8"))
     first = mappings[0]["routes"][0]
     overlapping = dict(first)
@@ -603,22 +676,23 @@ def test_overlapping_route_predicates_block_freeze(tmp_path: Path) -> None:
     _write_json(memo / "mapping-candidates.json", mappings)
     exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
 
-    manifest = build_capability_manifest(
-        memo,
-        memflow,
-        usage,
-        exclusions,
-        signer=OperationalSigner(keys, roster_version=roster.version),
-        signer_key_id=roster.local_key_id,
-        roster=roster,
-    )
-
-    assert "continuity:operation-map" in manifest.blockers
+    with pytest.raises(ManifestError, match="route transform fixture verification failed"):
+        build_capability_manifest(
+            memo,
+            memflow,
+            usage,
+            exclusions,
+            signer=OperationalSigner(keys, roster_version=roster.version),
+            signer_key_id=roster.local_key_id,
+            roster=roster,
+            fixture_root=fixture_root,
+            transform_registry=_transform_registry(),
+        )
 
 
 def test_catalog_preflight_requires_canonical_signed_two_mac_receipts(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path / "authority")
-    _memo, _memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    _memo, _memflow, usage, events, _fixture_root = _fixture_tree(tmp_path, ambiguous_task=False)
     exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
     usage_record = json.loads((usage / "usage.json").read_text(encoding="utf-8"))
     proof_paths = []
@@ -645,7 +719,7 @@ def test_catalog_preflight_requires_canonical_signed_two_mac_receipts(tmp_path: 
 
 def test_catalog_preflight_rejects_signed_proof_for_another_commit(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path / "authority")
-    _memo, _memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    _memo, _memflow, usage, events, _fixture_root = _fixture_tree(tmp_path, ambiguous_task=False)
     exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
     usage_record = json.loads((usage / "usage.json").read_text(encoding="utf-8"))
     proof_paths = []
@@ -669,7 +743,7 @@ def test_catalog_preflight_rejects_signed_proof_for_another_commit(tmp_path: Pat
 
 def test_audit_exclusion_rejects_forged_signer_device_id(tmp_path: Path) -> None:
     keys, roster = _authority(tmp_path / "authority")
-    _memo, _memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    _memo, _memflow, usage, events, _fixture_root = _fixture_tree(tmp_path, ambiguous_task=False)
     exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
 
     with pytest.raises(ManifestError, match="provenance"):

@@ -101,3 +101,228 @@ Required independent checks:
 3. Exact deterministic generation replay and plan mismatch rejection.
 4. State parity, prepared-stamp verification, and no activation path.
 5. Frozen-v1 compatibility and absence of Memflow mutation.
+
+## Fix round — bind publish to the requested parent namespace
+
+BASE reviewed: `23a64ccb9499474255a96c1215fd8b3534ea1452`
+
+Technical commit:
+`ce608c4253b844cfd4db0913a93e036911f5648f`
+
+Status: implementation and proportional gates are green. Independent
+specification/durability/security re-review is still required before
+acceptance.
+
+### RED evidence
+
+The two required parent-swap regressions were added before the production
+change and run against the current implementation:
+
+```text
+uv run --no-sync pytest \
+  tests/test_operation_migration_v2.py::test_publish_rejects_parent_swap_before_exclusive_rename \
+  tests/test_operation_migration_v2.py::test_publish_rejects_parent_swap_after_rename_before_parent_fsync \
+  -q
+
+2 failed in 3.34s
+Failed: DID NOT RAISE OSError
+Failed: DID NOT RAISE OSError
+```
+
+In both RED reproductions, `apply_v1_migration` returned success even though
+the requested target path was absent. The prepared generation existed only
+below the parent directory that had been renamed aside.
+
+### Threat closure
+
+- A secure descriptor for the trusted grandparent boundary and a no-follow
+  descriptor for the exact requested parent name are retained before staging
+  creation. The parent's initial `(st_dev, st_ino)` is bound to both
+  descriptors.
+- Staging allocation uses `mkdir(..., dir_fd=parent_fd)` with a private random
+  name. Cleanup is also descriptor-relative and removes only the staging
+  identity created by this attempt.
+- Parent identity is re-resolved no-follow from the retained boundary across
+  the build/verification phases and immediately before exclusive publish.
+- Staging fsync, Darwin/Linux exclusive descriptor-relative rename, child
+  identity validation, parent fsync, and durable child identity validation
+  retain their original order.
+- After parent fsync, parent and target are freshly re-opened/re-statted
+  no-follow from the trusted boundary and must match the retained parent and
+  prepared-generation identities. The same resolution is repeated
+  immediately before returning success.
+- A parent rename/replacement either before rename or at
+  `after-rename-before-parent-fsync` now raises
+  `prepared parent namespace identity changed`. A valid generation may remain
+  in the displaced directory for crash/retry semantics, but it is never
+  accepted as success at the requested pathname.
+- The existing no-clobber path, replacement-generation rejection, stable-path
+  crash retry, and task-owned staging cleanup remain green. The roster-selected
+  prepared-stamp algorithm introduced in `23a64ccb` is preserved.
+- Frozen v1 paths are unchanged and no activation marker or v2 selector was
+  added.
+
+### GREEN evidence and final gates
+
+Required focused gate:
+
+```text
+uv run --no-sync pytest \
+  tests/test_operation_migration_v2.py \
+  tests/test_definitive_gate.py -q
+
+19 passed in 22.36s
+```
+
+Proportional migration/ledger/view/frozen-v1/definitive matrix:
+
+```text
+uv run --no-sync pytest \
+  tests/test_operation_migration_v2.py \
+  tests/test_operation_ledger_v2.py \
+  tests/test_operation_views_v2.py \
+  tests/test_operation_ledger_v1_compat.py \
+  tests/test_definitive_memory.py \
+  tests/test_definitive_gate.py -q
+
+123 passed in 31.06s
+```
+
+Static and repository gates:
+
+```text
+uv run --no-sync ruff check \
+  src/memo/operation_migration.py \
+  tests/test_operation_migration_v2.py
+All checks passed!
+
+uv run --no-sync mypy src/memo/operation_migration.py
+Success: no issues found in 1 source file
+
+git diff --exit-code 23a64ccb -- \
+  src/memo/operation_ledger.py \
+  src/memo/operation_ledger_v1.py \
+  src/memo/contracts.py
+exit 0, no output
+
+git diff --check
+exit 0, no output
+```
+
+Commit scope:
+
+```text
+git diff-tree --no-commit-id --name-only -r ce608c42
+src/memo/operation_migration.py
+tests/test_operation_migration_v2.py
+
+## Fix round 2 — bind the complete boundary namespace chain
+
+BASE lógico: `2f636240`
+
+Technical commit:
+`6e54600fbd4b197350db2830e20ad1906d4d6c5d`
+
+Status: boundary-swap regressions and all required gates are green. Independent
+security re-review remains required before acceptance.
+
+### RED evidence
+
+The new regressions were added before the production change and run against
+the `ce608c42` implementation:
+
+```text
+uv run --no-sync pytest \
+  tests/test_operation_migration_v2.py::test_publish_rejects_boundary_swap_before_exclusive_rename \
+  tests/test_operation_migration_v2.py::test_publish_rejects_boundary_swap_after_rename_before_parent_fsync \
+  -q
+
+2 failed in 3.85s
+Failed: DID NOT RAISE OSError
+Failed: DID NOT RAISE OSError
+```
+
+Both RED cases renamed the grandparent/boundary aside, recreated the
+requested boundary and parent names, and observed a success/parity result with
+the prepared generation only under the displaced boundary.
+
+### Threat closure
+
+- The requested parent is now opened by walking every absolute component
+  descriptor-relative from a retained no-follow filesystem-root FD. Each
+  component is bound to its name and `(st_dev, st_ino)`; missing components are
+  created with descriptor-relative `mkdir` and parent `fsync`.
+- The retained parent FD, staging allocation/cleanup, target publication,
+  child identity checks, and fsyncs remain descriptor-relative and no-follow.
+  The accepted parent-swap protections from `ce608c42` are preserved.
+- `_resolve_bound_parent` reopens the entire root-to-parent chain and requires
+  every expected component identity before resolving the target. Boundary or
+  ancestor replacement therefore fails closed even when the retained parent
+  FD still points into a displaced directory.
+- Final parent+target re-resolution is performed after parent fsync and again
+  immediately before returning success. No activation marker or v2 selector is
+  introduced; the roster-selected prepared-stamp algorithm from `23a64ccb`
+  remains unchanged.
+- Stable crash retry, no-clobber Darwin/Linux exclusive rename, staging
+  replacement detection, parent-swap tests, and frozen-v1 bytes remain green.
+
+### GREEN evidence and final gates
+
+Focused Task 4 plus definitive gate:
+
+```text
+uv run --no-sync pytest tests/test_operation_migration_v2.py \
+  tests/test_definitive_gate.py -q
+
+21 passed in 25.78s
+```
+
+Proportional migration/ledger/view/frozen-v1/definitive matrix:
+
+```text
+uv run --no-sync pytest \
+  tests/test_operation_migration_v2.py \
+  tests/test_operation_ledger_v2.py \
+  tests/test_operation_views_v2.py \
+  tests/test_operation_ledger_v1_compat.py \
+  tests/test_definitive_memory.py \
+  tests/test_definitive_gate.py -q
+
+125 passed in 34.31s
+```
+
+Boundary and immediate-parent regressions:
+
+```text
+4 passed in 5.98s
+```
+
+Static and repository gates:
+
+```text
+uv run --no-sync ruff check \
+  src/memo/operation_migration.py \
+  tests/test_operation_migration_v2.py
+All checks passed!
+
+uv run --no-sync mypy src/memo/operation_migration.py
+Success: no issues found in 1 source file
+
+git diff --exit-code 2f636240 -- \
+  src/memo/operation_ledger.py \
+  src/memo/operation_ledger_v1.py \
+  src/memo/contracts.py
+exit 0, no output
+
+git diff --check
+exit 0, no output
+```
+
+Commit scope:
+
+```text
+git diff-tree --no-commit-id --name-only -r 6e54600f
+src/memo/operation_migration.py
+tests/test_operation_migration_v2.py
+```
+```

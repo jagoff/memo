@@ -35,3 +35,18 @@
   explicit-environment isolation are covered. No production marker, service,
   configuration, or state changed; the live job remains PID `2046` on
   `127.0.0.1:18766`. Independent review is still required before acceptance.
+- Task 3: Git-authority follow-up remains uncommitted over `a3a6070912`.
+  Current exact worktree gate using the repository venv: `214 passed`; mypy
+  clean in 147 source files; Ruff clean. Independent security review:
+  `FAIL BLOCKER`. Inherited `GIT_DIR` can redirect the fresh drain gate to an
+  alternate `.git/memflow`, hide the real durable `inflight=1`, and certify
+  `clean=True`. Durable Memo record:
+  `8f5f618241af4c76a2403e10a0014f12`. Do not treat the earlier
+  `uv run --no-sync` collection failure as a code failure: this managed=false
+  worktree has no local `.venv`.
+- Task 4: three review blockers have uncommitted regressions/fixes: immutable
+  kernel-read-only source snapshot, externally supplied expected runtime
+  digest preventing local reseal, and a complete tree digest covering root,
+  directories, modes, symlink targets, and file types. Current focused gate:
+  `31 passed`; full-source mypy and focused Ruff clean. Commit and independent
+  re-review remain required.

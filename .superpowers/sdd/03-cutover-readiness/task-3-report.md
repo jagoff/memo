@@ -122,3 +122,150 @@ Required independent checks:
    before every listener/thread path.
 5. ACTIVE parity, rollback recovery, launchd environment authority, and
    absence of production mutation.
+
+## State-root and trusted-Git authority follow-up
+
+Review follow-up status: delivered in Memflow commit
+`45b22d6c64fe8c13b18eae4ad119986dd6cb2e27`.
+
+The follow-up closes the independent-review BLOCKER and MEDIUM findings:
+
+- A drain now resolves one absolute, canonical, non-symlink project worktree
+  and its exact Git dir with a trusted absolute Git executable. Its durable
+  state root is always `<trusted-git-dir>/memflow`; the separate signed-control
+  repository and commit cannot select it.
+- Authority Git calls use a closed environment containing only deterministic
+  locale, no-replace, no-system-config, global-null-config, and no-optional-lock
+  settings. Inherited `PATH`, `HOME`, XDG, loader, Git config, object,
+  alternate-object, replace, and every other process variable are absent.
+- Exact control transport remains a raw 40-hex commit whose tree contains only
+  mode-`100644` `control.json`. Canonical JSON, logical control OID,
+  Ed25519/roster, issuance/freshness, attempt, sequence/predecessor, signer,
+  marker-mode bindings, and environment-JSON refusal remain enforced.
+- Ordinary pre-fence writers retain the established non-Git fallback, including
+  first-write creation of a missing project root. A drain carrying an expected
+  control OID instead requires the exact Git worktree and fails closed.
+
+RED evidence before the fix:
+
+```text
+3 failed
+- hostile GIT_DIR selected alternate.git/memflow and hid real delivery=1
+- fake git first in PATH impersonated a non-Git control repository
+- authority command was relative and inherited PATH/HOME/XDG/loader state
+```
+
+GREEN evidence after the fix:
+
+```text
+Critical regressions: 3 passed
+Cutover/fence suites: 59 passed
+Focused cutover/daemon/launchd/delivery/Git/MCP/session matrix: 292 passed
+Ruff: All checks passed
+Mypy: Success: no issues found in 147 source files
+git diff --check: passed
+```
+
+No production marker, drain, state root, service, LaunchAgent, listener, or
+runtime configuration was read for mutation or changed by this follow-up.
+
+## Git-entry authority BLOCKER follow-up
+
+Independent review finding `6c2f6cc82d534be8a1730edf994912ac` is resolved
+in Memflow commit
+`8ebc663091f9b3e8cebf1b8e26b4938cfd83c47f`.
+
+The trusted project authority now:
+
+- opens the project `.git` entry with no-follow semantics and accepts exactly
+  either a directory or a canonical regular gitfile;
+- binds the entry's device, inode, mode, and, for a gitfile, its exact bytes;
+- binds the resolved Git directory and the device, inode, and mode of every
+  directory in its absolute component chain;
+- revalidates those bindings before and after authority operations; and
+- runs every later trusted absolute-Git operation against the pinned
+  `--git-dir` and `--work-tree`, without repeating `git -C` discovery.
+
+RED evidence before the fix:
+
+```text
+Authority regressions: 2 failed, 1 passed
+- project/.git symlink selected alternate/.git/memflow instead of refusing
+- a directory swap between the two discovery calls was not detected
+- a legitimate linked-worktree gitfile remained accepted
+```
+
+GREEN evidence after the fix:
+
+```text
+Authority regressions, including exact gitfile-byte binding: 4 passed
+Cutover/fence suites: 63 passed
+Focused cutover/daemon/launchd/delivery/Git/MCP/session matrix: 296 passed
+Ruff: All checks passed
+Mypy: Success: no issues found in 147 source files
+git diff --check: passed
+```
+
+No production marker, drain, restart, state root, service, LaunchAgent,
+listener, or runtime configuration was read for mutation or changed by this
+follow-up.
+
+## Descriptor-bound state authority BLOCKER follow-up
+
+Residual review finding `700cebd1f3904536b1ca3e4867b2f9b5` is resolved
+in Memflow commit
+`3c5b91ebdb7c1073713c0d13d6a6acee88871d78`.
+
+The gate now retains its authority for its entire lifetime:
+
+- canonical worktree, `.git` entry, resolved Git directory, state root, and
+  cutover directory are opened with no-follow, close-on-exec descriptors;
+- every root-to-leaf directory link is bound by device, inode, and mode and
+  revalidated through `stat(..., dir_fd=parent_fd, follow_symlinks=False)`
+  against the retained child descriptor;
+- canonical worktree gitfiles additionally retain their exact inode and bytes;
+- lock, marker, sentinel, in-flight ledger, and drain-fsync reads and writes
+  are descriptor-relative and never use the diagnostic `Path` properties;
+- the admission lock rejects unlink/recreate split brain after acquiring the
+  flock and again after the protected operation;
+- atomic writes use a unique no-follow `O_EXCL` temp, write-all, `fchmod`,
+  file fsync, identity-checked `renameat`, target identity check, and directory
+  fsync;
+- gate caching and registration bind the Git/worktree/state/cutover identities,
+  close losing candidates, and never close a cached gate with active
+  admissions; and
+- explicit close is idempotent, serialized, and refuses to orphan a live
+  admission context.
+
+RED evidence before the fix:
+
+```text
+5 failed
+- post-build project/.git replacement hid real delivery=1 as clean=True
+- state-root replacement hid real delivery=1 as clean=True
+- cutover-directory replacement hid real delivery=1 as clean=True
+- admission.lock unlink/recreate after flock was accepted
+- FenceGate had no descriptor lifecycle close
+```
+
+GREEN evidence after the fix:
+
+```text
+Descriptor authority regressions: 10 passed
+Cutover/fence suites: 73 passed
+Focused cutover/daemon/launchd/delivery/Git/MCP/session matrix: 306 passed
+Ruff: All checks passed
+Mypy: Success: no issues found in 147 source files
+git diff --check: passed
+```
+
+The additional GREEN cases cover worktree gitfile and resolved-target
+replacement after construction, true cutover-name ABA during an atomic write,
+partial-build and cache-loser FD cleanup, cache identity displacement, and
+close refusal during an active admission. A concurrent mkdirat warning found
+during the first integrated run was fixed with safe create-or-open plus parent
+fsync; the final integrated run completed without warnings.
+
+No production marker, drain, restart, state root, service, LaunchAgent,
+listener, or runtime configuration was read for mutation or changed by this
+follow-up.

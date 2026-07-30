@@ -36,3 +36,9 @@
   and append-before-view plus omitted-timestamp replay are sealed. v2 remains
   dormant, the v1 adapter remains default, and Memflow remains live and
   untouched. Independent review is still required before acceptance.
+- Task 4: fix round reopened after review of `c4aaafe0` — `FAIL (HIGH)`.
+  Parent rename/recreation can detach the retained FD from the requested
+  namespace, publish into the displaced directory, and still report
+  `installed=True`. Durable Memo record:
+  `0f7b976aaa614cb8b144983e35641859`. Focused fix brief:
+  `task-4-parent-binding-fix-brief.md`.
