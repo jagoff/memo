@@ -22,6 +22,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         name: str | None = None,
         ref: str | None = None,
         force: bool = False,
+        refresh: bool = False,
         with_embeddings: bool = True,
         include: list[str] | None = None,
         exclude: list[str] | None = None,
@@ -33,16 +34,18 @@ def register(server: FastMCP, memory: Memory) -> None:
         private repos work when SSH agent / credential helpers / tokens
         already let `git clone <url>` succeed on this machine.
         """
-        return memory.repo_index(
-            url,
-            name=name,
-            ref=ref,
-            force=force,
-            with_embeddings=with_embeddings,
-            include=include,
-            exclude=exclude,
-            max_file_bytes=max_file_bytes,
-        )
+        kwargs: dict[str, Any] = {
+            "name": name,
+            "ref": ref,
+            "force": force,
+            "with_embeddings": with_embeddings,
+            "include": include,
+            "exclude": exclude,
+            "max_file_bytes": max_file_bytes,
+        }
+        if refresh:
+            kwargs["refresh"] = True
+        return memory.repo_index(url, **kwargs)
 
     @annotated_tool(server, **WRITE_IDEMPOTENT)
     def memo_repo_embed(repo: str, force: bool = False) -> dict[str, Any]:
@@ -50,9 +53,19 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.repo_embed(repo, force=force)
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_repo_status(repo: str) -> dict[str, Any] | None:
-        """Return exact and semantic index counts for one repo."""
-        return memory.repo_status(repo)
+    def memo_repo_status(
+        repo: str,
+        paths: list[str] | None = None,
+        scopes: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Return index counts plus coverage/freshness evidence for one repo.
+
+        `paths` requests byte-level freshness for exact files. `scopes`
+        restricts recorded coverage gaps to directory prefixes.
+        """
+        if paths is None and scopes is None:
+            return memory.repo_status(repo)
+        return memory.repo_status(repo, paths=paths, scopes=scopes)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_repo_search(
@@ -61,23 +74,42 @@ def register(server: FastMCP, memory: Memory) -> None:
         repo: str | None = None,
         path: str | None = None,
         mode: str = "hybrid",
+        scope: str = "all",
+        include_evidence: bool = True,
     ) -> list[dict[str, Any]]:
         """Search indexed repositories.
 
-        Modes: `hybrid` fuses chunk embeddings, chunk BM25, and line
-        BM25; `vec` is semantic chunk search; `bm25` is keyword chunk
-        search; `line` searches the exact per-line index.
+        Modes: `unified` adds CodeGraph and Git co-change providers to the
+        semantic/lexical fusion; `hybrid` fuses embeddings and lexical
+        channels; `lexical` is BM25 + exact lines; `vec`, `bm25`, and
+        `line` select one channel. Scope is `all`, `production`, `tests`,
+        or `vendor`.
         """
-        return [
-            hit.to_dict()
-            for hit in memory.repo_search(
-                query,
-                limit=limit,
-                repo=repo,
-                path=path,
-                mode=mode,
-            )
-        ]
+        search_kwargs: dict[str, Any] = {
+            "limit": limit,
+            "repo": repo,
+            "path": path,
+            "mode": mode,
+        }
+        if scope != "all":
+            search_kwargs["scope"] = scope
+        hits = memory.repo_search(query, **search_kwargs)
+        out: list[dict[str, Any]] = []
+        evidence_cache: dict[tuple[str, str], dict[str, Any]] = {}
+        for hit in hits:
+            row = hit.to_dict()
+            if include_evidence:
+                repo_key = str(repo or row.get("repo_id") or row.get("repo_name") or "")
+                hit_path = str(row.get("path") or "")
+                cache_key = (repo_key, hit_path)
+                if cache_key not in evidence_cache:
+                    evidence_cache[cache_key] = memory.repo_evidence(
+                        repo_key,
+                        paths=[hit_path] if hit_path else None,
+                    )
+                row["code_evidence"] = evidence_cache[cache_key]
+            out.append(row)
+        return out
 
     @annotated_tool(server, **READ_ONLY)
     def memo_repo_get_file(

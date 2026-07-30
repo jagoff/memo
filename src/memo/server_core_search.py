@@ -96,7 +96,7 @@ def register(server: Any, memory: Memory) -> None:
         loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
         loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
         raw_lines: list[str] = memo_native_briefing_lines(
-            memory, loops_n=loops_n, loops_days=loops_days
+            memory, loops_n=loops_n, loops_days=loops_days, cwd=cwd
         )
         raw_lines.extend(operational_briefing_lines(memory, cwd))
         markdown = compact_text("\n".join(raw_lines), max_chars=900)

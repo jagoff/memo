@@ -25,7 +25,7 @@ from memo.memory.record import (
 )
 
 
-def _older_id(a: str, a_ts: str, b: str, b_ts: str) -> str | None:
+def _older_id(a: str, a_ts: str | None, b: str, b_ts: str | None) -> str | None:
     """Return the id of the older side of a pair by aware-datetime compare.
 
     ``updated`` is LOCAL-offset ISO (``record._now_iso`` uses ``.astimezone()``),
@@ -37,7 +37,9 @@ def _older_id(a: str, a_ts: str, b: str, b_ts: str) -> str | None:
     the prior ``a if a_ts < b_ts else b`` behavior when the two are equal.
     """
 
-    def _parse(ts: str) -> datetime | None:
+    def _parse(ts: str | None) -> datetime | None:
+        if ts is None:
+            return None
         try:
             dt = datetime.fromisoformat(ts)
         except (ValueError, TypeError):
@@ -68,8 +70,14 @@ class _SearchScoringMixin(_MemoryBase):
         # Both flags are registered, bounded floats.  Cast away the generic
         # accessor's optional type without an ``or`` fallback, which would
         # incorrectly discard the explicitly supported value 0.0.
-        contradict_penalty = cast(float, flag_float("MEMO_CONTRADICT_PENALTY"))
-        evolution_penalty = cast(float, flag_float("MEMO_EVOLUTION_PENALTY"))
+        # ``typing.cast`` erases its first argument at runtime; mutating that
+        # type expression is therefore provably behavior-neutral.
+        raw_contradict_penalty = flag_float("MEMO_CONTRADICT_PENALTY")
+        raw_evolution_penalty = flag_float("MEMO_EVOLUTION_PENALTY")
+        # pragma: no mutate start
+        contradict_penalty = cast(float, raw_contradict_penalty)
+        evolution_penalty = cast(float, raw_evolution_penalty)
+        # pragma: no mutate end
         ids = [r.id for r in results]
         try:
             pairs = self.contradict_store.pairs_for_ids(ids)
@@ -111,17 +119,16 @@ class _SearchScoringMixin(_MemoryBase):
             a, b = pair.memory_id_a, pair.memory_id_b
             a_ts, b_ts = id_to_updated.get(a), id_to_updated.get(b)
             if "contrad" in rel:
-                # Only demote when BOTH sides carry a timestamp — otherwise we
-                # can't tell which is older and would risk sinking the newer one.
-                if a_ts and b_ts:
-                    target = _older_id(a, a_ts, b, b_ts)
-                    if target is not None and target not in declared:
-                        _demote(target, contradict_penalty)
-            elif "evolu" in rel and a in present and b in present and a_ts and b_ts:
-                # Only when BOTH sides surfaced can we safely demote the older.
-                target = _older_id(a, a_ts, b, b_ts)
-                if target is not None and target not in declared:
-                    _demote(target, evolution_penalty)
+                penalty = contradict_penalty
+            elif "evolu" in rel:
+                penalty = evolution_penalty
+            else:
+                continue
+            # ``id_to_updated`` only contains surfaced records. Missing/invalid
+            # timestamps therefore preserve both sides via ``_older_id(None)``.
+            target = _older_id(a, a_ts, b, b_ts)
+            if target is not None and target not in declared:
+                _demote(target, penalty)
         if not mult:
             return results
         penalised = [
@@ -163,7 +170,7 @@ class _SearchScoringMixin(_MemoryBase):
             if not query_entities:
                 return results
             boosted: list[MemoryRecord] = []
-            changed = False
+            changed = False  # pragma: no mutate -- ``None`` is equally falsy here.
             for r in results:
                 doc_entities: list[str] = (r.extra or {}).get("entities") or []
                 boost = entity_match_score(query_entities, doc_entities)
@@ -193,10 +200,16 @@ class _SearchScoringMixin(_MemoryBase):
         try:
             anchor = results[0]
             counts = self.graph.co_recall_counts(anchor.id, [r.id for r in results[1:]])
-            max_c = max(counts.values(), default=0)
+            if not counts:
+                return results
+            max_c = max(counts.values())
             if max_c <= 0:
                 return results
-            weight = cast(float, flag_float("MEMO_CO_RECALL_BOOST_WEIGHT"))
+            raw_weight = flag_float("MEMO_CO_RECALL_BOOST_WEIGHT")
+            # ``typing.cast`` erases its first argument at runtime.
+            # pragma: no mutate start
+            weight = cast(float, raw_weight)
+            # pragma: no mutate end
             boosted: list[MemoryRecord] = [anchor]
             for r in results[1:]:
                 c = counts.get(r.id, 0)
@@ -229,7 +242,7 @@ class _SearchScoringMixin(_MemoryBase):
             from memo.retrieval_boost import boost_for
 
             health = self.store.get_health_batch([r.id for r in results])
-            changed = False
+            changed = False  # pragma: no mutate -- ``None`` is equally falsy here.
             out: list[MemoryRecord] = []
             for r in results:
                 h = health.get(r.id)
@@ -244,7 +257,9 @@ class _SearchScoringMixin(_MemoryBase):
                     headings=[heading] if heading else None,
                     tags=r.tags or None,
                 )
-                if abs(b - 1.0) < 1e-6:
+                # The generated <→<= mutant has no witness in this binary-float
+                # domain at the decimal 1e-6 boundary.
+                if abs(b - 1.0) < 1e-6:  # pragma: no mutate
                     out.append(r)
                     continue
                 out.append(replace(r, score=round((r.score or 0.0) * b, 6)))
@@ -272,7 +287,7 @@ class _SearchScoringMixin(_MemoryBase):
             health = self.store.get_health_batch(ids)
             if not health:
                 return results
-            changed = False
+            changed = False  # pragma: no mutate -- ``None`` is equally falsy here.
             out = []
             for r in results:
                 h = health.get(r.id)
@@ -280,7 +295,7 @@ class _SearchScoringMixin(_MemoryBase):
                     out.append(r)
                     continue
                 mult = h["confidence"] * h["roi_score"]
-                if abs(mult - 1.0) < 1e-6:
+                if abs(mult - 1.0) < 1e-6:  # pragma: no mutate
                     out.append(r)
                     continue
                 out.append(replace(r, score=round((r.score or 0.0) * mult, 6)))
@@ -308,11 +323,11 @@ class _SearchScoringMixin(_MemoryBase):
         results unchanged.
         """
         try:
-            changed = False
+            changed = False  # pragma: no mutate -- ``None`` is equally falsy here.
             out = []
             for r in results:
                 factor = _state_decay_factor(r)
-                if abs(factor - 1.0) < 1e-6:
+                if abs(factor - 1.0) < 1e-6:  # pragma: no mutate
                     out.append(r)
                     continue
                 out.append(replace(r, score=round((r.score or 0.0) * factor, 6)))

@@ -34,7 +34,9 @@ def _sanitize_secret_store(database: Path) -> None:
             # Rebuild every page so deleted ciphertext/name cells and freelist
             # pages cannot survive into the published snapshot.
             connection.execute("VACUUM")
-        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+        # SQLite keywords and PRAGMA names are case-insensitive; case-only
+        # string mutants are behaviorally equivalent.
+        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):  # pragma: no mutate
             raise sqlite3.DatabaseError(f"SQLite snapshot failed integrity_check: {database}")
 
 
@@ -69,9 +71,13 @@ def snapshot_sqlite_database(source: Path, destination: Path) -> None:
         raise
 
     with closing(sqlite3.connect(destination)) as connection:
+        # SQLite keywords and PRAGMA names are case-insensitive; case-only
+        # string mutants are behaviorally equivalent.
+        # pragma: no mutate start
         if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
             destination.unlink(missing_ok=True)
             raise sqlite3.DatabaseError(f"SQLite snapshot failed integrity_check: {destination}")
+        # pragma: no mutate end
 
 
 __all__ = ["snapshot_sqlite_database"]

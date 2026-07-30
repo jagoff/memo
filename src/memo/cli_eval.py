@@ -91,6 +91,65 @@ def eval_group() -> None:
 eval_group.add_command(bench_group)
 
 
+@eval_group.command(name="repo-search")
+@click.option(
+    "--labels",
+    "labels_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="JSON labels using schema memo.eval.repo_search.labels.v1.",
+)
+@click.option("--repo", default=None, help="Override the repo filter in every label.")
+@click.option("--k", type=click.IntRange(min=1, max=100), default=10, show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--gate",
+    is_flag=True,
+    help="Fail when graph-first recall is below grep-first or any search call failed.",
+)
+def eval_repo_search_cmd(
+    labels_path: Path,
+    repo: str | None,
+    k: int,
+    as_json: bool,
+    gate: bool,
+) -> None:
+    """Compare lexical-first and graph-enriched repo retrieval symmetrically."""
+    from memo.memory import Memory
+    from memo.repo_eval import evaluate_repo_search, load_repo_eval_labels
+
+    try:
+        labels = load_repo_eval_labels(labels_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    memory = Memory(Config.from_env())
+    try:
+        report = evaluate_repo_search(memory, labels, k=k, repo=repo)
+    finally:
+        memory.close()
+    payload = report.to_dict()
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        console.print(
+            f"repo-search eval · {report.labels} labels · "
+            f"{report.total_search_calls} calls · {report.total_session_elapsed_ms:.1f}ms"
+        )
+        for strategy in report.strategies:
+            console.print(
+                f"  {strategy.strategy}: recall@{k}={strategy.recall_at_k:.3f} "
+                f"precision@{k}={strategy.precision_at_k:.3f} mrr={strategy.mrr:.3f} "
+                f"zero={strategy.zero_results} failures={strategy.failures} "
+                f"search_ms={strategy.search_elapsed_ms:.1f}"
+            )
+    by_name = {row.strategy: row for row in report.strategies}
+    grep_first = by_name["grep-first"]
+    graph_first = by_name["graph-first"]
+    gate_failed = report.failures > 0 or graph_first.recall_at_k < grep_first.recall_at_k
+    if gate and gate_failed:
+        raise click.exceptions.Exit(1)
+
+
 @eval_group.command(name="memory")
 @click.option("--k", type=click.IntRange(min=1, max=50), default=5, show_default=True)
 @click.option(

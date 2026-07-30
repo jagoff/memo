@@ -19,6 +19,7 @@ from pathlib import Path
 
 _graph: tuple[dict[str, set[str]], dict[tuple[str, str], float]] | None = None
 _loaded_at: float | None = None
+_loaded_mtime_ns: int | None = None
 CODEGRAPH_DIR = Path(__file__).parent.parent.parent / ".codegraph"
 CODEGRAPH_DB = CODEGRAPH_DIR / "codegraph.db"
 
@@ -59,9 +60,10 @@ def load(force: bool = False) -> tuple[dict[str, set[str]], dict[tuple[str, str]
     On first call, builds the light index from ``.codegraph/codegraph.db``.
     Caches forever unless ``force=True``. Returns (adjacency, edge_weights).
     """
-    global _graph, _loaded_at
+    global _graph, _loaded_at, _loaded_mtime_ns
 
-    if _graph is not None and not force:
+    current_mtime_ns = CODEGRAPH_DB.stat().st_mtime_ns if CODEGRAPH_DB.is_file() else None
+    if _graph is not None and not force and current_mtime_ns == _loaded_mtime_ns:
         return _graph
 
     if not CODEGRAPH_DB.is_file():
@@ -84,6 +86,7 @@ def load(force: bool = False) -> tuple[dict[str, set[str]], dict[tuple[str, str]
 
     _graph = _build_light_index(rows)
     _loaded_at = time.time()
+    _loaded_mtime_ns = CODEGRAPH_DB.stat().st_mtime_ns
     logging.getLogger(__name__).info(
         "codegraph loaded: %d nodes, %d edges", len(_graph[0]), len(_graph[1])
     )
@@ -118,6 +121,7 @@ def auto_update_on_commit() -> None:
 
 def reset() -> None:
     """Reset the cached graph (forces a reload on the next call)."""
-    global _graph, _loaded_at
+    global _graph, _loaded_at, _loaded_mtime_ns
     _graph = None
     _loaded_at = None
+    _loaded_mtime_ns = None

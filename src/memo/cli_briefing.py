@@ -244,7 +244,14 @@ def briefing(*, compact: bool) -> None:
     try:
         from memo.briefing import memo_native_briefing_lines
 
-        lines.extend(memo_native_briefing_lines(mem, loops_n=loops_n, loops_days=loops_days))
+        lines.extend(
+            memo_native_briefing_lines(
+                mem,
+                loops_n=loops_n,
+                loops_days=loops_days,
+                cwd=_os.getcwd(),
+            )
+        )
     except Exception as exc:
         if debug:
             print(f"# memo briefing: memo-native sections failed: {exc}", file=_sys.stderr)

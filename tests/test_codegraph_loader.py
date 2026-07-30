@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import time
 from pathlib import Path
 
 from memo import codegraph_loader
@@ -57,3 +59,29 @@ def test_refresh_is_noop_and_is_stale_only_when_missing(monkeypatch, tmp_path: P
     assert codegraph_loader.is_stale() is False
     monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", tmp_path / "missing.db")
     assert codegraph_loader.is_stale() is True
+
+
+def test_load_reloads_when_database_mtime_advances(monkeypatch, tmp_path: Path) -> None:
+    db = tmp_path / ".codegraph" / "codegraph.db"
+    db.parent.mkdir(parents=True)
+    _seed_db(db)
+    monkeypatch.setattr(codegraph_loader, "CODEGRAPH_DB", db)
+    codegraph_loader.reset()
+
+    adjacency, _ = codegraph_loader.load()
+    assert "delta" not in adjacency
+
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO nodes (id, kind, name) VALUES ('function:d', 'function', 'Delta')")
+    conn.execute(
+        "INSERT INTO edges (source, target, kind) VALUES ('function:c', 'function:d', 'calls')"
+    )
+    conn.commit()
+    conn.close()
+    advanced = time.time_ns() + 1_000_000_000
+    db.touch()
+    db.chmod(0o600)
+    os.utime(db, ns=(advanced, advanced))
+
+    reloaded, _ = codegraph_loader.load()
+    assert reloaded["gamma"] == {"beta", "delta"}

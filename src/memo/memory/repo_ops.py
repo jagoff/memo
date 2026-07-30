@@ -7,6 +7,7 @@ the former `memory.py` god-file.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from memo.memory._base import _MemoryBase
@@ -27,6 +28,7 @@ class _RepoOpsMixin(_MemoryBase):
         name: str | None = None,
         ref: str | None = None,
         force: bool = False,
+        refresh: bool = False,
         with_embeddings: bool = True,
         include: list[str] | None = None,
         exclude: list[str] | None = None,
@@ -37,6 +39,7 @@ class _RepoOpsMixin(_MemoryBase):
             name=name,
             ref=ref,
             force=force,
+            refresh=refresh,
             with_embeddings=with_embeddings,
             include=include,
             exclude=exclude,
@@ -62,8 +65,23 @@ class _RepoOpsMixin(_MemoryBase):
     def repo_embed(self, repo: str, *, force: bool = False, progress=None) -> dict[str, Any]:
         return self._repo_corpus().embed(repo, force=force, progress=progress)
 
-    def repo_status(self, repo: str) -> dict[str, Any] | None:
-        return self._repo_corpus().status(repo)
+    def repo_status(
+        self,
+        repo: str,
+        *,
+        paths: list[str] | None = None,
+        scopes: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        return self._repo_corpus().status(repo, paths=paths, scopes=scopes)
+
+    def repo_evidence(
+        self,
+        repo: str,
+        *,
+        paths: list[str] | None = None,
+        scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self._repo_corpus().evidence(repo, paths=paths, scopes=scopes).to_dict()
 
     def repo_search(
         self,
@@ -73,6 +91,7 @@ class _RepoOpsMixin(_MemoryBase):
         repo: str | None = None,
         path: str | None = None,
         mode: str = "hybrid",
+        scope: str = "all",
     ):
         return self._repo_corpus().search(
             query,
@@ -80,7 +99,16 @@ class _RepoOpsMixin(_MemoryBase):
             repo=repo,
             path=path,
             mode=mode,
+            scope=scope,
         )
+
+    def repo_export_artifact(
+        self,
+        repo: str,
+        kind: str,
+        destination: Path,
+    ) -> dict[str, Any]:
+        return self._repo_corpus().export_artifact(repo, kind, destination)
 
     def repo_get_file(
         self,

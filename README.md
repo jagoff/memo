@@ -443,7 +443,7 @@ memo runs four background daemons:
 |---|---|---|
 | recall-daemon | `memo recall-daemon start` | Warm MLX embedder over socket (<200 ms recall) |
 | idle-daemon | auto-started by `memo-mcp` | Auto-capture for MCP-only clients (Devin, OpenCode) |
-| ingest-daemon | `memo ingest-daemon start` | Bulk vault ingestion |
+| ingest-daemon | `memo ingest-daemon start` | Serialized repo/batch indexing with dedupe and failure ledger |
 | maint-daemon | `memo maint-daemon start` | Background cleanup + synthesis |
 
 ### All 134 top-level CLI commands

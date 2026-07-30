@@ -187,6 +187,10 @@ def test_memo_repo_search_calls_to_dict_on_each_hit(tmp_cfg) -> None:
     hit2 = MagicMock()
     hit2.to_dict.return_value = {"path": "src/bar.py", "score": 0.7, "text": "def bar(): ..."}
     mem.repo_search.return_value = [hit1, hit2]
+    mem.repo_evidence.side_effect = [
+        {"schema": "memo.code_evidence.v1", "requested_paths": ["src/foo.py"]},
+        {"schema": "memo.code_evidence.v1", "requested_paths": ["src/bar.py"]},
+    ]
 
     server, tools = _make_server_and_tools()
     register(server, mem)
@@ -210,8 +214,9 @@ def test_memo_repo_search_calls_to_dict_on_each_hit(tmp_cfg) -> None:
     hit2.to_dict.assert_called_once()
     assert isinstance(result, list)
     assert len(result) == 2
-    assert result[0] == {"path": "src/foo.py", "score": 0.9, "text": "def foo(): ..."}
-    assert result[1] == {"path": "src/bar.py", "score": 0.7, "text": "def bar(): ..."}
+    assert result[0]["code_evidence"]["requested_paths"] == ["src/foo.py"]
+    assert result[1]["code_evidence"]["requested_paths"] == ["src/bar.py"]
+    assert mem.repo_evidence.call_count == 2
 
 
 def test_memo_repo_search_defaults(tmp_cfg) -> None:
