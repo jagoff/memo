@@ -399,6 +399,46 @@ def test_unified_briefing_fallback_returns_only_rendered_open_loop_and_day_ids(
     assert "stale" not in report.rows[0].memo_source_ids
 
 
+def test_unified_briefing_fallback_excludes_ids_from_empty_section(
+    manifest, authority, roster, monkeypatch
+) -> None:
+    memory = _BriefingMemory(
+        _BriefingStore(
+            [{"id": "unrendered-durable", "updated": datetime.now(tz=UTC).isoformat()}],
+            [],
+        ),
+        roster,
+    )
+    memory.operational = SimpleNamespace(
+        state=lambda **_kwargs: {
+            "focus": {"focus-a": {"id": "rendered-operational"}},
+            "handoffs": {},
+            "attention": {},
+            "conflicts": {},
+        }
+    )
+    monkeypatch.setattr("memo.briefing.memo_native_briefing_lines", lambda *_args: [])
+    monkeypatch.setattr(
+        "memo.briefing.operational_briefing_lines",
+        lambda *_args: ["### Operational continuity", "- focus"],
+    )
+    route = replace(
+        manifest.operation_mappings[0].routes[0],
+        memo_methods=("unified_briefing",),
+        parameter_mapping={},
+    )
+    signed = _resign(_with_route(manifest, route), authority[0], roster)
+    case = replace(
+        fixture("native"),
+        expected_source_ids=("rendered-operational",),
+    )
+
+    report = run_synapse_parity(signed, memory, [case])
+
+    assert report.status == "pass", report.rows
+    assert report.rows[0].memo_source_ids == ("rendered-operational",)
+
+
 @pytest.mark.parametrize(
     ("method", "expected_status", "expected_source_ids"),
     [

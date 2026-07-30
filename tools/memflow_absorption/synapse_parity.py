@@ -220,62 +220,83 @@ def _ask_status(value: Mapping[str, object]) -> str:
     return status
 
 
-def _briefing_source_ids(memory: Memory, cwd: str | None) -> tuple[str, ...]:
+def _briefing_source_ids(
+    memory: Memory,
+    cwd: str | None,
+    *,
+    native_rendered: bool,
+    operational_rendered: bool,
+) -> tuple[str, ...]:
     """Return precisely the native record IDs rendered by briefing sections."""
 
     ids: list[object] = []
-    try:
-        cutoff = (datetime.now(tz=UTC) - timedelta(days=7)).isoformat()
-        recent = memory.store.list_recent(
-            limit=20,
-            exclude_types={"reference", "secret"},
-        )
-        open_loops = [
-            row
-            for row in recent
-            if isinstance(row, Mapping) and str(row.get("updated") or "") >= cutoff
-        ][:5]
-        ids.extend(row.get("id") for row in open_loops)
-
-        pool = memory.store.list_recent(
-            limit=500,
-            exclude_types={"reference", "secret"},
-        )
-        if pool:
-            ordered = sorted(
-                (row for row in pool if isinstance(row, Mapping)),
-                key=lambda row: str(row.get("updated") or ""),
+    if native_rendered:
+        try:
+            cutoff = (datetime.now(tz=UTC) - timedelta(days=7)).isoformat()
+            recent = memory.store.list_recent(
+                limit=20,
+                exclude_types={"reference", "secret"},
             )
-            if ordered:
-                seed = int(hashlib.sha256(datetime.now(tz=UTC).strftime("%Y-%m-%d").encode()).hexdigest(), 16)
-                selected = ordered[seed % len(ordered)]
-                selected_id = str(selected.get("id") or "")
-                record = memory.get(selected_id) if selected_id else None
-                if record is not None:
-                    ids.append(getattr(record, "id", selected_id))
-    except Exception:
-        return _canonical_ids(ids)
-    try:
-        project = Path(cwd).resolve().name if cwd else None
-        state = memory.operational.state(project=project)
-        for row in list(state.get("focus", {}).values())[:3]:
-            if isinstance(row, Mapping):
-                ids.append(row.get("id"))
-        for row in [row for row in state.get("handoffs", {}).values() if not row.get("consumed_at")][:3]:
-            if isinstance(row, Mapping):
-                ids.append(row.get("id"))
-        for row in [row for row in state.get("attention", {}).values() if not row.get("acknowledged_at")][:3]:
-            if isinstance(row, Mapping):
-                ids.append(row.get("id"))
-        for row in [
-            row
-            for row in state.get("conflicts", {}).values()
-            if row.get("lifecycle_state") not in {"resolved", "archived"}
-        ][:3]:
-            if isinstance(row, Mapping):
-                ids.append(row.get("id"))
-    except Exception:
-        return _canonical_ids(ids)
+            open_loops = [
+                row
+                for row in recent
+                if isinstance(row, Mapping) and str(row.get("updated") or "") >= cutoff
+            ][:5]
+            ids.extend(row.get("id") for row in open_loops)
+
+            pool = memory.store.list_recent(
+                limit=500,
+                exclude_types={"reference", "secret"},
+            )
+            if pool:
+                ordered = sorted(
+                    (row for row in pool if isinstance(row, Mapping)),
+                    key=lambda row: str(row.get("updated") or ""),
+                )
+                if ordered:
+                    seed = int(
+                        hashlib.sha256(
+                            datetime.now(tz=UTC).strftime("%Y-%m-%d").encode()
+                        ).hexdigest(),
+                        16,
+                    )
+                    selected = ordered[seed % len(ordered)]
+                    selected_id = str(selected.get("id") or "")
+                    record = memory.get(selected_id) if selected_id else None
+                    if record is not None:
+                        ids.append(getattr(record, "id", selected_id))
+        except Exception:  # noqa: S110 - the other rendered section can still supply provenance
+            pass
+    if operational_rendered:
+        try:
+            project = Path(cwd).resolve().name if cwd else None
+            state = memory.operational.state(project=project)
+            for row in list(state.get("focus", {}).values())[:3]:
+                if isinstance(row, Mapping):
+                    ids.append(row.get("id"))
+            for row in [
+                row
+                for row in state.get("handoffs", {}).values()
+                if not row.get("consumed_at")
+            ][:3]:
+                if isinstance(row, Mapping):
+                    ids.append(row.get("id"))
+            for row in [
+                row
+                for row in state.get("attention", {}).values()
+                if not row.get("acknowledged_at")
+            ][:3]:
+                if isinstance(row, Mapping):
+                    ids.append(row.get("id"))
+            for row in [
+                row
+                for row in state.get("conflicts", {}).values()
+                if row.get("lifecycle_state") not in {"resolved", "archived"}
+            ][:3]:
+                if isinstance(row, Mapping):
+                    ids.append(row.get("id"))
+        except Exception:  # noqa: S110 - rendered provenance remains best-effort
+            pass
     return _canonical_ids(ids)
 
 
@@ -377,15 +398,21 @@ class _MemoFacade:
 
                 cwd = kwargs.get("cwd")
                 cwd_value = cwd if isinstance(cwd, str) else None
-                lines = [
-                    *memo_native_briefing_lines(self.memory),
-                    *operational_briefing_lines(self.memory, cwd_value),
-                ]
+                native_lines = memo_native_briefing_lines(self.memory)
+                operational_lines = operational_briefing_lines(self.memory, cwd_value)
+                lines = [*native_lines, *operational_lines]
                 result = {
                     "available": bool(lines),
                     "markdown": compact_text("\n".join(lines), max_chars=900),
                     "lines": lines,
-                    "source_ids": list(_briefing_source_ids(self.memory, cwd_value)) if lines else [],
+                    "source_ids": list(
+                        _briefing_source_ids(
+                            self.memory,
+                            cwd_value,
+                            native_rendered=bool(native_lines),
+                            operational_rendered=bool(operational_lines),
+                        )
+                    ),
                 }
             return _native_status(result), _source_ids(result)
         if method == "conflict":
