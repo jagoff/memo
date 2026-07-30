@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import os
 import re
 import stat
 import subprocess
 import sys
 import tempfile
-import json
 from pathlib import Path
 from typing import Literal
 
@@ -58,7 +58,8 @@ def validate_binding(raw: bytes, *, service: str, key_id: str, expected_name: st
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise KeyStoreError("Secure Enclave binding is not canonical JSON") from None
-    if not isinstance(value, dict) or set(value) != {"helper_sha256", "key_id", "schema", "service", "state"}:
+    if (not isinstance(value, dict) or set(value) != {"helper_sha256", "key_id", "schema", "service", "state"}
+            or not all(isinstance(value[k], str) for k in value)):
         raise KeyStoreError("Secure Enclave binding fields are invalid")
     encoded = canonical_binding(service=service, key_id=key_id,
                                 helper_sha256=value["helper_sha256"], state=value["state"])
@@ -80,7 +81,7 @@ class SecureEnclaveP256Backend:
         if sys.platform != "darwin":
             raise KeyStoreError("macOS Secure Enclave signing is unavailable")
         self._validate_service(service)
-        if not service.startswith(_SERVICE_NAMESPACE):
+        if not (service == _SERVICE_NAMESPACE or service.startswith(_SERVICE_NAMESPACE + ".")):
             raise KeyStoreError("Secure Enclave Keychain service must use operational v2 namespace")
         self._service = service
         self._helper, self._helper_sha256 = self._install_helper()
@@ -235,18 +236,15 @@ class SecureEnclaveP256Backend:
         )
         helper_sha256 = hashlib.sha256(candidate).hexdigest()
         root = Path.home() / "Library" / "Application Support" / "Memo" / "native-tools"
-        with authority_write_lock(root):
-            with open_secure_directory(root, create=True) as directory:
-                target_name = f"helpers-v1/{helper_sha256}"
-                # Keep compatibility with the existing secure-directory API;
-                # callers may provide a pre-created cache root in tests.
-                target = root / helper_sha256
-                if directory.exists(target.name):
-                    existing, observed = directory.read_bytes_snapshot(target.name)
-                    if existing != candidate or observed.st_uid != os.getuid() or observed.st_nlink != 1 or stat.S_IMODE(observed.st_mode) != 0o500:
-                        raise KeyStoreError("cached Secure Enclave helper failed content-address verification")
-                else:
-                    directory.create_bytes_exclusive(target.name, candidate, mode=0o500)
+        helpers = root / "helpers-v1"
+        target = helpers / helper_sha256
+        with authority_write_lock(root), open_secure_directory(helpers, create=True) as directory:
+            if directory.exists(target.name):
+                existing, observed = directory.read_bytes_snapshot(target.name)
+                if existing != candidate or observed.st_uid != os.getuid() or observed.st_nlink != 1 or stat.S_IMODE(observed.st_mode) != 0o500:
+                    raise KeyStoreError("cached Secure Enclave helper failed content-address verification")
+            else:
+                directory.create_bytes_exclusive(target.name, candidate, mode=0o500)
         cls._verify_code_signature(target)
         return target, helper_sha256
 
