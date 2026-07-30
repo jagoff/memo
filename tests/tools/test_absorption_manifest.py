@@ -510,3 +510,28 @@ def test_route_predicates_use_closed_match_language(tmp_path: Path) -> None:
             signer_key_id=roster.local_key_id,
             roster=roster,
         )
+
+
+def test_overlapping_route_predicates_block_freeze(tmp_path: Path) -> None:
+    keys, roster = _authority(tmp_path / "authority")
+    memo, memflow, usage, events = _fixture_tree(tmp_path, ambiguous_task=False)
+    mappings = json.loads((memo / "mapping-candidates.json").read_text(encoding="utf-8"))
+    first = mappings[0]["routes"][0]
+    overlapping = dict(first)
+    overlapping["route_id"] = "continuity-overlap"
+    overlapping["predicate"] = {"mode": {"in": ["default", "other"]}}
+    mappings[0]["routes"].append(overlapping)
+    _write_json(memo / "mapping-candidates.json", mappings)
+    exclusions = _signed_inputs(tmp_path, usage, events, keys, roster)
+
+    manifest = build_capability_manifest(
+        memo,
+        memflow,
+        usage,
+        exclusions,
+        signer=OperationalSigner(keys, roster_version=roster.version),
+        signer_key_id=roster.local_key_id,
+        roster=roster,
+    )
+
+    assert "continuity:operation-map" in manifest.blockers

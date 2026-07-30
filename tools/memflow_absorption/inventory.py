@@ -21,13 +21,20 @@ from tools.memflow_absorption.schemas import (
     ConsumerInventoryRow,
     LaunchdSnapshot,
     ProcessSnapshot,
+    SynapseOperation,
     SynapseRetirementManifest,
+)
+from tools.memflow_absorption.synapse_catalog import (
+    SynapseCatalogError,
+    discover_synapse_operations,
 )
 
 _REFERENCE_RE = re.compile(r"(?i)(?:\bmemflow\b|memflow[-_.a-z0-9]*|synapse_memflow_[a-z0-9_]+)")
 _SYMBOL_RE = re.compile(r"\b(?:class|def)\s+([A-Za-z_][A-Za-z0-9_]*)")
 _IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 CONSUMER_INVENTORY_DOMAIN = "memo.cutover.consumer_inventory.v1"
+# The schema evolved, but its Ed25519 purpose remains the pre-approved
+# retirement authority domain.  Do not silently introduce an unsigned domain.
 SYNAPSE_RETIREMENT_DOMAIN = "memo.cutover.synapse_retirement.v1"
 
 
@@ -229,6 +236,20 @@ def build_synapse_retirement_manifest(
     ):
         raise InventoryError("Synapse source commit is invalid")
 
+    operations: tuple[SynapseOperation, ...] = ()
+    catalog_sources = (
+        root / "src/synapse/mcp_catalog.py",
+        root / "src/synapse/cli/parser.py",
+        *(root / f"src/synapse/{name}" for name in (
+            "runtime.py", "watcher.py", "morning_digest.py", "whatsapp_live.py", "vault_archive.py"
+        )),
+    )
+    if any(path.exists() for path in catalog_sources):
+        try:
+            operations = discover_synapse_operations(root)
+        except SynapseCatalogError as exc:
+            raise InventoryError(str(exc)) from exc
+
     files: set[str] = set()
     symbols: set[str] = set()
     tests: set[str] = set()
@@ -256,7 +277,7 @@ def build_synapse_retirement_manifest(
     if (signer is None) != (roster is None) or (signer is None) != (signer_key_id == ""):
         raise InventoryError("retirement signing authority must be complete")
     unsigned = SynapseRetirementManifest(
-        schema="memo.synapse_retirement.v1",
+        schema="memo.synapse_retirement.v2",
         source_commit=source_commit,
         files=tuple(sorted(files)),
         symbols=tuple(sorted(symbols)),
@@ -265,6 +286,7 @@ def build_synapse_retirement_manifest(
         active_reference_sha256=hashlib.sha256(canonical_json_bytes(scan_records)).hexdigest(),
         signer_key_id=signer_key_id,
         signature="",
+        operations=operations,
     )
     if signer is None:
         return unsigned

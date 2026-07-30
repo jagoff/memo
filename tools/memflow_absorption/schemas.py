@@ -103,6 +103,7 @@ class OperationRoute:
     transform_id: str
     fixture_sha256: tuple[str, ...]
     atomic_group: str | None
+    fixture_paths: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -118,6 +119,7 @@ class OperationRoute:
             "transform_id": self.transform_id,
             "fixture_sha256": list(self.fixture_sha256),
             "atomic_group": self.atomic_group,
+            "fixture_paths": list(self.fixture_paths),
         }
 
 
@@ -353,8 +355,32 @@ class ConsumerInventory:
 
 
 @dataclass(frozen=True)
+class SynapseOperation:
+    """One canonical, source-backed Synapse operation surface."""
+
+    source_operation: str
+    source_files: tuple[str, ...]
+    source_symbols: tuple[str, ...]
+    consumers: tuple[str, ...]
+    daemon_routes: tuple[str, ...]
+    exclusion_reason: str | None
+    fixture_paths: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "source_operation": self.source_operation,
+            "source_files": list(self.source_files),
+            "source_symbols": list(self.source_symbols),
+            "consumers": list(self.consumers),
+            "daemon_routes": list(self.daemon_routes),
+            "exclusion_reason": self.exclusion_reason,
+            "fixture_paths": list(self.fixture_paths),
+        }
+
+
+@dataclass(frozen=True)
 class SynapseRetirementManifest:
-    schema: Literal["memo.synapse_retirement.v1"]
+    schema: Literal["memo.synapse_retirement.v2"]
     source_commit: str
     files: tuple[str, ...]
     symbols: tuple[str, ...]
@@ -363,12 +389,21 @@ class SynapseRetirementManifest:
     active_reference_sha256: str
     signer_key_id: str
     signature: str
+    operations: tuple[SynapseOperation, ...] = ()
 
     def to_dict(self, *, blank_signature: bool = False) -> dict[str, object]:
-        body = asdict(self)
-        if blank_signature:
-            body["signature"] = ""
-        return body
+        return {
+            "schema": self.schema,
+            "source_commit": self.source_commit,
+            "files": list(self.files),
+            "symbols": list(self.symbols),
+            "tests": list(self.tests),
+            "goldens": list(self.goldens),
+            "active_reference_sha256": self.active_reference_sha256,
+            "signer_key_id": self.signer_key_id,
+            "signature": "" if blank_signature else self.signature,
+            "operations": [row.to_dict() for row in self.operations],
+        }
 
     def signed_bytes(self) -> bytes:
         return canonical_json_bytes(self.to_dict(blank_signature=True))

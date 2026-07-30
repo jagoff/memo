@@ -21,7 +21,12 @@ from tools.memflow_absorption.schemas import (
     OperationMappingRow,
     OperationRoute,
     SloBaseline,
+    SynapseOperation,
     UsageProof,
+)
+from tools.memflow_absorption.synapse_catalog import (
+    SynapseCatalogError,
+    discover_synapse_operations,
 )
 
 AUDIT_EXCLUSIONS_DOMAIN = "memo.cutover.audit_exclusions.v1"
@@ -201,6 +206,11 @@ def _route(value: Mapping[str, Any]) -> OperationRoute:
             transform_id=value["transform_id"],
             fixture_sha256=_strings(value["fixture_sha256"], "route fixtures"),
             atomic_group=value.get("atomic_group"),
+            fixture_paths=(
+                _strings(value["fixture_paths"], "route fixture paths")
+                if "fixture_paths" in value
+                else ()
+            ),
         )
     except (KeyError, TypeError) as exc:
         raise ManifestError("operation route is incomplete") from exc
@@ -216,6 +226,8 @@ def _route(value: Mapping[str, Any]) -> OperationRoute:
         or any(
             _require_digest(digest, "route fixture") != digest for digest in route.fixture_sha256
         )
+        or (route.fixture_paths and len(route.fixture_paths) != len(route.fixture_sha256))
+        or len(set(route.fixture_paths)) != len(route.fixture_paths)
     ):
         raise ManifestError("operation route lacks executable authority data")
     if not _valid_predicate(route.predicate):
@@ -307,12 +319,45 @@ def _slo(value: Mapping[str, Any]) -> SloBaseline:
         raise ManifestError("SLO baseline is incomplete") from exc
 
 
+def _predicate_overlap(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
+    """Whether two closed predicate expressions can match the same request."""
+
+    for argument in set(left) & set(right):
+        left_operator, left_value = next(iter(cast(dict[str, object], left[argument]).items()))
+        right_operator, right_value = next(iter(cast(dict[str, object], right[argument]).items()))
+        if left_operator == right_operator == "present":
+            if left_value != right_value:
+                return False
+            continue
+        if left_operator == "present":
+            if left_value is False:
+                return False
+            continue
+        if right_operator == "present":
+            if right_value is False:
+                return False
+            continue
+        left_values = (
+            {canonical_json_bytes(left_value)}
+            if left_operator == "eq"
+            else {canonical_json_bytes(value) for value in cast(list[object], left_value)}
+        )
+        right_values = (
+            {canonical_json_bytes(right_value)}
+            if right_operator == "eq"
+            else {canonical_json_bytes(value) for value in cast(list[object], right_value)}
+        )
+        if left_values.isdisjoint(right_values):
+            return False
+    return True
+
+
 def _routes_are_disjoint(routes: tuple[OperationRoute, ...]) -> bool:
-    canonical_predicates = [canonical_json_bytes(route.predicate) for route in routes]
-    fixture_digests = [fixture for route in routes for fixture in route.fixture_sha256]
-    return len(canonical_predicates) == len(set(canonical_predicates)) and len(
-        fixture_digests
-    ) == len(set(fixture_digests))
+    return not any(
+        _predicate_overlap(left.predicate, right.predicate)
+        for index, left in enumerate(routes)
+        for right in routes[index + 1 :]
+    )
 
 
 def _receipt_digest(root: Path) -> str:
@@ -383,6 +428,8 @@ def build_capability_manifest(
     signer: OperationalSigner,
     signer_key_id: str,
     roster: VerificationRoster,
+    source_operation_records: tuple[SynapseOperation, ...] = (),
+    fixture_root: Path | None = None,
 ) -> CapabilityManifest:
     """Join pinned source, mappings, and signed 90-day telemetry fail-closed."""
 
@@ -391,7 +438,17 @@ def build_capability_manifest(
         "Memflow source snapshot",
     )
     source_commit = _require_oid(source.get("source_commit"), "Memflow source commit")
-    source_operations = _objects(source.get("operations"), "source operations")
+    source_operations = _objects(source.get("operations", []), "source operations")
+    if source_operation_records:
+        source_operations = [
+            {
+                "source_operation": row.source_operation,
+                "source_tests": list(row.fixture_paths),
+                "capability": row.source_operation,
+                "latency_sensitive": bool(row.daemon_routes),
+            }
+            for row in source_operation_records
+        ]
     source_by_name: dict[str, dict[str, Any]] = {}
     for operation in source_operations:
         name = operation.get("source_operation")
@@ -445,6 +502,8 @@ def build_capability_manifest(
     mapping_names = [row.source_operation for row in mappings]
     if len(mapping_names) != len(set(mapping_names)) or set(mapping_names) != set(source_by_name):
         raise ManifestError("every source operation must have exactly one disposition")
+    if fixture_root is not None:
+        _verify_fixture_bindings(mappings, fixture_root)
 
     blockers: set[str] = set()
     coverage_gaps = usage.get("coverage_gaps")
@@ -717,6 +776,74 @@ def build_capability_manifest(
     return signed
 
 
+def _verify_fixture_bindings(mappings: tuple[OperationMappingRow, ...], root: Path) -> None:
+    """Bind each Synapse route digest to a regular fixture in the pinned tree."""
+
+    absolute_root = root.resolve(strict=True)
+    for mapping in mappings:
+        for route in mapping.routes:
+            if not route.fixture_paths:
+                raise ManifestError("Synapse route lacks fixture path authority")
+            for relative, digest in zip(route.fixture_paths, route.fixture_sha256, strict=True):
+                candidate = absolute_root / relative
+                try:
+                    resolved = candidate.resolve(strict=True)
+                except OSError as exc:
+                    raise ManifestError("Synapse route fixture is unavailable") from exc
+                if absolute_root not in (resolved, *resolved.parents) or candidate.is_symlink():
+                    raise ManifestError("Synapse route fixture is unsafe")
+                if _sha256(resolved.read_bytes()) != digest:
+                    raise ManifestError("Synapse route fixture digest mismatch")
+
+
+def build_synapse_capability_manifest(
+    snapshot: Path,
+    usage_proofs: tuple[Path, ...],
+    exclusions: tuple[Path, ...],
+    *,
+    memo_snapshot: Path,
+    usage_snapshot: Path,
+    audit_exclusions: AuditExclusions,
+    signer: OperationalSigner,
+    signer_key_id: str,
+    roster: VerificationRoster,
+) -> CapabilityManifest:
+    """Build capability authority over the canonical, pinned Synapse catalog.
+
+    ``usage_proofs`` and ``exclusions`` are immutable input receipts.  They
+    must byte-match the evidence embedded in ``usage_snapshot`` and the signed
+    exclusion record, preventing a caller from silently substituting telemetry
+    after inspection.
+    """
+
+    try:
+        operations = discover_synapse_operations(snapshot)
+    except SynapseCatalogError as exc:
+        raise ManifestError(str(exc)) from exc
+    usage = _object(_load_json(usage_snapshot / "usage.json"), "usage snapshot")
+    proof_bytes = {
+        canonical_json_bytes(value)
+        for value in _objects(usage.get("proofs"), "usage proofs")
+    }
+    supplied_proofs = {path.read_bytes() for path in usage_proofs}
+    if len(supplied_proofs) != 2 or supplied_proofs != proof_bytes:
+        raise ManifestError("Synapse usage proofs do not exactly match the two-Mac snapshot")
+    supplied_exclusions = {path.read_bytes() for path in exclusions}
+    if supplied_exclusions != {canonical_json_bytes(audit_exclusions.to_dict())}:
+        raise ManifestError("Synapse exclusion receipts do not match signed authority")
+    return build_capability_manifest(
+        memo_snapshot,
+        snapshot,
+        usage_snapshot,
+        audit_exclusions,
+        signer=signer,
+        signer_key_id=signer_key_id,
+        roster=roster,
+        source_operation_records=operations,
+        fixture_root=snapshot,
+    )
+
+
 def verify_capability_manifest(
     manifest: CapabilityManifest,
     *,
@@ -748,6 +875,7 @@ __all__ = [
     "USAGE_PROOF_DOMAIN",
     "ManifestError",
     "build_capability_manifest",
+    "build_synapse_capability_manifest",
     "sign_audit_exclusions",
     "sign_usage_proof",
     "verify_capability_manifest",
