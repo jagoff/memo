@@ -6,13 +6,12 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
 ## Ejecución en tiempo real
 
-Último checkpoint: 2026-07-30 14:25 America/Argentina/Cordoba
+Último checkpoint: 2026-07-30 14:54 America/Argentina/Cordoba
 
 ### En curso
 
 - [x] Revisión independiente de especificación, APIs y tests de Plan 01
-  Tareas 2–6 — `T2 PASS`, `T3 PASS`, `T4 FAIL HIGH`,
-  `T5 PASS`, `T6 PASS`.
+  Tareas 2–6 — `T2 PASS`, `T3 PASS`, `T4 PASS`, `T5 PASS`, `T6 PASS`.
 - [ ] Revisor continuo read-only de corrección y durabilidad para cada lote
   nuevo — agente `constant_code_reviewer`; `P01-T04 FAIL HIGH` cerrado,
   `P03-T04` aceptado y `P03-T03 FAIL BLOCKER` confirmado; Secure Enclave
@@ -60,8 +59,9 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Corregir `P03-T03 BLOCKER`: aunque el control ya proviene de un commit
   Git exacto, `GIT_DIR` heredado puede desviar el gate fresh a otro state root,
   ocultar el ledger real (`inflight=1`) y devolver falsamente `clean=True`.
-  Fijar la autoridad del root, sanear entorno/ejecutable Git y agregar la
-  regresión. La matriz nominal previa fue `214 passed`, mypy/Ruff limpios.
+  `45b22d6c64` fijó entorno/ejecutable/root; re-review encontró `.git`
+  desplazable. Follow-up `8ebc663091` liga `.git`/git-dir y deja `63 focused`
+  + `296 integrated` verdes. Re-review final en curso.
 - [ ] Reemplazar expiries fijas de tests P03 que ya vencieron; matriz actual
   `221 passed, 3 failed` por tiempo de fixture.
 
@@ -142,8 +142,8 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [x] Cinco planes de implementación escritos y auditados.
 - [x] Worktree aislado creado.
 - [x] Baseline verde: `5809 passed, 18 skipped`.
-- [ ] Plan 01 — Operational Ledger v2: **Tarea 1 aceptada; Tareas 2–6
-  implementadas y verdes, pendientes de revisión independiente**.
+- [ ] Plan 01 — Operational Ledger v2: **Tareas 1–6 aceptadas; Tarea 7
+  bloqueada por el helper Secure Enclave versionado**.
 - [ ] Plan 02 — Runtime nativo de coordinación viva.
 - [ ] Plan 03 — Readiness para corte.
 - [ ] Plan 04 — Migración del estado activo.
@@ -152,7 +152,7 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 - [ ] Verificación de uso vivo exclusivamente vía Memo.
 - [ ] Baja definitiva de Memflow.
 
-Progreso aceptado: **1/35 tareas**.
+Progreso aceptado: **7/35 tareas**.
 
 ## Gate obligatorio para cada tarea
 
@@ -178,7 +178,7 @@ Cada tarea debe completar todos estos pasos antes de marcarse terminada:
 
 ## Plan 01 — Operational Ledger v2
 
-Estado: **1/7 aceptadas**.
+Estado: **6/7 aceptadas**.
 
 ### Tarea 1 — Congelar v1 y definir contratos puros v2
 
@@ -314,7 +314,8 @@ Estado: **1/7 aceptadas**.
   `(dev, ino)` verificada y fsync del mismo parent descriptor.
 - [x] Regresiones de reemplazo de staging y crash post-rename/pre-parent-fsync.
 - [x] Migración + definitive: `17 passed`; Ruff y mypy limpios.
-- [ ] Revisión independiente y `PASS`.
+- [x] Revisión independiente final: `PASS`; publish root-anchored
+  `6e54600f`, `21 passed`, sin `BLOCKER/HIGH/MEDIUM`.
 
 ### Tarea 5 — Outbox durable exactly-once
 
@@ -330,7 +331,8 @@ Estado: **1/7 aceptadas**.
 - [x] Non-slow: `6079 passed, 18 skipped`.
 - [x] Commit técnico: `24f7a406`.
 - [x] Reporte de implementación generado.
-- [ ] Revisión independiente y `PASS`.
+- [x] Revisión independiente: `PASS`, sin defecto material; Memo
+  `99210fd486024444b3715ef395a24ff0`. Verificación actual: `40 passed`.
 
 ### Tarea 6 — Sesiones canónicas sobre ledger v2
 
@@ -479,11 +481,11 @@ paso todavía no comenzó, no que esté aprobado.
 | ID | Tarea | Owner | BASE | RED | GREEN | Commit | Review | Deploy |
 |---|---|---|---|---|---|---|---|---|
 | P01-T01 | Contratos y v1 congelado | múltiples implementadores especializados | `d9ed37a6` | 7 rondas registradas | `134`; full `5943` | `f03d7418`…`54b48b9e` | **PASS final** | — |
-| P01-T02 | Anchors, append y bundles | implementadores + revisores especializados | `8e85662b`; hardening `0b1c859d`; ronda 2 `123cd8f6` | inicial + hardening `36 failed, 76 passed`; ronda 2 pendiente | contracts `186`; full `5995` | `5a80c74d` + `815307ac` | **FAIL** ronda 2: 3H/2M | — |
-| P01-T03 | Vistas SQLite e idempotencia | Codex | `c9127f39` | import RED | focused `22`; acumulado `256`; full `6032` | `daf3bf36` | pendiente | — |
-| P01-T04 | Migración genesis y paridad | Codex | `42f458c0` | import RED | focused `10`; matriz `100`; acumulado `276`; full `6043` | `78764d74` | pendiente | — |
-| P01-T05 | Outbox durable exactly-once | Codex | `20e16ba4` | import RED | focused `490`; matriz `500`; acumulado `676`; full `6079` | `24f7a406` | pendiente | — |
-| P01-T06 | Sesiones canónicas | Codex | `6b68a260` | — | — | — | pendiente | — |
+| P01-T02 | Anchors, append y bundles | implementadores + revisores especializados | `8e85662b`; hardening `0b1c859d`; ronda 2 `123cd8f6` | inicial + hardening `36 failed, 76 passed` | final `80` | `5a80c74d`…`396d13a8` | **PASS final** | — |
+| P01-T03 | Vistas SQLite e idempotencia | Codex | `c9127f39` | import RED + backfill multi-origen | final `20 + 55` | `daf3bf36` + `62ea3066` | **PASS final** | — |
+| P01-T04 | Migración genesis y paridad | Codex | `42f458c0` | import RED + swaps de namespace | final `21` | `78764d74`…`6e54600f` | **PASS final** | — |
+| P01-T05 | Outbox durable exactly-once | Codex | `20e16ba4` | import RED | matriz `500`; actual `40` | `24f7a406` | **PASS final** | — |
+| P01-T06 | Sesiones canónicas | Codex | `6b68a260` | retry/crash replay | final `141` | `ecf2b951`…`e84da0b3` | **PASS final** | — |
 | P01-T07 | Activación facade v2 | — | — | — | — | — | — | — |
 | P02-T01 | Fixtures de paridad Memflow | — | — | — | — | — | — | — |
 | P02-T02 | Coordinación, handoffs y tasks | — | — | — | — | — | — | — |
@@ -498,7 +500,7 @@ paso todavía no comenzó, no que esté aprobado.
 | P02-T11 | Runtime distribuido E2E | — | — | — | — | — | — | — |
 | P03-T01 | Snapshot, manifest e inventario | Codex | `90a7144e` | import RED | focused `32`; matriz `60`; full `6138` | `f6ca3fff`…`7858d540` | pendiente | — |
 | P03-T02 | Fencing de requests Memflow | Codex | Memflow `5426e8e5` | import RED | focused `34`; paridad `211`; full `1888` | `22299647` + `2c643863` | pendiente | — |
-| P03-T03 | Drain y startup refusal | Codex | Memflow `2c643863` | pendiente | en curso | — | — | — |
+| P03-T03 | Drain y startup refusal | Codex + agentes especializados | Memflow `2c643863` | Git env/root 3 RED; `.git` symlink/swap 2 RED | focused `63`; integrated `296` | `a3a6070912` + `45b22d6c64` + `8ebc663091` | re-review final en curso | — |
 | P03-T04 | Aislamiento de Synapse | Codex + agentes especializados | Synapse `45c146d5` | regresiones Git-object, attestation, submódulos y mounts | focused `45`; re-review subset `14` | `933445fd` + `f32e789` + `8600800` | **PASS final** | — |
 | P03-T05 | Registry backend de Memo | — | — | — | — | — | — | — |
 | P03-T06 | Configuración y readiness | — | — | — | — | — | — | — |
