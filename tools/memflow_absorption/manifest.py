@@ -446,6 +446,250 @@ def _slo(value: Mapping[str, Any]) -> SloBaseline:
         raise ManifestError("SLO baseline is incomplete") from exc
 
 
+def _require_exact_fields(
+    value: Mapping[str, Any],
+    expected: set[str],
+    description: str,
+) -> None:
+    if set(value) != expected:
+        raise ManifestError(f"{description} fields are invalid")
+
+
+def _capability(value: Mapping[str, Any]) -> CapabilityRow:
+    _require_exact_fields(
+        value,
+        {
+            "name",
+            "sources",
+            "consumers",
+            "window_started_at",
+            "window_ended_at",
+            "observed_calls",
+            "observed_daemon_events",
+            "machines",
+            "evidence_ids",
+            "exclusion_counts",
+            "evidence_complete",
+            "source_operations",
+            "operation_mappings",
+            "slo_baseline_ids",
+            "dependencies",
+            "disposition",
+            "memo_target",
+            "parity_tests",
+            "deletion_proof",
+        },
+        "capability row",
+    )
+    exclusions = _object(value["exclusion_counts"], "capability exclusion counts")
+    if (
+        value["disposition"] not in {"memo_native", "absorb", "internal", "delete"}
+        or any(
+            not isinstance(value[field], str)
+            for field in (
+                "name",
+                "window_started_at",
+                "window_ended_at",
+                "memo_target",
+            )
+        )
+        or any(
+            isinstance(value[field], bool) or not isinstance(value[field], int)
+            for field in ("observed_calls", "observed_daemon_events")
+        )
+        or not isinstance(value["evidence_complete"], bool)
+        or any(
+            not isinstance(key, str)
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            for key, count in exclusions.items()
+        )
+    ):
+        raise ManifestError("capability row values are invalid")
+    mappings = _objects(value["operation_mappings"], "capability operation mappings")
+    return CapabilityRow(
+        name=value["name"],
+        sources=_strings(value["sources"], "capability sources"),
+        consumers=_strings(value["consumers"], "capability consumers"),
+        window_started_at=value["window_started_at"],
+        window_ended_at=value["window_ended_at"],
+        observed_calls=value["observed_calls"],
+        observed_daemon_events=value["observed_daemon_events"],
+        machines=_strings(value["machines"], "capability machines"),
+        evidence_ids=_strings(value["evidence_ids"], "capability evidence ids"),
+        exclusion_counts=cast(dict[str, int], exclusions),
+        evidence_complete=value["evidence_complete"],
+        source_operations=_strings(
+            value["source_operations"], "capability source operations"
+        ),
+        operation_mappings=tuple(
+            _mapping_exact(mapping) for mapping in mappings
+        ),
+        slo_baseline_ids=_strings(
+            value["slo_baseline_ids"], "capability SLO baseline ids"
+        ),
+        dependencies=_strings(value["dependencies"], "capability dependencies"),
+        disposition=value["disposition"],
+        memo_target=value["memo_target"],
+        parity_tests=_strings(value["parity_tests"], "capability parity tests"),
+        deletion_proof=_strings(
+            value["deletion_proof"], "capability deletion proof"
+        ),
+    )
+
+
+def _route_exact(value: Mapping[str, Any]) -> OperationRoute:
+    _require_exact_fields(
+        value,
+        {
+            "route_id",
+            "predicate",
+            "memo_methods",
+            "memo_mcp",
+            "memo_cli",
+            "parameter_mapping",
+            "defaults",
+            "result_mapping",
+            "error_mapping",
+            "transform_id",
+            "fixture_sha256",
+            "atomic_group",
+            "fixture_paths",
+        },
+        "operation route",
+    )
+    return _route(value)
+
+
+def _mapping_exact(value: Mapping[str, Any]) -> OperationMappingRow:
+    _require_exact_fields(
+        value,
+        {
+            "source_operation",
+            "source_commit",
+            "source_tests",
+            "evidence_ids",
+            "capability",
+            "disposition",
+            "routes",
+            "parity_tests",
+            "deletion_proof",
+        },
+        "operation mapping",
+    )
+    routes = _objects(value["routes"], "operation mapping routes")
+    normalized = dict(value)
+    normalized["routes"] = [route.to_dict() for route in map(_route_exact, routes)]
+    return _mapping(normalized)
+
+
+def capability_manifest_from_dict(value: Mapping[str, Any]) -> CapabilityManifest:
+    """Decode the exact typed capability-manifest authority."""
+
+    _require_exact_fields(
+        value,
+        {
+            "schema",
+            "frozen_at",
+            "window_started_at",
+            "window_ended_at",
+            "machine_ids",
+            "source_receipt_sha256",
+            "capabilities",
+            "operation_mappings",
+            "slo_baselines",
+            "operation_map_sha256",
+            "slo_baseline_sha256",
+            "blockers",
+            "frozen",
+            "signer_device_id",
+            "signer_key_id",
+            "roster_version",
+            "signature",
+            "registry_authority_sha256",
+            "fixture_authority_sha256",
+        },
+        "capability manifest",
+    )
+    source_receipts = _object(
+        value["source_receipt_sha256"], "capability source receipts"
+    )
+    capabilities = _objects(value["capabilities"], "capabilities")
+    mappings = _objects(value["operation_mappings"], "operation mappings")
+    slos = _objects(value["slo_baselines"], "SLO baselines")
+    string_fields = (
+        "schema",
+        "frozen_at",
+        "window_started_at",
+        "window_ended_at",
+        "operation_map_sha256",
+        "slo_baseline_sha256",
+        "signer_device_id",
+        "signer_key_id",
+        "signature",
+        "registry_authority_sha256",
+        "fixture_authority_sha256",
+    )
+    if (
+        any(not isinstance(value[field], str) for field in string_fields)
+        or not isinstance(value["frozen"], bool)
+        or isinstance(value["roster_version"], bool)
+        or not isinstance(value["roster_version"], int)
+        or any(
+            not isinstance(key, str) or not isinstance(digest, str)
+            for key, digest in source_receipts.items()
+        )
+    ):
+        raise ManifestError("capability manifest values are invalid")
+    for slo in slos:
+        _require_exact_fields(
+            slo,
+            {
+                "baseline_id",
+                "source_commit",
+                "workload_id",
+                "machine_class",
+                "window_started_at",
+                "window_ended_at",
+                "sample_count",
+                "visibility_p50_ms",
+                "visibility_p95_ms",
+                "visibility_p99_ms",
+                "visibility_max_ms",
+                "recovery_max_ms",
+                "error_rate",
+                "data_loss_count",
+                "duplicate_count",
+                "tolerance_ratio",
+            },
+            "SLO baseline",
+        )
+    try:
+        return CapabilityManifest(
+            schema=cast(Any, value["schema"]),
+            frozen_at=value["frozen_at"],
+            window_started_at=value["window_started_at"],
+            window_ended_at=value["window_ended_at"],
+            machine_ids=_strings(value["machine_ids"], "capability machine ids"),
+            source_receipt_sha256=cast(dict[str, str], source_receipts),
+            capabilities=tuple(_capability(row) for row in capabilities),
+            operation_mappings=tuple(_mapping_exact(row) for row in mappings),
+            slo_baselines=tuple(_slo(row) for row in slos),
+            operation_map_sha256=value["operation_map_sha256"],
+            slo_baseline_sha256=value["slo_baseline_sha256"],
+            blockers=_strings(value["blockers"], "capability blockers"),
+            frozen=value["frozen"],
+            signer_device_id=value["signer_device_id"],
+            signer_key_id=value["signer_key_id"],
+            roster_version=value["roster_version"],
+            signature=value["signature"],
+            registry_authority_sha256=value["registry_authority_sha256"],
+            fixture_authority_sha256=value["fixture_authority_sha256"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ManifestError("capability manifest schema is incomplete") from exc
+
+
 def _predicate_overlap(left: Mapping[str, object], right: Mapping[str, object]) -> bool:
     """Whether two closed predicate expressions can match the same request."""
 
@@ -1018,21 +1262,31 @@ def verify_capability_manifest(
 ) -> None:
     """Verify canonical digests and the authority signature."""
 
-    if not manifest.frozen or manifest.blockers or not manifest.signature:
+    if (
+        manifest.schema != "memo.cutover_capability_manifest.v1"
+        or not manifest.frozen
+        or manifest.blockers
+        or not manifest.signature
+    ):
         raise ManifestError("capability manifest is not frozen and signed")
+    if manifest.roster_version != roster.version:
+        raise ManifestError("capability manifest roster authority is invalid")
     if (
         _sha256(manifest.operation_map_bytes()) != manifest.operation_map_sha256
         or _sha256(manifest.slo_baseline_bytes()) != manifest.slo_baseline_sha256
     ):
         raise ManifestError("capability manifest canonical digest mismatch")
     try:
+        key = roster.key(manifest.signer_key_id)
+        if key.device_id != manifest.signer_device_id:
+            raise SignatureError("capability manifest signer does not own roster key")
         OperationalVerifier().verify(
             domain=CAPABILITY_MANIFEST_DOMAIN,
             payload=manifest.signed_bytes(),
             envelope=manifest.signature_envelope(),
             roster=roster,
         )
-    except SignatureError as exc:
+    except (KeyError, SignatureError) as exc:
         raise ManifestError("capability manifest signature is invalid") from exc
 
 
@@ -1044,6 +1298,7 @@ __all__ = [
     "audit_exclusions_from_dict",
     "build_capability_manifest",
     "build_synapse_capability_manifest",
+    "capability_manifest_from_dict",
     "sign_audit_exclusions",
     "sign_usage_proof",
     "verify_audit_exclusions",

@@ -6,36 +6,37 @@ import argparse
 import hashlib
 import json
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 from memo.config import Config
-from memo.errors import SignatureError
 from memo.memory import Memory
 from memo.operational_event import canonical_json_bytes
 from memo.operational_roster import VerificationRoster
-from memo.operational_signing import OperationalVerifier, SignatureEnvelope
+from tools.memflow_absorption.consumer_migration import (
+    ConsumerMigrationError,
+    build_consumer_replacement_plan,
+    consumer_replacement_plan_from_dict,
+)
 from tools.memflow_absorption.control_record import (
-    CONTROL_RECORD_DOMAIN,
     ControlRecordError,
     CutoverSafetyError,
     control_record_from_dict,
     verify_control_record,
 )
 from tools.memflow_absorption.inventory import (
-    CONSUMER_INVENTORY_DOMAIN,
     InventoryError,
     consumer_inventory_from_dict,
     synapse_retirement_manifest_from_dict,
     verify_consumer_inventory,
 )
 from tools.memflow_absorption.manifest import (
-    CAPABILITY_MANIFEST_DOMAIN,
     ManifestError,
     _usage_proof,
     audit_exclusions_from_dict,
+    capability_manifest_from_dict,
     verify_audit_exclusions,
+    verify_capability_manifest,
     verify_usage_proof,
 )
 from tools.memflow_absorption.safety import (
@@ -100,6 +101,7 @@ def _parser() -> argparse.ArgumentParser:
     synapse_preflight.add_argument("--capability-manifest", type=Path, required=True)
     synapse_preflight.add_argument("--consumer-inventory", type=Path, required=True)
     synapse_preflight.add_argument("--consumer-plan", type=Path, required=True)
+    synapse_preflight.add_argument("--memo-bin", type=Path, required=True)
     synapse_preflight.add_argument("--roster-root", type=Path, required=True)
     synapse_preflight.add_argument("--apply", action="store_true")
     synapse_verify = commands.add_parser("synapse-verify")
@@ -255,26 +257,8 @@ def _synapse_data(args: argparse.Namespace) -> dict[str, object]:
     return result
 
 
-def _blank_signature(payload: dict[str, Any]) -> bytes:
-    unsigned = dict(payload)
-    unsigned["signature"] = ""
-    return canonical_json_bytes(unsigned)
-
-
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
-
-
-def _iso_timestamp(value: object, description: str) -> datetime:
-    if not isinstance(value, str):
-        raise SystemExit(f"{description} timestamp is invalid")
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise SystemExit(f"{description} timestamp is invalid") from exc
-    if parsed.tzinfo is None:
-        raise SystemExit(f"{description} timestamp lacks timezone")
-    return parsed.astimezone(UTC)
 
 
 def _verification_roster(path: Path) -> VerificationRoster:
@@ -282,46 +266,6 @@ def _verification_roster(path: Path) -> VerificationRoster:
         return VerificationRoster.load(path)
     except Exception as exc:
         raise SystemExit("Synapse cutover cannot load verification roster") from exc
-
-
-def _verify_raw_signature(
-    payload: dict[str, Any],
-    *,
-    description: str,
-    domain: str,
-    roster: VerificationRoster,
-    roster_version: int | None = None,
-) -> None:
-    key_id = payload.get("signer_key_id")
-    signature = payload.get("signature")
-    version = payload.get("roster_version") if roster_version is None else roster_version
-    if (
-        not isinstance(key_id, str)
-        or not key_id
-        or not isinstance(signature, str)
-        or not signature
-        or not isinstance(version, int)
-        or version < 1
-    ):
-        raise SystemExit(f"{description} signature authority is malformed")
-    try:
-        key = roster.key(key_id)
-        signer_device_id = payload.get("signer_device_id")
-        if signer_device_id is not None and signer_device_id != key.device_id:
-            raise SignatureError(f"{description} signer device does not own its key")
-        OperationalVerifier().verify(
-            domain=domain,
-            payload=_blank_signature(payload),
-            envelope=SignatureEnvelope(
-                algorithm="ed25519",
-                key_id=key_id,
-                roster_version=version,
-                signature=signature,
-            ),
-            roster=roster,
-        )
-    except (KeyError, SignatureError) as exc:
-        raise SystemExit(f"{description} signature is invalid") from exc
 
 
 def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
@@ -334,104 +278,62 @@ def _synapse_preflight(args: argparse.Namespace) -> dict[str, object]:
     inventory = _read_canonical_object(args.consumer_inventory, "consumer inventory")
     plan = _read_canonical_object(args.consumer_plan, "consumer replacement plan")
     roster = _verification_roster(args.roster_root)
-    _verify_raw_signature(
-        control,
-        description="cutover control record",
-        domain=CONTROL_RECORD_DOMAIN,
-        roster=roster,
-    )
-    _verify_raw_signature(
-        manifest,
-        description="capability manifest",
-        domain=CAPABILITY_MANIFEST_DOMAIN,
-        roster=roster,
-    )
-    _verify_raw_signature(
-        inventory,
-        description="consumer inventory",
-        domain=CONSUMER_INVENTORY_DOMAIN,
-        roster=roster,
-    )
     try:
+        typed_control = control_record_from_dict(control)
+        verified_control = verify_control_record(
+            expected_oid=typed_control.control_oid,
+            roster=roster,
+            record=typed_control,
+            fetched_oid=typed_control.control_oid,
+        )
+        typed_manifest = capability_manifest_from_dict(manifest)
+        verify_capability_manifest(typed_manifest, roster=roster)
         typed_inventory = consumer_inventory_from_dict(inventory)
         verify_consumer_inventory(typed_inventory, roster=roster)
-    except InventoryError as exc:
-        raise SystemExit("consumer inventory typed verification failed") from exc
-    if control.get("synapse_state") in {"COMMITTED", "VERIFIED"}:
+        typed_plan = consumer_replacement_plan_from_dict(plan)
+        rebuilt_plan = build_consumer_replacement_plan(
+            typed_inventory,
+            typed_manifest,
+            roster=roster,
+            memo_bin=args.memo_bin,
+        )
+    except (
+        ControlRecordError,
+        ConsumerMigrationError,
+        InventoryError,
+        ManifestError,
+    ) as exc:
+        raise SystemExit("Synapse preflight typed authority verification failed") from exc
+    if verified_control.synapse_state in {
+        SynapseRetirementState.COMMITTED,
+        SynapseRetirementState.VERIFIED,
+    }:
         raise SystemExit("synapse.cutover.retired")
     if (
-        control.get("schema") != "memo.cutover_control_record.v1"
-        or control.get("state") != "PREPARING"
-        or control.get("synapse_state") != "PREPARING"
+        verified_control.state.value != "PREPARING"
+        or verified_control.synapse_state is not SynapseRetirementState.PREPARING
     ):
         raise SystemExit("Synapse preflight requires a signed PREPARING control record")
     if (
-        manifest.get("schema") != "memo.cutover_capability_manifest.v1"
-        or manifest.get("frozen") is not True
-        or manifest.get("blockers") != []
-        or not manifest.get("signature")
-    ):
-        raise SystemExit("Synapse capability manifest is not frozen and signed")
-    machine_ids = manifest.get("machine_ids")
-    if (
-        not isinstance(machine_ids, list)
-        or len(machine_ids) != 2
-        or machine_ids != sorted(set(machine_ids))
+        len(typed_manifest.machine_ids) != 2
+        or typed_manifest.machine_ids
+        != tuple(sorted(set(typed_manifest.machine_ids)))
     ):
         raise SystemExit("Synapse capability manifest lacks exact two-peer authority")
-    operation_map = {
-        "mappings": manifest.get("operation_mappings"),
-        "registry_authority_sha256": manifest.get("registry_authority_sha256", ""),
-        "fixture_authority_sha256": manifest.get("fixture_authority_sha256", ""),
-    }
-    if (
-        manifest.get("operation_map_sha256")
-        != _sha256_bytes(canonical_json_bytes(operation_map))
-        or manifest.get("slo_baseline_sha256")
-        != _sha256_bytes(canonical_json_bytes(manifest.get("slo_baselines")))
-    ):
-        raise SystemExit("Synapse capability manifest digest mismatch")
-    rows = plan.get("rows")
-    digest = plan.get("digest")
-    surfaces = plan.get("covered_surfaces")
-    if not isinstance(rows, list) or digest != _sha256_bytes(canonical_json_bytes(rows)):
-        raise SystemExit("Synapse consumer-plan digest mismatch")
-    required = {
-        "process",
-        "port",
-        "launchagent",
-        "mcp_gateway_route",
-        "shell_config_path",
-        "state_root",
-    }
-    if (
-        not isinstance(surfaces, dict)
-        or set(surfaces) != required
-        or any(
-            not isinstance(values, list)
-            or not values
-            or values != sorted(set(values))
-            or any(not isinstance(value, str) or not value for value in values)
-            for values in surfaces.values()
-        )
-    ):
-        raise SystemExit("Synapse preflight surface coverage is incomplete")
-    manifest_sha256 = _sha256_bytes(_blank_signature(manifest))
-    inventory_sha256 = hashlib.sha256(typed_inventory.signed_bytes()).hexdigest()
-    if (
-        plan.get("capability_manifest_sha256") != manifest_sha256
-        or plan.get("inventory_sha256") != inventory_sha256
-        or surfaces != inventory.get("surface_observations")
-    ):
+    if typed_plan.authority_bytes() != rebuilt_plan.authority_bytes():
         raise SystemExit(
-            "Synapse consumer plan is not derived from verified inventory and manifest"
+            "Synapse consumer plan differs from deterministic verified authority"
         )
+    required = set(rebuilt_plan.covered_surfaces)
+    manifest_sha256 = hashlib.sha256(typed_manifest.signed_bytes()).hexdigest()
     return {
         "command": "synapse-preflight",
         "dry_run": True,
         "preflight_passed": True,
         "capability_manifest_sha256": manifest_sha256,
-        "consumer_plan_sha256": _sha256_bytes(canonical_json_bytes(plan)),
+        "consumer_plan_sha256": hashlib.sha256(
+            typed_plan.authority_bytes()
+        ).hexdigest(),
         "peer_count": 2,
         "covered_surfaces": sorted(required),
     }

@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Any, cast
 
 from memo.atomic_io import SecureDirectory, open_secure_directory
 from memo.operational_event import canonical_json_bytes
@@ -756,6 +757,146 @@ def build_consumer_replacement_plan(
     )
 
 
+def consumer_replacement_plan_from_dict(
+    value: Mapping[str, Any],
+) -> ConsumerReplacementPlan:
+    """Decode the exact deterministic consumer-plan authority."""
+
+    if set(value) != {
+        "rows",
+        "digest",
+        "covered_surfaces",
+        "inventory_sha256",
+        "capability_manifest_sha256",
+    } or not isinstance(value.get("rows"), list):
+        raise ConsumerMigrationError("consumer replacement plan fields are invalid")
+    row_fields = {
+        "old_label",
+        "new_label",
+        "command",
+        "owner",
+        "restart_required",
+        "config_sha256",
+        "rollback_action",
+        "run_at_load",
+        "keep_alive",
+        "start_interval_seconds",
+        "start_calendar_interval",
+        "watch_paths",
+        "throttle_interval_seconds",
+        "environment",
+    }
+    rows: list[ConsumerReplacement] = []
+    for raw in value["rows"]:
+        if not isinstance(raw, dict) or set(raw) != row_fields:
+            raise ConsumerMigrationError("consumer replacement row fields are invalid")
+        calendar = raw["start_calendar_interval"]
+        environment = raw["environment"]
+        keep_alive = raw["keep_alive"]
+        if (
+            any(
+                not isinstance(raw[field], str)
+                for field in (
+                    "old_label",
+                    "new_label",
+                    "owner",
+                    "config_sha256",
+                    "rollback_action",
+                )
+            )
+            or any(
+                not isinstance(raw[field], bool)
+                for field in ("restart_required", "run_at_load")
+            )
+            or not isinstance(raw["command"], list)
+            or any(not isinstance(item, str) for item in raw["command"])
+            or not isinstance(raw["watch_paths"], list)
+            or any(not isinstance(item, str) for item in raw["watch_paths"])
+            or not (
+                isinstance(keep_alive, bool)
+                or (
+                    isinstance(keep_alive, dict)
+                    and all(isinstance(key, str) for key in keep_alive)
+                )
+            )
+            or (
+                raw["start_interval_seconds"] is not None
+                and (
+                    isinstance(raw["start_interval_seconds"], bool)
+                    or not isinstance(raw["start_interval_seconds"], int)
+                )
+            )
+            or (
+                raw["throttle_interval_seconds"] is not None
+                and (
+                    isinstance(raw["throttle_interval_seconds"], bool)
+                    or not isinstance(raw["throttle_interval_seconds"], int)
+                )
+            )
+            or not isinstance(calendar, list)
+            or any(
+                not isinstance(item, dict)
+                or any(
+                    not isinstance(key, str)
+                    or isinstance(number, bool)
+                    or not isinstance(number, int)
+                    for key, number in item.items()
+                )
+                for item in calendar
+            )
+            or not isinstance(environment, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or any(not isinstance(part, str) for part in item)
+                for item in environment
+            )
+        ):
+            raise ConsumerMigrationError("consumer replacement row values are invalid")
+        rows.append(
+            ConsumerReplacement(
+                old_label=raw["old_label"],
+                new_label=raw["new_label"],
+                command=tuple(raw["command"]),
+                owner=raw["owner"],
+                restart_required=raw["restart_required"],
+                config_sha256=raw["config_sha256"],
+                rollback_action=raw["rollback_action"],
+                run_at_load=raw["run_at_load"],
+                keep_alive=keep_alive,
+                start_interval_seconds=raw["start_interval_seconds"],
+                start_calendar_interval=tuple(
+                    tuple(sorted(item.items())) for item in calendar
+                ),
+                watch_paths=tuple(raw["watch_paths"]),
+                throttle_interval_seconds=raw["throttle_interval_seconds"],
+                environment=tuple((item[0], item[1]) for item in environment),
+            )
+        )
+    surfaces = value.get("covered_surfaces")
+    if not isinstance(surfaces, dict) or any(
+        not isinstance(key, str)
+        or not isinstance(items, list)
+        or any(not isinstance(item, str) for item in items)
+        for key, items in surfaces.items()
+    ):
+        raise ConsumerMigrationError("consumer replacement plan surfaces are invalid")
+    for field in ("digest", "inventory_sha256", "capability_manifest_sha256"):
+        if not isinstance(value.get(field), str):
+            raise ConsumerMigrationError("consumer replacement plan digests are invalid")
+    return ConsumerReplacementPlan(
+        rows=tuple(rows),
+        digest=cast(str, value["digest"]),
+        covered_surfaces={
+            key: tuple(items) for key, items in cast(dict[str, list[str]], surfaces).items()
+        },
+        inventory_sha256=cast(str, value["inventory_sha256"]),
+        capability_manifest_sha256=cast(
+            str, value["capability_manifest_sha256"]
+        ),
+    )
+
+
 def _plist_bytes(row: ConsumerReplacement) -> bytes:
     payload: dict[str, object] = {
         "Label": row.new_label,
@@ -974,6 +1115,7 @@ def verify_no_synapse_runtime_reference(
 __all__ = [
     "ConsumerMigrationError",
     "build_consumer_replacement_plan",
+    "consumer_replacement_plan_from_dict",
     "render_memo_launch_agents",
     "verify_no_synapse_runtime_reference",
 ]

@@ -518,6 +518,7 @@ def _verify_peer_votes(
     if len(votes) != 2:
         raise CutoverSafetyError("Synapse retirement requires exactly two peer votes")
     devices: list[str] = []
+    key_ids: list[str] = []
     digests: list[str] = []
     for vote in votes:
         if (
@@ -541,8 +542,13 @@ def _verify_peer_votes(
         except (KeyError, SignatureError) as exc:
             raise CutoverSafetyError("Synapse peer vote signature is invalid") from exc
         devices.append(vote.signer_device_id)
+        key_ids.append(vote.signer_key_id)
         digests.append(hashlib.sha256(vote.signed_bytes()).hexdigest())
-    if tuple(sorted(devices)) != control.peer_device_ids or len(set(devices)) != 2:
+    if (
+        tuple(sorted(devices)) != control.peer_device_ids
+        or len(set(devices)) != 2
+        or len(set(key_ids)) != 2
+    ):
         raise CutoverSafetyError("Synapse peer votes do not cover both authority devices")
     return tuple(sorted(digests))
 

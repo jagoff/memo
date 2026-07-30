@@ -20,6 +20,7 @@ from tools.memflow_absorption.consumer_migration import (
     build_consumer_replacement_plan,
 )
 from tools.memflow_absorption.control_record import (
+    CONTROL_RECORD_DOMAIN,
     SYNAPSE_PEER_VOTE_DOMAIN,
     ControlRecordError,
     CutoverSafetyError,
@@ -595,6 +596,46 @@ def test_advance_requires_fresh_cas_and_two_bound_signed_peer_votes(
         )
 
 
+def test_peer_vote_rejects_device_impersonation_and_reused_roster_key(
+    authority,
+    tmp_path: Path,
+) -> None:
+    manifest, inventory, plan = _real_plan(authority, tmp_path)
+    cas, initial = _initial(authority)
+    ready = prepare_synapse_retirement(
+        cas,
+        initial,
+        manifest,
+        inventory,
+        plan,
+        roster=authority[1],
+        signer=authority[2],
+        next_control_oid="c" * 40,
+        memo_bin=tmp_path / "runtime" / "memo",
+    )
+    mac_a = _vote(authority, ready, "mac-a")
+    impersonated = replace(mac_a, signer_device_id="mac-b", signature="")
+    envelope = authority[2].sign(
+        domain=SYNAPSE_PEER_VOTE_DOMAIN,
+        payload=impersonated.signed_bytes(),
+        key_id=mac_a.signer_key_id,
+    )
+    impersonated = replace(impersonated, signature=envelope.signature)
+    before = cas.read()
+
+    with pytest.raises(CutoverSafetyError, match="signature is invalid"):
+        advance_synapse_retirement(
+            cas,
+            ready,
+            SynapseRetirementState.QUIESCED,
+            roster=authority[1],
+            signer=authority[2],
+            next_control_oid="d" * 40,
+            peer_votes=(mac_a, impersonated),
+        )
+    assert cas.read() == before
+
+
 def test_signing_requires_exact_predecessor_sequence_and_legal_transition(
     authority,
 ) -> None:
@@ -944,6 +985,8 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
         str(preflight_paths["inventory"]),
         "--consumer-plan",
         str(preflight_paths["plan"]),
+        "--memo-bin",
+        str(tmp_path / "runtime" / "memo"),
         "--roster-root",
         str(tmp_path),
     ]
@@ -973,7 +1016,75 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
     ).hexdigest()
     preflight_paths["inventory"].write_bytes(canonical_json_bytes(malformed_inventory))
     preflight_paths["plan"].write_bytes(canonical_json_bytes(malformed_plan))
-    with pytest.raises(SystemExit, match="typed verification failed"):
+    with pytest.raises(SystemExit, match="typed authority verification failed"):
+        main(preflight_command)
+    preflight_paths["inventory"].write_bytes(
+        canonical_json_bytes(preflight_inventory.to_dict())
+    )
+    preflight_paths["plan"].write_bytes(canonical_json_bytes(plan_dict))
+
+    for field, value in (("control_oid", "bad-oid"), ("sequence", 2)):
+        malformed_control = initial_record.to_dict()
+        malformed_control[field] = value
+        malformed_control["signature"] = ""
+        envelope = authority[2].sign(
+            domain=CONTROL_RECORD_DOMAIN,
+            payload=canonical_json_bytes(malformed_control),
+            key_id=authority[1].local_key_id,
+        )
+        malformed_control["signature"] = envelope.signature
+        preflight_paths["control"].write_bytes(
+            canonical_json_bytes(malformed_control)
+        )
+        with pytest.raises(
+            SystemExit, match="typed authority verification failed"
+        ):
+            main(preflight_command)
+    preflight_paths["control"].write_bytes(
+        canonical_json_bytes(initial_record.to_dict())
+    )
+
+    malformed_manifest = manifest.to_dict()
+    malformed_manifest["operation_mappings"] = [{"source_operation": "forged"}]
+    malformed_manifest["operation_map_sha256"] = hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "mappings": malformed_manifest["operation_mappings"],
+                "registry_authority_sha256": "",
+                "fixture_authority_sha256": "",
+            }
+        )
+    ).hexdigest()
+    malformed_manifest["signature"] = ""
+    manifest_envelope = authority[2].sign(
+        domain=CAPABILITY_MANIFEST_DOMAIN,
+        payload=canonical_json_bytes(malformed_manifest),
+        key_id=authority[1].local_key_id,
+    )
+    malformed_manifest["signature"] = manifest_envelope.signature
+    preflight_paths["manifest"].write_bytes(
+        canonical_json_bytes(malformed_manifest)
+    )
+    with pytest.raises(SystemExit, match="typed authority verification failed"):
+        main(preflight_command)
+    preflight_paths["manifest"].write_bytes(canonical_json_bytes(manifest.to_dict()))
+
+    forged_row = ConsumerReplacement(
+        old_label="com.synapse.self-signed",
+        new_label="com.memo.self-signed",
+        command=(str(tmp_path / "runtime" / "memo"), "save"),
+        owner="memo_native",
+        restart_required=True,
+        config_sha256="7" * 64,
+        rollback_action="operator",
+    )
+    forged_plan = dict(plan_dict)
+    forged_plan["rows"] = [forged_row.to_dict()]
+    forged_plan["digest"] = hashlib.sha256(
+        canonical_json_bytes(forged_plan["rows"])
+    ).hexdigest()
+    preflight_paths["plan"].write_bytes(canonical_json_bytes(forged_plan))
+    with pytest.raises(SystemExit, match="deterministic verified authority"):
         main(preflight_command)
 
     cas, committed, retirement = _committed(authority, tmp_path)
