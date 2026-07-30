@@ -103,7 +103,6 @@ def _write_json(path: Path, payload: object) -> None:
         path.unlink()
         path.with_name(f"{path.name}.receipt.json").unlink()
         create_readonly_snapshot(source, path)
-        source.unlink(missing_ok=True)
     else:
         path.write_bytes(canonical_json_bytes(payload))
 
