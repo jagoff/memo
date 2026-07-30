@@ -548,6 +548,7 @@ def build_capability_manifest(
     roster: VerificationRoster,
     source_operation_records: tuple[SynapseOperation, ...] = (),
     fixture_root: Path | None = None,
+    transform_registry: object | None = None,
 ) -> CapabilityManifest:
     """Join pinned source, mappings, and signed 90-day telemetry fail-closed."""
 
@@ -622,6 +623,9 @@ def build_capability_manifest(
         raise ManifestError("every source operation must have exactly one disposition")
     if fixture_root is not None:
         _verify_fixture_bindings(mappings, fixture_root)
+        if transform_registry is not None:
+            from tools.memflow_absorption.transforms import verify_route_fixtures
+            verify_route_fixtures(tuple(r for m in mappings for r in m.routes), transform_registry, fixture_root)
 
     blockers: set[str] = set()
     receipts = usage.get("source_receipts_v2")
