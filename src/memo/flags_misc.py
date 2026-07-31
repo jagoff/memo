@@ -1683,4 +1683,32 @@ SPECS: tuple[FlagSpec, ...] = (
         "Max items shown in `memo digest`.",
         min_val=1,
     ),
+    # cross-agent coordination (live collision scan + directive delivery)
+    _spec(
+        "MEMO_COORD_ENABLED",
+        "bool",
+        True,
+        "coordination",
+        "Cross-agent coordination: periodic live-collision scan (watcher trigger) "
+        "plus <memo-coordination> directive delivery via the recall hook. "
+        "Default on; set =0 to disable.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_COORD_SCAN_INTERVAL",
+        "int",
+        300,
+        "coordination",
+        "Seconds between collision scans in the `memo watch` trigger thread.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_COORD_ACTIVE_WINDOW",
+        "int",
+        21600,
+        "coordination",
+        "Sessions updated within this many seconds count as active for the "
+        "collision scan; older open collisions expire to 'stale'.",
+        min_val=1,
+    ),
 )

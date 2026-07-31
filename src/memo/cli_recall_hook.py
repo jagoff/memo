@@ -106,6 +106,24 @@ def _proactive_urgent_line(cfg: Config) -> str:
         return ""
 
 
+def _append_coordination_block(cfg: Config, session_id: str | None, context: str) -> str:
+    """Append this session's pending `<memo-coordination>` directives.
+
+    Pure sqlite read (no LLM, no network) kept out of the entrypoint so the
+    recall-hook complexity budget is untouched. Fail-open: any failure returns
+    the context unchanged."""
+    try:
+        from memo.coordination import deliver_pending_block
+
+        block = deliver_pending_block(cfg, session_id)
+    except (ImportError, OSError, ValueError) as exc:
+        _log.debug("coordination block failed: %s", exc)
+        return context
+    if not block:
+        return context
+    return f"{context}\n\n{block}" if context else block
+
+
 @click.command(name="recall-hook")
 def recall_hook() -> None:
     """UserPromptSubmit hook — inject relevant memories as additionalContext."""
@@ -800,6 +818,13 @@ def recall_hook() -> None:
     # parity, recall_logic).
     if _avoid_block:
         context = f"{_avoid_block}\n\n{context}"
+
+    # Cross-agent coordination directives (<memo-coordination>): pending
+    # directives for this session, appended to the injected context so the
+    # agent acts on them this turn. One indexed sqlite read — zero LLM, zero
+    # network — and each side is stamped delivered exactly once (see
+    # memo.coordination.deliver_pending_block). Best-effort, never blocks.
+    context = _append_coordination_block(cfg, _sid, context)
 
     output: dict[str, Any] = {
         "hookSpecificOutput": {

@@ -156,6 +156,13 @@ def run_watcher(*, delay: float = 2.0, debug: bool = False) -> None:
         signal.signal(signal.SIGINT, _sigterm)
         signal.signal(signal.SIGTERM, _sigterm)
 
+        # Cross-agent coordination trigger: interval scan in a daemon thread
+        # (never blocks the reindex debounce). Gated by MEMO_COORD_ENABLED
+        # inside maybe_start_scan_thread; stops with the watcher's own event.
+        from memo.coordination import maybe_start_scan_thread
+
+        maybe_start_scan_thread(stop)
+
         try:
             while not stop.is_set():
                 time.sleep(0.5)
