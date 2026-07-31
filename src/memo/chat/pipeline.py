@@ -82,7 +82,8 @@ def chat_stream(
     t0 = time.monotonic()
 
     memo_query = rewrite_query(question, history)
-    yield {"type": "stage", "stage": "retrieval", "query": memo_query}
+    retrieval_t0 = time.monotonic()
+    yield {"type": "stage", "name": "memo_retrieval", "phase": "start"}
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         mem_future = pool.submit(memory.search, memo_query, limit=base_k, mode="hybrid")
@@ -122,6 +123,12 @@ def chat_stream(
             factor=cfg.vote_boost,
         )
 
+    yield {
+        "type": "stage",
+        "name": "memo_retrieval",
+        "phase": "done",
+        "ms": int((time.monotonic() - retrieval_t0) * 1000),
+    }
     yield {"type": "context", "sources": sources[:base_k]}
 
     def _done(answer: str, synthesis_source: str) -> dict[str, Any]:
@@ -133,10 +140,19 @@ def chat_stream(
             "total_ms": int((time.monotonic() - t0) * 1000),
         }
 
+    streaming_t0 = time.monotonic()
+    yield {"type": "stage", "name": "streaming", "phase": "start"}
+
     if dominant:
         doc = resolve_fulldoc(memory, dominant)
         if doc:
             yield {"type": "token", "text": doc["text"]}
+            yield {
+                "type": "stage",
+                "name": "streaming",
+                "phase": "done",
+                "ms": int((time.monotonic() - streaming_t0) * 1000),
+            }
             yield _done(doc["text"], f"memo.fulldoc.{doc['fulldoc_source']}")
             return
 
@@ -155,4 +171,10 @@ def chat_stream(
     except Exception:
         yield {"type": "error", "message": "synthesis failed", "answer_partial": "".join(parts)}
         return
+    yield {
+        "type": "stage",
+        "name": "streaming",
+        "phase": "done",
+        "ms": int((time.monotonic() - streaming_t0) * 1000),
+    }
     yield _done("".join(parts), "memo.chat")

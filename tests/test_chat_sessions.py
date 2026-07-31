@@ -10,7 +10,7 @@ def test_roundtrip_and_listing(tmp_path) -> None:
     store.append_turn("s2", "user", "otra consulta")
     sessions = store.list_sessions()
     assert len(sessions) == 2
-    assert sessions[0]["id"] == "s2"  # más reciente primero
+    assert sessions[0]["session_id"] == "s2"  # más reciente primero
     turns = store.get("s1")
     assert [t["role"] for t in turns] == ["user", "assistant"]
     assert store.recent_queries() == ["otra consulta", "hola"]

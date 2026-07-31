@@ -63,6 +63,21 @@ def test_event_sequence_and_shapes(tmp_path) -> None:
     assert kinds[0] == "stage"
     assert "context" in kinds and "token" in kinds
     assert kinds[-1] == "done"
+
+    # web-chat/src/api.ts StreamEvent expects stage events shaped
+    # {name: StageEventName, phase: "start"|"done", ms?}, not {stage: str}.
+    stages = [e for e in events if e["type"] == "stage"]
+    assert stages[0]["name"] == "memo_retrieval"
+    assert stages[0]["phase"] == "start"
+    retrieval_done = next(
+        s for s in stages if s["name"] == "memo_retrieval" and s["phase"] == "done"
+    )
+    assert retrieval_done["ms"] >= 0
+    streaming_start = next(s for s in stages if s["name"] == "streaming" and s["phase"] == "start")
+    assert streaming_start["phase"] == "start"
+    streaming_done = next(s for s in stages if s["name"] == "streaming" and s["phase"] == "done")
+    assert streaming_done["ms"] >= 0
+
     context = next(e for e in events if e["type"] == "context")
     ids = {s["id"] for s in context["sources"]}
     assert {"m1", "r1"} <= ids

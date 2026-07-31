@@ -11,6 +11,11 @@ from typing import Any
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
+def iso_ts(ts: float) -> str:
+    """Format an epoch-seconds timestamp the way the rest of chat/ does."""
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
+
+
 class SessionStore:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -44,20 +49,26 @@ class SessionStore:
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
         if not self.root.exists():
             return []
-        rows = []
+        entries = []
         for path in self.root.glob("*.jsonl"):
             turns = self.get(path.stem)
             first_user = next((t["text"] for t in turns if t.get("role") == "user"), "")
-            rows.append(
-                {
-                    "id": path.stem,
-                    "updated": path.stat().st_mtime,
-                    "first_query": first_user,
-                    "turns": len(turns),
-                }
+            first_ts = turns[0]["ts"] if turns else path.stat().st_mtime
+            last_ts = turns[-1]["ts"] if turns else path.stat().st_mtime
+            entries.append(
+                (
+                    last_ts,
+                    {
+                        "session_id": path.stem,
+                        "first_ts": iso_ts(first_ts),
+                        "last_ts": iso_ts(last_ts),
+                        "turn_count": len(turns),
+                        "label": first_user,
+                    },
+                )
             )
-        rows.sort(key=lambda r: r["updated"], reverse=True)
-        return rows[:limit]
+        entries.sort(key=lambda e: e[0], reverse=True)
+        return [row for _, row in entries[:limit]]
 
     def delete(self, session_id: str) -> bool:
         path = self._path(session_id)
@@ -77,7 +88,7 @@ class SessionStore:
     def recent_queries(self, limit: int = 8) -> list[str]:
         queries: list[str] = []
         for row in self.list_sessions(limit=limit * 3):
-            for turn in reversed(self.get(row["id"])):
+            for turn in reversed(self.get(row["session_id"])):
                 if turn.get("role") == "user" and turn.get("text"):
                     if turn["text"] not in queries:
                         queries.append(turn["text"])

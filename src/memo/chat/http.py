@@ -20,7 +20,7 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         question_key,
     )
     from memo.chat.pipeline import chat_stream
-    from memo.chat.sessions import SessionStore
+    from memo.chat.sessions import SessionStore, iso_ts
 
     cfg = ChatConfig.load(memory.cfg.state_dir)
     sessions = SessionStore(cfg.sessions_dir)
@@ -142,9 +142,20 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: str) -> Any:
         try:
-            return {"id": session_id, "turns": sessions.get(session_id)}
+            turns = sessions.get(session_id)
         except ValueError:
             return JSONResponse({"error": "invalid session id"}, status_code=400)
+        return {
+            "session_id": session_id,
+            "turns": [
+                {
+                    "role": t.get("role", ""),
+                    "text": t.get("text", ""),
+                    "at": iso_ts(t["ts"]) if t.get("ts") is not None else None,
+                }
+                for t in turns
+            ],
+        }
 
     @app.post("/api/sessions/delete")
     async def delete_session(request: Request) -> Any:
@@ -162,7 +173,8 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
     @app.get("/api/suggestions")
     async def suggestions(limit: int = 8) -> Any:
-        return {"suggestions": sessions.recent_queries(limit=limit)}
+        chips = [{"label": q, "query": q} for q in sessions.recent_queries(limit=limit)]
+        return {"chips": chips}
 
     @app.post("/api/memory/delete")
     async def memory_delete() -> Any:

@@ -64,6 +64,34 @@ def test_deferred_endpoints_501(client) -> None:
 
 def test_sessions_endpoints(client) -> None:
     client.post("/api/ask", json={"q": "hola", "chat_session_id": "s1"})
+
+    # web-chat/src/types.ts SessionListItem expects {session_id, turn_count,
+    # label, first_ts?, last_ts?} — not the internal {id, updated, turns,
+    # first_query} shape.
     sessions = client.get("/api/sessions").json()["sessions"]
-    assert any(s["id"] == "s1" for s in sessions)
+    row = next(s for s in sessions if s["session_id"] == "s1")
+    assert row["turn_count"] == 2
+    assert row["label"] == "hola"
+
+    # web-chat/src/types.ts SessionHistory expects {session_id, turns:
+    # [{role, text, at?}]} — not {id, turns: [{role, text, ts}]}.
+    history = client.get("/api/sessions/s1").json()
+    assert history["session_id"] == "s1"
+    assert history["turns"][0]["role"] == "user"
+    assert history["turns"][0]["text"] == "hola"
+    assert "at" in history["turns"][0]
+
     assert client.post("/api/sessions/delete", json={"session_id": "s1"}).json()["ok"] is True
+
+
+def test_suggestions_returns_chip_objects(client) -> None:
+    client.post("/api/ask", json={"q": "hola de nuevo", "chat_session_id": "s2"})
+
+    # web-chat/src/api.ts fetchSuggestions() reads body.chips (SuggestionChip[]
+    # = {label, query}), not body.suggestions (a list of raw strings).
+    body = client.get("/api/suggestions").json()
+    assert "chips" in body
+    chip = next(c for c in body["chips"] if c["query"] == "hola de nuevo")
+    assert chip["label"] == "hola de nuevo"
+
+    client.post("/api/sessions/delete", json={"session_id": "s2"})
