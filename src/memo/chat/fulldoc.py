@@ -42,7 +42,10 @@ def _chunk_numbers(members: list[dict[str, Any]]) -> tuple[set[int], set[int]]:
 
 def resolve_fulldoc(memory: Any, members: list[dict[str, Any]]) -> dict[str, Any] | None:
     head = members[0]
-    if head.get("source") == "vault" and head.get("repo_name") and head.get("path"):
+    # Vault branch: must complete or return None
+    if head.get("source") == "vault":
+        if not (head.get("repo_name") and head.get("path")):
+            return None
         doc = memory.repo_get_file(str(head["repo_name"]), str(head["path"]))
         if isinstance(doc, dict):
             text = str(doc.get("text") or doc.get("content") or "")
@@ -53,6 +56,8 @@ def resolve_fulldoc(memory: Any, members: list[dict[str, Any]]) -> dict[str, Any
                     "fulldoc_source": "repo",
                 }
         return None
+
+    # Memory branch: reassemble if all chunks present
     nums, totals = _chunk_numbers(members)
     if len(totals) != 1 or nums != set(range(1, next(iter(totals)) + 1)):
         return None

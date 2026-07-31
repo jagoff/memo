@@ -84,3 +84,30 @@ def test_resolve_vault_uses_repo_get_file() -> None:
     assert (
         doc is not None and doc["text"] == "contenido completo" and doc["fulldoc_source"] == "repo"
     )
+
+
+def test_vault_group_missing_repo_name_fails_closed() -> None:
+    class _Mem:
+        def repo_get_file(self, repo, path, *, start=None, end=None):
+            raise AssertionError("no debe llamarse para vault sin repo_name")
+
+    members = [
+        {
+            "source": "vault",
+            "id": "v1",
+            "title": "Plan (§1/2)",
+            "score": 1.0,
+            "snippet": "a",
+            "path": "docs/plan.md",
+        },
+        {
+            "source": "vault",
+            "id": "v2",
+            "title": "Plan (§2/2)",
+            "score": 0.9,
+            "snippet": "b",
+            "path": "docs/plan.md",
+        },
+    ]
+    # Missing repo_name should return None, never fall through to memory reassembly
+    assert resolve_fulldoc(_Mem(), members) is None
