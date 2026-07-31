@@ -217,6 +217,7 @@ guard pattern exactly:
 ```python
 try:
     from memo import presence as _presence_mod
+
     _presence_mod.bump(cfg.state_dir, recalls=len(relevant))
 except Exception as exc:
     _logger.debug("presence bump failed: %s", exc)
