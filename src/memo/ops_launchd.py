@@ -19,6 +19,14 @@ def render_chat_plist(
     args_xml = "\n".join(f"      <string>{escape(a)}</string>" for a in args)
     log = escape(f"{home}/Library/Logs/memo/chat.log")
     path_env = escape(f"{home}/.local/bin:/usr/local/bin:/usr/bin:/bin")
+    # launchd agents don't inherit the shell env — forward MEMO_* vars from the
+    # installing shell so the daemon uses the same embedder/vault/state config
+    # as `memo` in a terminal (mirrors watcher.py's render_plist).
+    memo_env = {k: v for k, v in sorted(os.environ.items()) if k.startswith("MEMO_")}
+    memo_env_xml = "".join(
+        f"      <key>{escape(k)}</key>\n      <string>{escape(v)}</string>\n"
+        for k, v in memo_env.items()
+    )
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -41,7 +49,7 @@ def render_chat_plist(
     <dict>
       <key>PATH</key>
       <string>{path_env}</string>
-    </dict>
+{memo_env_xml}    </dict>
   </dict>
 </plist>
 """

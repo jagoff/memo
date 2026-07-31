@@ -42,6 +42,32 @@ def test_render_chat_plist_escapes_xml_ampersand(tmp_path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_render_chat_plist_forwards_memo_env_vars(tmp_path, monkeypatch) -> None:
+    # launchd agents don't inherit the shell env — without forwarding MEMO_*
+    # vars the installed daemon falls back to the default 0.6B/1024 embedder
+    # against a 2560-dim index (broken retrieval + poisoned vote embeddings).
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
+    monkeypatch.setenv("MEMO_VAULT_PATH", "/Users/tester/A&B")
+    monkeypatch.delenv("NOT_MEMO_UNRELATED", raising=False)
+    monkeypatch.setenv("NOT_MEMO_UNRELATED", "should-not-forward")
+
+    plist = render_chat_plist("/usr/local/bin/memo", "/Users/tester", port=8765, dist=None)
+
+    assert "<key>MEMO_EMBEDDER_DIMS</key>" in plist
+    assert "<string>2560</string>" in plist
+    assert "<key>MEMO_VAULT_PATH</key>" in plist
+    assert "A&amp;B" in plist
+    assert "/Users/tester/A&B" not in plist  # raw unescaped ampersand must not survive
+    assert "NOT_MEMO_UNRELATED" not in plist
+
+    plist_path = tmp_path / "env.plist"
+    plist_path.write_text(plist, encoding="utf-8")
+    result = subprocess.run(
+        ["plutil", "-lint", str(plist_path)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_install_chat_writes_plist_and_calls_bootout_then_bootstrap(tmp_path, monkeypatch) -> None:
     calls: list[list[str]] = []
 
