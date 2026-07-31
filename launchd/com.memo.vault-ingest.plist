@@ -2,8 +2,9 @@
 <!--
   Template: memo vault re-ingest LaunchAgent (macOS) — fires when iCloud syncs
   Obsidian vault edits (WatchPaths); ThrottleInterval bounds the re-ingest
-  cadence. Uses the light 0.6B embedder deliberately: ingest runs often and
-  must stay cheap. Replace __HOME__ / __MEMO_BIN__, adjust WatchPaths to your
+  cadence. Embedder model/dims MUST match the live index (the synapse-era
+  agent shipped 0.6B/1024 against a 2560d index and silently failed every
+  run). Replace __HOME__ / __MEMO_BIN__, adjust WatchPaths to your
   vaults (or set MEMO_VAULT_PATHS), then:
 
     cp com.memo.vault-ingest.plist ~/Library/LaunchAgents/
@@ -30,9 +31,9 @@
     <key>HF_HUB_OFFLINE</key>
     <string>1</string>
     <key>MEMO_EMBEDDER_DIMS</key>
-    <string>1024</string>
+    <string>2560</string>
     <key>MEMO_EMBEDDER_MODEL</key>
-    <string>mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ</string>
+    <string>mlx-community/Qwen3-Embedding-4B-4bit-DWQ</string>
     <key>MEMO_HELPER_MODEL</key>
     <string>mlx-community/Qwen3-4B-4bit</string>
     <key>MEMO_LLM_MODEL</key>
