@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="mlx-memo"
 OLD_APP_NAME="memo-mcp"
 PYPI_SPEC="mlx-memo"
-DEFAULT_VERSION="4.6.0"
+DEFAULT_VERSION="4.6.1"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13
 
