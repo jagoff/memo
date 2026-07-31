@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 CHAT_LABEL = "com.memo.chat"
 
@@ -14,8 +16,9 @@ def render_chat_plist(
     args = [memo_bin, "chat", "serve", "--host", "127.0.0.1", "--port", str(port)]
     if dist:
         args += ["--dist", dist]
-    args_xml = "\n".join(f"      <string>{a}</string>" for a in args)
-    log = f"{home}/Library/Logs/memo/chat.log"
+    args_xml = "\n".join(f"      <string>{escape(a)}</string>" for a in args)
+    log = escape(f"{home}/Library/Logs/memo/chat.log")
+    path_env = escape(f"{home}/.local/bin:/usr/local/bin:/usr/bin:/bin")
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -37,7 +40,7 @@ def render_chat_plist(
     <key>EnvironmentVariables</key>
     <dict>
       <key>PATH</key>
-      <string>{home}/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+      <string>{path_env}</string>
     </dict>
   </dict>
 </plist>
@@ -70,19 +73,26 @@ def install_chat(memo_bin: str, home: Path, *, port: int = 8765, dist: str | Non
     path = _plist_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_chat_plist(memo_bin, str(home), port=port, dist=dist), encoding="utf-8")
-    uid = subprocess.run(["id", "-u"], capture_output=True, text=True, check=True).stdout.strip()
+    uid = os.getuid()
     subprocess.run(
         ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False
     )
-    subprocess.run(
-        ["launchctl", "bootstrap", f"gui/{uid}", str(path)], capture_output=True, check=True
-    )
+    try:
+        subprocess.run(
+            ["launchctl", "bootstrap", f"gui/{uid}", str(path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        raise RuntimeError(f"launchctl bootstrap failed: {stderr or exc}") from exc
     return path
 
 
 def uninstall_chat(home: Path) -> bool:
     path = _plist_path(home)
-    uid = subprocess.run(["id", "-u"], capture_output=True, text=True, check=True).stdout.strip()
+    uid = os.getuid()
     subprocess.run(
         ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False
     )

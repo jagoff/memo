@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from pathlib import Path
 from typing import Any
 
 import click
@@ -174,14 +175,16 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
 def ops_install(service: str, port: int, dist: str | None) -> None:
     """Install a memo launchd agent (currently: chat)."""
     import shutil
-    from pathlib import Path
 
     from memo.ops_launchd import install_chat
 
     memo_bin = shutil.which("memo")
     if not memo_bin:
         raise click.ClickException("no encuentro el binario `memo` en PATH")
-    path = install_chat(memo_bin, Path.home(), port=port, dist=dist)
+    try:
+        path = install_chat(memo_bin, Path.home(), port=port, dist=dist)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(f"installed {path}")
 
 
@@ -189,8 +192,6 @@ def ops_install(service: str, port: int, dist: str | None) -> None:
 @click.argument("service", type=click.Choice(["chat"]))
 def ops_uninstall(service: str) -> None:
     """Uninstall a memo launchd agent."""
-    from pathlib import Path
-
     from memo.ops_launchd import uninstall_chat
 
     click.echo("removed" if uninstall_chat(Path.home()) else "not installed")
