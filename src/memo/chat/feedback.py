@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from memo.chat.dedup import score_of
+from memo.chat.dedup import SCORE_FIELDS, score_of
 
 _MIN_FACTOR, _MAX_FACTOR = 1.0, 5.0
 
@@ -123,7 +123,7 @@ def filter_negative_sources(
 
 
 def _boost_field(s: dict[str, Any]) -> str:
-    for name in ("rerank_score", "normalized_score", "score"):
+    for name in SCORE_FIELDS:
         if isinstance(s.get(name), (int, float)):
             return name
     return "score"

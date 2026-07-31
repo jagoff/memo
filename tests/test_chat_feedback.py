@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from memo.chat import feedback
+from memo.chat.dedup import SCORE_FIELDS
 from memo.chat.feedback import (
     ChatFeedback,
     FeedbackStore,
@@ -10,6 +12,14 @@ from memo.chat.feedback import (
     filter_negative_sources,
     question_key,
 )
+
+
+def test_boost_field_precedence_matches_dedup_score_fields() -> None:
+    # _boost_field must stay derived from dedup.SCORE_FIELDS — a second,
+    # independently-maintained field-precedence tuple drifting out of sync
+    # would boost the wrong field silently.
+    for field in SCORE_FIELDS:
+        assert feedback._boost_field({field: 1.0}) == field
 
 
 def _vote(qk: str, sid: str, rating: str, emb: list[float] | None = None) -> SourceVote:

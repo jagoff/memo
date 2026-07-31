@@ -41,9 +41,11 @@ class SessionStore:
         turns = []
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
-                turns.append(json.loads(line))
+                parsed = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if isinstance(parsed, dict):
+                turns.append(parsed)
         return turns
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:

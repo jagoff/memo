@@ -8,7 +8,7 @@ from typing import Any
 CHUNK_MARKER = re.compile(r"\s*\(§\d+\s*/\s*\d+\)\s*$")
 CHUNK_NUM = re.compile(r"\(§(\d+)\s*/\s*(\d+)\)\s*$")
 _MERGED_SNIPPET_MAX = 6000
-_SCORE_FIELDS = ("rerank_score", "normalized_score", "score")
+SCORE_FIELDS = ("rerank_score", "normalized_score", "score")
 
 
 def normalize_title(title: str | None) -> str:
@@ -25,7 +25,7 @@ def dedup_key(s: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def score_of(s: dict[str, Any]) -> float:
-    for field in _SCORE_FIELDS:
+    for field in SCORE_FIELDS:
         value = s.get(field)
         if isinstance(value, (int, float)):
             return float(value)
