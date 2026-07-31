@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.jagoff/memo -->
 <!-- Banner: keep it, but make sure it loads fast (<200KB, WebP if possible) -->
 [![memo — local memory for AI](https://raw.githubusercontent.com/jagoff/memo/master/docs/banner.webp)](https://raw.githubusercontent.com/jagoff/memo/master/docs/banner.webp)
 
