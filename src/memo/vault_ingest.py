@@ -62,13 +62,11 @@ def vault_label(path: Path) -> str:
     """memo ``--name`` label for a vault dir: Notes→notes, obsidian-work→work."""
     name = path.name.lower()
     if name.startswith("obsidian-"):
-        name = name[len("obsidian-"):]
+        name = name[len("obsidian-") :]
     return name or "vault"
 
 
-def build_ingest_command(
-    memo_bin: str, path: Path, label: str, excludes: list[str]
-) -> list[str]:
+def build_ingest_command(memo_bin: str, path: Path, label: str, excludes: list[str]) -> list[str]:
     """Argv for one vault's ``memo ingest`` run (no shell, no quoting issues)."""
     cmd = [memo_bin, "ingest", str(path), "--name", label, "--prune"]
     for glob in excludes:

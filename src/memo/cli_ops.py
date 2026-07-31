@@ -115,7 +115,11 @@ def vault_ingest_cmd(as_json: bool) -> None:
         click.echo(json.dumps(result))
     else:
         for v in result["vaults"]:
-            status = "[green]ok[/green]" if v["returncode"] == 0 else f"[red]exit {v['returncode']}[/red]"
+            status = (
+                "[green]ok[/green]"
+                if v["returncode"] == 0
+                else f"[red]exit {v['returncode']}[/red]"
+            )
             console.print(f"{v['vault']}: {status}  [dim]{v['path']}[/dim]")
     if not result["ok"]:
         raise SystemExit(1)

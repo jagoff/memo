@@ -30,11 +30,25 @@ def test_default_paths_only_existing_dirs(monkeypatch):
 def test_build_ingest_command():
     cmd = build_ingest_command("/bin/memo", Path("/v/Notes"), "notes", ["a/**", "b.md"])
     assert cmd == [
-        "/bin/memo", "ingest", "/v/Notes", "--name", "notes", "--prune",
-        "--exclude", "a/**", "--exclude", "b.md",
+        "/bin/memo",
+        "ingest",
+        "/v/Notes",
+        "--name",
+        "notes",
+        "--prune",
+        "--exclude",
+        "a/**",
+        "--exclude",
+        "b.md",
     ]
 
 
 def test_fixed_excludes_present():
-    for glob in ("Obsidian/Whatsapp/**", "Obsidian/AI/**", "04-Archive/**", "Archive/**", "archive/**"):
+    for glob in (
+        "Obsidian/Whatsapp/**",
+        "Obsidian/AI/**",
+        "04-Archive/**",
+        "Archive/**",
+        "archive/**",
+    ):
         assert glob in _FIXED_VAULT_EXCLUDES
