@@ -9,6 +9,28 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.6.1] - 2026-07-31
+
+### Fixed
+
+- PyPI project page renders again: README images and doc links use absolute
+  GitHub URLs, restoring the a44890c9 fix that the conversion README dropped —
+  the v4.6.0 page shipped with a broken banner because of it (#145).
+- README banner served as WebP at full 1600 px resolution (152 KB, down from
+  the original 372 KB JPEG); `banner.jpg` stays for older PyPI pages (#140,
+  #145).
+
+### Added
+
+- Docker image now publishes a `linux/arm64` manifest alongside `linux/amd64`:
+  the README one-liner works natively on Apple Silicon and ARM Linux instead
+  of failing with `no matching manifest` (#144).
+
+### Changed
+
+- Dependency bumps: python-runtime group, GitHub Actions group, Python base
+  image digest, and `@types/node` (#141, #86, #58, #125).
+
 ## [4.6.0] - 2026-07-31
 
 ### Added
