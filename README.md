@@ -170,7 +170,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 | Architecture and design notes | [reference.md › Design](docs/reference.md#design-and-comparison) |
 | Privacy and network policy | [PRIVACY.md](PRIVACY.md) |
 
-### All 137 top-level CLI commands
+### All 138 top-level CLI commands
 
 <details>
 <summary>Complete command inventory (kept here so CI detects CLI/documentation drift)</summary>
@@ -181,7 +181,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 
 **Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes` `chronicle`
 
-**Maintenance:** `reindex` `maintain` `review` `dream` `consolidate` `synthesize` `dedupe` `retier` `contradict` `invalidate` `temporal` `compress-context`
+**Maintenance:** `reindex` `maintain` `review` `dream` `consolidate` `synthesize` `dedupe` `retier` `contradict` `invalidate` `temporal` `compress-context` `ops`
 
 **Analysis & Quality:** `health` `stats` `doctor` `journey-check` `lint` `drift` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile` `confidence` `graduation` `hype` `definitive` `evidence`
 
