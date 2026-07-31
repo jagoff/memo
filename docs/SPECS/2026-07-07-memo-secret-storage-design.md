@@ -105,28 +105,32 @@ This reverses the blanket "never store secrets" rule — memo can now be a **tru
 #### New Tier in `src/memo/tiers.py`
 
 ```python
-DURABLE_TYPES: frozenset[str] = frozenset({
-    "decision",
-    "fact",
-    "bug",
-    "feedback",
-    "preference",
-    "note",
-    "manual",
-    "synthesis",
-    "procedure",
-    "failure_pattern",
-    "secret",  # NEW
-})
+DURABLE_TYPES: frozenset[str] = frozenset(
+    {
+        "decision",
+        "fact",
+        "bug",
+        "feedback",
+        "preference",
+        "note",
+        "manual",
+        "synthesis",
+        "procedure",
+        "failure_pattern",
+        "secret",  # NEW
+    }
+)
 
-SECRET_KINDS: frozenset[str] = frozenset({
-    "api_token",
-    "password",
-    "ssh_key",
-    "db_credential",
-    "certificate",
-    "generic",
-})
+SECRET_KINDS: frozenset[str] = frozenset(
+    {
+        "api_token",
+        "password",
+        "ssh_key",
+        "db_credential",
+        "certificate",
+        "generic",
+    }
+)
 ```
 
 #### Historical Markdown Format (not created by current releases)
@@ -185,28 +189,29 @@ def _load_or_create_machine_salt() -> str:
     salt_path = Path.home() / ".memo" / "machine.salt"
     if salt_path.exists():
         return salt_path.read_text(encoding="utf-8").strip()
-    
+
     salt = secrets.token_hex(16)
     salt_path.parent.mkdir(parents=True, exist_ok=True)
     salt_path.write_text(salt, encoding="utf-8")
     salt_path.chmod(0o600)
     return salt
 
+
 def derive_secret_key() -> bytes:
     """Device-bound key: hostname + device_id + machine salt."""
     from consciousness_contracts.uri import device_id as get_device_id
     import socket
-    
+
     hostname = socket.gethostname()
     device_id = get_device_id()
     machine_salt = _load_or_create_machine_salt()
-    
+
     material = f"{hostname}:{device_id}:{machine_salt}".encode("utf-8")
-    
+
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.backends import default_backend
-    
+
     kdf = PBKDF2(
         algorithm=hashes.SHA256(),
         length=32,
@@ -224,22 +229,23 @@ def encrypt_secret(value: str) -> tuple[bytes, bytes]:
     """Encrypt a secret value. Returns: (ciphertext, nonce)."""
     import secrets
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    
+
     key = derive_secret_key()
     nonce = secrets.token_bytes(12)
-    
+
     cipher = AESGCM(key)
     ciphertext = cipher.encrypt(nonce, value.encode("utf-8"), None)
-    
+
     return ciphertext, nonce
+
 
 def decrypt_secret(ciphertext: bytes, nonce: bytes) -> str:
     """Decrypt a secret value."""
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    
+
     key = derive_secret_key()
     cipher = AESGCM(key)
-    
+
     plaintext = cipher.decrypt(nonce, ciphertext, None)
     return plaintext.decode("utf-8")
 ```
@@ -253,20 +259,15 @@ def decrypt_secret(ciphertext: bytes, nonce: bytes) -> str:
 ```python
 HEURISTIC_PATTERNS: dict[str, re.Pattern] = {
     "api_token": re.compile(
-        r"(sk_[a-z0-9]{20,}|token[=:]\s*[a-z0-9]{32,}|api[_-]?key[=:]\s*\S+)",
-        re.IGNORECASE
+        r"(sk_[a-z0-9]{20,}|token[=:]\s*[a-z0-9]{32,}|api[_-]?key[=:]\s*\S+)", re.IGNORECASE
     ),
-    "password": re.compile(
-        r"(password[=:]\s*\S+|passwd\s*:\s*\S+|pwd[=:]\s*\S+)",
-        re.IGNORECASE
-    ),
-    "ssh_key": re.compile(
-        r"(-----BEGIN [A-Z]+ PRIVATE KEY|-----BEGIN RSA PRIVATE KEY)"
-    ),
+    "password": re.compile(r"(password[=:]\s*\S+|passwd\s*:\s*\S+|pwd[=:]\s*\S+)", re.IGNORECASE),
+    "ssh_key": re.compile(r"(-----BEGIN [A-Z]+ PRIVATE KEY|-----BEGIN RSA PRIVATE KEY)"),
     "db_credential": re.compile(
         r"(postgres://|mysql://|mongodb://|user[=:]\s*\w+.*password[=:]\s*\S+)"
     ),
 }
+
 
 def detect_secrets_heuristic(content: str) -> list[tuple[str, float]]:
     """Fast regex-based detection. Returns [(kind, confidence), ...]. 0.7 = heuristic match."""
@@ -347,11 +348,13 @@ def memo_get_secret(name: str) -> dict[str, str]:
     value = daemon.query_socket("get", name=name, client=server.client_name)
     return {"value": value, "kind": "secret"}
 
+
 @server.tool()
 def memo_list_secrets(kind: str | None = None) -> list[dict]:
     """List secrets (metadata only, no values)."""
     secrets = memory.list_secrets(kind=kind)
     return [{"name": s.name, "kind": s.kind, "accessed_count": s.accessed_count} for s in secrets]
+
 
 @server.tool()
 def memo_delete_secret(name: str) -> dict[str, bool]:

@@ -9,6 +9,56 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.6.2] - 2026-07-31
+
+### Fixed
+
+- MCP registry publish works again: the `mcp-name: io.github.jagoff/memo`
+  ownership marker the registry requires in the PyPI README was dropped by
+  the #130 rewrite, so the v4.6.1 registry step failed validation. The marker
+  is restored and now pinned to `server.json` by a supply-chain test (#147).
+
+## [4.6.1] - 2026-07-31
+
+### Fixed
+
+- PyPI project page renders again: README images and doc links use absolute
+  GitHub URLs, restoring the a44890c9 fix that the conversion README dropped —
+  the v4.6.0 page shipped with a broken banner because of it (#145).
+- README banner served as WebP at full 1600 px resolution (152 KB, down from
+  the original 372 KB JPEG); `banner.jpg` stays for older PyPI pages (#140,
+  #145).
+
+### Added
+
+- Docker image now publishes a `linux/arm64` manifest alongside `linux/amd64`:
+  the README one-liner works natively on Apple Silicon and ARM Linux instead
+  of failing with `no matching manifest` (#144).
+
+### Changed
+
+- Dependency bumps: python-runtime group, GitHub Actions group, Python base
+  image digest, and `@types/node` (#141, #86, #58, #125).
+
+## [4.6.0] - 2026-07-31
+
+### Added
+
+- Graph-backed repository intelligence: repo search and context packs are now
+  enriched with the CodeGraph structure layer (#134).
+- Synapse/memflow daemons adopted natively: the `com.memo.*` launchd fleet
+  (recall daemon, nightly, vault ingest, dream, watch) replaces the deprecated
+  trinity stack; handoffs and operational continuity now live in memo (#136).
+
+### Fixed
+
+- Reindex no longer emits `invalid memory id` warnings for `_chronicle` diary
+  files: the bucket is skipped silently via the reindex skip-dirs list (#138).
+- Nightly launchd template now passes the correct `--max-memories` flag to
+  `memo contradict scan` (#137).
+- Hardened code intelligence and the dream pipeline against real-run failures
+  (#135).
+
 ### Changed
 
 - Normal MCP startup is fully offline again: remote update checks and

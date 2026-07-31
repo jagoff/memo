@@ -1,5 +1,6 @@
+<!-- mcp-name: io.github.jagoff/memo -->
 <!-- Banner: keep it, but make sure it loads fast (<200KB, WebP if possible) -->
-[![memo — local memory for AI](docs/banner.jpg)](docs/banner.jpg)
+[![memo — local memory for AI](https://raw.githubusercontent.com/jagoff/memo/master/docs/banner.webp)](https://raw.githubusercontent.com/jagoff/memo/master/docs/banner.webp)
 
 # memo
 
@@ -9,17 +10,18 @@ Persistent, searchable memory for Claude Code, Codex, Cursor, Cline, Devin, and 
 
 [![PyPI](https://img.shields.io/pypi/v/mlx-memo.svg)](https://pypi.org/project/mlx-memo/)
 [![Downloads](https://static.pepy.tech/badge/mlx-memo)](https://pepy.tech/project/mlx-memo)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jagoff/memo/blob/master/LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.jagoff%2Fmemo.svg)](https://mcptoplist.com/server/io.github.jagoff%2Fmemo)
 
-![Save a fact once — every later session recalls it automatically, all stored locally.](docs/demo.gif)
+![Save a fact once — every later session recalls it automatically, all stored locally.](https://raw.githubusercontent.com/jagoff/memo/master/docs/demo.gif)
 
 ---
 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.5.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.2/install.sh | bash
 ```
 
 <sub>Prefer a package manager? `uv tool install mlx-memo` · `pipx install mlx-memo` · `brew tap jagoff/memo && brew install mlx-memo`</sub>
@@ -40,14 +42,14 @@ That's it. Your agents pick it up over MCP automatically — the installer wires
 New Mac:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.5.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.2/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git
 ```
 
 Agent-managed setup:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.5.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.2/install.sh | bash
 memo doctor --strict-runtime
 ```
 
@@ -116,13 +118,13 @@ A 7-phase nightly pipeline: inventory → mine signals → resolve conflicts →
 
 **Hybrid retrieval.** A vector leg (MLX on Apple Silicon, `sentence-transformers` on CPU) and a BM25 leg (FTS5, diacritic-folding for Spanish) run in parallel, fuse via Reciprocal Rank Fusion, then go through an optional MLX cross-encoder rerank.
 
-![vector + keyword search in parallel, fused, reranked, top memory injected](docs/diagram-recall.svg)
+![vector + keyword search in parallel, fused, reranked, top memory injected](https://raw.githubusercontent.com/jagoff/memo/master/docs/diagram-recall.svg)
 
 **Markdown is the source of truth.** Every memory is a plain `.md` file you can read, grep, and version-control. SQLite is a derived index that rebuilds from the files at any time — hand-edit in Obsidian and your edit wins on the next `memo reindex`. Nothing is locked in a database you can't open.
 
-**Prompts and memories stay on your machine.** Embedder, reranker, and LLM all run in-process. No telemetry. Memory travels only if *you* point `memo sync` at a git remote you own. Normal startup is fully offline; remote update checks and auto-update require an explicit opt-in. → **[Privacy and network policy](PRIVACY.md)**
+**Prompts and memories stay on your machine.** Embedder, reranker, and LLM all run in-process. No telemetry. Memory travels only if *you* point `memo sync` at a git remote you own. Normal startup is fully offline; remote update checks and auto-update require an explicit opt-in. → **[Privacy and network policy](https://github.com/jagoff/memo/blob/master/PRIVACY.md)**
 
-Also in the box: cross-agent `memo resume` (reopen any session from any agent), cross-Mac git sync, a knowledge graph with optional codegraph symbol edges, encrypted secret storage, OCR/audio ingestion, evidence packs, outcome learning, signed federation, and a local chat UI over your memory (`memo chat serve`). → **[Full feature reference](docs/reference.md)**
+Also in the box: cross-agent `memo resume` (reopen any session from any agent), cross-Mac git sync, a knowledge graph with optional codegraph symbol edges, encrypted secret storage, OCR/audio ingestion, evidence packs, outcome learning, signed federation, and a local chat UI over your memory (`memo chat serve`). → **[Full feature reference](https://github.com/jagoff/memo/blob/master/docs/reference.md)**
 
 ---
 
@@ -150,9 +152,9 @@ Closest comparators are **basic-memory** (local-first + Obsidian + MCP — same 
 | | Support |
 |---|---|
 | **macOS, Apple Silicon (M1–M4)** | Full — MLX embedder + reranker + `ask`/`synthesize`/`dream` |
-| **Linux / Ubuntu** | Standalone CPU backend — search, recall, save. `pipx install "mlx-memo[cpu]"` · [docs/ubuntu.md](docs/ubuntu.md) |
+| **Linux / Ubuntu** | Standalone CPU backend — search, recall, save. `pipx install "mlx-memo[cpu]"` · [docs/ubuntu.md](https://github.com/jagoff/memo/blob/master/docs/ubuntu.md) |
 | **Intel Mac** | Unsupported — current PyTorch releases do not ship Python 3.13 wheels for this platform |
-| **Docker** | Cross-platform, CPU backend · [docs/docker.md](docs/docker.md) |
+| **Docker** | Cross-platform, CPU backend · [docs/docker.md](https://github.com/jagoff/memo/blob/master/docs/docker.md) |
 
 Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). First install pulls ~8 GB of models, 5–15 min. Optional: an Obsidian vault — without one, memo uses `~/Documents/memo/`.
 
@@ -162,13 +164,13 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 
 | | |
 |---|---|
-| Install detail, installer knobs, new-Mac migration | [reference.md › Install](docs/reference.md#install-detail) |
-| Per-client MCP setup (Claude Desktop, Cursor, Cline, Continue) | [reference.md › MCP setup](docs/reference.md#mcp-setup) |
-| Ambient recall, capture, and tuning | [reference.md › Ambient memory](docs/reference.md#ambient-memory) |
-| Full CLI reference (138 commands) + `memo tui` | [reference.md › CLI](docs/reference.md#cli-reference) |
-| All `MEMO_*` flags and model profiles | [reference.md › Configuration](docs/reference.md#configuration) |
-| Architecture and design notes | [reference.md › Design](docs/reference.md#design-and-comparison) |
-| Privacy and network policy | [PRIVACY.md](PRIVACY.md) |
+| Install detail, installer knobs, new-Mac migration | [reference.md › Install](https://github.com/jagoff/memo/blob/master/docs/reference.md#install-detail) |
+| Per-client MCP setup (Claude Desktop, Cursor, Cline, Continue) | [reference.md › MCP setup](https://github.com/jagoff/memo/blob/master/docs/reference.md#mcp-setup) |
+| Ambient recall, capture, and tuning | [reference.md › Ambient memory](https://github.com/jagoff/memo/blob/master/docs/reference.md#ambient-memory) |
+| Full CLI reference (138 commands) + `memo tui` | [reference.md › CLI](https://github.com/jagoff/memo/blob/master/docs/reference.md#cli-reference) |
+| All `MEMO_*` flags and model profiles | [reference.md › Configuration](https://github.com/jagoff/memo/blob/master/docs/reference.md#configuration) |
+| Architecture and design notes | [reference.md › Design](https://github.com/jagoff/memo/blob/master/docs/reference.md#design-and-comparison) |
+| Privacy and network policy | [PRIVACY.md](https://github.com/jagoff/memo/blob/master/PRIVACY.md) |
 
 ### All 138 top-level CLI commands
 
@@ -210,6 +212,6 @@ git clone https://github.com/jagoff/memo && cd memo
 uv pip install -e '.[dev]'
 ```
 
-Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). If memo is useful to you, a ⭐ genuinely helps other people find it.
+Issues and PRs welcome — see [CONTRIBUTING.md](https://github.com/jagoff/memo/blob/master/CONTRIBUTING.md). If memo is useful to you, a ⭐ genuinely helps other people find it.
 
 MIT licensed. Built on [Apple MLX](https://github.com/ml-explore/mlx), [sqlite-vec](https://github.com/asg017/sqlite-vec), and [codegraph](https://github.com/colbymchenry/codegraph).

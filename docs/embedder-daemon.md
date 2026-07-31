@@ -47,7 +47,7 @@ documents for symmetric corpus embeddings.
 ```python
 from memo.embedder_client import embed_query, embed, ping, stats, status
 
-vec  = embed_query("astor terapia ocupacional")
+vec = embed_query("astor terapia ocupacional")
 vecs = embed(["doc 1", "doc 2"])
 
 if status() is not None:

@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "memo",
   "display_name": "memo - local-first memory (Node)",
-  "version": "4.5.0",
+  "version": "4.6.2",
   "description": "Local-first long-term memory for AI agents. 100% offline: no cloud API, no keys.",
   "long_description": "memo gives Claude a persistent, local-first memory: decisions, facts and preferences saved today are recalled automatically in future sessions.\n\n- Hybrid retrieval: vector (sqlite-vec) + BM25 fused with RRF, optional cross-encoder rerank\n- Embeddings run in-process - MLX on Apple Silicon, CPU sentence-transformers on Linux - so nothing ever leaves your machine\n- Markdown files are the source of truth (Obsidian-compatible); the sqlite index is fully rebuildable\n- Time-machine queries (ask what was known at any past date), contradiction detection, nightly synthesis\n- Focused default MCP surface (30 tools, ~3k tokens)\n\nRequires the `uv` runtime. For supply-chain safety the bootstrap never downloads and executes a remote shell script; install uv from the official Astral documentation before first launch. The first launch then installs the exactly pinned memo package and can take 1-2 minutes.",
   "author": {

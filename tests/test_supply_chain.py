@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -176,6 +177,15 @@ def test_security_policy_matches_current_release_and_opt_in_surfaces() -> None:
     assert "Authorization: Bearer" in policy
     assert "/security/advisories/new" in policy
     assert "private vulnerability report" in policy.lower()
+
+
+def test_readme_carries_the_mcp_registry_name_marker() -> None:
+    # The MCP registry validates PyPI ownership by requiring
+    # "mcp-name: <server.json name>" inside the package README; losing the
+    # marker (as the #130 rewrite did) breaks registry publishes.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    name = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))["name"]
+    assert f"mcp-name: {name}" in readme
 
 
 def test_readme_surface_counts_and_top_level_command_inventory_are_exact() -> None:

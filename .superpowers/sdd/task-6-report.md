@@ -151,7 +151,9 @@ Python-side date comparison:
 def open_loops(self, limit: int = 5, *, days: int = 7) -> list[tuple[str, str]]:
     cutoff = (datetime.now(tz=UTC) - timedelta(days=days)).isoformat()
     rows = self.store.list_recent(
-        limit=limit, exclude_types={"reference", "secret"}, updated_since=cutoff,
+        limit=limit,
+        exclude_types={"reference", "secret"},
+        updated_since=cutoff,
     )
     return [(r.get("id") or "", r.get("title") or "—") for r in rows]
 ```

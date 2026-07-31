@@ -484,7 +484,7 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     console.print("[dim]Could not reach git; checking PyPI…[/dim]")
     try:
         url = "https://pypi.org/pypi/mlx-memo/json"
-        with urllib.request.urlopen(  # noqa: S310  # nosec B310 - constant HTTPS URL
+        with urllib.request.urlopen(  # nosec B310 - constant HTTPS URL
             url, timeout=10
         ) as resp:
             data = json.loads(resp.read().decode("utf-8"))

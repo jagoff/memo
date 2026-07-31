@@ -31,33 +31,68 @@ Expected: FAIL — unknown flag / KeyError.
 
 Append to the `SPECS` tuple in `src/memo/flags_misc.py` (before its closing `)`), matching the `_spec(name, kind, default, group, help, ...)` signature:
 ```python
+(
     _spec(
-        "MEMO_PROACTIVE_ENABLED", "bool", False, "misc",
+        "MEMO_PROACTIVE_ENABLED",
+        "bool",
+        False,
+        "misc",
         "Master switch for the proactive engine (statusline badge, urgent push, "
         "`memo digest`). Default off — dark flag, graduates via dream_flags.",
     ),
+)
+(
     _spec(
-        "MEMO_PROACTIVE_PUSH_COOLDOWN_H", "int", 6, "misc",
-        "Minimum hours between urgent pushes.", min_val=0,
+        "MEMO_PROACTIVE_PUSH_COOLDOWN_H",
+        "int",
+        6,
+        "misc",
+        "Minimum hours between urgent pushes.",
+        min_val=0,
     ),
+)
+(
     _spec(
-        "MEMO_PROACTIVE_DAILY_CAP", "int", 3, "misc",
-        "Hard cap on proactive pushes per day.", min_val=0,
+        "MEMO_PROACTIVE_DAILY_CAP",
+        "int",
+        3,
+        "misc",
+        "Hard cap on proactive pushes per day.",
+        min_val=0,
     ),
+)
+(
     _spec(
-        "MEMO_PROACTIVE_MULT_FLOOR", "float", 0.2, "misc",
-        "Floor for the adaptive per-kind multiplier (reliability can never be "
-        "fully muted).", min_val=0.0, max_val=1.0,
+        "MEMO_PROACTIVE_MULT_FLOOR",
+        "float",
+        0.2,
+        "misc",
+        "Floor for the adaptive per-kind multiplier (reliability can never be fully muted).",
+        min_val=0.0,
+        max_val=1.0,
     ),
+)
+(
     _spec(
-        "MEMO_PROACTIVE_URGENT_MIN", "float", 0.7, "misc",
+        "MEMO_PROACTIVE_URGENT_MIN",
+        "float",
+        0.7,
+        "misc",
         "Minimum score for a reliability nudge to qualify for an urgent push.",
-        min_val=0.0, max_val=1.0,
+        min_val=0.0,
+        max_val=1.0,
     ),
+)
+(
     _spec(
-        "MEMO_PROACTIVE_DIGEST_TOP", "int", 7, "misc",
-        "Max items shown in `memo digest`.", min_val=1,
+        "MEMO_PROACTIVE_DIGEST_TOP",
+        "int",
+        7,
+        "misc",
+        "Max items shown in `memo digest`.",
+        min_val=1,
     ),
+)
 ```
 
 - [ ] **Step 4: Run test + config validate**

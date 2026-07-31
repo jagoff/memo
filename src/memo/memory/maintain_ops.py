@@ -18,6 +18,7 @@ from typing import Any
 
 import frontmatter
 
+from memo.dream_chronicle import CHRONICLE_BUCKET
 from memo.embedder import assert_valid_embedding
 from memo.errors import StorageError
 from memo.fact_extraction import fact_edges_from_metadata, upsert_declared_fact_edges
@@ -48,6 +49,10 @@ from memo.redact import sanitize_memory_input
 from memo.tiers import VerificationState
 from memo.util import sha256_full as _sha256_full
 from memo.util import sha256_short as _sha256_short
+
+# Chronicle diaries carry no id: frontmatter by design (dream_chronicle) —
+# skip them like lifecycle archives instead of warning per file.
+_REINDEX_SKIP_DIRS: frozenset[str] = LIFECYCLE_ARCHIVE_DIRS | {CHRONICLE_BUCKET}
 
 
 def _purge_legacy_secret_index(
@@ -230,13 +235,14 @@ class _MaintainOpsMixin(_MemoryBase):
         for md_path in sorted(memory_root.rglob("*.md")):
             checked += 1
             relative_parts = md_path.relative_to(memory_root).parts
-            if relative_parts[:1] and relative_parts[0] in LIFECYCLE_ARCHIVE_DIRS:
+            if relative_parts[:1] and relative_parts[0] in _REINDEX_SKIP_DIRS:
                 # Current lifecycle archives live under ``inactive``; older
                 # vaults used ``archived``.  Both may retain a canonical id so
                 # a human can recover a note by moving it back out, but neither
                 # may be re-absorbed automatically on reindex/sync.  A project
                 # bucket can never collide here — project_bucket() remaps those
                 # two slugs to ``_inactive``/``_archived`` (see project.py).
+                # ``_chronicle`` diaries are not memories at all.
                 skipped += 1
                 continue
             if _path_has_symlink_component(memory_root, relative_parts):
