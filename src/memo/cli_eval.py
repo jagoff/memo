@@ -539,6 +539,54 @@ def eval_recall_cmd(
                     console.print(f"      {h['score']:>5}  {flag:<5}  {h['title']}")
 
 
+@eval_group.command(name="chat")
+@click.option(
+    "--corpus",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("eval/chat_regression_corpus.json"),
+    show_default=True,
+    help="JSON corpus (schema synapse.eval_chat.query.v1, rescued from synapse).",
+)
+@click.option("--only", default=None, help="Run only the query with this id.")
+def eval_chat_cmd(corpus: Path, only: str | None) -> None:
+    """Regression gate: run the corpus through the chat pipeline and check outputs."""
+    from rich.table import Table
+
+    from memo.chat.pipeline import chat_stream
+    from memo.eval_chat import apply_checks
+
+    data = json.loads(corpus.read_text(encoding="utf-8"))
+    queries = [q for q in data.get("queries", []) if not only or q.get("id") == only]
+    if not queries:
+        raise click.ClickException(f"no query with id {only!r} in {corpus}")
+
+    mem = _get_memory(Config.from_env())
+    rows = []
+    for query in queries:
+        t0 = time.monotonic()
+        events = list(chat_stream(mem, str(query.get("question") or "")))
+        done = next((e for e in reversed(events) if e.get("type") in {"done", "error"}), {})
+        rows.append(apply_checks(query, done, int((time.monotonic() - t0) * 1000)))
+
+    table = Table(title=f"eval chat — {corpus.name}")
+    table.add_column("id")
+    table.add_column("passed")
+    table.add_column("ms", justify="right")
+    table.add_column("failed checks")
+    for row in rows:
+        failed = ", ".join(c["check"] for c in row["checks"] if not c["passed"])
+        table.add_row(row["id"], "✓" if row["passed"] else "✗", str(row["total_ms"]), failed)
+    console.print(table)
+
+    latencies = sorted(r["total_ms"] for r in rows) or [0]
+    p50 = latencies[len(latencies) // 2]
+    p95_idx = max(0, min(len(latencies) - 1, int(len(latencies) * 0.95) - 1))
+    console.print(f"p50={p50}ms p95={latencies[p95_idx]}ms")
+
+    if any(not r["passed"] for r in rows):
+        raise click.exceptions.Exit(1)
+
+
 def _tokens_baseline_path(cfg: Config) -> Path:
     return cfg.state_dir / "eval" / "token_baseline.json"
 

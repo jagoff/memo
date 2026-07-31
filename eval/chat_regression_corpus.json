@@ -1,0 +1,416 @@
+{
+  "_doc": "Committed synthesis-regression seed for `synapse eval-chat`. DISCIPLINE: every chat answer that is wrong at the SYNTHESIS layer (fabrication, refusal, wrong format) becomes a permanent labeled query here — never patch a single query. Each entry is a `CorpusQuery` (schema synapse.eval_chat.query.v1); the durable value is `checks` (require_substrings / forbid_substrings / forbid_refusal / min_sources), evaluated by `apply_output_checks` in eval_chat.py. `expected_source_ids` must be non-empty for the query to run (else run_eval skips it). Retrieval-class regressions (right note buried, garbage crowding) belong in memo `eval/regression_labels.json`, not here.",
+  "queries": [
+    {
+      "id": "deploy-lambda-no-fabrication",
+      "question": "donde se hace el deploy de las lambda?",
+      "expected_source_ids": [
+        "52575c2249462e5aa648c6bd0b1d8faa"
+      ],
+      "notes": "2026-06-08 incident: model fabricated AWS-console metadata (us-east-1, lambda-athena-query-billing-report, EventBridge, 5,12 MB) from garbled OCR screenshots instead of the real note (dev-PublicCloudInfrastructure). Guards the anti-fabrication synthesis layer.",
+      "category": "lexical_exact",
+      "checks": {
+        "require_substrings": [
+          "dev-PublicCloudInfrastructure"
+        ],
+        "forbid_substrings": [
+          "us-east-1",
+          "lambda-athena",
+          "EventBridge",
+          "5,12 MB",
+          "5.12 MB"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 1
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "ffc5aed8f4b5",
+      "question": "¿qué sabés de avature?",
+      "expected_source_ids": [
+        "16fe3a61d3914528861e831c91874dcc"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "require_substrings": [
+          "Avature"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 1
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "89accfe7d0cc",
+      "question": "qué módulo se usa para hacer el deploy de lambdas",
+      "expected_source_ids": [
+        "f03f1aa7ab493c5e0c01ba96c5425670"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "forbid_refusal": true,
+        "min_sources": 1
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "78325e7d6d05",
+      "question": "qué es synapse y cómo se posiciona entre memflow y memo",
+      "expected_source_ids": [
+        "fbbe464a079b17d55cecd403d998bd21",
+        "0a4bd9e4bf1521916d73105c1a6b7109"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "require_substrings": [
+          "Synapse"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "b880f5cff39c",
+      "question": "qué es RealityConflict y cuál es su lifecycle en synapse",
+      "expected_source_ids": [
+        "c42ec97c76ff015f3b8b3f34b6fc39d9",
+        "04cb80a12f7c9f46cb7ea51af5230d27"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "fd1da9dc68b4",
+      "question": "cuál es el invariante de las dos memorias soberanas en synapse",
+      "expected_source_ids": [
+        "0dd798cce316bff5dcfdf2fda7741141",
+        "4b22b1fd8409561c9b3769ca156a9f3c",
+        "b17f2f7d1c67aeb0bcb88c4313987cb3"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "require_substrings": [
+          "soberan"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "0582808e625a",
+      "question": "qué modelos LLM usan memo, memflow y synapse",
+      "expected_source_ids": [
+        "4b22b1fd8409561c9b3769ca156a9f3c",
+        "4c90c1c0b2b6b5fb6eb8b57dda29f044",
+        "0cd90e810b56c7a73b395105bf56c27a"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "require_substrings": [
+          "Qwen"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "2f83d4a0f65a",
+      "question": "qué es el stack de conciencia",
+      "expected_source_ids": [
+        "7a609683d6ee98063797a0fa1368dfac",
+        "5eb6b9838656978d08120fead7287683"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "a23ebcf30498",
+      "question": "comparativa entre memo y supermemory",
+      "expected_source_ids": [
+        "7693618f54bb209d3ae082223cea50af",
+        "898b91dea6f3a23699228c6481b23b2c",
+        "b3d41ac34601004a13f13374cd8287d7"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "require_substrings": [
+          "supermemory"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "5f8969a70c3a",
+      "question": "qué comandos expone synapse",
+      "expected_source_ids": [
+        "fbbe464a079b17d55cecd403d998bd21",
+        "034d46c4edea5ba3ec7e5c57898322dd",
+        "189d9bb49840594f8cf70091dae1ddc9"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "7f0258d73e3f",
+      "question": "cómo funciona el workflow two-phase plan-action execute-action en synapse",
+      "expected_source_ids": [
+        "f83ae07177c3e0c66e456212df82d2e9",
+        "0a4bd9e4bf1521916d73105c1a6b7109"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "multi_hop",
+      "checks": {
+        "require_substrings": [
+          "plan"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "92496b45ef30",
+      "question": "qué es identity_alias en synapse",
+      "expected_source_ids": [
+        "fe1dab235bb20c44d7eaa16f6c677d33",
+        "536b1d24a7abeb192c7a708500a457de"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "require_substrings": [
+          "alias"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "5f312a671b66",
+      "question": "cómo se propaga el trace_id en synapse",
+      "expected_source_ids": [
+        "04cb80a12f7c9f46cb7ea51af5230d27",
+        "f83ae07177c3e0c66e456212df82d2e9"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "require_substrings": [
+          "trace"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "f410d0adea13",
+      "question": "qué quiere decir desacuerdo explícito entre memorias",
+      "expected_source_ids": [
+        "c42ec97c76ff015f3b8b3f34b6fc39d9",
+        "748b3c67f4bda7c0dd7a59080e0543ab"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "20bdeb00cef4",
+      "question": "qué links importantes tengo de avature",
+      "expected_source_ids": [
+        "9ff077e6e24b32a44ea03c7564294259",
+        "7983cc7cd6133af593dae36e4fe0cf66",
+        "b7a6e5a0d8a251e901a9fdce65057b12"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "4e9b7d5450cd",
+      "question": "cómo me conecto a la VPN de avature",
+      "expected_source_ids": [
+        "ba9cceb2a15117776092f02acaef6625",
+        "fd1934b2dac2c7dc11c03ba945927184",
+        "48b7a1c59cd90571a414345f22870ad4"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "require_substrings": [
+          "VPN"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "c12ef0ab38e1",
+      "question": "qué es el FinOps en avature",
+      "expected_source_ids": [
+        "cd14e2e10d368d42a49f45ff40dc3a87",
+        "e52756676bb321437d32e74cd77ec7c8"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "require_substrings": [
+          "FinOps"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "405354600bc2",
+      "question": "cómo se conecta uno a AWS legacy en avature",
+      "expected_source_ids": [
+        "1613e3642dfe223268de2eb9cd155ea6",
+        "b719f75c35efd09138d5b05eee2dd66e",
+        "ab29a49995124ecbbc80cff669981811"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "require_substrings": [
+          "AWS"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "3d99907ea6ac",
+      "question": "qué responsabilidades tengo en FinOps",
+      "expected_source_ids": [
+        "e8ed7fec30d0839567ead022331cd54e"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "require_substrings": [
+          "FinOps"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 1
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "1fea66da5956",
+      "question": "qué notas tengo sobre observability de AWS",
+      "expected_source_ids": [
+        "ab3b973b21041c4266cd8410e498093f",
+        "6c3d48878963accd1df369c9d4adcd7e"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "f3de708eb53c",
+      "question": "qué es el MBR de AWS",
+      "expected_source_ids": [
+        "072f6b898118bb7d86ad2967f5b5be06",
+        "05eb599a056481f6e0c7064c67de4a5b"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "lexical_exact",
+      "checks": {
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "67934087024b",
+      "question": "qué es memo y qué hace",
+      "expected_source_ids": [
+        "7693618f54bb209d3ae082223cea50af"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "require_substrings": [
+          "memo"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 1
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "ee1ab5ef2fcd",
+      "question": "cómo se registra el quality feedback en el chat",
+      "expected_source_ids": [
+        "fbbe464a079b17d55cecd403d998bd21"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "min_sources": 1
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    },
+    {
+      "id": "a21905cf9286",
+      "question": "qué dominios cubre synapse como cerebro neutral",
+      "expected_source_ids": [
+        "f83ae07177c3e0c66e456212df82d2e9",
+        "0a4bd9e4bf1521916d73105c1a6b7109"
+      ],
+      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
+      "category": "semantic_fuzzy",
+      "checks": {
+        "require_substrings": [
+          "Synapse"
+        ],
+        "forbid_refusal": true,
+        "min_sources": 2
+      },
+      "schema": "synapse.eval_chat.query.v1"
+    }
+  ]
+}
