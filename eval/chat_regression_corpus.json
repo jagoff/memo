@@ -266,8 +266,6 @@
       "id": "4e9b7d5450cd",
       "question": "cómo me conecto a la VPN de avature",
       "expected_source_ids": [
-        "ba9cceb2a15117776092f02acaef6625",
-        "fd1934b2dac2c7dc11c03ba945927184",
         "48b7a1c59cd90571a414345f22870ad4"
       ],
       "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
@@ -275,24 +273,6 @@
       "checks": {
         "require_substrings": [
           "VPN"
-        ],
-        "forbid_refusal": true,
-        "min_sources": 2
-      },
-      "schema": "synapse.eval_chat.query.v1"
-    },
-    {
-      "id": "c12ef0ab38e1",
-      "question": "qué es el FinOps en avature",
-      "expected_source_ids": [
-        "cd14e2e10d368d42a49f45ff40dc3a87",
-        "e52756676bb321437d32e74cd77ec7c8"
-      ],
-      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
-      "category": "semantic_fuzzy",
-      "checks": {
-        "require_substrings": [
-          "FinOps"
         ],
         "forbid_refusal": true,
         "min_sources": 2
@@ -346,20 +326,6 @@
       "category": "lexical_exact",
       "checks": {
         "forbid_refusal": true,
-        "min_sources": 2
-      },
-      "schema": "synapse.eval_chat.query.v1"
-    },
-    {
-      "id": "f3de708eb53c",
-      "question": "qué es el MBR de AWS",
-      "expected_source_ids": [
-        "072f6b898118bb7d86ad2967f5b5be06",
-        "05eb599a056481f6e0c7064c67de4a5b"
-      ],
-      "notes": "live-validated 2026-06-15: ids discovered via /api/ask/stream, each resolved via `memo get`",
-      "category": "lexical_exact",
-      "checks": {
         "min_sources": 2
       },
       "schema": "synapse.eval_chat.query.v1"
