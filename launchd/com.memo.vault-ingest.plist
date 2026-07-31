@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Template: memo vault re-ingest LaunchAgent (macOS) — fires when iCloud syncs
+  Obsidian vault edits (WatchPaths); ThrottleInterval bounds the re-ingest
+  cadence. Embedder model/dims MUST match the live index (the synapse-era
+  agent shipped 0.6B/1024 against a 2560d index and silently failed every
+  run). Replace __HOME__ / __MEMO_BIN__, adjust WatchPaths to your
+  vaults (or set MEMO_VAULT_PATHS), then:
+
+    cp com.memo.vault-ingest.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.memo.vault-ingest.plist
+
+  Adopted from com.synapse.vault-ingest on the synapse deprecation (2026-07-30);
+  the shell shim + PYTHONPATH indirection died with synapse — this runs
+  `memo ops vault-ingest` directly.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.memo.vault-ingest</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__MEMO_BIN__</string>
+    <string>ops</string>
+    <string>vault-ingest</string>
+    <string>--json</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HF_HUB_OFFLINE</key>
+    <string>1</string>
+    <key>MEMO_EMBEDDER_DIMS</key>
+    <string>2560</string>
+    <key>MEMO_EMBEDDER_MODEL</key>
+    <string>mlx-community/Qwen3-Embedding-4B-4bit-DWQ</string>
+    <key>MEMO_HELPER_MODEL</key>
+    <string>mlx-community/Qwen3-4B-4bit</string>
+    <key>MEMO_LLM_MODEL</key>
+    <string>mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit-DWQ</string>
+    <key>MEMO_RERANKER_ENABLED</key>
+    <string>0</string>
+    <key>MEMO_RERANKER_MODEL</key>
+    <string>vserifsaglam/Qwen3-Reranker-4B-4bit-MLX</string>
+    <key>MEMO_RERANKER_REVISION</key>
+    <string>9655b27c01d2ff1c49f7e672a04b70d630161b46</string>
+    <key>TRANSFORMERS_OFFLINE</key>
+    <string>1</string>
+    <key>PATH</key>
+    <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>120</integer>
+  <key>WatchPaths</key>
+  <array>
+    <string>__HOME__/Library/Mobile Documents/iCloud~md~obsidian/Documents/Notes</string>
+    <string>__HOME__/Library/Mobile Documents/iCloud~md~obsidian/Documents/obsidian-work</string>
+  </array>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/memo/vault-ingest.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/memo/vault-ingest.err</string>
+</dict>
+</plist>

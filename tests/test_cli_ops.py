@@ -1,0 +1,93 @@
+"""Tests for the `memo ops` command group."""
+
+import json
+
+from click.testing import CliRunner
+
+import memo.cli_ops as cli_ops
+from memo.cli_ops import ops_group
+
+
+class _FakeRec:
+    def __init__(self, d):
+        self._d = d
+
+    def to_dict(self):
+        return self._d
+
+
+class _FakeMem:
+    def __init__(self, records):
+        self.records = records
+        self.deleted = []
+
+    def list(self, limit=20, type_=None):
+        return [_FakeRec(r) for r in self.records]
+
+    def delete(self, id_, *, actor=None):
+        self.deleted.append(id_)
+        return True
+
+
+def _orphan(id_):
+    return {
+        "id": id_,
+        "body": "x",
+        "updated": "2026-01-01",
+        "created": "2026-01-01",
+        "extra": {"source": "vault-ingest:notes", "abs_path": "/definitely/gone.md"},
+    }
+
+
+def test_gc_vault_orphans_dry_run(monkeypatch):
+    fake = _FakeMem([_orphan("a"), _orphan("b")])
+    monkeypatch.setattr(cli_ops, "_get_memory", lambda cfg: fake)
+    result = CliRunner().invoke(ops_group, ["gc-vault-orphans", "--dry-run", "--json"])
+    assert result.exit_code == 0, result.output
+    out = json.loads(result.output)
+    assert out == {"scanned": 2, "orphans": 2, "deleted": 0, "dry_run": True}
+    assert fake.deleted == []
+
+
+def test_gc_vault_orphans_deletes(monkeypatch):
+    fake = _FakeMem([_orphan("a")])
+    monkeypatch.setattr(cli_ops, "_get_memory", lambda cfg: fake)
+    result = CliRunner().invoke(ops_group, ["gc-vault-orphans", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["deleted"] == 1
+    assert fake.deleted == ["a"]
+
+
+def test_gc_memo_duplicates_counts_dry_run(monkeypatch):
+    recs = [
+        {"id": "old", "body": "same", "updated": "2026-01-01", "created": "", "extra": {}},
+        {"id": "new", "body": "same", "updated": "2026-02-01", "created": "", "extra": {}},
+    ]
+    fake = _FakeMem(recs)
+    monkeypatch.setattr(cli_ops, "_get_memory", lambda cfg: fake)
+    result = CliRunner().invoke(ops_group, ["gc-memo-duplicates", "--dry-run", "--json"])
+    assert result.exit_code == 0, result.output
+    out = json.loads(result.output)
+    # Fidelity with the synapse original: dry-run counts would-be deletions.
+    assert out == {"scanned": 2, "dup_groups": 1, "deleted": 1, "dry_run": True}
+    assert fake.deleted == []
+
+
+def test_exclude_roundtrip(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
+    runner = CliRunner()
+    result = runner.invoke(ops_group, ["exclude", "add", "notes", "a/b.md"])
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(ops_group, ["exclude", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"notes": ["a/b.md"]}
+    result = runner.invoke(ops_group, ["exclude", "remove", "notes", "a/b.md"])
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(ops_group, ["exclude", "list", "--json"])
+    assert json.loads(result.output) == {}
+
+
+def test_ops_registered_on_root_cli():
+    from memo.cli import cli
+
+    assert "ops" in cli.commands

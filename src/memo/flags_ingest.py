@@ -14,6 +14,13 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_INGEST_STRICT", "bool", False, "ingest", "Strict ingest filtering."),
     _spec("MEMO_INGEST_DEBUG", "bool", False, "ingest", "Verbose ingest diagnostics."),
     _spec(
+        "MEMO_VAULT_PATHS",
+        "str",
+        "",
+        "ingest",
+        "Comma-separated vault roots for `memo ops vault-ingest` (default: known iCloud vaults).",
+    ),
+    _spec(
         "MEMO_SAVE_EXTRACT",
         "bool",
         False,
