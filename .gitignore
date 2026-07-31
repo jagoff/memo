@@ -45,6 +45,13 @@ integrations/**/node_modules/
 integrations/**/dist/
 integrations/**/.paperclip-sdk/
 
+# Node (web-chat SPA — vendored from archived synapse)
+web-chat/node_modules/
+web-chat/dist/
+web-chat/*.tsbuildinfo
+web-chat/vite.config.js
+web-chat/vite.config.d.ts
+
 # Generated dashboard HTML (rebuild with `python web/build.py`)
 web/health.html
 
