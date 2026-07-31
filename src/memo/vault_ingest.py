@@ -17,12 +17,12 @@ embedder itself.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
+from memo.flags import flag_str
 from memo.ingest_exclude import IngestExcludeStore
 
 _logger = logging.getLogger("memo.vault_ingest")
@@ -52,7 +52,7 @@ def vault_paths() -> list[Path]:
     ``MEMO_VAULT_PATHS`` (comma list) overrides; otherwise the known iCloud
     vaults that exist on disk.
     """
-    raw = os.environ.get("MEMO_VAULT_PATHS", "").strip()
+    raw = flag_str("MEMO_VAULT_PATHS").strip()
     if raw:
         return [Path(p.strip()).expanduser() for p in raw.split(",") if p.strip()]
     return [p for p in _DEFAULT_VAULT_PATHS if p.is_dir()]
