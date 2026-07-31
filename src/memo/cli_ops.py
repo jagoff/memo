@@ -165,3 +165,45 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
     """Drop REL_PATH from VAULT_LABEL's tombstones."""
     removed = IngestExcludeStore().remove(vault_label=vault_label, rel_path=rel_path)
     console.print("[green]✓ removed[/green]" if removed else "[dim]not found[/dim]")
+
+
+@ops_group.command(name="install")
+@click.argument("service", type=click.Choice(["chat"]))
+@click.option("--port", default=8765, show_default=True, type=int)
+@click.option("--dist", default=None, help="Directorio dist de la SPA (opcional).")
+def ops_install(service: str, port: int, dist: str | None) -> None:
+    """Install a memo launchd agent (currently: chat)."""
+    import shutil
+    from pathlib import Path
+
+    from memo.ops_launchd import install_chat
+
+    memo_bin = shutil.which("memo")
+    if not memo_bin:
+        raise click.ClickException("no encuentro el binario `memo` en PATH")
+    path = install_chat(memo_bin, Path.home(), port=port, dist=dist)
+    click.echo(f"installed {path}")
+
+
+@ops_group.command(name="uninstall")
+@click.argument("service", type=click.Choice(["chat"]))
+def ops_uninstall(service: str) -> None:
+    """Uninstall a memo launchd agent."""
+    from pathlib import Path
+
+    from memo.ops_launchd import uninstall_chat
+
+    click.echo("removed" if uninstall_chat(Path.home()) else "not installed")
+
+
+@ops_group.command(name="status")
+def ops_status() -> None:
+    """Show all com.memo.* launchd agents."""
+    import subprocess
+
+    from memo.ops_launchd import parse_launchctl_list
+
+    out = subprocess.run(["launchctl", "list"], capture_output=True, text=True, check=True).stdout
+    for row in parse_launchctl_list(out):
+        state = f"pid {row['pid']}" if row["pid"] else f"exit {row['last_exit']}"
+        click.echo(f"{row['label']}\t{state}")
