@@ -40,6 +40,24 @@ def _chunk_numbers(members: list[dict[str, Any]]) -> tuple[set[int], set[int]]:
     return nums, totals
 
 
+def _full_body(memory: Any, member: dict[str, Any]) -> str:
+    """Full body of a memory chunk, falling back to its (700-char) snippet.
+
+    resolve_fulldoc's whole point is inlining the WHOLE doc — reassembling
+    from pipeline._SNIPPET_CHARS-truncated snippets loses most of the content.
+    """
+    snippet = str(member.get("snippet") or "")
+    member_id = str(member.get("id") or "")
+    if not member_id:
+        return snippet
+    try:
+        record = memory.get(member_id)
+    except Exception:
+        return snippet
+    body = str(getattr(record, "body", "") or "") if record is not None else ""
+    return body or snippet
+
+
 def resolve_fulldoc(memory: Any, members: list[dict[str, Any]]) -> dict[str, Any] | None:
     head = members[0]
     # Vault branch: must complete or return None
@@ -65,5 +83,5 @@ def resolve_fulldoc(memory: Any, members: list[dict[str, Any]]) -> dict[str, Any
         (m for m in members if CHUNK_NUM.search(str(m.get("title") or ""))),
         key=lambda m: int(CHUNK_NUM.search(str(m["title"])).group(1)),  # type: ignore[union-attr]
     )
-    text = "\n\n".join(str(m.get("snippet") or "") for m in ordered)
+    text = "\n\n".join(_full_body(memory, m) for m in ordered)
     return {"title": normalize_title(head.get("title")), "text": text, "fulldoc_source": "memory"}

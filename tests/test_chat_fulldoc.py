@@ -54,6 +54,45 @@ def test_resolve_memory_note_requires_all_chunks() -> None:
     assert resolve_fulldoc(_Mem(), [_chunk(1, 3), _chunk(2, 3)]) is None  # falta §3
 
 
+def test_resolve_memory_note_uses_full_body_not_truncated_snippet() -> None:
+    # pipeline._SNIPPET_CHARS truncates each source's snippet to 700 chars —
+    # the memory fulldoc branch must fetch the full body via memory.get(),
+    # not reassemble from the already-truncated snippets (~65% content loss).
+    long_body_1 = "primera parte de la nota. " * 40
+    long_body_2 = "segunda parte de la nota. " * 40
+    assert len(long_body_1) > 700 and len(long_body_2) > 700
+
+    class _Record:
+        def __init__(self, body: str) -> None:
+            self.body = body
+
+    class _Mem:
+        def get(self, id_: str):
+            return {"m1": _Record(long_body_1), "m2": _Record(long_body_2)}.get(id_)
+
+        def repo_get_file(self, repo, path, *, start=None, end=None):
+            raise AssertionError("no debe llamarse para notas de memoria")
+
+    doc = resolve_fulldoc(_Mem(), [_chunk(1, 2), _chunk(2, 2)])
+    assert doc is not None
+    assert long_body_1 in doc["text"]
+    assert long_body_2 in doc["text"]
+    assert doc["text"] != "parte 1\n\nparte 2"
+    assert doc["text"].index(long_body_1) < doc["text"].index(long_body_2)  # ordered by §n
+
+
+def test_resolve_memory_note_falls_back_to_snippet_when_fetch_fails() -> None:
+    class _Mem:
+        def get(self, id_: str):
+            raise RuntimeError("store unavailable")
+
+        def repo_get_file(self, repo, path, *, start=None, end=None):
+            raise AssertionError("no debe llamarse para notas de memoria")
+
+    doc = resolve_fulldoc(_Mem(), [_chunk(1, 2), _chunk(2, 2)])
+    assert doc == {"title": "doc x", "text": "parte 1\n\nparte 2", "fulldoc_source": "memory"}
+
+
 def test_resolve_vault_uses_repo_get_file() -> None:
     class _Mem:
         def repo_get_file(self, repo, path, *, start=None, end=None):
