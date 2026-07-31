@@ -7,10 +7,10 @@ import re
 from typing import Any
 
 _LEXICAL_IDENTIFIER_RE = re.compile(
-    r"(`[^`]+`|\"[^\"]+\"|\b[a-z0-9]+(?:_[a-z0-9]+)+\b|\b[A-Z0-9]{3,}\b)"
+    r"(`[^`]+`|\"[^\"]+\"|\b[a-z0-9]+(?:_[a-z0-9]+)+\b|\b[A-Z][A-Z0-9_]{2,}\b)"
 )
 _MULTI_HOP_RE = re.compile(
-    r"\?.*\?|\by\s+(cu[aá]ndo|d[oó]nde|qui[eé]n|por\s+qu[eé])\b|\band\s+(when|where|who|why)\b",
+    r"\?[^?]+\?|\by\s+(cu[aá]ndo|d[oó]nde|qui[eé]n|por\s+qu[eé])\b|\band\s+(when|where|who|why)\b",
     re.IGNORECASE | re.DOTALL,
 )
 _EXPAND_PROMPT = (

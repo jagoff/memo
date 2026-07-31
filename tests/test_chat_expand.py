@@ -16,6 +16,11 @@ def test_classify() -> None:
     assert classify_query("dónde se define chat_ask_stream") == "lexical_exact"
     assert classify_query("¿quién vino? ¿y cuándo?") == "multi_hop"
     assert classify_query("qué comimos en el cumpleaños") == "semantic_fuzzy"
+    # Additional regression tests for identifier classification
+    assert classify_query("qué pasó en 2024") == "semantic_fuzzy"
+    assert classify_query("cuánto cuesta, tipo 500 pesos") == "semantic_fuzzy"
+    assert classify_query("PYTHONPATH está roto") == "lexical_exact"
+    assert classify_query("en serio??") == "semantic_fuzzy"
 
 
 def test_gate() -> None:
@@ -29,6 +34,7 @@ def test_expand_parses_variants() -> None:
     out = expand_query(chat, "m", "pregunta original", n=2)
     assert out == ["variante uno", "variante dos"]
     assert chat.calls[0][2]["temperature"] == 0.0
+    assert chat.calls[0][2]["max_tokens"] == 400
 
 
 def test_expand_malformed_returns_empty() -> None:
