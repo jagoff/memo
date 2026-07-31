@@ -95,3 +95,45 @@ def test_suggestions_returns_chip_objects(client) -> None:
     assert chip["label"] == "hola de nuevo"
 
     client.post("/api/sessions/delete", json={"session_id": "s2"})
+
+
+def test_ask_stream_generates_session_id_when_missing(client) -> None:
+    # App.tsx never generates chat_session_id client-side — it only ever
+    # adopts one FROM the context/done events (App.tsx:276-277, 341-342).
+    # Without server-side generation, sessions never persist in real UI use.
+    with client.stream("POST", "/api/ask/stream", json={"q": "hola sin session"}) as resp:
+        assert resp.status_code == 200
+        body = "".join(chunk for chunk in resp.iter_text())
+    frames = [json.loads(line[5:]) for line in body.split("\n\n") if line.startswith("data:")]
+    context = next(f for f in frames if f["type"] == "context")
+    done = next(f for f in frames if f["type"] == "done")
+    assert context.get("chat_session_id")
+    assert context["chat_session_id"] == done["chat_session_id"]
+
+    generated_id = done["chat_session_id"]
+    sessions = client.get("/api/sessions").json()["sessions"]
+    row = next(s for s in sessions if s["session_id"] == generated_id)
+    assert row["turn_count"] == 2
+
+    client.post("/api/sessions/delete", json={"session_id": generated_id})
+
+
+def test_ask_stream_persists_under_given_session_id(client) -> None:
+    with client.stream(
+        "POST",
+        "/api/ask/stream",
+        json={"q": "hola con session", "chat_session_id": "given-1"},
+    ) as resp:
+        assert resp.status_code == 200
+        body = "".join(chunk for chunk in resp.iter_text())
+    frames = [json.loads(line[5:]) for line in body.split("\n\n") if line.startswith("data:")]
+    context = next(f for f in frames if f["type"] == "context")
+    done = next(f for f in frames if f["type"] == "done")
+    assert context.get("chat_session_id") == "given-1"
+    assert done.get("chat_session_id") == "given-1"
+
+    history = client.get("/api/sessions/given-1").json()
+    assert history["session_id"] == "given-1"
+    assert len(history["turns"]) == 2
+
+    client.post("/api/sessions/delete", json={"session_id": "given-1"})
