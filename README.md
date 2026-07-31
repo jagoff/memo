@@ -11,6 +11,7 @@ Persistent, searchable memory for Claude Code, Codex, Cursor, Cline, Devin, and 
 [![Downloads](https://static.pepy.tech/badge/mlx-memo)](https://pepy.tech/project/mlx-memo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/jagoff/memo/blob/master/LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-server-3b82f6.svg)](https://modelcontextprotocol.io)
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.jagoff%2Fmemo.svg)](https://mcptoplist.com/server/io.github.jagoff%2Fmemo)
 
 ![Save a fact once — every later session recalls it automatically, all stored locally.](https://raw.githubusercontent.com/jagoff/memo/master/docs/demo.gif)
 
