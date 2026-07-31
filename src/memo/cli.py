@@ -100,6 +100,7 @@ from memo.cli_memory import (
 )
 from memo.cli_onboard import onboard
 from memo.cli_operational import evidence_cmd, migrate_independence_cmd, operational_group
+from memo.cli_ops import ops_group
 from memo.cli_outcome import gaps as gaps_cmd
 from memo.cli_outcome import outcome as outcome_cmd
 from memo.cli_proactive import digest
@@ -507,6 +508,7 @@ cli.add_command(health_cmd)
 cli.add_command(dashboard_cmd)
 cli.add_command(compress_context_cmd)
 cli.add_command(dedupe_cmd)
+cli.add_command(ops_group)
 cli.add_command(contextual_group)
 cli.add_command(links_group)
 cli.add_command(version_group)
