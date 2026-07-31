@@ -9,6 +9,25 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-07-31
+
+### Added
+
+- Graph-backed repository intelligence: repo search and context packs are now
+  enriched with the CodeGraph structure layer (#134).
+- Synapse/memflow daemons adopted natively: the `com.memo.*` launchd fleet
+  (recall daemon, nightly, vault ingest, dream, watch) replaces the deprecated
+  trinity stack; handoffs and operational continuity now live in memo (#136).
+
+### Fixed
+
+- Reindex no longer emits `invalid memory id` warnings for `_chronicle` diary
+  files: the bucket is skipped silently via the reindex skip-dirs list (#138).
+- Nightly launchd template now passes the correct `--max-memories` flag to
+  `memo contradict scan` (#137).
+- Hardened code intelligence and the dream pipeline against real-run failures
+  (#135).
+
 ### Changed
 
 - Normal MCP startup is fully offline again: remote update checks and
