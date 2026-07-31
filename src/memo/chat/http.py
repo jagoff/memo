@@ -26,6 +26,13 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
     sessions = SessionStore(cfg.sessions_dir)
     app = FastAPI(title="memo chat", docs_url=None, redoc_url=None)
 
+    async def _json_body(request: Request) -> dict[str, Any] | None:
+        try:
+            body = await request.json()
+        except Exception:
+            return None
+        return body if isinstance(body, dict) else None
+
     def sessions_history(session_id: str | None) -> list[dict[str, str]] | None:
         if not session_id:
             return None
@@ -49,7 +56,9 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
     @app.post("/api/ask/stream")
     async def ask_stream(request: Request) -> Any:
-        body = await request.json()
+        body = await _json_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         question = str(body.get("q") or "").strip()
         if not question:
             return JSONResponse({"error": "q required"}, status_code=400)
@@ -77,7 +86,9 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
     @app.post("/api/ask")
     async def ask(request: Request) -> Any:
-        body = await request.json()
+        body = await _json_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         if not str(body.get("q") or "").strip():
             return JSONResponse({"error": "q required"}, status_code=400)
         events = _run(body)
@@ -86,7 +97,9 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
     @app.post("/api/feedback")
     async def feedback(request: Request) -> Any:
-        body = await request.json()
+        body = await _json_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         fb = ChatFeedback(
             feedback_id=uuid.uuid4().hex[:12],
             created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -103,7 +116,9 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
     @app.post("/api/feedback/source")
     async def feedback_source(request: Request) -> Any:
-        body = await request.json()
+        body = await _json_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         query = str(body.get("query") or "")
         try:
             embedding = memory.embedder.embed_query(query) if query else []
@@ -133,7 +148,9 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
     @app.post("/api/sessions/delete")
     async def delete_session(request: Request) -> Any:
-        body = await request.json()
+        body = await _json_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         try:
             return {"ok": sessions.delete(str(body.get("session_id") or ""))}
         except ValueError:

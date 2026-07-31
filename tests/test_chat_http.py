@@ -34,11 +34,27 @@ def test_ask_non_stream(client) -> None:
     assert resp.json()["type"] == "done"
 
 
+def test_ask_malformed_json_returns_400(client) -> None:
+    resp = client.post(
+        "/api/ask", content=b"not json", headers={"Content-Type": "application/json"}
+    )
+    assert resp.status_code == 400
+    assert "error" in resp.json()
+
+
 def test_feedback_source_roundtrip(client) -> None:
     resp = client.post(
         "/api/feedback/source", json={"source_id": "m1", "query": "hola", "rating": "up"}
     )
     assert resp.status_code == 200 and resp.json()["ok"] is True
+
+
+def test_feedback_source_malformed_json_returns_400(client) -> None:
+    resp = client.post(
+        "/api/feedback/source", content=b"not json", headers={"Content-Type": "application/json"}
+    )
+    assert resp.status_code == 400
+    assert "error" in resp.json()
 
 
 def test_deferred_endpoints_501(client) -> None:
