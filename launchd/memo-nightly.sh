@@ -25,6 +25,6 @@ log "start gc-vault-orphans"
 "__MEMO_BIN__" ops gc-vault-orphans --json || log "gc-vault-orphans FAILED (exit $?)"
 
 log "start memo-consolidate"
-"__MEMO_BIN__" consolidate apply --auto-threshold 0.95 --max-clusters 15 || log "memo-consolidate FAILED (exit $?)"
+"__MEMO_BIN__" consolidate apply --force --auto-threshold 0.95 --max-clusters 15 || log "memo-consolidate FAILED (exit $?)"
 
 log "done"
