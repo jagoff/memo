@@ -25,3 +25,20 @@ def test_plain_question_passthrough() -> None:
     q = "cómo configuro el embedder"
     assert rewrite_query(q, _HISTORY) == q
     assert rewrite_query("resumime eso", None) == "resumime eso"  # sin historial no hay tópico
+
+
+def test_info_question_with_inverted_punctuation() -> None:
+    # Leading inverted question mark should not block the rule
+    assert rewrite_query("¿Qué sabés de Avature?", None) == "Avature"
+
+
+def test_summary_followup_with_inverted_punctuation() -> None:
+    # Leading inverted question mark should not block summary followup
+    out = rewrite_query("¿Resumime eso?", _HISTORY)
+    assert "memo" in out and "daemon" in out
+
+
+def test_pronoun_prefix_with_inverted_punctuation() -> None:
+    # Leading inverted question mark should not block pronoun prefix
+    out = rewrite_query("¿Y eso cuándo fue?", _HISTORY)
+    assert "daemon" in out and "cuándo" in out

@@ -5,17 +5,17 @@ from __future__ import annotations
 import re
 
 _SUMMARY_FOLLOWUP_RE = re.compile(
-    r"^\s*(resum[ií](me)?(lo)?|ampli[aá]|expand[ií]|m[aá]s detalles?|contame m[aá]s"
+    r"^[\s¿¡]*(resum[ií](me)?(lo)?|ampli[aá]|expand[ií]|m[aá]s detalles?|contame m[aá]s"
     r"|y de eso|tell me more|summar(y|ize))\b",
     re.IGNORECASE,
 )
 _INFO_QUESTION_RE = re.compile(
-    r"^\s*(qu[eé]\s+(sab[eé]s|sabes|conoc[eé]s)\s+(de|sobre|del?)"
+    r"^[\s¿¡]*(qu[eé]\s+(sab[eé]s|sabes|conoc[eé]s)\s+(de|sobre|del?)"
     r"|tell me about|what do you know about)\s+(?P<topic>.+?)[?\s]*$",
     re.IGNORECASE,
 )
 _PRONOUN_PREFIX_RE = re.compile(
-    r"^\s*(y\s+(él|ella|eso|esa|ese|esto)|and\s+(he|she|it|that))\b", re.IGNORECASE
+    r"^[\s¿¡]*(y\s+(él|ella|eso|esa|ese|esto)|and\s+(he|she|it|that))\b", re.IGNORECASE
 )
 _FILLERS = {
     "que",
