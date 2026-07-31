@@ -7,6 +7,21 @@ from pathlib import Path
 from typing import Any
 
 
+def _normalize_history(history: Any) -> list[dict[str, str]] | None:
+    """Map inbound UI turns ({role, text} per types.ts:54-57) onto the
+    {role, content} shape rewrite._history_topic reads, tolerating either key."""
+    if not history:
+        return None
+    return [
+        {
+            "role": str(t.get("role", "")),
+            "content": str(t.get("content") or t.get("text") or ""),
+        }
+        for t in history
+        if isinstance(t, dict)
+    ]
+
+
 def build_app(memory: Any, *, dist: Path | None = None) -> Any:
     from fastapi import FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -46,16 +61,19 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         question = str(body.get("q") or "").strip()
         given_session_id = body.get("chat_session_id") or None
         session_id = given_session_id or uuid.uuid4().hex[:12]
-        history = body.get("history") or sessions_history(given_session_id)
+        history = _normalize_history(body.get("history")) or sessions_history(given_session_id)
         events = []
         for event in chat_stream(memory, question, history=history, k=body.get("k") or None):
             if event.get("type") in ("context", "done"):
                 event = {**event, "chat_session_id": session_id}
             events.append(event)
         done = next((e for e in events if e.get("type") == "done"), None)
-        sessions.append_turn(session_id, "user", question)
-        if done:
-            sessions.append_turn(session_id, "assistant", str(done.get("answer", "")))
+        try:
+            sessions.append_turn(session_id, "user", question)
+            if done:
+                sessions.append_turn(session_id, "assistant", str(done.get("answer", "")))
+        except ValueError:
+            pass
         return events
 
     @app.post("/api/ask/stream")
@@ -68,7 +86,7 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             return JSONResponse({"error": "q required"}, status_code=400)
         given_session_id = body.get("chat_session_id") or None
         session_id = given_session_id or uuid.uuid4().hex[:12]
-        history = body.get("history") or sessions_history(given_session_id)
+        history = _normalize_history(body.get("history")) or sessions_history(given_session_id)
 
         def _generate() -> Any:
             answer = ""

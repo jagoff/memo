@@ -34,6 +34,13 @@ def test_ask_non_stream(client) -> None:
     assert resp.json()["type"] == "done"
 
 
+def test_ask_non_stream_survives_invalid_session_id(client) -> None:
+    # SessionStore._path raises ValueError on an invalid session id — the
+    # stream path already guards append_turn against it; /api/ask must too.
+    resp = client.post("/api/ask", json={"q": "hola", "chat_session_id": "bad id!"})
+    assert resp.status_code == 200
+
+
 def test_ask_malformed_json_returns_400(client) -> None:
     resp = client.post(
         "/api/ask", content=b"not json", headers={"Content-Type": "application/json"}
@@ -116,6 +123,67 @@ def test_ask_stream_generates_session_id_when_missing(client) -> None:
     assert row["turn_count"] == 2
 
     client.post("/api/sessions/delete", json={"session_id": generated_id})
+
+
+def test_ask_normalizes_ui_history_before_rewrite(tmp_path) -> None:
+    # web-chat/src/types.ts sends history turns as {role, text} (types.ts:54-57)
+    # but rewrite._history_topic reads turn.get("content") — without
+    # normalizing text->content the follow-up rewrite silently no-ops and
+    # retrieval runs on the literal follow-up text, never the resolved topic.
+    from tests.test_chat_pipeline import _FakeMemory
+
+    class _SpyMemory(_FakeMemory):
+        def __init__(self, tmp_path):
+            super().__init__(tmp_path)
+            self.queries: list[str] = []
+
+        def search(self, query, *, limit=None, mode="hybrid", **kw):
+            self.queries.append(query)
+            return super().search(query, limit=limit, mode=mode, **kw)
+
+    memory = _SpyMemory(tmp_path)
+    app = build_app(memory)
+    client = TestClient(app)
+
+    history = [
+        {"role": "user", "text": "qué sabés del proyecto memo daemon"},
+        {"role": "assistant", "text": "Memo daemon es ..."},
+    ]
+    resp = client.post("/api/ask", json={"q": "resumime eso", "history": history})
+    assert resp.status_code == 200
+
+    assert memory.queries, "search was never called"
+    assert "memo" in memory.queries[0] and "daemon" in memory.queries[0]
+
+
+def test_ask_stream_normalizes_ui_history_before_rewrite(tmp_path) -> None:
+    from tests.test_chat_pipeline import _FakeMemory
+
+    class _SpyMemory(_FakeMemory):
+        def __init__(self, tmp_path):
+            super().__init__(tmp_path)
+            self.queries: list[str] = []
+
+        def search(self, query, *, limit=None, mode="hybrid", **kw):
+            self.queries.append(query)
+            return super().search(query, limit=limit, mode=mode, **kw)
+
+    memory = _SpyMemory(tmp_path)
+    app = build_app(memory)
+    client = TestClient(app)
+
+    history = [
+        {"role": "user", "text": "qué sabés del proyecto memo daemon"},
+        {"role": "assistant", "text": "Memo daemon es ..."},
+    ]
+    with client.stream(
+        "POST", "/api/ask/stream", json={"q": "resumime eso", "history": history}
+    ) as resp:
+        assert resp.status_code == 200
+        "".join(chunk for chunk in resp.iter_text())
+
+    assert memory.queries, "search was never called"
+    assert "memo" in memory.queries[0] and "daemon" in memory.queries[0]
 
 
 def test_ask_stream_persists_under_given_session_id(client) -> None:
