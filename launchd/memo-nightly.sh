@@ -16,7 +16,7 @@ for r in memo memflow; do
 done || log "codegraph-sync FAILED (exit $?)"
 
 log "start contradict-scan"
-"__MEMO_BIN__" contradict scan --max-memorias 500 --min-days-apart 3 --since "$(date -v-30d +%Y-%m-%d)" || log "contradict-scan FAILED (exit $?)"
+"__MEMO_BIN__" contradict scan --max-memories 500 --min-days-apart 3 --since "$(date -v-30d +%Y-%m-%d)" || log "contradict-scan FAILED (exit $?)"
 
 log "start gc-memo-duplicates"
 "__MEMO_BIN__" ops gc-memo-duplicates --json || log "gc-memo-duplicates FAILED (exit $?)"
@@ -25,6 +25,6 @@ log "start gc-vault-orphans"
 "__MEMO_BIN__" ops gc-vault-orphans --json || log "gc-vault-orphans FAILED (exit $?)"
 
 log "start memo-consolidate"
-"__MEMO_BIN__" consolidate apply --auto-threshold 0.95 --max-clusters 15 || log "memo-consolidate FAILED (exit $?)"
+"__MEMO_BIN__" consolidate apply --force --auto-threshold 0.95 --max-clusters 15 || log "memo-consolidate FAILED (exit $?)"
 
 log "done"
