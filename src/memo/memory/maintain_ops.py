@@ -18,6 +18,7 @@ from typing import Any
 
 import frontmatter
 
+from memo.dream_chronicle import CHRONICLE_BUCKET
 from memo.embedder import assert_valid_embedding
 from memo.errors import StorageError
 from memo.fact_extraction import fact_edges_from_metadata, upsert_declared_fact_edges
@@ -260,6 +261,11 @@ class _MaintainOpsMixin(_MemoryBase):
             meta: dict[str, Any] = post.metadata
             md_id = meta.get("id")
             rel_path = md_path.relative_to(self.cfg.memory_dir)
+            if rel_path.parts[:1] == (CHRONICLE_BUCKET,):
+                # Chronicle diaries carry no id: frontmatter by design — skip
+                # without the invalid-id warning.
+                skipped += 1
+                continue
             is_secret = meta.get("type") == "secret" or rel_path.parts[:1] == ("secrets",)
             if is_secret:
                 if (
