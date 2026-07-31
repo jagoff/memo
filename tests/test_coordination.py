@@ -472,6 +472,41 @@ def test_deliver_pending_block_respects_disable_flag(
     assert deliver_pending_block(tmp_cfg, "sess-a", now=NOW) == ""
 
 
+def test_deliver_pending_block_survives_unexpected_store_errors(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recall hook rides on this — any store error must return ''."""
+
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise AttributeError("corrupted sidecar row")
+
+    monkeypatch.setattr(coordination, "CoordinationStore", _boom)
+
+    assert deliver_pending_block(tmp_cfg, "sess-a", now=NOW) == ""
+
+
+def test_hook_path_uses_short_store_timeout(tmp_path: Path) -> None:
+    assert coordination._HOOK_DB_TIMEOUT_S == 0.05
+    with CoordinationStore(tmp_path / "coordination.db", timeout_s=0.05) as store:
+        busy_ms = store._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert busy_ms == 50
+    with CoordinationStore(tmp_path / "coordination.db") as store:
+        assert store._conn.execute("PRAGMA busy_timeout").fetchone()[0] == 10000
+
+
+def test_judge_prompt_is_capped_trimming_longer_summary_first() -> None:
+    long_side, short_side = coordination._capped_summaries("a" * 5000, "b" * 1000, 3600)
+    assert len(long_side) + len(short_side) <= 3600
+    assert short_side == "b" * 1000  # the longer summary is truncated first
+
+    big = _activity("sess-a", tuple(f"title {i} " + "x" * 200 for i in range(20)))
+    small = _activity("sess-b", ("tiny title",))
+    candidate = coordination.CollisionCandidate("sess-a", "sess-b", "README.md", "file")
+    prompt = coordination._judge_prompt(candidate, big, small)
+    assert len(prompt) <= coordination._MAX_JUDGE_PROMPT_CHARS
+    assert "tiny title" in prompt
+
+
 def test_render_directives_block_lists_each_directive(tmp_path: Path) -> None:
     with CoordinationStore(tmp_path / "coordination.db") as store:
         store.upsert(_collision())

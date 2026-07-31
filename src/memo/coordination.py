@@ -43,12 +43,28 @@ _MAX_SESSIONS = 50
 _MAX_RESOURCES_PER_PAIR = 5
 _MAX_JUDGED_PER_SCAN = 12
 _JUDGE_TIMEOUT_S = 30.0
+_MAX_JUDGE_PROMPT_CHARS = 4000
+# The recall hook must never wait on a locked sidecar — a scan writer holding
+# the DB for 10s would eat the whole 5s hook budget. 50ms and fail-open.
+_HOOK_DB_TIMEOUT_S = 0.05
 _SEVERITIES = frozenset({"info", "warn", "block"})
 _ACTIVE_STATUSES = ("open", "delivered")
 
-# Fail-open catch list for the scan/judge paths. Deliberately NOT a bare
-# ``except Exception`` — the broad-exception ratchet budgets those per file.
+# Fail-open catch lists. Deliberately NOT a bare ``except Exception`` — the
+# broad-exception ratchet budgets those per file. _DELIVERY_ERRORS guards the
+# recall-hook path, which must never die: it covers everything the sidecar
+# read/render can realistically raise.
 _SCAN_ERRORS = (OSError, RuntimeError, ValueError, TypeError, KeyError, ImportError)
+_DELIVERY_ERRORS = (
+    ImportError,
+    OSError,
+    ValueError,
+    sqlite3.Error,
+    AttributeError,
+    KeyError,
+    TypeError,
+    RuntimeError,
+)
 
 _BRANCH_RE = re.compile(
     r"\b(?:feat|fix|chore|docs|refactor|test|perf|ci|build|release|hotfix)/[\w.\-/]+"
@@ -211,14 +227,19 @@ def _row_to_collision(row: sqlite3.Row) -> Collision:
 
 
 class CoordinationStore:
-    """WAL sidecar holding confirmed collisions and their delivery state."""
+    """WAL sidecar holding confirmed collisions and their delivery state.
 
-    def __init__(self, db_path: Path) -> None:
+    `timeout_s` covers both the connect timeout and the busy_timeout pragma.
+    The scan/CLI paths keep the sidecar default (10s); the recall-hook path
+    passes `_HOOK_DB_TIMEOUT_S` so a locked DB can never eat the hook budget.
+    """
+
+    def __init__(self, db_path: Path, *, timeout_s: float = 10.0) -> None:
         self.db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
+        self._conn = sqlite3.connect(str(db_path), timeout=timeout_s, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA busy_timeout=10000")
+        self._conn.execute(f"PRAGMA busy_timeout={int(timeout_s * 1000)}")
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_DDL)
 
@@ -517,13 +538,24 @@ def _activity_summary(activity: SessionActivity) -> str:
     return "\n".join(lines)
 
 
+def _capped_summaries(first: str, second: str, budget: int) -> tuple[str, str]:
+    """Fit both summaries into `budget` chars, truncating the longer one first."""
+    if len(first) + len(second) <= budget:
+        return first, second
+    if len(first) >= len(second):
+        first = first[: max(budget - len(second), budget // 2)]
+        return first, second[: budget - len(first)]
+    second = second[: max(budget - len(first), budget // 2)]
+    return first[: budget - len(second)], second
+
+
 def _judge_prompt(candidate: CollisionCandidate, a: SessionActivity, b: SessionActivity) -> str:
-    return (
-        f"Shared resource: {candidate.resource} (kind: {candidate.kind})\n\n"
-        f"Agent A —\n{_activity_summary(a)}\n\n"
-        f"Agent B —\n{_activity_summary(b)}\n\n"
-        "Are these two live agents colliding on the shared resource?"
-    )
+    header = f"Shared resource: {candidate.resource} (kind: {candidate.kind})"
+    question = "Are these two live agents colliding on the shared resource?"
+    scaffold = len(header) + len(question) + len("\n\nAgent A —\n\n\nAgent B —\n\n\n")
+    budget = max(_MAX_JUDGE_PROMPT_CHARS - scaffold, 400)
+    summary_a, summary_b = _capped_summaries(_activity_summary(a), _activity_summary(b), budget)
+    return f"{header}\n\nAgent A —\n{summary_a}\n\nAgent B —\n{summary_b}\n\n{question}"
 
 
 def _parse_judgement(raw: str) -> dict[str, Any] | None:
@@ -659,11 +691,16 @@ def render_directives_block(directives: list[Directive]) -> str:
 
 
 def deliver_pending_block(cfg: Any, session_id: str | None, *, now: datetime | None = None) -> str:
-    """Render + stamp this session's pending directives. Never raises."""
+    """Render + stamp this session's pending directives.
+
+    Best-effort: any error returns an empty string — the recall hook rides on
+    this and must never die. Opens the sidecar with `_HOOK_DB_TIMEOUT_S` so a
+    locked DB fails open instead of stalling the hook budget.
+    """
     if not session_id or not coord_enabled():
         return ""
     try:
-        with CoordinationStore(coordination_db_path(cfg)) as store:
+        with CoordinationStore(coordination_db_path(cfg), timeout_s=_HOOK_DB_TIMEOUT_S) as store:
             pending = store.pending_directives(session_id)
             if not pending:
                 return ""
@@ -671,7 +708,7 @@ def deliver_pending_block(cfg: Any, session_id: str | None, *, now: datetime | N
             for directive in pending:
                 store.mark_delivered(directive.collision_id, session_id, ts)
             return render_directives_block(pending)
-    except (OSError, ValueError, sqlite3.Error):
+    except _DELIVERY_ERRORS:
         _log.debug("coordination: delivery failed", exc_info=True)
         return ""
 
