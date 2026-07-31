@@ -77,7 +77,7 @@ def normalize_scores(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 out[i]["normalized_score"] = 0.5
                 out[i]["score_group"] = label
             continue
-        for i, s in zip(indices, scores, strict=False):
-            out[i]["normalized_score"] = round((s - lo) / span, 6)
+        for i, sc in zip(indices, scores, strict=False):
+            out[i]["normalized_score"] = round((sc - lo) / span, 6)
             out[i]["score_group"] = label
     return out
