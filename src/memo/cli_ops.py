@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from typing import Any
 
 import click
 
@@ -32,12 +33,12 @@ def ops_group() -> None:
     """Maintenance jobs (GC, vault re-ingest, ingest tombstones)."""
 
 
-def _all_records() -> tuple[object, list[dict]]:
+def _all_records() -> tuple[Any, list[dict]]:
     mem = _get_memory(Config.from_env())
     return mem, [r.to_dict() for r in mem.list(limit=_LIST_ALL)]
 
 
-def _delete_records(mem: object, records: list[dict]) -> int:
+def _delete_records(mem: Any, records: list[dict]) -> int:
     deleted = 0
     for r in records:
         with contextlib.suppress(ValueError):
