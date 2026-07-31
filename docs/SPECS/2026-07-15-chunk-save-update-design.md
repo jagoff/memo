@@ -34,8 +34,7 @@ One new helper on the maintain mixin, called from both write paths, all
 behind the existing `MEMO_CHUNK_INGEST` flag (no new flags):
 
 ```python
-def maybe_emit_chunks(self, *, parent_id, parent_rel, title, body,
-                      tags, created, updated) -> int:
+def maybe_emit_chunks(self, *, parent_id, parent_rel, title, body, tags, created, updated) -> int:
     """Best-effort chunk emission for one just-written memory."""
 ```
 

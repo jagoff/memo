@@ -35,6 +35,7 @@
 
 ```python
 """Tests for pure GC logic (ported from synapse ops on deprecation)."""
+
 from memo.ops_gc import find_exact_duplicates, find_vault_orphans
 
 
@@ -78,6 +79,7 @@ Ported from synapse `ops.gc_vault_orphans` / `ops.gc_memo_duplicates` when the
 synapse control plane was deprecated (2026-07-30). Pure functions; cli_ops
 lists records and performs deletions.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -197,8 +199,16 @@ def test_env_override(monkeypatch, tmp_path):
 def test_build_ingest_command():
     cmd = build_ingest_command("/bin/memo", Path("/v/Notes"), "notes", ["a/**", "b.md"])
     assert cmd == [
-        "/bin/memo", "ingest", "/v/Notes", "--name", "notes", "--prune",
-        "--exclude", "a/**", "--exclude", "b.md",
+        "/bin/memo",
+        "ingest",
+        "/v/Notes",
+        "--name",
+        "notes",
+        "--prune",
+        "--exclude",
+        "a/**",
+        "--exclude",
+        "b.md",
     ]
 
 

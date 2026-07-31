@@ -91,12 +91,14 @@ harness can A/B), matching the exact style of sibling entries like
 `MEMO_ASK_GAPS_ENABLED` / `MEMO_GUARD_ENABLED`:
 
 ```python
-_g(
-    "MEMO_PROACTIVE_ENABLED",
-    "manual",
-    "proactive engine (statusline badge, urgent push, memo digest); UX/ops "
-    "surface, not recall-measurable",
-),
+(
+    _g(
+        "MEMO_PROACTIVE_ENABLED",
+        "manual",
+        "proactive engine (statusline badge, urgent push, memo digest); UX/ops "
+        "surface, not recall-measurable",
+    ),
+)
 ```
 
 Placed immediately after the `MEMO_ASK_GAPS_ENABLED` entry in the
