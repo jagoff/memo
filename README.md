@@ -1,5 +1,5 @@
 <!-- Banner: keep it, but make sure it loads fast (<200KB, WebP if possible) -->
-[![memo — local memory for AI](docs/banner.jpg)](docs/banner.jpg)
+[![memo — local memory for AI](docs/banner.webp)](docs/banner.webp)
 
 # memo
 
