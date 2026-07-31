@@ -91,3 +91,31 @@ def test_ops_registered_on_root_cli():
     from memo.cli import cli
 
     assert "ops" in cli.commands
+
+
+def test_ops_install_chat_rejects_nonexistent_dist(tmp_path):
+    # A bare str --dist means a relative path + launchd's cwd=/ silently
+    # crash-loops under KeepAlive instead of failing fast at install time.
+    result = CliRunner().invoke(ops_group, ["install", "chat", "--dist", str(tmp_path / "missing")])
+    assert result.exit_code != 0
+    assert "does not exist" in result.output
+
+
+def test_ops_install_chat_resolves_relative_dist_to_absolute_path(monkeypatch, tmp_path):
+    import shutil
+
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    captured: dict = {}
+
+    def fake_install_chat(memo_bin, home, *, port=8765, dist=None):
+        captured["dist"] = dist
+        return home / "Library" / "LaunchAgents" / "com.memo.chat.plist"
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/local/bin/memo")
+    monkeypatch.setattr("memo.ops_launchd.install_chat", fake_install_chat)
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(ops_group, ["install", "chat", "--dist", "dist"])
+    assert result.exit_code == 0, result.output
+    assert captured["dist"] == str(dist_dir.resolve())

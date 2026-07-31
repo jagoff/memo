@@ -90,6 +90,18 @@ def test_event_sequence_and_shapes(tmp_path) -> None:
     assert done["synthesis_source"] == "memo.chat"
 
 
+def test_retrieval_error_yields_error_event_and_stops(tmp_path) -> None:
+    class _BoomMemory(_FakeMemory):
+        def search(self, query, *, limit=None, mode="hybrid", **kw):
+            raise RuntimeError("index corrupted")
+
+    events = list(chat_stream(_BoomMemory(tmp_path), "pregunta"))
+    assert events[-1]["type"] == "error"
+    assert events[-1]["message"] == "retrieval failed"
+    assert not any(e["type"] == "context" for e in events)
+    assert not any(e["type"] == "done" for e in events)
+
+
 def test_synthesis_error_yields_error_event(tmp_path) -> None:
     class _Boom(_FakeChatBackend):
         def chat_stream(self, model, messages, options=None):

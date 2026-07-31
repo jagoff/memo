@@ -85,43 +85,47 @@ def chat_stream(
     retrieval_t0 = time.monotonic()
     yield {"type": "stage", "name": "memo_retrieval", "phase": "start"}
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        mem_future = pool.submit(memory.search, memo_query, limit=base_k, mode="hybrid")
-        vault_future = pool.submit(memory.repo_search, memo_query, limit=base_k)
-        mem_sources = [_record_to_source(r) for r in (mem_future.result() or [])]
-        vault_sources = [_hit_to_source(h) for h in (vault_future.result() or [])]
-
-    rankings = [mem_sources, vault_sources]
-    if cfg.multi_query and allows_multi_query(classify_query(memo_query)):
-        variants = expand_query(
-            memory._ensure_chat(), memory.cfg.llm_model, memo_query, n=cfg.multi_query_n
-        )
-        for variant in variants:
-            hits = memory.search(variant, limit=base_k, mode="hybrid") or []
-            rankings.append([_record_to_source(r) for r in hits])
-
-    fused = normalize_scores(rrf_fuse(rankings, limit=base_k))
-    fused = _apply_title_boost(fused, memo_query)
-    dominant = dominant_doc_group(fused) if cfg.fulldoc else None
-
-    sources = collapse_near_duplicates(fused)
-    store = SourceVoteStore(cfg.feedback_dir)
-    latest = store.latest_by_pair()
-    qkey = question_key(memo_query)
-    sources = filter_negative_sources(sources, latest, qkey)
-    sources = boost_positive_sources(sources, latest, qkey, factor=cfg.vote_boost)
     try:
-        query_vec = memory.embedder.embed_query(memo_query)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            mem_future = pool.submit(memory.search, memo_query, limit=base_k, mode="hybrid")
+            vault_future = pool.submit(memory.repo_search, memo_query, limit=base_k)
+            mem_sources = [_record_to_source(r) for r in (mem_future.result() or [])]
+            vault_sources = [_hit_to_source(h) for h in (vault_future.result() or [])]
+
+        rankings = [mem_sources, vault_sources]
+        if cfg.multi_query and allows_multi_query(classify_query(memo_query)):
+            variants = expand_query(
+                memory._ensure_chat(), memory.cfg.llm_model, memo_query, n=cfg.multi_query_n
+            )
+            for variant in variants:
+                hits = memory.search(variant, limit=base_k, mode="hybrid") or []
+                rankings.append([_record_to_source(r) for r in hits])
+
+        fused = normalize_scores(rrf_fuse(rankings, limit=base_k))
+        fused = _apply_title_boost(fused, memo_query)
+        dominant = dominant_doc_group(fused) if cfg.fulldoc else None
+
+        sources = collapse_near_duplicates(fused)
+        store = SourceVoteStore(cfg.feedback_dir)
+        latest = store.latest_by_pair()
+        qkey = question_key(memo_query)
+        sources = filter_negative_sources(sources, latest, qkey)
+        sources = boost_positive_sources(sources, latest, qkey, factor=cfg.vote_boost)
+        try:
+            query_vec = memory.embedder.embed_query(memo_query)
+        except Exception:
+            query_vec = []
+        if query_vec:
+            sources = boost_semantic(
+                sources,
+                query_vec,
+                store.load(),
+                threshold=cfg.semantic_threshold,
+                factor=cfg.vote_boost,
+            )
     except Exception:
-        query_vec = []
-    if query_vec:
-        sources = boost_semantic(
-            sources,
-            query_vec,
-            store.load(),
-            threshold=cfg.semantic_threshold,
-            factor=cfg.vote_boost,
-        )
+        yield {"type": "error", "message": "retrieval failed", "answer_partial": ""}
+        return
 
     yield {
         "type": "stage",

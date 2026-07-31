@@ -282,6 +282,17 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_AGENT_TTY",
         "MEMO_CODEX_BADGE_SHOWN",
         "MEMO_STARTUP_BANNER_SHOWN",
+        # chat/config.py-owned knobs: env-only + built-in defaults, read
+        # directly (not through this registry's markdown/overlay chain).
+        "MEMO_CHAT_BASE_K",
+        "MEMO_CHAT_RELEVANCE_FLOOR",
+        "MEMO_CHAT_VOTE_BOOST",
+        "MEMO_CHAT_SEMANTIC_THRESHOLD",
+        "MEMO_CHAT_MULTI_QUERY",
+        "MEMO_CHAT_MULTI_QUERY_N",
+        "MEMO_CHAT_FULLDOC",
+        "MEMO_CHAT_ANSWER_MAX_TOKENS",
+        "MEMO_CHAT_SYNTH_HEAD",
     }
     return sorted(k for k in src if k.startswith("MEMO_") and k not in REGISTRY and k not in owned)
 

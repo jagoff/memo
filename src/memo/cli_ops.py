@@ -171,8 +171,13 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
 @ops_group.command(name="install")
 @click.argument("service", type=click.Choice(["chat"]))
 @click.option("--port", default=8765, show_default=True, type=int)
-@click.option("--dist", default=None, help="Directorio dist de la SPA (opcional).")
-def ops_install(service: str, port: int, dist: str | None) -> None:
+@click.option(
+    "--dist",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Directorio dist de la SPA (opcional).",
+)
+def ops_install(service: str, port: int, dist: Path | None) -> None:
     """Install a memo launchd agent (currently: chat)."""
     import shutil
 
@@ -181,8 +186,9 @@ def ops_install(service: str, port: int, dist: str | None) -> None:
     memo_bin = shutil.which("memo")
     if not memo_bin:
         raise click.ClickException("no encuentro el binario `memo` en PATH")
+    resolved_dist = str(dist.expanduser().resolve()) if dist else None
     try:
-        path = install_chat(memo_bin, Path.home(), port=port, dist=dist)
+        path = install_chat(memo_bin, Path.home(), port=port, dist=resolved_dist)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"installed {path}")
