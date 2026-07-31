@@ -152,16 +152,22 @@ keep the recall hook under its 5s budget.
 
 `memo chat serve [--port 8765] [--dist web-chat/dist]` serves the chat SPA
 (vendored from the archived synapse chat) plus its API on `127.0.0.1:<port>`
-(requires the `[http]` extra — FastAPI/uvicorn; raises `ImportError` otherwise).
-Pipeline: `src/memo/chat/pipeline.py` orchestrates retrieval
-(`_ChatAskOpsMixin`) → dedup/fusion/fulldoc/rewrite → synthesis, streamed as
-SSE events (`context`/`token`/`done`) over `POST /api/ask/stream`. Feedback
-closes the loop (`src/memo/chat/feedback.py`): per-turn 👍/👎 and per-source
-votes boost a source's rank on an exact question-key match, or (semantic
-fallback) cosine similarity ≥ `MEMO_CHAT_SEMANTIC_THRESHOLD` between the
-vote's query embedding and the new query.
+(requires the `[http]` extra — FastAPI/uvicorn; raises a `ClickException`
+otherwise, not an `ImportError` — `cli_chat.py` catches the missing-extra
+`ImportError` and re-raises it as a clean CLI error). Pipeline:
+`src/memo/chat/pipeline.py` orchestrates retrieval (`Memory.search` /
+`Memory.repo_search`, called directly — not through `_ChatAskOpsMixin`) →
+dedup/fusion/fulldoc/rewrite → synthesis, streamed as SSE events
+(`stage`/`context`/`token`/`done`/`error`) over `POST /api/ask/stream`.
+Feedback closes the loop (`src/memo/chat/feedback.py`): per-turn 👍/👎 and
+per-source votes boost a source's rank on an exact question-key match, or
+(semantic fallback) cosine similarity ≥ `MEMO_CHAT_SEMANTIC_THRESHOLD` between
+the vote's query embedding and the new query.
 
-Knobs (`src/memo/chat/config.py`, same env-var precedence as `flags.py`):
+Knobs (`src/memo/chat/config.py` — env-only + built-in defaults, read directly
+via `os.environ`; NOT registered in `flags.py`'s markdown-config/tuned-overlay
+chain, though the 9 names are excluded from `flags.unknown_memo_vars` so
+`memo config validate` doesn't flag them as typos):
 `MEMO_CHAT_BASE_K` (20, retrieval pool before dedup/rerank),
 `MEMO_CHAT_RELEVANCE_FLOOR` (0.25), `MEMO_CHAT_VOTE_BOOST` (1.5, multiplier on
 a 👍-voted source), `MEMO_CHAT_SEMANTIC_THRESHOLD` (0.75),
