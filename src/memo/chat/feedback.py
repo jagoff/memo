@@ -75,9 +75,13 @@ class SourceVoteStore(_JsonlStore):
 
     def load(self) -> list[SourceVote]:
         fields = {f for f in SourceVote.__dataclass_fields__}
-        return [
-            SourceVote(**{k: v for k, v in d.items() if k in fields}) for d in self._load_dicts()
-        ]
+        out: list[SourceVote] = []
+        for d in self._load_dicts():
+            try:
+                out.append(SourceVote(**{k: v for k, v in d.items() if k in fields}))
+            except TypeError:
+                continue
+        return out
 
     def latest_by_pair(self) -> dict[tuple[str, str], SourceVote]:
         latest: dict[tuple[str, str], SourceVote] = {}
@@ -95,9 +99,13 @@ class FeedbackStore(_JsonlStore):
 
     def load(self) -> list[ChatFeedback]:
         fields = {f for f in ChatFeedback.__dataclass_fields__}
-        return [
-            ChatFeedback(**{k: v for k, v in d.items() if k in fields}) for d in self._load_dicts()
-        ]
+        out: list[ChatFeedback] = []
+        for d in self._load_dicts():
+            try:
+                out.append(ChatFeedback(**{k: v for k, v in d.items() if k in fields}))
+            except TypeError:
+                continue
+        return out
 
 
 def filter_negative_sources(
