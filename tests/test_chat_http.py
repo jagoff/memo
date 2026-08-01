@@ -205,3 +205,24 @@ def test_ask_stream_persists_under_given_session_id(client) -> None:
     assert len(history["turns"]) == 2
 
     client.post("/api/sessions/delete", json={"session_id": "given-1"})
+
+
+def test_spa_fallback_does_not_swallow_unknown_api_routes(tmp_path) -> None:
+    # An unknown /api/* path must 404 as JSON — not 200 with index.html —
+    # so API clients get a real error instead of silently parsing HTML.
+    from tests.test_chat_pipeline import _FakeMemory
+
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><html></html>")
+    app = build_app(_FakeMemory(tmp_path), dist=dist)
+    c = TestClient(app)
+
+    resp = c.get("/api/nonexistent")
+    assert resp.status_code == 404
+    assert resp.json()["error"]
+
+    # SPA routes still fall back to index.html.
+    resp = c.get("/cualquier/ruta")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
