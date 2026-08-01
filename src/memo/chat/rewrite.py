@@ -11,7 +11,7 @@ _SUMMARY_FOLLOWUP_RE = re.compile(
 )
 _INFO_QUESTION_RE = re.compile(
     r"^[\s¿¡]*(qu[eé]\s+(sab[eé]s|sabes|conoc[eé]s)\s+(de|sobre|del?)"
-    r"|tell me about|what do you know about)\s+(?P<topic>.+)$",
+    r"|tell me about|what do you know about)\s+(?P<topic>\S.*)$",
     re.IGNORECASE,
 )
 _PRONOUN_PREFIX_RE = re.compile(
