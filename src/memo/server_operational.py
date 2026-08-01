@@ -101,6 +101,44 @@ def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
         """Verify every native operational hash chain."""
         return memory.operational.ledger.verify()
 
+    @annotated_tool(server, **WRITE_IDEMPOTENT)
+    def memo_signal_remember(
+        marker: Annotated[
+            str, Field(description="Stable idempotency marker for the watcher signal.")
+        ],
+        epoch: Annotated[
+            int, Field(description="Monotonic watcher epoch; stale epochs are rejected.")
+        ] = 0,
+        fence: Annotated[str, Field(description="Optional leadership fence token.")] = "",
+        payload: Annotated[
+            dict[str, Any] | None, Field(description="Structured signal payload.")
+        ] = None,
+        actor_id: Annotated[str, Field(description="Agent writing the signal.")] = "memo",
+    ) -> dict[str, Any]:
+        """Remember a durable, idempotent operational watcher marker."""
+        return asdict(
+            memory.operational.remember_signal(
+                marker=marker, epoch=epoch, fence=fence, payload=payload, actor_id=actor_id
+            )
+        )
+
+    @annotated_tool(server, **READ_ONLY)
+    def memo_signal_list(
+        marker: Annotated[str | None, Field(description="Filter to one marker.")] = None,
+        min_epoch: Annotated[
+            int | None, Field(description="Return signals at or above this epoch.")
+        ] = None,
+        limit: Annotated[int, Field(description="Maximum number of markers.")] = 100,
+    ) -> dict[str, Any]:
+        """List durable watcher markers, newest epoch first."""
+        rows = [
+            asdict(item)
+            for item in memory.operational.list_signals(
+                marker=marker, min_epoch=min_epoch, limit=limit
+            )
+        ]
+        return {"signals": rows, "count": len(rows)}
+
 
 def _register_focus_and_handoff_tools(server: Any, memory: Any) -> None:
     @annotated_tool(server, **WRITE_IDEMPOTENT)

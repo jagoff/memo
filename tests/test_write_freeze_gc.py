@@ -25,10 +25,8 @@ SUMMARY = f"memo contradiction between memories {MEM_A[:12]} and {MEM_B[:12]}"
 
 def _open_semantic_conflict(store: OperationalStore, *, a: str = MEM_A, b: str = MEM_B) -> str:
     anomaly_id = "anomaly-test-0001"
-    store.ledger.append(
-        "anomaly.record",
-        subject_uri=f"memo://anomaly/{anomaly_id}",
-        payload={
+    store.record_anomaly(
+        {
             "anomaly_id": anomaly_id,
             "kind": "semantic_contradiction",
             "state": "detected",

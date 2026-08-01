@@ -130,6 +130,29 @@ def test_usefulness_json_shape_remains_unchanged(tmp_path: Path) -> None:
     assert sorted(payload) == ["by_consumer", "recall_hook"]
 
 
+def test_usefulness_text_names_composite_ranking_score(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    dashboard.append_recall_log(
+        state_dir,
+        prompt="composite score one",
+        hits=[{"id": "a" * 8, "score": 1.25, "title": "A"}],
+        via="daemon",
+    )
+    dashboard.append_recall_log(
+        state_dir,
+        prompt="composite score two",
+        hits=[{"id": "b" * 8, "score": 0.7, "title": "B"}],
+        via="daemon",
+    )
+
+    result = CliRunner().invoke(cli, ["usefulness"], env=_cli_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert "composite ranking" in result.output
+    assert "top_composite_score_rate=0.5" in result.output
+    assert "strong_hit_rate=" not in result.output
+
+
 def test_usefulness_doctor_command_outputs_text(tmp_path: Path) -> None:
     result = CliRunner().invoke(cli, ["usefulness", "doctor"], env=_cli_env(tmp_path))
 

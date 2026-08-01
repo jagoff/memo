@@ -168,7 +168,7 @@ def _import_legacy_rows(
             skipped += 1
             continue
         if write:
-            memory.operational.ledger.append(
+            memory.operational.import_legacy_event(
                 f"legacy.{row.get('op') or 'event'!s}",
                 subject_uri=str(row.get("subject_uri") or "memo://migration/legacy"),
                 trace_id=str(row.get("trace_id") or ""),

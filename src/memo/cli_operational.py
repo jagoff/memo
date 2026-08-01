@@ -82,6 +82,70 @@ def operational_verify(memory: Any) -> None:
         raise click.ClickException("operational journal verification failed")
 
 
+@operational_group.group(name="signal")
+def signal_group() -> None:
+    """Remember or inspect durable watcher markers."""
+
+
+def _payload_object(raw: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise click.BadParameter("must be valid JSON", param_hint="--payload-json") from exc
+    if not isinstance(payload, dict):
+        raise click.BadParameter("must decode to a JSON object", param_hint="--payload-json")
+    return payload
+
+
+@signal_group.command(name="remember")
+@click.option("--marker", required=True, help="Stable idempotency marker.")
+@click.option("--epoch", default=0, type=click.IntRange(0), show_default=True)
+@click.option("--fence", default="", help="Optional leadership fence token.")
+@click.option("--payload-json", default="{}", help="Signal payload as a JSON object.")
+@click.option("--actor-id", default="memo", show_default=True)
+@_with_memory
+def signal_remember(
+    memory: Any,
+    marker: str,
+    epoch: int,
+    fence: str,
+    payload_json: str,
+    actor_id: str,
+) -> None:
+    """Remember a durable idempotent signal and print its JSON record."""
+    try:
+        item = memory.operational.remember_signal(
+            marker=marker,
+            epoch=epoch,
+            fence=fence,
+            payload=_payload_object(payload_json),
+            actor_id=actor_id,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    _json(asdict(item))
+
+
+@signal_group.command(name="list")
+@click.option("--marker", default=None, help="Filter to one exact marker.")
+@click.option("--min-epoch", default=None, type=click.IntRange(0))
+@click.option("--limit", default=100, type=click.IntRange(1, 1000), show_default=True)
+@_with_memory
+def signal_list(
+    memory: Any,
+    marker: str | None,
+    min_epoch: int | None,
+    limit: int,
+) -> None:
+    """List durable watcher signals as a JSON envelope."""
+    rows = memory.operational.list_signals(
+        marker=marker,
+        min_epoch=min_epoch,
+        limit=limit,
+    )
+    _json({"signals": [asdict(item) for item in rows], "count": len(rows)})
+
+
 @operational_group.group(name="focus")
 def focus_group() -> None:
     """Set or clear the current project focus."""

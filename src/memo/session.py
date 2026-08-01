@@ -468,6 +468,33 @@ def prune_lru(state_dir: Path, *, cap: int = _LRU_CAP_DEFAULT) -> int:
     return deleted
 
 
+def delete_session(state_dir: Path, session_id: str) -> bool:
+    """Delete one session snapshot, returning whether it existed.
+
+    The id is validated and only a regular, non-symlink child of the sessions
+    directory can be removed.
+    """
+    path = _session_path(state_dir, session_id)
+    if path.is_symlink():
+        raise ValueError("refusing to delete symlink session")
+    if not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
+def delete_all_sessions(state_dir: Path) -> int:
+    """Delete all regular JSON snapshots directly under ``state_dir/sessions``."""
+    d = sessions_dir(state_dir)
+    deleted = 0
+    for path in d.glob("*.json"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        path.unlink()
+        deleted += 1
+    return deleted
+
+
 def format_relative(updated_iso: str | None, now: datetime | None = None) -> str:
     """`updated` → `"5m ago"` / `"2h ago"` / `"3d ago"` for the picker.
     Falls back to `"—"` on parse failure."""

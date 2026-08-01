@@ -34,10 +34,10 @@ from memo.config import Config
     help="Render a single frame and exit (no live loop) — for scripts/headless.",
 )
 def tui(refresh: float, no_clear: bool, once: bool) -> None:
-    """Live terminal dashboard — token savings, utility metrics, consumers.
+    """Live terminal dashboard — context activity, recall outcomes, consumers.
 
-    Shows: tokens saved, cost $, recall hooks, strong hits, unique memories,
-    grounding rate. Ctrl+C to exit.
+    Shows: tokens injected, recall hooks, composite-score rate, surfaced
+    memories, and grounding rate. Ctrl+C to exit.
     """
     from memo.dashboard import run_tui
 

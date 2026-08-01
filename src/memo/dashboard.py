@@ -33,6 +33,7 @@ from memo.dashboard_logs import (
     verdict_log_path,
 )
 from memo.dashboard_metrics import (
+    COMPOSITE_SCORE_THRESHOLD,
     EXPECTED_CONSUMERS,
     GROUNDED_SCORE,
     STRONG_SCORE,
@@ -56,6 +57,7 @@ from memo.tui.dashboard import render, run_tui
 from memo.tui.dashboard.panels import _human_age, _human_bytes, sparkline
 
 __all__ = [
+    "COMPOSITE_SCORE_THRESHOLD",
     "EXPECTED_CONSUMERS",
     "GROUNDED_SCORE",
     "STRONG_SCORE",
