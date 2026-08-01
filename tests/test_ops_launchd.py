@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -36,10 +37,11 @@ def test_render_chat_plist_escapes_xml_ampersand(tmp_path) -> None:
 
     plist_path = tmp_path / "escaped.plist"
     plist_path.write_text(plist, encoding="utf-8")
-    result = subprocess.run(
-        ["plutil", "-lint", str(plist_path)], capture_output=True, text=True, check=False
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    if shutil.which("plutil") is not None:
+        result = subprocess.run(
+            ["plutil", "-lint", str(plist_path)], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_render_chat_plist_forwards_memo_env_vars(tmp_path, monkeypatch) -> None:
@@ -62,10 +64,11 @@ def test_render_chat_plist_forwards_memo_env_vars(tmp_path, monkeypatch) -> None
 
     plist_path = tmp_path / "env.plist"
     plist_path.write_text(plist, encoding="utf-8")
-    result = subprocess.run(
-        ["plutil", "-lint", str(plist_path)], capture_output=True, text=True, check=False
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    if shutil.which("plutil") is not None:
+        result = subprocess.run(
+            ["plutil", "-lint", str(plist_path)], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_install_chat_writes_plist_and_calls_bootout_then_bootstrap(tmp_path, monkeypatch) -> None:
