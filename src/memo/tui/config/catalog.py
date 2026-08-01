@@ -337,6 +337,7 @@ GROUP_TO_DOMAIN: dict[str, str] = {
     "cache": "Maintenance",
     "capture": "Capture",
     "cli": "Advanced",
+    "coordination": "Maintenance",
     "dream": "Maintenance",
     "embedder": "Models",
     "entity": "Graph",

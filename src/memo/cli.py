@@ -46,6 +46,7 @@ from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
+from memo.cli_coordinate import coordinate_group
 from memo.cli_dashboard import dashboard_cmd
 from memo.cli_debug_recall import debug_recall_cmd
 from memo.cli_dedupe import dedupe_cmd
@@ -215,6 +216,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
             "cross-dedup",
             "retier",
             "contradict",
+            "coordinate",
             "invalidate",
             "temporal",
             "compress-context",
@@ -522,6 +524,7 @@ cli.add_command(import_group)
 cli.add_command(export_group)
 cli.add_command(collaborative_group)
 cli.add_command(contradict_group)
+cli.add_command(coordinate_group)
 cli.add_command(http_api)
 cli.add_command(startup_banner_cmd)
 cli.add_command(codex_badge_cmd)
