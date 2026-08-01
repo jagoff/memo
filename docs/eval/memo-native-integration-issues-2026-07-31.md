@@ -37,6 +37,7 @@ and Memflow absorption. Items are closed only with a reproducible check.
 | MNI-030 | medium | resolved | Mesh MCP status/list tools were marked read-only even though constructing a remote-backed endpoint can fetch/merge its isolated Git clone. | All remote-capable mesh MCP tools use the conservative open-world `NETWORK_WRITE` annotation so clients do not silently treat network activity as a local read. |
 | MNI-031 | low | resolved | Three narrative sections of the reference still advertised the pre-mesh 40/57/161 MCP counts despite exact tables and runtime metadata using 49/66/170. | All prose, tables, runtime metadata, and exact profile tests now agree on 49/66/170 and ~7k/~8.2k/~21k schema-token estimates. |
 | MNI-032 | medium | resolved | The new CLI/MCP `transport_path` help said “local/shared”, which could encourage both terminals to mutate one checkout and contradict the proven isolated-clone topology. | Product help now requires an explicit isolated local clone; `--remote` is the sole documented cross-device rendezvous. |
+| MNI-033 | critical | resolved | Fresh Linux CPU installs attempted macOS Keychain/Secure Enclave authority enrollment and crashed on the first `memo save`, blocking the real Ubuntu smoke gate. | Fresh non-macOS installs now retain the compatible v1 backend until a non-Keychain authority provider exists; a Linux selector regression plus release focal tests pass. |
 
 ## Empirical proof already closed
 

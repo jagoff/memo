@@ -130,9 +130,10 @@ SPECS: tuple[FlagSpec, ...] = (
         True,
         "misc",
         "Automatically enroll a productive device authority and activate the "
-        "signed operational v2 ledger for a fresh state directory. Existing "
-        "activated v2 roots and explicitly injected authorities are unaffected; "
-        "set =0 for hermetic or staged-rollout environments.",
+        "signed operational v2 ledger for a fresh macOS state directory. "
+        "Existing activated v2 roots and explicitly injected authorities are "
+        "unaffected; Linux keeps the v1 backend until a non-Keychain authority "
+        "provider is available. Set =0 for hermetic or staged-rollout environments.",
         opt_out=True,
     ),
     # MCP transport

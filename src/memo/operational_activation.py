@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -412,7 +413,11 @@ def select_operational_store(cfg: Config) -> OperationalStore:
         return activate_fresh_operational_v2(cfg, authority=injected)
     if cfg.operational_root.exists():
         raise _failure("partial operational v2 install requires explicit recovery")
-    if not flag_bool("MEMO_OPERATIONAL_V2_AUTO_ACTIVATE"):
+    # Productive v2 enrollment currently relies on the macOS Secure Enclave
+    # and Keychain providers. Linux has no equivalent provider yet; a fresh
+    # CPU install must retain the byte-compatible v1 backend instead of
+    # crashing during its first `memo save`.
+    if not flag_bool("MEMO_OPERATIONAL_V2_AUTO_ACTIVATE") or sys.platform != "darwin":
         return OperationalStore(cfg.state_dir, device_id=cfg.device_id)
     authority = build_fresh_productive_authority(cfg)
     return activate_fresh_operational_v2(cfg, authority=authority)

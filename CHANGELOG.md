@@ -21,7 +21,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 ### Fixed
 
 - Cross-terminal authorization, actor/device binding, local-only federation
-  leaks, SQLite lifecycle warnings, and concurrent terminal write races.
+  leaks, SQLite lifecycle warnings, concurrent terminal write races, and fresh
+  Linux installs attempting unavailable macOS authority enrollment.
 
 ## [4.7.0] - 2026-07-31
 

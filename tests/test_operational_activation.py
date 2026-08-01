@@ -152,6 +152,18 @@ def test_selector_can_disable_only_implicit_fresh_v2_activation(
     assert not cfg.operational_root.exists()
 
 
+def test_selector_keeps_linux_fresh_install_on_v1_without_keychain(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _config(tmp_path)
+    monkeypatch.setattr("memo.operational_activation.sys.platform", "linux")
+
+    store = select_operational_store(cfg)
+
+    assert store.backend_version == 1
+    assert not cfg.operational_root.exists()
+
+
 def test_memory_facade_selects_verified_v2_backend(tmp_path) -> None:
     cfg = _config(tmp_path)
     test_authority = build_test_fresh_v2_authority(
