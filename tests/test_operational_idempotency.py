@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import closing
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -322,7 +323,7 @@ def test_commit_catches_up_an_interposed_same_origin_event(tmp_path: Path) -> No
     assert result.replayed is False
     assert len(ledger.events) == 2
     assert store.views.state()["focus"]["demo"]["summary"] == "native memo"
-    with connect_operational_db(store.views.path) as connection:
+    with closing(connect_operational_db(store.views.path)) as connection:
         assert connection.execute("SELECT COUNT(*) FROM applied_events").fetchone()[0] == 2
 
 

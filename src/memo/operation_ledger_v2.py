@@ -1499,9 +1499,7 @@ class OperationLedgerV2:
                     head_names = names("heads")
                     for name in head_names:
                         if not name.endswith(".json"):
-                            raise LedgerIntegrityError(
-                                f"unsafe legacy journal head name: {name}"
-                            )
+                            raise LedgerIntegrityError(f"unsafe legacy journal head name: {name}")
                         device = name.removesuffix(".json")
                         legacy_ledger._validate_device_id(device)
                         relative = f"heads/{name}"
@@ -1629,9 +1627,7 @@ class OperationLedgerV2:
                                 f"legacy source changed during capture: {relative}"
                             )
                     if names("events") != event_devices or names("heads") != head_names:
-                        raise LedgerIntegrityError(
-                            "legacy source paths changed during capture"
-                        )
+                        raise LedgerIntegrityError("legacy source paths changed during capture")
                     for device, expected_names in segment_names.items():
                         if names(f"events/{device}") != expected_names:
                             raise LedgerIntegrityError(
@@ -1648,9 +1644,7 @@ class OperationLedgerV2:
                     ) from exc
 
                 events = [
-                    event
-                    for device_events in events_by_device.values()
-                    for event in device_events
+                    event for device_events in events_by_device.values() for event in device_events
                 ]
                 events.sort(key=lambda event: (event.ts, event.device_id, event.sequence))
                 files = [
@@ -1850,6 +1844,22 @@ class OperationLedgerV2:
                 OperationalErrorCode.SIGNATURE_INVALID,
                 f"event origin is not enrolled: {event.origin_device}",
             )
+        if event.actor.device_id != event.origin_device:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "event actor device differs from signed origin",
+            )
+        expected = self._active_key(
+            roster,
+            device_id=event.origin_device,
+            role="origin",
+            activation_sequence=roster.version,
+        )
+        if event.key_id != expected.key_id:
+            raise _failure(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "event key is not the active authority for its origin",
+            )
         verifier.verify(
             domain="memo.operational.event.v2",
             payload=canonical_signed_bytes(event),
@@ -1904,8 +1914,7 @@ class OperationLedgerV2:
             source_anchor = self._read_anchor_with_checkpoint(proof.source_origin)[0]
             if (
                 source_anchor.kind != "memo_v1"
-                or source_anchor.source_manifest_sha256
-                != anchor.source_manifest_sha256
+                or source_anchor.source_manifest_sha256 != anchor.source_manifest_sha256
             ):
                 raise _failure(
                     OperationalErrorCode.ANCHOR_CONFLICT,
@@ -2378,8 +2387,7 @@ class OperationLedgerV2:
             )
         if (
             applied_marker_bytes is not None
-            and value["applied_marker_sha256"]
-            != hashlib.sha256(applied_marker_bytes).hexdigest()
+            and value["applied_marker_sha256"] != hashlib.sha256(applied_marker_bytes).hexdigest()
         ):
             raise _failure(
                 OperationalErrorCode.STORAGE_UNAVAILABLE,
@@ -2485,9 +2493,7 @@ class OperationLedgerV2:
                             manifest_sha256=manifest_sha256,
                             expected_phase="committed",
                         )
-                    applied_for_receipt = self._optional_bytes(
-                        transaction_root / "APPLIED.json"
-                    )
+                    applied_for_receipt = self._optional_bytes(transaction_root / "APPLIED.json")
                     if applied_for_receipt is not None:
                         self._validate_transaction_marker(
                             transaction_root / "APPLIED.json",
@@ -3032,6 +3038,11 @@ class OperationLedgerV2:
                 else self.device_id
             )
             self._validate_safe_id(origin, "origin device")
+            if command.actor.device_id != origin:
+                raise _failure(
+                    OperationalErrorCode.INVALID_EVENT,
+                    "operational command actor device differs from event origin",
+                )
             anchor_path = self._anchor_path(origin)
             if self._exists(anchor_path):
                 anchor = self._read_anchor_with_checkpoint(origin)[0]
@@ -3271,6 +3282,11 @@ class OperationLedgerV2:
                     f"duplicate origin bundle: {origin}",
                 )
             seen.add(origin)
+            if any(event.visibility == "local_only" for event in bundle.events):
+                raise _failure(
+                    OperationalErrorCode.INVALID_EVENT,
+                    "federated bundle contains a local-only event",
+                )
             new_events, replayed = self._validate_bundle_against_existing(bundle)
             anchor_path = self._anchor_path(origin)
             anchor_is_new = not self._exists(anchor_path)
@@ -3710,14 +3726,34 @@ class OperationLedgerV2:
             for origin in selected:
                 anchor, checkpoint = self._read_anchor_with_checkpoint(origin)
                 events = tuple(self._read_events_chain(origin, anchor))
-                position = self._load_position(origin, anchor, repair=False)
+                self._load_position(origin, anchor, repair=False)
+                first_private = next(
+                    (
+                        index
+                        for index, event in enumerate(events)
+                        if event.visibility == "local_only"
+                    ),
+                    len(events),
+                )
+                private_tail = events[first_private:]
+                if any(event.visibility != "local_only" for event in private_tail):
+                    raise _failure(
+                        OperationalErrorCode.INVALID_EVENT,
+                        (
+                            "replicated event follows a local-only chain boundary; "
+                            "refusing to leak or publish an unverifiable bundle"
+                        ),
+                    )
+                events = events[:first_private]
+                head_sequence = events[-1].origin_sequence if events else anchor.base_sequence
+                head_hash = events[-1].event_hash if events else anchor.base_event_hash
                 bundles.append(
                     OriginBundle(
                         anchor=anchor,
                         checkpoint=checkpoint,
                         events=events,
-                        head_sequence=position.sequence,
-                        head_hash=position.event_hash,
+                        head_sequence=head_sequence,
+                        head_hash=head_hash,
                     )
                 )
             return tuple(bundles)

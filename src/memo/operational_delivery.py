@@ -29,9 +29,7 @@ ContextFactory = Callable[[PrincipalIdentity], CommitContext]
 _TERMINAL = frozenset({"acknowledged", "expired"})
 _ALLOWED = {
     "pending": frozenset({"reserved", "acknowledged", "expired"}),
-    "reserved": frozenset(
-        {"presented", "acknowledged", "known_failed", "uncertain", "expired"}
-    ),
+    "reserved": frozenset({"presented", "acknowledged", "known_failed", "uncertain", "expired"}),
     "presented": frozenset({"acknowledged", "expired"}),
     "known_failed": frozenset({"reserved", "expired"}),
     "uncertain": frozenset({"presented", "known_failed", "expired"}),
@@ -75,6 +73,15 @@ def _clock_key(value: str) -> tuple[int, int, str]:
         return int(first), int(second), origin
     except (TypeError, ValueError) as exc:
         raise ValueError("logical_clock must be '<counter>-<subcounter>-<origin>'") from exc
+
+
+def _is_recipient(identity: PrincipalIdentity, target_id: str) -> bool:
+    return target_id in {identity.actor_id, identity.principal_id}
+
+
+def _event_actor_is_recipient(event: object, target_id: str) -> bool:
+    actor = getattr(event, "actor", None)
+    return isinstance(actor, PrincipalIdentity) and _is_recipient(actor, target_id)
 
 
 @dataclass(frozen=True)
@@ -166,7 +173,7 @@ class DeliveryService:
                 project=project or "_global",
                 workspace="",
                 expires_at=None,
-                visibility=Visibility.LOCAL_ONLY.value,
+                visibility=Visibility.SHARED.value,
                 idempotency_key=key,
                 caused_by=caused_by,
                 subject_uri=subject_uri,
@@ -221,8 +228,17 @@ class DeliveryService:
             current = rows.get(key)
             if current is None:
                 continue
+            if (
+                str(payload["message_id"]) != current.message_id
+                or str(payload["target_id"]) != current.target_id
+                or not _event_actor_is_recipient(event, current.target_id)
+            ):
+                continue
             if event.event_type == DELIVERY_ACK_RECORDED:
                 if current.state == "expired":
+                    continue
+                actor = event.actor
+                if str(payload["ack_actor_id"]) != actor.actor_id:
                     continue
                 rows[key] = replace(
                     current,
@@ -265,7 +281,9 @@ class DeliveryService:
                 next_attempt_at=next_attempt,
                 last_error_code=str(payload["error_code"]) or None,
             )
-        selected = [row for row in rows.values() if message_id is None or row.message_id == message_id]
+        selected = [
+            row for row in rows.values() if message_id is None or row.message_id == message_id
+        ]
         return sorted(selected, key=lambda row: (row.message_event_id, row.target_id))
 
     def status(self, delivery_id: str) -> DeliveryView:
@@ -286,6 +304,8 @@ class DeliveryService:
         at: datetime | None = None,
     ) -> DeliveryView:
         current = self.status(delivery_id)
+        if not _is_recipient(identity, current.target_id):
+            raise _invalid("delivery recipient differs from authenticated actor")
         if state not in _ALLOWED.get(current.state, frozenset()):
             if current.state == state:
                 return current
@@ -330,6 +350,8 @@ class DeliveryService:
         for row in self.deliveries():
             if len(reserved) >= limit:
                 break
+            if not _is_recipient(identity, row.target_id):
+                continue
             if row.deadline_at and _parse_time(row.deadline_at) <= current_time:
                 self.transition(
                     identity=identity,
@@ -366,7 +388,7 @@ class DeliveryService:
         candidates = [
             item
             for item in self.deliveries(message_id=message_id)
-            if item.target_id in {identity.actor_id, identity.principal_id}
+            if _is_recipient(identity, item.target_id)
         ]
         if len(candidates) != 1:
             raise _invalid("delivery ACK target differs from authenticated actor")
@@ -428,9 +450,7 @@ class DeliveryService:
     ) -> CursorView:
         key = (identity.principal_id, channel)
         current = self.cursors().get(key)
-        if current is not None and _clock_key(logical_clock) <= _clock_key(
-            current.logical_clock
-        ):
+        if current is not None and _clock_key(logical_clock) <= _clock_key(current.logical_clock):
             if current.logical_clock == logical_clock and current.event_id == event_id:
                 return current
             raise _invalid("delivery cursor cannot regress")
@@ -459,7 +479,9 @@ class DeliveryService:
         ]
         if cursor is None:
             return len(rows)
-        seen = next((index for index, event in enumerate(rows) if event.event_id == cursor.event_id), -1)
+        seen = next(
+            (index for index, event in enumerate(rows) if event.event_id == cursor.event_id), -1
+        )
         return len(rows) if seen < 0 else len(rows) - seen - 1
 
 

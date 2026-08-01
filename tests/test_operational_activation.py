@@ -5,6 +5,7 @@ import json
 import pytest
 
 from memo.config import Config
+from memo.contradict import emit_anomaly
 from memo.errors import OperationalError
 from memo.memory import Memory
 from memo.operational_activation import (
@@ -43,6 +44,30 @@ def test_fresh_v2_activation_roundtrips_public_operational_state(tmp_path) -> No
     reopened = open_activated_operational_v2(cfg, authority=authority)
     assert reopened.backend_version == 2
     assert reopened.state()["focus"]["memo"]["summary"] == "Memo-only coordination"
+
+
+def test_v2_anomaly_uses_canonical_signed_conflict_lifecycle(tmp_path) -> None:
+    cfg = _config(tmp_path)
+    authority = build_test_fresh_v2_authority(
+        cfg.operational_root,
+        device_id=cfg.device_id,
+    ).runtime_authority()
+    store = activate_fresh_operational_v2(cfg, authority=authority)
+
+    anomaly_id = emit_anomaly(
+        "a" * 32,
+        "b" * 32,
+        "contradiction",
+        0.94,
+        "open",
+        operational=store,
+    )
+
+    assert anomaly_id is not None
+    conflict = store.state()["conflicts"][anomaly_id]
+    assert conflict["lifecycle_state"] == "detected"
+    assert conflict["metadata"]["memory_ids"] == ["a" * 32, "b" * 32]
+    assert store.ledger.verify()["ok"] is True
 
 
 def test_activation_stamp_tamper_fails_closed_before_open(tmp_path) -> None:
@@ -113,6 +138,18 @@ def test_selector_keeps_authorized_existing_v1_migration_backend(tmp_path) -> No
     store = select_operational_store(cfg.model_copy(update={"operational_context_provider": lambda: None}))
 
     assert store.backend_version == 1
+
+
+def test_selector_can_disable_only_implicit_fresh_v2_activation(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _config(tmp_path)
+    monkeypatch.setenv("MEMO_OPERATIONAL_V2_AUTO_ACTIVATE", "0")
+
+    store = select_operational_store(cfg)
+
+    assert store.backend_version == 1
+    assert not cfg.operational_root.exists()
 
 
 def test_memory_facade_selects_verified_v2_backend(tmp_path) -> None:

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import gc
 import sqlite3
+import warnings
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -102,7 +105,7 @@ def test_schema_creation_is_idempotent_and_rejects_unknown_version(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "operational.db"
-    with connect_operational_db(path) as connection:
+    with closing(connect_operational_db(path)) as connection:
         ensure_operational_schema(connection)
         ensure_operational_schema(connection)
         connection.execute("UPDATE view_meta SET value = '999' WHERE key = 'schema_version'")
@@ -111,13 +114,57 @@ def test_schema_creation_is_idempotent_and_rejects_unknown_version(
             ensure_operational_schema(connection)
 
 
+def test_connect_closes_connection_when_pragma_configuration_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_connect = sqlite3.connect
+    closed: list[bool] = []
+    created: list[sqlite3.Connection] = []
+
+    class FailingPragmaConnection(sqlite3.Connection):
+        def execute(
+            self,
+            sql: str,
+            parameters: tuple[object, ...] = (),
+        ) -> sqlite3.Cursor:
+            if sql == "PRAGMA busy_timeout = 30000":
+                raise sqlite3.OperationalError("injected PRAGMA failure")
+            return super().execute(sql, parameters)
+
+        def close(self) -> None:
+            closed.append(True)
+            super().close()
+
+    def failing_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        connection = real_connect(
+            *args,
+            **kwargs,
+            factory=FailingPragmaConnection,
+        )
+        created.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", failing_connect)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        with pytest.raises(sqlite3.OperationalError, match="injected PRAGMA failure"):
+            connect_operational_db(tmp_path / "operational.db")
+
+        assert closed == [True]
+        created.clear()
+        gc.collect()
+
+    assert not [warning for warning in caught if warning.category is ResourceWarning]
+
+
 def test_v1_schema_upgrade_requires_rebuild_and_keeps_local_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "operational.db"
     event = _event(1, FOCUS_SET, {"project": "demo", "summary": "restored"})
-    with connect_operational_db(path) as connection:
+    with closing(connect_operational_db(path)) as connection:
         connection.executescript(
             """
             CREATE TABLE view_meta (
@@ -212,7 +259,7 @@ def test_v1_schema_upgrade_requires_rebuild_and_keeps_local_artifacts(
 
     assert store.state()["focus"]["demo"]["summary"] == "restored"
     assert store.session_local_artifacts("session-a") == {"cwd": "/private/demo"}
-    with connect_operational_db(path) as connection:
+    with closing(connect_operational_db(path)) as connection:
         version = connection.execute(
             "SELECT value FROM view_meta WHERE key = 'schema_version'"
         ).fetchone()
@@ -262,7 +309,7 @@ def test_reducer_failure_rolls_back_event_cursor_domain_and_idempotency(
     with pytest.raises(RuntimeError, match="reducer exploded"):
         store.apply_events((event,))
 
-    with connect_operational_db(store.path) as connection:
+    with closing(connect_operational_db(store.path)) as connection:
         assert connection.execute("SELECT COUNT(*) FROM applied_events").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM origin_cursors").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM focus").fetchone()[0] == 0
@@ -734,7 +781,7 @@ def test_unsupported_event_is_quarantined_without_partial_reduction(tmp_path: Pa
 
     assert report.applied == 0
     assert report.quarantined == 1
-    with connect_operational_db(store.path) as connection:
+    with closing(connect_operational_db(store.path)) as connection:
         assert connection.execute("SELECT COUNT(*) FROM quarantined_events").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM applied_events").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM origin_cursors").fetchone()[0] == 0
@@ -771,7 +818,7 @@ def test_unsupported_event_blocks_later_origin_events_until_reducer_exists(
 
     assert recovered.applied == 2
     assert store.state()["focus"]["demo"]["summary"] == "must wait"
-    with connect_operational_db(store.path) as connection:
+    with closing(connect_operational_db(store.path)) as connection:
         assert connection.execute("SELECT COUNT(*) FROM quarantined_events").fetchone()[0] == 0
 
 
@@ -791,7 +838,7 @@ def test_durable_completion_without_intent_rolls_back(tmp_path: Path) -> None:
     with pytest.raises(OperationalError, match="no intent"):
         store.apply_events((completion,))
 
-    with connect_operational_db(store.path) as connection:
+    with closing(connect_operational_db(store.path)) as connection:
         assert connection.execute("SELECT COUNT(*) FROM applied_events").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM durable_outbox").fetchone()[0] == 0
 

@@ -44,7 +44,7 @@ agent-memory projects. For the complete live flag registry, run
   wording of past local transcript turns through a private, lexical-only FTS5
   index that never enters ambient recall.
 - **Fewer tokens, not more.** Recall injects the relevant answer on a bounded
-  budget, and the default MCP surface exposes 38 tools instead of the full 159.
+  budget, and the default MCP surface exposes 49 tools instead of the full 170.
 
 ---
 
@@ -248,12 +248,12 @@ Released wheels include the Claude/Codex/Devin agent assets, so a normal
 checkout, pass `--repo /path/to/memo` to test uncommitted plugin changes.
 
 Tools surface inside the agent as `mcp__memo__memo_*`. Agent installs default to
-a 38-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
+a 49-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
 `search`, `unified_briefing`, `version`, lifecycle, session/capture
 notifications, and Memo-native evidence, operational-continuity, and
-outcome-learning helpers) so
+outcome-learning and signed terminal-mesh helpers) so
 administrative schemas don't consume model context — set
-`MEMO_MCP_PROFILE=core`/`slim` (55 tools) or `full`/`default` (159 tools) only
+`MEMO_MCP_PROFILE=core`/`slim` (66 tools) or `full`/`default` (170 tools) only
 for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
@@ -389,9 +389,9 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 
 | Profile | Tool count | Schema tokens | Use |
 |---|---:|---:|---|
-| `agent` (default) | 38 | ~3.8k | Essential memory, evidence, continuity, lifecycle, and outcome-learning surface. |
-| `core` / `slim` | 55 | ~5.0k | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
-| `full` / `default` | 159 | ~18k | Every advanced domain module and diagnostic tool. |
+| `agent` (default) | 49 | ~7k | Essential memory, evidence, continuity, signed terminal mesh, lifecycle, signals, and outcome-learning surface. |
+| `core` / `slim` | 66 | ~8.2k | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
+| `full` / `default` | 170 | ~21k | Every advanced domain module and diagnostic tool. |
 
 Mutating MCP calls pass through a bounded process-local FIFO by default
 (`MEMO_MCP_WRITE_QUEUE_SIZE=32`); read-only calls bypass it. The
@@ -406,17 +406,21 @@ metadata. Use the full profile's `mem_relation_reviews`, `mem_judge`, and
 `MEMO_RELATION_CANDIDATES_ENABLED=0` and
 `MEMO_RELATION_ANNOTATIONS_ENABLED=0` flags remain rollback controls.
 
-The default `agent` profile exposes exactly 38 tools:
+The default `agent` profile exposes exactly 49 tools:
 
 `memo_ask`, `memo_attention_ack`, `memo_attention_add`, `memo_conflict_open`,
 `memo_conflict_resolve`, `memo_context`, `memo_delete`, `memo_evidence_pack`,
 `memo_federation_preview`, `memo_focus_clear`, `memo_focus_set`, `memo_get`,
 `memo_graph`, `memo_handoff_consume`, `memo_handoff_create`,
 `memo_history`, `memo_idle_capture`, `memo_invalidate`, `memo_journal_verify`,
-`memo_mark_reviewed`, `memo_offload`, `memo_operational_state`,
+`memo_mark_reviewed`, `memo_mesh_delivery_ack`, `memo_mesh_delivery_reserve`,
+`memo_mesh_message_list`, `memo_mesh_message_send`, `memo_mesh_presence_announce`,
+`memo_mesh_presence_list`, `memo_mesh_status`, `memo_mesh_sync_ingest`,
+`memo_mesh_sync_publish`, `memo_offload`, `memo_operational_state`,
 `memo_outcome_record`, `memo_pop_notification`, `memo_procedure_candidates`,
 `memo_procedure_promote`, `memo_profile`, `memo_rename`, `memo_review_due`,
-`memo_save`, `memo_save_text`, `memo_search`, `memo_start_session`,
+`memo_save`, `memo_save_text`, `memo_search`, `memo_signal_list`,
+`memo_signal_remember`, `memo_start_session`,
 `memo_supersede`, `memo_unified_briefing`, `memo_update`, `memo_version`,
 `memo_write_queue_status`.
 
@@ -1162,7 +1166,7 @@ plaintext disclosure operations.
 `idle-daemon`
 
 **Other:** `backend-native` `collaborative` `feedback` `query` `mandate`
-`drift` `sleep-cycle` `operational` `ocr-image` `provenance` `secret`
+`drift` `sleep-cycle` `operational` `mesh` `ocr-image` `provenance` `secret`
 `verbatim` `mcp-command` `codex-badge` `debug-recall` `http-api` `mine-git`
 `token-gate` `fix` `undo` `code-facts` `code-nudge` `code-health`
 
@@ -1330,8 +1334,8 @@ read-only, `$EDITOR`, and backup restore paths.
 
 ### Token economy
 
-The default MCP profile exposes 38 tools (~3.8k schema tokens), compared with
-159 tools (~18k) on the full profile. The bundled Claude Code recall hook also
+The default MCP profile exposes 49 tools (~7k schema tokens), compared with
+170 tools (~21k) on the full profile. The bundled Claude Code recall hook also
 pins `MEMO_RECALL_TOP_K=1` and `MEMO_RECALL_TOKEN_BUDGET=160`; the general
 runtime default remains 600 tokens for clients that do not use that hook.
 
@@ -1571,6 +1575,15 @@ and signed federation. None of these surfaces imports or launches another
 memory product or a private contract package.
 
 - Every operational mutation enters a tamper-evident, hash-chained journal.
+- `memo mesh` and the default-profile `memo_mesh_*` MCP tools expose directed
+  messages, delivery reservation/ACK, presence, and signed Git sync. Every
+  command receives an explicit local clone path and a local actor identity;
+  v1 or missing authority fails closed. `--remote` binds that clone to the
+  cross-device Git rendezvous when each terminal has isolated local state.
+  Directed recipients use the device-qualified `device:session` principal;
+  `:` is reserved and therefore rejected in caller-supplied actor ids.
+- `memo events` and `memo chat-session` are local diagnostic stores. They do
+  not claim cross-terminal delivery and are never a substitute for `memo mesh`.
 - `memo evidence "<question>"` returns a bounded `EvidencePack` or explicitly
   abstains when support is insufficient.
 - `memo operational outcome record` connects task results to the memories used;

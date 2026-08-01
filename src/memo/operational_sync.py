@@ -92,6 +92,7 @@ class OperationalSync:
         )
 
     def ingest(self) -> SyncResult:
+        self.transport.refresh(required=False)
         local_bundles = {
             item.anchor.origin_device: item for item in self.store.export_bundles()
         }
@@ -145,6 +146,7 @@ class OperationalSync:
         )
 
     def status(self) -> OperationalSyncStatus:
+        self.transport.refresh(required=False)
         local = self._local_heads()
         remote = self._remote_heads()
         pending = sum(max(0, sequence - local.get(origin, 0)) for origin, sequence in remote.items())

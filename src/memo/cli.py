@@ -60,8 +60,8 @@ from memo.cli_dream import dream_cmd
 from memo.cli_drift import drift as drift_cmd
 from memo.cli_embed_daemon import embed_daemon_group
 from memo.cli_entities import entities, entity, extract_entities
-from memo.cli_events import events_group
 from memo.cli_eval import eval_group
+from memo.cli_events import events_group
 from memo.cli_export import export_group
 from memo.cli_federation import federation_group
 from memo.cli_feedback import feedback_group
@@ -101,6 +101,7 @@ from memo.cli_memory import (
     undo,
     update,
 )
+from memo.cli_mesh import mesh_group
 from memo.cli_onboard import onboard
 from memo.cli_operational import evidence_cmd, migrate_independence_cmd, operational_group
 from memo.cli_ops import ops_group
@@ -497,6 +498,7 @@ cli.add_command(definitive_group)
 cli.add_command(federation_group)
 cli.add_command(migrate_independence_cmd)
 cli.add_command(operational_group)
+cli.add_command(mesh_group)
 cli.add_command(feedback_group)
 cli.add_command(repo_group)
 cli.add_command(recall_daemon_group)

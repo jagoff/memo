@@ -113,7 +113,7 @@
   <!-- ====================== TOKEN ECONOMY BANNER ====================== -->
   <rect x="40" y="572" width="848" height="104" rx="12" fill="#0f172a"/>
   <text x="64" y="606" font-size="13" font-weight="700" fill="#e2e8f0" letter-spacing="0.06em" style="text-transform:uppercase">Token economy</text>
-  <text x="64" y="636" font-size="15" font-weight="600" fill="#ffffff">Default MCP surface: 30 tools · ~3k tokens   vs   full 158 tools · ~18k tokens</text>
+  <text x="64" y="636" font-size="15" font-weight="600" fill="#ffffff">Default MCP surface: 49 tools · ~7k tokens   vs   full 170 tools · ~21k tokens</text>
   <text x="64" y="660" font-size="13" fill="#94a3b8">≈ 90% less schema context per session · recall injects the answer the agent would otherwise re-derive (~160-token budget).</text>
   <text x="788" y="636" font-size="34" font-weight="800" fill="#38bdf8" text-anchor="middle">90%</text>
   <text x="788" y="658" font-size="11" fill="#94a3b8" text-anchor="middle">less context overhead</text>

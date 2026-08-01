@@ -57,6 +57,7 @@ from memo import server_idle_capture as _srv_idle_capture
 from memo import server_import_export as _srv_import_export
 from memo import server_lifecycle as _srv_lifecycle
 from memo import server_links as _srv_links
+from memo import server_mesh as _srv_mesh
 from memo import server_multimodal as _srv_multimodal
 from memo import server_offload as _srv_offload
 from memo import server_operational as _srv_operational
@@ -285,7 +286,7 @@ def _build_server(
     # Stable and advanced domain tool modules register their @server.tool()
     # closures here. Presence on the MCP surface does not by itself mean a
     # feature is part of memo's stable core contract; see experimental_index.md.
-    # Skip when MEMO_MCP_SLIM=1 — reduces 158 tools to the 50-tool core surface
+    # Skip when MEMO_MCP_SLIM=1 — reduces 170 tools to the 66-tool core surface
     # for local/constrained LLMs where tool-definition tokens are expensive.
     from memo.surface import mcp_include_advanced_tools
 
@@ -344,6 +345,7 @@ def _build_server(
     _srv_core_history.register(server, memory)
     _srv_idle_capture.register(server, memory)
     _srv_operational.register(server, memory)
+    _srv_mesh.register(server, memory)
     _srv_resources.register(server, memory)
     _srv_profile.register(server, memory)
     _srv_prompts.register(server, memory)

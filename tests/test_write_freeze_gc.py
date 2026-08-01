@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from memo.operational import OperationalStore
 from memo.write_policy import WritePolicyEngine
+from tests.operational_authority import build_authorized_legacy_store
 
 # Two real-looking memory ids that a contradiction was detected between.
 MEM_A = "4bb2ff4e756b4f35a94e989b7b1e8efb"
@@ -25,10 +26,8 @@ SUMMARY = f"memo contradiction between memories {MEM_A[:12]} and {MEM_B[:12]}"
 
 def _open_semantic_conflict(store: OperationalStore, *, a: str = MEM_A, b: str = MEM_B) -> str:
     anomaly_id = "anomaly-test-0001"
-    store.ledger.append(
-        "anomaly.record",
-        subject_uri=f"memo://anomaly/{anomaly_id}",
-        payload={
+    store.record_anomaly(
+        {
             "anomaly_id": anomaly_id,
             "kind": "semantic_contradiction",
             "state": "detected",
@@ -38,14 +37,14 @@ def _open_semantic_conflict(store: OperationalStore, *, a: str = MEM_A, b: str =
             "relationship": "contradiction",
             "evidence_uris": [f"memo://memoria/{a}", f"memo://memoria/{b}"],
             "created_at": "2026-07-25T18:28:41+00:00",
-        },
+        }
     )
     store.state()  # materialize the projection
     return anomaly_id
 
 
 def test_semantic_conflict_does_not_freeze_unrelated_prose_writes(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = build_authorized_legacy_store(tmp_path, device_id="device-a")
     _open_semantic_conflict(store)
 
     # These exact titles froze during the QA run because their tokens are
@@ -60,7 +59,7 @@ def test_semantic_conflict_does_not_freeze_unrelated_prose_writes(tmp_path):
 
 
 def test_semantic_conflict_still_matches_by_member_id(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = build_authorized_legacy_store(tmp_path, device_id="device-a")
     _open_semantic_conflict(store)
 
     # A write/update that actually references a subject memory id still matches.
@@ -70,7 +69,7 @@ def test_semantic_conflict_still_matches_by_member_id(tmp_path):
 
 
 def test_topic_scoped_conflict_still_freezes_matching_topic(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = build_authorized_legacy_store(tmp_path, device_id="device-a")
     store.open_conflict(
         topic="billing architecture",
         summary="Two incompatible billing designs are active",
@@ -84,7 +83,7 @@ def test_topic_scoped_conflict_still_freezes_matching_topic(tmp_path):
 
 
 def test_gc_conflicts_for_memory_resolves_orphan(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = build_authorized_legacy_store(tmp_path, device_id="device-a")
     _open_semantic_conflict(store)
     assert len(store.active_conflicts(f"touch {MEM_A}")) == 1
 
@@ -97,7 +96,7 @@ def test_gc_conflicts_for_memory_resolves_orphan(tmp_path):
 
 
 def test_write_policy_allows_prose_write_when_only_semantic_conflict_exists(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = build_authorized_legacy_store(tmp_path, device_id="device-a")
     _open_semantic_conflict(store)
     engine = WritePolicyEngine(store)
 

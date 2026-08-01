@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
+from tempfile import mkdtemp
+from typing import TYPE_CHECKING
 
 from memo.identity import PrincipalIdentity
 from memo.operational_epoch import CommitContext, EpochFence
@@ -20,6 +22,10 @@ from memo.operational_key_store import (
 )
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner, OperationalVerifier
+
+if TYPE_CHECKING:
+    from memo.config import Config
+    from memo.operational import OperationalStore
 
 
 @dataclass(frozen=True)
@@ -151,3 +157,40 @@ def build_test_operational_authority(
         request_control_oid=authorization.control_oid,
     )
     return TestOperationalAuthority(fence=fence, context=context)
+
+
+def authorize_test_config(cfg: Config) -> Config:
+    """Compose a real in-memory authority into one isolated test Config."""
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    # A reopened Memory may intentionally reuse its application state. Private
+    # test keys are in-memory, so each composition needs its own authority root
+    # while the operational journal itself remains shared.
+    authority_root = Path(
+        mkdtemp(prefix="memo-test-operational-authority-", dir=cfg.state_dir)
+    )
+    authority = build_test_operational_authority(
+        authority_root,
+        device_id=cfg.device_id,
+    )
+    return cfg.model_copy(
+        update={
+            "operational_context_provider": authority.context_provider,
+            "operational_epoch_fence": authority.fence,
+        }
+    )
+
+
+def build_authorized_legacy_store(root: Path, *, device_id: str) -> OperationalStore:
+    """Build a v1 store whose writes traverse a real authenticated fence."""
+    from memo.operational import OperationalStore
+
+    authority = build_test_operational_authority(
+        Path(root) / "test-operational-authority",
+        device_id=device_id,
+    )
+    return OperationalStore(
+        root,
+        device_id=device_id,
+        context_provider=authority.context_provider,
+        epoch_fence=authority.fence,
+    )

@@ -10,6 +10,7 @@ from memo.errors import StorageError
 from memo.identity import normalized_content_hash
 from memo.memory import Memory
 from memo.store import VecStore
+from tests.operational_authority import authorize_test_config
 
 
 def _index_snapshot(mem: Memory, ids: list[str]) -> dict[str, tuple[dict, object, str]]:
@@ -335,14 +336,16 @@ def test_reindex_rebuild_migrates_vector_dimensions_and_model_identity(
     (data_dir / "memory.md").write_text(frontmatter.dumps(post), encoding="utf-8")
 
     monkeypatch.setenv("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
-    cfg = Config(
-        data_dir=data_dir,
-        state_dir=state_dir,
-        embedder_backend="mlx",
-        embedder_model="vendor/new-model",
-        embedder_revision="a" * 40,
-        embedder_dims=5,
-        reranker_enabled=False,
+    cfg = authorize_test_config(
+        Config(
+            data_dir=data_dir,
+            state_dir=state_dir,
+            embedder_backend="mlx",
+            embedder_model="vendor/new-model",
+            embedder_revision="a" * 40,
+            embedder_dims=5,
+            reranker_enabled=False,
+        )
     )
     memory = Memory(cfg)
     memory.embedder.embed = lambda inputs: [  # type: ignore[method-assign]
@@ -488,14 +491,16 @@ def test_reindex_rebuild_upgrades_legacy_st_index_identity(
         updated="2026-01-01T00:00:00+00:00",
     )
     (data_dir / "legacy.md").write_text(frontmatter.dumps(post), encoding="utf-8")
-    cfg = Config(
-        data_dir=data_dir,
-        state_dir=state_dir,
-        embedder_backend="st",
-        st_embedder_model="Qwen/Qwen3-Embedding-0.6B",
-        st_embedder_revision="b" * 40,
-        embedder_dims=4,
-        reranker_enabled=False,
+    cfg = authorize_test_config(
+        Config(
+            data_dir=data_dir,
+            state_dir=state_dir,
+            embedder_backend="st",
+            st_embedder_model="Qwen/Qwen3-Embedding-0.6B",
+            st_embedder_revision="b" * 40,
+            embedder_dims=4,
+            reranker_enabled=False,
+        )
     )
 
     monkeypatch.setenv("MEMO_SKIP_MODEL_VERSION_CHECK", "1")

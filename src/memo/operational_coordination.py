@@ -38,9 +38,7 @@ def _now(clock: Callable[[], datetime]) -> str:
 
 
 def _stable_id(kind: str, identity: PrincipalIdentity, key: str) -> str:
-    digest = hashlib.sha256(
-        f"{kind}\0{identity.principal_id}\0{key}".encode()
-    ).hexdigest()
+    digest = hashlib.sha256(f"{kind}\0{identity.principal_id}\0{key}".encode()).hexdigest()
     return f"{kind}-{digest[:24]}"
 
 
@@ -142,7 +140,7 @@ class CoordinationService:
                 project=project or "_global",
                 workspace="",
                 expires_at=expires_at,
-                visibility=Visibility.LOCAL_ONLY.value,
+                visibility=Visibility.SHARED.value,
                 idempotency_key=key,
                 caused_by=caused_by,
                 subject_uri=subject_uri,
@@ -316,7 +314,9 @@ class CoordinationService:
                 )
             elif event.event_type == TOPIC_TERMINATED:
                 name = str(payload["channel"])
-                current = rows.get(name, ChannelView(name, str(payload["topic"]), "open", None, None))
+                current = rows.get(
+                    name, ChannelView(name, str(payload["topic"]), "open", None, None)
+                )
                 rows[name] = replace(
                     current,
                     status="terminated",
@@ -585,17 +585,47 @@ class CoordinationService:
         )
         return self.tasks()[task_id]
 
-    def assign_task(self, *, identity: PrincipalIdentity, task_id: str, assignee_id: str, idempotency_key: str) -> TaskView:
-        return self._task_transition(identity=identity, task_id=task_id, event_type=TASK_ASSIGNED, value=assignee_id, idempotency_key=idempotency_key)
+    def assign_task(
+        self, *, identity: PrincipalIdentity, task_id: str, assignee_id: str, idempotency_key: str
+    ) -> TaskView:
+        return self._task_transition(
+            identity=identity,
+            task_id=task_id,
+            event_type=TASK_ASSIGNED,
+            value=assignee_id,
+            idempotency_key=idempotency_key,
+        )
 
-    def complete_task(self, *, identity: PrincipalIdentity, task_id: str, result: str, idempotency_key: str) -> TaskView:
-        return self._task_transition(identity=identity, task_id=task_id, event_type=TASK_COMPLETED, value=result, idempotency_key=idempotency_key)
+    def complete_task(
+        self, *, identity: PrincipalIdentity, task_id: str, result: str, idempotency_key: str
+    ) -> TaskView:
+        return self._task_transition(
+            identity=identity,
+            task_id=task_id,
+            event_type=TASK_COMPLETED,
+            value=result,
+            idempotency_key=idempotency_key,
+        )
 
-    def cancel_task(self, *, identity: PrincipalIdentity, task_id: str, idempotency_key: str) -> TaskView:
-        return self._task_transition(identity=identity, task_id=task_id, event_type=TASK_CANCELLED, idempotency_key=idempotency_key)
+    def cancel_task(
+        self, *, identity: PrincipalIdentity, task_id: str, idempotency_key: str
+    ) -> TaskView:
+        return self._task_transition(
+            identity=identity,
+            task_id=task_id,
+            event_type=TASK_CANCELLED,
+            idempotency_key=idempotency_key,
+        )
 
-    def expire_task(self, *, identity: PrincipalIdentity, task_id: str, idempotency_key: str) -> TaskView:
-        return self._task_transition(identity=identity, task_id=task_id, event_type=TASK_EXPIRED, idempotency_key=idempotency_key)
+    def expire_task(
+        self, *, identity: PrincipalIdentity, task_id: str, idempotency_key: str
+    ) -> TaskView:
+        return self._task_transition(
+            identity=identity,
+            task_id=task_id,
+            event_type=TASK_EXPIRED,
+            idempotency_key=idempotency_key,
+        )
 
 
 __all__ = [

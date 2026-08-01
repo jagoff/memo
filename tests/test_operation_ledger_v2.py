@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import threading
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -565,7 +566,14 @@ def _fork_process_loss(
 ) -> None:
     if not hasattr(os, "fork"):
         pytest.skip("process-loss regression requires os.fork")
-    pid = os.fork()
+    # Python 3.14 warns whenever fork happens after any process thread exists.
+    # This helper deliberately tests abrupt process loss at exact in-memory
+    # failure hooks that cannot be represented by a fresh spawn interpreter.
+    # Keep the exception local to this test boundary and never use fork in the
+    # Memo runtime itself.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        pid = os.fork()
     if pid == 0:
         try:
             operation()
@@ -628,10 +636,13 @@ def test_roster_and_epoch_reads_reuse_retained_authority_after_path_swap(
         root.rename(retained_path)
         root.symlink_to(outside, target_is_directory=True)
 
-        assert VerificationRoster.load(
-            root,
-            pin_store=authority.pin_store,
-        ) == authority.roster
+        assert (
+            VerificationRoster.load(
+                root,
+                pin_store=authority.pin_store,
+            )
+            == authority.roster
+        )
         context = authority.context()
         authority.fence.verify(context)
 
@@ -1702,6 +1713,149 @@ def test_bundle_import_validates_signatures_continuity_and_exact_replay(
     assert ledger.verify().ok is True
 
 
+@pytest.mark.parametrize("attack", ("actor-origin", "foreign-key"))
+def test_import_binds_event_actor_and_signing_key_to_origin(
+    tmp_path: Path,
+    attack: str,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    incoming = _bundle(authority, origin="device-a", sequences=(1,))
+    original = incoming.events[0]
+    if attack == "actor-origin":
+        changed = _resign_event(
+            authority,
+            original,
+            actor=_identity("device-b"),
+        )
+    else:
+        changed = _resign_event(
+            authority,
+            original,
+            key_id=_key_for(authority, "device-b").key_id,
+        )
+    attacked = replace(
+        incoming,
+        events=(changed,),
+        head_sequence=changed.origin_sequence,
+        head_hash=changed.event_hash,
+    )
+    ledger = _ledger(tmp_path / "operational", authority)
+
+    with pytest.raises(OperationalError, match=r"actor|origin|key|authority"):
+        ledger.import_bundles((attacked,), context=authority.context())
+
+    assert ledger.positions() == ()
+
+
+def test_append_rejects_migration_origin_that_differs_from_actor_device(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-a",
+        remote_devices=("device-b",),
+    )
+    attestor = _add_attestor(authority)
+    migration = _signed_migration_origin(
+        authority,
+        attestor=attestor,
+        migration_device="device-b",
+        source_manifest="a" * 64,
+        proof_root="b" * 64,
+        proof_count=1,
+    )
+    ledger = _ledger(tmp_path / "operational", authority)
+
+    with pytest.raises(OperationalError, match="actor device differs"):
+        ledger.append(
+            _command(),
+            context=replace(authority.context(), migration_origin=migration),
+        )
+
+    assert ledger.positions() == ()
+
+
+def test_export_never_contains_local_only_tail_but_shared_prefix_imports(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-a",
+        remote_devices=("device-b",),
+    )
+    source = _ledger(tmp_path / "source", authority)
+    source.ensure_anchor()
+    shared = source.append(
+        replace(_command(idempotency_key="shared"), visibility="shared"),
+        context=authority.context(),
+    )
+    source.append(
+        replace(_command(idempotency_key="private"), visibility="local_only"),
+        context=authority.context(),
+    )
+
+    exported = source.export_bundles(origins=("device-a",))
+
+    assert len(exported) == 1
+    assert exported[0].events == (shared,)
+    assert exported[0].head_sequence == shared.origin_sequence
+    assert all(event.visibility != "local_only" for event in exported[0].events)
+    peer = _ledger(tmp_path / "peer", authority)
+    report = peer.import_bundles(exported, context=authority.context())
+    assert report.events_inserted == 1
+
+
+def test_export_fails_closed_if_shared_event_follows_local_only_boundary(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(tmp_path / "authority")
+    source = _ledger(tmp_path / "source", authority)
+    source.ensure_anchor()
+    source.append(
+        replace(_command(idempotency_key="private-first"), visibility="local_only"),
+        context=authority.context(),
+    )
+    source.append(
+        replace(_command(idempotency_key="shared-after"), visibility="shared"),
+        context=authority.context(),
+    )
+
+    with pytest.raises(OperationalError, match="local-only chain boundary"):
+        source.export_bundles()
+
+
+def test_import_rejects_signed_local_only_event_before_persistence(
+    tmp_path: Path,
+) -> None:
+    authority = _authority(
+        tmp_path / "authority",
+        device_id="device-b",
+        remote_devices=("device-a",),
+    )
+    incoming = _bundle(authority, origin="device-a", sequences=(1,))
+    private = _resign_event(
+        authority,
+        incoming.events[0],
+        visibility="local_only",
+    )
+    attacked = replace(
+        incoming,
+        events=(private,),
+        head_sequence=private.origin_sequence,
+        head_hash=private.event_hash,
+    )
+    ledger = _ledger(tmp_path / "operational", authority)
+
+    with pytest.raises(OperationalError, match="local-only"):
+        ledger.import_bundles((attacked,), context=authority.context())
+
+    assert ledger.positions() == ()
+
+
 def test_import_rejects_gap_and_quarantines_stably(tmp_path: Path) -> None:
     authority = _authority(
         tmp_path / "authority",
@@ -2009,9 +2163,7 @@ def test_transaction_cleanup_restarts_idempotently_after_receipt(
 
     _fork_process_loss(lose_power)
     transaction = next((operational / "journal" / "transactions").iterdir())
-    receipt = operational / "journal" / "recovery" / "transactions" / (
-        f"{transaction.name}.json"
-    )
+    receipt = operational / "journal" / "recovery" / "transactions" / (f"{transaction.name}.json")
     assert receipt.exists()
 
     restarted = _ledger(operational, authority)
@@ -2082,17 +2234,16 @@ def test_compaction_transaction_stages_exact_predecessor_anchor_history(
     _fork_process_loss(lose_power)
     transaction = next(ledger.transactions_dir.iterdir())
     manifest = json.loads((transaction / "manifest.json").read_bytes())
-    predecessor_relative = (
-        f"anchor-history/device-a/{genesis.anchor_hash}.json"
-    )
+    predecessor_relative = f"anchor-history/device-a/{genesis.anchor_hash}.json"
     predecessor_target = next(
         target
         for target in manifest["targets"]
         if target["relative_target"] == predecessor_relative
     )
-    assert predecessor_target["after_sha256"] == hashlib.sha256(
-        canonical_json_bytes(genesis)
-    ).hexdigest()
+    assert (
+        predecessor_target["after_sha256"]
+        == hashlib.sha256(canonical_json_bytes(genesis)).hexdigest()
+    )
 
     restarted = _ledger(operational, authority)
     restarted.recover()

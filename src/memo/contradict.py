@@ -856,10 +856,8 @@ def emit_anomaly(
     state = "detected" if status == "open" else "resolved"
     severity = "high" if confidence >= 0.9 else "medium" if confidence >= 0.75 else "low"
     if operational is not None:
-        operational.ledger.append(
-            "anomaly.record",
-            subject_uri=f"memo://anomaly/{anomaly_id}",
-            payload={
+        operational.record_anomaly(
+            {
                 "anomaly_id": anomaly_id,
                 "kind": "semantic_contradiction",
                 "state": state,
@@ -878,7 +876,7 @@ def emit_anomaly(
                 "confidence": confidence,
                 "status": status,
                 "created_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
-            },
+            }
         )
     return anomaly_id
 

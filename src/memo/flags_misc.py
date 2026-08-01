@@ -124,6 +124,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "this channel (the statusline badge is unaffected).",
         opt_out=True,
     ),
+    _spec(
+        "MEMO_OPERATIONAL_V2_AUTO_ACTIVATE",
+        "bool",
+        True,
+        "misc",
+        "Automatically enroll a productive device authority and activate the "
+        "signed operational v2 ledger for a fresh state directory. Existing "
+        "activated v2 roots and explicitly injected authorities are unaffected; "
+        "set =0 for hermetic or staged-rollout environments.",
+        opt_out=True,
+    ),
     # MCP transport
     _spec(
         "MEMO_MCP_TRANSPORT",
@@ -191,7 +202,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 30 tools) | core/slim (stable core) | full/default (all tools).",
+        "MCP surface profile: agent (default, 49 tools) | core/slim (stable core) | full/default (all tools).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(

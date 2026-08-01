@@ -714,18 +714,26 @@ class _MaintainOpsMixin(_MemoryBase):
             "facts": facts,
         }
         if reindexed or added:
-            self.operational.receipt(
-                "reindex",
-                subject_uri="memo://maintenance/reindex",
-                metadata={
-                    "checked": checked,
-                    "reindexed": reindexed,
-                    "added": added,
-                    "skipped": skipped,
-                    "facts": facts,
-                    "force": force,
-                },
-            )
+            try:
+                self.operational.receipt(
+                    "reindex",
+                    subject_uri="memo://maintenance/reindex",
+                    metadata={
+                        "checked": checked,
+                        "reindexed": reindexed,
+                        "added": added,
+                        "skipped": skipped,
+                        "facts": facts,
+                        "force": force,
+                    },
+                )
+            except Exception as exc:
+                # The markdown/index rebuild is already authoritative and
+                # committed. A pre-activation runtime has no operational
+                # authority, so receipt emission must fail closed without
+                # turning a successful, idempotent bootstrap into a partial
+                # onboarding failure.
+                _log.warning("native reindex receipt failed: %s", exc)
         # Rebuild crossref edges from disk (flag-gated) — markdown is truth,
         # so hand-edited '- relation [[target]]' lines win on reindex.
         from memo.flags import flag_bool as _flag_bool

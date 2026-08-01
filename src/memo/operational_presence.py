@@ -130,7 +130,7 @@ class PresenceService:
                 project=project,
                 workspace=workspace,
                 expires_at=str(payload["expires_at"]) if "expires_at" in payload else None,
-                visibility=Visibility.LOCAL_ONLY.value,
+                visibility=Visibility.SHARED.value,
                 idempotency_key=key,
                 caused_by=(),
                 subject_uri=f"memo://presence/{target_id}",
@@ -261,6 +261,11 @@ class PresenceService:
         current = self._all().get(lease_id)
         if current is None:
             return
+        if (current.actor_id, current.device_id) != (
+            identity.actor_id,
+            identity.device_id,
+        ):
+            raise _invalid("presence lease owner differs from authenticated actor")
         self._commit(
             identity,
             event_type=PRESENCE_LEASE_EXPIRED,
@@ -275,8 +280,14 @@ class PresenceService:
         rows: dict[str, PresenceLease] = {}
         for event in self.store.ledger.validated_events():
             payload = event.payload
-            if event.event_type in {PRESENCE_ANNOUNCED, PRESENCE_RENEWED}:
+            if event.event_type == PRESENCE_ANNOUNCED:
                 key = str(payload["id"])
+                if (
+                    event.target_id != key
+                    or str(payload["actor_id"]) != event.actor.actor_id
+                    or str(payload["device_id"]) != event.actor.device_id
+                ):
+                    continue
                 rows[key] = PresenceLease(
                     id=key,
                     actor_id=str(payload["actor_id"]),
@@ -289,8 +300,40 @@ class PresenceService:
                     ttl_seconds=int(payload["ttl_seconds"]),
                     expires_at=str(payload["expires_at"]),
                 )
+            elif event.event_type == PRESENCE_RENEWED:
+                key = str(payload["id"])
+                current = rows.get(key)
+                if (
+                    current is None
+                    or event.target_id != key
+                    or (current.actor_id, current.device_id)
+                    != (event.actor.actor_id, event.actor.device_id)
+                    or str(payload["actor_id"]) != current.actor_id
+                    or str(payload["device_id"]) != current.device_id
+                ):
+                    continue
+                rows[key] = PresenceLease(
+                    id=key,
+                    actor_id=current.actor_id,
+                    device_id=current.device_id,
+                    project=str(payload["project"]),
+                    workspace=str(payload["workspace"]),
+                    topic=str(payload["topic"]),
+                    intent=str(payload["intent"]),
+                    files=tuple(str(item) for item in payload["files"]),
+                    ttl_seconds=int(payload["ttl_seconds"]),
+                    expires_at=str(payload["expires_at"]),
+                )
             elif event.event_type == PRESENCE_LEASE_EXPIRED:
-                rows.pop(str(payload["id"]), None)
+                key = str(payload["id"])
+                current = rows.get(key)
+                if (
+                    current is not None
+                    and event.target_id == key
+                    and (current.actor_id, current.device_id)
+                    == (event.actor.actor_id, event.actor.device_id)
+                ):
+                    rows.pop(key)
         return rows
 
     def active(
@@ -303,8 +346,7 @@ class PresenceService:
         rows = [
             row
             for row in self._all().values()
-            if _parse_time(row.expires_at) > cutoff
-            and (project is None or row.project == project)
+            if _parse_time(row.expires_at) > cutoff and (project is None or row.project == project)
         ]
         return sorted(rows, key=lambda row: (row.project, row.workspace, row.actor_id, row.id))
 

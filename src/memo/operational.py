@@ -40,6 +40,10 @@ class _LedgerView:
     def validated_events(self) -> Any:
         return self.__ledger.validated_events()
 
+    def iter_events(self) -> Any:
+        """Expose read-only iteration for compatibility and diagnostics."""
+        return self.__ledger.iter_events()
+
     def validate_import_events(self, rows: list[dict[str, Any]]) -> None:
         """Validate a bundle without exposing the ledger mutation surface."""
         self.__ledger.validate_import_events(rows)
@@ -74,6 +78,7 @@ class _V2LedgerView:
         return self.__ledger.decode_bundle(encoded)
 
 if TYPE_CHECKING:
+    from memo.identity import PrincipalIdentity
     from memo.operation_ledger_v2 import OperationLedgerV2
     from memo.operation_views import OperationalViewStore
     from memo.operational_epoch import CommitContext, EpochFence
@@ -553,6 +558,58 @@ class OperationalStore:
         report = ledger.import_bundles(bundles, context=context)
         self.views.catch_up(ledger)
         return report
+
+    def context_for(self, identity: PrincipalIdentity) -> CommitContext:
+        """Derive a fresh authenticated v2 context for one local principal.
+
+        Product surfaces must not reuse the runtime daemon's fixed identity or
+        reach into the epoch fence directly.  They present an explicit
+        ``PrincipalIdentity`` here; Memo first obtains its authority-bound
+        context, rejects cross-device impersonation, and then asks the fence to
+        revalidate the same epoch/control marker for the requested principal.
+        """
+        from memo.errors import OperationalError, OperationalErrorCode
+        from memo.identity import PrincipalIdentity
+        from memo.operational_epoch import CommitContext
+
+        if not self._v2_enabled or self.backend_version != 2:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "authenticated operational contexts require ledger v2",
+                retryable=False,
+            )
+        if not isinstance(identity, PrincipalIdentity):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational principal identity is required",
+                retryable=False,
+            )
+        provider = self._context_provider
+        fence = self.epoch_fence
+        if provider is None or fence is None:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational v2 authority is unavailable",
+                retryable=False,
+            )
+        authority_context = provider()
+        if not isinstance(authority_context, CommitContext):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational v2 authority returned an invalid context",
+                retryable=False,
+            )
+        if identity.device_id != authority_context.origin_device:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational principal is not bound to the local device",
+                retryable=False,
+            )
+        return fence.context(
+            identity,
+            request_epoch=authority_context.authority_epoch,
+            request_control_oid=authority_context.control_oid,
+        )
 
     def rebuild(self, *, events: list[Any] | None = None) -> dict[str, Any]:
         if self._v2_enabled:
@@ -1035,6 +1092,45 @@ class OperationalStore:
                 actor=ActorIdentity(actor_id=actor_id, actor_kind="agent"),
             )
             return payload
+
+    def record_anomaly(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Record a semantic anomaly through the authenticated Memo boundary.
+
+        Legacy journals retain their historical ``anomaly.record`` wire event.
+        The v2 ledger has a single canonical conflict model, so detected and
+        resolved anomalies become conflict lifecycle commands instead of
+        introducing a parallel event family.
+        """
+        anomaly_id = str(payload.get("anomaly_id") or "").strip()
+        state = str(payload.get("state") or "").strip()
+        if not anomaly_id:
+            raise ValueError("anomaly_id must not be empty")
+        if state not in {"detected", "resolved"}:
+            raise ValueError("anomaly state must be detected|resolved")
+        if not self._v2_enabled:
+            return self._commit(
+                "anomaly.record",
+                dict(payload),
+                subject_uri=f"memo://anomaly/{anomaly_id}",
+            )
+        if state == "resolved":
+            return self._commit(
+                "conflict.resolve",
+                {
+                    "id": anomaly_id,
+                    "resolved_at": str(payload.get("created_at") or utc_now_iso()),
+                    "resolution": str(payload.get("status") or "resolved"),
+                },
+                subject_uri=f"memo://conflict/{anomaly_id}",
+                actor=ActorIdentity(actor_id="memo-anomaly", actor_kind="system"),
+            )
+        conflict = _detected_anomaly_conflict(anomaly_id, payload)
+        return self._commit(
+            "conflict.open",
+            conflict,
+            subject_uri=f"memo://conflict/{anomaly_id}",
+            actor=ActorIdentity(actor_id="memo-anomaly", actor_kind="system"),
+        )
 
     def remember_signal(
         self,

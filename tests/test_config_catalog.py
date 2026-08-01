@@ -17,10 +17,28 @@ from memo.tui.config.catalog import (
 
 def test_catalog_covers_every_config_field_and_flag_once() -> None:
     catalog = build_catalog()
+    persistent_fields = {
+        name
+        for name, field in Config.model_fields.items()
+        if not (field.json_schema_extra or {}).get("runtime_only")
+    }
 
     assert len({spec.key for spec in catalog}) == len(catalog)
-    assert {spec.config_field for spec in catalog if spec.config_field} == set(Config.model_fields)
+    assert {spec.config_field for spec in catalog if spec.config_field} == persistent_fields
     assert {spec.env_name for spec in catalog if spec.env_name} >= set(REGISTRY)
+
+
+def test_runtime_authority_is_never_serialized_or_user_configurable(tmp_cfg: Config) -> None:
+    dumped = tmp_cfg.model_dump(mode="json")
+    catalog_fields = {spec.config_field for spec in build_catalog() if spec.config_field}
+
+    for field in (
+        "operational_context_provider",
+        "operational_epoch_fence",
+        "operational_signer",
+    ):
+        assert field not in dumped
+        assert field not in catalog_fields
 
 
 def test_every_setting_has_explicit_policy_and_visibility() -> None:

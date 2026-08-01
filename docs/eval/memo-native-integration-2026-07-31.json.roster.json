@@ -1,13 +1,13 @@
 {
-  "created_at": "2026-08-01T03:17:11.250+00:00",
+  "created_at": "2026-08-01T04:20:58.743+00:00",
   "keys": [
     {
       "device_id": "device-a",
       "enrollment_sequence": 1,
-      "fingerprint": "6823dca67d8e87b858c475030b0d50c782810514fbcc58314c748f04f74991ed",
-      "key_id": "ed25519-3216c4ec0aae455b9cc3f6373e9cc2ed",
-      "proof_of_possession": "7MUZ8jVrDJn6W0eAiiUBkAsQrvS6fn8OvxhJfw05-ndIu9P9H3j9vHdTJTuNjKI1Mjk0dgV1GCv-TIniKmZsBA",
-      "public_key": "mdQODCLU9enqHb59bbDVtnNQJSeouYIC2aUBsLekjP4",
+      "fingerprint": "f8119105ee7544e7e787c126516c600370cb847df57665a549d77ba9f3936ce1",
+      "key_id": "ed25519-fc3117c57b9f44df8b8b45d7726bad48",
+      "proof_of_possession": "RFEZlsS3vYRhJ4e_WT2WIL6McGmFyQCDqhDZVKrloZCxieQkWAMUd1In6q28LKXfJACJQF4xTwfE_Vkk1ICoCg",
+      "public_key": "txsWSlgg1Uu0ucXdnPzgkPQBfyP0L1KWeWZ3lTg04cY",
       "revocation_sequence": null,
       "roles": [
         "origin"
@@ -16,10 +16,10 @@
     {
       "device_id": "device-b",
       "enrollment_sequence": 1,
-      "fingerprint": "5f1e4b661a98114472ab6c4021670cff4577e645299f7ba33f04090393fe4715",
-      "key_id": "ed25519-6f7a15c57b7f4e6faac4d575cd522c6e",
-      "proof_of_possession": "fvg-Aid4_XIhHm2PXm2B9ueCK6uOwELTDzVbV8J7e0iV3t3GPCnLPoAakw_1Ij6GGcXDtTqec88dr0joT5DEDw",
-      "public_key": "ePNPgnvh506Vgtm8w3MtYTspqQfLjVP5r-sJAnFf5Gs",
+      "fingerprint": "e63704ed3d0fadd0ba31dfd17b7ab5a5e6da2e583af14ec46b9515ebb21c2abf",
+      "key_id": "ed25519-cdb12d36ddcd4438ad1e050bd65262cd",
+      "proof_of_possession": "lrJEYeZmgDTzRARa_e4fCztxbkWlnlcv9qTY4AQbKXBnWUXQKMb5Ny5Wh3wVDZsswSTBZ-fOjP2pVQMz5IcNDA",
+      "public_key": "wKIJ_ezcl0UPbg5_1xnFDKDAzTmU_4N5iiWTJei1ViA",
       "revocation_sequence": null,
       "roles": [
         "origin"
@@ -31,14 +31,14 @@
     "device-a",
     "device-b"
   ],
-  "previous_roster_hash": "8aece76dc6d51b68e6292a663540f7761b5ac19a7a11eef4c61d17eb4a9daf17",
-  "roster_hash": "222fb9c263aff871ae6885931511211fe79647960181b0f27f592d8186d3f7ca",
+  "previous_roster_hash": "6d74c774e9e434578a177903a52000d6cb30b24b359deb1fa5bae0dd2b535e06",
+  "roster_hash": "6c010dea98b568d131f75800032b3131b5ce9242be18f4f1cd7c100b6a0cbad2",
   "schema": "memo.operational_roster.v1",
   "signature": {
     "algorithm": "ed25519",
-    "key_id": "ed25519-3216c4ec0aae455b9cc3f6373e9cc2ed",
+    "key_id": "ed25519-fc3117c57b9f44df8b8b45d7726bad48",
     "roster_version": 1,
-    "signature": "fiHa1c907qXKw-hEnqzRvjpLc-YtJlS8AQNAzd7bQsOBlhLhsnSkZYBX3-ks432O3BNlVlvkjNAFbCdmyRUtAw"
+    "signature": "MaA0_IGSZfrEHm5vox-Nexdtyb2X7Eo9NqKt4Of98mbfudGRzlsUVTEzQVKUax1WMl-T_xcHst-nPUcWnswKAg"
   },
   "version": 2
 }

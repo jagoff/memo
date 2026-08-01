@@ -180,12 +180,10 @@ def test_resolve_accepts_competing_status(mock_memory):
 def mem_with_stub_embed(tmp_cfg: Config, monkeypatch) -> Memory:
     """Memory with a small deterministic embedder. Same body → same bucket
     so we can stage near-duplicate clusters."""
-    cfg = Config(
-        data_dir=tmp_cfg.data_dir,
-        vault_path=tmp_cfg.vault_path,
-        state_dir=tmp_cfg.state_dir,
-        embedder_dims=4,
-    )
+    # Preserve the authenticated operational authority composed by ``tmp_cfg``.
+    # Reconstructing Config from only its filesystem fields silently discarded
+    # the runtime fence and made native anomaly emission fail closed.
+    cfg = tmp_cfg.model_copy(update={"embedder_dims": 4})
 
     def _stub_embed(self, inputs):
         out = []
@@ -529,9 +527,9 @@ def test_pair_record_dataclass():
 
 
 def test_emit_anomaly_writes_native_ledger_event(tmp_path):
-    from memo.operational import OperationalStore
+    from tests.operational_authority import build_authorized_legacy_store
 
-    operational = OperationalStore(tmp_path, device_id="device-test")
+    operational = build_authorized_legacy_store(tmp_path, device_id="device-test")
 
     anomaly_id = emit_anomaly(
         "aaa",

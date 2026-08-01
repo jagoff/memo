@@ -16,6 +16,7 @@ from memo.operational_event import OriginBundle, canonical_json_bytes
 
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _HEAD_SCHEMA = "memo.operational_transport_head.v1"
+_REMOTE_BRANCH = "memo-operational"
 
 
 def _failure(message: str) -> OperationalError:
@@ -60,8 +61,9 @@ class TransportPublishResult:
 class GitTransport:
     """Publish signed artifacts into an isolated Git repository."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, remote: str | Path | None = None) -> None:
         self.root = Path(root).resolve()
+        self.remote = str(remote) if remote is not None else None
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._initialize()
 
@@ -93,6 +95,64 @@ class GitTransport:
             self._git("init", "--quiet")
         self._git("config", "user.name", "memo operational transport")
         self._git("config", "user.email", "memo@localhost")
+        if self.remote is not None:
+            current = self._git("remote", "get-url", "origin", check=False)
+            if current.returncode == 0:
+                if current.stdout.strip() != self.remote:
+                    raise _failure("operational Git transport remote binding changed")
+            else:
+                self._git("remote", "add", "origin", self.remote)
+            self.refresh(required=False)
+
+    def refresh(self, *, required: bool = True) -> bool:
+        """Fetch and merge the configured immutable-artifact branch.
+
+        Each Memo peer owns its own clone.  The remote branch is the only
+        cross-device rendezvous; callers never read another peer's state
+        directory directly.
+        """
+
+        if self.remote is None:
+            return False
+        fetched = self._git(
+            "fetch",
+            "--quiet",
+            "origin",
+            f"refs/heads/{_REMOTE_BRANCH}",
+            check=False,
+        )
+        if fetched.returncode != 0:
+            missing = (
+                "couldn't find remote ref" in fetched.stderr.lower()
+                or "could not find remote branch" in fetched.stderr.lower()
+            )
+            if missing and not required:
+                return False
+            raise _failure(f"operational Git transport fetch failed: {fetched.stderr.strip()}")
+        local_head = self._git("rev-parse", "--verify", "HEAD", check=False)
+        if local_head.returncode != 0:
+            self._git("checkout", "--quiet", "-B", _REMOTE_BRANCH, "FETCH_HEAD")
+        else:
+            self._git("merge", "--quiet", "--no-edit", "FETCH_HEAD")
+        return True
+
+    def _push(self) -> None:
+        if self.remote is None:
+            return
+        for attempt in range(2):
+            pushed = self._git(
+                "push",
+                "--quiet",
+                "origin",
+                f"HEAD:refs/heads/{_REMOTE_BRANCH}",
+                check=False,
+            )
+            if pushed.returncode == 0:
+                return
+            if attempt == 0:
+                self.refresh(required=True)
+                continue
+            raise _failure(f"operational Git transport push failed: {pushed.stderr.strip()}")
 
     @staticmethod
     def _write_immutable(path: Path, data: bytes) -> bool:
@@ -154,6 +214,7 @@ class GitTransport:
         published = 0
         duplicates = 0
         with authority_write_lock(self.root / ".memo-operational-transport"):
+            self.refresh(required=False)
             anchor_path = (
                 self.root
                 / "anchors"
@@ -230,6 +291,7 @@ class GitTransport:
                 raise _failure(status.stderr.strip() or "cannot inspect operational Git index")
             if status.returncode == 1:
                 self._git("commit", "--quiet", "-m", f"memo operational {origin}@{head.sequence}")
+            self._push()
             oid = self._git("rev-parse", "HEAD").stdout.strip()
         return TransportPublishResult(
             published_events=published,

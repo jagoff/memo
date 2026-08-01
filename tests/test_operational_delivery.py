@@ -8,11 +8,14 @@ from types import SimpleNamespace
 import pytest
 
 from memo.config import Config
+from memo.contracts import Visibility
 from memo.errors import OperationalError
 from memo.identity import PrincipalIdentity
 from memo.operational_activation import activate_fresh_operational_v2
 from memo.operational_coordination import CoordinationService
 from memo.operational_delivery import DeliveryService
+from memo.operational_event import OperationalCommand
+from memo.operational_event_types import DELIVERY_ACK_RECORDED, DELIVERY_RESERVED
 from tests.operational_authority import build_test_fresh_v2_authority
 
 
@@ -23,6 +26,14 @@ def test_cross_origin_transition_reduces_after_its_message_even_if_sorted_first(
         event_type="memo.operational.delivery.reserved.v1",
         event_id="event-from-device-a",
         expires_at=None,
+        actor=PrincipalIdentity(
+            principal_id="principal:agent-a",
+            actor_id="agent-a",
+            kind="agent",
+            device_id="device-a",
+            session_id="session:agent-a",
+            source_client="pytest",
+        ),
         payload={
             "delivery_id": delivery_id,
             "message_id": "message-b",
@@ -37,6 +48,14 @@ def test_cross_origin_transition_reduces_after_its_message_even_if_sorted_first(
         event_type="memo.operational.coord.message.sent.v1",
         event_id=message_event_id,
         expires_at=None,
+        actor=PrincipalIdentity(
+            principal_id="principal:agent-b",
+            actor_id="agent-b",
+            kind="agent",
+            device_id="device-b",
+            session_id="session:agent-b",
+            source_client="pytest",
+        ),
         payload={
             "message_id": "message-b",
             "target_ids": ("agent-a",),
@@ -68,9 +87,7 @@ def delivery_runtime(tmp_path):
     )
     authority = test_authority.runtime_authority()
     store = activate_fresh_operational_v2(cfg, authority=authority)
-    stamp = json.loads(
-        (cfg.operational_root / "operational-v2-activated.json").read_text()
-    )
+    stamp = json.loads((cfg.operational_root / "operational-v2-activated.json").read_text())
     instant = datetime(2026, 7, 31, 12, tzinfo=UTC)
 
     def identity(actor: str) -> PrincipalIdentity:
@@ -130,7 +147,7 @@ def test_message_creates_one_pending_delivery_per_recipient_and_ack_is_idempoten
 
 
 def test_delivery_retry_and_terminal_states_are_monotonic(delivery_runtime) -> None:
-    coordination, delivery, sender, target, daemon, instant = delivery_runtime
+    coordination, delivery, sender, target, _, instant = delivery_runtime
     message = coordination.send_message(
         identity=sender,
         channel="ops",
@@ -139,10 +156,10 @@ def test_delivery_retry_and_terminal_states_are_monotonic(delivery_runtime) -> N
         idempotency_key="message-retry",
     )
     pending = delivery.deliveries(message_id=message.message_id)[0]
-    reserved = delivery.reserve_due(identity=daemon, now=instant)[0]
+    reserved = delivery.reserve_due(identity=target, now=instant)[0]
     assert reserved.state == "reserved"
     failed = delivery.transition(
-        identity=daemon,
+        identity=target,
         delivery_id=pending.id,
         state="known_failed",
         error_code="tty_busy",
@@ -150,13 +167,13 @@ def test_delivery_retry_and_terminal_states_are_monotonic(delivery_runtime) -> N
         at=instant,
     )
     assert failed.next_attempt_at is not None
-    assert delivery.reserve_due(identity=daemon, now=instant) == []
+    assert delivery.reserve_due(identity=target, now=instant) == []
     retried = delivery.reserve_due(
-        identity=daemon,
+        identity=target,
         now=instant + timedelta(seconds=1),
     )[0]
     presented = delivery.transition(
-        identity=daemon,
+        identity=target,
         delivery_id=retried.id,
         state="presented",
         terminal_id="term-1",
@@ -174,11 +191,99 @@ def test_delivery_retry_and_terminal_states_are_monotonic(delivery_runtime) -> N
     assert acknowledged.state == "acknowledged"
     with pytest.raises(OperationalError, match="not allowed"):
         delivery.transition(
-            identity=daemon,
+            identity=target,
             delivery_id=retried.id,
             state="presented",
             idempotency_key="regress",
         )
+
+
+def test_only_delivery_recipient_can_reserve_or_transition(delivery_runtime) -> None:
+    coordination, delivery, sender, target, daemon, instant = delivery_runtime
+    message = coordination.send_message(
+        identity=sender,
+        channel="ops",
+        body="target-only",
+        target_ids=(target.actor_id,),
+        idempotency_key="message-target-only",
+    )
+    pending = delivery.deliveries(message_id=message.message_id)[0]
+
+    assert delivery.reserve_due(identity=daemon, now=instant) == []
+    with pytest.raises(OperationalError, match="recipient"):
+        delivery.transition(
+            identity=daemon,
+            delivery_id=pending.id,
+            state="reserved",
+            idempotency_key="foreign-reserve",
+            at=instant,
+        )
+
+    reserved = delivery.reserve_due(identity=target, now=instant)
+    assert [row.id for row in reserved] == [pending.id]
+
+
+def test_imported_foreign_actor_events_cannot_mutate_delivery(delivery_runtime) -> None:
+    coordination, delivery, sender, target, daemon, instant = delivery_runtime
+    message = coordination.send_message(
+        identity=sender,
+        channel="ops",
+        body="signed attack",
+        target_ids=(target.actor_id,),
+        idempotency_key="message-import-attack",
+    )
+    pending = delivery.deliveries(message_id=message.message_id)[0]
+    common = {
+        "delivery_id": pending.id,
+        "message_id": pending.message_id,
+        "target_id": pending.target_id,
+        "transitioned_at": instant.isoformat().replace("+00:00", "Z"),
+    }
+    delivery.store.commit(
+        OperationalCommand(
+            event_type=DELIVERY_RESERVED,
+            actor=daemon,
+            target_id=pending.id,
+            project="_global",
+            workspace="",
+            expires_at=None,
+            visibility=Visibility.SHARED.value,
+            idempotency_key="imported-foreign-reserve",
+            caused_by=(pending.message_event_id,),
+            subject_uri=f"memo://delivery/{pending.id}",
+            trace_id="",
+            payload={
+                **common,
+                "attempt_count": 1,
+                "terminal_id": "attacker-terminal",
+                "error_code": "",
+            },
+        ),
+        context=delivery.context_factory(daemon),
+    )
+    delivery.store.commit(
+        OperationalCommand(
+            event_type=DELIVERY_ACK_RECORDED,
+            actor=daemon,
+            target_id=pending.id,
+            project="_global",
+            workspace="",
+            expires_at=None,
+            visibility=Visibility.SHARED.value,
+            idempotency_key="imported-foreign-ack",
+            caused_by=(pending.message_event_id,),
+            subject_uri=f"memo://delivery/{pending.id}/ack",
+            trace_id="",
+            payload={
+                **common,
+                "ack_actor_id": daemon.actor_id,
+                "ack_event_id": "a" * 64,
+            },
+        ),
+        context=delivery.context_factory(daemon),
+    )
+
+    assert delivery.status(pending.id).state == "pending"
 
 
 def test_cursor_cannot_regress_and_unread_is_event_derived(delivery_runtime) -> None:

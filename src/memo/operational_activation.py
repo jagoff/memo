@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.errors import OperationalError, OperationalErrorCode
+from memo.flags import flag_bool
 from memo.identity import PrincipalIdentity
 from memo.operation_ledger_v2 import OperationLedgerV2
 from memo.operation_views import OperationalViewStore
@@ -411,6 +412,8 @@ def select_operational_store(cfg: Config) -> OperationalStore:
         return activate_fresh_operational_v2(cfg, authority=injected)
     if cfg.operational_root.exists():
         raise _failure("partial operational v2 install requires explicit recovery")
+    if not flag_bool("MEMO_OPERATIONAL_V2_AUTO_ACTIVATE"):
+        return OperationalStore(cfg.state_dir, device_id=cfg.device_id)
     authority = build_fresh_productive_authority(cfg)
     return activate_fresh_operational_v2(cfg, authority=authority)
 

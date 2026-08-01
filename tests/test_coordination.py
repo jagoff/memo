@@ -313,7 +313,12 @@ def test_gather_activities_joins_operational_focus(tmp_cfg: Config) -> None:
     from memo.operational import OperationalStore
 
     _write_session(tmp_cfg.state_dir, "sess-live", updated=NOW, project="memo")
-    OperationalStore(tmp_cfg.state_dir, device_id=tmp_cfg.device_id).set_focus(
+    OperationalStore(
+        tmp_cfg.state_dir,
+        device_id=tmp_cfg.device_id,
+        context_provider=tmp_cfg.operational_context_provider,
+        epoch_fence=tmp_cfg.operational_epoch_fence,
+    ).set_focus(
         project="memo", summary="fix the README banner"
     )
 

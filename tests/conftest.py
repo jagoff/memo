@@ -121,6 +121,13 @@ os.environ["MEMO_SUPERSEDE_SUPPORT_GATE"] = "0"
 # pytest. Tests that exercise the updater opt back in explicitly.
 os.environ["MEMO_AUTO_UPDATE"] = "0"
 
+# Fresh production installs enroll a Secure Enclave authority and activate the
+# signed operational-v2 ledger. The general test suite constructs thousands of
+# intentionally disposable Config instances and must not require production
+# key material; operational-v2 tests inject their own deterministic authority
+# and therefore bypass this auto-activation rollout switch.
+os.environ["MEMO_OPERATIONAL_V2_AUTO_ACTIVATE"] = "0"
+
 # Trust & belief-revision program flags (memo v3.0.0+). A machine running the
 # *activated* trust program exports these via ~/.claude/settings.json `env` (and
 # the launchd fleet), and Claude Code passes them down to a `pytest` subprocess —

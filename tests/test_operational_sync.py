@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,6 +43,8 @@ from memo.terminal_bridge import (
     TerminalBridge,
     TerminalPresentRequest,
     TerminalRegistration,
+    sign_terminal_registration,
+    verify_terminal_registration,
 )
 
 
@@ -169,10 +172,19 @@ def _peer(
 
 @pytest.fixture
 def two_peer_runtime(tmp_path: Path) -> tuple[_Peer, _Peer, GitTransport]:
-    keys = DeviceKeyStore.in_memory()
-    key_a = keys.generate(device_id="device-a", roles=("origin",))
-    key_b = keys.generate(device_id="device-b", roles=("origin",))
-    transport = GitTransport(tmp_path / "remote")
+    keys_a = DeviceKeyStore.in_memory()
+    keys_b = DeviceKeyStore.in_memory()
+    key_a = keys_a.generate(device_id="device-a", roles=("origin",))
+    key_b = keys_b.generate(device_id="device-b", roles=("origin",))
+    remote = tmp_path / "remote.git"
+    subprocess.run(
+        ("git", "init", "--quiet", "--bare", str(remote)),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    transport_a = GitTransport(tmp_path / "transport-a", remote=remote)
+    transport_b = GitTransport(tmp_path / "transport-b", remote=remote)
 
     authority_a = tmp_path / "a" / "authority"
     pins_a = _pin_store(authority_a)
@@ -182,7 +194,7 @@ def two_peer_runtime(tmp_path: Path) -> tuple[_Peer, _Peer, GitTransport]:
         root=authority_a,
         pin_store=pins_a,
     )
-    signer_a_v1 = OperationalSigner(keys, roster_version=1)
+    signer_a_v1 = OperationalSigner(keys_a, roster_version=1)
     fence_a = EpochFence(
         authority_a,
         roster=roster_a_v1,
@@ -212,7 +224,7 @@ def two_peer_runtime(tmp_path: Path) -> tuple[_Peer, _Peer, GitTransport]:
         root=authority_b,
         pin_store=pins_b,
     )
-    signer_b_v1 = OperationalSigner(keys, roster_version=1)
+    signer_b_v1 = OperationalSigner(keys_b, roster_version=1)
     fence_b = EpochFence(
         authority_b,
         roster=roster_b_v1,
@@ -238,23 +250,23 @@ def two_peer_runtime(tmp_path: Path) -> tuple[_Peer, _Peer, GitTransport]:
         tmp_path / "a",
         device_id="device-a",
         actor_id="agent-a",
-        keys=keys,
+        keys=keys_a,
         roster=roster_a,
         pins=pins_a,
         fence=fence_a,
-        transport=transport,
+        transport=transport_a,
     )
     peer_b = _peer(
         tmp_path / "b",
         device_id="device-b",
         actor_id="agent-b",
-        keys=keys,
+        keys=keys_b,
         roster=roster_b,
         pins=pins_b,
         fence=fence_b,
-        transport=transport,
+        transport=transport_b,
     )
-    return peer_a, peer_b, transport
+    return peer_a, peer_b, transport_b
 
 
 def _send(peer: _Peer, index: int, *, target: str) -> None:
@@ -306,6 +318,7 @@ def test_gap_blocks_reduce_until_recovered(two_peer_runtime) -> None:
     for index in range(1, 4):
         _send(a, index, target="agent-b")
     a.sync.publish()
+    transport.refresh(required=True)
     head = transport.read_head("device-a")
     assert head is not None
     missing = transport.segment_path(head, 2)
@@ -327,6 +340,7 @@ def test_tampered_remote_segment_fails_closed(two_peer_runtime) -> None:
     a, b, transport = two_peer_runtime
     _send(a, 1, target="agent-b")
     a.sync.publish()
+    transport.refresh(required=True)
     head = transport.read_head("device-a")
     assert head is not None
     segment = transport.segment_path(head, 1)
@@ -342,6 +356,7 @@ def test_tampered_signed_head_fails_closed(two_peer_runtime) -> None:
     a, b, transport = two_peer_runtime
     _send(a, 1, target="agent-b")
     a.sync.publish()
+    transport.refresh(required=True)
     head_path = transport.root / "heads" / "device-a.json"
     value = json.loads(head_path.read_text(encoding="utf-8"))
     value["event_hash"] = "f" * 64
@@ -377,7 +392,7 @@ def test_send_sync_present_ack_presence_continuity_and_signed_receipt(
         identity=a.identity,
         channel="handoff",
         body="continue the signed integration",
-        target_ids=("agent-b",),
+        target_ids=(b.identity.principal_id,),
         expects_ack=True,
         idempotency_key="vertical-message-1",
     )
@@ -392,12 +407,7 @@ def test_send_sync_present_ack_presence_continuity_and_signed_receipt(
     reserved = delivery_b.reserve_due(identity=b.identity, now=now)
     assert len(reserved) == 1
     presenter = _Presenter()
-    terminal = TerminalBridge(
-        tmp_path / "terminal.sqlite",
-        presenter=presenter,
-        clock=lambda: now,
-    )
-    terminal.register(
+    registration = sign_terminal_registration(
         TerminalRegistration(
             id="terminal-b",
             principal_id=b.identity.principal_id,
@@ -407,26 +417,39 @@ def test_send_sync_present_ack_presence_continuity_and_signed_receipt(
             issued_at=now.isoformat(),
             expires_at=(now + timedelta(minutes=5)).isoformat(),
             nonce="vertical-nonce",
-            signature="vertical-registration-signature",
+            signature="",
         ),
-        peer_uid=os.getuid(),
+        signer=b.signer,
+        key_id=b.key_id,
+        device_id=b.identity.device_id,
     )
-    terminal_receipt = terminal.present(
-        TerminalPresentRequest(
-            event_id=sent.event_id,
-            message_id=sent.message_id,
-            delivery_id=reserved[0].id,
-            terminal_id="terminal-b",
-            mode="notify",
-            payload=sent.body,
-            sanitized_payload_hash="",
-            deadline=(now + timedelta(minutes=1)).isoformat(),
-            idempotency_key="vertical-present-1",
-            principal_id=b.identity.principal_id,
-            session_id=b.identity.session_id,
+    with TerminalBridge(
+        tmp_path / "terminal.sqlite",
+        presenter=presenter,
+        clock=lambda: now,
+        registration_verifier=lambda candidate: verify_terminal_registration(
+            candidate,
+            verifier=OperationalVerifier(),
+            roster=b.roster,
         ),
-        peer_uid=os.getuid(),
-    )
+    ) as terminal:
+        terminal.register(registration, peer_uid=os.getuid())
+        terminal_receipt = terminal.present(
+            TerminalPresentRequest(
+                event_id=sent.event_id,
+                message_id=sent.message_id,
+                delivery_id=reserved[0].id,
+                terminal_id="terminal-b",
+                mode="notify",
+                payload=sent.body,
+                sanitized_payload_hash="",
+                deadline=(now + timedelta(minutes=1)).isoformat(),
+                idempotency_key="vertical-present-1",
+                principal_id=b.identity.principal_id,
+                session_id=b.identity.session_id,
+            ),
+            peer_uid=os.getuid(),
+        )
     presented = delivery_b.transition(
         identity=b.identity,
         delivery_id=reserved[0].id,
@@ -509,10 +532,15 @@ def test_send_sync_present_ack_presence_continuity_and_signed_receipt(
         signer_device_id="device-a",
         signer_key_id=a.key_id,
         roster_version=a.roster.version,
+        roster_hash=a.roster.roster_hash,
         created_at=now.isoformat(),
         signer=a.signer,
     )
-    verify_integration_receipt(receipt, roster=a.roster)
+    verify_integration_receipt(
+        receipt,
+        roster=a.roster,
+        trusted_roster_hash=a.roster.roster_hash,
+    )
 
     assert all(receipt.checks.values())
     assert receipt.signature is not None
@@ -520,4 +548,5 @@ def test_send_sync_present_ack_presence_continuity_and_signed_receipt(
         verify_integration_receipt(
             replace(receipt, evidence={**receipt.evidence, "state_sha256": "0" * 64}),
             roster=a.roster,
+            trusted_roster_hash=a.roster.roster_hash,
         )

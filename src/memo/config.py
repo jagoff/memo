@@ -506,10 +506,16 @@ class Config(BaseModel):
     operational_context_provider: Callable[[], CommitContext] | None = Field(
         default=None,
         description="Provider for the current authenticated operational epoch context.",
+        exclude=True,
+        repr=False,
+        json_schema_extra={"runtime_only": True},
     )
     operational_epoch_fence: EpochFence | None = Field(
         default=None,
         description="Durable epoch fence used to admit operational writes.",
+        exclude=True,
+        repr=False,
+        json_schema_extra={"runtime_only": True},
     )
     operational_signer: OperationalSigner | None = Field(
         default=None,
@@ -517,6 +523,9 @@ class Config(BaseModel):
             "Opaque signer composed by the operational runtime; tests may inject "
             "an in-memory provider without weakening production key policy."
         ),
+        exclude=True,
+        repr=False,
+        json_schema_extra={"runtime_only": True},
     )
     memories_in_vault: bool = Field(
         default=False,

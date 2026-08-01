@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -929,7 +930,7 @@ def test_verify_v1_parity_rejects_a_tampered_derived_view(tmp_path: Path) -> Non
 
     import sqlite3
 
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         connection.execute("DELETE FROM focus")
         connection.commit()
 

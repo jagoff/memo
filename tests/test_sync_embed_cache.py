@@ -22,6 +22,7 @@ from memo.sync_embed_cache import (
     import_embed_cache,
 )
 from memo.sync_git import sync_once, sync_pull
+from tests.operational_authority import authorize_test_config
 
 
 def _git(root: Path, *args: str) -> None:
@@ -50,12 +51,14 @@ def _make_clone(remote: Path, where: Path) -> Path:
 
 def _mem_for(clone: Path, state: Path, monkeypatch) -> Memory:
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
-    cfg = Config(
-        data_dir=clone / "memorias",
-        state_dir=state,
-        embedder_dims=4,
-        embedder_model="stub",
-        reranker_enabled=False,
+    cfg = authorize_test_config(
+        Config(
+            data_dir=clone / "memorias",
+            state_dir=state,
+            embedder_dims=4,
+            embedder_model="stub",
+            reranker_enabled=False,
+        )
     )
     return Memory(cfg)
 

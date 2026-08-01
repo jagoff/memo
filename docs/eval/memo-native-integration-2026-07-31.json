@@ -1,5 +1,5 @@
 {
-  "attempt_id": "hermetic-428f5e633f0d426d86caea6a52c0ff92",
+  "attempt_id": "hermetic-d5e27f657ed946a9be022201e61a2d53",
   "checks": {
     "ack_roundtrip": true,
     "acks_bidirectional": true,
@@ -18,22 +18,26 @@
   "created_at": "2026-07-31T12:00:00+00:00",
   "evidence": {
     "continuity_sha256": "34c20547c92c5e4b2c5552304ccc0aaed483103e4932ec84d5c91f3260ed6a05",
-    "git_head_a": "edcf1ab534497cc34d54d99abc6e7fda04f13559c0fc69be61b7104fde068218",
-    "git_head_b": "88a4c057d864aff3373aae6a0f6ad9bf160347271938100ebf44f575c6d2beab",
-    "state_sha256": "7bc95fe752ed65acb80b89b3571578e482b3455f9bf87724081b583f14aa02a5",
-    "terminal_receipt_a": "dfe27783e6aeb35b9413a5c561ea1fb24aa2509d0c2e7df940c3498bd37ee20a",
-    "terminal_receipt_b": "68991918356a7b365356a1782f89e50364078dfe0972c06b3481e8720f246ac0"
+    "evidence_archive_sha256": "0210705996291f3609af9ffebeb8d539b4f53dc708d1322715e3971bde6c471e",
+    "git_head_a": "2c361ae3f1e5ca968fc4381f0327f10b2407a4151aa2e840608099e4b10b245c",
+    "git_head_b": "88eb68a775d1e0faa856a905891c7b3b47ae2058ac845bcdd0c7be0beeaaf7bc",
+    "restart_process_continuity_sha256": "4406bec430466ba05bf483e969486d82825d6cfd1141b5b02626f7d8f4536096",
+    "restart_process_state_sha256": "5c2a80c2cf7d049938cce82e04c3c735faaf222067d3baa8b50d13c9dc54657a",
+    "state_sha256": "5c2a80c2cf7d049938cce82e04c3c735faaf222067d3baa8b50d13c9dc54657a",
+    "terminal_receipt_a": "74da7f0f92eb35371fc6319e9b937a33c6e757cd8fb9e1873f66a7da8cf1bc36",
+    "terminal_receipt_b": "7a41a799d995e65b2150ca12c114fd12b1d77577fa7207662838109a40d9f4b8"
   },
-  "receipt_sha256": "2e2282b908afee8d12fde372709b74a21b7be36437d80a726f443ad5cb4dc7ef",
+  "receipt_sha256": "56c0ad66bd8c13febc8ad418c8a9948c2134ae3a3befcbeeea081473334ea41a",
+  "roster_hash": "6c010dea98b568d131f75800032b3131b5ce9242be18f4f1cd7c100b6a0cbad2",
   "roster_version": 2,
   "schema": "memo.definitive_integration.v1",
   "signature": {
     "algorithm": "ed25519",
-    "key_id": "ed25519-3216c4ec0aae455b9cc3f6373e9cc2ed",
+    "key_id": "ed25519-fc3117c57b9f44df8b8b45d7726bad48",
     "roster_version": 2,
-    "signature": "0HAcdYkvoOSCUIMR6W7NFN_VH2bV4_NAx1HVhJwRv_ecLfUiSu2-ZiHJbXsgez23wjIHVBNkuOsVRWhpHIQADA"
+    "signature": "c8qfCxsRNzKdVAMD_1QnTyMS8JuldO-K1evQzurXpDTCnUMo_H4ZxBW6XFtYCwOAa_SbCnS0N2cOj-UgHGM9DQ"
   },
   "signer_device_id": "device-a",
-  "signer_key_id": "ed25519-3216c4ec0aae455b9cc3f6373e9cc2ed",
+  "signer_key_id": "ed25519-fc3117c57b9f44df8b8b45d7726bad48",
   "topology": "two-independent-peers+git+terminal+restart"
 }

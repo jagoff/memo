@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from memo.config import Config
+from memo.contracts import Visibility
 from memo.errors import OperationalError
 from memo.identity import PrincipalIdentity
 from memo.operational_activation import activate_fresh_operational_v2
@@ -27,9 +28,7 @@ def coordination(tmp_path):
     )
     authority = test_authority.runtime_authority()
     store = activate_fresh_operational_v2(cfg, authority=authority)
-    stamp = json.loads(
-        (cfg.operational_root / "operational-v2-activated.json").read_text()
-    )
+    stamp = json.loads((cfg.operational_root / "operational-v2-activated.json").read_text())
 
     def identity(actor: str) -> PrincipalIdentity:
         return PrincipalIdentity(
@@ -97,6 +96,9 @@ def test_send_handoff_and_consume_are_idempotent(coordination) -> None:
     assert consumed.status == "consumed"
     assert replay == consumed
     assert consumed.evidence_uris == ("commit:abc",)
+    assert {event.visibility for event in service.store.ledger.validated_events()} == {
+        Visibility.SHARED.value
+    }
 
 
 def test_handoff_target_and_task_lifecycle_are_monotonic(coordination) -> None:

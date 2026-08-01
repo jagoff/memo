@@ -47,6 +47,15 @@ OPERATIONAL_TOOL_NAMES = frozenset(
         "memo_handoff_consume",
         "memo_handoff_create",
         "memo_journal_verify",
+        "memo_mesh_delivery_ack",
+        "memo_mesh_delivery_reserve",
+        "memo_mesh_message_list",
+        "memo_mesh_message_send",
+        "memo_mesh_presence_announce",
+        "memo_mesh_presence_list",
+        "memo_mesh_status",
+        "memo_mesh_sync_ingest",
+        "memo_mesh_sync_publish",
         "memo_operational_state",
         "memo_outcome_record",
         "memo_procedure_candidates",
@@ -172,15 +181,15 @@ def test_mcp_full_profile_registers_every_decorated_server_tool(
     registered = _mcp_tool_names(tmp_path, monkeypatch, "full")
 
     assert expected <= registered
-    assert len(registered) == 159
+    assert len(registered) == 170
 
 
 @pytest.mark.parametrize(
     ("profile", "expected_count"),
     [
-        ("agent", 38),
-        ("core", 55),
-        ("full", 159),
+        ("agent", 49),
+        ("core", 66),
+        ("full", 170),
     ],
 )
 def test_mcp_profile_tool_counts(
