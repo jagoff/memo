@@ -11,7 +11,7 @@ _SUMMARY_FOLLOWUP_RE = re.compile(
 )
 _INFO_QUESTION_RE = re.compile(
     r"^[\s¿¡]*(qu[eé]\s+(sab[eé]s|sabes|conoc[eé]s)\s+(de|sobre|del?)"
-    r"|tell me about|what do you know about)\s+(?P<topic>.+?)[?\s]*$",
+    r"|tell me about|what do you know about)\s+(?P<topic>.+)$",
     re.IGNORECASE,
 )
 _PRONOUN_PREFIX_RE = re.compile(
@@ -57,7 +57,11 @@ def _history_topic(history: list[dict[str, str]] | None) -> str | None:
 
 def rewrite_query(question: str, history: list[dict[str, str]] | None) -> str:
     q = (question or "").strip()
-    info = _INFO_QUESTION_RE.match(q)
+    # _INFO_QUESTION_RE's topic group is greedy (CodeQL py/polynomial-redos:
+    # a lazy `.+?` followed by another quantified group before `$` backtracks
+    # polynomially) — rstrip the trailing punctuation/whitespace it used to
+    # absorb before matching, so the topic still comes out clean.
+    info = _INFO_QUESTION_RE.match(q.rstrip("?¿! \t"))
     if info:
         return info.group("topic").strip()
     if _SUMMARY_FOLLOWUP_RE.match(q):

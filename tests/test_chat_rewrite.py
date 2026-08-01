@@ -1,3 +1,5 @@
+import time
+
 from memo.chat.rewrite import rewrite_query
 
 _HISTORY = [
@@ -42,3 +44,12 @@ def test_pronoun_prefix_with_inverted_punctuation() -> None:
     # Leading inverted question mark should not block pronoun prefix
     out = rewrite_query("¿Y eso cuándo fue?", _HISTORY)
     assert "daemon" in out and "cuándo" in out
+
+
+def test_info_question_pathological_padding_completes_fast() -> None:
+    # CodeQL py/polynomial-redos: _INFO_QUESTION_RE's old lazy `.+?` followed
+    # by `[?\s]*$` backtracked polynomially on a long run of trailing
+    # whitespace/punctuation. Must resolve near-instantly, not hang.
+    t0 = time.monotonic()
+    rewrite_query("tell me about " + " " * 20000, None)
+    assert time.monotonic() - t0 < 1.0
