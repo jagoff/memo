@@ -40,6 +40,10 @@ class _LedgerView:
     def validated_events(self) -> Any:
         return self.__ledger.validated_events()
 
+    def validate_import_events(self, rows: list[dict[str, Any]]) -> None:
+        """Validate a bundle without exposing the ledger mutation surface."""
+        self.__ledger.validate_import_events(rows)
+
     def head_hashes(self) -> Any:
         return self.__ledger.head_hashes()
 
@@ -520,24 +524,12 @@ class OperationalStore:
         trace_id: str = "",
         context: CommitContext | None = None,
     ) -> dict[str, Any]:
-        from memo.errors import OperationalError, OperationalErrorCode
-        from memo.operational_epoch import CommitContext
-        authenticated = context or (self._context_provider() if self._context_provider else None)
-        if not isinstance(authenticated, CommitContext):
-            raise OperationalError(
-                OperationalErrorCode.INVALID_EVENT,
-                "authenticated epoch context is required for operational writes",
-                retryable=False,
-            )
-        if self.epoch_fence is None:
-            raise OperationalError(
-                OperationalErrorCode.INVALID_EVENT,
-                "authenticated epoch fence is required for operational writes",
-                retryable=False,
-            )
-        with authority_write_lock(self.snapshot_path):
-            self.epoch_fence.verify(authenticated)
-            event = self.__ledger.append(
+        _, admission = self._legacy_admission(
+            context,
+            purpose="operational writes",
+        )
+        with admission, authority_write_lock(self.snapshot_path):
+            event = self._append_authorized_event(
                 op,
                 subject_uri=subject_uri,
                 actor=actor,
@@ -568,6 +560,86 @@ class OperationalStore:
             else:
                 state = self.rebuild()
         return {"event": event.to_dict(), "state": state}
+
+    def _legacy_admission(
+        self,
+        context: CommitContext | None,
+        *,
+        purpose: str,
+    ) -> tuple[CommitContext, AbstractContextManager[None]]:
+        """Resolve and retain the authenticated fence for one v1 mutation.
+
+        The legacy journal remains migration-compatible, but every mutation is
+        admitted by the same durable epoch fence used by v2.  Retaining the
+        fence through the durable write closes the verify-then-append race.
+        """
+        from memo.errors import OperationalError, OperationalErrorCode
+        from memo.operational_epoch import CommitContext
+
+        authenticated = context or (
+            self._context_provider() if self._context_provider else None
+        )
+        if not isinstance(authenticated, CommitContext):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                f"authenticated epoch context is required for {purpose}",
+                retryable=False,
+            )
+        fence = self.epoch_fence
+        if fence is None:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                f"authenticated epoch fence is required for {purpose}",
+                retryable=False,
+            )
+        if hasattr(fence, "verified"):
+            admission: AbstractContextManager[None] = fence.verified(authenticated)
+        else:
+            fence.verify(authenticated)
+            admission = nullcontext()
+        return authenticated, admission
+
+    def _append_authorized_event(self, op: str, **kwargs: Any) -> Any:
+        """Internal append seam; callers must already hold epoch admission."""
+        return self.__ledger.append(op, **kwargs)
+
+    def import_events(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        context: CommitContext | None = None,
+    ) -> dict[str, int]:
+        """Import a verified legacy bundle through the authorized store path."""
+        _, admission = self._legacy_admission(
+            context,
+            purpose="operational event imports",
+        )
+        with admission:
+            return cast(dict[str, int], self.__ledger.import_events(rows))
+
+    def append_legacy_import(
+        self,
+        op: str,
+        *,
+        subject_uri: str,
+        trace_id: str,
+        payload: dict[str, Any],
+        event_id: str,
+        context: CommitContext | None = None,
+    ) -> Any:
+        """Append one migration-only v1 event through epoch authorization."""
+        _, admission = self._legacy_admission(
+            context,
+            purpose="legacy operational migration",
+        )
+        with admission:
+            return self._append_authorized_event(
+                op,
+                subject_uri=subject_uri,
+                trace_id=trace_id,
+                payload=payload,
+                event_id=event_id,
+            )
 
     def set_focus(
         self,

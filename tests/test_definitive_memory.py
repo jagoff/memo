@@ -16,6 +16,7 @@ from memo.errors import FederationError, IdentityConflictError, MemoError, NotFo
 from memo.memory import Memory
 from memo.operation_ledger import LedgerIntegrityError, OperationLedger
 from memo.operational_event import MigrationPreparedStamp, canonical_json_bytes
+from tests.operational_authority import build_test_operational_authority
 
 
 def _evidence_hit(
@@ -403,12 +404,20 @@ def test_operation_ledger_imports_complete_foreign_chain_and_rejects_forks(tmp_p
 
 
 def _target_config(tmp_cfg, tmp_path) -> Config:
+    state_dir = tmp_path / "target-state"
+    authority = build_test_operational_authority(
+        state_dir / "test-operational-authority",
+        device_id="target-test-device",
+    )
     return Config(
         data_dir=tmp_path / "target-data",
         vault_path=tmp_path / "target-vault",
-        state_dir=tmp_path / "target-state",
+        state_dir=state_dir,
+        device_id="target-test-device",
         embedder_dims=4,
         reranker_enabled=False,
+        operational_context_provider=authority.context_provider,
+        operational_epoch_fence=authority.fence,
     )
 
 

@@ -187,6 +187,8 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch):
         state_dir=tmp_cfg.state_dir,
         embedder_dims=4,
         reranker_enabled=False,
+        operational_context_provider=tmp_cfg.operational_context_provider,
+        operational_epoch_fence=tmp_cfg.operational_epoch_fence,
     )
 
     def _stub_embed(self, inputs):
@@ -245,7 +247,21 @@ def tmp_cfg(tmp_path: Path) -> Config:
     # `project:<repo>` tag. Tests that exercise the auto-tag flow opt
     # back in explicitly via monkeypatch.setenv("MEMO_AUTO_PROJECT_TAG", "1").
     os.environ.setdefault("MEMO_AUTO_PROJECT_TAG", "0")
-    return Config(data_dir=data, vault_path=vault, state_dir=state, reranker_enabled=False)
+    from tests.operational_authority import build_test_operational_authority
+
+    authority = build_test_operational_authority(
+        state / "test-operational-authority",
+        device_id="test-device",
+    )
+    return Config(
+        data_dir=data,
+        vault_path=vault,
+        state_dir=state,
+        device_id="test-device",
+        reranker_enabled=False,
+        operational_context_provider=authority.context_provider,
+        operational_epoch_fence=authority.fence,
+    )
 
 
 class _FakeChat:

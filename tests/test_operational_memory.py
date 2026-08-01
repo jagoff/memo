@@ -19,6 +19,7 @@ from memo.operation_ledger import LedgerIntegrityError, OperationLedger
 from memo.operational import OperationalStore
 from memo.server_core_records import register as register_record_tools
 from memo.server_operational import register as register_operational_tools
+from tests.operational_authority import build_test_operational_authority
 
 
 class _ToolServer:
@@ -33,8 +34,21 @@ class _ToolServer:
         return decorator
 
 
+def _legacy_store(tmp_path, *, device_id="device-a"):
+    authority = build_test_operational_authority(
+        tmp_path / "test-operational-authority",
+        device_id=device_id,
+    )
+    return OperationalStore(
+        tmp_path,
+        device_id=device_id,
+        context_provider=authority.context_provider,
+        epoch_fence=authority.fence,
+    )
+
+
 def test_operational_state_rebuilds_from_hash_chained_journal(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = _legacy_store(tmp_path)
     focus = store.set_focus(
         project="memo",
         summary="Ship native continuity",
@@ -57,12 +71,14 @@ def test_operational_state_rebuilds_from_hash_chained_journal(tmp_path):
 
 
 def test_operational_snapshot_rebuilds_when_journal_advances(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = _legacy_store(tmp_path)
     store.set_focus(project="memo", summary="before")
     conflict_id = "anomaly-fixed"
-    store.ledger.append(
+    store.append_legacy_import(
         "anomaly.record",
         subject_uri=f"memo://anomaly/{conflict_id}",
+        trace_id="",
+        event_id="anomaly-fixed-event",
         payload={
             "anomaly_id": conflict_id,
             "kind": "semantic_contradiction",
@@ -86,9 +102,9 @@ def test_operational_commit_rebuilds_when_later_same_device_event_wins_race(
     tmp_path,
     monkeypatch,
 ):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = _legacy_store(tmp_path)
     store.state()
-    append = store.ledger.append
+    append = store._append_authorized_event
 
     def append_then_race(op, **kwargs):
         event = append(op, **kwargs)
@@ -102,7 +118,7 @@ def test_operational_commit_rebuilds_when_later_same_device_event_wins_race(
         )
         return event
 
-    monkeypatch.setattr(store.ledger, "append", append_then_race)
+    monkeypatch.setattr(store, "_append_authorized_event", append_then_race)
 
     store.set_focus(project="memo", summary="superseded before snapshot commit")
     state = store.state()
@@ -573,7 +589,7 @@ def test_independence_migration_identical_rows_use_stable_occurrences(tmp_cfg, t
 
 
 def test_conditional_operational_transitions_are_serialized(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = _legacy_store(tmp_path)
     handoff = store.create_handoff(
         project="memo",
         summary="consume once",
@@ -589,7 +605,7 @@ def test_conditional_operational_transitions_are_serialized(tmp_path):
 
 
 def test_legacy_store_does_not_create_or_write_dormant_v2_generation(tmp_path):
-    store = OperationalStore(tmp_path, device_id="device-a")
+    store = _legacy_store(tmp_path)
 
     store.set_focus(project="memo", summary="legacy remains authoritative")
 

@@ -361,7 +361,7 @@ class FederationManager:
                 "operations": len(operations),
             }
         if receipt_exists:
-            journal = self.memory.operational.ledger.import_events(operations)
+            journal = self.memory.operational.import_events(operations)
             return {
                 "schema": MEMO_FEDERATION_SCHEMA,
                 "bundle_id": bundle["bundle_id"],
@@ -424,7 +424,7 @@ class FederationManager:
                     imported += 1
             except (MemoError, OSError, TypeError, ValueError) as exc:
                 errors.append(f"{str(item.get('source_id') or '')[:12]}: {exc}")
-        journal = self.memory.operational.ledger.import_events(operations)
+        journal = self.memory.operational.import_events(operations)
         if journal["imported"]:
             self.memory.operational.rebuild()
         if not errors:
