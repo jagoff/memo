@@ -195,8 +195,7 @@ class SecureDirectory:
             encoded = _read_all(descriptor)
             final = os.fstat(descriptor)
             if (
-                (observed.st_dev, observed.st_ino)
-                != (final.st_dev, final.st_ino)
+                (observed.st_dev, observed.st_ino) != (final.st_dev, final.st_ino)
                 or final.st_size != len(encoded)
                 or observed.st_mtime_ns != final.st_mtime_ns
                 or observed.st_ctime_ns != final.st_ctime_ns
@@ -542,11 +541,7 @@ def _directory_lock(
                 )
             except FileNotFoundError:
                 observed = None
-            if (
-                reject_ancestor_symlinks
-                and observed is not None
-                and stat.S_ISLNK(observed.st_mode)
-            ):
+            if reject_ancestor_symlinks and observed is not None and stat.S_ISLNK(observed.st_mode):
                 raise ValueError(f"unsafe authority lock target: {target}")
         relative_target = "/".join(target_parts) or "."
         identity = f"{namespace}:{device}:{inode}:{relative_target}"
@@ -572,14 +567,16 @@ def authority_admission_lock(root: Path) -> Iterator[SecureDirectory]:
         finally:
             retained[target] = (directory, depth)
         return
-    stable_key = hashlib.sha256(
-        b"authority-admission-path-v1\0" + os.fsencode(target)
-    ).hexdigest()
-    with _exclusive_lock(stable_key), _directory_lock(
-        target,
-        namespace="authority-admission-v1",
-        reject_ancestor_symlinks=True,
-    ), open_secure_directory(target, create=True) as directory:
+    stable_key = hashlib.sha256(b"authority-admission-path-v1\0" + os.fsencode(target)).hexdigest()
+    with (
+        _exclusive_lock(stable_key),
+        _directory_lock(
+            target,
+            namespace="authority-admission-v1",
+            reject_ancestor_symlinks=True,
+        ),
+        open_secure_directory(target, create=True) as directory,
+    ):
         retained[target] = (directory, 1)
         try:
             yield directory
@@ -591,16 +588,17 @@ def authority_admission_lock(root: Path) -> Iterator[SecureDirectory]:
 def authority_write_lock(root: Path) -> Iterator[None]:
     """Cross-process journal lock keyed by a trusted directory inode."""
     target = Path(os.path.abspath(os.fspath(root)))
-    stable_key = hashlib.sha256(
-        b"authority-write-path-v1\0" + os.fsencode(target)
-    ).hexdigest()
+    stable_key = hashlib.sha256(b"authority-write-path-v1\0" + os.fsencode(target)).hexdigest()
     # The stable absolute-path lock closes the creation race where the nearest
     # existing ancestor changes between two contenders. The descriptor-derived
     # lock still aliases paths that resolve to the same retained authority.
-    with _exclusive_lock(stable_key), _directory_lock(
-        target,
-        namespace="authority-write-v2",
-        reject_ancestor_symlinks=False,
+    with (
+        _exclusive_lock(stable_key),
+        _directory_lock(
+            target,
+            namespace="authority-write-v2",
+            reject_ancestor_symlinks=False,
+        ),
     ):
         yield
 

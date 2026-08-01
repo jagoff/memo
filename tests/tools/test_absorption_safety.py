@@ -75,17 +75,16 @@ def test_initialize_is_explicit_and_resolution_stays_below_attempt(tmp_path: Pat
 
     assert initialized == root
     assert (root / ATTEMPT_SENTINEL).is_file()
-    assert json.loads((root / ATTEMPT_SENTINEL).read_text(encoding="utf-8"))[
-        "manifest_sha256"
-    ] == MANIFEST_SHA256
+    assert (
+        json.loads((root / ATTEMPT_SENTINEL).read_text(encoding="utf-8"))["manifest_sha256"]
+        == MANIFEST_SHA256
+    )
     assert resolve_under_attempt(
         root,
         "snapshots/memo.json",
         "attempt-123",
         MANIFEST_SHA256,
-    ) == (
-        root / "snapshots" / "memo.json"
-    )
+    ) == (root / "snapshots" / "memo.json")
     with pytest.raises(SafetyError, match="manifest"):
         resolve_under_attempt(root, "snapshots/memo.json", "attempt-123", "b" * 64)
     with pytest.raises(SafetyError, match="escapes"):

@@ -95,7 +95,7 @@ def state_dir(tmp_path: Path) -> Path:
                 "trace_id": "trace-new",
                 "query": "  how   does  feedback work? ",
                 "answer": "private answer that must not be copied",
-            }
+            },
         ],
     )
     _write_jsonl(
@@ -158,9 +158,7 @@ def test_eval_extraction_keeps_fixture_metadata_only(state_dir: Path) -> None:
     assert fixture.content_sha256
 
 
-def test_apply_is_replay_safe_and_stages_eval_only(
-    state_dir: Path, mem_with_stub: Memory
-) -> None:
+def test_apply_is_replay_safe_and_stages_eval_only(state_dir: Path, mem_with_stub: Memory) -> None:
     record = mem_with_stub.save(content="known source", title="Source")
     # The fixture state uses this canonical source id; rewrite it to the real
     # test memory rather than allowing an orphan feedback signal.
@@ -211,7 +209,9 @@ def test_invalid_fixture_leaves_no_partial_feedback_or_receipt(mem_with_stub: Me
     ]
 
 
-def test_late_feedback_failure_rolls_back_all_imported_feedback(mem_with_stub: Memory, monkeypatch) -> None:
+def test_late_feedback_failure_rolls_back_all_imported_feedback(
+    mem_with_stub: Memory, monkeypatch
+) -> None:
     first = mem_with_stub.save(content="first source", title="First")
     second = mem_with_stub.save(content="second source", title="Second")
     data = SynapseDataBundle(

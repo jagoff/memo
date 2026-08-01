@@ -269,11 +269,13 @@ class CapabilityManifest:
         return next((row for row in self.capabilities if row.name == name), None)
 
     def operation_map_bytes(self) -> bytes:
-        return canonical_json_bytes({
-            "mappings": [row.to_dict() for row in self.operation_mappings],
-            "registry_authority_sha256": self.registry_authority_sha256,
-            "fixture_authority_sha256": self.fixture_authority_sha256,
-        })
+        return canonical_json_bytes(
+            {
+                "mappings": [row.to_dict() for row in self.operation_mappings],
+                "registry_authority_sha256": self.registry_authority_sha256,
+                "fixture_authority_sha256": self.fixture_authority_sha256,
+            }
+        )
 
     def slo_baseline_bytes(self) -> bytes:
         return canonical_json_bytes([row.to_dict() for row in self.slo_baselines])
@@ -403,8 +405,7 @@ class ConsumerInventory:
             "verification_phases": list(self.verification_phases),
             "covered_surfaces": list(self.covered_surfaces),
             "surface_observations": {
-                key: list(values)
-                for key, values in sorted(self.surface_observations.items())
+                key: list(values) for key, values in sorted(self.surface_observations.items())
             },
             "scan_receipt_sha256": list(self.scan_receipt_sha256),
         }
@@ -455,8 +456,7 @@ class ConsumerReplacement:
             ),
             "start_interval_seconds": self.start_interval_seconds,
             "start_calendar_interval": [
-                {key: value for key, value in calendar}
-                for calendar in self.start_calendar_interval
+                {key: value for key, value in calendar} for calendar in self.start_calendar_interval
             ],
             "watch_paths": list(self.watch_paths),
             "throttle_interval_seconds": self.throttle_interval_seconds,
@@ -488,8 +488,7 @@ class ConsumerReplacementPlan:
                 "rows": [row.to_dict() for row in self.rows],
                 "digest": self.digest,
                 "covered_surfaces": {
-                    key: list(values)
-                    for key, values in sorted(self.covered_surfaces.items())
+                    key: list(values) for key, values in sorted(self.covered_surfaces.items())
                 },
                 "inventory_sha256": self.inventory_sha256,
                 "capability_manifest_sha256": self.capability_manifest_sha256,

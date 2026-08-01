@@ -17,9 +17,7 @@ def snapshot(tmp_path: Path) -> Path:
     package = root / "src" / "synapse"
     (package / "cli").mkdir(parents=True)
     (root / "tests").mkdir()
-    (root / "source.json").write_bytes(
-        canonical_json_bytes({"source_commit": "a" * 40})
-    )
+    (root / "source.json").write_bytes(canonical_json_bytes({"source_commit": "a" * 40}))
     (package / "mcp_catalog.py").write_text(
         """CANONICAL_MCP_TOOLS = [
     McpToolManifest(tool_id=\"synapse.federate.query\", mcp_name=\"synapse_federate_query\"),
@@ -65,9 +63,7 @@ def test_catalog_excludes_runtime_self_audit_from_admission(snapshot: Path) -> N
 
 
 def test_catalog_rejects_noncanonical_source_record(snapshot: Path) -> None:
-    (snapshot / "source.json").write_text(
-        '{"source_commit": "' + "a" * 40 + '"}', encoding="utf-8"
-    )
+    (snapshot / "source.json").write_text('{"source_commit": "' + "a" * 40 + '"}', encoding="utf-8")
 
     with pytest.raises(SynapseCatalogError, match="canonical"):
         discover_synapse_operations(snapshot)

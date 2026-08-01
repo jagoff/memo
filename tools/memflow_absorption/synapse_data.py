@@ -118,9 +118,9 @@ def _json_value(encoded: bytes | None, relative: str) -> object:
         raise SynapseDataError(f"malformed JSON in {relative}") from exc
 
 
-def _load_state(state_dir: Path) -> tuple[
-    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], object, str
-]:
+def _load_state(
+    state_dir: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], object, str]:
     """Read the four admitted inputs from one descriptor-secure state root."""
     try:
         with open_secure_directory(state_dir) as directory:
@@ -183,7 +183,12 @@ def _feedback_from_rows(
         trace_id = _normal_id(row.get("trace_id"))
         query = _normal_query(metadata.get("query")) or trace_queries.get(trace_id, "")
         sources = metadata.get("source_ids")
-        if not base_id or rating not in {"up", "down"} or not query or not isinstance(sources, list):
+        if (
+            not base_id
+            or rating not in {"up", "down"}
+            or not query
+            or not isinstance(sources, list)
+        ):
             continue
         normalized_sources = tuple(
             dict.fromkeys(source for source in map(_normal_id, sources) if source)
@@ -222,7 +227,9 @@ def _fixtures_from_value(value: object) -> tuple[EvalFixture, ...]:
         source_values = row.get("expected_source_ids") or row.get("source_ids")
         if not isinstance(source_values, list):
             continue
-        source_ids = tuple(dict.fromkeys(source for source in map(_normal_id, source_values) if source))
+        source_ids = tuple(
+            dict.fromkeys(source for source in map(_normal_id, source_values) if source)
+        )
         # A down-voted/needs-review row is not a high-signal eval fixture.
         if row.get("needs_review") is True or str(row.get("rating") or "").casefold() == "down":
             continue
@@ -251,9 +258,7 @@ def build_synapse_data_bundle(
     """Extract exactly the bounded evidence surface and bind its input digest."""
     ledger, chat_traces, pipeline_traces, corpus, input_sha256 = _load_state(state_dir)
     trace_queries = _queries_by_trace((*chat_traces, *pipeline_traces))
-    feedback, skipped_feedback_ids = _feedback_from_rows(
-        ledger, trace_queries, seen_ids or set()
-    )
+    feedback, skipped_feedback_ids = _feedback_from_rows(ledger, trace_queries, seen_ids or set())
     return SynapseDataBundle(
         feedback=feedback,
         eval_fixtures=_fixtures_from_value(corpus),
@@ -451,10 +456,12 @@ def _rollback_imported_feedback(memory: Memory, feedback: dict[str, str]) -> Non
                 return
             placeholders = ",".join("?" for _ in removable)
             cursor.execute(
-                f"DELETE FROM source_feedback_vec WHERE feedback_id IN ({placeholders})", removable  # noqa: S608
+                f"DELETE FROM source_feedback_vec WHERE feedback_id IN ({placeholders})",  # noqa: S608
+                removable,
             )
             cursor.execute(
-                f"DELETE FROM source_feedback WHERE id IN ({placeholders})", removable  # noqa: S608
+                f"DELETE FROM source_feedback WHERE id IN ({placeholders})",  # noqa: S608
+                removable,
             )
     except Exception as exc:
         raise SynapseDataError("could not roll back failed Synapse feedback import") from exc
@@ -473,9 +480,7 @@ def apply_synapse_data(
         raise SynapseDataError("attempt id is unsafe")
     if not re.fullmatch(r"[0-9a-f]{64}", data.input_sha256):
         raise SynapseDataError("input_sha256 must be a lowercase SHA-256")
-    canonical_bundle_skipped_ids = _canonical_skipped_feedback_ids(
-        data.skipped_feedback_ids
-    )
+    canonical_bundle_skipped_ids = _canonical_skipped_feedback_ids(data.skipped_feedback_ids)
     prior = _prior_receipt(memory, attempt_id)
     if prior is not None:
         if prior.input_sha256 != data.input_sha256:

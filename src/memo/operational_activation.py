@@ -49,9 +49,7 @@ def _failure(message: str) -> OperationalError:
 
 
 def _root_sha256(root: Path) -> str:
-    return hashlib.sha256(
-        b"memo-operational-root-v1\0" + os.fsencode(root.resolve())
-    ).hexdigest()
+    return hashlib.sha256(b"memo-operational-root-v1\0" + os.fsencode(root.resolve())).hexdigest()
 
 
 def _file_sha256(path: Path) -> str:
@@ -145,7 +143,14 @@ def _decode_stamp(path: Path) -> OperationalActivationStamp:
                 "signature": SignatureEnvelope(**signature_body),
             }
         )
-    except (FileNotFoundError, OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (
+        FileNotFoundError,
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
         raise _failure("operational v2 activation stamp is missing or invalid") from exc
     if canonical_json_bytes(stamp) != encoded:
         raise _failure("operational v2 activation stamp is not canonical")
@@ -195,10 +200,7 @@ def _verify_stamp(
     )
     anchor = ledger.anchor(cfg.device_id)
     anchor_path = ledger.anchors_dir / f"{cfg.device_id}.json"
-    if (
-        anchor.anchor_hash != stamp.anchor_hash
-        or _file_sha256(anchor_path) != stamp.anchor_sha256
-    ):
+    if anchor.anchor_hash != stamp.anchor_hash or _file_sha256(anchor_path) != stamp.anchor_sha256:
         raise _failure("operational v2 activation anchor binding is invalid")
     report = ledger.verify()
     if not report.ok:
@@ -239,7 +241,9 @@ def activate_fresh_operational_v2(
         device_id=cfg.device_id,
         epoch=0,
         control_oid=hashlib.sha256(
-            canonical_json_bytes({"anchor": anchor.anchor_hash, "roster": authority.roster.roster_hash})
+            canonical_json_bytes(
+                {"anchor": anchor.anchor_hash, "roster": authority.roster.roster_hash}
+            )
         ).hexdigest(),
         artifact_digests=digests,
         roster_version=authority.roster.version,
@@ -399,9 +403,7 @@ def select_operational_store(cfg: Config) -> OperationalStore:
         return open_activated_operational_v2(cfg, authority=authority)
 
     legacy_root = cfg.state_dir / "journal"
-    if legacy_root.exists() or (
-        cfg.operational_context_provider is not None and injected is None
-    ):
+    if legacy_root.exists() or (cfg.operational_context_provider is not None and injected is None):
         return OperationalStore(
             cfg.state_dir,
             device_id=cfg.device_id,

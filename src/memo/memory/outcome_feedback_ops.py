@@ -86,11 +86,7 @@ def _canonical_timestamp(value: str) -> str:
         raise ValidationError("source outcome has an invalid recorded_at timestamp") from exc
     if parsed.tzinfo is None:
         raise ValidationError("source outcome recorded_at timestamp has no timezone")
-    return (
-        parsed.astimezone(UTC)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
-    )
+    return parsed.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _source_outcome_evidence(

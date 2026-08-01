@@ -250,13 +250,7 @@ class ContinuityComposer:
             now = self.clock().astimezone(UTC)
             leases = self.presence.active(project=project, now=now)
             files = tuple(
-                sorted(
-                    {
-                        str(file)
-                        for lease in leases
-                        for file in _tuple_field(lease, "files")
-                    }
-                )
+                sorted({str(file) for lease in leases for file in _tuple_field(lease, "files")})
             )
             conflicts = sorted(
                 self.presence.conflicts(project=project, files=files, now=now),
@@ -272,9 +266,7 @@ class ContinuityComposer:
             file = str(_field(item, "file"))
             lease_ids = tuple(str(value) for value in _tuple_field(item, "lease_ids"))
             source = _stable_source("workspace_conflict", file, file)
-            section.records.append(
-                (f"- Conflict {file}: {', '.join(lease_ids)}", source)
-            )
+            section.records.append((f"- Conflict {file}: {', '.join(lease_ids)}", source))
         return 1
 
     def _collect_checkpoint(
@@ -338,10 +330,14 @@ class ContinuityComposer:
                 )
                 verdict = str(getattr(health, "verdict", "unknown"))
         except Exception:
-            self._unavailable("runtime health unavailable", omissions=omissions, fallbacks=fallbacks)
+            self._unavailable(
+                "runtime health unavailable", omissions=omissions, fallbacks=fallbacks
+            )
             section.records.append(("Runtime health unavailable.", None))
             return 0
-        source = _stable_source("runtime_health", hashlib.sha256(wire.encode()).hexdigest(), verdict)
+        source = _stable_source(
+            "runtime_health", hashlib.sha256(wire.encode()).hexdigest(), verdict
+        )
         section.records.append((f"- {verdict}: {_single_line(wire, limit=480)}", source))
         return 1
 

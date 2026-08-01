@@ -50,11 +50,7 @@ def _canonical_timestamp(value: str, *, field: str) -> str:
         raise ValidationError(f"{field} must be a timezone-aware ISO-8601 timestamp") from exc
     if parsed.tzinfo is None:
         raise ValidationError(f"{field} must be a timezone-aware ISO-8601 timestamp")
-    return (
-        parsed.astimezone(UTC)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
-    )
+    return parsed.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _json_value(value: object, *, path: str) -> JsonScalar | list[Any] | dict[str, Any]:
@@ -87,9 +83,7 @@ def canonical_save_request(save_kwargs: Mapping[str, object]) -> dict[str, Any]:
 
 
 def canonical_save_request_hash(save_kwargs: Mapping[str, object]) -> str:
-    return hashlib.sha256(
-        canonical_json_bytes(canonical_save_request(save_kwargs))
-    ).hexdigest()
+    return hashlib.sha256(canonical_json_bytes(canonical_save_request(save_kwargs))).hexdigest()
 
 
 def _freeze(value: object) -> FrozenJson:
@@ -264,11 +258,7 @@ def frozen_intent_from_row(row: Mapping[str, object]) -> FrozenPromotionIntent:
     normalized_sources = _normalized_source_event_ids(source_event_ids)
     normalized_request = canonical_save_request(save_kwargs)
     raw_attempts = row.get("attempts", 0)
-    if (
-        isinstance(raw_attempts, bool)
-        or not isinstance(raw_attempts, int)
-        or raw_attempts < 0
-    ):
+    if isinstance(raw_attempts, bool) or not isinstance(raw_attempts, int) or raw_attempts < 0:
         raise ValidationError("stored durable promotion attempts are invalid")
     attempts = raw_attempts
     intent = FrozenPromotionIntent(
@@ -413,9 +403,7 @@ class DurableOutboxWorker:
             self._commit(
                 event_type=DURABLE_PROMOTION_REJECTED,
                 intent=intent,
-                idempotency_key=(
-                    f"durable-promotion/rejected/{intent.id}/{intent.request_hash}"
-                ),
+                idempotency_key=(f"durable-promotion/rejected/{intent.id}/{intent.request_hash}"),
                 payload={
                     "promotion_id": intent.id,
                     "operation_key": intent.operation_key,
@@ -430,9 +418,7 @@ class DurableOutboxWorker:
             self._commit(
                 event_type=DURABLE_PROMOTION_RETRY_SCHEDULED,
                 intent=intent,
-                idempotency_key=(
-                    f"durable-promotion/retry/{intent.id}/{attempt_number}"
-                ),
+                idempotency_key=(f"durable-promotion/retry/{intent.id}/{attempt_number}"),
                 payload={
                     "promotion_id": intent.id,
                     "operation_key": intent.operation_key,
@@ -449,9 +435,7 @@ class DurableOutboxWorker:
         self._commit(
             event_type=DURABLE_PROMOTION_COMPLETED,
             intent=intent,
-            idempotency_key=(
-                f"durable-promotion/completed/{intent.id}/{intent.request_hash}"
-            ),
+            idempotency_key=(f"durable-promotion/completed/{intent.id}/{intent.request_hash}"),
             payload={
                 "promotion_id": intent.id,
                 "operation_key": intent.operation_key,
@@ -473,14 +457,10 @@ class DurableOutboxWorker:
                 intent.request_hash,
             )
             if existing is None:
-                raise StorageError(
-                    "completed durable promotion has no authoritative memory"
-                )
+                raise StorageError("completed durable promotion has no authoritative memory")
             return existing
         if state == "rejected":
-            raise ValidationError(
-                str(status.get("reason") or "durable promotion was rejected")
-            )
+            raise ValidationError(str(status.get("reason") or "durable promotion was rejected"))
         if state == "retry_scheduled" and _canonical_timestamp(
             self.clock(),
             field="clock",

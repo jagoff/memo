@@ -161,11 +161,7 @@ def manifest(
             dependencies=(),
             disposition="memo_native",
             memo_target=",".join(
-                sorted(
-                    method
-                    for route in mapping.routes
-                    for method in route.memo_methods
-                )
+                sorted(method for route in mapping.routes for method in route.memo_methods)
             ),
             parity_tests=mapping.parity_tests,
             deletion_proof=(),
@@ -334,9 +330,7 @@ def _plan(inventory, manifest, authority, memo_bin):
     )
 
 
-def test_plan_maps_exact_labels_to_absolute_memo_commands(
-    inventory, manifest, authority, memo_bin
-):
+def test_plan_maps_exact_labels_to_absolute_memo_commands(inventory, manifest, authority, memo_bin):
     plan = _plan(inventory, manifest, authority, memo_bin)
 
     whatsapp = plan.by_old_label("com.synapse.whatsapp-ingest")
@@ -347,9 +341,7 @@ def test_plan_maps_exact_labels_to_absolute_memo_commands(
         str(memo_bin.resolve()),
         "watch",
     )
-    assert plan.by_old_label("com.synapse.dashboard").command == (
-        "client-close-reconnect",
-    )
+    assert plan.by_old_label("com.synapse.dashboard").command == ("client-close-reconnect",)
     assert all(row.old_label != "com.synapse.unloaded" for row in plan.rows)
 
 
@@ -362,9 +354,7 @@ def test_unknown_or_substring_label_blocks(inventory, manifest, authority, memo_
         _plan(changed, manifest, authority, memo_bin)
 
 
-def test_whatsapp_without_authoritative_scope_blocks(
-    inventory, manifest, authority, memo_bin
-):
+def test_whatsapp_without_authoritative_scope_blocks(inventory, manifest, authority, memo_bin):
     keys, roster = authority
     row = replace(
         _launchd_row("com.synapse.whatsapp-ingest"),
@@ -425,9 +415,7 @@ def test_unsigned_or_tampered_authority_blocks(inventory, manifest, authority, m
         )
 
 
-def test_missing_operation_capability_mapping_blocks(
-    inventory, manifest, authority, memo_bin
-):
+def test_missing_operation_capability_mapping_blocks(inventory, manifest, authority, memo_bin):
     keys, roster = authority
     retained_mappings = tuple(
         row
@@ -435,9 +423,7 @@ def test_missing_operation_capability_mapping_blocks(
         if row.source_operation != "synapse.watcher.event"
     )
     retained_capabilities = tuple(
-        row
-        for row in manifest.capabilities
-        if "synapse.watcher.event" not in row.source_operations
+        row for row in manifest.capabilities if "synapse.watcher.event" not in row.source_operations
     )
     changed = _resign_manifest(
         replace(
@@ -462,19 +448,14 @@ def test_cli_route_and_capability_target_must_match_replacement_exactly(
         for row in manifest.operation_mappings
         if row.source_operation == "synapse.watcher.event"
     )
-    capability = next(
-        row
-        for row in manifest.capabilities
-        if row.name == mapping.capability
-    )
+    capability = next(row for row in manifest.capabilities if row.name == mapping.capability)
     mismatched_route = replace(mapping.routes[0], memo_cli=("memo native",))
     mismatched_mapping = replace(mapping, routes=(mismatched_route,))
     changed = _resign_manifest(
         replace(
             manifest,
             operation_mappings=tuple(
-                mismatched_mapping if row is mapping else row
-                for row in manifest.operation_mappings
+                mismatched_mapping if row is mapping else row for row in manifest.operation_mappings
             ),
             capabilities=tuple(
                 replace(capability, operation_mappings=(mismatched_mapping,))
@@ -582,9 +563,7 @@ def test_retained_environment_key_without_exact_value_blocks(
 ):
     keys, roster = authority
     row = _launchd_row("com.synapse.whatsapp-ingest")
-    changed_environment = tuple(
-        item for item in row.environment if item[0] != missing_key
-    )
+    changed_environment = tuple(item for item in row.environment if item[0] != missing_key)
     row = replace(row, environment=changed_environment)
     changed = _resign_inventory(replace(inventory, rows=(row,)), keys, roster)
 
@@ -613,9 +592,7 @@ def test_renderer_preserves_authoritative_schedules(
         "Minute": 0,
     }
     assert rendered["com.memo.digest"]["KeepAlive"] is False
-    assert rendered["com.memo.import-whatsapp"]["WatchPaths"] == [
-        "/operator/whatsapp/messages.db"
-    ]
+    assert rendered["com.memo.import-whatsapp"]["WatchPaths"] == ["/operator/whatsapp/messages.db"]
     assert rendered["com.memo.import-whatsapp"]["ThrottleInterval"] == 300
     for row in rendered.values():
         environment = row["EnvironmentVariables"]
@@ -628,9 +605,7 @@ def test_renderer_preserves_authoritative_schedules(
     assert all(Path(row["ProgramArguments"][0]).is_absolute() for row in rendered.values())
 
 
-def test_invalid_keepalive_and_calendar_shapes_block(
-    inventory, manifest, authority, memo_bin
-):
+def test_invalid_keepalive_and_calendar_shapes_block(inventory, manifest, authority, memo_bin):
     keys, roster = authority
     invalid_keep_alive = replace(
         _launchd_row("com.synapse.watcher"),
@@ -696,9 +671,7 @@ def test_periodic_job_without_schedule_blocks(inventory, manifest, authority, me
         _plan(changed, manifest, authority, memo_bin)
 
 
-def test_renderer_rejects_production_library_or_ancestor(
-    inventory, manifest, authority, memo_bin
-):
+def test_renderer_rejects_production_library_or_ancestor(inventory, manifest, authority, memo_bin):
     plan = _plan(inventory, manifest, authority, memo_bin)
 
     with pytest.raises(ConsumerMigrationError, match="production Library"):
@@ -767,9 +740,7 @@ def test_verifier_rejects_mutated_plist(inventory, manifest, authority, memo_bin
         verify_no_synapse_runtime_reference(staging, plan)
 
 
-def test_renderer_rejects_tampered_plan_digest(
-    inventory, manifest, authority, memo_bin, tmp_path
-):
+def test_renderer_rejects_tampered_plan_digest(inventory, manifest, authority, memo_bin, tmp_path):
     plan = _plan(inventory, manifest, authority, memo_bin)
     tampered = replace(plan, digest="0" * 64)
 

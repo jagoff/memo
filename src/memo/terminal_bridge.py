@@ -27,9 +27,7 @@ if TYPE_CHECKING:
     from memo.operational_roster import VerificationRoster
 
 TerminalMode = Literal["notify", "inject"]
-PresentationState = Literal[
-    "reserved", "presented", "known_failed", "uncertain"
-]
+PresentationState = Literal["reserved", "presented", "known_failed", "uncertain"]
 ReconciliationObservation = Literal["presented", "not_presented"]
 _CAPABILITIES = frozenset({"notify", "inject"})
 _MAX_PAYLOAD_BYTES = 16_384
@@ -56,9 +54,7 @@ def _invalid(message: str) -> OperationalError:
 def _canonical_time(value: datetime) -> str:
     if value.tzinfo is None:
         raise ValueError("terminal timestamps must include a timezone")
-    return value.astimezone(UTC).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
-    )
+    return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _parse_time(value: str) -> datetime:
@@ -129,9 +125,7 @@ def sanitize_terminal_payload(payload: str) -> str:
                 continue
             index += 1
             continue
-        if (codepoint < 0x20 and character not in {"\n", "\t"}) or (
-            0x7F <= codepoint <= 0x9F
-        ):
+        if (codepoint < 0x20 and character not in {"\n", "\t"}) or (0x7F <= codepoint <= 0x9F):
             index += 1
             continue
         output.append(character)

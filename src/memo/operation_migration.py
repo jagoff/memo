@@ -65,9 +65,7 @@ _EVENT_TYPES = {
 }
 _RENAME_EXCL = 0x00000004
 _RENAME_NOREPLACE = 0x00000001
-_DIRECTORY_FLAGS = (
-    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-)
+_DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _PARENT_NAMESPACE_CHANGED = "prepared parent namespace identity changed"
 
 
@@ -101,11 +99,7 @@ def _canonical_timestamp(value: str) -> str:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise _failure("migration authority timestamp must include a timezone")
-    return (
-        parsed.astimezone(UTC)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+    return parsed.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _frozen_json(value: object) -> object:
@@ -184,10 +178,7 @@ class MigrationReport:
 def _domain_state(state: Mapping[str, object]) -> dict[str, object]:
     return {
         "schema": state.get("schema"),
-        **{
-            domain: _frozen_json(state.get(domain, {}))
-            for domain in _DOMAINS
-        },
+        **{domain: _frozen_json(state.get(domain, {})) for domain in _DOMAINS},
     }
 
 
@@ -214,10 +205,7 @@ def _source_state_and_contributors(
             domain, entity_id = "conflicts", str(payload.get("id") or "")
         elif op == "outcome.record":
             domain, entity_id = "outcomes", str(payload.get("task_id") or "")
-        elif (
-            op == "anomaly.record"
-            and payload.get("kind") == "semantic_contradiction"
-        ):
+        elif op == "anomaly.record" and payload.get("kind") == "semantic_contradiction":
             domain, entity_id = "conflicts", str(payload.get("anomaly_id") or "")
         if domain and entity_id:
             rows = state.get(domain)
@@ -290,9 +278,7 @@ def _seed_specs(
                 raise _failure(f"v1 domain row is invalid: {domain}/{entity_id}")
             contributor = contributors.get((domain, entity_id))
             if contributor is None:
-                raise _failure(
-                    f"v1 domain row lacks a source event: {domain}/{entity_id}"
-                )
+                raise _failure(f"v1 domain row lacks a source event: {domain}/{entity_id}")
             encoded_id = quote(entity_id, safe="")
             event_id = f"memo-v1/{manifest_sha256}/{domain}/{encoded_id}"
             payload = _frozen_json(row)
@@ -445,9 +431,7 @@ def _migration_origin(
         migration_device_id=plan.local_origin,
         source_manifest_sha256=plan.source_manifest_sha256,
         capability_manifest_sha256=authority.capability_manifest_sha256,
-        attestor_device_id=authority.roster.key(
-            authority.attestor_key_id
-        ).device_id,
+        attestor_device_id=authority.roster.key(authority.attestor_key_id).device_id,
         attestor_key_id=authority.attestor_key_id,
         roster_version=authority.roster.version,
         issued_at=authority.issued_at,
@@ -611,10 +595,7 @@ def _verify_generation_matches_plan(
     authority: V1MigrationAuthority,
 ) -> None:
     bundles = ledger.export_bundles()
-    anchors = {
-        bundle.anchor.origin_device: bundle.anchor
-        for bundle in bundles
-    }
+    anchors = {bundle.anchor.origin_device: bundle.anchor for bundle in bundles}
     if set(anchors) != {origin for origin, _ in plan.source_heads}:
         raise _failure(
             "prepared generation origins do not match the migration plan",
@@ -632,9 +613,7 @@ def _verify_generation_matches_plan(
                 code=OperationalErrorCode.ANCHOR_CONFLICT,
             )
     events = ledger.validated_events()
-    if tuple(event.event_id for event in events) != tuple(
-        seed.event_id for seed in plan.seeds
-    ):
+    if tuple(event.event_id for event in events) != tuple(seed.event_id for seed in plan.seeds):
         raise _failure(
             "prepared seed event identities do not match the migration plan",
             code=OperationalErrorCode.ANCHOR_CONFLICT,
@@ -647,9 +626,7 @@ def _verify_generation_matches_plan(
     created_at = _canonical_timestamp(authority.issued_at)
     for seed, event in zip(plan.seeds, events, strict=True):
         command = _command(seed, identity=identity)
-        content_hash = hashlib.sha256(
-            canonical_json_bytes(asdict(command))
-        ).hexdigest()
+        content_hash = hashlib.sha256(canonical_json_bytes(asdict(command))).hexdigest()
         checks = {
             "event_type": (event.event_type, seed.event_type),
             "actor": (event.actor, identity),
@@ -1053,17 +1030,13 @@ def _require_requested_target(
                 follow_symlinks=False,
             )
         except OSError as exc:
-            raise OSError(
-                "prepared target identity changed in requested namespace"
-            ) from exc
+            raise OSError("prepared target identity changed in requested namespace") from exc
         if (
             not stat.S_ISDIR(expected_identity.st_mode)
             or not stat.S_ISDIR(resolved_target.st_mode)
             or not os.path.samestat(expected_identity, resolved_target)
         ):
-            raise OSError(
-                "prepared target identity changed in requested namespace"
-            )
+            raise OSError("prepared target identity changed in requested namespace")
     finally:
         os.close(resolved_parent)
 
@@ -1143,13 +1116,16 @@ def _renameat_exclusive(
         ctypes.c_uint,
     )
     rename.restype = ctypes.c_int
-    if rename(
-        parent_descriptor,
-        source,
-        parent_descriptor,
-        target,
-        flags,
-    ) == 0:
+    if (
+        rename(
+            parent_descriptor,
+            source,
+            parent_descriptor,
+            target,
+            flags,
+        )
+        == 0
+    ):
         return
     error = ctypes.get_errno()
     if error in {errno.EEXIST, errno.ENOTEMPTY}:
@@ -1211,9 +1187,7 @@ def _install_prepared(
             follow_symlinks=False,
         )
         if not os.path.samestat(prepared_identity, published):
-            raise OSError(
-                "prepared generation identity changed during publication"
-            )
+            raise OSError("prepared generation identity changed during publication")
         os.fsync(parent.descriptor)
         durable = os.stat(
             target.name,
@@ -1221,9 +1195,7 @@ def _install_prepared(
             follow_symlinks=False,
         )
         if not os.path.samestat(prepared_identity, durable):
-            raise OSError(
-                "prepared generation identity changed after publication"
-            )
+            raise OSError("prepared generation identity changed after publication")
         _require_requested_target(
             parent,
             target.name,
@@ -1356,9 +1328,7 @@ def apply_v1_migration(
                     target_root.name,
                 )
                 if existing_identity is None:
-                    raise OSError(
-                        "prepared target identity changed during publication"
-                    ) from None
+                    raise OSError("prepared target identity changed during publication") from None
                 _require_requested_target(
                     bound_parent,
                     target_root.name,
@@ -1394,11 +1364,7 @@ def apply_v1_migration(
         return report
     finally:
         try:
-            if (
-                not installed
-                and staging is not None
-                and staging_identity is not None
-            ):
+            if not installed and staging is not None and staging_identity is not None:
                 _remove_bound_staging(
                     bound_parent,
                     staging,

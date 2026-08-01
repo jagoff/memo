@@ -310,16 +310,22 @@ def test_historical_roster_load_validates_complete_latest_pinned_history(
         pin_store=_pin_store(tmp_path),
     )
 
-    assert VerificationRoster.load_version(
-        tmp_path,
-        version=1,
-        pin_store=_pin_store(tmp_path),
-    ) == roster
-    assert VerificationRoster.load_version(
-        tmp_path,
-        version=2,
-        pin_store=_pin_store(tmp_path),
-    ) == updated
+    assert (
+        VerificationRoster.load_version(
+            tmp_path,
+            version=1,
+            pin_store=_pin_store(tmp_path),
+        )
+        == roster
+    )
+    assert (
+        VerificationRoster.load_version(
+            tmp_path,
+            version=2,
+            pin_store=_pin_store(tmp_path),
+        )
+        == updated
+    )
 
     (tmp_path / "verification-rosters/00000002.json").unlink()
     with pytest.raises(RosterError):
@@ -391,10 +397,13 @@ def test_roster_update_accepts_exact_pinned_predecessor(tmp_path: Path) -> None:
         pin_store=_pin_store(tmp_path),
     )
 
-    assert VerificationRoster.load(
-        tmp_path,
-        pin_store=_pin_store(tmp_path),
-    ) == updated
+    assert (
+        VerificationRoster.load(
+            tmp_path,
+            pin_store=_pin_store(tmp_path),
+        )
+        == updated
+    )
 
 
 def test_load_recovers_crash_between_roster_history_and_current(tmp_path, monkeypatch) -> None:

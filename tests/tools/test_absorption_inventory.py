@@ -46,9 +46,7 @@ def _authority(tmp_path: Path) -> tuple[DeviceKeyStore, VerificationRoster]:
 def _write_canonical_synapse_catalog(snapshot: Path) -> None:
     package = snapshot / "src" / "synapse"
     (package / "cli").mkdir(parents=True, exist_ok=True)
-    (snapshot / "source.json").write_bytes(
-        canonical_json_bytes({"source_commit": "a" * 40})
-    )
+    (snapshot / "source.json").write_bytes(canonical_json_bytes({"source_commit": "a" * 40}))
     (package / "mcp_catalog.py").write_text(
         "CANONICAL_MCP_TOOLS = [McpToolManifest(tool_id='synapse.federate.query', mcp_name='synapse_federate_query')]\n",
         encoding="utf-8",
@@ -287,9 +285,7 @@ def test_synapse_retirement_manifest_can_be_signed(tmp_path: Path) -> None:
 def test_synapse_retirement_manifest_rejects_missing_canonical_catalog(tmp_path: Path) -> None:
     snapshot = tmp_path / "synapse"
     snapshot.mkdir()
-    (snapshot / "source.json").write_bytes(
-        canonical_json_bytes({"source_commit": "a" * 40})
-    )
+    (snapshot / "source.json").write_bytes(canonical_json_bytes({"source_commit": "a" * 40}))
 
     with pytest.raises(InventoryError, match="canonical MCP catalog"):
         build_synapse_retirement_manifest(snapshot)

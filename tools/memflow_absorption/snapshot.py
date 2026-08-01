@@ -42,9 +42,19 @@ def _read_regular_file(path: Path) -> tuple[bytes, os.stat_result]:
                 chunks.append(chunk)
             final = os.fstat(descriptor)
             data = b"".join(chunks)
-            if ((opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
-                    != (final.st_dev, final.st_ino, final.st_size, final.st_mtime_ns, final.st_ctime_ns)
-                    or final.st_size != len(data)):
+            if (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+                opened.st_ctime_ns,
+            ) != (
+                final.st_dev,
+                final.st_ino,
+                final.st_size,
+                final.st_mtime_ns,
+                final.st_ctime_ns,
+            ) or final.st_size != len(data):
                 raise SnapshotError("snapshot source changed while reading")
             return data, final
     except SnapshotError:

@@ -736,8 +736,7 @@ def run_hermetic_integration_proof(*, receipt_path: Path) -> dict[str, object]:
         restart_pid = restart_report.get("pid")
         checks = {
             "gap_detected": gap_report.gaps == {"device-a": 1},
-            "gap_recovered": recovery.recovered_events == 1
-            and recovery.remaining_gap is None,
+            "gap_recovered": recovery.recovered_events == 1 and recovery.remaining_gap is None,
             "tamper_rejected": tamper_rejected,
             "two_peer_convergence": a.store.views.state() == b.store.views.state(),
             "terminal_mesh_bidirectional": presenter_b.calls == [sent.body]
@@ -755,14 +754,12 @@ def run_hermetic_integration_proof(*, receipt_path: Path) -> dict[str, object]:
             )
             and lease_a in active_b,
             "ack_roundtrip": delivery_a.status(acknowledged.id).state == "acknowledged",
-            "acks_bidirectional": delivery_b.status(response_ack.id).state
-            == "acknowledged",
+            "acks_bidirectional": delivery_b.status(response_ack.id).state == "acknowledged",
             "presence_roundtrip": set(active_a) == {lease_a, lease_b}
             and set(active_b) == {lease_a, lease_b},
             "continuity_composed": continuity.durable_available
             and continuity.operational_available,
-            "restart_rebuild": restart_report["state_sha256"]
-            == _state_sha256(live_state)
+            "restart_rebuild": restart_report["state_sha256"] == _state_sha256(live_state)
             and restart_report["deduplicated_rebuild"] is True
             and isinstance(restart_pid, int)
             and restart_pid != os.getpid(),
@@ -775,9 +772,7 @@ def run_hermetic_integration_proof(*, receipt_path: Path) -> dict[str, object]:
             "continuity_sha256": hashlib.sha256(continuity.text.encode()).hexdigest(),
             "state_sha256": hashlib.sha256(canonical_json_bytes(live_state)).hexdigest(),
             "restart_process_state_sha256": str(restart_report["state_sha256"]),
-            "restart_process_continuity_sha256": str(
-                restart_report["continuity_sha256"]
-            ),
+            "restart_process_continuity_sha256": str(restart_report["continuity_sha256"]),
         }
         terminal_a.close()
         terminal_b.close()

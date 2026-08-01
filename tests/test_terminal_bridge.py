@@ -312,6 +312,7 @@ def test_registration_signed_by_key_revoked_at_roster_version_is_rejected(
         roster=revoked,
     )
 
+
 def test_bridge_rejects_foreign_uid_and_sanitizes_payload(tmp_path: Path) -> None:
     now = datetime(2026, 7, 31, 12, tzinfo=UTC)
     authority = build_test_fresh_v2_authority(tmp_path / "authority", device_id="device-a")

@@ -48,22 +48,41 @@ def canonical_binding(*, service: str, key_id: str, helper_sha256: str, state: s
     SecureEnclaveP256Backend._validate_key_id(key_id)
     if not re.fullmatch(r"[0-9a-f]{64}", helper_sha256) or state not in _BINDING_STATES:
         raise KeyStoreError("Secure Enclave binding is invalid")
-    return json.dumps({"helper_sha256": helper_sha256, "key_id": key_id,
-                       "schema": _BINDING_SCHEMA, "service": service, "state": state},
-                      sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return json.dumps(
+        {
+            "helper_sha256": helper_sha256,
+            "key_id": key_id,
+            "schema": _BINDING_SCHEMA,
+            "service": service,
+            "state": state,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
 
 
-def validate_binding(raw: bytes, *, service: str, key_id: str, expected_name: str | None = None) -> dict[str, str]:
+def validate_binding(
+    raw: bytes, *, service: str, key_id: str, expected_name: str | None = None
+) -> dict[str, str]:
     try:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise KeyStoreError("Secure Enclave binding is not canonical JSON") from None
-    if (not isinstance(value, dict) or set(value) != {"helper_sha256", "key_id", "schema", "service", "state"}
-            or not all(isinstance(value[k], str) for k in value)):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"helper_sha256", "key_id", "schema", "service", "state"}
+        or not all(isinstance(value[k], str) for k in value)
+    ):
         raise KeyStoreError("Secure Enclave binding fields are invalid")
-    encoded = canonical_binding(service=service, key_id=key_id,
-                                helper_sha256=value["helper_sha256"], state=value["state"])
-    if raw != encoded or value["schema"] != _BINDING_SCHEMA or (expected_name and expected_name != binding_digest(service, key_id) + ".json"):
+    encoded = canonical_binding(
+        service=service, key_id=key_id, helper_sha256=value["helper_sha256"], state=value["state"]
+    )
+    if (
+        raw != encoded
+        or value["schema"] != _BINDING_SCHEMA
+        or (expected_name and expected_name != binding_digest(service, key_id) + ".json")
+    ):
         raise KeyStoreError("Secure Enclave binding is not canonical")
     return value
 
@@ -230,9 +249,11 @@ class SecureEnclaveP256Backend:
         if not packaged.is_file():
             raise KeyStoreError("packaged Secure Enclave helper is unavailable")
         candidate = cls._read_regular_snapshot(
-            packaged, description="packaged Memo Secure Enclave helper",
+            packaged,
+            description="packaged Memo Secure Enclave helper",
             maximum_bytes=_MAX_HELPER_BINARY_BYTES,
-            allowed_owners=frozenset({0, os.getuid()}), required_mode=0o500,
+            allowed_owners=frozenset({0, os.getuid()}),
+            required_mode=0o500,
         )
         helper_sha256 = hashlib.sha256(candidate).hexdigest()
         root = Path.home() / "Library" / "Application Support" / "Memo" / "native-tools"
@@ -241,8 +262,15 @@ class SecureEnclaveP256Backend:
         with authority_write_lock(root), open_secure_directory(helpers, create=True) as directory:
             if directory.exists(target.name):
                 existing, observed = directory.read_bytes_snapshot(target.name)
-                if existing != candidate or observed.st_uid != os.getuid() or observed.st_nlink != 1 or stat.S_IMODE(observed.st_mode) != 0o500:
-                    raise KeyStoreError("cached Secure Enclave helper failed content-address verification")
+                if (
+                    existing != candidate
+                    or observed.st_uid != os.getuid()
+                    or observed.st_nlink != 1
+                    or stat.S_IMODE(observed.st_mode) != 0o500
+                ):
+                    raise KeyStoreError(
+                        "cached Secure Enclave helper failed content-address verification"
+                    )
             else:
                 directory.create_bytes_exclusive(target.name, candidate, mode=0o500)
         cls._verify_code_signature(target)
@@ -263,16 +291,10 @@ class SecureEnclaveP256Backend:
                     prefix=".secure-enclave-build-",
                     dir=root,
                 ) as temporary_name:
-                    source_copy = (
-                        Path(temporary_name)
-                        / "memo_secure_enclave_helper.swift"
-                    )
+                    source_copy = Path(temporary_name) / "memo_secure_enclave_helper.swift"
                     source_descriptor = os.open(
                         source_copy,
-                        os.O_CREAT
-                        | os.O_EXCL
-                        | os.O_WRONLY
-                        | getattr(os, "O_NOFOLLOW", 0),
+                        os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
                         0o400,
                     )
                     try:

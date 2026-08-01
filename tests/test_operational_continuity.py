@@ -53,12 +53,8 @@ class _Checkpoint:
 class _Coordination:
     def handoffs(self):
         return {
-            "handoff-2": _Handoff(
-                "handoff-2", "consumed", "old", "agent-a", "agent-b"
-            ),
-            "handoff-1": _Handoff(
-                "handoff-1", "open", "finish signed sync", "agent-a", "agent-b"
-            ),
+            "handoff-2": _Handoff("handoff-2", "consumed", "old", "agent-a", "agent-b"),
+            "handoff-1": _Handoff("handoff-1", "open", "finish signed sync", "agent-a", "agent-b"),
         }
 
 
@@ -95,7 +91,9 @@ class _Sessions:
 
 def _composer(**overrides) -> ContinuityComposer:
     values = {
-        "durable_briefing": lambda **_: "Decision: Memo is the sole runtime.\nProof must be signed.",
+        "durable_briefing": lambda **_: (
+            "Decision: Memo is the sole runtime.\nProof must be signed."
+        ),
         "coordination": _Coordination(),
         "delivery": _DeliveryService(),
         "presence": _Presence(),

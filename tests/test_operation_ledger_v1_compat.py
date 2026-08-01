@@ -43,9 +43,9 @@ def test_frozen_v1_append_is_byte_compatible(tmp_path) -> None:
     active_segment = active_root / "journal/events/device-a/2026-07-29.jsonl"
     frozen_segment = frozen_root / "journal/events/device-a/2026-07-29.jsonl"
     assert frozen_segment.read_bytes() == active_segment.read_bytes()
-    assert (
-        frozen_root / "journal/heads/device-a.json"
-    ).read_bytes() == (active_root / "journal/heads/device-a.json").read_bytes()
+    assert (frozen_root / "journal/heads/device-a.json").read_bytes() == (
+        active_root / "journal/heads/device-a.json"
+    ).read_bytes()
 
 
 def test_v1_reader_preserves_bytes_and_head(tmp_path) -> None:

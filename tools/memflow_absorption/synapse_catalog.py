@@ -82,11 +82,15 @@ def _regular_files(root: Path) -> tuple[str, ...]:
         parent = Path(directory)
         for name in directory_names:
             if (parent / name).is_symlink():
-                raise SynapseCatalogError(f"Synapse snapshot contains symlink: {(parent / name).relative_to(root)}")
+                raise SynapseCatalogError(
+                    f"Synapse snapshot contains symlink: {(parent / name).relative_to(root)}"
+                )
         for name in file_names:
             path = parent / name
             if path.is_symlink():
-                raise SynapseCatalogError(f"Synapse snapshot contains symlink: {path.relative_to(root)}")
+                raise SynapseCatalogError(
+                    f"Synapse snapshot contains symlink: {path.relative_to(root)}"
+                )
             if path.is_file():
                 files.append(path.relative_to(root).as_posix())
     return tuple(sorted(files))
@@ -101,7 +105,11 @@ def _parse(path: Path) -> ast.Module:
 
 def _keyword(call: ast.Call, name: str) -> str | None:
     for item in call.keywords:
-        if item.arg == name and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str):
+        if (
+            item.arg == name
+            and isinstance(item.value, ast.Constant)
+            and isinstance(item.value.value, str)
+        ):
             return item.value.value
     return None
 
@@ -182,7 +190,11 @@ def _daemon_operations(root: Path, fixtures: tuple[str, ...]) -> list[SynapseOpe
         if not path.is_file():
             raise SynapseCatalogError(f"Synapse snapshot lacks daemon source: {relative}")
         tree = _parse(path)
-        declared = {node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        declared = {
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
         missing = set(symbols) - declared
         if missing:
             raise SynapseCatalogError(f"daemon source lacks canonical symbol: {relative}")
@@ -206,12 +218,12 @@ def discover_synapse_operations(snapshot: Path) -> tuple[SynapseOperation, ...]:
 
     root, _commit = _canonical_source(snapshot)
     files = _regular_files(root)
-    fixtures = tuple(
-        path
-        for path in files
-        if path.startswith(("tests/", "eval/", "launchd/"))
-    )
-    rows = [*_mcp_operations(root, fixtures), *_cli_operations(root, fixtures), *_daemon_operations(root, fixtures)]
+    fixtures = tuple(path for path in files if path.startswith(("tests/", "eval/", "launchd/")))
+    rows = [
+        *_mcp_operations(root, fixtures),
+        *_cli_operations(root, fixtures),
+        *_daemon_operations(root, fixtures),
+    ]
     names = [row.source_operation for row in rows]
     if len(names) != len(set(names)):
         raise SynapseCatalogError("canonical Synapse operation names overlap")

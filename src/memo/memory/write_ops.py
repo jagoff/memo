@@ -372,9 +372,7 @@ class _WriteOpsMixin(_MemoryBase):
                     "path": str(path.relative_to(memory_dir)),
                     "operation_key": operation_key,
                     "request_hash": (
-                        str(marker.get("request_hash") or "")
-                        if isinstance(marker, dict)
-                        else ""
+                        str(marker.get("request_hash") or "") if isinstance(marker, dict) else ""
                     ),
                 }
             )
@@ -398,9 +396,7 @@ class _WriteOpsMixin(_MemoryBase):
         rel = str(candidate.relative_to(self.cfg.memory_dir))
         candidate_id = str(post.metadata.get("id") or "")
         if not is_canonical_memory_id(candidate_id):
-            raise StorageError(
-                f"durable operation Markdown has an invalid memory id: {rel}"
-            )
+            raise StorageError(f"durable operation Markdown has an invalid memory id: {rel}")
         raw_tags = post.metadata.get("tags") or []
         if isinstance(raw_tags, str):
             tags = [raw_tags]
@@ -410,9 +406,7 @@ class _WriteOpsMixin(_MemoryBase):
             tags = []
         candidate_tags = _normalise_tags(tags)
         raw_topic = post.metadata.get("topic_key")
-        topic_key = (
-            canonical_topic_key(str(raw_topic)) if raw_topic is not None else None
-        )
+        topic_key = canonical_topic_key(str(raw_topic)) if raw_topic is not None else None
         namespace = namespace_for_index(candidate_tags, path=rel)
         body = markdown_body(post)
         title = str(post.metadata.get("title") or _derive_title(body) or "untitled")
@@ -475,9 +469,7 @@ class _WriteOpsMixin(_MemoryBase):
             ) from exc
         row = self.store.get(candidate_id)
         if row is None:
-            raise StorageError(
-                f"durable operation recovery did not restore {candidate_id[:8]}"
-            )
+            raise StorageError(f"durable operation recovery did not restore {candidate_id[:8]}")
         recovered = record_from_row(row, body=sanitized.content)
         return replace(
             recovered,
@@ -516,15 +508,9 @@ class _WriteOpsMixin(_MemoryBase):
             return self._recover_operation_claim_locked(candidate, post)
         relative = str(candidate.relative_to(self.cfg.memory_dir))
         if row.get("path") != relative:
-            raise StorageError(
-                f"durable operation index path mismatch for {candidate_id[:8]}"
-            )
+            raise StorageError(f"durable operation index path mismatch for {candidate_id[:8]}")
         row_extra = row.get("extra")
-        row_marker = (
-            row_extra.get("_memo_operation")
-            if isinstance(row_extra, dict)
-            else None
-        )
+        row_marker = row_extra.get("_memo_operation") if isinstance(row_extra, dict) else None
         if row_marker != marker:
             return self._recover_operation_claim_locked(candidate, post)
         record = record_from_row(row, body=markdown_body(post))
@@ -566,9 +552,7 @@ class _WriteOpsMixin(_MemoryBase):
         canonical_kwargs = canonical_save_request(save_kwargs)
         calculated_hash = canonical_save_request_hash(canonical_kwargs)
         if calculated_hash != normalized_hash:
-            raise ValidationError(
-                "request_hash does not match the complete canonical save_kwargs"
-            )
+            raise ValidationError("request_hash does not match the complete canonical save_kwargs")
         allowed_keys = {
             "content",
             "title",

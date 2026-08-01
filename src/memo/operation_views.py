@@ -953,8 +953,7 @@ class OperationalViewStore:
                     existing_event["origin_device"] != event.origin_device
                     or existing_event["origin_sequence"] != event.origin_sequence
                     or existing_event["event_hash"] != event.event_hash
-                    or existing_event["event_json"]
-                    != _json(operational_wire_dict(event))
+                    or existing_event["event_json"] != _json(operational_wire_dict(event))
                 ):
                     raise _failure(
                         OperationalErrorCode.ANCHOR_CONFLICT,
@@ -1189,10 +1188,7 @@ class OperationalViewStore:
             if origin_event is not None:
                 raise _failure(
                     OperationalErrorCode.ANCHOR_CONFLICT,
-                    (
-                        "origin sequence collision: "
-                        f"{event.origin_device}/{event.origin_sequence}"
-                    ),
+                    (f"origin sequence collision: {event.origin_device}/{event.origin_sequence}"),
                 )
             by_id[event.event_id] = event
             by_position[position] = event
@@ -1281,9 +1277,7 @@ class OperationalViewStore:
                         applied=reduced.applied,
                         duplicates=reduced.duplicates,
                         quarantined=reduced.quarantined,
-                        state_sha256=hashlib.sha256(
-                            canonical_json_bytes(state)
-                        ).hexdigest(),
+                        state_sha256=hashlib.sha256(canonical_json_bytes(state)).hexdigest(),
                     )
             except BaseException:
                 connection.rollback()

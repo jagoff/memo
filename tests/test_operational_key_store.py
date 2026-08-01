@@ -197,9 +197,7 @@ def test_productive_provider_delegates_nonexportable_p256_lifecycle(
 def test_p256_roster_drives_anchor_and_event_verification(tmp_path) -> None:
     authority_root = tmp_path / "authority"
     backend = _P256OpaqueProvider()
-    store = DeviceKeyStore(
-        MacOSKeychainProvider(backend=backend)
-    )
+    store = DeviceKeyStore(MacOSKeychainProvider(backend=backend))
     key = store.generate(device_id="device-a", roles=("origin",))
     pin_store = AuthorityPinStore._for_test(authority_root)
     roster = VerificationRoster.bootstrap(

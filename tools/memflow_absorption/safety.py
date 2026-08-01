@@ -69,9 +69,7 @@ _INDEPENDENCE_SURFACES = (
     "state_root",
 )
 SYNAPSE_INDEPENDENCE_SCAN_DOMAIN = "memo.cutover.synapse_independence_scan.v1"
-SYNAPSE_INDEPENDENCE_RECEIPT_DOMAIN = (
-    "memo.cutover.synapse_independence_receipt.v1"
-)
+SYNAPSE_INDEPENDENCE_RECEIPT_DOMAIN = "memo.cutover.synapse_independence_receipt.v1"
 
 
 class SafetyError(RuntimeError):
@@ -115,9 +113,7 @@ def _readonly_production_pin_store(root: Path) -> AuthorityPinStore:
     try:
         canonical_root = location_path.resolve(strict=True)
     except OSError as exc:
-        raise CutoverSafetyError(
-            "verification roster authority root is unavailable"
-        ) from exc
+        raise CutoverSafetyError("verification roster authority root is unavailable") from exc
     provider = MacOSAuthorityPinProvider()
     location_binding = hashlib.sha256(
         b"memo-authority-root-v1\0" + os.fsencode(canonical_root)
@@ -126,19 +122,13 @@ def _readonly_production_pin_store(root: Path) -> AuthorityPinStore:
     try:
         raw = provider._read_account(f"binding:{binding_digest}")
     except KeyStoreError as exc:
-        raise CutoverSafetyError(
-            "verification roster authority pin is unavailable"
-        ) from exc
+        raise CutoverSafetyError("verification roster authority pin is unavailable") from exc
     if raw is None:
-        raise CutoverSafetyError(
-            "verification roster authority pin binding is missing"
-        )
+        raise CutoverSafetyError("verification roster authority pin binding is missing")
     try:
         installation_id = str(uuid.UUID(raw.decode("ascii")))
     except (UnicodeDecodeError, ValueError) as exc:
-        raise CutoverSafetyError(
-            "verification roster authority pin binding is invalid"
-        ) from exc
+        raise CutoverSafetyError("verification roster authority pin binding is invalid") from exc
     store = object.__new__(AuthorityPinStore)
     store._root = canonical_root
     store._location_path = location_path
@@ -165,10 +155,7 @@ def load_verification_roster_readonly(
     try:
         store = pin_store or _readonly_production_pin_store(root)
         before = store._read_unlocked()
-        if (
-            before.pending_roster_version is not None
-            or before.pending_epoch is not None
-        ):
+        if before.pending_roster_version is not None or before.pending_epoch is not None:
             raise CutoverSafetyError(
                 "verification roster has pending recovery; read-only audit refuses"
             )
@@ -177,21 +164,12 @@ def load_verification_roster_readonly(
     except CutoverSafetyError:
         raise
     except (KeyStoreError, OSError, RosterError, ValueError) as exc:
-        raise CutoverSafetyError(
-            "verification roster read-only load failed"
-        ) from exc
+        raise CutoverSafetyError("verification roster read-only load failed") from exc
     if before != after:
-        raise CutoverSafetyError(
-            "verification roster authority changed during read-only load"
-        )
+        raise CutoverSafetyError("verification roster authority changed during read-only load")
     latest = history[-1]
-    if (
-        before.roster_version != latest.version
-        or before.roster_hash != latest.roster_hash
-    ):
-        raise CutoverSafetyError(
-            "verification roster rollback or substitution detected"
-        )
+    if before.roster_version != latest.version or before.roster_hash != latest.roster_hash:
+        raise CutoverSafetyError("verification roster rollback or substitution detected")
     return latest
 
 
@@ -324,9 +302,7 @@ def assert_retirement_cleanup_authority(
         or control.synapse_state is not SynapseRetirementState.VERIFIED
         or control.retirement_epoch < 1
     ):
-        raise CutoverSafetyError(
-            "retirement cleanup requires a VERIFIED control record"
-        )
+        raise CutoverSafetyError("retirement cleanup requires a VERIFIED control record")
     if (
         set(expected_digests) != _CLEANUP_DIGEST_KEYS
         or set(observed_digests) != _CLEANUP_DIGEST_KEYS
@@ -335,25 +311,18 @@ def assert_retirement_cleanup_authority(
             for value in (*expected_digests.values(), *observed_digests.values())
         )
     ):
-        raise CutoverSafetyError(
-            "retirement cleanup requires all exact artifact digests"
-        )
+        raise CutoverSafetyError("retirement cleanup requires all exact artifact digests")
     mismatches = sorted(
-        key
-        for key in _CLEANUP_DIGEST_KEYS
-        if expected_digests[key] != observed_digests[key]
+        key for key in _CLEANUP_DIGEST_KEYS if expected_digests[key] != observed_digests[key]
     )
     if mismatches:
         raise CutoverSafetyError(
             "retirement cleanup artifact digest mismatch: " + ",".join(mismatches)
         )
     if (
-        expected_digests["retirement_manifest"]
-        != control.synapse_manifest_sha256
-        or expected_digests["consumer_replacement_receipt"]
-        != control.consumer_plan_sha256
-        or expected_digests["independence_receipt"]
-        != control.independence_receipt_sha256
+        expected_digests["retirement_manifest"] != control.synapse_manifest_sha256
+        or expected_digests["consumer_replacement_receipt"] != control.consumer_plan_sha256
+        or expected_digests["independence_receipt"] != control.independence_receipt_sha256
     ):
         raise CutoverSafetyError(
             "retirement cleanup digest mismatch with VERIFIED control authority"
@@ -361,32 +330,18 @@ def assert_retirement_cleanup_authority(
     raw_authority = os.fspath(authority_root)
     authority = Path(os.path.abspath(raw_authority))
     if _contains_unresolved(raw_authority) or not Path(raw_authority).is_absolute():
-        raise CutoverSafetyError(
-            "retirement cleanup authority root is unresolved or relative"
-        )
-    if (
-        authority == Path(authority.anchor)
-        or authority == Path.home()
-        or len(authority.parts) <= 3
-    ):
-        raise CutoverSafetyError(
-            f"retirement cleanup authority root is too broad: {authority}"
-        )
+        raise CutoverSafetyError("retirement cleanup authority root is unresolved or relative")
+    if authority == Path(authority.anchor) or authority == Path.home() or len(authority.parts) <= 3:
+        raise CutoverSafetyError(f"retirement cleanup authority root is too broad: {authority}")
     try:
         _reject_symlink_components(authority)
         authority_mode = authority.stat().st_mode
     except FileNotFoundError as exc:
-        raise CutoverSafetyError(
-            "retirement cleanup authority root does not exist"
-        ) from exc
+        raise CutoverSafetyError("retirement cleanup authority root does not exist") from exc
     except (OSError, SafetyError) as exc:
-        raise CutoverSafetyError(
-            "retirement cleanup authority root is unsafe"
-        ) from exc
+        raise CutoverSafetyError("retirement cleanup authority root is unsafe") from exc
     if not stat.S_ISDIR(authority_mode):
-        raise CutoverSafetyError(
-            "retirement cleanup authority root is not a directory"
-        )
+        raise CutoverSafetyError("retirement cleanup authority root is not a directory")
     repository = _repository_ancestor(authority)
     if repository is not None:
         raise CutoverSafetyError(
@@ -398,14 +353,10 @@ def assert_retirement_cleanup_authority(
     for path in cleanup_paths:
         raw = os.fspath(path)
         if _contains_unresolved(raw) or not Path(raw).is_absolute():
-            raise CutoverSafetyError(
-                f"retirement cleanup path is unresolved or relative: {raw}"
-            )
+            raise CutoverSafetyError(f"retirement cleanup path is unresolved or relative: {raw}")
         candidate = Path(os.path.abspath(raw))
         if candidate == Path(candidate.anchor) or candidate == Path.home():
-            raise CutoverSafetyError(
-                f"retirement cleanup path is too broad: {candidate}"
-            )
+            raise CutoverSafetyError(f"retirement cleanup path is too broad: {candidate}")
         try:
             _reject_symlink_components(candidate)
             observed = candidate.stat()
@@ -414,13 +365,10 @@ def assert_retirement_cleanup_authority(
                 f"retirement cleanup path does not exist: {candidate}"
             ) from exc
         except (OSError, SafetyError) as exc:
-            raise CutoverSafetyError(
-                f"retirement cleanup path is unsafe: {candidate}"
-            ) from exc
+            raise CutoverSafetyError(f"retirement cleanup path is unsafe: {candidate}") from exc
         if not (stat.S_ISREG(observed.st_mode) or stat.S_ISDIR(observed.st_mode)):
             raise CutoverSafetyError(
-                "retirement cleanup path is not a regular file or directory: "
-                f"{candidate}"
+                f"retirement cleanup path is not a regular file or directory: {candidate}"
             )
         try:
             relative = candidate.relative_to(authority)
@@ -429,9 +377,7 @@ def assert_retirement_cleanup_authority(
                 f"retirement cleanup path is outside cleanup authority: {candidate}"
             ) from exc
         if not relative.parts:
-            raise CutoverSafetyError(
-                "retirement cleanup path must be below cleanup authority"
-            )
+            raise CutoverSafetyError("retirement cleanup path must be below cleanup authority")
         repository = _repository_ancestor(candidate)
         if repository is not None:
             raise CutoverSafetyError(
@@ -497,9 +443,7 @@ def verify_synapse_retired(
     scan_digests = (stop_digest, reboot_digest)
     if inventory.scan_receipt_sha256 != scan_digests:
         raise CutoverSafetyError("signed inventory does not bind both scan receipts")
-    expected_scan_source = hashlib.sha256(
-        canonical_json_bytes(list(scan_digests))
-    ).hexdigest()
+    expected_scan_source = hashlib.sha256(canonical_json_bytes(list(scan_digests))).hexdigest()
     if inventory.source_scan_sha256 != expected_scan_source:
         raise CutoverSafetyError("signed inventory source digest does not bind final scans")
     inventory_sha256 = hashlib.sha256(inventory.signed_bytes()).hexdigest()
@@ -579,9 +523,8 @@ def _verify_independence_scan(
     if surfaces != set(_INDEPENDENCE_SURFACES):
         raise CutoverSafetyError(f"{phase} scan observations are incomplete")
     identifiers = [(row.surface, row.identifier) for row in scan.observations]
-    if (
-        len(identifiers) != len(set(identifiers))
-        or any(not row.identifier for row in scan.observations)
+    if len(identifiers) != len(set(identifiers)) or any(
+        not row.identifier for row in scan.observations
     ):
         raise CutoverSafetyError(f"{phase} scan observations are ambiguous")
     resurrected = [
@@ -615,9 +558,7 @@ def verify_independence_receipt(
         verify_consumer_inventory(inventory, roster=roster)
         verify_synapse_retirement_manifest(manifest, roster=roster)
     except InventoryError as exc:
-        raise CutoverSafetyError(
-            "independence receipt artifact signature is invalid"
-        ) from exc
+        raise CutoverSafetyError("independence receipt artifact signature is invalid") from exc
     stop_digest, stop_time = _verify_independence_scan(
         post_stop_scan,
         phase="post_stop",
@@ -638,9 +579,7 @@ def verify_independence_receipt(
         raise CutoverSafetyError("post-reboot scan capture time is not later")
     if inventory.scan_receipt_sha256 != scan_digests:
         raise CutoverSafetyError("signed inventory does not bind both scan receipts")
-    expected_scan_source = hashlib.sha256(
-        canonical_json_bytes(list(scan_digests))
-    ).hexdigest()
+    expected_scan_source = hashlib.sha256(canonical_json_bytes(list(scan_digests))).hexdigest()
     if inventory.source_scan_sha256 != expected_scan_source:
         raise CutoverSafetyError("signed inventory source digest does not bind final scans")
     receipt_sha256 = hashlib.sha256(receipt.signed_bytes()).hexdigest()
@@ -653,17 +592,14 @@ def verify_independence_receipt(
         and receipt_sha256 == control.independence_receipt_sha256
     )
     expected = (
-        control.synapse_state
-        in {SynapseRetirementState.COMMITTED, SynapseRetirementState.VERIFIED}
+        control.synapse_state in {SynapseRetirementState.COMMITTED, SynapseRetirementState.VERIFIED}
         and control.retirement_epoch > 0
-        and control.synapse_manifest_sha256
-        == hashlib.sha256(manifest.signed_bytes()).hexdigest()
+        and control.synapse_manifest_sha256 == hashlib.sha256(manifest.signed_bytes()).hexdigest()
         and receipt.schema == "memo.synapse_independence_receipt.v1"
         and receipt.attempt_id == control.attempt_id
         and control_binding
         and receipt.retirement_epoch == control.retirement_epoch
-        and receipt.synapse_manifest_sha256
-        == hashlib.sha256(manifest.signed_bytes()).hexdigest()
+        and receipt.synapse_manifest_sha256 == hashlib.sha256(manifest.signed_bytes()).hexdigest()
         and receipt.consumer_inventory_sha256
         == hashlib.sha256(inventory.signed_bytes()).hexdigest()
         and receipt.scan_receipt_sha256 == scan_digests

@@ -199,7 +199,9 @@ def _signed_inventory(
     return replace(unsigned, signature=envelope.signature)
 
 
-def _real_plan(authority, tmp_path: Path) -> tuple[
+def _real_plan(
+    authority, tmp_path: Path
+) -> tuple[
     CapabilityManifest,
     ConsumerInventory,
     ConsumerReplacementPlan,
@@ -355,14 +357,9 @@ def _scan(
     unsigned = IndependenceScanReceipt(
         schema="memo.synapse_independence_scan.v1",
         phase=phase,  # type: ignore[arg-type]
-        boot_id=boot_id
-        or ("boot-before" if phase == "post_stop" else "boot-after"),
+        boot_id=boot_id or ("boot-before" if phase == "post_stop" else "boot-after"),
         captured_at=captured_at
-        or (
-            "2026-07-30T01:00:00Z"
-            if phase == "post_stop"
-            else "2026-07-30T02:00:00Z"
-        ),
+        or ("2026-07-30T01:00:00Z" if phase == "post_stop" else "2026-07-30T02:00:00Z"),
         source_scan_sha256=hashlib.sha256(
             canonical_json_bytes([row.to_dict() for row in observations])
         ).hexdigest(),
@@ -419,9 +416,7 @@ def test_real_consumer_builder_populates_verified_authority(authority, tmp_path)
 
     assert dict(plan.covered_surfaces) == _observations()
     assert plan.inventory_sha256 == hashlib.sha256(inventory.signed_bytes()).hexdigest()
-    assert plan.capability_manifest_sha256 == hashlib.sha256(
-        manifest.signed_bytes()
-    ).hexdigest()
+    assert plan.capability_manifest_sha256 == hashlib.sha256(manifest.signed_bytes()).hexdigest()
 
 
 @pytest.mark.parametrize("forgery", ["plan", "inventory", "manifest"])
@@ -852,9 +847,7 @@ def test_public_receipt_verifier_repeats_cross_invariants(
         hashlib.sha256(stop.signed_bytes()).hexdigest(),
         hashlib.sha256(reboot.signed_bytes()).hexdigest(),
     )
-    inventory_digests = (
-        ("8" * 64, "9" * 64) if failure == "inventory_binding" else scan_digests
-    )
+    inventory_digests = ("8" * 64, "9" * 64) if failure == "inventory_binding" else scan_digests
     inventory = _signed_inventory(authority, scan_digests=inventory_digests)
     receipt = _signed_receipt(authority, committed, inventory, retirement, stop, reboot)
 
@@ -967,13 +960,9 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
         "inventory": tmp_path / "preflight-inventory.json",
         "plan": tmp_path / "plan.json",
     }
-    preflight_paths["control"].write_bytes(
-        canonical_json_bytes(initial_record.to_dict())
-    )
+    preflight_paths["control"].write_bytes(canonical_json_bytes(initial_record.to_dict()))
     preflight_paths["manifest"].write_bytes(canonical_json_bytes(manifest.to_dict()))
-    preflight_paths["inventory"].write_bytes(
-        canonical_json_bytes(preflight_inventory.to_dict())
-    )
+    preflight_paths["inventory"].write_bytes(canonical_json_bytes(preflight_inventory.to_dict()))
     preflight_paths["plan"].write_bytes(canonical_json_bytes(plan_dict))
     preflight_command = [
         "synapse-preflight",
@@ -1018,9 +1007,7 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
     preflight_paths["plan"].write_bytes(canonical_json_bytes(malformed_plan))
     with pytest.raises(SystemExit, match="typed authority verification failed"):
         main(preflight_command)
-    preflight_paths["inventory"].write_bytes(
-        canonical_json_bytes(preflight_inventory.to_dict())
-    )
+    preflight_paths["inventory"].write_bytes(canonical_json_bytes(preflight_inventory.to_dict()))
     preflight_paths["plan"].write_bytes(canonical_json_bytes(plan_dict))
 
     for field, value in (("control_oid", "bad-oid"), ("sequence", 2)):
@@ -1033,16 +1020,10 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
             key_id=authority[1].local_key_id,
         )
         malformed_control["signature"] = envelope.signature
-        preflight_paths["control"].write_bytes(
-            canonical_json_bytes(malformed_control)
-        )
-        with pytest.raises(
-            SystemExit, match="typed authority verification failed"
-        ):
+        preflight_paths["control"].write_bytes(canonical_json_bytes(malformed_control))
+        with pytest.raises(SystemExit, match="typed authority verification failed"):
             main(preflight_command)
-    preflight_paths["control"].write_bytes(
-        canonical_json_bytes(initial_record.to_dict())
-    )
+    preflight_paths["control"].write_bytes(canonical_json_bytes(initial_record.to_dict()))
 
     malformed_manifest = manifest.to_dict()
     malformed_manifest["operation_mappings"] = [{"source_operation": "forged"}]
@@ -1062,9 +1043,7 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
         key_id=authority[1].local_key_id,
     )
     malformed_manifest["signature"] = manifest_envelope.signature
-    preflight_paths["manifest"].write_bytes(
-        canonical_json_bytes(malformed_manifest)
-    )
+    preflight_paths["manifest"].write_bytes(canonical_json_bytes(malformed_manifest))
     with pytest.raises(SystemExit, match="typed authority verification failed"):
         main(preflight_command)
     preflight_paths["manifest"].write_bytes(canonical_json_bytes(manifest.to_dict()))
@@ -1080,9 +1059,7 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
     )
     forged_plan = dict(plan_dict)
     forged_plan["rows"] = [forged_row.to_dict()]
-    forged_plan["digest"] = hashlib.sha256(
-        canonical_json_bytes(forged_plan["rows"])
-    ).hexdigest()
+    forged_plan["digest"] = hashlib.sha256(canonical_json_bytes(forged_plan["rows"])).hexdigest()
     preflight_paths["plan"].write_bytes(canonical_json_bytes(forged_plan))
     with pytest.raises(SystemExit, match="deterministic verified authority"):
         main(preflight_command)
@@ -1157,9 +1134,9 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
         post_reboot_scan=reboot,
     )
     verify_paths["control"].write_bytes(canonical_json_bytes(cas.read()[1].to_dict()))
-    assert verified.independence_receipt_sha256 == hashlib.sha256(
-        receipt.signed_bytes()
-    ).hexdigest()
+    assert (
+        verified.independence_receipt_sha256 == hashlib.sha256(receipt.signed_bytes()).hexdigest()
+    )
     assert (
         main(
             [
@@ -1199,9 +1176,7 @@ def test_cli_requires_derived_plan_and_two_signed_scan_receipts(
         signer=authority[2],
         predecessor=committed,
     )
-    verify_paths["control"].write_bytes(
-        canonical_json_bytes(wrong_digest_control.to_dict())
-    )
+    verify_paths["control"].write_bytes(canonical_json_bytes(wrong_digest_control.to_dict()))
     with pytest.raises(SystemExit, match="does not commit"):
         main(
             [

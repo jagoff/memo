@@ -1107,10 +1107,14 @@ def test_marker_signed_by_historical_roster_survives_latest_rotation(
         request_control_oid="control-0",
     )
 
-    assert (live_context.authority_epoch, live_context.control_oid) == (
-        reopened_context.authority_epoch,
-        reopened_context.control_oid,
-    ) == (0, "control-0")
+    assert (
+        (live_context.authority_epoch, live_context.control_oid)
+        == (
+            reopened_context.authority_epoch,
+            reopened_context.control_oid,
+        )
+        == (0, "control-0")
+    )
 
 
 def test_latest_roster_activation_advances_historical_marker(
@@ -1346,12 +1350,9 @@ def test_legitimate_binding_returns_only_an_opaque_bound_operation(tmp_path) -> 
     assert not hasattr(operation, "capability")
     assert not hasattr(operation, "validator")
     direct_referents = gc.get_referents(operation)
+    assert not any(isinstance(value, epoch_module.SystemCapability) for value in direct_referents)
     assert not any(
-        isinstance(value, epoch_module.SystemCapability) for value in direct_referents
-    )
-    assert not any(
-        isinstance(value, (OperationalSigner, OperationalVerifier))
-        for value in direct_referents
+        isinstance(value, (OperationalSigner, OperationalVerifier)) for value in direct_referents
     )
     assert not any(isinstance(value, (dict, list, set)) for value in direct_referents)
 
@@ -1401,9 +1402,7 @@ def test_bound_operation_proof_cannot_replay_to_another_fence(tmp_path) -> None:
     )
     referents = gc.get_referents(operation)
     payload = next(value for value in referents if isinstance(value, bytes))
-    envelope = next(
-        value for value in referents if isinstance(value, SignatureEnvelope)
-    )
+    envelope = next(value for value in referents if isinstance(value, SignatureEnvelope))
     forged = object.__new__(epoch_module.SystemCapability)
     object.__setattr__(forged, "_SystemCapability__operation", operation)
     object.__setattr__(forged, "_SystemCapability__payload", payload)
@@ -1531,9 +1530,7 @@ def test_retained_proof_is_rejected_after_fence_identifier_reuse(tmp_path) -> No
         )
         referents = gc.get_referents(operation)
         payload = next(value for value in referents if isinstance(value, bytes))
-        envelope = next(
-            value for value in referents if isinstance(value, SignatureEnvelope)
-        )
+        envelope = next(value for value in referents if isinstance(value, SignatureEnvelope))
         retained_proofs[id(original_fence)] = (payload, envelope)
         fence_references.append(weakref.ref(original_fence))
 

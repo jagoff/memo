@@ -145,12 +145,9 @@ def connect_operational_db(path: Path) -> sqlite3.Connection:
 def ensure_operational_schema(connection: sqlite3.Connection) -> None:
     """Create the current schema or make the rebuildable v1 history upgradeable."""
     connection.execute(
-        "CREATE TABLE IF NOT EXISTS view_meta "
-        "(key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT"
+        "CREATE TABLE IF NOT EXISTS view_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT"
     )
-    row = connection.execute(
-        "SELECT value FROM view_meta WHERE key = 'schema_version'"
-    ).fetchone()
+    row = connection.execute("SELECT value FROM view_meta WHERE key = 'schema_version'").fetchone()
     if row is not None and row["value"] == "1":
         applied_table = connection.execute(
             """
@@ -165,8 +162,7 @@ def ensure_operational_schema(connection: sqlite3.Connection) -> None:
             }
             if "event_json" not in columns:
                 connection.execute(
-                    "ALTER TABLE applied_events "
-                    "ADD COLUMN event_json TEXT NOT NULL DEFAULT ''"
+                    "ALTER TABLE applied_events ADD COLUMN event_json TEXT NOT NULL DEFAULT ''"
                 )
         connection.execute(
             """
@@ -182,18 +178,14 @@ def ensure_operational_schema(connection: sqlite3.Connection) -> None:
             "SELECT value FROM view_meta WHERE key = 'schema_version'"
         ).fetchone()
     if row is not None and row["value"] != str(OPERATIONAL_VIEW_SCHEMA_VERSION):
-        raise _storage_failure(
-            f"unsupported operational view schema: {row['value']}"
-        )
+        raise _storage_failure(f"unsupported operational view schema: {row['value']}")
     connection.executescript(_DDL)
     connection.execute(
         "INSERT OR IGNORE INTO view_meta(key, value) VALUES('schema_version', ?)",
         (str(OPERATIONAL_VIEW_SCHEMA_VERSION),),
     )
     history_incomplete = (
-        connection.execute(
-            "SELECT 1 FROM applied_events WHERE event_json = '' LIMIT 1"
-        ).fetchone()
+        connection.execute("SELECT 1 FROM applied_events WHERE event_json = '' LIMIT 1").fetchone()
         is not None
     )
     if history_incomplete:

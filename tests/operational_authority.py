@@ -165,9 +165,7 @@ def authorize_test_config(cfg: Config) -> Config:
     # A reopened Memory may intentionally reuse its application state. Private
     # test keys are in-memory, so each composition needs its own authority root
     # while the operational journal itself remains shared.
-    authority_root = Path(
-        mkdtemp(prefix="memo-test-operational-authority-", dir=cfg.state_dir)
-    )
+    authority_root = Path(mkdtemp(prefix="memo-test-operational-authority-", dir=cfg.state_dir))
     authority = build_test_operational_authority(
         authority_root,
         device_id=cfg.device_id,

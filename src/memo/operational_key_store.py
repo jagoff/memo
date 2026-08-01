@@ -422,10 +422,7 @@ class AuthorityPinStore:
             version, roster_hash = self._roster_metadata(
                 state.pending_roster_record.encode("utf-8")
             )
-            if (
-                version != state.pending_roster_version
-                or roster_hash != state.pending_roster_hash
-            ):
+            if version != state.pending_roster_version or roster_hash != state.pending_roster_hash:
                 raise KeyStoreError("authority pin metadata is invalid")
         if state.pending_epoch_authorization:
             epoch, authorization_sha256 = self._epoch_metadata(

@@ -1,4 +1,5 @@
 """Signed, canonical Memflow source receipts (v2)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -13,6 +14,7 @@ from memo.operational_signing import OperationalSigner, OperationalVerifier, Sig
 
 DOMAIN = "memo.cutover.source_receipt.v2"
 
+
 def _ts(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -21,6 +23,7 @@ def _ts(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise SignatureError("source receipt timestamps must be timezone-aware")
     return parsed.astimezone(UTC)
+
 
 @dataclass(frozen=True)
 class SourceBucket:
@@ -31,6 +34,7 @@ class SourceBucket:
 
     def to_dict(self) -> dict[str, Any]:
         return {"start": self.start, "end": self.end, "count": self.count, "digest": self.digest}
+
 
 @dataclass(frozen=True)
 class SourceReceiptV2:
@@ -54,14 +58,27 @@ class SourceReceiptV2:
 
     def to_dict(self, *, blank_signature: bool = False) -> dict[str, Any]:
         env = self.signature
-        return {"schema": self.schema, "device_id": self.device_id, "key_id": self.key_id,
-                "roster_id": self.roster_id, "query": self.query, "extractor_version": self.extractor_version,
-                "snapshot_commit": self.snapshot_commit, "raw_event_set_sha256": self.raw_event_set_sha256,
-                "window_start": self.window_start, "window_end": self.window_end, "issued_at": self.issued_at,
-                "collected_at": self.collected_at, "cursor": self.cursor, "extraction_complete": self.extraction_complete,
-                "hourly_buckets": [b.to_dict() for b in self.hourly_buckets], "frozen_at": self.frozen_at,
-                "signature": "" if blank_signature else (env.signature if env else ""),
-                "algorithm": env.algorithm if env else "", "roster_version": env.roster_version if env else 0}
+        return {
+            "schema": self.schema,
+            "device_id": self.device_id,
+            "key_id": self.key_id,
+            "roster_id": self.roster_id,
+            "query": self.query,
+            "extractor_version": self.extractor_version,
+            "snapshot_commit": self.snapshot_commit,
+            "raw_event_set_sha256": self.raw_event_set_sha256,
+            "window_start": self.window_start,
+            "window_end": self.window_end,
+            "issued_at": self.issued_at,
+            "collected_at": self.collected_at,
+            "cursor": self.cursor,
+            "extraction_complete": self.extraction_complete,
+            "hourly_buckets": [b.to_dict() for b in self.hourly_buckets],
+            "frozen_at": self.frozen_at,
+            "signature": "" if blank_signature else (env.signature if env else ""),
+            "algorithm": env.algorithm if env else "",
+            "roster_version": env.roster_version if env else 0,
+        }
 
     def signed_bytes(self) -> bytes:
         return canonical_json_bytes(self.to_dict(blank_signature=True))
@@ -71,12 +88,15 @@ class SourceReceiptV2:
             raise SignatureError("source receipt is unsigned")
         return self.signature
 
+
 def sign_source_receipt(receipt: SourceReceiptV2, signer: OperationalSigner) -> SourceReceiptV2:
     # Include envelope metadata in the canonical payload before signing; the
     # verifier reconstructs the same bytes from the persisted receipt.
     seeded = SignatureEnvelope(
-        algorithm="ed25519", key_id=receipt.key_id,
-        roster_version=signer.roster_version, signature="",
+        algorithm="ed25519",
+        key_id=receipt.key_id,
+        roster_version=signer.roster_version,
+        signature="",
     )
     env = signer.sign(
         domain=DOMAIN,
@@ -85,15 +105,24 @@ def sign_source_receipt(receipt: SourceReceiptV2, signer: OperationalSigner) -> 
     )
     return SourceReceiptV2(**{**receipt.__dict__, "signature": env})
 
-def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoster, frozen_at: str | None = None,
-                          window_start: str | None = None, window_end: str | None = None,
-                          authoritative_events: list[dict[str, Any]] | None = None) -> None:
+
+def verify_source_receipt(
+    receipt: SourceReceiptV2,
+    *,
+    roster: VerificationRoster,
+    frozen_at: str | None = None,
+    window_start: str | None = None,
+    window_end: str | None = None,
+    authoritative_events: list[dict[str, Any]] | None = None,
+) -> None:
     if receipt.schema != "memo.cutover_source_receipt.v2" or receipt.signature is None:
         raise SignatureError("source receipt is unsigned or has invalid schema")
     key = roster.key(receipt.key_id)
     if key.device_id != receipt.device_id or receipt.roster_id != roster.roster_hash:
         raise SignatureError("source receipt device/key/roster mismatch")
-    if len(receipt.raw_event_set_sha256) != 64 or any(c not in "0123456789abcdef" for c in receipt.raw_event_set_sha256):
+    if len(receipt.raw_event_set_sha256) != 64 or any(
+        c not in "0123456789abcdef" for c in receipt.raw_event_set_sha256
+    ):
         raise SignatureError("invalid raw event digest")
     start, end = _ts(receipt.window_start), _ts(receipt.window_end)
     if window_start is not None and start != _ts(window_start):
@@ -148,6 +177,15 @@ def verify_source_receipt(receipt: SourceReceiptV2, *, roster: VerificationRoste
                 raise SignatureError("source receipt bucket does not match authoritative events")
     if not receipt.cursor or not receipt.extraction_complete:
         raise SignatureError("source extraction is incomplete")
-    OperationalVerifier().verify(domain=DOMAIN, payload=receipt.signed_bytes(), envelope=receipt.signature, roster=roster)
+    OperationalVerifier().verify(
+        domain=DOMAIN, payload=receipt.signed_bytes(), envelope=receipt.signature, roster=roster
+    )
 
-__all__ = ["DOMAIN", "SourceBucket", "SourceReceiptV2", "sign_source_receipt", "verify_source_receipt"]
+
+__all__ = [
+    "DOMAIN",
+    "SourceBucket",
+    "SourceReceiptV2",
+    "sign_source_receipt",
+    "verify_source_receipt",
+]

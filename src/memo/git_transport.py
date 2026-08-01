@@ -87,7 +87,9 @@ class GitTransport:
                 capture_output=True,
             )
         except (OSError, subprocess.CalledProcessError) as exc:
-            detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) else str(exc)
+            detail = (
+                exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) else str(exc)
+            )
             raise _failure(f"operational Git transport failed: {detail}") from exc
 
     def _initialize(self) -> None:
@@ -216,11 +218,7 @@ class GitTransport:
         with authority_write_lock(self.root / ".memo-operational-transport"):
             self.refresh(required=False)
             anchor_path = (
-                self.root
-                / "anchors"
-                / origin
-                / str(epoch)
-                / f"{bundle.anchor.anchor_hash}.json"
+                self.root / "anchors" / origin / str(epoch) / f"{bundle.anchor.anchor_hash}.json"
             )
             checkpoint_path = (
                 self.root
@@ -258,15 +256,9 @@ class GitTransport:
                 anchor_hash=bundle.anchor.anchor_hash,
                 checkpoint_id=bundle.anchor.checkpoint_id,
                 roster_version=bundle.anchor.roster_version,
-                key_id=(
-                    bundle.events[-1].key_id
-                    if bundle.events
-                    else bundle.anchor.key_id
-                ),
+                key_id=(bundle.events[-1].key_id if bundle.events else bundle.anchor.key_id),
                 signature=(
-                    bundle.events[-1].signature
-                    if bundle.events
-                    else bundle.anchor.signature
+                    bundle.events[-1].signature if bundle.events else bundle.anchor.signature
                 ),
             )
             head_path = self.root / "heads" / f"{origin}.json"
@@ -303,7 +295,9 @@ class GitTransport:
         heads = self.root / "heads"
         if not heads.is_dir():
             return ()
-        return tuple(sorted(path.stem for path in heads.glob("*.json") if _SAFE_ID.fullmatch(path.stem)))
+        return tuple(
+            sorted(path.stem for path in heads.glob("*.json") if _SAFE_ID.fullmatch(path.stem))
+        )
 
     def read_head(self, origin: str, *, required: bool = True) -> TransportHead | None:
         path = self.root / "heads" / f"{_safe(origin, 'origin')}.json"

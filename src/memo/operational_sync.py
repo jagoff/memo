@@ -93,9 +93,7 @@ class OperationalSync:
 
     def ingest(self) -> SyncResult:
         self.transport.refresh(required=False)
-        local_bundles = {
-            item.anchor.origin_device: item for item in self.store.export_bundles()
-        }
+        local_bundles = {item.anchor.origin_device: item for item in self.store.export_bundles()}
         bundles: list[OriginBundle] = []
         gaps: dict[str, int] = {}
         for origin in self.transport.origins():
@@ -149,7 +147,9 @@ class OperationalSync:
         self.transport.refresh(required=False)
         local = self._local_heads()
         remote = self._remote_heads()
-        pending = sum(max(0, sequence - local.get(origin, 0)) for origin, sequence in remote.items())
+        pending = sum(
+            max(0, sequence - local.get(origin, 0)) for origin, sequence in remote.items()
+        )
         return OperationalSyncStatus(
             local_heads=local,
             remote_heads=remote,
@@ -177,7 +177,10 @@ class OperationalSync:
             ) from exc
         try:
             anchor_value = json.loads(anchor_bytes.decode("utf-8"))
-            if not isinstance(anchor_value, dict) or canonical_json_bytes(anchor_value) != anchor_bytes:
+            if (
+                not isinstance(anchor_value, dict)
+                or canonical_json_bytes(anchor_value) != anchor_bytes
+            ):
                 raise ValueError
             base_sequence = int(str(anchor_value["base_sequence"]))
             base_hash = str(anchor_value["base_event_hash"])
@@ -237,9 +240,7 @@ class OperationalSync:
         encoded_bundle = canonical_json_bytes(
             {
                 "anchor": anchor_value,
-                "checkpoint": base64.urlsafe_b64encode(checkpoint)
-                .rstrip(b"=")
-                .decode("ascii"),
+                "checkpoint": base64.urlsafe_b64encode(checkpoint).rstrip(b"=").decode("ascii"),
                 "events": event_values,
                 "head_sequence": final_sequence,
                 "head_hash": final_hash,
@@ -273,9 +274,7 @@ class OperationalSync:
         value = self.clock()
         if value.tzinfo is None:
             raise ValueError("operational sync clock must include a timezone")
-        return value.astimezone(UTC).isoformat(timespec="milliseconds").replace(
-            "+00:00", "Z"
-        )
+        return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 __all__ = [

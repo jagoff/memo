@@ -102,9 +102,7 @@ def _append_turn(
         )
         if found is not None:
             if any(found.get(key) != value for key, value in turn.items()):
-                raise click.ClickException(
-                    "turn_id already exists with a different payload"
-                )
+                raise click.ClickException("turn_id already exists with a different payload")
             return dict(found)
         turn["created_at"] = time.time()
         session["turns"].append(turn)

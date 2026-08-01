@@ -385,15 +385,11 @@ def checkpoint(
     with _session_write_lock(state_dir, session_id):
         existing = _load(state_dir, session_id) or {}
         turn_count = int(existing.get("turn_count") or 0) + 1
-        operation_key = idempotency_key or (
-            f"session-checkpoint/{session_id}/{turn_count}"
-        )
+        operation_key = idempotency_key or (f"session-checkpoint/{session_id}/{turn_count}")
         if (
             runtime is not None
             and runtime_identity is not None
-            and callable(
-                getattr(type(runtime.service), "replay_checkpoint", None)
-            )
+            and callable(getattr(type(runtime.service), "replay_checkpoint", None))
         ):
             replayed_checkpoint = runtime.service.replay_checkpoint(
                 identity=runtime_identity,

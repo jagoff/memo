@@ -318,9 +318,7 @@ def test_gather_activities_joins_operational_focus(tmp_cfg: Config) -> None:
         device_id=tmp_cfg.device_id,
         context_provider=tmp_cfg.operational_context_provider,
         epoch_fence=tmp_cfg.operational_epoch_fence,
-    ).set_focus(
-        project="memo", summary="fix the README banner"
-    )
+    ).set_focus(project="memo", summary="fix the README banner")
 
     activities = gather_activities(_FakeMemory([]), tmp_cfg, now=NOW)
 

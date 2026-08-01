@@ -273,8 +273,8 @@ def test_parity_blocks_a_route_without_an_admitted_usage_receipt(
     assert capability is not None
     blocked = _resign(
         replace(
-        manifest,
-        capabilities=(replace(capability, observed_calls=0),),
+            manifest,
+            capabilities=(replace(capability, observed_calls=0),),
         ),
         authority[0],
         roster,

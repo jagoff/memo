@@ -426,15 +426,17 @@ def test_v1_migration_is_deterministic_idempotent_and_exact(tmp_path: Path) -> N
         for event in events
     )
     assert any(
-        event.source_proof is not None
-        and event.source_proof.source_origin == _REMOTE
+        event.source_proof is not None and event.source_proof.source_origin == _REMOTE
         for event in events
     )
     assert (tmp_path / "v2-first" / "migration-v1.json").is_file()
     assert not (tmp_path / "v2-first" / "operational-v2-activated.json").exists()
-    assert json.loads(
-        (tmp_path / "v2-first" / "migration-v1.json").read_text(encoding="utf-8")
-    )["schema"] == "memo.operational_migration_prepared.v1"
+    assert (
+        json.loads((tmp_path / "v2-first" / "migration-v1.json").read_text(encoding="utf-8"))[
+            "schema"
+        ]
+        == "memo.operational_migration_prepared.v1"
+    )
     assert _journal_digest(source) == source_before
 
 

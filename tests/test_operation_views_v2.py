@@ -674,9 +674,7 @@ def test_late_cross_origin_backfill_converges_with_rebuild_and_keeps_local_artif
     catch_up_report = caught_up.catch_up(_ValidatedLedger())
     rebuilt_report = rebuilt.rebuild((older, newest))
 
-    assert canonical_json_bytes(incremental.state()) == canonical_json_bytes(
-        rebuilt.state()
-    )
+    assert canonical_json_bytes(incremental.state()) == canonical_json_bytes(rebuilt.state())
     assert canonical_json_bytes(caught_up.state()) == canonical_json_bytes(rebuilt.state())
     assert incremental_report.state_sha256 == rebuilt_report.state_sha256
     assert catch_up_report.state_sha256 == rebuilt_report.state_sha256
@@ -685,9 +683,7 @@ def test_late_cross_origin_backfill_converges_with_rebuild_and_keeps_local_artif
         "demo",
         newest.idempotency_key,
     )
-    assert incremental.session_local_artifacts("session-a") == {
-        "prompt_path": "/private/p"
-    }
+    assert incremental.session_local_artifacts("session-a") == {"prompt_path": "/private/p"}
 
 
 def test_late_backfill_rereduction_failure_rolls_back_all_portable_state(

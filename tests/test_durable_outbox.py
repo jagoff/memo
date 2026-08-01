@@ -51,7 +51,9 @@ class _Operational:
     def __init__(self, views: OperationalViewStore) -> None:
         self.views = views
         self.events: list[OperationalEventV2] = []
-        self._commands: dict[tuple[str, str], tuple[str, OperationalEventV2, dict[str, object]]] = {}
+        self._commands: dict[
+            tuple[str, str], tuple[str, OperationalEventV2, dict[str, object]]
+        ] = {}
 
     def commit(
         self,

@@ -128,9 +128,7 @@ def test_cli_and_mcp_two_terminal_roundtrip_uses_only_memo_surfaces(
         memory_b,
         ["mesh", "message", "list", "--channel", "handoff", *common_b],
     )
-    assert [row["body"] for row in listed_b["messages"]] == [
-        "A completed the migration"
-    ]
+    assert [row["body"] for row in listed_b["messages"]] == ["A completed the migration"]
     reserved_b = _invoke(
         runner,
         monkeypatch,
@@ -220,9 +218,7 @@ def test_cli_and_mcp_two_terminal_roundtrip_uses_only_memo_surfaces(
         session_id="term-a",
         channel="handoff",
     )
-    assert [row["body"] for row in before_ingest_a["messages"]] == [
-        "A completed the migration"
-    ]
+    assert [row["body"] for row in before_ingest_a["messages"]] == ["A completed the migration"]
     ingest_a(
         transport_path=root_a,
         remote=remote,

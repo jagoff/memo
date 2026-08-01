@@ -56,12 +56,26 @@ def _load_json(path: Path) -> Any:
             encoded, observed = directory.read_bytes_snapshot(absolute.name)
             receipt_encoded, _receipt_stat = directory.read_bytes_snapshot(receipt_name)
         receipt = json.loads(receipt_encoded)
-        if canonical_json_bytes(receipt) != receipt_encoded or receipt.get("schema") != "memo.cutover_snapshot_receipt.v2":
+        if (
+            canonical_json_bytes(receipt) != receipt_encoded
+            or receipt.get("schema") != "memo.cutover_snapshot_receipt.v2"
+        ):
             raise ManifestError(f"invalid snapshot receipt: {path}")
         required_receipt_keys = {
-            "schema", "source", "target", "source_size", "source_mtime_ns", "source_mode",
-            "source_device", "source_inode", "target_size", "target_mtime_ns", "target_mode",
-            "target_device", "target_inode", "sha256",
+            "schema",
+            "source",
+            "target",
+            "source_size",
+            "source_mtime_ns",
+            "source_mode",
+            "source_device",
+            "source_inode",
+            "target_size",
+            "target_mtime_ns",
+            "target_mode",
+            "target_device",
+            "target_inode",
+            "sha256",
         }
         if set(receipt) != required_receipt_keys:
             raise ManifestError(f"snapshot receipt schema is not exact: {path}")
@@ -499,9 +513,7 @@ def _capability(value: Mapping[str, Any]) -> CapabilityRow:
         )
         or not isinstance(value["evidence_complete"], bool)
         or any(
-            not isinstance(key, str)
-            or isinstance(count, bool)
-            or not isinstance(count, int)
+            not isinstance(key, str) or isinstance(count, bool) or not isinstance(count, int)
             for key, count in exclusions.items()
         )
     ):
@@ -519,22 +531,14 @@ def _capability(value: Mapping[str, Any]) -> CapabilityRow:
         evidence_ids=_strings(value["evidence_ids"], "capability evidence ids"),
         exclusion_counts=cast(dict[str, int], exclusions),
         evidence_complete=value["evidence_complete"],
-        source_operations=_strings(
-            value["source_operations"], "capability source operations"
-        ),
-        operation_mappings=tuple(
-            _mapping_exact(mapping) for mapping in mappings
-        ),
-        slo_baseline_ids=_strings(
-            value["slo_baseline_ids"], "capability SLO baseline ids"
-        ),
+        source_operations=_strings(value["source_operations"], "capability source operations"),
+        operation_mappings=tuple(_mapping_exact(mapping) for mapping in mappings),
+        slo_baseline_ids=_strings(value["slo_baseline_ids"], "capability SLO baseline ids"),
         dependencies=_strings(value["dependencies"], "capability dependencies"),
         disposition=value["disposition"],
         memo_target=value["memo_target"],
         parity_tests=_strings(value["parity_tests"], "capability parity tests"),
-        deletion_proof=_strings(
-            value["deletion_proof"], "capability deletion proof"
-        ),
+        deletion_proof=_strings(value["deletion_proof"], "capability deletion proof"),
     )
 
 
@@ -611,9 +615,7 @@ def capability_manifest_from_dict(value: Mapping[str, Any]) -> CapabilityManifes
         },
         "capability manifest",
     )
-    source_receipts = _object(
-        value["source_receipt_sha256"], "capability source receipts"
-    )
+    source_receipts = _object(value["source_receipt_sha256"], "capability source receipts")
     capabilities = _objects(value["capabilities"], "capabilities")
     mappings = _objects(value["operation_mappings"], "operation mappings")
     slos = _objects(value["slo_baselines"], "SLO baselines")
@@ -883,38 +885,75 @@ def build_capability_manifest(
     seen_devices: set[str] = set()
     expected_hours = int((end - start).total_seconds() // 3600)
     for receipt in receipts:
-        if not isinstance(receipt, dict) or receipt.get("schema") != "memo.cutover_source_receipt.v2":
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("schema") != "memo.cutover_source_receipt.v2"
+        ):
             raise ManifestError("invalid source receipt schema")
         device = receipt.get("device_id")
         buckets = receipt.get("hourly_buckets")
         if device not in machine_ids or device in seen_devices or not isinstance(buckets, list):
             raise ManifestError("source receipt device/buckets invalid")
-        required = ("key_id", "roster_id", "query", "extractor_version", "snapshot_commit",
-                    "raw_event_set_sha256", "window_start", "window_end", "issued_at",
-                    "collected_at", "cursor", "signature")
+        required = (
+            "key_id",
+            "roster_id",
+            "query",
+            "extractor_version",
+            "snapshot_commit",
+            "raw_event_set_sha256",
+            "window_start",
+            "window_end",
+            "issued_at",
+            "collected_at",
+            "cursor",
+            "signature",
+        )
         if any(not receipt.get(field) for field in required):
             raise ManifestError("source receipt provenance/signature incomplete")
         if len(buckets) != expected_hours or not receipt.get("extraction_complete"):
             raise ManifestError("source receipt coverage incomplete")
         previous = None
         for bucket in buckets:
-            if not isinstance(bucket, dict) or any(key not in bucket for key in ("start", "end", "count", "digest")):
+            if not isinstance(bucket, dict) or any(
+                key not in bucket for key in ("start", "end", "count", "digest")
+            ):
                 raise ManifestError("source receipt hourly bucket malformed")
             if previous is not None and bucket["start"] <= previous:
                 raise ManifestError("source receipt buckets out of order")
             previous = bucket["start"]
         try:
-            env = SignatureEnvelope(algorithm=receipt["algorithm"], key_id=receipt["key_id"],
-                                    roster_version=int(receipt["roster_version"]), signature=receipt["signature"])
-            model = SourceReceiptV2(device_id=device, key_id=receipt["key_id"], roster_id=receipt["roster_id"],
-                query=receipt["query"], extractor_version=receipt["extractor_version"], snapshot_commit=receipt["snapshot_commit"],
-                raw_event_set_sha256=receipt["raw_event_set_sha256"], window_start=receipt["window_start"], window_end=receipt["window_end"],
-                issued_at=receipt["issued_at"], collected_at=receipt["collected_at"], cursor=receipt["cursor"],
-                extraction_complete=receipt["extraction_complete"], hourly_buckets=tuple(SourceBucket(**b) for b in buckets),
-                frozen_at=receipt.get("frozen_at"), signature=env)
-            verify_source_receipt(model, roster=roster, frozen_at=frozen_at,
-                                  window_start=window_started_at, window_end=window_ended_at,
-                                  authoritative_events=_objects(events_by_device.get(device), f"events for {device}"))
+            env = SignatureEnvelope(
+                algorithm=receipt["algorithm"],
+                key_id=receipt["key_id"],
+                roster_version=int(receipt["roster_version"]),
+                signature=receipt["signature"],
+            )
+            model = SourceReceiptV2(
+                device_id=device,
+                key_id=receipt["key_id"],
+                roster_id=receipt["roster_id"],
+                query=receipt["query"],
+                extractor_version=receipt["extractor_version"],
+                snapshot_commit=receipt["snapshot_commit"],
+                raw_event_set_sha256=receipt["raw_event_set_sha256"],
+                window_start=receipt["window_start"],
+                window_end=receipt["window_end"],
+                issued_at=receipt["issued_at"],
+                collected_at=receipt["collected_at"],
+                cursor=receipt["cursor"],
+                extraction_complete=receipt["extraction_complete"],
+                hourly_buckets=tuple(SourceBucket(**b) for b in buckets),
+                frozen_at=receipt.get("frozen_at"),
+                signature=env,
+            )
+            verify_source_receipt(
+                model,
+                roster=roster,
+                frozen_at=frozen_at,
+                window_start=window_started_at,
+                window_end=window_ended_at,
+                authoritative_events=_objects(events_by_device.get(device), f"events for {device}"),
+            )
         except Exception as exc:
             raise ManifestError("source receipt signature verification failed") from exc
         seen_devices.add(device)
@@ -1143,8 +1182,25 @@ def build_capability_manifest(
         if routes and isinstance(transform_registry, FrozenTransformRegistry)
         else ""
     )
-    fixture_authority_sha256 = _sha256(canonical_json_bytes(sorted({p: d for m in mappings for r in m.routes for p, d in zip(r.fixture_paths, r.fixture_sha256, strict=True)}.items())))
-    operation_map = canonical_json_bytes({"mappings": [row.to_dict() for row in mappings], "registry_authority_sha256": registry_authority_sha256, "fixture_authority_sha256": fixture_authority_sha256})
+    fixture_authority_sha256 = _sha256(
+        canonical_json_bytes(
+            sorted(
+                {
+                    p: d
+                    for m in mappings
+                    for r in m.routes
+                    for p, d in zip(r.fixture_paths, r.fixture_sha256, strict=True)
+                }.items()
+            )
+        )
+    )
+    operation_map = canonical_json_bytes(
+        {
+            "mappings": [row.to_dict() for row in mappings],
+            "registry_authority_sha256": registry_authority_sha256,
+            "fixture_authority_sha256": fixture_authority_sha256,
+        }
+    )
     slo_baseline = canonical_json_bytes([row.to_dict() for row in slos])
     signer_key = roster.key(signer_key_id)
     sorted_blockers = tuple(sorted(blockers))
@@ -1232,8 +1288,7 @@ def build_synapse_capability_manifest(
         raise ManifestError(str(exc)) from exc
     usage = _object(_load_json(usage_snapshot / "usage.json"), "usage snapshot")
     proof_bytes = {
-        canonical_json_bytes(value)
-        for value in _objects(usage.get("proofs"), "usage proofs")
+        canonical_json_bytes(value) for value in _objects(usage.get("proofs"), "usage proofs")
     }
     supplied_proofs = {path.read_bytes() for path in usage_proofs}
     if len(supplied_proofs) != 2 or supplied_proofs != proof_bytes:

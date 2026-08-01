@@ -2306,11 +2306,7 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_request(
         service=service,  # type: ignore[arg-type]
         identity_factory=lambda: identity,
     )
-    checkpoint_kwargs = (
-        {"idempotency_key": "checkpoint-1"}
-        if explicit_idempotency_key
-        else {}
-    )
+    checkpoint_kwargs = {"idempotency_key": "checkpoint-1"} if explicit_idempotency_key else {}
     try:
         with pytest.raises(OSError, match="simulated crash"):
             checkpoint(
@@ -2337,11 +2333,7 @@ def test_canonical_checkpoint_retry_after_cache_crash_reuses_service_request(
 
     assert [call["checkpointed_at"] for call in service.calls] == [None]
     assert len(service.replay_calls) == 2
-    expected_key = (
-        "checkpoint-1"
-        if explicit_idempotency_key
-        else "session-checkpoint/session-a/1"
-    )
+    expected_key = "checkpoint-1" if explicit_idempotency_key else "session-checkpoint/session-a/1"
     assert service.calls[0]["idempotency_key"] == expected_key
     assert service.replay_calls[-1]["idempotency_key"] == expected_key
     assert snapshot["head_commit"] == canonical.head

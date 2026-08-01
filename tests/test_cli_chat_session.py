@@ -46,9 +46,7 @@ def test_terminal_processes_cannot_overwrite_each_others_chat_turns(
         assert process.exitcode == 0
 
     stored = _load(state_dir / "chat_sessions.json")["sessions"]["shared-session"]
-    assert {turn["turn_id"] for turn in stored["turns"]} == {
-        f"turn-{index}" for index in range(8)
-    }
+    assert {turn["turn_id"] for turn in stored["turns"]} == {f"turn-{index}" for index in range(8)}
     assert {turn["client"] for turn in stored["turns"]} == {
         "terminal-0",
         "terminal-1",

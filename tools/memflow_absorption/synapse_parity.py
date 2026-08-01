@@ -280,16 +280,12 @@ def _briefing_source_ids(
                 if isinstance(row, Mapping):
                     ids.append(row.get("id"))
             for row in [
-                row
-                for row in state.get("handoffs", {}).values()
-                if not row.get("consumed_at")
+                row for row in state.get("handoffs", {}).values() if not row.get("consumed_at")
             ][:3]:
                 if isinstance(row, Mapping):
                     ids.append(row.get("id"))
             for row in [
-                row
-                for row in state.get("attention", {}).values()
-                if not row.get("acknowledged_at")
+                row for row in state.get("attention", {}).values() if not row.get("acknowledged_at")
             ][:3]:
                 if isinstance(row, Mapping):
                     ids.append(row.get("id"))
@@ -335,7 +331,9 @@ def _route_arguments(route: OperationRoute, values: Mapping[str, object]) -> dic
     return arguments
 
 
-def _verified_manifest(manifest: CapabilityManifest, memo: Memory, roster: VerificationRoster | None) -> None:
+def _verified_manifest(
+    manifest: CapabilityManifest, memo: Memory, roster: VerificationRoster | None
+) -> None:
     resolved_roster = roster or getattr(memo, "capability_manifest_roster", None)
     if not isinstance(resolved_roster, VerificationRoster):
         raise ParityManifestError("a verification roster is required for Synapse parity")
@@ -357,9 +355,7 @@ class _MemoFacade:
     def __init__(self, memory: Memory) -> None:
         self.memory = memory
 
-    def call(
-        self, method: str, arguments: Mapping[str, object]
-    ) -> tuple[str, tuple[str, ...]]:
+    def call(self, method: str, arguments: Mapping[str, object]) -> tuple[str, tuple[str, ...]]:
         method = {
             "memo_ask": "ask",
             "memo_search": "search",

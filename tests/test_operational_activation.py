@@ -135,7 +135,9 @@ def test_selector_keeps_authorized_existing_v1_migration_backend(tmp_path) -> No
     legacy = cfg.state_dir / "journal"
     legacy.mkdir(parents=True)
 
-    store = select_operational_store(cfg.model_copy(update={"operational_context_provider": lambda: None}))
+    store = select_operational_store(
+        cfg.model_copy(update={"operational_context_provider": lambda: None})
+    )
 
     assert store.backend_version == 1
 

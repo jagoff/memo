@@ -77,6 +77,7 @@ class _V2LedgerView:
     def decode_bundle(self, encoded: bytes) -> Any:
         return self.__ledger.decode_bundle(encoded)
 
+
 if TYPE_CHECKING:
     from memo.identity import PrincipalIdentity
     from memo.operation_ledger_v2 import OperationLedgerV2
@@ -329,7 +330,14 @@ class OperationalStore:
     transaction_root: Path
     backend_version: int
 
-    def __init__(self, state_dir: Path, *, device_id: str, context_provider: Callable[[], CommitContext] | None = None, epoch_fence: EpochFence | None = None) -> None:
+    def __init__(
+        self,
+        state_dir: Path,
+        *,
+        device_id: str,
+        context_provider: Callable[[], CommitContext] | None = None,
+        epoch_fence: EpochFence | None = None,
+    ) -> None:
         self.state_dir = Path(state_dir)
         self.__ledger = OperationLedger(self.state_dir, device_id=device_id)
         self.ledger = _LedgerView(self.__ledger)
@@ -450,9 +458,7 @@ class OperationalStore:
                 "operational command actor differs from authenticated principal",
                 retryable=False,
             )
-        request_hash = hashlib.sha256(
-            canonical_json_bytes(asdict(command))
-        ).hexdigest()
+        request_hash = hashlib.sha256(canonical_json_bytes(asdict(command))).hexdigest()
         ledger = cast("OperationLedgerV2", self.__ledger)
         # Retain the durable epoch fence through the complete append + view
         # commit.  A one-shot ``verify`` here leaves a race where authority
@@ -479,10 +485,7 @@ class OperationalStore:
             if not self.views.supports(command.event_type):
                 raise OperationalError(
                     OperationalErrorCode.INVALID_EVENT,
-                    (
-                        "operational event type has no active view reducer: "
-                        f"{command.event_type}"
-                    ),
+                    (f"operational event type has no active view reducer: {command.event_type}"),
                     retryable=False,
                 )
             existing = self.views.idempotency(
@@ -729,9 +732,7 @@ class OperationalStore:
                 f"operational v2 does not admit legacy operation {op!r}",
                 retryable=False,
             )
-        authenticated = context or (
-            self._context_provider() if self._context_provider else None
-        )
+        authenticated = context or (self._context_provider() if self._context_provider else None)
         if not isinstance(authenticated, CommitContext):
             raise OperationalError(
                 OperationalErrorCode.INVALID_EVENT,
@@ -751,12 +752,9 @@ class OperationalStore:
                 )
             ).hexdigest()
         project = str(payload.get("project") or "_global")
-        target_id = str(
-            payload.get("id")
-            or payload.get("task_id")
-            or payload.get("project")
-            or ""
-        ) or None
+        target_id = (
+            str(payload.get("id") or payload.get("task_id") or payload.get("project") or "") or None
+        )
         command = OperationalCommand(
             event_type=event_type,
             actor=authenticated.identity,
@@ -790,9 +788,7 @@ class OperationalStore:
         from memo.errors import OperationalError, OperationalErrorCode
         from memo.operational_epoch import CommitContext
 
-        authenticated = context or (
-            self._context_provider() if self._context_provider else None
-        )
+        authenticated = context or (self._context_provider() if self._context_provider else None)
         if not isinstance(authenticated, CommitContext):
             raise OperationalError(
                 OperationalErrorCode.INVALID_EVENT,
@@ -1179,7 +1175,9 @@ class OperationalStore:
                         payload=dict(existing.get("payload") or {}),
                         created_at=str(existing.get("created_at", "")),
                     )
-            item = OperationalSignal(marker, int(epoch), str(fence), dict(payload or {}), utc_now_iso())
+            item = OperationalSignal(
+                marker, int(epoch), str(fence), dict(payload or {}), utc_now_iso()
+            )
             self._commit(
                 "signal.remember",
                 asdict(item),
@@ -1199,8 +1197,18 @@ class OperationalStore:
                 continue
             if min_epoch is not None and int(row.get("epoch", 0)) < min_epoch:
                 continue
-            out.append(OperationalSignal(key, int(row.get("epoch", 0)), str(row.get("fence", "")), dict(row.get("payload") or {}), str(row.get("created_at", ""))))
-        return sorted(out, key=lambda item: (item.epoch, item.created_at), reverse=True)[: max(1, min(limit, 1000))]
+            out.append(
+                OperationalSignal(
+                    key,
+                    int(row.get("epoch", 0)),
+                    str(row.get("fence", "")),
+                    dict(row.get("payload") or {}),
+                    str(row.get("created_at", "")),
+                )
+            )
+        return sorted(out, key=lambda item: (item.epoch, item.created_at), reverse=True)[
+            : max(1, min(limit, 1000))
+        ]
 
     def receipt(
         self,
