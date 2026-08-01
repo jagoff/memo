@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from unittest.mock import MagicMock
 
@@ -149,10 +150,12 @@ def test_memo_backup_restore_success(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_backup_restore"](
-        backup_name="backup-20260701",
-        restore_memories=True,
-        restore_dbs=True,
+    result = asyncio.run(
+        tools["memo_backup_restore"](
+            backup_name="backup-20260701",
+            restore_memories=True,
+            restore_dbs=True,
+        )
     )
 
     mem.backup.restore_backup.assert_called_once_with(
@@ -175,7 +178,7 @@ def test_memo_backup_restore_failure(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_backup_restore"](backup_name="bad-backup")
+    result = asyncio.run(tools["memo_backup_restore"](backup_name="bad-backup"))
 
     assert result["success"] is False
     assert result["backup_name"] == "bad-backup"
@@ -193,10 +196,12 @@ def test_memo_backup_restore_partial_flags(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    tools["memo_backup_restore"](
-        backup_name="partial-backup",
-        restore_memories=False,
-        restore_dbs=True,
+    asyncio.run(
+        tools["memo_backup_restore"](
+            backup_name="partial-backup",
+            restore_memories=False,
+            restore_dbs=True,
+        )
     )
 
     mem.backup.restore_backup.assert_called_once_with(

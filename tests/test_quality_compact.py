@@ -47,12 +47,14 @@ def _seed_quality_compact_records(tmp_path: Path) -> tuple[dict[str, str], str]:
         content="Stable canonical memory.",
         title="Canonical",
         tags=["project:memo"],
+        defer_embed=True,
     )
     source = mem.save(
         content="Duplicate memory.",
         title="Duplicate",
         tags=["project:memo"],
         extra={"canonical_id": canonical.id},
+        defer_embed=True,
     )
     mem.close()
     return env, source.id

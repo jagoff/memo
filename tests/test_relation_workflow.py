@@ -65,6 +65,27 @@ def test_post_save_candidate_failure_never_fails_canonical_save(mock_memory, mon
     assert mock_memory.get(saved.id) is not None
 
 
+def test_deferred_embed_skips_relation_candidate_search(mock_memory, monkeypatch) -> None:
+    monkeypatch.setattr(
+        mock_memory,
+        "detect_relation_candidates",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("deferred save attempted semantic relation detection")
+        ),
+    )
+
+    saved = mock_memory.save(
+        content="save without a resident embedding model",
+        title="deferred relation detection",
+        type_="decision",
+        defer_embed=True,
+    )
+
+    assert saved.extra["_memo_embed_pending"] is True
+    assert saved.relation_candidates == []
+    assert saved.relation_detection == "deferred"
+
+
 def test_judged_relation_annotation_excludes_pending(mock_memory, monkeypatch) -> None:
     first = mock_memory.save(content="choice one", title="one", type_="decision")
     second = mock_memory.save(content="choice two", title="two", type_="decision")

@@ -25,6 +25,74 @@ serialize_float32 = import_sqlite_vec().serialize_float32
 
 _log = logging.getLogger(__name__)
 
+_TEST_SCOPE_SQL = (
+    "({column} GLOB 'test/*' OR {column} GLOB 'tests/*' "
+    "OR {column} GLOB '*/test/*' OR {column} GLOB '*/tests/*' "
+    "OR {column} GLOB '__tests__/*' OR {column} GLOB '*/__tests__/*' "
+    "OR {column} GLOB 'spec/*' OR {column} GLOB 'specs/*' "
+    "OR {column} GLOB '*/spec/*' OR {column} GLOB '*/specs/*' "
+    "OR {column} GLOB 'fixtures/*' OR {column} GLOB '*/fixtures/*' "
+    "OR {column} GLOB 'testdata/*' OR {column} GLOB '*/testdata/*' "
+    "OR {column} GLOB 'test_*.*' OR {column} GLOB '*/test_*.*' "
+    "OR {column} GLOB '*_test.*' OR {column} GLOB '*/*_test.*' "
+    "OR {column} GLOB '*.test.*' OR {column} GLOB '*/*.test.*' "
+    "OR {column} GLOB '*_spec.*' OR {column} GLOB '*/*_spec.*' "
+    "OR {column} GLOB '*.spec.*' OR {column} GLOB '*/*.spec.*')"
+)
+_VENDOR_SCOPE_SQL = (
+    "({column} GLOB 'vendor/*' OR {column} GLOB 'vendored/*' "
+    "OR {column} GLOB '*/vendor/*' OR {column} GLOB '*/vendored/*' "
+    "OR {column} GLOB 'third_party/*' OR {column} GLOB 'third-party/*' "
+    "OR {column} GLOB '*/third_party/*' OR {column} GLOB '*/third-party/*' "
+    "OR {column} GLOB 'node_modules/*' OR {column} GLOB '*/node_modules/*' "
+    "OR {column} GLOB 'dist/*' OR {column} GLOB '*/dist/*' "
+    "OR {column} GLOB 'build/*' OR {column} GLOB '*/build/*' "
+    "OR {column} GLOB 'generated/*' OR {column} GLOB '*/generated/*' "
+    "OR {column} GLOB 'coverage/*' OR {column} GLOB '*/coverage/*' "
+    "OR {column} GLOB 'target/*' OR {column} GLOB '*/target/*')"
+)
+
+
+def _repo_scope_sql(column: str, scope: str) -> str:
+    normalized = str(scope or "all").strip().lower()
+    if column not in {"repo_chunks.path", "repo_lines.path"}:
+        raise ValueError(f"unsupported repo path column: {column}")
+    lowered = f"lower({column})"
+    tests = _TEST_SCOPE_SQL.format(column=lowered)
+    vendor = _VENDOR_SCOPE_SQL.format(column=lowered)
+    if normalized == "all":
+        return "1 = 1"
+    if normalized == "tests":
+        return tests
+    if normalized == "vendor":
+        return vendor
+    if normalized == "production":
+        return f"NOT {tests} AND NOT {vendor}"
+    raise ValueError(f"invalid repo scope {scope!r}; expected all, production, tests, or vendor")
+
+
+def _attach_repo_generation(row: dict[str, Any]) -> None:
+    raw = row.pop("extra_json", None)
+    try:
+        extra = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        extra = {}
+    evidence = extra.get("code_evidence") if isinstance(extra, dict) else {}
+    if not isinstance(evidence, dict):
+        evidence = {}
+    row["index_generation"] = str(evidence.get("index_generation") or "")
+
+
+def _provider_target_line(entry: dict[str, Any]) -> int | None:
+    for evidence in entry.get("evidence") or []:
+        if not isinstance(evidence, dict):
+            continue
+        try:
+            return int(evidence["line_start"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
+
 
 class _RepoStoreMixin(_StoreBase):
     # -- repo corpus -------------------------------------------------------
@@ -80,6 +148,48 @@ class _RepoStoreMixin(_StoreBase):
             "chunks": int(row["chunks"] or 0),
             "embedded_chunks": int(row["embedded_chunks"] or 0),
         }
+
+    def replace_repo_coverage(
+        self,
+        *,
+        repo_id: str,
+        generation: str,
+        rows: list[dict[str, Any]],
+        recorded_at: str,
+    ) -> None:
+        """Atomically replace recorded coverage gaps for one index generation."""
+        with self._tx() as cx:
+            cx.execute(
+                "DELETE FROM repo_coverage WHERE repo_id = ? AND generation = ?",
+                (repo_id, generation),
+            )
+            cx.executemany(
+                "INSERT INTO repo_coverage "
+                "(repo_id, generation, path, reason, detail, line_start, line_end, recorded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        repo_id,
+                        generation,
+                        str(row["path"]),
+                        str(row["reason"]),
+                        str(row.get("detail") or ""),
+                        row.get("line_start"),
+                        row.get("line_end"),
+                        recorded_at,
+                    )
+                    for row in rows
+                ],
+            )
+
+    def list_repo_coverage(self, repo_id: str, generation: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT path, reason, detail, line_start, line_end, recorded_at "
+            "FROM repo_coverage WHERE repo_id = ? AND generation = ? "
+            "ORDER BY path, reason",
+            (repo_id, generation),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def update_repo_status(
         self, repo_id: str, status: str, *, indexed_at: str | None = None
@@ -235,6 +345,27 @@ class _RepoStoreMixin(_StoreBase):
                     source.get("status") or "ready",
                     json.dumps(source.get("extra") or {}, default=str),
                 ),
+            )
+
+    def patch_repo_source_extra(self, repo_id: str, patch: dict[str, Any]) -> None:
+        """Merge provider metadata without clobbering index/evidence fields."""
+        with self._tx() as cx:
+            row = cx.execute(
+                "SELECT extra_json FROM repo_sources WHERE id = ?",
+                (repo_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"repo not found: {repo_id}")
+            try:
+                current = json.loads(row["extra_json"] or "{}")
+            except (TypeError, ValueError):
+                current = {}
+            if not isinstance(current, dict):
+                current = {}
+            current.update(patch)
+            cx.execute(
+                "UPDATE repo_sources SET extra_json = ? WHERE id = ?",
+                (json.dumps(current, default=str), repo_id),
             )
 
     def upsert_repo_files(
@@ -399,6 +530,7 @@ class _RepoStoreMixin(_StoreBase):
                 ).fetchall()
             ]
             self._delete_repo_file_rows(cx, file_ids)
+            cx.execute("DELETE FROM repo_coverage WHERE repo_id = ?", (repo_id,))
             cx.execute("DELETE FROM repo_sources WHERE id = ?", (repo_id,))
         return True
 
@@ -408,6 +540,7 @@ class _RepoStoreMixin(_StoreBase):
         limit: int = 10,
         repo_id: str | None = None,
         path_glob: str | None = None,
+        scope: str = "all",
     ) -> list[dict[str, Any]]:
         if len(embedding) != self.dims:
             raise ValueError(
@@ -418,18 +551,19 @@ class _RepoStoreMixin(_StoreBase):
         # `repo_id` is a vec0 PARTITION KEY → `repo_vec.repo_id = ?` pre-filters
         # the kNN to that repo (exact, no over-fetch). Only `path_glob` (a GLOB,
         # not vec0-filterable) still needs the `k * 5` over-fetch + post-filter.
-        candidate_k = limit * 5 if path_glob else limit
+        candidate_k = limit * 20 if (path_glob or scope != "all" or repo_id is None) else limit
         sql = (
             "SELECT repo_chunks.id AS id, repo_vec.distance AS distance, "
             "       repo_chunks.repo_id, repo_sources.name AS repo_name, repo_sources.url, "
             "       repo_sources.ref, repo_sources.commit_sha, repo_chunks.file_id, "
             "       repo_chunks.path, repo_files.language, repo_chunks.line_start, "
-            "       repo_chunks.line_end, repo_chunks.body_text "
+            "       repo_chunks.line_end, repo_chunks.body_text, repo_sources.extra_json "
             "FROM repo_vec "
             "JOIN repo_chunks ON repo_chunks.id = repo_vec.id "
             "JOIN repo_files ON repo_files.id = repo_chunks.file_id "
             "JOIN repo_sources ON repo_sources.id = repo_chunks.repo_id "
             "WHERE embedding MATCH ? AND k = ? "
+            "AND repo_sources.status != 'indexing' "
         )
         params: list[Any] = [serialize_float32(embedding), candidate_k]
         if repo_id:
@@ -438,14 +572,16 @@ class _RepoStoreMixin(_StoreBase):
         if path_glob:
             sql += "AND repo_chunks.path GLOB ? "
             params.append(path_glob)
+        sql += f"AND {_repo_scope_sql('repo_chunks.path', scope)} "
         sql += "ORDER BY distance ASC LIMIT ?"
         params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
             d = _repo_row_to_dict(r)
+            _attach_repo_generation(d)
             d["score"] = max(0.0, 1.0 - float(r["distance"]))
-            d["match_type"] = "chunk"
+            d["match_type"] = "vec"
             out.append(d)
         return out
 
@@ -455,11 +591,12 @@ class _RepoStoreMixin(_StoreBase):
         limit: int = 10,
         repo_id: str | None = None,
         path_glob: str | None = None,
+        scope: str = "all",
     ) -> list[dict[str, Any]]:
         match_expr = _fts_match_expr(query)
         if not match_expr:
             return []
-        candidate_k = limit * 5 if (repo_id or path_glob) else limit
+        candidate_k = limit * 20 if (repo_id or path_glob or scope != "all") else limit
         # Column weights: (id UNINDEXED, repo_name, path, body)
         sql = (
             "SELECT repo_chunks.id AS id, "
@@ -467,12 +604,12 @@ class _RepoStoreMixin(_StoreBase):
             "       repo_chunks.repo_id, repo_sources.name AS repo_name, repo_sources.url, "
             "       repo_sources.ref, repo_sources.commit_sha, repo_chunks.file_id, "
             "       repo_chunks.path, repo_files.language, repo_chunks.line_start, "
-            "       repo_chunks.line_end, repo_chunks.body_text "
+            "       repo_chunks.line_end, repo_chunks.body_text, repo_sources.extra_json "
             "FROM repo_chunk_fts "
             "JOIN repo_chunks ON repo_chunks.id = repo_chunk_fts.id "
             "JOIN repo_files ON repo_files.id = repo_chunks.file_id "
             "JOIN repo_sources ON repo_sources.id = repo_chunks.repo_id "
-            "WHERE repo_chunk_fts MATCH ? "
+            "WHERE repo_chunk_fts MATCH ? AND repo_sources.status != 'indexing' "
         )
         params: list[Any] = [
             _BM25_UNINDEXED_WEIGHT,
@@ -487,6 +624,7 @@ class _RepoStoreMixin(_StoreBase):
         if path_glob:
             sql += "AND repo_chunks.path GLOB ? "
             params.append(path_glob)
+        sql += f"AND {_repo_scope_sql('repo_chunks.path', scope)} "
         sql += "ORDER BY bm25_score ASC LIMIT ?"
         params.append(candidate_k)
         try:
@@ -494,7 +632,10 @@ class _RepoStoreMixin(_StoreBase):
         except sqlite3.OperationalError as exc:
             _log.warning("repo bm25 (chunk) query failed: %s", exc)
             return []
-        return [_repo_bm25_row_to_dict(r, "chunk") for r in rows[:limit]]
+        out = [_repo_bm25_row_to_dict(r, "bm25") for r in rows[:limit]]
+        for row in out:
+            _attach_repo_generation(row)
+        return out
 
     def search_repo_lines(
         self,
@@ -502,11 +643,12 @@ class _RepoStoreMixin(_StoreBase):
         limit: int = 10,
         repo_id: str | None = None,
         path_glob: str | None = None,
+        scope: str = "all",
     ) -> list[dict[str, Any]]:
         match_expr = _fts_match_expr(query)
         if not match_expr:
             return []
-        candidate_k = limit * 5 if (repo_id or path_glob) else limit
+        candidate_k = limit * 20 if (repo_id or path_glob or scope != "all") else limit
         # Column weights: (id UNINDEXED, repo_name, path, line_no UNINDEXED, body)
         sql = (
             "SELECT repo_lines.id AS id, "
@@ -514,12 +656,13 @@ class _RepoStoreMixin(_StoreBase):
             "       repo_lines.repo_id, repo_sources.name AS repo_name, repo_sources.url, "
             "       repo_sources.ref, repo_sources.commit_sha, repo_lines.file_id, "
             "       repo_lines.path, repo_files.language, repo_lines.line_no AS line_start, "
-            "       repo_lines.line_no AS line_end, repo_lines.text AS body_text "
+            "       repo_lines.line_no AS line_end, repo_lines.text AS body_text, "
+            "       repo_sources.extra_json "
             "FROM repo_line_fts "
             "JOIN repo_lines ON repo_lines.id = repo_line_fts.id "
             "JOIN repo_files ON repo_files.id = repo_lines.file_id "
             "JOIN repo_sources ON repo_sources.id = repo_lines.repo_id "
-            "WHERE repo_line_fts MATCH ? "
+            "WHERE repo_line_fts MATCH ? AND repo_sources.status != 'indexing' "
         )
         params: list[Any] = [
             _BM25_UNINDEXED_WEIGHT,
@@ -535,6 +678,7 @@ class _RepoStoreMixin(_StoreBase):
         if path_glob:
             sql += "AND repo_lines.path GLOB ? "
             params.append(path_glob)
+        sql += f"AND {_repo_scope_sql('repo_lines.path', scope)} "
         sql += "ORDER BY bm25_score ASC LIMIT ?"
         params.append(candidate_k)
         try:
@@ -542,7 +686,85 @@ class _RepoStoreMixin(_StoreBase):
         except sqlite3.OperationalError as exc:
             _log.warning("repo bm25 (line) query failed: %s", exc)
             return []
-        return [_repo_bm25_row_to_dict(r, "line") for r in rows[:limit]]
+        out = [_repo_bm25_row_to_dict(r, "line") for r in rows[:limit]]
+        for row in out:
+            _attach_repo_generation(row)
+        return out
+
+    def repo_chunks_for_paths(
+        self,
+        repo_id: str,
+        path_entries: list[dict[str, Any]],
+        *,
+        limit: int = 40,
+    ) -> list[dict[str, Any]]:
+        """Resolve provider path evidence to the most relevant active chunk."""
+        if not path_entries:
+            return []
+        by_path = {
+            str(entry.get("path") or ""): entry
+            for entry in path_entries
+            if str(entry.get("path") or "")
+        }
+        rows: list[sqlite3.Row] = []
+        for batch in _batches(list(by_path)):
+            placeholders = ",".join("?" for _ in batch)
+            query = (
+                "SELECT repo_chunks.id, repo_chunks.repo_id, "  # noqa: S608
+                "       repo_sources.name AS repo_name, repo_sources.url, "
+                "       repo_sources.ref, repo_sources.commit_sha, "
+                "       repo_sources.extra_json, repo_chunks.file_id, "
+                "       repo_chunks.path, repo_files.language, "
+                "       repo_chunks.line_start, repo_chunks.line_end, "
+                "       repo_chunks.body_text "
+                "FROM repo_chunks "
+                "JOIN repo_files ON repo_files.id = repo_chunks.file_id "
+                "JOIN repo_sources ON repo_sources.id = repo_chunks.repo_id "
+                "WHERE repo_chunks.repo_id = ? "
+                "AND repo_sources.status != 'indexing' "
+                f"AND repo_chunks.path IN ({placeholders}) "
+                "ORDER BY repo_chunks.path, repo_chunks.chunk_seq"
+            )
+            rows.extend(
+                self._conn.execute(
+                    query,
+                    (repo_id, *batch),
+                ).fetchall()
+            )
+
+        candidates: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            candidates.setdefault(str(row["path"]), []).append(row)
+        out: list[dict[str, Any]] = []
+        for path, entry in by_path.items():
+            path_rows = candidates.get(path) or []
+            if not path_rows:
+                continue
+            target_line = _provider_target_line(entry)
+            selected = next(
+                (
+                    row
+                    for row in path_rows
+                    if target_line is not None
+                    and int(row["line_start"]) <= target_line <= int(row["line_end"])
+                ),
+                path_rows[0],
+            )
+            item = _repo_row_to_dict(selected)
+            _attach_repo_generation(item)
+            item["score"] = float(entry.get("score") or 0.0)
+            item["match_type"] = str(entry.get("match_type") or "provider")
+            item["provider_evidence"] = list(entry.get("evidence") or [])
+            item["provider_metadata"] = {
+                key: value
+                for key, value in entry.items()
+                if key not in {"path", "score", "evidence", "match_type"}
+            }
+            out.append(item)
+        return sorted(
+            out,
+            key=lambda item: (-float(item["score"]), str(item["path"])),
+        )[:limit]
 
     def get_repo_file(self, repo_id: str, path: str) -> dict[str, Any] | None:
         row = self._conn.execute(

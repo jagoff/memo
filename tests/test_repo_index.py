@@ -16,6 +16,7 @@ from memo.repo_index import (
     _extract_query_terms,
     _path_name_boost,
 )
+from memo.repo_index_helpers import _repo_embed_batch_size
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -102,6 +103,12 @@ def test_repo_index_indexes_lines_chunks_and_gets_ranges(tmp_path: Path, monkeyp
     assert out["embedded_chunks"] == 2
     assert out["pending_chunks"] == 0
     assert out["semantic_status"] == "semantic_ready"
+    evidence = out["code_evidence"]
+    assert evidence["schema"] == "memo.code_evidence.v1"
+    assert evidence["provider"] == "memo-repo"
+    assert evidence["recording_status"] == "complete"
+    assert evidence["coverage_status"] == "known_gaps"
+    assert {gap["reason"] for gap in evidence["gaps"]} >= {"binary", "excluded"}
 
     line_hits = mem.repo_search("needle-value", repo="sample", mode="line")
     assert line_hits
@@ -116,11 +123,14 @@ def test_repo_index_indexes_lines_chunks_and_gets_ranges(tmp_path: Path, monkeyp
     assert body is not None
     assert "def alpha" in body["text"]
     assert "needle-value" in body["text"]
+    assert body["code_evidence"]["coverage_status"] == "complete"
+    assert body["code_evidence"]["freshness"] == "current"
 
     unchanged = mem.repo_index(str(repo), name="sample")
     assert unchanged["skipped_repo_unchanged"] is True
     assert unchanged["unchanged_files"] == 2
     assert unchanged["semantic_status"] == "semantic_ready"
+    assert unchanged["code_evidence"]["index_generation"] == evidence["index_generation"]
 
 
 def test_noise_filter_drops_md_fragments_but_keeps_short_code(tmp_path: Path, monkeypatch):
@@ -289,6 +299,12 @@ def test_repo_embed_sorts_batches_by_input_length(tmp_path: Path, monkeypatch):
 
     assert len(seen_lengths) == 3
     assert seen_lengths == sorted(seen_lengths)
+
+
+def test_repo_embed_default_batch_is_memory_safe(monkeypatch):
+    monkeypatch.delenv("MEMO_REPO_EMBED_BATCH", raising=False)
+
+    assert _repo_embed_batch_size() == 16
 
 
 def test_repo_embed_reduces_batch_size_after_runtime_error(tmp_path: Path, monkeypatch):

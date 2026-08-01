@@ -270,8 +270,8 @@ def test_throttle_first_check_then_blocked(tmp_cfg):
 
 
 def test_runtime_flag_defaults(monkeypatch):
-    # memo v4.1.0+: MEMO_AUTO_UPDATE defaults ON (memo keeps itself current);
-    # the check/self-heal flags stay opt-in (default off).
+    # Normal startup is offline: update checks, auto-update, and self-heal all
+    # require explicit opt-in.
     from memo.flags import flag_bool
 
     names = (
@@ -285,24 +285,27 @@ def test_runtime_flag_defaults(monkeypatch):
 
     assert {name: flag_bool(name) for name in names} == {
         "MEMO_UPDATE_CHECK_ENABLED": False,
-        "MEMO_AUTO_UPDATE": True,
+        "MEMO_AUTO_UPDATE": False,
         "MEMO_STATUSLINE_SELFHEAL": False,
         "MEMO_HOOK_SELFHEAL": False,
     }
 
 
-def test_maybe_auto_update_enabled_by_default(tmp_cfg, monkeypatch):
-    # memo v4.1.0+: MEMO_AUTO_UPDATE defaults ON. With no explicit env var (the
-    # conftest hermetic pin removed), a memo-mcp start checks for a newer tag and
-    # spawns the background updater. The isolated MEMO_CONFIG_DIR means no
-    # markdown config leaks in, so this exercises the real built-in default.
+def test_maybe_auto_update_disabled_by_default(tmp_cfg, monkeypatch):
+    # No explicit env var means no outbound tag check and no subprocess.
     monkeypatch.delenv("MEMO_AUTO_UPDATE", raising=False)
-    monkeypatch.setattr(au, "latest_remote_tag", lambda *a, **k: "v999.0.0")
-    monkeypatch.setattr(au, "tag_is_on_remote_master", lambda *a, **k: True)
-    monkeypatch.setattr(au, "_process_identity", lambda pid: f"test:{pid}")
-    monkeypatch.setattr(au.subprocess, "Popen", lambda *a, **k: _FakeUpdateProc(4242))
+    monkeypatch.setattr(
+        au,
+        "latest_remote_tag",
+        lambda *a, **k: pytest.fail("default startup must not access the network"),
+    )
+    monkeypatch.setattr(
+        au.subprocess,
+        "Popen",
+        lambda *a, **k: pytest.fail("default startup must not spawn an updater"),
+    )
 
-    assert au.maybe_auto_update(tmp_cfg) is True
+    assert au.maybe_auto_update(tmp_cfg) is False
 
 
 def test_maybe_auto_update_respects_explicit_optout(tmp_cfg, monkeypatch):

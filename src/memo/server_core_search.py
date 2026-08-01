@@ -101,21 +101,10 @@ def register(server: Any, memory: Memory) -> None:
         ground the task. Pass `cwd` to bias project context and `source` to
         attribute consult logs to the calling client.
         """
-        from memo.briefing import (
-            compact_text,
-            memo_native_briefing_lines,
-            operational_briefing_lines,
-        )
-        from memo.flags import flag_int
+        from memo.briefing import compose_unified_briefing
 
         t0 = now_ms()
-        loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
-        loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
-        raw_lines: list[str] = memo_native_briefing_lines(
-            memory, loops_n=loops_n, loops_days=loops_days
-        )
-        raw_lines.extend(operational_briefing_lines(memory, cwd))
-        markdown = compact_text("\n".join(raw_lines), max_chars=900)
+        markdown = compose_unified_briefing(memory, cwd)
         lines = markdown.splitlines() if markdown else []
         log_consult(
             memory,

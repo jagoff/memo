@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
+
+from memo.code_evidence import normalize_code_path
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,7 @@ class CodeReference:
     end_line: int | None
     relation: str
     confidence: float
+    code_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 def _normalized_remote(remote: str) -> str:
@@ -115,7 +118,7 @@ def _relative_capture(path: str, repo_root: Path) -> str:
             return candidate.resolve().relative_to(repo_root.resolve()).as_posix()
         except ValueError:
             return candidate.as_posix()
-    return candidate.as_posix().lstrip("./")
+    return normalize_code_path(candidate.as_posix())
 
 
 def _node_columns(conn: sqlite3.Connection) -> set[str]:
@@ -193,6 +196,11 @@ def _explicit_references(extra: dict[str, Any]) -> list[CodeReference]:
                 ),
                 relation=str(metadata.get("relation") or "explicit"),
                 confidence=1.0,
+                code_evidence=(
+                    dict(metadata["code_evidence"])
+                    if isinstance(metadata.get("code_evidence"), dict)
+                    else {}
+                ),
             )
         )
     return out
@@ -274,7 +282,23 @@ class CodeReferenceResolver:
             )
             refs.append(_reference_from_row(matches[0], repo_id=self.repo_id, relation=relation))
         unique = {(ref.uri, ref.relation): ref for ref in refs}
-        return tuple(unique[key] for key in sorted(unique))
+        resolved: list[CodeReference] = []
+        for key in sorted(unique):
+            ref = unique[key]
+            if not ref.code_evidence and ref.file_path:
+                from memo.code_evidence import codegraph_evidence
+
+                ref = replace(
+                    ref,
+                    code_evidence=codegraph_evidence(
+                        db_path=self.db_path,
+                        repo_root=self.repo_root,
+                        repo_id=self.repo_id,
+                        paths=[ref.file_path],
+                    ).to_dict(),
+                )
+            resolved.append(ref)
+        return tuple(resolved)
 
 
 __all__ = [

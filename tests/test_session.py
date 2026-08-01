@@ -139,6 +139,10 @@ def test_recent_prompts_returns_last_n_oldest_first(tmp_cfg, fake_git):
     sid = "sid-trail-1"
     for p in ("primer prompt largo", "segundo prompt largo", "tercer prompt largo"):
         checkpoint(tmp_cfg.state_dir, session_id=sid, cwd=str(tmp_cfg.state_dir), prompt=p)
+    payload = session_mod._load(tmp_cfg.state_dir, sid)
+    assert payload is not None
+    payload["prompt_trail"].insert(1, 7)
+    session_mod._write(tmp_cfg.state_dir, sid, payload)
     assert recent_prompts(tmp_cfg.state_dir, sid, 2) == [
         "segundo prompt largo",
         "tercer prompt largo",
@@ -147,11 +151,18 @@ def test_recent_prompts_returns_last_n_oldest_first(tmp_cfg, fake_git):
     assert len(recent_prompts(tmp_cfg.state_dir, sid, 99)) == 3
 
 
-def test_recent_prompts_missing_session_or_zero_n(tmp_cfg):
+def test_recent_prompts_missing_session_or_zero_n(tmp_cfg, monkeypatch):
     """No session, empty id, or n<=0 → [] (never raises — recall must not break)."""
     assert recent_prompts(tmp_cfg.state_dir, "does-not-exist", 2) == []
     assert recent_prompts(tmp_cfg.state_dir, "", 2) == []
     assert recent_prompts(tmp_cfg.state_dir, "x", 0) == []
+
+    error = OSError("stale session")
+    debug = MagicMock()
+    monkeypatch.setattr(session_mod, "_load", MagicMock(side_effect=error))
+    monkeypatch.setattr(session_mod._log, "debug", debug)
+    assert recent_prompts(tmp_cfg.state_dir, "stale-session", 2) == []
+    debug.assert_called_once_with("session: failed to read prompt_trail: %s", error)
 
 
 def test_session_recent_env_zero_limit_disables_panel(tmp_cfg, fake_git, monkeypatch, tmp_path):
@@ -673,6 +684,7 @@ def test_format_relative_buckets():
     assert format_relative((now - timedelta(minutes=5)).isoformat(), now=now) == "5m ago"
     assert format_relative((now - timedelta(hours=3)).isoformat(), now=now) == "3h ago"
     assert format_relative((now - timedelta(days=2)).isoformat(), now=now) == "2d ago"
+    assert format_relative((datetime.now(UTC) - timedelta(seconds=1)).isoformat()) == "<1m ago"
     assert format_relative(None) == "—"
     assert format_relative("garbage") == "—"
 
@@ -680,6 +692,20 @@ def test_format_relative_buckets():
 def test_checkpoint_requires_session_id(tmp_cfg):
     with pytest.raises(ValueError):
         checkpoint(tmp_cfg.state_dir, session_id="", cwd=str(tmp_cfg.state_dir))
+
+
+def test_checkpoint_does_not_persist_wrapper_only_prompt(tmp_cfg, fake_git) -> None:
+    session_id = "wrapper-only-prompt"
+    checkpoint(
+        tmp_cfg.state_dir,
+        session_id=session_id,
+        cwd=str(tmp_cfg.state_dir),
+        prompt="<command-message>noise</command-message>",
+    )
+
+    snapshot = session_mod._load(tmp_cfg.state_dir, session_id)
+    assert snapshot is not None
+    assert snapshot["prompt_trail"] == []
 
 
 def test_gather_git_state_outside_repo(tmp_path):
@@ -1375,6 +1401,43 @@ def test_session_listing_and_lookup_exact_boundaries_and_utf8(tmp_path, monkeypa
     assert encodings and set(encodings) == {"utf-8"}
 
 
+def test_list_sessions_filters_continue_past_earlier_nonmatches(tmp_path, monkeypatch) -> None:
+    directory = session_mod.sessions_dir(tmp_path)
+    wrong_project = directory / "wrong-project.json"
+    missing_cwd = directory / "missing-cwd.json"
+    match = directory / "match.json"
+    wrong_project.write_text(
+        json.dumps({"session_id": "wrong-project", "project": "other"}),
+        encoding="utf-8",
+    )
+    missing_cwd.write_text(
+        json.dumps({"session_id": "missing-cwd", "project": "memo"}),
+        encoding="utf-8",
+    )
+    match.write_text(
+        json.dumps(
+            {
+                "session_id": "match",
+                "project": "memo",
+                "cwd": str(tmp_path),
+                "updated": "2026-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    ordered_directory = MagicMock()
+    ordered_directory.glob.return_value = [wrong_project, missing_cwd, match]
+    monkeypatch.setattr(session_mod, "sessions_dir", lambda _state_dir: ordered_directory)
+
+    assert [row["session_id"] for row in list_sessions(tmp_path, project="memo")] == [
+        "match",
+        "missing-cwd",
+    ]
+    assert [
+        row["session_id"] for row in list_sessions(tmp_path, project="memo", cwd=str(tmp_path))
+    ] == ["match"]
+
+
 def test_list_sessions_default_limit_is_ten(tmp_path) -> None:
     for index in range(11):
         session_mod._write(
@@ -1541,6 +1604,127 @@ def test_refresh_summary_forwards_exact_prompt_model_options_and_caps_output(
     assert saved["running_summary"] == "s" * 400
     assert saved["summary_turn"] == 5
 
+    session_mod._write(
+        tmp_path,
+        "sid-default-model",
+        {
+            "session_id": "sid-default-model",
+            "transcript_path": str(transcript),
+            "turn_count": 3,
+            "summary_turn": 0,
+        },
+    )
+    calls.clear()
+    assert refresh_summary(tmp_path, "sid-default-model", min_new_turns=3)
+    assert calls[0][0] == "mlx-community/Qwen3-4B-4bit"
+
+
+def test_refresh_summary_uses_exact_turn_delta_before_loading_model(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "work"}}),
+        encoding="utf-8",
+    )
+
+    model_loads = 0
+
+    class UnexpectedChat:
+        def __init__(self):
+            nonlocal model_loads
+            model_loads += 1
+
+    monkeypatch.setattr("memo.llm.MLXChat", UnexpectedChat)
+    session_mod._write(
+        tmp_path,
+        "sid-no-turn-count",
+        {"session_id": "sid-no-turn-count", "transcript_path": str(transcript)},
+    )
+    assert not refresh_summary(tmp_path, "sid-no-turn-count", min_new_turns=1)
+    assert model_loads == 0
+
+    session_mod._write(
+        tmp_path,
+        "sid-current-summary",
+        {
+            "session_id": "sid-current-summary",
+            "transcript_path": str(transcript),
+            "turn_count": 5,
+            "summary_turn": 3,
+        },
+    )
+    assert not refresh_summary(tmp_path, "sid-current-summary", min_new_turns=3)
+    assert model_loads == 0
+
+
+def test_refresh_summary_equal_concurrent_checkpoint_wins(tmp_path, monkeypatch) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "work"}}),
+        encoding="utf-8",
+    )
+    initial = {
+        "session_id": "sid-concurrent-summary",
+        "transcript_path": str(transcript),
+        "turn_count": 3,
+        "summary_turn": 0,
+    }
+    latest = {**initial, "summary_turn": 3, "running_summary": "newer summary"}
+    loads = iter([initial, latest])
+    monkeypatch.setattr(session_mod, "_load", lambda *_args: next(loads))
+    writer = MagicMock()
+    monkeypatch.setattr(session_mod, "_write", writer)
+
+    class Chat:
+        def chat(self, *_args, **_kwargs):
+            return {"message": {"content": "stale generated summary"}}
+
+    monkeypatch.setattr("memo.llm.MLXChat", Chat)
+
+    assert not refresh_summary(tmp_path, "sid-concurrent-summary", min_new_turns=3)
+    writer.assert_not_called()
+
+
+def test_refresh_summary_writes_first_turn_when_latest_summary_is_zero(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "user", "message": {"content": "work"}}),
+        encoding="utf-8",
+    )
+    initial = {
+        "session_id": "sid-first-summary",
+        "transcript_path": str(transcript),
+        "turn_count": 1,
+        "summary_turn": 0,
+    }
+    latest = dict(initial)
+    loads = iter([initial, latest])
+    monkeypatch.setattr(session_mod, "_load", lambda *_args: next(loads))
+    writer = MagicMock()
+    monkeypatch.setattr(session_mod, "_write", writer)
+
+    class Chat:
+        def chat(self, *_args, **_kwargs):
+            return {"message": {"content": "first generated summary"}}
+
+    monkeypatch.setattr("memo.llm.MLXChat", Chat)
+
+    assert refresh_summary(tmp_path, "sid-first-summary", min_new_turns=1)
+    writer.assert_called_once_with(
+        tmp_path,
+        "sid-first-summary",
+        {
+            **initial,
+            "running_summary": "first generated summary",
+            "summary_turn": 1,
+        },
+    )
+
 
 def test_refresh_summary_does_not_invent_empty_model_output(tmp_path, monkeypatch) -> None:
     transcript = tmp_path / "transcript.jsonl"
@@ -1594,7 +1778,7 @@ def test_clean_summary_and_active_memory_render_exact_contract() -> None:
         "running_summary": "r" * 141,
         "project": "memo",
         "branch": "",
-        "turn_count": 0,
+        "turn_count": 7,
         "modified_files": [" a.py ", 7, "", "b.py", "c.py", "d.py", "e.py"],
         "last_assistant_tail": "tail\n" + "z" * 170,
         "prompt_trail": ["one", 8, "", "two", "three", "four", "p" * 121],
@@ -1603,7 +1787,7 @@ def test_clean_summary_and_active_memory_render_exact_contract() -> None:
         "### Active memory",
         "",
         f"- **In progress**: {'r' * 140}",
-        "- **Context**: `memo` · `—` · 0 turns",
+        "- **Context**: `memo` · `—` · 7 turns",
         "- **Files touched**: `a.py`, `b.py`, `c.py`, `d.py`",
         f"- **Last reply**: tail {'z' * 155}",
         "- **Open loops (session)**:",
@@ -1613,6 +1797,13 @@ def test_clean_summary_and_active_memory_render_exact_contract() -> None:
         "  4. two",
         "  5. one",
     ]
+    noise_lines = render_active_memory(
+        {
+            "project": "memo",
+            "last_assistant_tail": "<local-command-stdout>noise</local-command-",
+        }
+    )
+    assert not any("Last reply" in line for line in noise_lines)
 
 
 def test_checkpoint_without_transcript_preserves_existing_message_fields(
@@ -1847,6 +2038,12 @@ def test_mark_autosaved_updates_existing_only(tmp_path, monkeypatch) -> None:
 
     session_mod.mark_autosaved(tmp_path, "sid-missing")
     assert session_mod._load(tmp_path, "sid-missing") is None
+
+    for error in (OSError("disk unavailable"), ValueError("invalid session snapshot")):
+        loader = MagicMock(side_effect=error)
+        monkeypatch.setattr(session_mod, "_load", loader)
+        session_mod.mark_autosaved(tmp_path, "sid-error")
+        loader.assert_called_once_with(tmp_path, "sid-error")
 
 
 def test_clean_snapshot_summary_empty_fallback_is_exact() -> None:

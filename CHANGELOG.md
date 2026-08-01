@@ -9,7 +9,170 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-07-31
+
 ### Added
+
+- **Native chat UI over your memory** (`memo chat serve`, rescued from the archived
+  synapse chat): retrieval pipeline (`memo.chat`) with RRF fusion, per-group score
+  normalization, chunk dedup, rules-based follow-up rewrite, gated multi-query
+  expansion, 👍/👎 feedback with exact + semantic vote boosts, relevance floor,
+  and fulldoc inline — streamed as SSE with a vendored React SPA (`web-chat/`).
+- `memo eval chat` — regression gate over the rescued chat corpus
+  (`eval/chat_regression_corpus.json`).
+- `memo ops install|uninstall|status` — launchd lifecycle for the `com.memo.chat`
+  agent (env-forwarding plist, validated `--dist`).
+- One-off migration of synapse chat feedback signals
+  (`scripts/migrate_synapse_chat_state.py`).
+
+### Fixed
+
+- `memo config validate` no longer flags the documented `MEMO_CHAT_*` knobs as typos.
+
+## [4.6.2] - 2026-07-31
+
+### Fixed
+
+- MCP registry publish works again: the `mcp-name: io.github.jagoff/memo`
+  ownership marker the registry requires in the PyPI README was dropped by
+  the #130 rewrite, so the v4.6.1 registry step failed validation. The marker
+  is restored and now pinned to `server.json` by a supply-chain test (#147).
+
+## [4.6.1] - 2026-07-31
+
+### Fixed
+
+- PyPI project page renders again: README images and doc links use absolute
+  GitHub URLs, restoring the a44890c9 fix that the conversion README dropped —
+  the v4.6.0 page shipped with a broken banner because of it (#145).
+- README banner served as WebP at full 1600 px resolution (152 KB, down from
+  the original 372 KB JPEG); `banner.jpg` stays for older PyPI pages (#140,
+  #145).
+
+### Added
+
+- Docker image now publishes a `linux/arm64` manifest alongside `linux/amd64`:
+  the README one-liner works natively on Apple Silicon and ARM Linux instead
+  of failing with `no matching manifest` (#144).
+
+### Changed
+
+- Dependency bumps: python-runtime group, GitHub Actions group, Python base
+  image digest, and `@types/node` (#141, #86, #58, #125).
+
+## [4.6.0] - 2026-07-31
+
+### Added
+
+- Graph-backed repository intelligence: repo search and context packs are now
+  enriched with the CodeGraph structure layer (#134).
+- Synapse/memflow daemons adopted natively: the `com.memo.*` launchd fleet
+  (recall daemon, nightly, vault ingest, dream, watch) replaces the deprecated
+  trinity stack; handoffs and operational continuity now live in memo (#136).
+
+### Fixed
+
+- Reindex no longer emits `invalid memory id` warnings for `_chronicle` diary
+  files: the bucket is skipped silently via the reindex skip-dirs list (#138).
+- Nightly launchd template now passes the correct `--max-memories` flag to
+  `memo contradict scan` (#137).
+- Hardened code intelligence and the dream pipeline against real-run failures
+  (#135).
+
+### Changed
+
+- Normal MCP startup is fully offline again: remote update checks and
+  background auto-update now require explicit opt-in with
+  `MEMO_UPDATE_CHECK_ENABLED=1` or `MEMO_AUTO_UPDATE=1`.
+- Graph-enriched repo search now uses CodeGraph's indexed identifier-segment
+  vocabulary instead of scanning every symbol once per query term, ranks
+  multi-term identifier matches first, and ignores generic test/repo boilerplate
+  that previously crowded specific results out of the top ten. Unified fusion
+  also caps each file at two chunks so one verbose file cannot consume the
+  entire result window, and uses a stable candidate floor so increasing the
+  requested limit does not reveal candidates that should already rank in a
+  smaller window.
+- Repository embeddings now default to 16 chunks per MLX batch (configurable
+  with `MEMO_REPO_EMBED_BATCH`) after a real self-index run showed the previous
+  batch of 64 exceeding 19 GiB.
+- Repository watchers now observe a local source checkout (when the indexed URL
+  is local) and accept Git branch-ref events, so a commit reliably triggers an
+  incremental refresh instead of watching an otherwise idle managed clone.
+- Tantivy shutdown now commits pending writes, joins background merge threads,
+  and is idempotent, preventing immediate index-directory cleanup from racing
+  live merge files.
+
+### Security
+
+- Release workflow contracts now pin all platform smoke jobs as mandatory and
+  prohibit downstream publishing from bypassing skipped prerequisites.
+
+## [4.5.0] - 2026-07-29
+
+### Changed
+
+- CLI `memo briefing` and MCP `memo_unified_briefing` now share one
+  unified-briefing composer, so both surfaces render the same sections and
+  dispute markers; dispute-aware ask gained an MLX integration test.
+- Code-ref verification is unified in the new `code_intel` engine: the recall
+  renderer and the dream code-drift pass now share one implementation of the
+  vigente/desaparecido/no-verificado semantics (the two previous copies had
+  already diverged once).
+
+### Added — codegraph integration (two rounds)
+
+- Project-aware codegraph loader: nearest `.codegraph/codegraph.db` discovered
+  upward from cwd, `MEMO_CODEGRAPH_DB` pin for daemons/pipx installs,
+  per-DB mtime-cached graphs, `MEMO_CODEGRAPH_MAX_EDGES` hot-path cap.
+- `memo doctor` checks the codegraph index (freshness, WAL, counts, CLI
+  version) — WARN-only, never blocks.
+- `memo code-facts [--project PATH]`: mines durable architectural facts
+  (call hubs, CLI surface, package dependencies) from any indexed repo into
+  memories with verifiable `code_refs` provenance.
+- Dream pass `code_drift` (`MEMO_DREAM_CODE_DRIFT_ENABLED`, default off):
+  re-verifies memories citing code against the live index nightly; memories
+  whose refs are all gone are reversibly archived, never hard-deleted.
+  Optional auto-repair (`MEMO_DREAM_CODE_REPAIR_ENABLED`, default off)
+  re-points a dead ref when exactly one name-similar candidate exists,
+  preserving the old ref in `code_refs_history`.
+- Verified code citations in recall (`MEMO_RECALL_CODE_REFS_ENABLED`, default
+  off): `↳ code: path:line (vigente)` lines under recalled memories, checked
+  live against the index (full and balanced formats).
+- Symbol-aligned repo chunking (`MEMO_REPO_CHUNK_SYMBOL_ALIGNED`, default
+  off): chunk boundaries follow codegraph symbol boundaries.
+- `memo code-nudge`: after a commit, surfaces memories that cite the files
+  just touched (wired into the trinity git hooks; silent when none).
+- `memo code-health`: ref-status summary, dead-knowledge report (memories
+  citing 0-caller symbols) and undocumented-hub report in one command.
+- Briefing shows the nightly code-drift outcome (`MEMO_BRIEFING_CODE_DRIFT`,
+  default on; reads the dream receipt — zero graph queries at SessionStart).
+- ask-gaps flags top call hubs with no memory documenting them
+  (`MEMO_GAPS_CODE_HUBS`, default on).
+- Recall code-proximity boost (`MEMO_RECALL_CODE_PROXIMITY_BOOST`, default
+  0.0/off): memories citing symbols near your uncommitted changes rank higher.
+- `memo context-pack --code <symbol|path>`: adds a graph-neighborhood section
+  (symbols ≤1 hop + memories citing them) to the pack.
+- Scripts `cg_impact_gate.sh` (pre-refactor caller checklist; aborts on
+  unknown symbols) and `cg_affected_tests.sh` (SQL reverse-dependency test
+  selection with fail-safe FULL_SUITE fallback) + report-only CI shadow job.
+
+### Added
+
+- MCP elicitation confirm on the six irreversible tools (`memo_delete`,
+  `memo_synthesize_delete`, `memo_backup_restore`, `memo_feedback_clear`,
+  `memo_repo_delete`, `memo_cache_evict`): elicitation-capable clients get an
+  in-band confirmation stating the blast radius before the operation runs;
+  clients without the capability proceed unchanged (fail-open, capability
+  check first). An explicit decline (not cancel) is persisted as a durable
+  `type=feedback` memory — decline-as-signal, itself fail-open. Flags:
+  `MEMO_ELICIT_CONFIRM` + `MEMO_ELICIT_DECLINE_SIGNAL`, both default on.
+  Review-hardened: once the question has been sent the gate fails closed (a
+  mid-elicit error/disconnect aborts instead of running unconfirmed); the
+  HTTP daemon's `json_response` transport skips eliciting up-front (it cannot
+  carry it and would deadlock); prompt fragments from untrusted titles are
+  sanitized + capped; the decline signal dedupes via a stable `topic_key`
+  and goes through the normal write policy; `memo_repo_delete` executes
+  against the exact row the user confirmed (id-bound, no re-resolve).
 
 - Dispute-aware ask (`MEMO_ASK_DISPUTES`, default on): retrieved memories with
   open/competing contradiction pairs are marked `⚔ disputed-by` in the ask

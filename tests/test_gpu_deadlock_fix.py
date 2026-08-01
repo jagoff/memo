@@ -147,6 +147,7 @@ class TestChatWithTimeoutSetsThreadLocal:
 
         _started = threading.Event()
         _release = threading.Event()
+        _finished = threading.Event()
 
         class SlowChat:
             _gen_lock = threading.Lock()
@@ -154,8 +155,72 @@ class TestChatWithTimeoutSetsThreadLocal:
             def chat(self, model, messages, options=None):
                 _started.set()
                 _release.wait(timeout=5.0)
+                _finished.set()
                 return {"message": {"content": "done"}}
 
         result = chat_with_timeout(SlowChat(), timeout=0.1, model="m", messages=[])
         assert result is None
         _release.set()
+        assert _finished.wait(timeout=2.0)
+
+    def test_timed_out_worker_does_not_block_interpreter_shutdown(self):
+        import subprocess
+        import sys
+        import textwrap
+
+        script = textwrap.dedent(
+            """
+            import threading
+
+            from memo.memory.record import chat_with_timeout
+
+            blocker = threading.Event()
+
+            class SlowChat:
+                def chat(self, **kwargs):
+                    blocker.wait()
+                    return {"message": {"content": "done"}}
+
+            assert chat_with_timeout(SlowChat(), timeout=0.05, model="m", messages=[]) is None
+            print("returned", flush=True)
+            """
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+        assert completed.stdout.strip() == "returned"
+
+    def test_call_is_rejected_while_timed_out_worker_is_still_running(self):
+        import time
+
+        from memo.memory.record import chat_with_timeout
+
+        release = threading.Event()
+        finished = threading.Event()
+        second_calls = 0
+
+        class SlowChat:
+            def chat(self, **kwargs):
+                release.wait(timeout=5.0)
+                finished.set()
+                return {"message": {"content": "slow"}}
+
+        class SecondChat:
+            def chat(self, **kwargs):
+                nonlocal second_calls
+                second_calls += 1
+                return {"message": {"content": "unexpected"}}
+
+        assert chat_with_timeout(SlowChat(), timeout=0.05, model="m", messages=[]) is None
+        started = time.monotonic()
+        assert chat_with_timeout(SecondChat(), timeout=1.0, model="m", messages=[]) is None
+        assert time.monotonic() - started < 0.25
+        assert second_calls == 0
+
+        release.set()
+        assert finished.wait(timeout=2.0)

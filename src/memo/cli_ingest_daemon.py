@@ -110,16 +110,51 @@ def ingest_daemon_stop() -> None:
 
 
 @ingest_daemon_group.command(name="status")
-def ingest_daemon_status() -> None:
-    """Print whether the ingest daemon is running."""
+@click.option("--job", "job_id", default=None, help="Poll one queued job id.")
+@click.option("--json", "as_json", is_flag=True)
+def ingest_daemon_status(job_id: str | None, as_json: bool) -> None:
+    """Print daemon health or poll one queued job."""
+    import json
+
+    from memo import ingest_client
+    from memo.ingest_ledger import IngestFailureLedger
     from memo.ingest_server import _is_pid_alive, _read_pid, _socket_path
 
     cfg = Config.from_env()
     pid = _read_pid(cfg.state_dir)
     sock = _socket_path(cfg.state_dir)
+    running = pid is not None and _is_pid_alive(pid)
+    if job_id:
+        payload = ingest_client.status(job_id, state_dir=cfg.state_dir) if running else None
+        if payload is None:
+            payload = {"error": "ingest daemon unreachable", "job_id": job_id}
+        if as_json:
+            click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        elif "error" in payload:
+            console.print(f"[red]{payload['error']}[/red]")
+        else:
+            console.print(
+                f"job={job_id} state={payload.get('state')} error={payload.get('error') or '-'}"
+            )
+        return
 
-    if pid is not None and _is_pid_alive(pid):
-        console.print(f"[green]running[/green] pid={pid}  socket={sock}")
+    ping = ingest_client.ping(state_dir=cfg.state_dir) if running else None
+    payload = {
+        "running": running,
+        "pid": pid if running else None,
+        "socket": str(sock),
+        "daemon": ping,
+        "ledger": IngestFailureLedger(cfg.state_dir / "ingest-jobs.jsonl").health(),
+    }
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif running:
+        health = ping.get("health") if isinstance(ping, dict) else {}
+        console.print(
+            f"[green]running[/green] pid={pid} socket={sock} "
+            f"jobs={ping.get('jobs', '?') if isinstance(ping, dict) else '?'} "
+            f"worker_alive={health.get('worker_alive', '?') if isinstance(health, dict) else '?'}"
+        )
     else:
         console.print(f"[red]stopped[/red]  socket={sock}")
 

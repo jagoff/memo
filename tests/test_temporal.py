@@ -1,6 +1,7 @@
 """Tests for temporal reasoning module."""
 
 import time
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -26,10 +27,15 @@ def test_temporal_analyzer_init(temporal_analyzer):
 
 
 def test_classify_pair_timeout_does_not_wait_for_worker(mock_memory, monkeypatch):
+    finished = Event()
+
     class SlowChat:
         def chat(self, **_kwargs):
-            time.sleep(0.3)
-            return {"message": {"content": '{"relationship":"unrelated"}'}}
+            try:
+                time.sleep(0.3)
+                return {"message": {"content": '{"relationship":"unrelated"}'}}
+            finally:
+                finished.set()
 
     monkeypatch.setattr("memo.temporal._pair_classify_timeout", lambda: 0.05)
     analyzer = TemporalAnalyzer(mock_memory, chat=SlowChat())
@@ -54,6 +60,10 @@ def test_classify_pair_timeout_does_not_wait_for_worker(mock_memory, monkeypatch
 
     assert result is None
     assert elapsed < 0.2
+    # The production helper deliberately keeps the timed-out MLX worker alive
+    # and rejects competing calls. Drain this synthetic worker so its global
+    # fail-closed state cannot leak into the next test in the same xdist process.
+    assert finished.wait(timeout=1.0)
 
 
 def test_classify_pair_disables_thinking_for_json_response(mock_memory):

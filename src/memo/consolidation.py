@@ -108,6 +108,7 @@ class AdvancedConsolidator:
     def __init__(self, memory: Any, chat: ChatBackend | None = None) -> None:
         self.memory = memory
         self._chat = chat
+        self._llm_available = True
         self._archival_dir = memory.cfg.memory_dir / "archived"
 
     def _ensure_chat(self) -> ChatBackend:
@@ -152,6 +153,8 @@ class AdvancedConsolidator:
             )
 
         # For duplicates and facets, use LLM to synthesize
+        if not self._llm_available:
+            return None
         return self._llm_propose_merge(cluster)
 
     def _llm_propose_merge(self, cluster: dict[str, Any]) -> MergeProposal | None:
@@ -212,9 +215,11 @@ class AdvancedConsolidator:
                     },
                 )
             except Exception as exc:
+                self._llm_available = False
                 _log.warning("consolidation: merge-proposal LLM call failed: %s", exc)
                 return None
             if out is None:
+                self._llm_available = False
                 _log.warning("consolidation: merge-proposal LLM timeout")
                 return None
             raw = (out.get("message") or {}).get("content") or ""
@@ -451,6 +456,11 @@ class AdvancedConsolidator:
             Dict with clusters, proposals, and results lists.
         """
         from memo.flags import flag_float
+
+        # One cold-load timeout makes every remaining LLM-backed proposal in
+        # this pass predictably fail. Retry on the next consolidation run, not
+        # once per cluster in the current run.
+        self._llm_available = True
 
         if auto_threshold is None:
             auto_threshold = flag_float("MEMO_CONSOLIDATE_AUTO_THRESHOLD")

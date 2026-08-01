@@ -109,8 +109,10 @@ def _make_trace_middleware() -> Any:
     return _TraceMiddleware()
 
 
-# FastMCP surfaces server instructions alongside each client connection. Keep
-# this deliberately terse: some clients repeat it in every tool description.
+# FastMCP surfaces server instructions alongside each client connection. These
+# carry the full memory-first contract (briefing → consult → persist → flag);
+# some clients repeat them in every tool description, so growth is bounded by
+# tests/test_server_instructions.py (len <= 600).
 _SERVER_INSTRUCTIONS = (
     "At session start, call memo_unified_briefing once to load durable "
     "context. Before deciding anything prior work might cover, consult "
@@ -452,6 +454,13 @@ def main() -> None:
             # request/response tools, this keeps SDK 1.28 from leaking that
             # stream after a completed response.
             transport_options["json_response"] = True
+            # JSON mode has no mid-call server->client stream: the SDK
+            # discards elicitation/create and the tool call deadlocks until
+            # the client gives up. Disable the elicitation gate up-front so
+            # gated destructive tools stay fail-open on this transport.
+            from memo.server_elicit import mark_transport_elicit_unsupported
+
+            mark_transport_elicit_unsupported()
         server.run(
             transport=cast(Any, transport),
             host=host,

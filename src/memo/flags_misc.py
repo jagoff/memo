@@ -48,13 +48,12 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_AUTO_UPDATE",
         "bool",
-        True,
+        False,
         "update",
         "On memo-mcp start, check for a newer git TAG and update in the "
-        "background (takes effect next start). Default ON: memo keeps itself "
-        "current across every install. This is the one default-on outbound "
-        "call (a throttled `git ls-remote` to the memo repo); set =0 to opt out "
-        "and keep startup fully offline.",
+        "background (takes effect next start). Default off: normal startup is "
+        "fully offline; set =1 to opt in to the throttled remote tag check and "
+        "background install.",
     ),
     _spec(
         "MEMO_AUTO_UPDATE_INTERVAL_S",
@@ -303,12 +302,69 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_CODEGRAPH_DISCOVERY",
+        "bool",
+        True,
+        "misc",
+        "Project-aware codegraph DB discovery: resolve the nearest "
+        ".codegraph/codegraph.db walking up from cwd before falling back to "
+        "memo's own checkout. Default on; set =0 to pin the historical "
+        "checkout DB. Read raw in codegraph_loader (hot-path leaf, like "
+        "MEMO_GPU_XPROC_LOCK); registered here for `memo config validate`.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_CODEGRAPH_MAX_EDGES",
+        "int",
+        300000,
+        "misc",
+        "Cap on traversable codegraph edges loaded per DB: over the cap, "
+        "codegraph_loader.load() serves the cached graph (even stale) or "
+        "raises instead of scanning every edge on the recall hot path. Read "
+        "raw in codegraph_loader (hot-path leaf, like "
+        "MEMO_CODEGRAPH_DISCOVERY); registered here for `memo config validate`.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_CODEGRAPH_DB",
+        "str",
+        "",
+        "misc",
+        "Explicit path to a codegraph.db index, consulted only when cwd "
+        "discovery finds no .codegraph/ upward from the working directory "
+        "(launchd daemons at $HOME, pipx/uv-tool installs whose "
+        "module-relative default points inside site-packages). Discovery "
+        "still wins when it finds a nearer index, so project-awareness is "
+        "preserved. Default '': fall back to memo's own checkout.",
+    ),
+    _spec(
         "MEMO_BRIEFING_GRAPH",
         "bool",
         True,
         "misc",
         "Add an entity-centric 'Knowledge map' (graph hubs + their clusters) to "
         "the SessionStart briefing and memo_unified_briefing. Default on.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_BRIEFING_CODE_DRIFT",
+        "bool",
+        True,
+        "misc",
+        "Surface last night's code-drift outcome (memories archived / partial / "
+        "repaired) as one line in the SessionStart briefing, read from the dream "
+        "receipt (state_dir/dream/last.json) — zero graph queries at "
+        "SessionStart. Default on.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_GAPS_CODE_HUBS",
+        "bool",
+        True,
+        "misc",
+        "Flag knowledge gaps on code hubs in `memo ask-gaps`: top codegraph "
+        "nodes by incoming call-edges with no memory citing them. On-demand "
+        "graph query only (never the recall hook). Default on.",
         opt_out=True,
     ),
     _spec(
@@ -439,6 +495,29 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_PROJECT_TAG", "str", "", "misc", "Pin a project tag (overrides cwd detection)."),
     _spec("MEMO_MODEL_PROFILE", "str", "", "misc", "Model profile: light | balanced | quality."),
     _spec("MEMO_NONINTERACTIVE", "bool", False, "misc", "Suppress interactive prompts (hooks/CI)."),
+    # MCP elicitation gate on irreversible tools (server_elicit.py)
+    _spec(
+        "MEMO_ELICIT_CONFIRM",
+        "bool",
+        True,
+        "mcp",
+        "MCP-side confirmation (elicitation) before irreversible tools "
+        "(memo_delete, memo_synthesize_delete, memo_backup_restore, "
+        "memo_feedback_clear, memo_repo_delete, memo_cache_evict). Fail-open: "
+        "clients without the elicitation capability proceed unchanged. "
+        "Set =0 for scripted elicitation-capable clients.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_ELICIT_DECLINE_SIGNAL",
+        "bool",
+        True,
+        "mcp",
+        "On an explicit elicitation decline (not cancel), save a durable "
+        "type=feedback memory recording the refusal so it feeds memo's "
+        "feedback loop. Fail-open: a failed signal save never blocks the abort.",
+        opt_out=True,
+    ),
     _spec(
         "MEMO_SUPPRESS_LEGACY_WARN",
         "bool",
@@ -1143,6 +1222,29 @@ SPECS: tuple[FlagSpec, ...] = (
         "OFF by default; superseded rules retire and new ones appear on their own. "
         "No-op in a repo whose block a human deleted.",
     ),
+    # dream — code-drift pass: re-verify code_refs against the codegraph index
+    _spec(
+        "MEMO_DREAM_CODE_DRIFT_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable the nightly code-drift pass in `memo dream run`. OFF by default; "
+        "re-verifies memories carrying code_refs against the live codegraph index "
+        "and proposes fully-drifted ones as outdated (reversible archive, never a "
+        "hard delete). Aborts when the index is missing or >24h stale.",
+    ),
+    # dream — code-drift auto-repair: re-point dead refs with a unique candidate
+    _spec(
+        "MEMO_DREAM_CODE_REPAIR_ENABLED",
+        "bool",
+        False,
+        "misc",
+        "Enable auto-repair inside the nightly code-drift pass. OFF by default; "
+        "a dead code_ref with EXACTLY one rename/move candidate in the "
+        "codegraph index is re-pointed in place (the old ref is preserved in "
+        "extra.code_refs_history) and the memory is not archived that night. "
+        "0 or >1 candidates -> archive as today.",
+    ),
     # dream v2 — anticipatory pass (Phase 3): surface unmet gaps + prewarm
     _spec(
         "MEMO_DREAM_ANTICIPATE_ENABLED",
@@ -1579,6 +1681,34 @@ SPECS: tuple[FlagSpec, ...] = (
         7,
         "misc",
         "Max items shown in `memo digest`.",
+        min_val=1,
+    ),
+    # cross-agent coordination (live collision scan + directive delivery)
+    _spec(
+        "MEMO_COORD_ENABLED",
+        "bool",
+        True,
+        "coordination",
+        "Cross-agent coordination: periodic live-collision scan (watcher trigger) "
+        "plus <memo-coordination> directive delivery via the recall hook. "
+        "Default on; set =0 to disable.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_COORD_SCAN_INTERVAL",
+        "int",
+        300,
+        "coordination",
+        "Seconds between collision scans in the `memo watch` trigger thread.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_COORD_ACTIVE_WINDOW",
+        "int",
+        21600,
+        "coordination",
+        "Sessions updated within this many seconds count as active for the "
+        "collision scan; older open collisions expire to 'stale'.",
         min_val=1,
     ),
 )

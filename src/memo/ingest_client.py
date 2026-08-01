@@ -44,6 +44,21 @@ def enqueue(
 ) -> str | None:
     """Enqueue a batch job. Returns its job_id, or None if the daemon is
     unreachable (caller should run the op in-process)."""
+    receipt = enqueue_receipt(kind, payload, state_dir=state_dir, timeout=timeout)
+    if receipt is None:
+        return None
+    job_id = receipt.get("job_id")
+    return str(job_id) if job_id else None
+
+
+def enqueue_receipt(
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    state_dir: Path | None = None,
+    timeout: float = _DEFAULT_TIMEOUT_S,
+) -> dict[str, Any] | None:
+    """Enqueue and return dedupe/quarantine metadata, or None on absence."""
     sock = _socket_path(_resolve_state_dir(state_dir))
     resp = embed_protocol.send_request(
         sock, {"op": "enqueue", "kind": kind, "payload": payload}, timeout=timeout
@@ -52,8 +67,7 @@ def enqueue(
         if resp and "error" in resp:
             _log.warning("ingest daemon enqueue error: %s", resp["error"])
         return None
-    job_id = resp.get("job_id")
-    return str(job_id) if job_id else None
+    return resp
 
 
 def status(
@@ -65,4 +79,4 @@ def status(
     return resp
 
 
-__all__ = ["enqueue", "ping", "status"]
+__all__ = ["enqueue", "enqueue_receipt", "ping", "status"]

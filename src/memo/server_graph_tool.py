@@ -20,7 +20,172 @@ from fastmcp import FastMCP
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
 
-_VERBS = ["path", "neighbors", "explore", "communities", "why"]
+_VERBS = ["path", "neighbors", "explore", "communities", "why", "impact", "architecture"]
+
+
+def _with_code_evidence(
+    payload: dict[str, Any],
+    *,
+    include_code: bool,
+) -> dict[str, Any]:
+    if not include_code:
+        return payload
+    from memo import codegraph_loader
+    from memo.code_evidence import codegraph_evidence
+    from memo.code_traceability import codegraph_repo_id
+
+    repo_root = codegraph_loader.CODEGRAPH_DB.parent.parent
+    payload["code_evidence"] = codegraph_evidence(
+        db_path=codegraph_loader.CODEGRAPH_DB,
+        repo_root=repo_root,
+        repo_id=codegraph_repo_id(repo_root),
+    ).to_dict()
+    return payload
+
+
+def _memory_navigation_result(
+    memory: Memory,
+    verb: str,
+    *,
+    a: str | None,
+    b: str | None,
+    focus: str | None,
+    limit: int,
+    include_code: bool,
+) -> dict[str, Any] | None:
+    nav = memory.navigator
+    use_codegraph = None if include_code else False
+    if verb == "path":
+        if not a or not b:
+            return {"error": "path requires a and b"}
+        path = nav.find_shortest_path(a, b, use_codegraph=use_codegraph)
+        payload = {"verb": "path", "result": path.__dict__ if path else None}
+        return _with_code_evidence(payload, include_code=include_code)
+    if verb == "why":
+        if not a or not b:
+            return {"error": "why requires a and b"}
+        payload = {"verb": "why", "result": nav.why_connected(a, b, use_codegraph=use_codegraph)}
+        return _with_code_evidence(payload, include_code=include_code)
+    if verb == "neighbors":
+        if not focus:
+            return {"error": "neighbors requires entity (or a)"}
+        payload = {
+            "verb": "neighbors",
+            "result": nav.get_neighbors(
+                focus,
+                max_neighbors=limit,
+                use_codegraph=use_codegraph,
+            ).__dict__,
+        }
+        return _with_code_evidence(payload, include_code=include_code)
+    if verb == "explore":
+        if not focus:
+            return {"error": "explore requires entity (or a)"}
+        from memo.explore import explore_entity
+
+        payload = {
+            "verb": "explore",
+            "result": explore_entity(
+                memory,
+                focus,
+                max_neighbors=limit,
+                max_memories=limit,
+                use_codegraph=use_codegraph,
+            ),
+        }
+        return _with_code_evidence(payload, include_code=include_code)
+    if verb == "communities":
+        communities = nav.detect_communities(min_size=2, use_codegraph=use_codegraph)
+        payload = {
+            "verb": "communities",
+            "result": [community.__dict__ for community in communities[:limit]],
+        }
+        return _with_code_evidence(payload, include_code=include_code)
+    return None
+
+
+def _code_navigation_result(
+    memory: Memory,
+    verb: str,
+    *,
+    cwd: str | None,
+    focus: str | None,
+    depth: int,
+    limit: int,
+    scope: str | None,
+    mode: str,
+    cursor: str | None,
+    max_chars: int,
+) -> dict[str, Any] | None:
+    if verb == "impact":
+        if not cwd:
+            return {"error": "impact requires cwd"}
+        return {
+            "verb": "impact",
+            "result": memory.code_change_impact(cwd, depth=depth, limit=limit),
+        }
+    if verb == "architecture":
+        if not cwd:
+            return {"error": "architecture requires cwd"}
+        return {
+            "verb": "architecture",
+            "result": memory.code_context_pack(
+                cwd,
+                focus=focus,
+                scope=scope,
+                mode=mode,
+                limit=limit,
+                cursor=cursor,
+                max_chars=max_chars,
+            ),
+        }
+    return None
+
+
+def _memo_graph_result(
+    memory: Memory,
+    verb: str,
+    *,
+    a: str | None,
+    b: str | None,
+    entity: str | None,
+    limit: int,
+    include_code: bool,
+    cwd: str | None,
+    depth: int,
+    scope: str | None,
+    mode: str,
+    cursor: str | None,
+    max_chars: int,
+) -> dict[str, Any]:
+    normalized = (verb or "").strip().lower()
+    focus = entity or a
+    result = _memory_navigation_result(
+        memory,
+        normalized,
+        a=a,
+        b=b,
+        focus=focus,
+        limit=limit,
+        include_code=include_code,
+    )
+    if result is not None:
+        return result
+    result = _code_navigation_result(
+        memory,
+        normalized,
+        cwd=cwd,
+        focus=focus,
+        depth=depth,
+        limit=limit,
+        scope=scope,
+        mode=mode,
+        cursor=cursor,
+        max_chars=max_chars,
+    )
+    if result is not None:
+        return result
+    return {"error": f"unknown verb: {verb}", "verbs": _VERBS}
 
 
 def register(server: FastMCP, memory: Memory) -> None:
@@ -32,6 +197,12 @@ def register(server: FastMCP, memory: Memory) -> None:
         entity: str | None = None,
         limit: int = 8,
         include_code: bool = False,
+        cwd: str | None = None,
+        depth: int = 1,
+        scope: str | None = None,
+        mode: str = "scout",
+        cursor: str | None = None,
+        max_chars: int = 12_000,
     ) -> dict[str, Any]:
         """Navigate the entity knowledge graph (read-only).
 
@@ -45,62 +216,43 @@ def register(server: FastMCP, memory: Memory) -> None:
         - ``"explore"``: a rich "what's around X" view of ``entity`` (or ``a``) —
           degree, neighbours, and the memories that mention it.
         - ``"communities"``: clusters of related entities (``limit`` caps count).
+        - ``"impact"``: changed code plus linked durable memories for ``cwd``.
+        - ``"architecture"``: a bounded CodeContextPack for ``cwd``. ``entity``
+          (or ``a``) selects a symbol/path focus; ``mode`` is scout, verify, or
+          audit and ``cursor`` continues an incomplete page.
 
         By default this navigates the MEMORY graph only (entities linked through
         shared memories). Set ``include_code=True`` to also fold in the codegraph
         code-structure layer (call/extends/etc. edges between code symbols).
 
         Args:
-            verb: One of path | neighbors | explore | communities | why.
+            verb: One of path | neighbors | explore | communities | why |
+                impact | architecture.
             a: First entity (path/why source; fallback for entity).
             b: Second entity (path/why target).
             entity: Entity name for neighbors/explore.
             limit: Result cap (neighbours, mentioning memories, communities).
             include_code: Fold in the codegraph code-structure layer (default off
                 → memory-only, so results are durable-memory navigation).
+            cwd: Git working tree used by the impact verb.
+            depth: CodeGraph hop depth for impact (bounded to 0..3).
+            scope: Repo-relative path bounding architecture findings.
+            mode: Architecture evidence mode: scout | verify | audit.
+            cursor: Opaque continuation cursor returned by architecture.
+            max_chars: Approximate architecture finding budget.
         """
-        nav = memory.navigator
-        v = (verb or "").strip().lower()
-        focus = entity or a
-        # Memory navigator by default: entity-only graph unless code is requested.
-        uc = None if include_code else False
-
-        if v == "path":
-            if not a or not b:
-                return {"error": "path requires a and b"}
-            path = nav.find_shortest_path(a, b, use_codegraph=uc)
-            return {"verb": "path", "result": path.__dict__ if path else None}
-
-        if v == "why":
-            if not a or not b:
-                return {"error": "why requires a and b"}
-            return {"verb": "why", "result": nav.why_connected(a, b, use_codegraph=uc)}
-
-        if v == "neighbors":
-            if not focus:
-                return {"error": "neighbors requires entity (or a)"}
-            return {
-                "verb": "neighbors",
-                "result": nav.get_neighbors(focus, max_neighbors=limit, use_codegraph=uc).__dict__,
-            }
-
-        if v == "explore":
-            if not focus:
-                return {"error": "explore requires entity (or a)"}
-            from memo.explore import explore_entity
-
-            return {
-                "verb": "explore",
-                "result": explore_entity(
-                    memory, focus, max_neighbors=limit, max_memories=limit, use_codegraph=uc
-                ),
-            }
-
-        if v == "communities":
-            communities = nav.detect_communities(min_size=2, use_codegraph=uc)
-            return {
-                "verb": "communities",
-                "result": [c.__dict__ for c in communities[:limit]],
-            }
-
-        return {"error": f"unknown verb: {verb}", "verbs": _VERBS}
+        return _memo_graph_result(
+            memory,
+            verb,
+            a=a,
+            b=b,
+            entity=entity,
+            limit=limit,
+            include_code=include_code,
+            cwd=cwd,
+            depth=depth,
+            scope=scope,
+            mode=mode,
+            cursor=cursor,
+            max_chars=max_chars,
+        )

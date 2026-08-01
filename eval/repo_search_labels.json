@@ -1,0 +1,232 @@
+{
+  "schema": "memo.eval.repo_search.labels.v1",
+  "description": "Hand-reviewed path labels for symmetric lexical-first versus graph-enriched retrieval over Memo's own repository.",
+  "queries": [
+    {
+      "id": "p01-artifact-integrity",
+      "query": "verified content addressed artifact digest manifest integrity",
+      "expected_paths": ["src/memo/artifact_store.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p02-code-evidence",
+      "query": "CodeEvidenceEnvelope coverage freshness gaps index generation",
+      "expected_paths": ["src/memo/code_evidence.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p03-change-impact",
+      "query": "bounded change impact traversal callers downstream symbols",
+      "expected_paths": ["src/memo/code_impact.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p04-context-modes",
+      "query": "provider neutral code context scout verify audit modes",
+      "expected_paths": ["src/memo/code_context.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p05-unified-retrieval",
+      "query": "unified repository retrieval codegraph cochange channels diagnostics",
+      "expected_paths": ["src/memo/repo_intelligence.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p06-structural-provider",
+      "query": "structural symbol path search one hop relationships",
+      "expected_paths": ["src/memo/repo_structural.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p07-git-signals",
+      "query": "git history cochange pairs cross service change signals",
+      "expected_paths": ["src/memo/repo_signals.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p08-repo-watcher",
+      "query": "incremental repository watcher debounce deduplicate refresh jobs",
+      "expected_paths": ["src/memo/repo_watcher.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p09-atomic-generation",
+      "query": "atomic repository index generation semantic pending active generation",
+      "expected_paths": ["src/memo/repo_index.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p10-rrf-ranking",
+      "query": "RRF fusion path name boost repository search scopes",
+      "expected_paths": ["src/memo/repo_index_search.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p11-symmetric-eval",
+      "query": "symmetric graph first grep first evaluation recall precision MRR",
+      "expected_paths": ["src/memo/repo_eval.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p12-codegraph-discovery",
+      "query": "discover nearest codegraph database cache graph by mtime",
+      "expected_paths": ["src/memo/codegraph_loader.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p13-mcp-repo-tools",
+      "query": "MCP repository search status index artifact tools",
+      "expected_paths": ["src/memo/server_repo.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p14-cli-repo",
+      "query": "CLI repository index search watch artifact operational receipt",
+      "expected_paths": ["src/memo/cli_repo.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p15-failure-ledger",
+      "query": "persistent ingest failure ledger hash chained events",
+      "expected_paths": ["src/memo/ingest_ledger.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p16-quarantine",
+      "query": "quarantine repeated fatal worker failures job fingerprint",
+      "expected_paths": ["src/memo/ingest_server.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p17-artifact-export",
+      "query": "export portable verified artifact and manifest",
+      "expected_paths": ["src/memo/artifact_store.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p18-provider-degradation",
+      "query": "codegraph provider unavailable index missing graceful diagnostics",
+      "expected_paths": [
+        "src/memo/repo_structural.py",
+        "src/memo/repo_intelligence.py",
+        "src/memo/codegraph_loader.py"
+      ],
+      "scope": "production"
+    },
+    {
+      "id": "p19-scope-classifier",
+      "query": "classify repository paths production tests vendor",
+      "expected_paths": ["src/memo/repo_index_search.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p20-cochange-expansion",
+      "query": "expand related paths from cochange seed confidence",
+      "expected_paths": ["src/memo/repo_signals.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p21-context-pagination",
+      "query": "code context cursor fingerprint pagination generation",
+      "expected_paths": ["src/memo/code_context.py"],
+      "scope": "production"
+    },
+    {
+      "id": "p22-search-evidence",
+      "query": "repository hit channel scores rank explanation provider evidence",
+      "expected_paths": [
+        "src/memo/repo_index_search.py",
+        "src/memo/repo_intelligence.py"
+      ],
+      "scope": "production"
+    },
+    {
+      "id": "t01-artifact-tampering",
+      "query": "test artifact read rejects tampering digest mismatch",
+      "expected_paths": ["tests/test_artifact_store.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t02-impact-hop",
+      "query": "test code change impact traverses one hop",
+      "expected_paths": ["tests/test_code_evidence.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t03-context-cursor",
+      "query": "test code context cursor bound to focus and generation",
+      "expected_paths": ["tests/test_code_context.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t04-structural-hop",
+      "query": "test structural provider reads codegraph one hop",
+      "expected_paths": ["tests/test_repo_intelligence.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t05-unified-atomic",
+      "query": "test unified search scopes artifacts cochange atomic visibility",
+      "expected_paths": ["tests/test_repo_intelligence.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t06-watcher-debounce",
+      "query": "test debounced repository refresh coalesces events",
+      "expected_paths": ["tests/test_watcher.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t07-repo-generation",
+      "query": "test repository index preserves code evidence generation",
+      "expected_paths": ["tests/test_repo_index.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t08-cli-repo-search",
+      "query": "test CLI repository search unified mode scope",
+      "expected_paths": ["tests/test_cli_repo.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t09-mcp-repo",
+      "query": "test MCP repository search result evidence",
+      "expected_paths": ["tests/test_server_repo.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t10-eval-failures",
+      "query": "test repository eval records failures zero results symmetrically",
+      "expected_paths": ["tests/test_repo_eval.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t11-symbol-chunks",
+      "query": "test repository chunking follows codegraph symbol boundaries",
+      "expected_paths": ["tests/test_repo_chunk_symbols.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t12-ingest-quarantine",
+      "query": "test ingest daemon quarantines repeated fatal jobs",
+      "expected_paths": ["tests/test_ingest_daemon.py"],
+      "scope": "tests"
+    },
+    {
+      "id": "t13-missing-graph",
+      "query": "test missing codegraph degrades without failure",
+      "expected_paths": [
+        "tests/test_repo_intelligence.py",
+        "tests/test_code_evidence.py"
+      ],
+      "scope": "tests"
+    },
+    {
+      "id": "t14-dimension-mismatch",
+      "query": "test repository embedding dimension mismatch",
+      "expected_paths": ["tests/test_repo_dim_mismatches.py"],
+      "scope": "tests"
+    }
+  ]
+}

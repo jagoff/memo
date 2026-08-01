@@ -53,6 +53,7 @@ def test_broad_exception_ratchet_exemptions_are_exact_and_present() -> None:
         ("briefing.py", "proactive_compact_line", 1),
         ("cli_recall_hook.py", "_proactive_urgent_line", 1),
         ("constitution.py", "run_mandate_sync_pass", 1),
+        ("repo_eval.py", "evaluate_repo_search", 1),
     }
     found = {(site.relpath, site.scope, site.ordinal) for site in find_broad_exception_sites(SRC)}
 

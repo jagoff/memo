@@ -85,6 +85,21 @@ CREATE TABLE IF NOT EXISTS repo_files (
 CREATE INDEX IF NOT EXISTS idx_repo_files_repo_path ON repo_files(repo_id, path);
 CREATE INDEX IF NOT EXISTS idx_repo_files_sha       ON repo_files(sha256);
 
+CREATE TABLE IF NOT EXISTS repo_coverage (
+    repo_id       TEXT NOT NULL,
+    generation    TEXT NOT NULL,
+    path          TEXT NOT NULL,
+    reason        TEXT NOT NULL,
+    detail        TEXT NOT NULL DEFAULT '',
+    line_start    INTEGER,
+    line_end      INTEGER,
+    recorded_at   TEXT NOT NULL,
+    PRIMARY KEY(repo_id, generation, path, reason)
+);
+
+CREATE INDEX IF NOT EXISTS idx_repo_coverage_generation
+ON repo_coverage(repo_id, generation, path);
+
 CREATE TABLE IF NOT EXISTS repo_chunks (
     id          TEXT PRIMARY KEY,
     repo_id     TEXT NOT NULL,
@@ -186,6 +201,7 @@ _REQUIRED_SCHEMA_OBJECTS = frozenset(
         "fts",
         "repo_sources",
         "repo_files",
+        "repo_coverage",
         "repo_chunks",
         "repo_lines",
         "repo_vec",

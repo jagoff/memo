@@ -59,6 +59,7 @@ class TantivyFTSIndex:
         self._index = tantivy.Index(self._schema, path=str(index_dir))
         self._writer = self._index.writer(heap_size=writer_heap_mb * 1024 * 1024)
         self._lock = threading.Lock()
+        self._closed = False
 
     @classmethod
     def open_or_create(cls, index_dir: Path) -> TantivyFTSIndex:
@@ -71,11 +72,22 @@ class TantivyFTSIndex:
     # -- write -----------------------------------------------------------------
 
     def close(self) -> None:
-        """Release the tantivy writer and index resources."""
+        """Commit pending writes and wait until Tantivy releases merge files."""
         import contextlib
 
-        with contextlib.suppress(Exception):
-            self._writer.commit()
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            with contextlib.suppress(Exception):
+                self._writer.commit()
+            # Tantivy merges index segments on background threads.  Merely
+            # committing can leave those threads holding temporary files,
+            # which races callers that immediately remove the index directory
+            # (including TemporaryDirectory cleanup).  This call consumes the
+            # writer and joins every outstanding merge thread.
+            with contextlib.suppress(Exception):
+                self._writer.wait_merging_threads()
 
     def add_document(self, id_: str, title: str, tags: str, body: str) -> None:
         import tantivy

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from memo.memory import Memory
 from memo.server_annotations import DESTRUCTIVE, READ_ONLY, annotated_tool
@@ -26,13 +26,38 @@ def register(server: FastMCP, memory: Memory) -> None:
         return memory.cache.stats()
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_cache_evict() -> dict[str, Any]:
+    async def memo_cache_evict(ctx: Context | None = None) -> dict[str, Any]:
         """Force a capacity-bound eviction pass now (coldest-first, per
         MEMO_CACHE_EVICTION). Dirty entries are flushed to the backing store
-        before removal. Returns the evicted memory ids.
+        before removal. Evicted memories are deleted permanently, so
+        elicitation-capable clients are asked to confirm when the pass
+        would actually evict. Returns the evicted memory ids.
 
         No-op unless MEMO_CACHE_MODE != off and MEMO_CACHE_MAX_ENTRIES > 0.
         """
+        from memo.server_elicit import abort_result, confirm_destructive
+
+        stats = memory.cache.stats()
+        over = int(stats.get("over_capacity") or 0)
+        if stats.get("enabled") and over > 0:
+            gate = await confirm_destructive(
+                ctx,
+                action="evict",
+                detail=(
+                    f"Evict ~{over} coldest memories from the cache tier "
+                    f"({stats.get('eviction')} policy)? Dirty entries are "
+                    "flushed to the backing store first; evicted memories are "
+                    "then deleted."
+                ),
+            )
+            if not gate.proceed:
+                return abort_result(
+                    gate,
+                    memory,
+                    tool="memo_cache_evict",
+                    action="evict",
+                    target=f"~{over} cache-tier memories",
+                )
         evicted = memory.cache.evict_if_needed()
         return {"evicted": evicted, "count": len(evicted)}
 

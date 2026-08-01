@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 from memo.memory import Memory
@@ -109,6 +110,23 @@ def test_memo_repo_index_default_args(tmp_cfg) -> None:
     )
 
 
+def test_memo_repo_index_passes_refresh_only_when_enabled(tmp_cfg) -> None:
+    from memo.server_repo import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.repo_index.return_value = {"status": "ok"}
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    tools["memo_repo_index"](
+        url="https://github.com/example/repo.git",
+        refresh=True,
+    )
+
+    assert mem.repo_index.call_args.kwargs["refresh"] is True
+
+
 def test_memo_repo_embed_delegates_to_memory(tmp_cfg) -> None:
     """memo_repo_embed must delegate to memory.repo_embed and return its result."""
     from memo.server_repo import register
@@ -187,6 +205,10 @@ def test_memo_repo_search_calls_to_dict_on_each_hit(tmp_cfg) -> None:
     hit2 = MagicMock()
     hit2.to_dict.return_value = {"path": "src/bar.py", "score": 0.7, "text": "def bar(): ..."}
     mem.repo_search.return_value = [hit1, hit2]
+    mem.repo_evidence.side_effect = [
+        {"schema": "memo.code_evidence.v1", "requested_paths": ["src/foo.py"]},
+        {"schema": "memo.code_evidence.v1", "requested_paths": ["src/bar.py"]},
+    ]
 
     server, tools = _make_server_and_tools()
     register(server, mem)
@@ -210,8 +232,9 @@ def test_memo_repo_search_calls_to_dict_on_each_hit(tmp_cfg) -> None:
     hit2.to_dict.assert_called_once()
     assert isinstance(result, list)
     assert len(result) == 2
-    assert result[0] == {"path": "src/foo.py", "score": 0.9, "text": "def foo(): ..."}
-    assert result[1] == {"path": "src/bar.py", "score": 0.7, "text": "def bar(): ..."}
+    assert result[0]["code_evidence"]["requested_paths"] == ["src/foo.py"]
+    assert result[1]["code_evidence"]["requested_paths"] == ["src/bar.py"]
+    assert mem.repo_evidence.call_count == 2
 
 
 def test_memo_repo_search_defaults(tmp_cfg) -> None:
@@ -352,7 +375,7 @@ def test_memo_repo_delete_wraps_result_in_envelope(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_repo_delete"](repo="myrepo", remove_clone=True)
+    result = asyncio.run(tools["memo_repo_delete"](repo="myrepo", remove_clone=True))
 
     mem.repo_delete.assert_called_once_with("myrepo", remove_clone=True)
     assert result == {"deleted": True}
@@ -369,7 +392,7 @@ def test_memo_repo_delete_default_remove_clone(tmp_cfg) -> None:
     server, tools = _make_server_and_tools()
     register(server, mem)
 
-    result = tools["memo_repo_delete"](repo="myrepo")
+    result = asyncio.run(tools["memo_repo_delete"](repo="myrepo"))
 
     mem.repo_delete.assert_called_once_with("myrepo", remove_clone=True)
     assert result == {"deleted": False}

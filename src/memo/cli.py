@@ -37,6 +37,8 @@ from memo.cli_capture import capture_stop, capture_tick, episodes_group, resume
 from memo.cli_chat import chat_group
 from memo.cli_chat_session import chat_session_group
 from memo.cli_chronicle import chronicle_cmd
+from memo.cli_code_facts import code_facts_cmd
+from memo.cli_code_intel import code_health_cmd, code_nudge_cmd
 from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
 from memo.cli_compress_context import compress_context_cmd
@@ -45,6 +47,7 @@ from memo.cli_config import config_group
 from memo.cli_consolidate import consolidate_group
 from memo.cli_contextual import contextual_group
 from memo.cli_contradict import contradict_group
+from memo.cli_coordinate import coordinate_group
 from memo.cli_dashboard import dashboard_cmd
 from memo.cli_debug_recall import debug_recall_cmd
 from memo.cli_dedupe import dedupe_cmd
@@ -100,6 +103,7 @@ from memo.cli_memory import (
 )
 from memo.cli_onboard import onboard
 from memo.cli_operational import evidence_cmd, migrate_independence_cmd, operational_group
+from memo.cli_ops import ops_group
 from memo.cli_outcome import gaps as gaps_cmd
 from memo.cli_outcome import outcome as outcome_cmd
 from memo.cli_proactive import digest
@@ -214,6 +218,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
             "cross-dedup",
             "retier",
             "contradict",
+            "coordinate",
             "invalidate",
             "temporal",
             "compress-context",
@@ -384,6 +389,9 @@ cli.add_command(journey_check)
 cli.add_command(debug_recall_cmd)
 cli.add_command(dream_cmd)
 cli.add_command(chronicle_cmd)
+cli.add_command(code_facts_cmd)
+cli.add_command(code_nudge_cmd)
+cli.add_command(code_health_cmd)
 cli.add_command(maintain_cmd)
 cli.add_command(invalidate_cmd)
 cli.add_command(synthesize_cmd)
@@ -506,6 +514,7 @@ cli.add_command(health_cmd)
 cli.add_command(dashboard_cmd)
 cli.add_command(compress_context_cmd)
 cli.add_command(dedupe_cmd)
+cli.add_command(ops_group)
 cli.add_command(contextual_group)
 cli.add_command(links_group)
 cli.add_command(version_group)
@@ -519,6 +528,7 @@ cli.add_command(import_group)
 cli.add_command(export_group)
 cli.add_command(collaborative_group)
 cli.add_command(contradict_group)
+cli.add_command(coordinate_group)
 cli.add_command(http_api)
 cli.add_command(startup_banner_cmd)
 cli.add_command(codex_badge_cmd)

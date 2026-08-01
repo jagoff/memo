@@ -7,7 +7,7 @@ intended for direct use outside the repo-indexing subsystem.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,10 @@ class RepoSearchHit:
     text: str
     score: float | None
     match_type: str
+    scope: str = "production"
+    channel_scores: dict[str, float] = field(default_factory=dict)
+    rank_explanation: dict[str, Any] = field(default_factory=dict)
+    index_generation: str = ""
 
     @property
     def locator(self) -> str:
@@ -57,6 +61,10 @@ class RepoSearchHit:
             "text": self.text,
             "score": self.score,
             "match_type": self.match_type,
+            "scope": self.scope,
+            "channel_scores": dict(self.channel_scores),
+            "rank_explanation": dict(self.rank_explanation),
+            "index_generation": self.index_generation,
             "locator": self.locator,
         }
 
@@ -83,6 +91,12 @@ def _hits_from_rows(rows: list[dict[str, Any]]) -> list[RepoSearchHit]:
             text=r.get("body_text") or "",
             score=r.get("score"),
             match_type=r.get("match_type") or "chunk",
+            scope=str(r.get("scope") or classify_repo_path(str(r.get("path") or ""))),
+            channel_scores={
+                str(key): float(value) for key, value in dict(r.get("channel_scores") or {}).items()
+            },
+            rank_explanation=dict(r.get("rank_explanation") or {}),
+            index_generation=str(r.get("index_generation") or ""),
         )
         for r in rows
     ]
@@ -124,7 +138,14 @@ def _boost_and_resort(
             tags=[],
         )
         new_score = float(h.score) * b
-        boosted.append((replace(h, score=new_score), new_score))
+        explanation = dict(h.rank_explanation)
+        explanation["retrieval_boost"] = round(float(b), 6)
+        boosted.append(
+            (
+                replace(h, score=new_score, rank_explanation=explanation),
+                new_score,
+            )
+        )
     boosted.sort(key=lambda pair: pair[1], reverse=True)
     return [pair[0] for pair in boosted[:limit]]
 
@@ -166,8 +187,48 @@ _QUERY_TERM_STOPWORDS = frozenset(
         "cuando",
         "este",
         "esta",
+        # Structural/search-domain boilerplate. Keeping these terms gives every
+        # test or repo module the same filename boost and lets generic symbols
+        # crowd out the query-specific identifiers.
+        "test",
+        "tests",
+        "code",
+        "repo",
+        "repository",
     }
 )
+
+_TEST_PATH_RE = re.compile(
+    r"(^|/)(tests?|__tests__|specs?|fixtures?|testdata)(/|$)"
+    r"|(^|/)(test_[^/]+|[^/]+_(test|spec)|[^/]+\.(test|spec))\.[^/]+$",
+    flags=re.IGNORECASE,
+)
+_VENDOR_PATH_RE = re.compile(
+    r"(^|/)(vendor|vendored|third[_-]?party|node_modules|dist|build|generated|"
+    r"coverage|target)(/|$)",
+    flags=re.IGNORECASE,
+)
+
+
+def classify_repo_path(path: str) -> str:
+    """Classify a repository path into the supported retrieval scopes."""
+    clean = str(path or "").replace("\\", "/").lstrip("/")
+    if _VENDOR_PATH_RE.search(clean):
+        return "vendor"
+    if _TEST_PATH_RE.search(clean):
+        return "tests"
+    return "production"
+
+
+def path_in_repo_scope(path: str, scope: str) -> bool:
+    normalized = str(scope or "all").strip().lower()
+    if normalized == "all":
+        return True
+    if normalized not in {"production", "tests", "vendor"}:
+        raise ValueError(
+            f"invalid repo scope {scope!r}; expected all, production, tests, or vendor"
+        )
+    return classify_repo_path(path) == normalized
 
 
 def _extract_query_terms(query: str) -> list[str]:
@@ -219,23 +280,90 @@ def _rrf_fuse_repo(
     limit: int,
     k: int = 60,
     query_terms: list[str] | None = None,
+    channel_names: list[str] | None = None,
+    max_per_path: int | None = None,
 ) -> list[dict[str, Any]]:
     fused: dict[str, float] = {}
     canon: dict[str, dict[str, Any]] = {}
-    for hits in hit_lists:
+    contributions: dict[str, dict[str, float]] = {}
+    ranks: dict[str, dict[str, int]] = {}
+    channel_details: dict[str, dict[str, Any]] = {}
+    for channel_index, hits in enumerate(hit_lists):
+        channel = (
+            channel_names[channel_index]
+            if channel_names is not None and channel_index < len(channel_names)
+            else f"channel_{channel_index + 1}"
+        )
         for rank, hit in enumerate(hits):
             rid = hit["id"]
-            fused[rid] = fused.get(rid, 0.0) + 1.0 / (k + rank + 1)
+            contribution = 1.0 / (k + rank + 1)
+            fused[rid] = fused.get(rid, 0.0) + contribution
+            contributions.setdefault(rid, {})[channel] = contribution
+            ranks.setdefault(rid, {})[channel] = rank + 1
+            detail: dict[str, Any] = {}
+            if hit.get("provider_evidence"):
+                detail["evidence"] = list(hit["provider_evidence"])
+            if hit.get("provider_metadata"):
+                detail["metadata"] = dict(hit["provider_metadata"])
+            if detail:
+                channel_details.setdefault(rid, {})[channel] = detail
             canon.setdefault(rid, hit)
+    path_boosts: dict[str, float] = {}
     if query_terms:
         for rid, score in list(fused.items()):
             boost = _path_name_boost(canon[rid].get("path") or "", query_terms)
             if boost:
                 fused[rid] = score * (1.0 + boost)
-    ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+                path_boosts[rid] = boost
+    ranked = _select_ranked_with_path_cap(
+        fused,
+        canon,
+        limit=limit,
+        max_per_path=max_per_path,
+    )
     out: list[dict[str, Any]] = []
     for rid, score in ranked:
         d = dict(canon[rid])
         d["score"] = score
+        d["match_type"] = (
+            "hybrid"
+            if len(contributions[rid]) > 1
+            else next(iter(contributions[rid]), d.get("match_type") or "chunk")
+        )
+        d["channel_scores"] = {
+            channel: round(value, 8) for channel, value in sorted(contributions[rid].items())
+        }
+        d["rank_explanation"] = {
+            "fusion": "rrf",
+            "rrf_k": k,
+            "channel_ranks": dict(sorted(ranks[rid].items())),
+            "path_name_boost": path_boosts.get(rid, 0.0),
+            "channel_details": channel_details.get(rid, {}),
+            "max_per_path": max_per_path,
+        }
+        d["scope"] = classify_repo_path(str(d.get("path") or ""))
         out.append(d)
     return out
+
+
+def _select_ranked_with_path_cap(
+    fused: dict[str, float],
+    canon: dict[str, dict[str, Any]],
+    *,
+    limit: int,
+    max_per_path: int | None,
+) -> list[tuple[str, float]]:
+    ranked_all = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
+    if max_per_path is None:
+        return ranked_all[:limit]
+    ranked: list[tuple[str, float]] = []
+    path_counts: dict[str, int] = {}
+    for rid, score in ranked_all:
+        hit_path = str(canon[rid].get("path") or "")
+        if path_counts.get(hit_path, 0) >= max_per_path:
+            continue
+        ranked.append((rid, score))
+        path_counts[hit_path] = path_counts.get(hit_path, 0) + 1
+        if len(ranked) >= limit:
+            break
+    return ranked

@@ -367,7 +367,9 @@ def test_memo_delete_warns_on_inbound_links(mock_memory, monkeypatch):
             return wrap
 
     register(_Srv(), mock_memory)
-    out = tools["memo_delete"](id=target.id)
+    import asyncio
+
+    out = asyncio.run(tools["memo_delete"](id=target.id))
     assert out["deleted"] is True
     assert out["referenced_by"] == [src.id]
     assert "dangle" in out["cascade_warning"]

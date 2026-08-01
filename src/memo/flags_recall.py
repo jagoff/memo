@@ -211,6 +211,19 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1.0,
     ),
     _spec(
+        "MEMO_RECALL_CODE_PROXIMITY_BOOST",
+        "float",
+        0.0,
+        "recall",
+        "Additive score boost for hits whose code_refs fall in the codegraph "
+        "neighborhood (2 hops) of the uncommitted working-tree changes "
+        "(git diff --name-only HEAD, once per render). Composes like the other "
+        "rank_hits boosts. Default 0.0 = OFF: zero subprocesses and zero graph "
+        "queries — ranking identical to today.",
+        min_val=0.0,
+        max_val=1.0,
+    ),
+    _spec(
         "MEMO_RECALL_RERANK_INPUT_K",
         "int",
         10,
@@ -627,6 +640,22 @@ SPECS: tuple[FlagSpec, ...] = (
         "'⚠ unverified — consider checking' marker instead of authoritative, "
         "reusing the epistemic '?unverified' framing. Pure render-layer (no store "
         "read, no MLX on the hook path); ranking untouched. Default OFF.",
+    ),
+    _spec(
+        "MEMO_RECALL_CODE_REFS_ENABLED",
+        "bool",
+        False,
+        "recall",
+        "Append a '  ↳ code: <path>:<line>' line under each recalled memory that "
+        "carries extra.code_refs, verified live against the codegraph index "
+        "(one indexed SELECT per ref over nodes by file_path [+ name]): "
+        "'(vigente)' on a positive lookup, '(desaparecido)' when the DB is live "
+        "but the ref no longer resolves, '(no verificado)' when the DB is "
+        "unavailable or the lookup fails. One read-only sqlite connection per "
+        "render, capped at 2 refs/memory and 4 lines/render (the token budget "
+        "still wins). Rendered by the full and balanced formats; compact stays "
+        "one-line-per-hit and never renders it. Default OFF: zero extra work "
+        "on the recall hot path (the codegraph DB is never even opened).",
     ),
     # ── Negative Recall — the ⛔ AVOID channel ────────────────────────────────
     # A preemptive, high-precision pass over type=failure_pattern anti-memories,

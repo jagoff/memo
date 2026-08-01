@@ -11,9 +11,11 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from memo.code_evidence import repo_index_generation
 from memo.config import Config
 from memo.embedder import assert_valid_embedding
 from memo.ingest_helpers import enrich_with_ocr
@@ -36,6 +38,7 @@ from memo.repo_index_helpers import (  # noqa: F401
     ProgressCallback,
     RepoEmbedInput,
     _chunk_lines,
+    _chunk_lines_symbol_aligned,
     _derive_repo_name,
     _embed_cache_model,
     _emit,
@@ -49,27 +52,55 @@ from memo.repo_index_helpers import (  # noqa: F401
     _repo_embed_batch_size,
     _repo_embed_input,
     _repo_flush_batch_size,
+    _RepoSymbolSpans,
     _safe_repo_name,
     _semantic_status,
     _stable_id,
+    _symbol_chunking_enabled,
     _tracked_files,
     _validate_clone_url,
 )
 from memo.repo_index_search import (
-    RepoSearchHit,
-    _boost_and_resort,
-    _extract_query_terms,
-    _hits_from_rows,
-    _path_name_boost,  # noqa: F401 — re-exported for backward compat
-    _rrf_fuse_repo,
+    RepoSearchHit as RepoSearchHit,
 )
+from memo.repo_index_search import (
+    _extract_query_terms as _extract_query_terms,
+)
+from memo.repo_index_search import (
+    _path_name_boost,  # noqa: F401 — re-exported for backward compat
+)
+from memo.repo_intelligence import _RepoIntelligenceMixin
 from memo.store import VecStore
 from memo.util import sha256_short as _short_hash
 
 _logger = logging.getLogger(__name__)
 
 
-class RepoCorpus:
+def _previous_repo_state(
+    source: dict[str, Any] | None,
+) -> tuple[dict[str, Any], str]:
+    extra: dict[str, Any] = {}
+    if source is not None and isinstance(source.get("extra"), dict):
+        extra = dict(source["extra"])
+    evidence: dict[str, Any] = {}
+    if isinstance(extra.get("code_evidence"), dict):
+        evidence = dict(extra["code_evidence"])
+    generation = str(extra.get("active_generation") or evidence.get("index_generation") or "")
+    return extra, generation
+
+
+def _publish_embedding_status(
+    store: VecStore,
+    repo_id: str,
+    status: str,
+    *,
+    enabled: bool,
+) -> None:
+    if enabled:
+        store.update_repo_status(repo_id, status, indexed_at=_now_iso())
+
+
+class RepoCorpus(_RepoIntelligenceMixin):
     """Index and search Git repositories inside memo's sqlite-vec store."""
 
     def __init__(
@@ -95,6 +126,7 @@ class RepoCorpus:
         from memo.embedder_select import make_embedder
 
         self.embedder = embedder or make_embedder(cfg)
+        self.last_search_diagnostics: dict[str, Any] = {}
 
     def index(
         self,
@@ -103,6 +135,7 @@ class RepoCorpus:
         name: str | None = None,
         ref: str | None = None,
         force: bool = False,
+        refresh: bool = False,
         with_embeddings: bool = True,
         include: list[str] | None = None,
         exclude: list[str] | None = None,
@@ -149,6 +182,7 @@ class RepoCorpus:
             and existing_source.get("commit_sha") == commit_sha
             and existing_source.get("status") != STATUS_INDEXING
             and not force
+            and not refresh
         ):
             counts = self.store.repo_counts(existing_source["id"])
             semantic_status = _semantic_status(existing_source.get("status"), counts)
@@ -181,6 +215,7 @@ class RepoCorpus:
                     "errors": 0,
                     "skipped_repo_unchanged": True,
                     "resumed_partial": False,
+                    "code_evidence": self.evidence(repo_id).to_dict(),
                 }
             return {
                 "repo_id": repo_id,
@@ -206,6 +241,7 @@ class RepoCorpus:
                 "errors": 0,
                 "skipped_repo_unchanged": True,
                 "resumed_partial": False,
+                "code_evidence": self.evidence(repo_id).to_dict(),
             }
 
         max_bytes = max_file_bytes
@@ -236,7 +272,17 @@ class RepoCorpus:
         flushed_files = 0
 
         indexed_at = _now_iso()
+        generation = repo_index_generation(
+            repo_id=repo_id,
+            commit_sha=commit_sha,
+            indexed_at=indexed_at,
+            include=include_globs,
+            exclude=exclude_globs,
+            max_file_bytes=max_bytes,
+        )
+        coverage_rows: list[dict[str, Any]] = []
         flush_batch = _repo_flush_batch_size()
+        previous_extra, previous_generation = _previous_repo_state(existing_source)
 
         # Persist target commit + indexing status BEFORE the scan so a
         # partial run is recoverable: file-batch commits below remain on
@@ -254,7 +300,25 @@ class RepoCorpus:
                 "extra": {
                     "include": include_globs,
                     "exclude": list(exclude or []),
+                    "effective_exclude": exclude_globs,
                     "max_file_bytes": max_bytes,
+                    "active_generation": previous_generation,
+                    "target_generation": generation,
+                    "artifacts": (
+                        dict(previous_extra["artifacts"])
+                        if isinstance(previous_extra.get("artifacts"), dict)
+                        else {}
+                    ),
+                    "providers": (
+                        dict(previous_extra["providers"])
+                        if isinstance(previous_extra.get("providers"), dict)
+                        else {}
+                    ),
+                    "code_evidence": {
+                        "schema": "memo.code_evidence.v1",
+                        "index_generation": generation,
+                        "recording_status": "indexing",
+                    },
                 },
             }
         )
@@ -273,6 +337,15 @@ class RepoCorpus:
             _emit(progress, "batch_flush", files=len(pending_files), total_flushed=flushed_files)
             pending_files = []
 
+        # Symbol-aligned chunking (MEMO_REPO_CHUNK_SYMBOL_ALIGNED): resolve the
+        # repo's codegraph.db once and hold ONE read-only connection for the
+        # whole run — never one per file. Prefers a committed `.codegraph/` in
+        # the clone, else the source checkout when `url` is a local path.
+        # Missing DB → spans_for() returns [] and chunking falls back silently.
+        symbol_spans: _RepoSymbolSpans | None = None
+        if _symbol_chunking_enabled():
+            symbol_spans = _RepoSymbolSpans(clone_path, Path(url.strip()))
+
         tracked_files = _tracked_files(clone_path)
         _emit(
             progress,
@@ -287,6 +360,7 @@ class RepoCorpus:
             path = clone_path / rel
             if _is_excluded(rel, rel_posix, include_globs, exclude_globs):
                 skipped_excluded += 1
+                coverage_rows.append({"path": rel_posix, "reason": "excluded"})
                 _emit(progress, "file_skipped", path=rel_posix, reason="excluded")
                 continue
             checked += 1
@@ -298,15 +372,18 @@ class RepoCorpus:
                 if inode_key in seen_inodes:
                     # Same physical file already indexed under another casing.
                     skipped_dup_path += 1
+                    coverage_rows.append({"path": rel_posix, "reason": "duplicate_path"})
                     _emit(progress, "file_skipped", path=rel_posix, reason="duplicate_path")
                     continue
                 if size > max_bytes:
                     skipped_too_large += 1
+                    coverage_rows.append({"path": rel_posix, "reason": "too_large"})
                     _emit(progress, "file_skipped", path=rel_posix, reason="too_large")
                     continue
                 raw = path.read_bytes()
                 if _looks_binary(raw):
                     skipped_binary += 1
+                    coverage_rows.append({"path": rel_posix, "reason": "binary"})
                     _emit(progress, "file_skipped", path=rel_posix, reason="binary")
                     continue
                 text = raw.decode("utf-8", errors="replace")
@@ -345,6 +422,9 @@ class RepoCorpus:
                     text=text,
                     raw_size=size,
                     sha=sha,
+                    symbol_spans=(
+                        symbol_spans.spans_for(rel_posix) if symbol_spans is not None else None
+                    ),
                 )
                 pending_files.append(file_payload)
                 indexed_files_total += 1
@@ -359,12 +439,28 @@ class RepoCorpus:
                 )
                 if len(pending_files) >= flush_batch:
                     _flush()
-            except Exception:
+            except Exception as exc:
                 _logger.debug("file error for %s", rel_posix, exc_info=True)
                 errors += 1
+                coverage_rows.append(
+                    {
+                        "path": rel_posix,
+                        "reason": "read_error",
+                        "detail": type(exc).__name__,
+                    }
+                )
                 _emit(progress, "file_error", path=rel_posix)
 
         _flush()
+        if symbol_spans is not None:
+            symbol_spans.close()
+        coverage_recorded_at = _now_iso()
+        self.store.replace_repo_coverage(
+            repo_id=repo_id,
+            generation=generation,
+            rows=coverage_rows,
+            recorded_at=coverage_recorded_at,
+        )
 
         deleted_file_ids = [
             meta["id"] for path, meta in existing_files.items() if path not in tracked_paths
@@ -373,7 +469,6 @@ class RepoCorpus:
             self.store.delete_repo_files(repo_id, deleted_file_ids)
 
         semantic_status = "semantic_pending"
-        self.store.update_repo_status(repo_id, semantic_status, indexed_at=_now_iso())
         _emit(
             progress,
             "write_done",
@@ -385,10 +480,54 @@ class RepoCorpus:
 
         index_embed_counts: dict[str, Any] = {}
         if with_embeddings:
-            index_embed_counts = self.embed(repo_id, force=False, progress=progress)
+            index_embed_counts = self.embed(
+                repo_id,
+                force=False,
+                progress=progress,
+                publish_status=False,
+            )
             semantic_status = index_embed_counts["semantic_status"]
         counts_after = self.store.repo_counts(repo_id)
         semantic_status = _semantic_status(semantic_status, counts_after)
+        artifacts = self._publish_repo_artifacts(
+            repo_id=repo_id,
+            repo_name=repo_name,
+            clone_path=clone_path,
+            commit_sha=commit_sha,
+            generation=generation,
+            indexed_at=indexed_at,
+            counts=counts_after,
+            coverage_rows=coverage_rows,
+        )
+        self.store.upsert_repo_source(
+            {
+                "id": repo_id,
+                "name": repo_name,
+                "url": url.strip(),
+                "ref": ref_name,
+                "commit_sha": commit_sha,
+                "clone_path": str(clone_path),
+                "indexed_at": indexed_at,
+                "status": semantic_status,
+                "extra": {
+                    "include": include_globs,
+                    "exclude": list(exclude or []),
+                    "effective_exclude": exclude_globs,
+                    "max_file_bytes": max_bytes,
+                    "active_generation": generation,
+                    "target_generation": generation,
+                    "artifacts": artifacts["refs"],
+                    "providers": artifacts["providers"],
+                    "code_evidence": {
+                        "schema": "memo.code_evidence.v1",
+                        "index_generation": generation,
+                        "recording_status": "complete",
+                        "recorded_at": coverage_recorded_at,
+                        "gap_count": len(coverage_rows),
+                    },
+                },
+            }
+        )
 
         return {
             "repo_id": repo_id,
@@ -415,98 +554,10 @@ class RepoCorpus:
             "errors": errors,
             "skipped_repo_unchanged": False,
             "resumed_partial": resuming_partial,
+            "refreshed": refresh,
+            "artifacts": artifacts,
+            "code_evidence": self.evidence(repo_id).to_dict(),
         }
-
-    def search(
-        self,
-        query: str,
-        *,
-        limit: int = 10,
-        repo: str | None = None,
-        path: str | None = None,
-        mode: str = "hybrid",
-    ) -> list[RepoSearchHit]:
-        if not query or not query.strip():
-            return []
-        repo_id = self._resolve_repo_id(repo) if repo else None
-        if repo and repo_id is None:
-            return []
-
-        # Over-fetch so the title/filename boost has a chance to promote
-        # notes whose body BM25 / line match score is dwarfed by noisy
-        # transcripts. Without this, a procedural note can sit at rank 20
-        # behind a YouTube transcript and never reach the boost stage.
-        oversample = max(limit * 4, 40)
-
-        if mode == "line":
-            return _boost_and_resort(
-                _hits_from_rows(
-                    self.store.search_repo_lines(
-                        query, limit=oversample, repo_id=repo_id, path_glob=path
-                    )
-                ),
-                query=query,
-                limit=limit,
-            )
-        if mode == "bm25":
-            return _boost_and_resort(
-                _hits_from_rows(
-                    self.store.search_repo_bm25(
-                        query, limit=oversample, repo_id=repo_id, path_glob=path
-                    )
-                ),
-                query=query,
-                limit=limit,
-            )
-
-        query_terms = _extract_query_terms(query)
-
-        if repo_id is not None and self.store.repo_counts(repo_id)["embedded_chunks"] == 0:
-            if mode == "vec":
-                return []
-            rows = _rrf_fuse_repo(
-                [
-                    self.store.search_repo_bm25(
-                        query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path
-                    ),
-                    self.store.search_repo_lines(
-                        query, limit=max(limit * 2, 30), repo_id=repo_id, path_glob=path
-                    ),
-                ],
-                limit=limit,
-                query_terms=query_terms,
-            )
-            return _boost_and_resort(_hits_from_rows(rows), query=query, limit=limit)
-
-        emb = self.embedder.embed_query(query)
-        assert_valid_embedding(emb, self.cfg.embedder_dims, context="repo search query")
-
-        if mode == "vec":
-            return _boost_and_resort(
-                _hits_from_rows(
-                    self.store.search_repo_vec(emb, limit=limit, repo_id=repo_id, path_glob=path)
-                ),
-                query=query,
-                limit=limit,
-            )
-
-        input_k = max(limit * 2, 30)
-        vec_hits = self.store.search_repo_vec(emb, limit=input_k, repo_id=repo_id, path_glob=path)
-        bm_hits = self.store.search_repo_bm25(query, limit=input_k, repo_id=repo_id, path_glob=path)
-        line_hits = self.store.search_repo_lines(
-            query, limit=input_k, repo_id=repo_id, path_glob=path
-        )
-        return _boost_and_resort(
-            _hits_from_rows(
-                _rrf_fuse_repo(
-                    [vec_hits, bm_hits, line_hits],
-                    limit=max(limit * 2, 30),
-                    query_terms=query_terms,
-                )
-            ),
-            query=query,
-            limit=limit,
-        )
 
     def embed(
         self,
@@ -514,6 +565,7 @@ class RepoCorpus:
         *,
         force: bool = False,
         progress: ProgressCallback | None = None,
+        publish_status: bool = True,
     ) -> dict[str, Any]:
         repo_id = self._resolve_repo_id(repo)
         if repo_id is None:
@@ -528,7 +580,12 @@ class RepoCorpus:
         if not pending_rows:
             counts = self.store.repo_counts(repo_id)
             status = _semantic_status(source.get("status"), counts)
-            self.store.update_repo_status(repo_id, status, indexed_at=_now_iso())
+            _publish_embedding_status(
+                self.store,
+                repo_id,
+                status,
+                enabled=publish_status,
+            )
             _emit(progress, "semantic_done", repo=source["name"], embedded=0, total=0)
             return {
                 "repo_id": repo_id,
@@ -539,6 +596,7 @@ class RepoCorpus:
                 "total_chunks": counts["chunks"],
                 "pending_chunks": counts["chunks"] - counts["embedded_chunks"],
                 "semantic_status": status,
+                "code_evidence": self.evidence(repo_id).to_dict(),
             }
 
         pending = sorted(
@@ -585,7 +643,9 @@ class RepoCorpus:
                     assert_valid_embedding(
                         vector,
                         self.cfg.embedder_dims,
-                        context=f"repo chunk {chunk['path']}:{chunk['line_start']}-{chunk['line_end']}",
+                        context=(
+                            f"repo chunk {chunk['path']}:{chunk['line_start']}-{chunk['line_end']}"
+                        ),
                     )
                     embeddings.append((chunk["id"], vector))
                     new_cache_rows.append((item.input_hash, vector))
@@ -617,7 +677,12 @@ class RepoCorpus:
 
         counts = self.store.repo_counts(repo_id)
         status = _semantic_status("semantic_ready", counts)
-        self.store.update_repo_status(repo_id, status, indexed_at=_now_iso())
+        _publish_embedding_status(
+            self.store,
+            repo_id,
+            status,
+            enabled=publish_status,
+        )
         _emit(
             progress,
             "semantic_done",
@@ -636,61 +701,8 @@ class RepoCorpus:
             "total_chunks": counts["chunks"],
             "pending_chunks": counts["chunks"] - counts["embedded_chunks"],
             "semantic_status": status,
+            "code_evidence": self.evidence(repo_id).to_dict(),
         }
-
-    def status(self, repo: str) -> dict[str, Any] | None:
-        repo_id = self._resolve_repo_id(repo)
-        if repo_id is None:
-            return None
-        source = self.store.get_repo_source(repo_id)
-        if source is None:
-            return None
-        counts = self.store.repo_counts(repo_id)
-        semantic_status = _semantic_status(source.get("status"), counts)
-        return {
-            **source,
-            **counts,
-            "pending_chunks": counts["chunks"] - counts["embedded_chunks"],
-            "semantic_status": semantic_status,
-        }
-
-    def get_file(
-        self,
-        repo: str,
-        path: str,
-        *,
-        start: int | None = None,
-        end: int | None = None,
-    ) -> dict[str, Any] | None:
-        repo_id = self._resolve_repo_id(repo)
-        if repo_id is None:
-            return None
-        meta = self.store.get_repo_file(repo_id, path)
-        if meta is None:
-            return None
-        lines = self.store.get_repo_file_lines(repo_id, path, start=start, end=end)
-        text = "\n".join(line["text"] for line in lines)
-        return {
-            **meta,
-            "start": lines[0]["line_no"] if lines else (start or 1),
-            "end": lines[-1]["line_no"] if lines else (end or start or 1),
-            "text": text,
-            "lines": lines,
-        }
-
-    def list(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        return self.store.list_repo_sources(limit=limit)
-
-    def delete(self, repo: str, *, remove_clone: bool = True) -> bool:
-        source = self.store.get_repo_source(repo)
-        if source is None:
-            return False
-        ok = self.store.delete_repo(source["id"])
-        if ok and remove_clone:
-            clone_path = source.get("clone_path")
-            if clone_path:
-                shutil.rmtree(clone_path, ignore_errors=True)
-        return ok
 
     def _sync_clone(self, url: str, clone_path: Path, ref: str) -> None:
         # A previous run may have been killed mid-clone, leaving a `.git`
@@ -731,6 +743,9 @@ class RepoCorpus:
         text: str,
         raw_size: int,
         sha: str,
+        # Sequence, not list: `RepoCorpus.list` shadows the builtin in this
+        # class's annotation scope.
+        symbol_spans: Sequence[tuple[int, int]] | None = None,
     ) -> dict[str, Any]:
         lines = text.splitlines()
         line_rows = [
@@ -748,7 +763,14 @@ class RepoCorpus:
         # fragments). Code files can be legitimately short — a 2-line function is
         # real signal, not noise — so only filter markdown.
         is_markdown = path.lower().endswith((".md", ".markdown"))
-        for seq, line_start, line_end, body in _chunk_lines(lines):
+        # Symbol-aligned cut (flag-gated): only attempted when the caller
+        # resolved codegraph spans for this file; unusable spans fall back
+        # silently to the char-based cutter, keeping the default path
+        # byte-identical.
+        chunk_tuples = _chunk_lines_symbol_aligned(lines, symbol_spans) if symbol_spans else None
+        if chunk_tuples is None:
+            chunk_tuples = _chunk_lines(lines)
+        for seq, line_start, line_end, body in chunk_tuples:
             if is_markdown and _is_noise_chunk(body):
                 continue  # near-empty md chunk, no heading/link — ingest noise
             chunk_id = _stable_id("repo-chunk", file_id, str(seq), _short_hash(body))

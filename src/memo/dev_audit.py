@@ -40,6 +40,9 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
     ("memory/facade.py", "MEMO_EMBEDDER_VIA_DAEMON"),
     ("mlx_gpu.py", "MEMO_GPU_LOCK_PATH"),
     ("mlx_gpu.py", "MEMO_GPU_XPROC_LOCK"),
+    ("codegraph_loader.py", "MEMO_CODEGRAPH_DISCOVERY"),
+    ("codegraph_loader.py", "MEMO_CODEGRAPH_MAX_EDGES"),
+    ("codegraph_loader.py", "MEMO_CODEGRAPH_DB"),
     ("setup/config_io.py", "MEMO_CONFIG_FILE"),
     ("embed_protocol.py", "MEMO_STATE_DIR"),
     ("embedder.py", "MEMO_QUERY_CACHE_SIZE"),
@@ -57,6 +60,12 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     # never break the recall payload or blow the 5s hook budget.
     ("recall_logic.py", "_negative_recall_hits", 1),
     ("recall_logic.py", "_negative_recall_block", 1),
+    # Code-citation lines (MEMO_RECALL_CODE_REFS_ENABLED): verification is
+    # fail-open — a codegraph open/lookup error degrades the ref line to
+    # '(no verificado)' and must never break the recall render or the 5s hook
+    # budget. (_code_ref_status now delegates to code_intel.ref_status, which
+    # catches concrete sqlite errors itself — no broad except left there.)
+    ("recall_logic.py", "_code_ref_lines", 1),
     ("cli_recall_hook.py", "recall_hook", 1),
     ("cli_recall_hook.py", "recall_hook._bail", 1),
     ("cli_recall_hook.py", "recall_hook", 2),
@@ -162,6 +171,8 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
 #   the latency-sensitive UserPromptSubmit hook;
 # - mandate sync: a nightly optional pass reports its error in the receipt and
 #   must not abort the rest of dream maintenance.
+# - repo-search evaluation: each strategy is an isolated trial; one provider
+#   failure is recorded in the report and must not suppress the paired trial.
 #
 # tests/test_dev_audit.py asserts that this inventory is exact and every key
 # still resolves to a real ``except Exception`` site, preventing stale or broad
@@ -170,6 +181,7 @@ BROAD_EXCEPTION_RATCHET_EXEMPTIONS: set[tuple[str, str, int]] = {
     ("briefing.py", "proactive_compact_line", 1),
     ("cli_recall_hook.py", "_proactive_urgent_line", 1),
     ("constitution.py", "run_mandate_sync_pass", 1),
+    ("repo_eval.py", "evaluate_repo_search", 1),
 }
 
 

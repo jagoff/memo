@@ -212,6 +212,141 @@ def collapse_near_dups(relevant: list[Any], *, threshold: float) -> list[Any]:
     return [h for h in relevant if id(h) in survivors]
 
 
+# ── Verified code citations (MEMO_RECALL_CODE_REFS_ENABLED, default OFF) ─────
+_CODE_REFS_PER_MEMORY_CAP = 2  # max '↳ code' lines per rendered memory
+_CODE_REFS_PER_RENDER_CAP = 4  # max '↳ code' lines per render (token budget wins)
+
+
+def _code_ref_entry(
+    ref: Any,
+) -> tuple[str, int | None, str, str | None, str | None, str | None] | None:
+    """(file_path, start_line, kind, symbol, qualified_name, repo_id) from one
+    extra['code_refs'] entry, or None when the entry carries no renderable file
+    path (bare URIs skip). ``symbol`` mirrors the dream pass's _code_ref_exists:
+    label falling back to qualified_name. ``repo_id`` is parsed from the entry's
+    ``codegraph://<repo_id>/...`` uri when present (None otherwise)."""
+    if not isinstance(ref, dict):
+        return None
+    path = str(ref.get("file_path") or "").strip()
+    if not path:
+        return None
+    line: int | None
+    try:
+        line = int(ref["start_line"]) if ref.get("start_line") is not None else None
+    except (TypeError, ValueError):
+        line = None
+    kind = str(ref.get("kind") or "").strip().lower()
+    label = str(ref.get("label") or "").strip()
+    qualified = str(ref.get("qualified_name") or "").strip()
+    repo_id: str | None = None
+    uri = str(ref.get("uri") or "").strip()
+    if uri:
+        from memo.code_traceability import parse_codegraph_uri
+
+        parsed_uri = parse_codegraph_uri(uri)
+        if parsed_uri is not None:
+            repo_id = parsed_uri[0]
+    return path, line, kind, label or qualified or None, qualified or None, repo_id
+
+
+def _code_ref_status(
+    conn: Any | None, path: str, kind: str, symbol: str | None, qualified: str | None
+) -> str:
+    """'vigente' | 'desaparecido' | 'no verificado' for one code ref.
+
+    Thin adapter over :func:`memo.code_intel.ref_status` — the single
+    implementation of the verification semantics shared with the dream pass.
+    ``conn`` None (DB unavailable) or any verification failure degrades to
+    'no verificado' — the render never breaks. repo_id gating already happened
+    in _code_ref_lines (which parses the uri), so the ref passed down carries
+    no repo claim and ``db_repo_id`` is ''."""
+    if conn is None:
+        return "no verificado"
+    from memo import code_intel
+
+    ref = {
+        "file_path": path,
+        "kind": kind,
+        "label": symbol or "",
+        "qualified_name": qualified or "",
+    }
+    return code_intel.ref_status(conn, ref, "") or "no verificado"
+
+
+def _code_ref_lines(relevant: list[Any]) -> dict[int, list[str]]:
+    """Pre-computed '  ↳ code: <path>:<line> (<status>)' lines per hit index.
+
+    Gated on MEMO_RECALL_CODE_REFS_ENABLED (default OFF ⇒ {} — zero extra work
+    on the 5s recall hot path; the codegraph DB is never even opened). When ON:
+    the DB resolves like codegraph_loader.load() (explicit > cwd discovery >
+    checkout default — project-aware under pipx/uv-tool), one read-only sqlite
+    connection per render (opened once, always closed), one indexed sub-ms
+    SELECT per ref (nodes by file_path [+ name/qualified_name]), capped at
+    _CODE_REFS_PER_MEMORY_CAP refs per memory / _CODE_REFS_PER_RENDER_CAP lines
+    per render. A ref whose codegraph:// uri names another repo's graph
+    degrades to '(no verificado)' — never verified against the wrong index.
+    Any failure degrades that ref to '(no verificado)'. Known skew: the
+    codegraph watcher debounces ~2s, so a just-deleted symbol can briefly
+    still verify '(vigente)' against the previous index snapshot — accepted."""
+    if not flag_bool("MEMO_RECALL_CODE_REFS_ENABLED"):
+        return {}
+    parsed: list[tuple[int, str, int | None, str, str | None, str | None, str | None]] = []
+    total = 0
+    for i, hit in enumerate(relevant):
+        if total >= _CODE_REFS_PER_RENDER_CAP:
+            break
+        refs = (getattr(hit, "extra", None) or {}).get("code_refs")
+        if not isinstance(refs, list):
+            continue
+        per_memory = 0
+        for ref in refs:
+            if per_memory >= _CODE_REFS_PER_MEMORY_CAP or total >= _CODE_REFS_PER_RENDER_CAP:
+                break
+            entry = _code_ref_entry(ref)
+            if entry is None:
+                continue
+            parsed.append((i, *entry))
+            per_memory += 1
+            total += 1
+    if not parsed:
+        return {}
+
+    import sqlite3
+
+    from memo import codegraph_loader
+
+    conn: Any | None = None
+    db_repo_id: str | None = None
+    try:
+        db = codegraph_loader._resolve_db()
+        if db.is_file():
+            conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            if any(entry[6] is not None for entry in parsed):
+                from memo.code_traceability import codegraph_repo_id
+
+                db_repo_id = codegraph_repo_id(db.parent.parent)
+    except Exception as exc:
+        _logger.debug("code refs: codegraph open failed: %s", exc)
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+        conn = None
+    out: dict[int, list[str]] = {}
+    try:
+        for i, path, line, kind, symbol, qualified, ref_repo_id in parsed:
+            if ref_repo_id is not None and ref_repo_id != db_repo_id:
+                status = "no verificado"  # ref cites another repo's graph
+            else:
+                status = _code_ref_status(conn, path, kind, symbol, qualified)
+            loc = f"{path}:{line}" if line is not None else path
+            out.setdefault(i, []).append(f"  ↳ code: {loc} ({status})")
+    finally:
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+    return out
+
+
 def render_recall_context(
     relevant: list[Any],
     nudge: list[Any],
@@ -261,6 +396,7 @@ def render_recall_context(
 
     use_labels = flag_bool("MEMO_RECALL_EPISTEMIC_LABELS")
     use_dossier = flag_bool("MEMO_HIT_DOSSIER")
+    code_lines_by_hit = _code_ref_lines(relevant)
     dropped: list[Any] = list(omitted or [])
     for i, hit in enumerate(relevant):
         score_tag = f" (score {hit.score:.2f})" if hit.score is not None else ""
@@ -284,7 +420,7 @@ def render_recall_context(
             *([tags_line] if tags_line else []),
             *([dossier_line] if dossier_line else []),
         ]
-        block = [*prefix, *([f"> {body}"] if body else []), ""]
+        block = [*prefix, *([f"> {body}"] if body else []), *code_lines_by_hit.get(i, []), ""]
         if max_chars is None or len(_render(block)) <= max_chars:
             lines.extend(block)
             continue
@@ -421,6 +557,10 @@ def render_recall_balanced(
     no epistemic_label, no trust_dossier, and no MEMO_RECALL_CONFIDENCE_GATE
     '⚠ unverified' marker. The gate and dossier apply only to compact and full
     formats by design — the balanced format prioritizes brevity over trust signals.
+    The one exception is the flag-gated '↳ code:' citation line
+    (MEMO_RECALL_CODE_REFS_ENABLED, default OFF): a verified evidence pointer,
+    not an epistemic annotation, and the operator opted into it explicitly.
+    Compact stays one-line-per-hit and never renders it.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     lines = [f"- [{hit.id[:8]}] {hit.title}" for hit in relevant]
@@ -435,6 +575,11 @@ def render_recall_balanced(
             indent = "\n  • ".join(bullets)
             if i < len(lines):
                 lines[i] = lines[i] + "\n  • " + indent
+
+    # Verified code citations (flag off ⇒ {} — zero extra work, DB untouched).
+    for i, ref_lines in _code_ref_lines(relevant).items():
+        if i < len(lines):
+            lines[i] = lines[i] + "\n" + "\n".join(ref_lines)
 
     footer = _render_footer(turn)
     body = "<memo-recall readonly>\n## Memory\n" + "\n".join(lines) + "\n"
@@ -647,6 +792,135 @@ def _apply_altitude_boost(hits: list[Any], boost: float, *, broad: bool) -> list
     return boosted
 
 
+def _apply_code_proximity_boost(
+    hits: list[Any],
+    explain: dict[str, dict[str, Any]] | None = None,
+    cwd: str | None = None,
+    *,
+    enabled: bool = True,
+) -> list[Any]:
+    """Code-proximity stage of ``rank_hits`` (MEMO_RECALL_CODE_PROXIMITY_BOOST).
+
+    Flag 0.0 (the default) returns ``hits`` unchanged with zero extra work —
+    no subprocess, no graph query, no import: ranking identical to today.
+    Flag > 0: ``_code_proximity_bonus`` resolves the working-tree neighborhood
+    once (in the render ``cwd`` when given) and every matching hit gains
+    +flag, re-sorted like the other additive boost stages (new list — the
+    caller's is never mutated)."""
+    if not enabled:
+        return hits
+    boost = flag_float("MEMO_RECALL_CODE_PROXIMITY_BOOST") or 0.0
+    if boost <= 0:
+        return hits
+    bonus = _code_proximity_bonus(hits, boost, cwd)
+    if bonus:
+        hits = [
+            replace(h, score=h.score + bonus[i]) if i in bonus and h.score is not None else h
+            for i, h in enumerate(hits)
+        ]
+        hits.sort(key=lambda h: h.score or 0.0, reverse=True)
+    if explain is not None:
+        _explain_stage(explain, hits, "code_proximity")
+    return hits
+
+
+def _code_proximity_bonus(
+    hits: list[Any], boost: float, cwd: str | None = None
+) -> dict[int, float]:
+    """Hit-index -> additive bonus for hits citing code near the working tree.
+
+    ONE ``git diff --name-only HEAD`` (1s timeout, run in the render ``cwd``
+    when given — the daemon's process cwd is / or $HOME and would be dead or
+    the wrong repo) resolves the uncommitted change set; ``symbols_for_files``
+    + ``neighbors(hops=2)`` expand it into the codegraph neighborhood, with
+    the index discovered from that same ``cwd`` (a render repo without its
+    own index gets no boost — never another repo's graph). A hit earns
+    ``+boost`` exactly once when any ``extra['code_refs']`` entry claiming
+    THIS repo (or none — ``code_intel.ref_repo_claim``) cites a changed
+    ``file_path`` or a ``label``/``qualified_name`` in the neighborhood.
+    Fail-open: git or graph failure -> {} (no boost, never an exception).
+    Only reached with the flag > 0 — flag 0.0 never calls this (zero
+    subprocesses, zero queries)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+            cwd=cwd or None,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    changed = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    if not changed:
+        return {}
+    resolved = _proximity_neighborhood(changed, cwd)
+    if resolved is None:
+        return {}
+    hood, db_repo_id = resolved
+    bonus: dict[int, float] = {}
+    for i, hit in enumerate(hits):
+        refs = (getattr(hit, "extra", None) or {}).get("code_refs")
+        if not isinstance(refs, list):
+            continue
+        if any(_proximity_ref_matches(ref, changed, hood, db_repo_id) for ref in refs):
+            bonus[i] = boost
+    return bonus
+
+
+def _proximity_neighborhood(changed: set[str], cwd: str | None) -> tuple[set[str], str] | None:
+    """(2-hop neighborhood of the changed files, db repo_id), or None.
+
+    With a render ``cwd``, the index is discovered strictly from that path —
+    a render repo without its own ``.codegraph`` gets None (never the pinned
+    or module-default DB, which belongs to another repo). Without one, the
+    engine's usual resolution applies (process cwd = render cwd on the direct
+    CLI path)."""
+    from memo import code_intel, codegraph_loader
+
+    db_path = None
+    if cwd and codegraph_loader._discovery_enabled():
+        from pathlib import Path
+
+        db_path = codegraph_loader._discover_db(start=Path(cwd))
+        if db_path is None:
+            return None
+    opened = code_intel.open_graph(db_path)
+    if opened is None:
+        return None
+    conn, db_repo_id = opened
+    try:
+        hood = code_intel.neighbors(conn, code_intel.symbols_for_files(conn, changed), hops=2)
+        return hood, db_repo_id
+    finally:
+        with contextlib.suppress(Exception):
+            conn.close()
+
+
+def _proximity_ref_matches(ref: Any, changed: set[str], hood: set[str], db_repo_id: str) -> bool:
+    """One code ref vs the local change set / neighborhood, repo-gated.
+
+    A ref claiming another repo (``code_intel.ref_repo_claim``: field or
+    codegraph:// uri host) never matches — the neighborhood was computed
+    against THIS repo's graph and diff."""
+    from memo import code_intel
+
+    if not isinstance(ref, dict):
+        return False
+    claim = code_intel.ref_repo_claim(ref)
+    if claim and claim != db_repo_id:
+        return False
+    path = str(ref.get("file_path") or "").strip()
+    label = str(ref.get("label") or "").strip()
+    qualified = str(ref.get("qualified_name") or "").strip()
+    return bool(path in changed or (label and label in hood) or (qualified and qualified in hood))
+
+
 def _mmr_token_set(hit: Any) -> frozenset[str]:
     text = f"{getattr(hit, 'title', '') or ''} {getattr(hit, 'body', '') or ''}"
     return frozenset(text.lower().split())
@@ -766,6 +1040,14 @@ class RankKnobs:
     mmr_lambda: float = 0.0
     synthesis_boost: float = 0.0
     altitude: float = 0.0  # Phase 2: boost distilled hits on a BROAD query (0.0 = OFF)
+    # Eval runs have project tags but no trustworthy render cwd. They disable
+    # this stage so an ambient process cwd cannot trigger one `git diff`
+    # subprocess per evaluated prompt.
+    code_proximity: bool = True
+    # Render cwd (the hook payload's cwd, NOT the daemon's process cwd): drives
+    # the code-proximity stage's git diff + .codegraph discovery. None keeps
+    # process-cwd behavior (the direct CLI path, where they coincide).
+    cwd: str | None = None
 
 
 def knobs_from_flags(
@@ -790,6 +1072,9 @@ def knobs_from_flags(
     ``project_tag`` resolves from ``cwd`` (``current_project_tag``) only when
     not passed explicitly, gated on ``project_boost > 0`` — exactly the hook's
     behavior; with neither ``project_tag`` nor ``cwd`` it stays ``None``.
+    ``cwd`` is also carried on the knobs (``RankKnobs.cwd``) so the
+    code-proximity stage runs its git diff + index discovery in the RENDER's
+    repo, not the daemon's process cwd.
 
     NOTE (path-dependence, from the M3 knobs): like preference/graph boosts,
     ``mmr_lambda``/``synthesis_boost`` apply only where ``rank_hits`` runs —
@@ -830,6 +1115,7 @@ def knobs_from_flags(
         mmr_lambda=flag_float("MEMO_RECALL_MMR_LAMBDA") or 0.0,
         synthesis_boost=flag_float("MEMO_RECALL_SYNTHESIS_BOOST") or 0.0,
         altitude=flag_float("MEMO_RECALL_ALTITUDE") or 0.0,
+        cwd=cwd,
     )
     if overrides:
         knobs = replace(knobs, **overrides)
@@ -937,7 +1223,7 @@ def rank_hits(
     """The daemon's post-search ranking core, pure + reusable.
 
     project-tiers -> preference-boost -> synthesis-boost -> altitude-boost ->
-    dedup_hits -> min_sim/cosine + min_body gate ->
+    code-proximity-boost -> dedup_hits -> min_sim/cosine + min_body gate ->
     synthesis-dedup -> [MMR diversity reorder]. Returns the gated,
     deduped, ordered candidate list (caller splits top_k vs nudge). Used by both
     ``_recall_logic`` and the eval harness so they cannot diverge. Graph ordering
@@ -972,6 +1258,16 @@ def rank_hits(
         raw = _apply_altitude_boost(raw, knobs.altitude, broad=_is_broad_query(query))
         if explain is not None:
             _explain_stage(explain, raw, "altitude")
+    # Live flag (not a tunable scalar): MEMO_RECALL_CODE_PROXIMITY_BOOST
+    # default 0.0 = OFF ⇒ the stage returns `raw` untouched with zero extra
+    # work. Offline evals also disable it explicitly because they have no
+    # trustworthy render cwd from which to resolve a working-tree diff.
+    raw = _apply_code_proximity_boost(
+        raw,
+        explain,
+        knobs.cwd,
+        enabled=knobs.code_proximity,
+    )
 
     def _passes(h: Any) -> bool:
         # bm25-mode `h.score` is on the BM25 relevance scale, NOT cosine — applying

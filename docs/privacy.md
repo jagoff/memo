@@ -4,25 +4,23 @@ memo stores memories, embeddings, caches, and history locally. Every memory
 operation — search, recall, save, history, briefing — is offline by default and
 sends nothing to a hosted service.
 
-The one exception at startup is **auto-update, which is ON by default** so memo
-keeps itself current across every install. On `memo-mcp` start it makes a
+Normal `memo-mcp` startup is fully offline. Remote update checks and background
+auto-update are both opt-in. When `MEMO_AUTO_UPDATE=1`, startup makes a
 throttled `git ls-remote` to the memo repo to see whether a newer tagged release
 exists and, if so, installs it in the background for the next start. It sends no
-memory content, paths, identity, or IP — only the git tag probe. Set
-`MEMO_AUTO_UPDATE=0` to opt out and keep startup fully offline. Startup still
-does not modify Claude, Codex, or other agent configuration unless a self-heal
-opt-in below is enabled.
+memory content or paths—only the normal network metadata of a git request.
+Startup also does not modify Claude, Codex, or other agent configuration unless
+a self-heal opt-in below is enabled.
 
 ## Startup behaviors
 
-`MEMO_AUTO_UPDATE` defaults ON (see above); the remaining startup behaviors
-default to `0`/false:
+All startup behaviors below default to `0`/false:
 
 - `MEMO_UPDATE_CHECK_ENABLED=1` permits a throttled remote tag check and records
   a local update notification (this is the check-only half of auto-update; it is
   implied when `MEMO_AUTO_UPDATE` is on).
-- `MEMO_AUTO_UPDATE=0` opts out of the default auto-update: no tag check, no
-  background install, fully offline startup.
+- `MEMO_AUTO_UPDATE=1` opts in to the throttled remote tag check and background
+  install. Leaving it unset performs neither operation.
 - `MEMO_UPDATE_ENDPOINT=<url>` (empty by default) routes the tag check above
   through an HTTP endpoint instead of `git ls-remote`. It sends three anonymous
   fields — `id=sha256(device_id)[:16]` (hashed on-device, raw id never sent),

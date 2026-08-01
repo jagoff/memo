@@ -91,6 +91,65 @@ def eval_group() -> None:
 eval_group.add_command(bench_group)
 
 
+@eval_group.command(name="repo-search")
+@click.option(
+    "--labels",
+    "labels_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="JSON labels using schema memo.eval.repo_search.labels.v1.",
+)
+@click.option("--repo", default=None, help="Override the repo filter in every label.")
+@click.option("--k", type=click.IntRange(min=1, max=100), default=10, show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--gate",
+    is_flag=True,
+    help="Fail when graph-first recall is below grep-first or any search call failed.",
+)
+def eval_repo_search_cmd(
+    labels_path: Path,
+    repo: str | None,
+    k: int,
+    as_json: bool,
+    gate: bool,
+) -> None:
+    """Compare lexical-first and graph-enriched repo retrieval symmetrically."""
+    from memo.memory import Memory
+    from memo.repo_eval import evaluate_repo_search, load_repo_eval_labels
+
+    try:
+        labels = load_repo_eval_labels(labels_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    memory = Memory(Config.from_env())
+    try:
+        report = evaluate_repo_search(memory, labels, k=k, repo=repo)
+    finally:
+        memory.close()
+    payload = report.to_dict()
+    if as_json:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        console.print(
+            f"repo-search eval · {report.labels} labels · "
+            f"{report.total_search_calls} calls · {report.total_session_elapsed_ms:.1f}ms"
+        )
+        for strategy in report.strategies:
+            console.print(
+                f"  {strategy.strategy}: recall@{k}={strategy.recall_at_k:.3f} "
+                f"precision@{k}={strategy.precision_at_k:.3f} mrr={strategy.mrr:.3f} "
+                f"zero={strategy.zero_results} failures={strategy.failures} "
+                f"search_ms={strategy.search_elapsed_ms:.1f}"
+            )
+    by_name = {row.strategy: row for row in report.strategies}
+    grep_first = by_name["grep-first"]
+    graph_first = by_name["graph-first"]
+    gate_failed = report.failures > 0 or graph_first.recall_at_k < grep_first.recall_at_k
+    if gate and gate_failed:
+        raise click.exceptions.Exit(1)
+
+
 @eval_group.command(name="memory")
 @click.option("--k", type=click.IntRange(min=1, max=50), default=5, show_default=True)
 @click.option(
@@ -478,6 +537,54 @@ def eval_recall_cmd(
                 for h in d["top"]:
                     flag = "NOISE" if h["noise"] else ("rel" if h["relevant"] else "—")
                     console.print(f"      {h['score']:>5}  {flag:<5}  {h['title']}")
+
+
+@eval_group.command(name="chat")
+@click.option(
+    "--corpus",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("eval/chat_regression_corpus.json"),
+    show_default=True,
+    help="JSON corpus (schema synapse.eval_chat.query.v1, rescued from synapse).",
+)
+@click.option("--only", default=None, help="Run only the query with this id.")
+def eval_chat_cmd(corpus: Path, only: str | None) -> None:
+    """Regression gate: run the corpus through the chat pipeline and check outputs."""
+    from rich.table import Table
+
+    from memo.chat.pipeline import chat_stream
+    from memo.eval_chat import apply_checks
+
+    data = json.loads(corpus.read_text(encoding="utf-8"))
+    queries = [q for q in data.get("queries", []) if not only or q.get("id") == only]
+    if not queries:
+        raise click.ClickException(f"no query with id {only!r} in {corpus}")
+
+    mem = _get_memory(Config.from_env())
+    rows = []
+    for query in queries:
+        t0 = time.monotonic()
+        events = list(chat_stream(mem, str(query.get("question") or "")))
+        done = next((e for e in reversed(events) if e.get("type") in {"done", "error"}), {})
+        rows.append(apply_checks(query, done, int((time.monotonic() - t0) * 1000)))
+
+    table = Table(title=f"eval chat — {corpus.name}")
+    table.add_column("id")
+    table.add_column("passed")
+    table.add_column("ms", justify="right")
+    table.add_column("failed checks")
+    for row in rows:
+        failed = ", ".join(c["check"] for c in row["checks"] if not c["passed"])
+        table.add_row(row["id"], "✓" if row["passed"] else "✗", str(row["total_ms"]), failed)
+    console.print(table)
+
+    latencies = sorted(r["total_ms"] for r in rows) or [0]
+    p50 = latencies[len(latencies) // 2]
+    p95_idx = max(0, min(len(latencies) - 1, int(len(latencies) * 0.95) - 1))
+    console.print(f"p50={p50}ms p95={latencies[p95_idx]}ms")
+
+    if any(not r["passed"] for r in rows):
+        raise click.exceptions.Exit(1)
 
 
 def _tokens_baseline_path(cfg: Config) -> Path:

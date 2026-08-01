@@ -1201,3 +1201,18 @@ def test_reindex_rebuild_rejects_duplicate_canonical_ids(mem_with_stub: Memory):
 
     assert mem_with_stub.store.count() == 1
     assert mem_with_stub.get(rec.id) is not None
+
+
+def test_reindex_skips_chronicle_bucket_silently(mem_with_stub: Memory, caplog):
+    chronicle = mem_with_stub.cfg.memory_dir / "_chronicle"
+    chronicle.mkdir(parents=True, exist_ok=True)
+    (chronicle / "2026-07-18.md").write_text(
+        "# Chronicle — 2026-07-18\n\nDiario nocturno sin frontmatter id.\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING", logger="memo.memory.record"):
+        mem_with_stub.reindex()
+
+    assert "invalid memory id" not in caplog.text
+    assert mem_with_stub.store.count() == 0

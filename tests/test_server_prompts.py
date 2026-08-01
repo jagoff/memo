@@ -48,6 +48,42 @@ def test_briefing_returns_context(mock_memory):
     assert out.startswith("Context from memo (briefing):")
 
 
+def test_briefing_prompt_matches_tool_markdown(mock_memory):
+    import memo.server_core_search as search_server
+
+    class _ToolServer:
+        def __init__(self):
+            self.tools: dict[str, object] = {}
+
+        def tool(self, *, annotations):
+            def _decorator(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return _decorator
+
+    mock_memory.save(content="port is 8765", title="port fact", type_="fact")
+    tool_server = _ToolServer()
+    search_server.register(tool_server, mock_memory)
+    tool_out = tool_server.tools["memo_unified_briefing"](cwd=None)
+
+    server = _register(mock_memory)
+    prompt_out = server.prompts["briefing"]()
+
+    assert tool_out["markdown"]
+    assert prompt_out == "Context from memo (briefing):\n" + tool_out["markdown"]
+
+
+def test_briefing_prompt_fails_open_when_composer_raises(mock_memory, monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("memo.briefing.memo_native_briefing_lines", _boom)
+    server = _register(mock_memory)
+    out = server.prompts["briefing"]()
+    assert out.startswith("memo unavailable:")
+
+
 def test_prompts_fail_open(mock_memory, monkeypatch):
     server = _register(mock_memory)
     monkeypatch.setattr(
@@ -66,13 +102,6 @@ def test_recall_logs_consult(mock_memory, monkeypatch):
 
 
 def test_recall_logs_dict_shaped_hits_to_real_sink(mock_memory, monkeypatch):
-    """Regression: the real `log_consult` (not stubbed, unlike the test above)
-    resolves its sink `append_recall_log`, which does dict-style `.get()`
-    access on each hit. Raw `MemoryRecord` objects raise `AttributeError`
-    there — swallowed by `log_consult`'s own broad except — so every
-    non-empty recall consult would silently never reach the recall log.
-    Exercise the real path down to the sink and assert it receives dicts.
-    """
     calls = []
     monkeypatch.setattr(
         "memo.dashboard.append_recall_log",

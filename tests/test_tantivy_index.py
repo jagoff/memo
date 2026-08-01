@@ -7,6 +7,8 @@ so it runs in all environments.
 
 from __future__ import annotations
 
+import tempfile
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -39,8 +41,10 @@ def test_fold_diacritics_ascii_unchanged() -> None:
 
 
 @pytest.fixture()
-def idx(tmp_path: Path) -> TantivyFTSIndex:
-    return TantivyFTSIndex.open_or_create(tmp_path / "tantivy")
+def idx(tmp_path: Path) -> Iterator[TantivyFTSIndex]:
+    index = TantivyFTSIndex.open_or_create(tmp_path / "tantivy")
+    yield index
+    index.close()
 
 
 @requires_tantivy
@@ -50,8 +54,26 @@ def test_exists_false_before_creation(tmp_path: Path) -> None:
 
 @requires_tantivy
 def test_exists_true_after_creation(tmp_path: Path) -> None:
-    TantivyFTSIndex.open_or_create(tmp_path / "idx")
+    index = TantivyFTSIndex.open_or_create(tmp_path / "idx")
     assert TantivyFTSIndex.exists(tmp_path / "idx")
+    index.close()
+
+
+@requires_tantivy
+def test_close_waits_for_merging_threads_and_is_idempotent() -> None:
+    """Closing permits immediate directory cleanup even after many commits."""
+    with tempfile.TemporaryDirectory() as tmp:
+        index = TantivyFTSIndex.open_or_create(Path(tmp) / "tantivy")
+        for i in range(100):
+            index.add_document(
+                f"id{i}",
+                f"document number {i}",
+                "",
+                f"content for merge segment {i}",
+            )
+            index.commit()
+        index.close()
+        index.close()
 
 
 @requires_tantivy
@@ -206,6 +228,7 @@ def test_thread_safety_concurrent_upserts(tmp_path: Path) -> None:
     assert not errors, f"thread errors: {errors}"
     results = idx.search_bm25("document", 20)
     assert len(results) == 8
+    idx.close()
 
 
 # ---------------------------------------------------------------------------
@@ -244,3 +267,4 @@ def test_fallback_to_fts5_when_tantivy_absent(
     results = store.search_bm25("testing", limit=5)
     assert len(results) == 1
     assert results[0]["id"] == "abc"
+    store.close()

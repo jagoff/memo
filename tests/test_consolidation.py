@@ -171,6 +171,51 @@ def test_consolidate_all_with_data(consolidator, mock_memory):
     assert "proposals" in result
 
 
+def test_consolidate_all_stops_llm_calls_after_first_timeout(consolidator, monkeypatch):
+    clusters = [
+        {
+            "cluster_id": cluster_id,
+            "relationship": "duplicate",
+            "members": [
+                {
+                    "id": f"{cluster_id:032x}",
+                    "title": f"Memory {cluster_id}",
+                    "updated": "2026-01-01T00:00:00+00:00",
+                    "body_preview": "same fact",
+                },
+                {
+                    "id": f"{cluster_id + 100:032x}",
+                    "title": f"Memory {cluster_id} copy",
+                    "updated": "2026-01-02T00:00:00+00:00",
+                    "body_preview": "same fact",
+                },
+            ],
+        }
+        for cluster_id in range(1, 4)
+    ]
+    monkeypatch.setattr(consolidator.memory, "consolidate", lambda **kwargs: clusters)
+    consolidator._chat = object()
+    calls = 0
+
+    def timeout_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return None
+
+    monkeypatch.setattr("memo.consolidation.chat_with_timeout", timeout_once)
+
+    result = consolidator.consolidate_all(
+        threshold=0.85,
+        max_clusters=20,
+        auto_apply=False,
+        dry_run=True,
+        auto_threshold=0.85,
+    )
+
+    assert calls == 1
+    assert result["proposals"] == []
+
+
 def test_merge_proposal_dataclass():
     """Test MergeProposal dataclass structure."""
     p = MergeProposal(

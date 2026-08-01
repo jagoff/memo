@@ -20,30 +20,6 @@ _log = logging.getLogger(__name__)
 _SOURCE = "mcp-prompt"
 
 
-def _briefing_text(memory: Any) -> str:
-    """Compose the compact briefing text.
-
-    Transcribed from `memo_unified_briefing` (`server_core_search.py`) — same
-    `memo.briefing` calls and flag reads — minus the tool's dict envelope and
-    consult logging (the prompt logs its own consult). `cwd` is not available
-    to a no-argument prompt, so operational lines are unbiased by project.
-    """
-    from memo.briefing import (
-        compact_text,
-        memo_native_briefing_lines,
-        operational_briefing_lines,
-    )
-    from memo.flags import flag_int
-
-    loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
-    loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
-    raw_lines: list[str] = memo_native_briefing_lines(
-        memory, loops_n=loops_n, loops_days=loops_days
-    )
-    raw_lines.extend(operational_briefing_lines(memory, None))
-    return compact_text("\n".join(raw_lines), max_chars=900)
-
-
 def register(server: Any, memory: Any) -> None:
     """Register the briefing/recall prompts (all profiles — prompts ≠ tools)."""
 
@@ -53,14 +29,20 @@ def register(server: Any, memory: Any) -> None:
         "operational state) into the conversation.",
     )
     def briefing() -> str:
+        # cwd=None: a no-argument prompt has no cwd, so operational lines are
+        # unbiased by project.
+        from memo.briefing import compose_unified_briefing
+
         t0 = now_ms()
         try:
-            text = _briefing_text(memory)
+            text = compose_unified_briefing(memory, None)
         except Exception as exc:
             _log.debug("briefing prompt failed", exc_info=True)
             return f"memo unavailable: {type(exc).__name__}"
         with suppress(Exception):
-            log_consult(memory, tool="briefing", query="", hits=[], t0_ms=t0, source=_SOURCE)
+            log_consult(
+                memory, tool="briefing", query="briefing", hits=[], t0_ms=t0, source=_SOURCE
+            )
         return "Context from memo (briefing):\n" + text
 
     @server.prompt(
@@ -75,11 +57,6 @@ def register(server: Any, memory: Any) -> None:
             _log.debug("recall prompt failed", exc_info=True)
             return f"memo unavailable: {type(exc).__name__}"
         with suppress(Exception):
-            # log_consult's sink (append_recall_log) does dict-style .get()
-            # access on each hit; raw MemoryRecord objects raise AttributeError
-            # there (silently swallowed by log_consult's own broad except),
-            # so every non-empty recall consult would go unlogged. Convert to
-            # dicts first, mirroring memo_search (server_core_search.py).
             log_consult(
                 memory,
                 tool="recall",
@@ -93,6 +70,6 @@ def register(server: Any, memory: Any) -> None:
             return header + "(no matching memories)"
         lines = []
         for h in hits:
-            body = (getattr(h, "body", "") or "")[:400]
+            body = (h.body or "")[:400]
             lines.append(f"[{h.id[:8]}] {h.title} ({h.type})\n{body}")
         return header + "\n---\n".join(lines)

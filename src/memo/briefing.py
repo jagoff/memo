@@ -309,6 +309,47 @@ def dream_digest_lines(state_dir: Path, *, max_age_h: float = 24.0) -> list[str]
         return []
 
 
+def code_drift_lines(cfg: Any) -> list[str]:
+    """'⚠ code-drift' — one line when last night's drift pass found stale refs.
+
+    Reads the ``code_drift`` key of the dream receipt
+    (``cfg.state_dir/dream/last.json``, written by ``_run_code_drift``) — zero
+    graph queries at SessionStart. Gated by ``MEMO_BRIEFING_CODE_DRIFT``
+    (default on; the flag is checked here so a disabled flag never opens the
+    receipt). Empty list on anything else — receipt missing/corrupt, pass
+    disabled/aborted, or nothing drifted.
+    """
+    import contextlib
+    import json as _json
+
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_BRIEFING_CODE_DRIFT"):
+        return []
+    with contextlib.suppress(Exception):
+        last = Path(cfg.state_dir) / "dream" / "last.json"
+        with last.open(encoding="utf-8") as fh:
+            data = _json.load(fh)
+        drift = data.get("code_drift")
+        if not isinstance(drift, dict) or drift.get("status") != "ok":
+            return []
+
+        def _count(key: str) -> int:
+            v = drift.get(key)
+            return len(v) if isinstance(v, list) else 0
+
+        outdated = _count("outdated")
+        partial = _count("partial")
+        repaired = _count("repaired")
+        if outdated or partial or repaired:
+            return [
+                f"⚠ code-drift: {outdated} memorias archivadas, {partial} parciales, "
+                f"{repaired} reparadas anoche — 'memo dream status'",
+                "",
+            ]
+    return []
+
+
 def proactive_lines(mem: Any, *, max_lines: int = 3) -> list[str]:
     """Compact proactive-engine digest — reliability/continuity/etc nudges.
 
@@ -423,12 +464,50 @@ def profile_lines(cfg: Any, *, cwd: str | None = None) -> list[str]:
     return lines
 
 
+def code_impact_lines(mem: Any, cwd: str) -> list[str]:
+    """Render linked memories affected by working-tree changes."""
+    from memo.flags import flag_int
+
+    depth = flag_int("MEMO_CODE_IMPACT_DEPTH") or 1
+    limit = flag_int("MEMO_CODE_IMPACT_LIMIT") or 5
+    impact = mem.code_change_impact(cwd, depth=depth, limit=limit)
+    memories = impact.get("memories") or []
+    if not memories:
+        return []
+    lines = ["### Memories affected by local code changes", ""]
+    changed = ", ".join(f"`{path}`" for path in impact["changed_files"][:4])
+    lines.append(f"Changed: {changed}")
+    for item in memories:
+        lines.append(
+            f"- `{str(item['id'])[:8]}` **{item.get('type') or 'note'}** · "
+            f"{item.get('title') or '—'} "
+            f"(impact distance {int(item.get('distance') or 0)})"
+        )
+    evidence = impact.get("code_evidence") or {}
+    if evidence.get("coverage_status") != "complete" or evidence.get("freshness") == "stale":
+        lines.append(
+            "_Code evidence is incomplete or stale; inspect `memo_graph` "
+            'with `verb="impact"` before relying on absence._'
+        )
+    lines.append("")
+    return lines
+
+
+def maybe_code_impact_lines(mem: Any, cwd: str | None) -> list[str]:
+    from memo.flags import flag_bool
+
+    if not cwd or not flag_bool("MEMO_BRIEFING_CODE_IMPACT"):
+        return []
+    return code_impact_lines(mem, cwd)
+
+
 def memo_native_briefing_lines(
     mem: Any,
     *,
     loops_n: int = 5,
     loops_days: int = 7,
     memory_of_day: bool = True,
+    cwd: str | None = None,
 ) -> list[str]:
     """Memo's durable-corpus briefing sections.
 
@@ -464,6 +543,8 @@ def memo_native_briefing_lines(
     if flag_bool("MEMO_FACT_SURFACE_ENABLED"):
         with contextlib.suppress(Exception):
             lines.extend(temporal_fact_lines(mem))
+    with contextlib.suppress(Exception):
+        lines.extend(maybe_code_impact_lines(mem, cwd))
 
     # ── Proactive engine: reliability/continuity/etc nudges (dark by default) ─
     if flag_bool("MEMO_PROACTIVE_ENABLED"):
@@ -475,6 +556,12 @@ def memo_native_briefing_lines(
     if flag_bool("MEMO_NEGATIVE_RECALL_ENABLED"):
         with contextlib.suppress(Exception):
             lines.extend(negative_recall_lines(mem))
+
+    # ── Code drift: last night's drift-pass outcome (receipt read, zero graph queries) ─
+    # MEMO_BRIEFING_CODE_DRIFT is checked inside the helper so a disabled flag
+    # never opens the receipt, here or in any other caller.
+    with contextlib.suppress(Exception):
+        lines.extend(code_drift_lines(mem.cfg))
 
     # Judged relation truth only; pending candidates belong to review surfaces.
     with contextlib.suppress(Exception):
@@ -570,6 +657,20 @@ def memo_native_briefing_lines(
     return lines
 
 
+def compose_unified_briefing(memory: Any, cwd: str | None) -> str:
+    """Compose the unified-briefing markdown — single source of truth for the
+    `memo_unified_briefing` MCP tool and the `briefing` MCP prompt."""
+    from memo.flags import flag_int
+
+    loops_n = max(1, flag_int("MEMO_BRIEFING_LOOPS_N") or 5)
+    loops_days = max(1, flag_int("MEMO_BRIEFING_LOOPS_DAYS") or 7)
+    raw_lines: list[str] = memo_native_briefing_lines(
+        memory, loops_n=loops_n, loops_days=loops_days
+    )
+    raw_lines.extend(operational_briefing_lines(memory, cwd))
+    return compact_text("\n".join(raw_lines), max_chars=900)
+
+
 def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
     text = str(text or "").strip().replace("\n", " ")
     if len(text) <= limit:
@@ -579,6 +680,7 @@ def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
 
 __all__ = [
     "compact_text",
+    "compose_unified_briefing",
     "dream_digest_lines",
     "install_seed_lines",
     "memo_native_briefing_lines",

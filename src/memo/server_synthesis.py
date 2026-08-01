@@ -156,12 +156,13 @@ def register(server: FastMCP, memory: Memory) -> None:
         return results
 
     @annotated_tool(server, **DESTRUCTIVE)
-    def memo_synthesize_delete(id: str) -> dict[str, Any]:
+    async def memo_synthesize_delete(id: str, ctx: Context | None = None) -> dict[str, Any]:
         """Delete a synthesis memory by ID.
 
         Only deletes memories of type=synthesis. Raises an error if the
         given ID belongs to a non-synthesis memory, preventing accidental
-        deletion of regular memories through this tool.
+        deletion of regular memories through this tool. Irreversible:
+        elicitation-capable clients are asked to confirm first.
 
         Args:
             id: The ID (or unambiguous prefix) of the synthesis memory to delete.
@@ -172,4 +173,31 @@ def register(server: FastMCP, memory: Memory) -> None:
             {"error": "ambiguous", "prefix", "matches"} when the prefix
             matches multiple records.
         """
+        from memo.errors import AmbiguousIdError
+        from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
+
+        try:
+            resolved = memory.resolve_id(id)
+        except AmbiguousIdError as exc:
+            return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
+        rec = memory.get(resolved) if resolved else None
+        if rec is not None and rec.type == "synthesis":
+            safe_title = sanitize_fragment(rec.title)
+            gate = await confirm_destructive(
+                ctx,
+                action="delete",
+                detail=(
+                    f"Permanently delete synthesis '{safe_title}'? Same no-trash "
+                    "delete path as memo_delete — recovery only via backup / "
+                    "git-sync / versions."
+                ),
+            )
+            if not gate.proceed:
+                return abort_result(
+                    gate,
+                    memory,
+                    tool="memo_synthesize_delete",
+                    action="delete",
+                    target=f"synthesis '{safe_title}' id={rec.id}",
+                )
         return _delete_synthesis(memory, id)

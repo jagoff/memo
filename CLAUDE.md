@@ -148,6 +148,48 @@ recall-daemon lifecycle, `MEMO_EMBEDDER_VIA_DAEMON` socket), `report.py`
 the warm `memo-mcp` daemon they manage is what serves embeds over the socket to
 keep the recall hook under its 5s budget.
 
+## Chat — native RAG chat UI (`:8765`)
+
+`memo chat serve [--port 8765] [--dist web-chat/dist]` serves the chat SPA
+(vendored from the archived synapse chat) plus its API on `127.0.0.1:<port>`
+(requires the `[http]` extra — FastAPI/uvicorn; raises a `ClickException`
+otherwise, not an `ImportError` — `cli_chat.py` catches the missing-extra
+`ImportError` and re-raises it as a clean CLI error). Pipeline:
+`src/memo/chat/pipeline.py` orchestrates retrieval (`Memory.search` /
+`Memory.repo_search`, called directly — not through `_ChatAskOpsMixin`) →
+dedup/fusion/fulldoc/rewrite → synthesis, streamed as SSE events
+(`stage`/`context`/`token`/`done`/`error`) over `POST /api/ask/stream`.
+Feedback closes the loop (`src/memo/chat/feedback.py`): per-turn 👍/👎 and
+per-source votes boost a source's rank on an exact question-key match, or
+(semantic fallback) cosine similarity ≥ `MEMO_CHAT_SEMANTIC_THRESHOLD` between
+the vote's query embedding and the new query.
+
+Knobs (`src/memo/chat/config.py` — env-only + built-in defaults, read directly
+via `os.environ`; NOT registered in `flags.py`'s markdown-config/tuned-overlay
+chain, though the 9 names are excluded from `flags.unknown_memo_vars` so
+`memo config validate` doesn't flag them as typos):
+`MEMO_CHAT_BASE_K` (20, retrieval pool before dedup/rerank),
+`MEMO_CHAT_RELEVANCE_FLOOR` (0.25), `MEMO_CHAT_VOTE_BOOST` (1.5, multiplier on
+a 👍-voted source), `MEMO_CHAT_SEMANTIC_THRESHOLD` (0.75),
+`MEMO_CHAT_MULTI_QUERY` (`true`) / `MEMO_CHAT_MULTI_QUERY_N` (2, query
+rewrite/expansion), `MEMO_CHAT_FULLDOC` (`true`, inline the full doc for a
+dominant source group), `MEMO_CHAT_ANSWER_MAX_TOKENS` (1200),
+`MEMO_CHAT_SYNTH_HEAD` (8, sources actually fed to synthesis).
+
+`memo eval chat` runs `eval/chat_regression_corpus.json` (schema
+`synapse.eval_chat.query.v1`, rescued from synapse) through the pipeline and
+checks pass/fail + p50/p95 latency — the chat-side counterpart to `memo eval
+recall` (see Retrieval-regression discipline below).
+
+**Ops (launchd):** `memo ops install chat [--port 8765] [--dist <path>]` /
+`memo ops uninstall chat` / `memo ops status` (`src/memo/ops_launchd.py`)
+render and bootstrap a `com.memo.chat` LaunchAgent (`KeepAlive`, logs to
+`~/Library/Logs/memo/chat.log`). **Post-release install** uses the released
+binary, not a worktree venv: `uv tool upgrade mlx-memo && memo ops install
+chat --dist <dist>` — the plist's `ProgramArguments` point at whatever `memo`
+resolves to in `PATH` at install time, so bootstrapping before the chat code
+ships crash-loops under `KeepAlive`.
+
 ## BM25 / Spanish search
 
 FTS5's tokenizer wraps each `\w+` token in its own phrase quotes, so a
@@ -360,6 +402,43 @@ config > overlay > built-in default** (an explicit `MEMO_*` env var or
 file or `memo dream tune --rollback` to revert. The enable flags live in the
 nightly LaunchAgent's `EnvironmentVariables` (launchd does not inherit the shell)
 — see `~/repos/memo/launchd/com.memo.dream.plist`.
+
+## Codegraph-first (code intelligence)
+
+The repo is indexed by codegraph (`.codegraph/codegraph.db`, kept fresh by the
+MCP watcher + git hooks + nightly sync). Use it INSTEAD of the grep+Read loop:
+
+- **Understand a flow / architecture / bug:** ONE `codegraph_explore` call with
+  2-4 **exact symbol/file names** (a bag of names, never prose — retrieval is
+  lexical FTS5, no embeddings). Don't know the name? `codegraph_search` first.
+- **Treat explore output as Read-equivalent:** don't re-verify with grep, don't
+  delegate to file-reading subagents.
+- **Before `codegraph_callers`/`codegraph_impact`:** confirm the symbol EXISTS
+  with `codegraph_search` — a non-existent name silently substitutes the best
+  fuzzy match (upstream #1473).
+- **After editing:** a ⚠️ staleness banner means re-read with Read; in doubt,
+  `codegraph_status` and check `pendingChanges`.
+- **Do NOT trust the "⚠️ no covering tests" blast-radius note** (~40% false,
+  upstream #1475) — verify against `tests/` with grep.
+- **Overloaded names** (`search`, `save`, `recall`): pin with file/line via
+  `codegraph_node`.
+- **Cross-repo (memflow/synapse):** pass `projectPath` — graphs are per-repo,
+  no cross-repo edges. Caveat: synapse consumes memo via subprocess/CLI, so
+  0 cross-repo callers does NOT prove a CLI surface is unused.
+- **Pre-refactor gate:** run `scripts/cg_impact_gate.sh <symbol>` before
+  renaming or changing signatures under `src/memo/`. Success criterion for a
+  rename: `codegraph_callers` on the OLD name returns 0.
+- **`codegraph affected` is BROKEN for this repo's src-layout** (returns 0
+  tests) — use `scripts/cg_affected_tests.sh` (SQL over the DB) instead.
+
+### Review with codegraph
+
+Per file in the diff: `codegraph_node` on the file → its dependents are the
+review checklist (each caller appears in the diff or is justified). Per renamed
+symbol: `codegraph_callers <old-name>` must return 0. The CLI's
+`node --symbols-only` output truncates dependents with `+N more` — when that
+marker appears, expand via the `codegraph_node` MCP tool, never trust the
+truncated list as complete.
 
 ## Workflows (Claude Code dynamic workflows)
 

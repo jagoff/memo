@@ -192,6 +192,14 @@ def test_internal_shim_state_vars_not_flagged_unknown() -> None:
     assert flags.validate(env=env) == []
 
 
+def test_chat_config_vars_not_flagged_unknown() -> None:
+    # chat/config.py's 9 MEMO_CHAT_* knobs are env-only (read directly, not
+    # through this registry) but must not be reported as typos.
+    env = {"MEMO_CHAT_BASE_K": "5"}
+    assert flags.unknown_memo_vars(env=env) == []
+    assert flags.validate(env=env) == []
+
+
 def test_active_flags_lists_only_set() -> None:
     env = {"MEMO_RECALL_TOP_K": "5", "MEMO_RECALL_DEBUG": ""}
     active = flags.active_flags(env=env)

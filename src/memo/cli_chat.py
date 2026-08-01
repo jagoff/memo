@@ -14,6 +14,8 @@ import json
 import logging
 import sys
 import time
+from pathlib import Path
+from typing import Any
 
 import click
 from rich.panel import Panel
@@ -28,6 +30,11 @@ _log = logging.getLogger(__name__)
 
 def _format_source_score(score: object) -> str:
     return f"{score:.3f}" if isinstance(score, (int, float)) else "—"
+
+
+def _build_memory() -> Any:
+    cfg = Config.from_env()
+    return _get_memory(cfg)
 
 
 @click.group(name="chat")
@@ -176,3 +183,26 @@ def chat_ask(
                 f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "
                 f"[dim](score {_format_source_score(s.get('score'))})[/dim]"
             )
+
+
+@chat_group.command(name="serve")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8765, show_default=True, type=int)
+@click.option(
+    "--dist",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Directorio dist de la SPA web-chat (opcional).",
+)
+def chat_serve(host: str, port: int, dist: Path | None) -> None:
+    """Serve the chat UI + API over HTTP (requires the [http] extra)."""
+    try:
+        import uvicorn
+    except ImportError as exc:
+        raise click.ClickException(
+            "chat serve requiere el extra http: uv tool install 'mlx-memo[http]'"
+        ) from exc
+    from memo.chat.http import build_app
+
+    memory = _build_memory()
+    uvicorn.run(build_app(memory, dist=dist), host=host, port=port, log_level="info")

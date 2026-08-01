@@ -14,6 +14,13 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec("MEMO_INGEST_STRICT", "bool", False, "ingest", "Strict ingest filtering."),
     _spec("MEMO_INGEST_DEBUG", "bool", False, "ingest", "Verbose ingest diagnostics."),
     _spec(
+        "MEMO_VAULT_PATHS",
+        "str",
+        "",
+        "ingest",
+        "Comma-separated vault roots for `memo ops vault-ingest` (default: known iCloud vaults).",
+    ),
+    _spec(
         "MEMO_SAVE_EXTRACT",
         "bool",
         False,
@@ -44,6 +51,16 @@ SPECS: tuple[FlagSpec, ...] = (
         False,
         "ingest",
         "Route batch repo indexing through the ingest worker daemon (async, returns a job_id). Falls back to in-process when the daemon is unreachable.",
+    ),
+    _spec(
+        "MEMO_INGEST_QUARANTINE_THRESHOLD",
+        "int",
+        3,
+        "ingest",
+        "Quarantine an identical ingest job after this many fatal worker crashes; "
+        "ordinary job errors never trigger quarantine. Zero disables quarantine.",
+        min_val=0,
+        max_val=100,
     ),
     # multimodal ingest — optional local models, ingest-time ONLY (never the
     # recall hook). Deps: pip install "mlx-memo[multimodal]".
@@ -110,16 +127,66 @@ SPECS: tuple[FlagSpec, ...] = (
         "zero MLX. No-op until MEMO_DREAM_PROFILE_ENABLED has produced a profile.",
         opt_out=True,
     ),
+    _spec(
+        "MEMO_BRIEFING_CODE_IMPACT",
+        "bool",
+        False,
+        "briefing",
+        "Show durable memories linked to locally changed code through CodeGraph.",
+    ),
+    _spec(
+        "MEMO_CODE_IMPACT_DEPTH",
+        "int",
+        1,
+        "graph",
+        "Maximum CodeGraph hop depth for working-tree change impact.",
+        min_val=0,
+        max_val=3,
+    ),
+    _spec(
+        "MEMO_CODE_IMPACT_LIMIT",
+        "int",
+        5,
+        "graph",
+        "Maximum linked memories shown for working-tree change impact.",
+        min_val=1,
+        max_val=50,
+    ),
     # repo indexing
     _spec(
         "MEMO_REPO_MAX_FILE_BYTES", "int", None, "repo", "Skip repo files larger than this (bytes)."
     ),
     _spec(
-        "MEMO_REPO_EMBED_BATCH", "int", None, "repo", "Chunks per embed batch during repo index."
+        "MEMO_REPO_EMBED_BATCH",
+        "int",
+        None,
+        "repo",
+        "Chunks per embed batch during repo index (default 16).",
     ),
     _spec("MEMO_REPO_FLUSH_BATCH", "int", None, "repo", "Rows per DB flush during repo index."),
     _spec(
         "MEMO_REPO_GIT_TIMEOUT_S", "float", None, "repo", "Timeout (s) for git operations on clone."
+    ),
+    _spec(
+        "MEMO_REPO_CHUNK_SYMBOL_ALIGNED",
+        "bool",
+        False,
+        "repo",
+        "Align repo-index chunk boundaries to codegraph symbol spans "
+        "(function/class start/end lines) when the indexed repo has a "
+        ".codegraph/codegraph.db. Missing DB or symbol-less files fall back "
+        "silently to the char-based chunker. Default off keeps chunk output "
+        "byte-identical, so the content-addressed embed cache stays valid; "
+        "flipping the flag only affects newly (re)indexed files.",
+    ),
+    _spec(
+        "MEMO_REPO_SIGNAL_MAX_COMMITS",
+        "int",
+        300,
+        "repo",
+        "Maximum Git commits scanned for bounded co-change and cross-service signals.",
+        min_val=1,
+        max_val=5000,
     ),
     # embedder daemon / client
     _spec(

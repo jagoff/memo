@@ -196,6 +196,19 @@ def test_publish_jobs_run_full_qa_on_the_exact_tagged_sha() -> None:
     assert docker_jobs["build-and-push"]["needs"] == "quality-gate"
 
 
+def test_release_quality_and_publish_chain_fail_closed() -> None:
+    """Required smoke jobs cannot be skipped while downstream publish still runs."""
+    quality_jobs = yaml.safe_load((WORKFLOWS / "release-quality.yml").read_text(encoding="utf-8"))[
+        "jobs"
+    ]
+    publish_jobs = yaml.safe_load((WORKFLOWS / "publish.yml").read_text(encoding="utf-8"))["jobs"]
+
+    assert set(quality_jobs) == {"quality", "linux-cpu-smoke", "macos-mlx-smoke"}
+    assert all("if" not in job for job in quality_jobs.values())
+    for job_name in ("github-release", "build", "pypi", "mcp-registry"):
+        assert "if" not in publish_jobs[job_name]
+
+
 def test_publish_has_one_automatic_release_trigger() -> None:
     workflow = (WORKFLOWS / "publish.yml").read_text(encoding="utf-8")
     config = yaml.safe_load(workflow)

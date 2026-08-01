@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from memo import ingest_client
+from memo.ingest_ledger import IngestFailureLedger
 from memo.ingest_server import _IngestServer, _JobBook, _socket_path
 
 
@@ -94,6 +95,61 @@ def test_runner_exception_surfaces_as_error_state(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+        book.shutdown()
+
+
+def test_job_dedupe_returns_active_job_once() -> None:
+    release = threading.Event()
+    calls: list[dict] = []
+
+    def slow(kind: str, payload: dict) -> dict:
+        calls.append(payload)
+        release.wait(timeout=2)
+        return {"ok": True}
+
+    book = _JobBook(slow)
+    try:
+        first = book.enqueue_receipt("repo", {"url": "same"})
+        second = book.enqueue_receipt("repo", {"url": "same"})
+        assert second["job_id"] == first["job_id"]
+        assert second["deduplicated"] is True
+        release.set()
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            status = book.status(first["job_id"])
+            if status and status["state"] == "done":
+                break
+            time.sleep(0.01)
+        assert calls == [{"url": "same"}]
+    finally:
+        release.set()
+        book.shutdown()
+
+
+def test_fatal_failures_are_ledgers_then_quarantined(tmp_path: Path) -> None:
+    ledger = IngestFailureLedger(tmp_path / "jobs.jsonl")
+
+    def crash(kind: str, payload: dict) -> dict:
+        raise SystemExit("fatal worker crash")
+
+    book = _JobBook(crash, ledger=ledger, quarantine_threshold=3)
+    try:
+        for _ in range(3):
+            job_id = book.enqueue("repo", {"url": "crash"})
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                status = book.status(job_id)
+                if status and status["state"] == "error":
+                    break
+                time.sleep(0.01)
+            assert status is not None and status["fatal"] is True
+        quarantined = book.enqueue_receipt("repo", {"url": "crash"})
+        assert quarantined["state"] == "quarantined"
+        status = book.status(quarantined["job_id"])
+        assert status is not None and status["state"] == "quarantined"
+        assert book.health()["worker_alive"] is True
+        assert ledger.health()["chain_valid"] is True
+    finally:
         book.shutdown()
 
 
