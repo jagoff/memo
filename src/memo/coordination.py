@@ -36,6 +36,7 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_S = 300
 DEFAULT_ACTIVE_WINDOW_S = 21600
+DEFAULT_DELIVERY_LIVENESS_S = 1800
 TOPIC_JACCARD = 0.35
 RECENT_MEMORIES_PER_SESSION = 20
 _RECENT_ROWS_SCANNED = 400
@@ -184,6 +185,11 @@ def scan_interval_s() -> float:
 def active_window_s() -> float:
     value = flag_int("MEMO_COORD_ACTIVE_WINDOW")
     return float(DEFAULT_ACTIVE_WINDOW_S if value is None else value)
+
+
+def delivery_liveness_s() -> float:
+    value = flag_int("MEMO_COORD_DELIVERY_WINDOW")
+    return float(DEFAULT_DELIVERY_LIVENESS_S if value is None else value)
 
 
 def coordination_db_path(cfg: Any) -> Path:
@@ -391,6 +397,29 @@ def _active_session_snaps(state_dir: Path, *, now: datetime) -> list[dict[str, A
         if snap.get("session_id") and ts is not None and ts >= cutoff:
             out.append(snap)
     return out
+
+
+def _live_session_ids(state_dir: Path, *, now: datetime) -> frozenset[str] | None:
+    """Session ids updated within the delivery-liveness window.
+
+    Returns None when liveness can't be assessed (no snapshots on disk or an
+    unreadable sessions dir) — callers fail open and deliver as before.
+    """
+    from memo.session import list_sessions
+
+    try:
+        snaps = list_sessions(state_dir, limit=_MAX_SESSIONS)
+    except (OSError, ValueError):
+        return None
+    if not snaps:
+        return None
+    cutoff = now - timedelta(seconds=delivery_liveness_s())
+    out = set()
+    for snap in snaps:
+        ts = _parse_instant(snap.get("updated"))
+        if snap.get("session_id") and ts is not None and ts >= cutoff:
+            out.add(str(snap["session_id"]))
+    return frozenset(out)
 
 
 def _row_session_id(row: dict[str, Any]) -> str:
@@ -704,7 +733,17 @@ def deliver_pending_block(cfg: Any, session_id: str | None, *, now: datetime | N
             pending = store.pending_directives(session_id)
             if not pending:
                 return ""
-            ts = (now if now is not None else datetime.now(UTC)).isoformat()
+            now_dt = now if now is not None else datetime.now(UTC)
+            # A directive about a counterpart that already went idle is pure
+            # noise ("stop and await instructions" from a dead session blocks
+            # work forever). Hold it — the row stays open, so if the other
+            # session resumes, delivery happens on a later turn.
+            live = _live_session_ids(Path(cfg.state_dir), now=now_dt)
+            if live is not None:
+                pending = [d for d in pending if d.other_session in live]
+            if not pending:
+                return ""
+            ts = now_dt.isoformat()
             for directive in pending:
                 store.mark_delivered(directive.collision_id, session_id, ts)
             return render_directives_block(pending)

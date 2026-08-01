@@ -631,3 +631,40 @@ def test_cli_coordinate_scan_smoke(tmp_cfg: Config, monkeypatch: pytest.MonkeyPa
 
     assert result.exit_code == 0, result.output
     assert '"collisions": 1' in result.output
+
+
+# ── delivery liveness gate ───────────────────────────────────────────────────
+
+
+def _write_session_snap(cfg: Config, session_id: str, *, updated: datetime) -> None:
+    d = Path(cfg.state_dir) / "sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{session_id}.json").write_text(
+        json.dumps({"session_id": session_id, "updated": updated.isoformat()})
+    )
+
+
+def test_deliver_skips_directive_when_counterpart_is_idle(tmp_cfg: Config) -> None:
+    # A "stop and await instructions" from a session idle for hours blocks
+    # work forever — the counterpart will never follow up. Don't inject it.
+    _write_session_snap(tmp_cfg, "sess-a", updated=NOW)
+    _write_session_snap(tmp_cfg, "sess-b", updated=NOW - timedelta(hours=3))
+    with CoordinationStore(coordination_db_path(tmp_cfg)) as store:
+        store.upsert(_collision())
+
+    assert deliver_pending_block(tmp_cfg, "sess-a", now=NOW) == ""
+
+    # Row stays open and unstamped: if sess-b resumes, delivery happens then.
+    with CoordinationStore(coordination_db_path(tmp_cfg)) as store:
+        row = store.list_collisions(statuses=("open",))[0]
+    assert row.status == "open" and row.delivered_a is None
+
+
+def test_deliver_proceeds_when_counterpart_is_live(tmp_cfg: Config) -> None:
+    _write_session_snap(tmp_cfg, "sess-a", updated=NOW)
+    _write_session_snap(tmp_cfg, "sess-b", updated=NOW - timedelta(minutes=5))
+    with CoordinationStore(coordination_db_path(tmp_cfg)) as store:
+        store.upsert(_collision())
+
+    block = deliver_pending_block(tmp_cfg, "sess-a", now=NOW)
+    assert "<memo-coordination>" in block
