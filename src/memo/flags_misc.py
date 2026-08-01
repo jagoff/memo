@@ -127,14 +127,13 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_OPERATIONAL_V2_AUTO_ACTIVATE",
         "bool",
-        True,
+        False,
         "misc",
         "Automatically enroll a productive device authority and activate the "
         "signed operational v2 ledger for a fresh macOS state directory. "
         "Existing activated v2 roots and explicitly injected authorities are "
         "unaffected; Linux keeps the v1 backend until a non-Keychain authority "
-        "provider is available. Set =0 for hermetic or staged-rollout environments.",
-        opt_out=True,
+        "provider is available. Preview feature: set =1 to opt in explicitly.",
     ),
     # MCP transport
     _spec(
@@ -195,15 +194,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "mcp",
-        "Expose only the 26 core inline tools (skip domain modules). "
-        "Reduces tool count from ~116 to 26 for local/constrained LLMs.",
+        "Expose only the 57-tool stable core surface (skip advanced modules).",
     ),
     _spec(
         "MEMO_MCP_PROFILE",
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 49 tools) | core/slim (stable core) | full/default (all tools).",
+        "MCP surface profile: agent (default, 40 tools) | core/slim (57 stable tools) | "
+        "full/default (170 tools including previews).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(

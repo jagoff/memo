@@ -13,6 +13,7 @@ from memo.operational_activation import (
     open_activated_operational_v2,
     select_operational_store,
 )
+from memo.operational_key_store import KeyStoreError
 from tests.operational_authority import build_test_fresh_v2_authority
 
 
@@ -44,6 +45,42 @@ def test_fresh_v2_activation_roundtrips_public_operational_state(tmp_path) -> No
     reopened = open_activated_operational_v2(cfg, authority=authority)
     assert reopened.backend_version == 2
     assert reopened.state()["focus"]["memo"]["summary"] == "Memo-only coordination"
+
+
+def test_activated_v2_persists_signal_and_receipt_facade_writes(tmp_path) -> None:
+    cfg = _config(tmp_path)
+    authority = build_test_fresh_v2_authority(
+        cfg.operational_root,
+        device_id=cfg.device_id,
+    ).runtime_authority()
+    store = activate_fresh_operational_v2(cfg, authority=authority)
+
+    signal = store.remember_signal(
+        marker="watcher:memo",
+        epoch=4,
+        fence="leader-b",
+        payload={"commits": 3},
+    )
+    replay = store.remember_signal(
+        marker="watcher:memo",
+        epoch=4,
+        fence="leader-b",
+        payload={"commits": 99},
+    )
+    receipt = store.receipt(
+        "save",
+        subject_uri="memo://memory/mem-1",
+        trace_id="trace-save-1",
+        actor_id="requested-actor",
+        metadata={"memory_id": "mem-1"},
+    )
+
+    assert replay == signal
+    assert store.list_signals() == [signal]
+    assert store.state()["signals"][signal.marker]["payload"] == {"commits": 3}
+    assert store.state()["receipts"][receipt.receipt_id] == receipt.to_dict()
+    assert receipt.actor_id == "memo-runtime"
+    assert store.ledger.verify()["ok"] is True
 
 
 def test_v2_anomaly_uses_canonical_signed_conflict_lifecycle(tmp_path) -> None:
@@ -152,6 +189,73 @@ def test_selector_can_disable_only_implicit_fresh_v2_activation(
 
     assert store.backend_version == 1
     assert not cfg.operational_root.exists()
+
+
+def test_selector_defaults_fresh_macos_to_functional_v1_without_packaged_helper(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _config(tmp_path)
+    monkeypatch.delenv("MEMO_OPERATIONAL_V2_AUTO_ACTIVATE", raising=False)
+    monkeypatch.setattr("memo.operational_activation.sys.platform", "darwin")
+
+    def unexpected_activation(_cfg):
+        raise AssertionError("default selection must not enroll preview v2 authority")
+
+    monkeypatch.setattr(
+        "memo.operational_activation.build_fresh_productive_authority",
+        unexpected_activation,
+    )
+
+    store = select_operational_store(cfg)
+    signal = store.remember_signal(marker="fresh-mac", epoch=1, fence="watcher-a")
+
+    assert store.backend_version == 1
+    assert store.list_signals() == [signal]
+    assert not cfg.operational_root.exists()
+
+
+def test_explicit_macos_v2_opt_in_fails_closed_without_helper_and_no_stamp(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _config(tmp_path)
+    monkeypatch.setenv("MEMO_OPERATIONAL_V2_AUTO_ACTIVATE", "1")
+    monkeypatch.setattr("memo.operational_activation.sys.platform", "darwin")
+
+    def missing_helper(_cfg):
+        raise KeyStoreError("packaged Secure Enclave helper is unavailable")
+
+    monkeypatch.setattr(
+        "memo.operational_activation.build_fresh_productive_authority",
+        missing_helper,
+    )
+
+    with pytest.raises(KeyStoreError, match="packaged Secure Enclave helper"):
+        select_operational_store(cfg)
+
+    assert not (cfg.operational_root / "operational-v2-activated.json").exists()
+
+
+def test_selector_reopens_activated_v2_when_auto_activation_is_off(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _config(tmp_path)
+    test_authority = build_test_fresh_v2_authority(
+        cfg.operational_root,
+        device_id=cfg.device_id,
+    )
+    authority = test_authority.runtime_authority()
+    activate_fresh_operational_v2(cfg, authority=authority)
+    monkeypatch.setenv("MEMO_OPERATIONAL_V2_AUTO_ACTIVATE", "0")
+    configured = cfg.model_copy(
+        update={
+            "operational_signer": test_authority.signer,
+            "operational_epoch_fence": test_authority.fence,
+        }
+    )
+
+    reopened = select_operational_store(configured)
+
+    assert reopened.backend_version == 2
 
 
 def test_selector_keeps_linux_fresh_install_on_v1_without_keychain(

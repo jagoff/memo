@@ -11,6 +11,7 @@ from memo.durable_outbox import (
     DurableOutboxAuthority,
     DurableOutboxWorker,
     canonical_save_request_hash,
+    deterministic_retry_at,
     freeze_promotion_intent,
     promotion_operation_key,
 )
@@ -247,15 +248,16 @@ def test_intent_identity_and_request_are_canonical_and_deeply_immutable() -> Non
 
 
 def test_outbox_reuses_memory_after_crash_post_save(tmp_path: Any) -> None:
-    worker, memory, _operational, views = _worker(tmp_path)
+    clock = _Clock("2026-07-30T12:00:00Z")
+    worker, memory, _operational, views = _worker(tmp_path, clock=clock)
     intent = _enqueue(worker)
     memory.fail = "after"
 
-    with pytest.raises(RuntimeError, match="crash after save"):
-        worker.run_once()
+    first = worker.run_once()
 
+    assert first.retried == 1
     assert views.outbox_report().retried == 1
-    worker.clock = _Clock("2026-07-30T12:00:02Z")
+    clock.value = "2026-07-30T12:00:01Z"
     report = worker.run_once()
 
     assert report.examined == 1
@@ -273,14 +275,64 @@ def test_outbox_crash_before_save_retries_only_when_due(tmp_path: Any) -> None:
     _enqueue(worker)
     memory.fail = "before"
 
-    with pytest.raises(RuntimeError, match="crash before save"):
-        worker.run_once()
+    first = worker.run_once()
 
+    assert first.retried == 1
     assert memory.records == {}
     assert views.outbox_report().retried == 1
     assert worker.run_once().examined == 0
     clock.value = "2026-07-30T12:00:01Z"
     assert worker.run_once().completed == 1
+    assert len(memory.records) == 1
+
+
+def test_old_intent_retry_is_scheduled_from_failure_time(tmp_path: Any) -> None:
+    clock = _Clock("2026-07-31T12:00:00Z")
+    worker, memory, _operational, views = _worker(tmp_path, clock=clock)
+    intent = _enqueue(worker)
+    memory.fail = "before"
+
+    report = worker.run_once()
+
+    status = views.outbox_status(intent.id)
+    assert report.retried == 1
+    assert status is not None
+    assert status["failure_at"] == "2026-07-31T12:00:00.000000Z"
+    assert status["retry_at"] == "2026-07-31T12:00:01.000000Z"
+    assert worker.run_once().examined == 0
+
+
+def test_retry_delay_caps_before_exponentiation_for_large_attempt_count() -> None:
+    assert deterministic_retry_at(
+        "2026-07-30T12:00:00Z",
+        1_000_000,
+    ) == "2026-07-30T13:00:00.000000Z"
+
+
+def test_transient_failure_does_not_starve_later_intents(tmp_path: Any) -> None:
+    clock = _Clock("2026-07-30T12:00:00Z")
+    worker, memory, _operational, views = _worker(tmp_path, clock=clock)
+    intents = sorted(
+        (
+            _enqueue(worker, key="promotion-1"),
+            _enqueue(worker, key="promotion-2"),
+        ),
+        key=lambda intent: intent.id,
+    )
+    failed, completed = intents
+    memory.fail = "before"
+
+    report = worker.run_once(limit=2)
+
+    assert report.examined == 2
+    assert report.retried == 1
+    assert report.completed == 1
+    failed_status = views.outbox_status(failed.id)
+    completed_status = views.outbox_status(completed.id)
+    assert failed_status is not None
+    assert completed_status is not None
+    assert failed_status["status"] == "retry_scheduled"
+    assert completed_status["status"] == "completed"
     assert len(memory.records) == 1
 
 

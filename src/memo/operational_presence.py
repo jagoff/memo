@@ -73,6 +73,8 @@ class PresenceLease:
     id: str
     actor_id: str
     device_id: str
+    principal_id: str
+    session_id: str
     project: str
     workspace: str
     topic: str
@@ -166,6 +168,8 @@ class PresenceService:
             expected = (
                 identity.actor_id,
                 identity.device_id,
+                identity.principal_id,
+                identity.session_id,
                 project,
                 normalized_workspace,
                 topic,
@@ -176,6 +180,8 @@ class PresenceService:
             actual = (
                 existing.actor_id,
                 existing.device_id,
+                existing.principal_id,
+                existing.session_id,
                 existing.project,
                 existing.workspace,
                 existing.topic,
@@ -191,6 +197,8 @@ class PresenceService:
             "id": lease_id,
             "actor_id": identity.actor_id,
             "device_id": identity.device_id,
+            "principal_id": identity.principal_id,
+            "session_id": identity.session_id,
             "project": project,
             "workspace": normalized_workspace,
             "topic": topic,
@@ -221,9 +229,11 @@ class PresenceService:
         current = self._all().get(lease_id)
         if current is None:
             raise _invalid(f"unknown presence lease: {lease_id}")
-        if (current.actor_id, current.device_id) != (
+        if (current.actor_id, current.device_id, current.principal_id, current.session_id) != (
             identity.actor_id,
             identity.device_id,
+            identity.principal_id,
+            identity.session_id,
         ):
             raise _invalid("presence lease owner differs from authenticated actor")
         ttl = _ttl(ttl_seconds if ttl_seconds is not None else current.ttl_seconds)
@@ -232,6 +242,8 @@ class PresenceService:
             "id": current.id,
             "actor_id": current.actor_id,
             "device_id": current.device_id,
+            "principal_id": current.principal_id,
+            "session_id": current.session_id,
             "project": current.project,
             "workspace": current.workspace,
             "topic": current.topic,
@@ -261,9 +273,11 @@ class PresenceService:
         current = self._all().get(lease_id)
         if current is None:
             return
-        if (current.actor_id, current.device_id) != (
+        if (current.actor_id, current.device_id, current.principal_id, current.session_id) != (
             identity.actor_id,
             identity.device_id,
+            identity.principal_id,
+            identity.session_id,
         ):
             raise _invalid("presence lease owner differs from authenticated actor")
         self._commit(
@@ -286,12 +300,16 @@ class PresenceService:
                     event.target_id != key
                     or str(payload["actor_id"]) != event.actor.actor_id
                     or str(payload["device_id"]) != event.actor.device_id
+                    or str(payload["principal_id"]) != event.actor.principal_id
+                    or str(payload["session_id"]) != event.actor.session_id
                 ):
                     continue
                 rows[key] = PresenceLease(
                     id=key,
                     actor_id=str(payload["actor_id"]),
                     device_id=str(payload["device_id"]),
+                    principal_id=str(payload["principal_id"]),
+                    session_id=str(payload["session_id"]),
                     project=str(payload["project"]),
                     workspace=str(payload["workspace"]),
                     topic=str(payload["topic"]),
@@ -306,16 +324,30 @@ class PresenceService:
                 if (
                     current is None
                     or event.target_id != key
-                    or (current.actor_id, current.device_id)
-                    != (event.actor.actor_id, event.actor.device_id)
+                    or (
+                        current.actor_id,
+                        current.device_id,
+                        current.principal_id,
+                        current.session_id,
+                    )
+                    != (
+                        event.actor.actor_id,
+                        event.actor.device_id,
+                        event.actor.principal_id,
+                        event.actor.session_id,
+                    )
                     or str(payload["actor_id"]) != current.actor_id
                     or str(payload["device_id"]) != current.device_id
+                    or str(payload["principal_id"]) != current.principal_id
+                    or str(payload["session_id"]) != current.session_id
                 ):
                     continue
                 rows[key] = PresenceLease(
                     id=key,
                     actor_id=current.actor_id,
                     device_id=current.device_id,
+                    principal_id=current.principal_id,
+                    session_id=current.session_id,
                     project=str(payload["project"]),
                     workspace=str(payload["workspace"]),
                     topic=str(payload["topic"]),
@@ -330,8 +362,18 @@ class PresenceService:
                 if (
                     current is not None
                     and event.target_id == key
-                    and (current.actor_id, current.device_id)
-                    == (event.actor.actor_id, event.actor.device_id)
+                    and (
+                        current.actor_id,
+                        current.device_id,
+                        current.principal_id,
+                        current.session_id,
+                    )
+                    == (
+                        event.actor.actor_id,
+                        event.actor.device_id,
+                        event.actor.principal_id,
+                        event.actor.session_id,
+                    )
                 ):
                     rows.pop(key)
         return rows
@@ -366,7 +408,7 @@ class PresenceService:
                 by_file.setdefault(file, []).append(lease)
         conflicts: list[WorkspaceConflict] = []
         for file, leases in sorted(by_file.items()):
-            principals = {(lease.actor_id, lease.device_id) for lease in leases}
+            principals = {lease.principal_id for lease in leases}
             if len(principals) < 2:
                 continue
             conflicts.append(

@@ -459,6 +459,11 @@ class OperationalStore:
                 retryable=False,
             )
         request_hash = hashlib.sha256(canonical_json_bytes(asdict(command))).hexdigest()
+        idempotency_scope = (
+            f"{command.project}\0{command.actor.principal_id}"
+            if command.visibility == Visibility.SHARED.value
+            else command.project
+        )
         ledger = cast("OperationLedgerV2", self.__ledger)
         # Retain the durable epoch fence through the complete append + view
         # commit.  A one-shot ``verify`` here leaves a race where authority
@@ -489,7 +494,7 @@ class OperationalStore:
                     retryable=False,
                 )
             existing = self.views.idempotency(
-                command.project,
+                idempotency_scope,
                 command.idempotency_key,
             )
             if existing is not None:
@@ -498,7 +503,7 @@ class OperationalStore:
                         OperationalErrorCode.IDEMPOTENCY_CONFLICT,
                         (
                             "operational idempotency key identifies a different request: "
-                            f"{command.project}/{command.idempotency_key}"
+                            f"{idempotency_scope}/{command.idempotency_key}"
                         ),
                         retryable=False,
                     )
@@ -524,7 +529,7 @@ class OperationalStore:
             event = ledger.append(command, context=context)
             self.views.catch_up(ledger)
             persisted = self.views.idempotency(
-                command.project,
+                idempotency_scope,
                 command.idempotency_key,
             )
             if persisted is None or persisted.event_id != event.event_id:
@@ -614,6 +619,42 @@ class OperationalStore:
             request_control_oid=authority_context.control_oid,
         )
 
+    def runtime_identity(self, *, source_client: str) -> PrincipalIdentity:
+        """Return the server-owned mesh principal for this runtime authority.
+
+        Transport callers must never choose their own actor/session claims.
+        The authority-composed context is the only source for those fields.
+        """
+        from memo.errors import OperationalError, OperationalErrorCode
+        from memo.identity import PrincipalIdentity
+        from memo.operational_epoch import CommitContext
+
+        source = str(source_client).strip()
+        context = self._context_provider() if self._context_provider else None
+        if not source or not isinstance(context, CommitContext):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational runtime identity is unavailable",
+                retryable=False,
+            )
+        device_id = context.origin_device.strip()
+        actor_id = context.identity.actor_id.strip()
+        session_id = context.identity.session_id.strip()
+        if not device_id or not actor_id or not session_id:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational runtime identity fields are invalid",
+                retryable=False,
+            )
+        return PrincipalIdentity(
+            principal_id=f"{device_id}:{session_id}",
+            actor_id=actor_id,
+            kind=context.identity.kind,
+            device_id=device_id,
+            session_id=session_id,
+            source_client=source,
+        )
+
     def rebuild(self, *, events: list[Any] | None = None) -> dict[str, Any]:
         if self._v2_enabled:
             ledger = cast("OperationLedgerV2", self.__ledger)
@@ -643,8 +684,17 @@ class OperationalStore:
         actor: ActorIdentity | None = None,
         trace_id: str = "",
         context: CommitContext | None = None,
+        event_id: str | None = None,
     ) -> dict[str, Any]:
         if self._v2_enabled:
+            if event_id is not None:
+                from memo.errors import OperationalError, OperationalErrorCode
+
+                raise OperationalError(
+                    OperationalErrorCode.INVALID_EVENT,
+                    "deterministic legacy event ids cannot be imported into operational v2",
+                    retryable=False,
+                )
             return self._commit_v2(
                 op,
                 payload,
@@ -663,6 +713,7 @@ class OperationalStore:
                 actor=actor,
                 trace_id=trace_id,
                 payload=payload,
+                event_id=event_id,
             )
             try:
                 state = json.loads(self.snapshot_path.read_text(encoding="utf-8"))
@@ -712,6 +763,8 @@ class OperationalStore:
             HANDOFF_CONSUMED,
             HANDOFF_CREATED,
             OUTCOME_RECORDED,
+            RECEIPT_RECORDED,
+            SIGNAL_REMEMBERED,
         )
 
         event_types = {
@@ -724,12 +777,19 @@ class OperationalStore:
             "conflict.open": CONFLICT_OPENED,
             "conflict.resolve": CONFLICT_RESOLVED,
             "outcome.record": OUTCOME_RECORDED,
+            "signal.remember": SIGNAL_REMEMBERED,
         }
-        event_type = event_types.get(op)
+        event_type = RECEIPT_RECORDED if op.startswith("receipt.") else event_types.get(op)
         if event_type is None:
             raise OperationalError(
                 OperationalErrorCode.INVALID_EVENT,
                 f"operational v2 does not admit legacy operation {op!r}",
+                retryable=False,
+            )
+        if event_type == RECEIPT_RECORDED and op != f"receipt.{payload.get('operation', '')}":
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "operational receipt operation does not match its event name",
                 retryable=False,
             )
         authenticated = context or (self._context_provider() if self._context_provider else None)
@@ -753,7 +813,14 @@ class OperationalStore:
             ).hexdigest()
         project = str(payload.get("project") or "_global")
         target_id = (
-            str(payload.get("id") or payload.get("task_id") or payload.get("project") or "") or None
+            str(
+                payload.get("id")
+                or payload.get("task_id")
+                or payload.get("marker")
+                or payload.get("project")
+                or ""
+            )
+            or None
         )
         command = OperationalCommand(
             event_type=event_type,
@@ -827,6 +894,28 @@ class OperationalStore:
         with admission:
             return cast(dict[str, int], self.__ledger.import_events(rows))
 
+    def import_legacy_event(
+        self,
+        op: str,
+        *,
+        subject_uri: str,
+        trace_id: str,
+        payload: dict[str, Any],
+        event_id: str,
+        context: CommitContext | None = None,
+    ) -> dict[str, Any]:
+        """Import one namespaced legacy event through the authorized store path."""
+        if not op.startswith("legacy."):
+            raise ValueError("imported operational event must use the legacy. namespace")
+        return self._commit(
+            op,
+            dict(payload),
+            subject_uri=subject_uri,
+            trace_id=trace_id,
+            context=context,
+            event_id=event_id,
+        )["event"]
+
     def append_legacy_import(
         self,
         op: str,
@@ -836,20 +925,16 @@ class OperationalStore:
         payload: dict[str, Any],
         event_id: str,
         context: CommitContext | None = None,
-    ) -> Any:
-        """Append one migration-only v1 event through epoch authorization."""
-        _, admission = self._legacy_admission(
-            context,
-            purpose="legacy operational migration",
+    ) -> dict[str, Any]:
+        """Backward-compatible alias for :meth:`import_legacy_event`."""
+        return self.import_legacy_event(
+            op,
+            subject_uri=subject_uri,
+            trace_id=trace_id,
+            payload=payload,
+            event_id=event_id,
+            context=context,
         )
-        with admission:
-            return self._append_authorized_event(
-                op,
-                subject_uri=subject_uri,
-                trace_id=trace_id,
-                payload=payload,
-                event_id=event_id,
-            )
 
     def set_focus(
         self,
@@ -1089,7 +1174,12 @@ class OperationalStore:
             )
             return payload
 
-    def record_anomaly(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def record_anomaly(
+        self,
+        payload: dict[str, Any],
+        *,
+        actor: ActorIdentity | None = None,
+    ) -> dict[str, Any]:
         """Record a semantic anomaly through the authenticated Memo boundary.
 
         Legacy journals retain their historical ``anomaly.record`` wire event.
@@ -1097,30 +1187,39 @@ class OperationalStore:
         resolved anomalies become conflict lifecycle commands instead of
         introducing a parallel event family.
         """
-        anomaly_id = str(payload.get("anomaly_id") or "").strip()
-        state = str(payload.get("state") or "").strip()
+        event_payload = dict(payload)
+        anomaly_id = str(event_payload.get("anomaly_id") or "").strip()
+        kind = str(event_payload.get("kind") or "").strip()
+        state = str(event_payload.get("state") or "").strip()
         if not anomaly_id:
             raise ValueError("anomaly_id must not be empty")
+        if not kind:
+            raise ValueError("anomaly kind must not be empty")
         if state not in {"detected", "resolved"}:
             raise ValueError("anomaly state must be detected|resolved")
+        event_payload["anomaly_id"] = anomaly_id
+        event_payload["kind"] = kind
+        event_payload["state"] = state
+        event_payload.setdefault("created_at", utc_now_iso())
         if not self._v2_enabled:
             return self._commit(
                 "anomaly.record",
-                dict(payload),
+                event_payload,
                 subject_uri=f"memo://anomaly/{anomaly_id}",
+                actor=actor,
             )
         if state == "resolved":
             return self._commit(
                 "conflict.resolve",
                 {
                     "id": anomaly_id,
-                    "resolved_at": str(payload.get("created_at") or utc_now_iso()),
-                    "resolution": str(payload.get("status") or "resolved"),
+                    "resolved_at": str(event_payload["created_at"]),
+                    "resolution": str(event_payload.get("status") or "resolved"),
                 },
                 subject_uri=f"memo://conflict/{anomaly_id}",
                 actor=ActorIdentity(actor_id="memo-anomaly", actor_kind="system"),
             )
-        conflict = _detected_anomaly_conflict(anomaly_id, payload)
+        conflict = _detected_anomaly_conflict(anomaly_id, event_payload)
         return self._commit(
             "conflict.open",
             conflict,
@@ -1157,10 +1256,6 @@ class OperationalStore:
                 "authenticated epoch context is required for operational signals",
                 retryable=False,
             )
-        if context.authority_epoch != int(epoch):
-            raise ValueError("signal epoch does not match authenticated context")
-        if fence and fence != context.control_oid:
-            raise ValueError("signal fence does not match authenticated control")
         with authority_write_lock(self.state_dir / "operational-transactions"):
             state = self._read_snapshot()
             existing = state["signals"].get(marker)
@@ -1168,13 +1263,15 @@ class OperationalStore:
                 if int(epoch) < int(existing.get("epoch", 0)):
                     raise ValueError("stale signal epoch")
                 if int(epoch) == int(existing.get("epoch", 0)):
-                    return OperationalSignal(
+                    item = OperationalSignal(
                         marker=marker,
                         epoch=int(existing["epoch"]),
                         fence=str(existing.get("fence", "")),
                         payload=dict(existing.get("payload") or {}),
                         created_at=str(existing.get("created_at", "")),
                     )
+                    self._mirror_signal_event(item)
+                    return item
             item = OperationalSignal(
                 marker, int(epoch), str(fence), dict(payload or {}), utc_now_iso()
             )
@@ -1185,7 +1282,27 @@ class OperationalStore:
                 actor=ActorIdentity(actor_id=actor_id, actor_kind="agent"),
                 context=context,
             )
+            self._mirror_signal_event(item)
             return item
+
+    def _mirror_signal_event(self, item: OperationalSignal) -> None:
+        """Project a signal revision into the cursored runtime event journal."""
+        from memo.event_surface import ingest_event
+
+        identity = f"{item.marker}\0{item.epoch}\0{item.created_at}".encode()
+        event_id = "signal-" + hashlib.sha256(identity).hexdigest()[:24]
+        ingest_event(
+            {
+                "event_id": event_id,
+                "kind": "signal",
+                "marker": item.marker,
+                "epoch": item.epoch,
+                "fence": item.fence,
+                "payload": dict(item.payload),
+                "created_at": item.created_at,
+            },
+            state_dir=self.state_dir,
+        )
 
     def list_signals(
         self, *, marker: str | None = None, min_epoch: int | None = None, limit: int = 100
@@ -1227,14 +1344,20 @@ class OperationalStore:
             trace_id=trace_id,
         )
         event = result["event"]
+        event_actor = event.get("actor")
+        persisted_actor_id = (
+            str(event_actor.get("actor_id") or actor_id)
+            if isinstance(event_actor, dict)
+            else actor_id
+        )
         return WriteReceipt(
             receipt_id=str(event["event_id"]),
             operation=operation,
             subject_uri=subject_uri,
             trace_id=trace_id,
-            actor_id=actor_id,
+            actor_id=persisted_actor_id,
             event_hash=str(event["event_hash"]),
-            generated_at=str(event["ts"]),
+            generated_at=str(event.get("created_at") or event.get("ts") or ""),
             metadata=dict(metadata or {}),
         )
 

@@ -394,12 +394,88 @@ def test_secure_enclave_helper_detects_cached_binary_substitution(
         backend._verify_helper()
 
 
+def _secure_enclave_backend_for_binding_test(tmp_path, helper_sha256: str):
+    backend = object.__new__(SecureEnclaveP256Backend)
+    backend._service = "com.memo.operational-signing.v2.test"
+    backend._helper = tmp_path / "helpers" / helper_sha256
+    backend._helper_sha256 = helper_sha256
+    backend._bindings = tmp_path / "bindings"
+    return backend
+
+
+def test_secure_enclave_key_lifecycle_is_bound_to_exact_helper(tmp_path) -> None:
+    key_id = "p256-se-" + "1" * 32
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key().public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+    original = _secure_enclave_backend_for_binding_test(tmp_path, "a" * 64)
+    original_calls: list[str] = []
+
+    def run_original(operation: str, observed_key_id: str, payload: bytes = b"") -> bytes:
+        assert observed_key_id == key_id
+        original_calls.append(operation)
+        if operation == "generate":
+            return public_key
+        if operation == "sign":
+            return private_key.sign(payload, ec.ECDSA(hashes.SHA256()))
+        return b""
+
+    original._run_helper = run_original
+    assert original.generate(key_id) == public_key
+    binding_path = original._bindings / original._binding_name(key_id)
+    binding = json.loads(binding_path.read_text())
+    assert binding["helper_sha256"] == "a" * 64
+    assert binding["state"] == "active"
+
+    replacement = _secure_enclave_backend_for_binding_test(tmp_path, "b" * 64)
+
+    def reject_replacement_run(*_args, **_kwargs) -> bytes:
+        raise AssertionError("a replacement helper must not receive a bound key")
+
+    replacement._run_helper = reject_replacement_run
+    with pytest.raises(KeyStoreError, match="bound to a different helper"):
+        replacement.sign(key_id, b"payload")
+    with pytest.raises(KeyStoreError, match="bound to a different helper"):
+        replacement.destroy(key_id)
+
+    assert original.sign(key_id, b"payload")
+    original.destroy(key_id)
+    assert original_calls == ["generate", "sign", "destroy"]
+    assert not binding_path.exists()
+
+
+def test_secure_enclave_incomplete_generation_fails_closed_until_destroyed(tmp_path) -> None:
+    key_id = "p256-se-" + "2" * 32
+    backend = _secure_enclave_backend_for_binding_test(tmp_path, "c" * 64)
+
+    def fail_generation(operation: str, _key_id: str, _payload: bytes = b"") -> bytes:
+        assert operation == "generate"
+        raise KeyStoreError("Secure Enclave helper execution failed")
+
+    backend._run_helper = fail_generation
+    with pytest.raises(KeyStoreError, match="helper execution failed"):
+        backend.generate(key_id)
+
+    binding_path = backend._bindings / backend._binding_name(key_id)
+    assert json.loads(binding_path.read_text())["state"] == "generating"
+    with pytest.raises(KeyStoreError, match="binding is generating; failing closed"):
+        backend.sign(key_id, b"payload")
+
+    backend._run_helper = lambda operation, _key_id, _payload=b"": (
+        b"" if operation == "destroy" else pytest.fail("only recovery destroy is allowed")
+    )
+    backend.destroy(key_id)
+    assert not binding_path.exists()
+
+
 @pytest.mark.skipif(
     sys.platform != "darwin" or os.getenv("MEMO_SECURE_ENCLAVE_TEST") != "1",
     reason="productive Secure Enclave smoke is opt-in",
 )
 def test_productive_secure_enclave_generates_reopens_signs_and_destroys() -> None:
-    service = f"com.memo.operational-signing.test.{uuid.uuid4().hex}"
+    service = f"com.memo.operational-signing.v2.test.{uuid.uuid4().hex}"
     provider = MacOSKeychainProvider(service=service)
     native_backend = provider._backend
     assert isinstance(native_backend, SecureEnclaveP256Backend)

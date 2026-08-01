@@ -674,6 +674,8 @@ def validate_event(event: OperationalEventV2) -> None:
             retryable=False,
         )
     validate_event_payload(event.event_type, event.payload)
+    if event.expires_at is not None:
+        _parse_time(event.expires_at, "expires_at")
     if event.source_proof is None:
         if event.migration_origin is not None or event.migration_origin_sha256:
             raise OperationalError(

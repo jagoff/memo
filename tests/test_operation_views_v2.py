@@ -31,9 +31,11 @@ from memo.operational_event_types import (
     HANDOFF_CONSUMED,
     HANDOFF_CREATED,
     OUTCOME_RECORDED,
+    RECEIPT_RECORDED,
     SESSION_CHECKPOINTED,
     SESSION_RECOVERABLE,
     SESSION_TERMINATED,
+    SIGNAL_REMEMBERED,
 )
 
 _PROMOTION_SAVE_KWARGS = {
@@ -74,6 +76,8 @@ def _event(
         target_id=(
             str(payload["session_id"])
             if event_type in {SESSION_CHECKPOINTED, SESSION_RECOVERABLE, SESSION_TERMINATED}
+            else str(payload["marker"])
+            if event_type == SIGNAL_REMEMBERED
             else None
         ),
         project="demo",
@@ -475,6 +479,68 @@ def test_core_reducers_preserve_public_state_shape(tmp_path: Path) -> None:
     assert state["sessions"] == {"session-a": expected_session}
 
 
+def test_signal_and_receipt_projections_are_monotonic_and_rebuildable(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "operational.db"
+    store = OperationalViewStore(path)
+    signal = _event(
+        1,
+        SIGNAL_REMEMBERED,
+        {
+            "marker": "watcher:memo",
+            "epoch": 4,
+            "fence": "leader-b",
+            "payload": {"commits": 3},
+            "created_at": "2026-07-30T12:00:01Z",
+        },
+    )
+    receipt = _event(
+        2,
+        RECEIPT_RECORDED,
+        {"operation": "save", "metadata": {"memory_id": "mem-1"}},
+    )
+    stale = _event(
+        3,
+        SIGNAL_REMEMBERED,
+        {
+            "marker": "watcher:memo",
+            "epoch": 3,
+            "fence": "leader-a",
+            "payload": {"commits": 1},
+            "created_at": "2026-07-30T12:00:03Z",
+        },
+    )
+
+    store.apply_events((signal, receipt, stale))
+    state = store.state()
+
+    assert state["signals"] == {
+        "watcher:memo": {
+            **signal.payload,
+            "created_at": "2026-07-30T12:00:01.000000Z",
+        }
+    }
+    assert state["receipts"] == {
+        receipt.event_id: {
+            "schema": "memo.write_receipt.v1",
+            "receipt_id": receipt.event_id,
+            "operation": "save",
+            "subject_uri": receipt.subject_uri,
+            "trace_id": receipt.trace_id,
+            "actor_id": "agent-a",
+            "event_hash": receipt.event_hash,
+            "generated_at": "2026-07-30T12:00:02Z",
+            "metadata": {"memory_id": "mem-1"},
+        }
+    }
+
+    rebuilt = OperationalViewStore(tmp_path / "rebuilt.db")
+    rebuilt.rebuild((signal, receipt, stale))
+    assert rebuilt.state()["signals"] == state["signals"]
+    assert rebuilt.state()["receipts"] == state["receipts"]
+
+
 def test_session_reducer_rejects_regression_identity_drift_and_post_terminal(
     tmp_path: Path,
 ) -> None:
@@ -866,6 +932,7 @@ def test_durable_outbox_reducer_is_monotonic_and_rebuildable(tmp_path: Path) -> 
                 "request_hash": _PROMOTION_REQUEST_HASH,
                 "attempt_number": 1,
                 "failure_class": "RuntimeError",
+                "failure_at": "2026-07-30T12:00:00Z",
                 "retry_at": "2026-07-30T12:00:01Z",
             },
         ),
@@ -915,6 +982,7 @@ def test_durable_retry_attempt_gap_rolls_back(tmp_path: Path) -> None:
                         "request_hash": _PROMOTION_REQUEST_HASH,
                         "attempt_number": 2,
                         "failure_class": "RuntimeError",
+                        "failure_at": "2026-07-30T12:00:00Z",
                         "retry_at": "2026-07-30T12:00:02Z",
                     },
                 ),

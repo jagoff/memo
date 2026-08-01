@@ -303,12 +303,34 @@ class DeliveryService:
         error_code: str = "",
         at: datetime | None = None,
     ) -> DeliveryView:
+        row, _committed = self._transition(
+            identity=identity,
+            delivery_id=delivery_id,
+            state=state,
+            idempotency_key=idempotency_key,
+            terminal_id=terminal_id,
+            error_code=error_code,
+            at=at,
+        )
+        return row
+
+    def _transition(
+        self,
+        *,
+        identity: PrincipalIdentity,
+        delivery_id: str,
+        state: str,
+        idempotency_key: str,
+        terminal_id: str = "",
+        error_code: str = "",
+        at: datetime | None = None,
+    ) -> tuple[DeliveryView, bool]:
         current = self.status(delivery_id)
         if not _is_recipient(identity, current.target_id):
             raise _invalid("delivery recipient differs from authenticated actor")
         if state not in _ALLOWED.get(current.state, frozenset()):
             if current.state == state:
-                return current
+                return current, False
             raise _invalid(f"delivery transition {current.state}->{state} is not allowed")
         event_type = _TRANSITION_EVENTS.get(state)
         if event_type is None:
@@ -316,7 +338,7 @@ class DeliveryService:
         attempt = current.attempt_count + (1 if state == "reserved" else 0)
         if attempt > self.retry_policy.max_attempts:
             raise _invalid("delivery retry attempts are exhausted")
-        self._commit(
+        result = self._commit(
             identity,
             event_type=event_type,
             target_id=delivery_id,
@@ -334,7 +356,7 @@ class DeliveryService:
             idempotency_key=idempotency_key,
             caused_by=(current.message_event_id,),
         )
-        return self.status(delivery_id)
+        return self.status(delivery_id), not result.replayed
 
     def reserve_due(
         self,
@@ -367,15 +389,15 @@ class DeliveryService:
                 continue
             if row.next_attempt_at and _parse_time(row.next_attempt_at) > current_time:
                 continue
-            reserved.append(
-                self.transition(
-                    identity=identity,
-                    delivery_id=row.id,
-                    state="reserved",
-                    idempotency_key=f"reserve/{row.id}/{row.attempt_count + 1}",
-                    at=now,
-                )
+            claimed, committed = self._transition(
+                identity=identity,
+                delivery_id=row.id,
+                state="reserved",
+                idempotency_key=f"reserve/{row.id}/{row.attempt_count + 1}",
+                at=now,
             )
+            if committed:
+                reserved.append(claimed)
         return reserved
 
     def acknowledge(

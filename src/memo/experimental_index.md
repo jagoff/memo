@@ -37,6 +37,15 @@ connections across multiple users so that discoveries made by one user can
 surface for others. Requires a shared storage backend that is not yet
 implemented in the core.
 
+## operational_mesh.py
+
+Authenticated terminal messaging, reservation/ACK delivery, presence, and Git
+transport over the signed operational-v2 ledger. The `memo mesh` CLI and
+`memo_mesh_*` MCP tools require an explicitly activated v2 authority; MCP tools
+are exposed only by the `full`/`default` profile. The feature remains preview
+until a platform helper is released and its multi-peer identity and transport
+security gates are proven on packaged installs.
+
 ## contradict.py
 
 Contradiction and staleness radar. Scans the corpus for pairs of memories

@@ -12,7 +12,12 @@ from memo.dashboard_logs import (
     read_usage_log,
 )
 
-STRONG_SCORE = 0.85
+# Final recall scores are composite ranking scores: semantic similarity plus
+# ranking boosts. They are intentionally not constrained to the cosine [0, 1]
+# range, so the threshold must not be presented as semantic confidence.
+COMPOSITE_SCORE_THRESHOLD = 0.85
+# Backward-compatible public constant. New callers should use the explicit name.
+STRONG_SCORE = COMPOSITE_SCORE_THRESHOLD
 # Reask/grounding-turn bar (kept moderate — used by reask_stats).
 GROUNDED_SCORE = 0.6
 # Utility bar: "the answer actually USED this memory", not just topical overlap.
@@ -429,14 +434,14 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
     with_hits = [r for r in fired if r.get("hits")]
 
     top_scores: list[float] = []
-    strong = 0
+    above_composite_threshold = 0
     for r in with_hits:
         hits = r.get("hits") or []
         score = hits[0].get("score") if hits else None
         if isinstance(score, (int, float)):
             top_scores.append(float(score))
-            if float(score) > STRONG_SCORE:
-                strong += 1
+            if float(score) > COMPOSITE_SCORE_THRESHOLD:
+                above_composite_threshold += 1
     top_scores.sort()
     lats = sorted(
         int(r["latency_ms"]) for r in fired if isinstance(r.get("latency_ms"), (int, float))
@@ -444,13 +449,18 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
 
     ref = referenced_rate(state_dir, rows)
     grounded = grounded_rate(state_dir)
+    top_composite_score_rate = round(above_composite_threshold / len(fired), 3) if fired else None
+    median_top_composite_score = round(_median(top_scores), 3) if top_scores else None
     return {
         "sampled": len(rows),
         "fired": len(fired),
         "bailed": bailed,
         "bail_breakdown": _bail_breakdown(bail_rows),
         "hit_rate": round(len(with_hits) / len(fired), 3) if fired else None,
-        "strong_hit_rate": round(strong / len(fired), 3) if fired else None,
+        "composite_score_threshold": COMPOSITE_SCORE_THRESHOLD,
+        "top_composite_score_rate": top_composite_score_rate,
+        # v1 aliases retained for existing clients.
+        "strong_hit_rate": top_composite_score_rate,
         "grounded_rate": grounded["grounded_rate"],
         "grounded": grounded["grounded"],
         "grounded_surfaced": grounded["surfaced"],
@@ -469,7 +479,9 @@ def recall_health(state_dir, *, limit: int = 200) -> dict[str, Any]:
         "referenced_rate": ref["referenced_rate"],
         "referenced": ref["referenced"],
         "surfaced": ref["surfaced"],
-        "median_top_score": round(_median(top_scores), 3) if top_scores else None,
+        "median_top_composite_score": median_top_composite_score,
+        # v1 alias retained for existing clients.
+        "median_top_score": median_top_composite_score,
         "p50_latency_ms": _median(lats),
     }
 
@@ -569,7 +581,7 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
                 "consults": 0,
                 "fired": 0,
                 "with_hits": 0,
-                "strong": 0,
+                "above_composite_threshold": 0,
                 "top_scores": [],
                 "last_seen": None,
                 "surfaced": set(),
@@ -586,8 +598,8 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
                 score = hits[0].get("score")
                 if isinstance(score, (int, float)):
                     agg["top_scores"].append(float(score))
-                    if float(score) > STRONG_SCORE:
-                        agg["strong"] += 1
+                    if float(score) > COMPOSITE_SCORE_THRESHOLD:
+                        agg["above_composite_threshold"] += 1
             sid = r.get("session_id")
             turn = r.get("turn")
             if sid and isinstance(turn, int) and (sid, turn) in scored_turns:
@@ -608,6 +620,10 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
         scores = sorted(agg["top_scores"])
         fired = agg["fired"]
         n_surfaced = len(agg["surfaced"])
+        top_composite_score_rate = (
+            round(agg["above_composite_threshold"] / fired, 3) if fired else None
+        )
+        median_top_composite_score = round(_median(scores), 3) if scores else None
         consumers.append(
             {
                 "consumer": name,
@@ -615,12 +631,17 @@ def consult_breakdown(state_dir, *, limit: int = 500) -> dict[str, Any]:
                 "fired": fired,
                 "bailed": agg["consults"] - fired,
                 "hit_rate": round(agg["with_hits"] / fired, 3) if fired else None,
-                "strong_hit_rate": round(agg["strong"] / fired, 3) if fired else None,
+                "composite_score_threshold": COMPOSITE_SCORE_THRESHOLD,
+                "top_composite_score_rate": top_composite_score_rate,
+                # v1 alias retained for existing clients.
+                "strong_hit_rate": top_composite_score_rate,
                 "grounded_rate": round(len(agg["grounded"]) / n_surfaced, 3)
                 if n_surfaced
                 else None,
                 "grounded_surfaced": n_surfaced,
-                "median_top_score": round(_median(scores), 3) if scores else None,
+                "median_top_composite_score": median_top_composite_score,
+                # v1 alias retained for existing clients.
+                "median_top_score": median_top_composite_score,
                 "last_seen": agg["last_seen"],
             }
         )

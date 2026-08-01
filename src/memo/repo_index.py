@@ -346,114 +346,116 @@ class RepoCorpus(_RepoIntelligenceMixin):
         if _symbol_chunking_enabled():
             symbol_spans = _RepoSymbolSpans(clone_path, Path(url.strip()))
 
-        tracked_files = _tracked_files(clone_path)
-        _emit(
-            progress,
-            "scan_start",
-            total=len(tracked_files),
-            resuming_partial=resuming_partial,
-        )
-        _emit(progress, "write_start", flush_batch=flush_batch)
+        try:
+            tracked_files = _tracked_files(clone_path)
+            _emit(
+                progress,
+                "scan_start",
+                total=len(tracked_files),
+                resuming_partial=resuming_partial,
+            )
+            _emit(progress, "write_start", flush_batch=flush_batch)
 
-        for rel_posix in tracked_files:
-            rel = Path(rel_posix)
-            path = clone_path / rel
-            if _is_excluded(rel, rel_posix, include_globs, exclude_globs):
-                skipped_excluded += 1
-                coverage_rows.append({"path": rel_posix, "reason": "excluded"})
-                _emit(progress, "file_skipped", path=rel_posix, reason="excluded")
-                continue
-            checked += 1
-            tracked_paths.add(rel_posix)
-            try:
-                st = path.stat()
-                size = st.st_size
-                inode_key = (st.st_dev, st.st_ino)
-                if inode_key in seen_inodes:
-                    # Same physical file already indexed under another casing.
-                    skipped_dup_path += 1
-                    coverage_rows.append({"path": rel_posix, "reason": "duplicate_path"})
-                    _emit(progress, "file_skipped", path=rel_posix, reason="duplicate_path")
+            for rel_posix in tracked_files:
+                rel = Path(rel_posix)
+                path = clone_path / rel
+                if _is_excluded(rel, rel_posix, include_globs, exclude_globs):
+                    skipped_excluded += 1
+                    coverage_rows.append({"path": rel_posix, "reason": "excluded"})
+                    _emit(progress, "file_skipped", path=rel_posix, reason="excluded")
                     continue
-                if size > max_bytes:
-                    skipped_too_large += 1
-                    coverage_rows.append({"path": rel_posix, "reason": "too_large"})
-                    _emit(progress, "file_skipped", path=rel_posix, reason="too_large")
-                    continue
-                raw = path.read_bytes()
-                if _looks_binary(raw):
-                    skipped_binary += 1
-                    coverage_rows.append({"path": rel_posix, "reason": "binary"})
-                    _emit(progress, "file_skipped", path=rel_posix, reason="binary")
-                    continue
-                text = raw.decode("utf-8", errors="replace")
-                sha = hashlib.sha256(raw).hexdigest()
-                seen_inodes.add(inode_key)
+                checked += 1
+                tracked_paths.add(rel_posix)
+                try:
+                    st = path.stat()
+                    size = st.st_size
+                    inode_key = (st.st_dev, st.st_ino)
+                    if inode_key in seen_inodes:
+                        # Same physical file already indexed under another casing.
+                        skipped_dup_path += 1
+                        coverage_rows.append({"path": rel_posix, "reason": "duplicate_path"})
+                        _emit(progress, "file_skipped", path=rel_posix, reason="duplicate_path")
+                        continue
+                    if size > max_bytes:
+                        skipped_too_large += 1
+                        coverage_rows.append({"path": rel_posix, "reason": "too_large"})
+                        _emit(progress, "file_skipped", path=rel_posix, reason="too_large")
+                        continue
+                    raw = path.read_bytes()
+                    if _looks_binary(raw):
+                        skipped_binary += 1
+                        coverage_rows.append({"path": rel_posix, "reason": "binary"})
+                        _emit(progress, "file_skipped", path=rel_posix, reason="binary")
+                        continue
+                    text = raw.decode("utf-8", errors="replace")
+                    sha = hashlib.sha256(raw).hexdigest()
+                    seen_inodes.add(inode_key)
 
-                # OCR enrichment for .md files with embedded images
-                # (`![[image.png]]`). Appends extracted text to the body so
-                # the embedder sees screenshot content. Hash is composed
-                # with each image's bytes hash so changing the image
-                # invalidates the cache.
-                if ocr_enabled_via_env() and rel_posix.lower().endswith(".md"):
-                    enriched, _resolved, img_hashes = enrich_with_ocr(
-                        text,
-                        path,
-                        clone_path,
-                        self.cfg.state_dir,
+                    # OCR enrichment for .md files with embedded images
+                    # (`![[image.png]]`). Appends extracted text to the body so
+                    # the embedder sees screenshot content. Hash is composed
+                    # with each image's bytes hash so changing the image
+                    # invalidates the cache.
+                    if ocr_enabled_via_env() and rel_posix.lower().endswith(".md"):
+                        enriched, _resolved, img_hashes = enrich_with_ocr(
+                            text,
+                            path,
+                            clone_path,
+                            self.cfg.state_dir,
+                        )
+                        if img_hashes:
+                            text = enriched
+                            h = hashlib.sha256(raw)
+                            for piece in img_hashes:
+                                h.update(piece)
+                            sha = h.hexdigest()
+
+                    file_id = _stable_id("repo-file", repo_id, rel_posix)
+                    existing = existing_files.get(rel_posix)
+                    if existing and existing["sha256"] == sha and not force:
+                        unchanged += 1
+                        _emit(progress, "file_skipped", path=rel_posix, reason="unchanged")
+                        continue
+
+                    file_payload = self._build_file_payload(
+                        path=rel_posix,
+                        file_id=file_id,
+                        text=text,
+                        raw_size=size,
+                        sha=sha,
+                        symbol_spans=(
+                            symbol_spans.spans_for(rel_posix) if symbol_spans is not None else None
+                        ),
                     )
-                    if img_hashes:
-                        text = enriched
-                        h = hashlib.sha256(raw)
-                        for piece in img_hashes:
-                            h.update(piece)
-                        sha = h.hexdigest()
+                    pending_files.append(file_payload)
+                    indexed_files_total += 1
+                    indexed_chunks += len(file_payload["chunks"])
+                    indexed_lines += len(file_payload["lines"])
+                    _emit(
+                        progress,
+                        "file_indexed",
+                        path=rel_posix,
+                        chunks=len(file_payload["chunks"]),
+                        lines=len(file_payload["lines"]),
+                    )
+                    if len(pending_files) >= flush_batch:
+                        _flush()
+                except Exception as exc:
+                    _logger.debug("file error for %s", rel_posix, exc_info=True)
+                    errors += 1
+                    coverage_rows.append(
+                        {
+                            "path": rel_posix,
+                            "reason": "read_error",
+                            "detail": type(exc).__name__,
+                        }
+                    )
+                    _emit(progress, "file_error", path=rel_posix)
 
-                file_id = _stable_id("repo-file", repo_id, rel_posix)
-                existing = existing_files.get(rel_posix)
-                if existing and existing["sha256"] == sha and not force:
-                    unchanged += 1
-                    _emit(progress, "file_skipped", path=rel_posix, reason="unchanged")
-                    continue
-
-                file_payload = self._build_file_payload(
-                    path=rel_posix,
-                    file_id=file_id,
-                    text=text,
-                    raw_size=size,
-                    sha=sha,
-                    symbol_spans=(
-                        symbol_spans.spans_for(rel_posix) if symbol_spans is not None else None
-                    ),
-                )
-                pending_files.append(file_payload)
-                indexed_files_total += 1
-                indexed_chunks += len(file_payload["chunks"])
-                indexed_lines += len(file_payload["lines"])
-                _emit(
-                    progress,
-                    "file_indexed",
-                    path=rel_posix,
-                    chunks=len(file_payload["chunks"]),
-                    lines=len(file_payload["lines"]),
-                )
-                if len(pending_files) >= flush_batch:
-                    _flush()
-            except Exception as exc:
-                _logger.debug("file error for %s", rel_posix, exc_info=True)
-                errors += 1
-                coverage_rows.append(
-                    {
-                        "path": rel_posix,
-                        "reason": "read_error",
-                        "detail": type(exc).__name__,
-                    }
-                )
-                _emit(progress, "file_error", path=rel_posix)
-
-        _flush()
-        if symbol_spans is not None:
-            symbol_spans.close()
+            _flush()
+        finally:
+            if symbol_spans is not None:
+                symbol_spans.close()
         coverage_recorded_at = _now_iso()
         self.store.replace_repo_coverage(
             repo_id=repo_id,

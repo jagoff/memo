@@ -51,9 +51,13 @@ jobs:
         # and point at a throwaway data_dir the runner can create.
         env:
           MEMO_DATA_DIR: ${{ runner.temp }}/memo-data
+          MEMO_STATE_DIR: ${{ runner.temp }}/memo-state
         run: |
           mkdir -p "$MEMO_DATA_DIR"
+          test -z "${MEMO_OPERATIONAL_V2_AUTO_ACTIVATE:-}"
           .venv/bin/memo doctor
+          .venv/bin/memo operational signal remember \
+            --marker macos-fresh-install --epoch 1 --fence ci-smoke
       - name: Tantivy FTS + OCR backend tests
         # The tantivy verbatim-FTS backend and Apple Vision OCR path live behind
         # darwin/arm64-only optional extras that no other CI job installs — so

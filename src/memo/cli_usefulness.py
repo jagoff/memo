@@ -55,23 +55,29 @@ def _render_usefulness(*, limit: int = 500, as_json: bool = False) -> None:
         return
 
     click.echo(f"memo usefulness — {breakdown['sampled']} consults sampled\n")
+    composite_threshold = health.get("composite_score_threshold", 0.85)
+    click.echo(
+        f"  composite ranking: % of fired recalls whose top final score "
+        f"is > {composite_threshold:.2f}"
+    )
     click.echo(
         f"  {'consumer':<16} {'consults':>8} {'fired':>6} {'bail':>5} "
-        f"{'hit%':>6} {'strong%':>8} {'grnd%':>6} {'top':>6}  last"
+        f"{'hit%':>6} {'comp>%':>8} {'grnd%':>6} {'comp50':>6}  last"
     )
     click.echo("  " + "-" * 80)
     for c in consumers:
         hit = f"{c['hit_rate'] * 100:.0f}" if c["hit_rate"] is not None else "—"
-        strong = (
-            f"{c['strong_hit_rate'] * 100:.0f}" if c.get("strong_hit_rate") is not None else "—"
-        )
+        composite_rate = c.get("top_composite_score_rate", c.get("strong_hit_rate"))
+        composite = f"{composite_rate * 100:.0f}" if composite_rate is not None else "—"
         # grounded% = outcome-based "actually used in the answer" (— until the
         # Stop-hook grounding detector has correlatable data for this consumer).
         grnd = f"{c['grounded_rate'] * 100:.0f}" if c.get("grounded_rate") is not None else "—"
-        top = f"{c['median_top_score']:.2f}" if c["median_top_score"] is not None else "—"
+        median_composite = c.get("median_top_composite_score", c.get("median_top_score"))
+        top = f"{median_composite:.2f}" if median_composite is not None else "—"
         click.echo(
             f"  {c['consumer']:<16} {c['consults']:>8} {c['fired']:>6} "
-            f"{c['bailed']:>5} {hit:>6} {strong:>8} {grnd:>6} {top:>6}  {_age(c['last_seen'])}"
+            f"{c['bailed']:>5} {hit:>6} {composite:>8} {grnd:>6} "
+            f"{top:>6}  {_age(c['last_seen'])}"
         )
 
     if silent:
@@ -108,13 +114,15 @@ def _render_usefulness(*, limit: int = 500, as_json: bool = False) -> None:
             f"(grounded recalls the user did NOT have to ask again — see `memo roi`)."
         )
 
-    # One-line verdict. hit% = fired that returned anything; strong% = fired
-    # that returned a high-confidence (>0.85) match — the honest relevance number.
+    # One-line summary. hit% = fired that returned anything; the composite rate
+    # uses the final ranking score (semantic similarity plus ranking boosts).
     total = breakdown["sampled"]
     n = len(consumers)
+    composite_rate = health.get("top_composite_score_rate", health.get("strong_hit_rate"))
     click.echo(
         f"\nmemo consulted {total}× across {n} consumer(s); recall-hook "  # noqa: RUF001
-        f"hit_rate={health.get('hit_rate')} strong_hit_rate={health.get('strong_hit_rate')}."
+        f"hit_rate={health.get('hit_rate')} "
+        f"top_composite_score_rate={composite_rate}."
     )
 
 

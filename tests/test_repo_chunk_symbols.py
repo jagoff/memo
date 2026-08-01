@@ -13,6 +13,8 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from memo.config import Config
 from memo.repo_index import RepoCorpus
 from memo.repo_index_helpers import (
@@ -114,6 +116,48 @@ def _index_and_read_chunks(
         for r in rows
         if r["path"] == "src/app.py"
     ]
+
+
+def test_symbol_span_connection_closes_when_indexing_is_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _make_text_repo(
+        tmp_path,
+        "interrupt",
+        {"src/app.py": "def alpha():\n    return '" + "x" * 100 + "'\n"},
+    )
+
+    class AbortIndex(BaseException):
+        pass
+
+    class FakeSymbolSpans:
+        closed = False
+
+        def spans_for(self, _rel_path: str) -> list[tuple[int, int]]:
+            return []
+
+        def close(self) -> None:
+            self.closed = True
+
+    spans = FakeSymbolSpans()
+    monkeypatch.setattr("memo.repo_index._symbol_chunking_enabled", lambda: True)
+    monkeypatch.setattr("memo.repo_index._RepoSymbolSpans", lambda *_roots: spans)
+    corpus = RepoCorpus(_cfg(tmp_path), embedder=object())
+
+    def interrupt(event: str, _payload: dict[str, object]) -> None:
+        if event == "file_indexed":
+            raise AbortIndex
+
+    with pytest.raises(AbortIndex):
+        corpus.index(
+            str(repo),
+            name="interrupt",
+            with_embeddings=False,
+            progress=interrupt,
+        )
+
+    assert spans.closed is True
 
 
 # ---------------------------------------------------------------------------

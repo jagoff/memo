@@ -745,3 +745,40 @@ def session_prune(cap: int) -> None:
     cfg = Config.from_env()
     n = prune_lru(cfg.state_dir, cap=cap)
     console.print(f"[green]✓[/green] pruned {n} session(s); cap={cap}")
+
+
+@session_group.command(name="delete")
+@click.argument("session_id")
+@click.option("--json", "as_json", is_flag=True)
+def session_delete(session_id: str, as_json: bool) -> None:
+    """Delete one session snapshot by its exact id."""
+    import json as _json
+
+    from memo.session import delete_session
+
+    cfg = Config.from_env()
+    try:
+        deleted = delete_session(cfg.state_dir, session_id)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    result = {"session_id": session_id, "deleted": deleted}
+    click.echo(_json.dumps(result) if as_json else ("deleted" if deleted else "not found"))
+
+
+@session_group.command(name="delete-all")
+@click.option("--yes", is_flag=True, help="Confirm deletion.")
+@click.option("--json", "as_json", is_flag=True)
+def session_delete_all(yes: bool, as_json: bool) -> None:
+    """Delete every session snapshot."""
+    import json as _json
+
+    if not yes:
+        raise click.ClickException("refusing to delete all sessions without --yes")
+    from memo.session import delete_all_sessions
+
+    try:
+        deleted = delete_all_sessions(Config.from_env().state_dir)
+    except (ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    result = {"deleted": deleted}
+    click.echo(_json.dumps(result) if as_json else f"deleted {deleted} session(s)")

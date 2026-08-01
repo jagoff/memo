@@ -1,12 +1,22 @@
 import json
+import runpy
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from memo.chat.feedback import (  # type: ignore[import-untyped]
     ChatFeedback,
     FeedbackStore,
     SourceVoteStore,
 )
-from scripts.migrate_synapse_chat_state import migrate_feedback
+
+MigrateFeedback = Callable[[Path, Path], dict[str, int]]
+migrate_feedback = cast(
+    MigrateFeedback,
+    runpy.run_path(str(Path(__file__).parents[1] / "scripts" / "migrate_synapse_chat_state.py"))[
+        "migrate_feedback"
+    ],
+)
 
 
 def _write(path: Path, lines: list[dict | str]) -> None:

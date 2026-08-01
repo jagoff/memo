@@ -69,17 +69,19 @@ Most memory servers *add* context. memo is built to remove it.
 
 | Profile | Tools | Schema tokens |
 |---|---:|---:|
-| `agent` (default) | 49 | ~7k |
-| `core` / `slim` | 66 | ~8.2k |
+| `agent` (default) | 40 | ~6k |
+| `core` / `slim` | 57 | ~7.2k |
 | `full` / `default` | 170 | ~21k |
 
-The default MCP surface is 49 tools, not 170: about 71% fewer tool schemas. It exposes **49 tools / ~7k schema tokens** versus **170 tools / ~21k tokens** on the full surface — overhead paid every session, in every client. The default includes the signed `memo_mesh_*` tools so terminals can exchange messages, ACKs, and presence without a second runtime.
+The default MCP surface is 40 tools, not 170: about 76% fewer tool schemas. It exposes **40 tools / ~6k schema tokens** versus **170 tools / ~21k tokens** on the full surface — overhead paid every session, in every client. The preview `memo_mesh_*` tools require the explicit `full`/`default` profile and an activated v2 authority.
 
 `memo events` and `memo chat-session` are local diagnostic stores and are not
-replicated. Cross-terminal coordination must use `memo mesh` (or the
-`memo_mesh_*` MCP tools), which traverse the signed operational ledger and Git
-transport. Mesh messages address terminal principals as `device:session`;
-`actor_id` cannot be used to impersonate another terminal.
+replicated. Preview cross-terminal coordination uses `memo mesh` (or the
+full-profile `memo_mesh_*` MCP tools), which traverse the signed operational
+ledger and Git transport. Mesh messages address terminal principals as
+`device:session`; `actor_id` cannot be used to impersonate another terminal.
+The transport authenticates and integrity-protects events, but it is not
+end-to-end encrypted: anyone with repository access can inspect message bodies.
 
 Ambient recall injects one relevant memory before the model answers. The bundled Claude Code hook caps that injection at ~160 tokens. `memo roi` reads the real grounding and re-ask ledgers, then estimates accumulated savings with disclosed defaults (350 tokens per grounded recall and 900 per avoided re-ask).
 
@@ -187,7 +189,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 
 **Recall & Hooks:** `recall` `recall-hook` `context` `briefing` `continuity` `prewarm` `capture-tick` `capture-stop` `interject` `ask-gaps` `guard` `digest`
 
-**Session & History:** `history` `as-of` `diff` `record-history` `session` `resume` `reflect` `mine-history` `episodes` `chronicle` `events`
+**Session & History:** `history` `as-of` `diff` `record-history` `session` `chat-session` `resume` `reflect` `mine-history` `episodes` `chronicle` `events`
 
 **Maintenance:** `reindex` `maintain` `review` `dream` `consolidate` `synthesize` `dedupe` `retier` `contradict` `coordinate` `invalidate` `temporal` `compress-context` `ops`
 
@@ -195,7 +197,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 
 **Knowledge Graph:** `graph` `entities` `entity` `extract-entities` `links` `version` `related`
 
-**Advanced Search:** `embed` `rerank` `contextual` `retrieve` `context-pack` `chat` `chat-ask` `chat-session` `repo`
+**Advanced Search:** `embed` `rerank` `contextual` `retrieve` `context-pack` `chat` `chat-ask` `repo`
 
 **Import / Export / Sync:** `import` `export` `backup` `restore` `sync` `ingest` `federation`
 

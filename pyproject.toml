@@ -177,6 +177,10 @@ include = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/memo"]
+# Generic wheels cannot ship an executable Secure Enclave helper. Keep the
+# reviewed Swift source in the sdist, but do not imply runtime availability by
+# placing source-only native code in the wheel.
+exclude = ["**/*.swift"]
 
 [tool.hatch.build.targets.wheel.force-include]
 ".agents/plugins/marketplace.json" = "memo/agent_assets/.agents/plugins/marketplace.json"

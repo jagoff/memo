@@ -37,6 +37,18 @@ def _now(clock: Callable[[], datetime]) -> str:
     return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def _expiry(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as exc:
+        raise ValueError("expires_at must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("expires_at must include a timezone")
+    return parsed.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def _stable_id(kind: str, identity: PrincipalIdentity, key: str) -> str:
     digest = hashlib.sha256(f"{kind}\0{identity.principal_id}\0{key}".encode()).hexdigest()
     return f"{kind}-{digest[:24]}"
@@ -191,6 +203,7 @@ class CoordinationService:
             raise ValueError("channel and body must be non-empty")
         targets = tuple(sorted(set(item.strip() for item in target_ids if item.strip())))
         evidence = tuple(item.strip() for item in evidence_uris if item.strip())
+        normalized_expires_at = _expiry(expires_at)
         message_id = _stable_id("message", identity, idempotency_key.strip())
         existing = next(
             (item for item in self.messages() if item.message_id == message_id),
@@ -204,7 +217,7 @@ class CoordinationService:
                 targets,
                 topic.strip(),
                 bool(expects_ack),
-                expires_at,
+                normalized_expires_at,
                 evidence,
             )
             actual = (
@@ -239,7 +252,7 @@ class CoordinationService:
                 "created_at": created_at,
             },
             idempotency_key=idempotency_key,
-            expires_at=expires_at,
+            expires_at=normalized_expires_at,
         )
         return MessageView(
             message_id=message_id,
@@ -250,7 +263,7 @@ class CoordinationService:
             target_ids=targets,
             topic=topic.strip(),
             expects_ack=bool(expects_ack),
-            expires_at=expires_at,
+            expires_at=normalized_expires_at,
             evidence_uris=evidence,
             created_at=created_at,
         )

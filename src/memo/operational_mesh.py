@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from memo.errors import OperationalError, OperationalErrorCode
 from memo.git_transport import GitTransport
@@ -17,6 +19,7 @@ from memo.operational_presence import PresenceLease, PresenceService
 from memo.operational_sync import OperationalSync, OperationalSyncStatus, SyncResult
 
 TransportFactory = Callable[[Path, str | None], GitTransport]
+_PRINCIPAL_PART_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
 def _invalid(message: str) -> OperationalError:
@@ -42,8 +45,10 @@ def mesh_identity(
     session = session_id.strip() or f"mesh-{actor}"
     if not device or not actor or not source:
         raise ValueError("device_id, actor_id, and source_client must be non-empty")
-    if ":" in actor:
-        raise ValueError("actor_id cannot contain ':'; terminal principals use device:session")
+    if not _PRINCIPAL_PART_RE.fullmatch(device) or not _PRINCIPAL_PART_RE.fullmatch(session):
+        raise ValueError("device_id and session_id must use safe terminal-principal syntax")
+    if not _PRINCIPAL_PART_RE.fullmatch(actor):
+        raise ValueError("actor_id must use safe terminal-principal syntax")
     return PrincipalIdentity(
         principal_id=f"{device}:{session}",
         actor_id=actor,
@@ -58,6 +63,21 @@ def _local_transport(root: Path, remote: str | None) -> GitTransport:
     """Open one local clone, optionally bound to its remote rendezvous."""
 
     return GitTransport(root, remote=remote)
+
+
+def _safe_remote(remote: str | None) -> str | None:
+    if remote is None or "://" not in remote:
+        return remote
+    parsed = urlsplit(remote)
+    host = parsed.hostname or ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    netloc = f"{host}:{port}" if port is not None else host
+    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 @dataclass(frozen=True)
@@ -131,7 +151,7 @@ class OperationalMesh:
             device_id=self.identity.device_id,
             principal_id=self.identity.principal_id,
             transport_path=str(self.transport_path),
-            remote=self.remote,
+            remote=_safe_remote(self.remote),
             sync=self.sync.status(),
             messages=len(self.coordination.messages()),
             deliveries=len(self.delivery.deliveries()),
@@ -158,7 +178,12 @@ class OperationalMesh:
         targets = tuple(item.strip() for item in target_ids if item.strip())
         if not targets:
             raise ValueError("target_ids must contain at least one recipient")
-        invalid = [item for item in targets if not all(item.partition(":")[::2])]
+        invalid = [
+            item
+            for item in targets
+            if item.count(":") != 1
+            or not all(_PRINCIPAL_PART_RE.fullmatch(part) for part in item.split(":"))
+        ]
         if invalid:
             raise ValueError(
                 "Memo mesh recipients must be terminal principals in device:session form"
@@ -175,7 +200,17 @@ class OperationalMesh:
         )
 
     def messages(self, *, channel: str | None = None) -> list[MessageView]:
-        return self.coordination.messages(channel=channel)
+        rows = self.coordination.messages(channel=channel)
+        sender_by_event = {
+            event.event_id: event.actor.principal_id
+            for event in self.store.ledger.validated_events()
+        }
+        return [
+            row
+            for row in rows
+            if self.identity.principal_id in row.target_ids
+            or sender_by_event.get(row.event_id) == self.identity.principal_id
+        ]
 
     def reserve_due(self, *, limit: int = 100) -> list[DeliveryView]:
         return self.delivery.reserve_due(

@@ -10,11 +10,11 @@ import re
 import stat
 import subprocess
 import sys
-import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
 
-from memo.atomic_io import authority_write_lock, open_secure_directory
+from memo.atomic_io import SecureDirectory, authority_write_lock, open_secure_directory
 from memo.operational_key_store import (
     KeyStoreError,
     _normalize_p256_signature,
@@ -26,10 +26,9 @@ _SERVICE_RE = re.compile(
 )
 _KEY_ID_RE = re.compile(r"p256-se-[0-9a-f]{32}\Z")
 _OPERATIONS = frozenset({"generate", "sign", "destroy"})
-_SYSTEM_SWIFTC = Path("/usr/bin/swiftc")
 _SYSTEM_CODESIGN = Path("/usr/bin/codesign")
-_MAX_HELPER_SOURCE_BYTES = 256 * 1024
 _MAX_HELPER_BINARY_BYTES = 16 * 1024 * 1024
+_MAX_BINDING_BYTES = 4096
 _SERVICE_NAMESPACE = "com.memo.operational-signing.v2"
 _BINDING_SCHEMA = "memo.secure_enclave_helper_binding.v1"
 _BINDING_PREFIX = b"memo.secure-enclave-binding.v1\0"
@@ -106,6 +105,7 @@ class SecureEnclaveP256Backend:
         self._helper: Path
         self._helper_sha256: str
         self._helper, self._helper_sha256 = self._install_helper()
+        self._bindings = self._native_tools_root() / "key-bindings-v1"
         self._verify_helper()
 
     @staticmethod
@@ -190,23 +190,6 @@ class SecureEnclaveP256Backend:
                 os.close(descriptor)
 
     @staticmethod
-    def _source() -> Path:
-        source = Path(__file__).parent / "native" / "memo_secure_enclave_helper.swift"
-        return source
-
-    @classmethod
-    def _source_snapshot(cls) -> tuple[Path, bytes]:
-        source = cls._source()
-        encoded = cls._read_regular_snapshot(
-            source,
-            description="Memo Secure Enclave helper source",
-            maximum_bytes=_MAX_HELPER_SOURCE_BYTES,
-            allowed_owners=frozenset({0, os.getuid()}),
-            require_single_link=False,
-        )
-        return source, encoded
-
-    @staticmethod
     def _verify_system_tool(path: Path, description: str) -> None:
         try:
             observed = os.lstat(path)
@@ -243,6 +226,16 @@ class SecureEnclaveP256Backend:
         if result.returncode != 0:
             raise KeyStoreError("Memo Secure Enclave helper code signature is invalid")
 
+    @staticmethod
+    def _native_tools_root() -> Path:
+        return Path.home() / "Library" / "Application Support" / "Memo" / "native-tools"
+
+    @staticmethod
+    def _assert_private_directory(descriptor: int, description: str) -> None:
+        observed = os.fstat(descriptor)
+        if observed.st_uid != os.getuid() or stat.S_IMODE(observed.st_mode) & 0o077:
+            raise KeyStoreError(f"{description} has unsafe ownership or mode")
+
     @classmethod
     def _install_helper(cls) -> tuple[Path, str]:
         # Production never compiles Swift at runtime.  The platform wheel must
@@ -258,10 +251,11 @@ class SecureEnclaveP256Backend:
             required_mode=0o500,
         )
         helper_sha256 = hashlib.sha256(candidate).hexdigest()
-        root = Path.home() / "Library" / "Application Support" / "Memo" / "native-tools"
+        root = cls._native_tools_root()
         helpers = root / "helpers-v1"
         target = helpers / helper_sha256
         with authority_write_lock(root), open_secure_directory(helpers, create=True) as directory:
+            cls._assert_private_directory(directory.descriptor, "Memo native helper directory")
             if directory.exists(target.name):
                 existing, observed = directory.read_bytes_snapshot(target.name)
                 if (
@@ -277,105 +271,6 @@ class SecureEnclaveP256Backend:
                 directory.create_bytes_exclusive(target.name, candidate, mode=0o500)
         cls._verify_code_signature(target)
         return target, helper_sha256
-
-        # Unreachable legacy source compiler retained below for provenance only.
-        _, source_bytes = cls._source_snapshot()
-        source_sha256 = hashlib.sha256(source_bytes).hexdigest()
-        root = Path.home() / "Library" / "Application Support" / "Memo" / "native-tools"
-        cls._verify_system_tool(_SYSTEM_SWIFTC, "system Swift compiler")
-        with authority_write_lock(root):
-            with open_secure_directory(root, create=True) as directory:
-                root_state = os.fstat(directory.descriptor)
-                if root_state.st_uid != os.getuid() or stat.S_IMODE(root_state.st_mode) & 0o077:
-                    raise KeyStoreError("Memo native helper directory has unsafe ownership or mode")
-            try:
-                with tempfile.TemporaryDirectory(
-                    prefix=".secure-enclave-build-",
-                    dir=root,
-                ) as temporary_name:
-                    source_copy = Path(temporary_name) / "memo_secure_enclave_helper.swift"
-                    source_descriptor = os.open(
-                        source_copy,
-                        os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
-                        0o400,
-                    )
-                    try:
-                        view = memoryview(source_bytes)
-                        written = 0
-                        while written < len(view):
-                            count = os.write(
-                                source_descriptor,
-                                view[written:],
-                            )
-                            if count <= 0:
-                                raise OSError("short helper source write")
-                            written += count
-                        os.fchmod(source_descriptor, 0o400)
-                        os.fsync(source_descriptor)
-                    finally:
-                        os.close(source_descriptor)
-                    temporary = Path(temporary_name) / "memo-secure-enclave-helper"
-                    result = subprocess.run(
-                        [
-                            str(_SYSTEM_SWIFTC),
-                            "-O",
-                            "-whole-module-optimization",
-                            "-module-name",
-                            "MemoSecureEnclaveHelper",
-                            "-o",
-                            str(temporary),
-                            str(source_copy),
-                        ],
-                        check=False,
-                        capture_output=True,
-                        timeout=120,
-                        env=cls._safe_tool_environment(),
-                    )
-                    if result.returncode != 0:
-                        raise KeyStoreError("Secure Enclave helper compilation failed")
-                    temporary.chmod(0o500)
-                    with open(temporary, "rb") as handle:
-                        os.fsync(handle.fileno())
-                    cls._verify_code_signature(temporary)
-                    candidate = cls._read_regular_snapshot(
-                        temporary,
-                        description="compiled Memo Secure Enclave helper",
-                        maximum_bytes=_MAX_HELPER_BINARY_BYTES,
-                        allowed_owners=frozenset({os.getuid()}),
-                        required_mode=0o500,
-                    )
-                    helper_sha256 = hashlib.sha256(candidate).hexdigest()
-                    target = root / (f"secure-enclave-{source_sha256}-{helper_sha256}")
-                    try:
-                        with open_secure_directory(root) as directory:
-                            if directory.exists(target.name):
-                                existing, observed = directory.read_bytes_snapshot(target.name)
-                                if (
-                                    observed.st_uid != os.getuid()
-                                    or observed.st_nlink != 1
-                                    or stat.S_IMODE(observed.st_mode) != 0o500
-                                    or existing != candidate
-                                ):
-                                    raise KeyStoreError(
-                                        "cached Secure Enclave helper failed "
-                                        "content-address verification"
-                                    )
-                            else:
-                                directory.create_bytes_exclusive(
-                                    target.name,
-                                    candidate,
-                                    mode=0o500,
-                                )
-                    except KeyStoreError:
-                        raise
-                    except (OSError, ValueError):
-                        raise KeyStoreError("cached Secure Enclave helper is unsafe") from None
-                    cls._verify_code_signature(target)
-                    return target, helper_sha256
-            except KeyStoreError:
-                raise
-            except (OSError, subprocess.SubprocessError):
-                raise KeyStoreError("Secure Enclave helper compilation failed") from None
 
     @classmethod
     def _read_helper_snapshot(cls, helper: Path) -> bytes:
@@ -393,7 +288,7 @@ class SecureEnclaveP256Backend:
             raise KeyStoreError("Memo Secure Enclave helper failed content-address verification")
         self._verify_code_signature(self._helper)
 
-    def _run(self, operation: str, key_id: str, payload: bytes = b"") -> bytes:
+    def _run_helper(self, operation: str, key_id: str, payload: bytes = b"") -> bytes:
         if operation not in _OPERATIONS:
             raise KeyStoreError("Secure Enclave helper operation is unsafe")
         self._validate_key_id(key_id)
@@ -434,19 +329,153 @@ class SecureEnclaveP256Backend:
             raise KeyStoreError(f"{message}: {key_id}")
         return bytes(result.stdout)
 
+    def _binding_name(self, key_id: str) -> str:
+        return binding_digest(self._service, key_id) + ".json"
+
+    @contextlib.contextmanager
+    def _binding_authority(self, key_id: str) -> Iterator[tuple[SecureDirectory, str]]:
+        name = self._binding_name(key_id)
+        lock_path = self._bindings / name
+        try:
+            with (
+                authority_write_lock(lock_path),
+                open_secure_directory(self._bindings, create=True) as directory,
+            ):
+                self._assert_private_directory(
+                    directory.descriptor,
+                    "Secure Enclave binding directory",
+                )
+                yield directory, name
+        except KeyStoreError:
+            raise
+        except (OSError, ValueError):
+            raise KeyStoreError("Secure Enclave binding store is unsafe") from None
+
+    def _read_binding(
+        self,
+        directory: SecureDirectory,
+        name: str,
+        key_id: str,
+        *,
+        allowed_states: frozenset[str],
+    ) -> dict[str, str]:
+        try:
+            raw, observed = directory.read_bytes_snapshot(name)
+        except (OSError, ValueError):
+            raise KeyStoreError("Secure Enclave key binding is unavailable or unsafe") from None
+        if (
+            observed.st_uid != os.getuid()
+            or observed.st_nlink != 1
+            or stat.S_IMODE(observed.st_mode) != 0o600
+            or len(raw) > _MAX_BINDING_BYTES
+        ):
+            raise KeyStoreError("Secure Enclave key binding is unavailable or unsafe")
+        value = validate_binding(
+            raw,
+            service=self._service,
+            key_id=key_id,
+            expected_name=name,
+        )
+        if value["helper_sha256"] != self._helper_sha256:
+            raise KeyStoreError("Secure Enclave key is bound to a different helper")
+        if value["state"] not in allowed_states:
+            raise KeyStoreError(f"Secure Enclave key binding is {value['state']}; failing closed")
+        return value
+
+    def _write_binding(
+        self,
+        directory: SecureDirectory,
+        name: str,
+        key_id: str,
+        state: str,
+        *,
+        exclusive: bool = False,
+    ) -> None:
+        encoded = canonical_binding(
+            service=self._service,
+            key_id=key_id,
+            helper_sha256=self._helper_sha256,
+            state=state,
+        )
+        try:
+            if exclusive:
+                directory.create_bytes_exclusive(name, encoded, mode=0o600)
+            else:
+                directory.atomic_write_bytes(name, encoded, mode=0o600)
+        except FileExistsError:
+            raise KeyStoreError(f"Secure Enclave key binding already exists: {key_id}") from None
+        except (OSError, ValueError):
+            raise KeyStoreError("Secure Enclave key binding update failed") from None
+
+    @staticmethod
+    def _unlink_binding(directory: SecureDirectory, name: str) -> None:
+        try:
+            directory.unlink(name)
+        except (OSError, ValueError):
+            raise KeyStoreError("Secure Enclave key binding cleanup failed") from None
+
+    def _destroy_locked(self, directory: SecureDirectory, name: str, key_id: str) -> None:
+        self._write_binding(directory, name, key_id, "destroying")
+        try:
+            output = self._run_helper("destroy", key_id)
+        except KeyStoreError as exc:
+            if not str(exc).startswith("unknown private key id:"):
+                raise
+        else:
+            if output:
+                raise KeyStoreError("Secure Enclave helper returned unexpected output")
+        self._unlink_binding(directory, name)
+
     def generate(self, key_id: str) -> bytes:
-        public_key = self._run("generate", key_id)
-        if len(public_key) != 65 or public_key[:1] != b"\x04":
-            with contextlib.suppress(KeyStoreError):
-                self._run("destroy", key_id)
-            raise KeyStoreError("Secure Enclave returned an invalid P-256 public key")
-        return public_key
+        self._validate_key_id(key_id)
+        with self._binding_authority(key_id) as (directory, name):
+            if directory.exists(name):
+                self._read_binding(
+                    directory,
+                    name,
+                    key_id,
+                    allowed_states=_BINDING_STATES,
+                )
+                raise KeyStoreError(f"Secure Enclave key binding already exists: {key_id}")
+            self._write_binding(
+                directory,
+                name,
+                key_id,
+                "generating",
+                exclusive=True,
+            )
+            public_key = self._run_helper("generate", key_id)
+            if len(public_key) != 65 or public_key[:1] != b"\x04":
+                with contextlib.suppress(KeyStoreError):
+                    self._destroy_locked(directory, name, key_id)
+                raise KeyStoreError("Secure Enclave returned an invalid P-256 public key")
+            try:
+                self._write_binding(directory, name, key_id, "active")
+            except KeyStoreError:
+                with contextlib.suppress(KeyStoreError):
+                    self._destroy_locked(directory, name, key_id)
+                raise
+            return public_key
 
     def sign(self, key_id: str, payload: bytes) -> bytes:
-        signature = self._run("sign", key_id, bytes(payload))
-        return _normalize_p256_signature(signature)
+        self._validate_key_id(key_id)
+        with self._binding_authority(key_id) as (directory, name):
+            self._read_binding(
+                directory,
+                name,
+                key_id,
+                allowed_states=frozenset({"active"}),
+            )
+            signature = self._run_helper("sign", key_id, bytes(payload))
+            return _normalize_p256_signature(signature)
 
     def destroy(self, key_id: str) -> None:
-        output = self._run("destroy", key_id)
-        if output:
-            raise KeyStoreError("Secure Enclave helper returned unexpected output")
+        self._validate_key_id(key_id)
+        with self._binding_authority(key_id) as (directory, name):
+            self._read_binding(
+                directory,
+                name,
+                key_id,
+                allowed_states=_BINDING_STATES,
+            )
+            self._destroy_locked(directory, name, key_id)

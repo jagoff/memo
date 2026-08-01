@@ -82,6 +82,21 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_event_id TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS signals (
+    marker TEXT PRIMARY KEY,
+    epoch INTEGER NOT NULL,
+    row_json TEXT NOT NULL,
+    updated_event_id TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS receipts (
+    receipt_id TEXT PRIMARY KEY,
+    operation TEXT NOT NULL,
+    subject_uri TEXT NOT NULL,
+    row_json TEXT NOT NULL,
+    updated_event_id TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS session_local_artifacts (
     session_id TEXT NOT NULL,
     artifact_uri TEXT NOT NULL,

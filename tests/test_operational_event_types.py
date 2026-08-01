@@ -31,10 +31,12 @@ from memo.operational_event_types import (
     OUTCOME_RECORDED,
     PRESENCE_EXPIRED,
     PRESENCE_UPDATED,
+    RECEIPT_RECORDED,
     ROSTER_UPDATED,
     SESSION_CHECKPOINTED,
     SESSION_RECOVERABLE,
     SESSION_TERMINATED,
+    SIGNAL_REMEMBERED,
     TERMINAL_COMMAND_FINISHED,
     TERMINAL_COMMAND_STARTED,
     validate_event_payload,
@@ -209,6 +211,7 @@ V2_NATIVE_PAYLOADS = {
         "request_hash": _PROMOTION_REQUEST_HASH,
         "attempt_number": 1,
         "failure_class": "RuntimeError",
+        "failure_at": "2026-07-29T12:09:00Z",
         "retry_at": "2026-07-29T12:09:01Z",
     },
     DURABLE_PROMOTION_COMPLETED: {
@@ -223,6 +226,17 @@ V2_NATIVE_PAYLOADS = {
         "request_hash": _PROMOTION_REQUEST_HASH,
         "failure_class": "IdentityConflictError",
         "reason": "durable operation identity conflict",
+    },
+    SIGNAL_REMEMBERED: {
+        "marker": "watcher:memo",
+        "epoch": 4,
+        "fence": "leader-b",
+        "payload": {"commits": 3},
+        "created_at": "2026-07-29T12:10:00Z",
+    },
+    RECEIPT_RECORDED: {
+        "operation": "save",
+        "metadata": {"memory_id": "mem-1"},
     },
 }
 

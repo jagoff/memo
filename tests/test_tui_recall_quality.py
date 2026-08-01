@@ -18,7 +18,9 @@ from rich.panel import Panel
 
 from memo.dashboard_panels import (
     _grounding_citation_stats,
+    _panel_recall_quality,
     _panel_recall_trend,
+    _panel_utility,
     _read_eval_history,
 )
 
@@ -96,6 +98,43 @@ def test_panel_renders_trend_and_citations(tmp_path: Path) -> None:
     # Recalled-never-cited: cccccccc + dddddddd → 2 of 4.
     assert "2 of 4 recalled" in out
     assert "sin datos aún" not in out
+
+
+def test_live_recall_panels_name_composite_ranking_score(tmp_path: Path) -> None:
+    from memo.dashboard import append_recall_log
+
+    append_recall_log(
+        tmp_path,
+        prompt="composite panel one",
+        hits=[{"id": "a" * 8, "score": 1.2, "title": "A"}],
+        via="daemon",
+    )
+    append_recall_log(
+        tmp_path,
+        prompt="composite panel two",
+        hits=[{"id": "b" * 8, "score": 0.7, "title": "B"}],
+        via="daemon",
+    )
+
+    out = _render(_panel_recall_quality(tmp_path))
+    utility_out = _render(_panel_utility(tmp_path))  # type: ignore[arg-type]
+
+    assert "hit / comp>0.85" in out
+    assert "composite p50" in out
+    assert "top composite" in utility_out
+    assert "final score >0.85" in utility_out
+    assert "strong" not in out + utility_out
+
+
+def test_utility_panel_names_observed_context_activity(tmp_path: Path) -> None:
+    out = _render(_panel_utility(tmp_path))  # type: ignore[arg-type]
+
+    assert "context activity" in out
+    assert "tokens injected" in out
+    assert "memories surfaced" in out
+    assert "tokens saved" not in out
+    assert "cost saved" not in out
+    assert "worth it?" not in out
 
 
 def test_history_caps_at_last_seven_entries(tmp_path: Path) -> None:

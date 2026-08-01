@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
+import pytest
+
+from memo.errors import StorageError
 from memo.identity import normalized_content_hash, normalized_title
 from memo.store import VecStore
 
@@ -34,6 +41,69 @@ def _put(
         topic_key=topic_key,
         namespace=namespace,
     )
+
+
+class _ExecuteProxy:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        statement: str,
+        mode: str,
+    ) -> None:
+        self._connection = connection
+        self._statement = statement
+        self._mode = mode
+        self.triggered = False
+
+    def execute(self, sql: str, parameters: Any = ()) -> sqlite3.Cursor:
+        if not self.triggered and self._statement in sql:
+            self.triggered = True
+            if self._mode == "raise":
+                raise sqlite3.OperationalError("injected ALTER failure")
+            return self._connection.execute("SELECT 1")
+        return self._connection.execute(sql, parameters)
+
+
+def _inject_migration_execute(
+    store: VecStore,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    statement: str,
+    mode: str = "raise",
+) -> _ExecuteProxy:
+    original_tx = store._tx
+    proxy: _ExecuteProxy | None = None
+
+    @contextmanager
+    def patched_tx() -> Iterator[Any]:
+        nonlocal proxy
+        with original_tx() as cx:
+            if proxy is None:
+                proxy = _ExecuteProxy(cx, statement=statement, mode=mode)
+            yield proxy
+
+    monkeypatch.setattr(store, "_tx", patched_tx)
+    # Initialize the proxy immediately so callers can assert it triggered.
+    with patched_tx():
+        pass
+    assert proxy is not None
+    return proxy
+
+
+def _downgrade_meta_schema(
+    store: VecStore,
+    *,
+    user_version: int,
+    columns: tuple[str, ...],
+) -> None:
+    with store._tx() as cx:
+        cx.execute("DROP INDEX IF EXISTS idx_meta_active_topic_unique")
+        cx.execute("DROP INDEX IF EXISTS idx_meta_topic_identity")
+        cx.execute("DROP INDEX IF EXISTS idx_meta_exact_identity")
+        for column in columns:
+            cx.execute(f"ALTER TABLE meta DROP COLUMN {column}")
+        cx.execute(f"PRAGMA user_version={user_version}")
 
 
 def test_fresh_schema_has_v7_identity_relations_and_reviews(tmp_path: Path) -> None:
@@ -87,6 +157,89 @@ def test_v4_migration_backfills_identity_without_touching_markdown(tmp_path: Pat
         assert markdown.read_bytes() == b"canonical bytes stay unchanged\n"
     finally:
         migrated.close()
+
+
+@pytest.mark.parametrize(
+    ("user_version", "columns", "failing_statement"),
+    [
+        (
+            2,
+            (
+                "topic_key",
+                "normalized_hash",
+                "session_id",
+                "revision_count",
+                "duplicate_count",
+                "last_seen_at",
+                "deleted_at",
+                "review_after",
+            ),
+            "ADD COLUMN normalized_hash",
+        ),
+        (
+            3,
+            ("verification_state", "verified_at"),
+            "ADD COLUMN verified_at",
+        ),
+    ],
+)
+def test_schema_migration_rolls_back_failed_alter_and_recovers_on_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    user_version: int,
+    columns: tuple[str, ...],
+    failing_statement: str,
+) -> None:
+    store = VecStore(tmp_path / "vec.db", dims=4)
+    try:
+        _downgrade_meta_schema(store, user_version=user_version, columns=columns)
+        proxy = _inject_migration_execute(
+            store,
+            monkeypatch,
+            statement=failing_statement,
+        )
+
+        with pytest.raises(sqlite3.OperationalError, match="injected ALTER failure"):
+            store._run_migrations()
+
+        assert proxy.triggered is True
+        after_failure = {str(row["name"]) for row in store._conn.execute("PRAGMA table_info(meta)")}
+        assert set(columns).isdisjoint(after_failure)
+        assert store.get_user_version() == user_version
+
+        store._run_migrations()
+
+        after_retry = {str(row["name"]) for row in store._conn.execute("PRAGMA table_info(meta)")}
+        assert set(columns) <= after_retry
+        assert store.get_user_version() == 8
+    finally:
+        store.close()
+
+
+def test_schema_migration_validates_columns_before_stamping_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = VecStore(tmp_path / "vec.db", dims=4)
+    try:
+        columns = ("verification_state", "verified_at")
+        _downgrade_meta_schema(store, user_version=3, columns=columns)
+        proxy = _inject_migration_execute(
+            store,
+            monkeypatch,
+            statement="ADD COLUMN verified_at",
+            mode="ignore",
+        )
+
+        with pytest.raises(StorageError, match=r"migration to v4.*verified_at"):
+            store._run_migrations()
+
+        assert proxy.triggered is True
+        after_failure = {str(row["name"]) for row in store._conn.execute("PRAGMA table_info(meta)")}
+        assert set(columns).isdisjoint(after_failure)
+        assert store.get_user_version() == 3
+    finally:
+        store.close()
 
 
 def test_topic_constraint_blocks_legacy_conflict_then_reenables(tmp_path: Path) -> None:

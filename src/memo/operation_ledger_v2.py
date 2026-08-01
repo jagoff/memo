@@ -1090,6 +1090,8 @@ class OperationLedgerV2:
                 OperationalErrorCode.INVALID_EVENT,
                 "event expires_at must be a string or null",
             )
+        if event.expires_at is not None:
+            _parse_timestamp(event.expires_at, "event expires_at")
         if not isinstance(event.caused_by, tuple) or not all(
             isinstance(item, str) for item in event.caused_by
         ):

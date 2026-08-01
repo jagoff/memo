@@ -38,3 +38,11 @@ updates:
     groups:
       vscode-extension:
         patterns: ["*"]
+
+  - package-ecosystem: "npm"
+    directory: "/web-chat"
+    schedule:
+      interval: "weekly"
+    groups:
+      web-chat:
+        patterns: ["*"]

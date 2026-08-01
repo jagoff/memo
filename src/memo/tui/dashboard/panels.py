@@ -401,11 +401,13 @@ def _panel_recall_quality(state_dir: Path) -> Panel:
         f"[bold green]{_pct(health.get('grounded_rate'))}[/bold green]  [dim](primary)[/dim]",
     )
     tbl.add_row(
-        "hit / strong", f"{_pct(health.get('hit_rate'))}  /  {_pct(health.get('strong_hit_rate'))}"
+        f"hit / comp>{health.get('composite_score_threshold', 0.85):.2f}",
+        f"{_pct(health.get('hit_rate'))}  /  "
+        f"{_pct(health.get('top_composite_score_rate', health.get('strong_hit_rate')))}",
     )
     tbl.add_row(
-        "median score",
-        f"{_val(health.get('median_top_score'), '{:.2f}')}  [dim]p50 lat[/dim] {_val(health.get('p50_latency_ms'), '{}ms')}",
+        "composite p50",
+        f"{_val(health.get('median_top_composite_score', health.get('median_top_score')), '{:.2f}')}  [dim]p50 lat[/dim] {_val(health.get('p50_latency_ms'), '{}ms')}",
     )
     tbl.add_row("sampled/fired", f"{_val(health.get('sampled'))} / {_val(health.get('fired'))}")
     tbl.add_row(
@@ -635,7 +637,7 @@ _utility_cache: _TTLCache = _TTLCache(ttl_s=30.0)
 
 
 def _panel_utility(state_dir: Path) -> Group:
-    """Panel answering 'is memo worth it?' — tokens saved, hit rate, grounding."""
+    """Panel summarizing context activity, recall, and grounding."""
     key = str(state_dir)
     cached = _utility_cache.get(key)
     if cached is None:
@@ -667,18 +669,21 @@ def _panel_utility(state_dir: Path) -> Group:
         except Exception as exc:
             _log.debug("dashboard: grounding fetch failed: %s", exc)
 
-        fired = with_hits = strong = 0
+        fired = with_hits = above_composite_threshold = 0
+        composite_threshold = 0.85
         try:
             health = recall_health(state_dir, limit=500)
             fired = health.get("fired", 0)
             with_hits = int(health.get("hit_rate", 0) * fired) if fired else 0
-            strong = int(health.get("strong_hit_rate", 0) * fired) if fired else 0
+            composite_threshold = health.get("composite_score_threshold", composite_threshold)
+            composite_rate = health.get(
+                "top_composite_score_rate", health.get("strong_hit_rate", 0)
+            )
+            above_composite_threshold = int(composite_rate * fired) if fired else 0
         except Exception as exc:
             _log.debug("dashboard: recall_health fetch failed: %s", exc)
 
-        tokens_saved = total_tokens
-        cost_usd = tokens_saved * 0.00001
-        strong_rate_pct = (strong / fired * 100) if fired else 0
+        composite_rate_pct = (above_composite_threshold / fired * 100) if fired else 0
         grounding_rate_pct = (
             (grounding_yes / (grounding_yes + grounding_no) * 100)
             if (grounding_yes + grounding_no)
@@ -693,15 +698,17 @@ def _panel_utility(state_dir: Path) -> Group:
             return "—" if v <= 0 else f"{v:.0f}%"
 
         rows = [
-            ("tokens saved", f"[yellow]{tokens_saved:,}[/yellow]"),
-            ("cost saved", f"[green]${cost_usd:.2f}[/green]"),
+            ("tokens injected", f"[yellow]{total_tokens:,}[/yellow]"),
             ("recall hooks", f"{_n(fired)} fired / {_n(with_hits)} hits"),
-            ("strong hits", f"{_pct(strong_rate_pct)} (score >0.85)"),
-            ("memories", f"[cyan]{unique_mems}[/cyan] unique"),
+            (
+                "top composite",
+                f"{_pct(composite_rate_pct)} (final score >{composite_threshold:.2f})",
+            ),
+            ("memories surfaced", f"[cyan]{unique_mems}[/cyan] unique"),
             ("grounding", f"{_pct(grounding_rate_pct)} answered"),
         ]
 
-        tbl = _kv(16)
+        tbl = _kv(18)
         for label, value in rows:
             # `value` carries Rich console markup (e.g. "[yellow]…[/yellow]");
             # Text(value) would render the tags literally, so parse the markup
@@ -710,4 +717,4 @@ def _panel_utility(state_dir: Path) -> Group:
         cached = tbl
         _utility_cache.set(cached, key)
 
-    return Group(_hdr("worth it?"), cached, Text())
+    return Group(_hdr("context activity"), cached, Text())

@@ -6,6 +6,7 @@ import json
 import re
 import time
 import uuid
+from bisect import bisect_right
 from pathlib import Path
 from typing import Any
 
@@ -42,17 +43,36 @@ def _load(path: Path | None = None) -> dict[str, Any]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise StorageError(f"chat session store is invalid JSON: {source}") from exc
-    if not isinstance(data, dict) or not isinstance(data.get("sessions"), dict):
-        raise StorageError(f"chat session store has an invalid shape: {source}")
+        raise StorageError(f"chat session store is corrupt: invalid JSON: {source}") from exc
+    sessions = data.get("sessions") if isinstance(data, dict) else None
+    if not isinstance(sessions, dict) or any(
+        not isinstance(session_id, str) or not isinstance(session, dict)
+        for session_id, session in sessions.items()
+    ):
+        raise StorageError(f"chat session store is corrupt: invalid shape: {source}")
     return data
 
 
 def _save(path: Path, data: dict[str, Any]) -> None:
-    atomic_write_text(
-        path,
-        json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-    )
+    try:
+        atomic_write_text(
+            path,
+            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
+        )
+    except OSError as exc:
+        raise StorageError(f"could not write chat sessions: {path}") from exc
+
+
+def _snapshot(session: dict[str, Any]) -> dict[str, Any]:
+    """Return a backward-compatible session with an activity watermark."""
+    out = dict(session)
+    out["updated_at"] = session.get("updated_at", session.get("created_at"))
+    return out
+
+
+def _click_storage_error(exc: StorageError) -> click.ClickException:
+    """Translate a domain storage failure at the CLI boundary."""
+    return click.ClickException(str(exc))
 
 
 def _start_session(*, session_id: str, client: str) -> dict[str, Any]:
@@ -61,10 +81,12 @@ def _start_session(*, session_id: str, client: str) -> dict[str, Any]:
         data = _load(path)
         existing = data["sessions"].get(session_id)
         if existing is None:
+            now = time.time()
             existing = {
                 "session_id": session_id,
                 "client": client,
-                "created_at": time.time(),
+                "created_at": now,
+                "updated_at": now,
                 "turns": [],
             }
             data["sessions"][session_id] = existing
@@ -89,6 +111,9 @@ def _append_turn(
         session = data["sessions"].get(session_id)
         if session is None:
             raise click.ClickException("session not found")
+        turns = session.get("turns")
+        if not isinstance(turns, list) or any(not isinstance(turn, dict) for turn in turns):
+            raise StorageError("chat session store is corrupt: invalid turns")
         turn: dict[str, Any] = {
             "turn_id": turn_id,
             "role": role,
@@ -97,15 +122,17 @@ def _append_turn(
             "client": client,
         }
         found = next(
-            (item for item in session["turns"] if item.get("turn_id") == turn_id),
+            (item for item in turns if item.get("turn_id") == turn_id),
             None,
         )
         if found is not None:
             if any(found.get(key) != value for key, value in turn.items()):
                 raise click.ClickException("turn_id already exists with a different payload")
             return dict(found)
-        turn["created_at"] = time.time()
-        session["turns"].append(turn)
+        now = time.time()
+        turn["created_at"] = now
+        turns.append(turn)
+        session["updated_at"] = now
         _save(path, data)
         return turn
 
@@ -121,7 +148,10 @@ def chat_session_group() -> None:
 @click.option("--json", "as_json", is_flag=True)
 def start(session_id: str, client: str, as_json: bool) -> None:
     sid = _valid(session_id, "session_id") if session_id else "cs-" + uuid.uuid4().hex
-    out = _start_session(session_id=sid, client=client)
+    try:
+        out = _start_session(session_id=sid, client=client)
+    except StorageError as exc:
+        raise _click_storage_error(exc) from exc
     click.echo(json.dumps(out, ensure_ascii=False) if as_json else sid)
 
 
@@ -146,14 +176,17 @@ def append(
     if not question.strip():
         raise click.ClickException("question required")
     tid = _valid(turn_id, "turn_id") if turn_id else "t-" + uuid.uuid4().hex
-    found = _append_turn(
-        session_id=sid,
-        question=question,
-        answer=answer,
-        client=client,
-        turn_id=tid,
-        role=role,
-    )
+    try:
+        found = _append_turn(
+            session_id=sid,
+            question=question,
+            answer=answer,
+            client=client,
+            turn_id=tid,
+            role=role,
+        )
+    except StorageError as exc:
+        raise _click_storage_error(exc) from exc
     click.echo(json.dumps(found, ensure_ascii=False) if as_json else tid)
 
 
@@ -162,23 +195,54 @@ def append(
 @click.option("--json", "as_json", is_flag=True)
 def get(session_id: str, as_json: bool) -> None:
     sid = _valid(session_id, "session_id")
-    obj = _load()["sessions"].get(sid)
+    try:
+        obj = _load()["sessions"].get(sid)
+    except StorageError as exc:
+        raise _click_storage_error(exc) from exc
     if obj is None:
         raise click.ClickException("session not found")
-    click.echo(json.dumps(obj, ensure_ascii=False) if as_json else sid)
+    click.echo(json.dumps(_snapshot(obj), ensure_ascii=False) if as_json else sid)
 
 
 @chat_session_group.command(name="list")
 @click.option("--limit", default=10, type=click.IntRange(1, 1000))
+@click.option(
+    "--cursor",
+    default=None,
+    help=(
+        "Stable session-id cursor. Supplying it (including an empty first "
+        "cursor) enables exhaustive pagination."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True)
-def list_sessions(limit: int, as_json: bool) -> None:
-    rows = sorted(
-        _load()["sessions"].values(),
-        key=lambda item: item.get("created_at", 0),
-        reverse=True,
-    )[:limit]
+def list_sessions(limit: int, cursor: str | None, as_json: bool) -> None:
+    try:
+        sessions = _load()["sessions"]
+    except StorageError as exc:
+        raise _click_storage_error(exc) from exc
+    if cursor is None:
+        rows = [
+            _snapshot(row)
+            for row in sorted(
+                sessions.values(),
+                key=lambda item: item.get("created_at", 0),
+                reverse=True,
+            )[:limit]
+        ]
+        payload: dict[str, Any] = {"sessions": rows}
+    else:
+        session_ids = sorted(str(session_id) for session_id in sessions)
+        start_at = bisect_right(session_ids, cursor)
+        page_ids = session_ids[start_at : start_at + limit]
+        rows = [_snapshot(sessions[session_id]) for session_id in page_ids]
+        has_more = start_at + len(page_ids) < len(session_ids)
+        payload = {
+            "sessions": rows,
+            "next_cursor": page_ids[-1] if has_more and page_ids else None,
+            "has_more": has_more,
+        }
     click.echo(
-        json.dumps({"sessions": rows}, ensure_ascii=False)
+        json.dumps(payload, ensure_ascii=False)
         if as_json
         else "\n".join(item["session_id"] for item in rows)
     )

@@ -4,13 +4,13 @@ import json
 
 import click
 
-from memo.config import Config
-from memo.event_surface import ingest_event, list_events
+from .config import Config
+from .event_surface import ingest_event, list_event_page, list_events
 
 
 @click.group("events")
 def events_group() -> None:
-    """Local diagnostic event log; not replicated. Use `memo mesh` for peers."""
+    """Local diagnostic events; not replicated. Use `memo mesh` for peers."""
 
 
 @events_group.command("ingest")
@@ -33,14 +33,35 @@ def ingest_cmd(payload: str | None, expected_epoch: int | None) -> None:
 @events_group.command("list")
 @click.option("--kind")
 @click.option("--limit", default=100, show_default=True)
-def list_cmd(kind: str | None, limit: int) -> None:
-    click.echo(
-        json.dumps(
-            list_events(
+@click.option(
+    "--cursor",
+    default=None,
+    help="Opaque cursor; enables bounded paginated output (empty means the beginning).",
+)
+@click.option("--since", help="ISO-8601 lower bound for initial cursor migration.")
+def list_cmd(kind: str | None, limit: int, cursor: str | None, since: str | None) -> None:
+    if cursor is None:
+        if since is not None:
+            raise click.UsageError("--since requires --cursor")
+        payload: object = list_events(
+            state_dir=Config.from_env().state_dir,
+            kind=kind,
+            limit=limit,
+        )
+    else:
+        try:
+            payload = list_event_page(
                 state_dir=Config.from_env().state_dir,
                 kind=kind,
                 limit=limit,
-            ),
+                cursor=cursor,
+                since=since,
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+    click.echo(
+        json.dumps(
+            payload,
             sort_keys=True,
         )
     )

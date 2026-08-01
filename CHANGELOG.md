@@ -13,16 +13,39 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Added
 
-- Memo-native authenticated terminal mesh absorbing Synapse/Memflow coordination:
-  isolated Git peers, signed messages, delivery ACKs, presence, terminal
-  registration, and exactly-once presentation.
+- `memo events list --cursor` now exposes bounded, resumable event pages from
+  the append-only JSONL journal, with an opaque cursor backed by a verified byte
+  offset, while the no-cursor command preserves its legacy JSON list contract.
+  `memo chat-session list --cursor` similarly supports stable
+  session-id pagination so consumers can drain histories larger than 1,000
+  records without replaying earlier pages.
+- Preview Memo-native authenticated terminal mesh absorbing Synapse/Memflow
+  coordination: isolated Git peers, signed messages, delivery ACKs, presence,
+  terminal registration, and exactly-once presentation. It requires explicit
+  operational-v2 activation and the `full`/`default` MCP profile.
 - Reproducible two-peer integration evidence and a per-finding audit ledger.
+
+### Changed
+
+- `memo stats --json` now emits `memo.stats.v2`: bounded context activity is
+  reported honestly as `context_tokens_injected` and `memories_surfaced`,
+  leaving estimated savings exclusively to `memo roi`. Recall dashboards and
+  CLIs now name the boosted final ranking value a composite score instead of
+  presenting it as semantic confidence; the ambiguous v1 score fields remain
+  compatibility aliases.
 
 ### Fixed
 
 - Cross-terminal authorization, actor/device binding, local-only federation
   leaks, SQLite lifecycle warnings, concurrent terminal write races, and fresh
   Linux installs attempting unavailable macOS authority enrollment.
+- Operational-v2 signal and write-receipt projections now persist and rebuild
+  instead of rejecting stable-facade writes. Durable promotion retries are
+  scheduled from the observed failure time, cap exponential work before
+  shifting, and no longer starve later intents in the same batch.
+- Fresh macOS installs no longer auto-enroll the preview v2 authority unless
+  `MEMO_OPERATIONAL_V2_AUTO_ACTIVATE=1` is explicitly set; generic wheels do
+  not ship source-only Swift as if a native helper were available.
 
 ## [4.7.0] - 2026-07-31
 

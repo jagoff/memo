@@ -44,13 +44,15 @@ def test_terminal_event_idempotency_conflict_is_rejected(tmp_path: Path) -> None
         ingest_event(_event("terminal-a-1", body="changed"), state_dir=tmp_path)
 
 
-def test_terminal_event_corruption_fails_closed(tmp_path: Path) -> None:
+def test_terminal_event_ingest_salvages_a_malformed_legacy_line(tmp_path: Path) -> None:
     event_dir = tmp_path / "events"
     event_dir.mkdir()
     (event_dir / "terminal-conversation.jsonl").write_text("not-json\n", encoding="utf-8")
 
-    with pytest.raises(StorageError, match="invalid JSON"):
-        ingest_event(_event("terminal-a-1"), state_dir=tmp_path)
+    result = ingest_event(_event("terminal-a-1"), state_dir=tmp_path)
+
+    assert result["accepted"] is True
+    assert [row["event_id"] for row in list_events(state_dir=tmp_path)] == ["terminal-a-1"]
 
 
 @pytest.mark.parametrize("encoded", ("not-json", "[]"))

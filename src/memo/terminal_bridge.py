@@ -259,7 +259,10 @@ def verify_terminal_registration(
             roster_version=roster_version,
         )
         key = roster.key(key_id)
-        if key.device_id != signer_device_id:
+        if (
+            key.device_id != signer_device_id
+            or registration.principal_id != f"{signer_device_id}:{registration.session_id}"
+        ):
             return False
         verifier.verify(
             domain=TERMINAL_REGISTRATION_SIGNATURE_DOMAIN,
@@ -447,12 +450,7 @@ class TerminalBridge:
                 retryable=False,
             )
         normalized = replace(registration, capabilities=capabilities)
-        if not self.registration_verifier(normalized):
-            raise OperationalError(
-                OperationalErrorCode.SIGNATURE_INVALID,
-                "terminal registration signature is invalid",
-                retryable=False,
-            )
+        self._verify_registration(normalized)
 
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
@@ -654,10 +652,19 @@ class TerminalBridge:
         terminal_id: str,
         event_id: str,
         observation: ReconciliationObservation,
+        peer_uid: int | None = None,
     ) -> PresenterReceipt:
+        if not terminal_id.strip() or not event_id.strip():
+            raise _invalid("terminal reconciliation identifiers must be non-empty")
         if observation not in {"presented", "not_presented"}:
             raise _invalid("terminal reconciliation observation is invalid")
+        now = self.clock().astimezone(UTC)
         with self._lock:
+            registration = self._current_registration(
+                terminal_id,
+                peer_uid=peer_uid,
+                now=now,
+            )
             row = self._connection.execute(
                 """
                 SELECT * FROM presenter_receipt
@@ -671,6 +678,11 @@ class TerminalBridge:
                     "terminal presenter receipt does not exist",
                     retryable=False,
                 )
+            if (
+                str(row["principal_id"]) != registration.principal_id
+                or str(row["session_id"]) != registration.session_id
+            ):
+                raise _invalid("terminal receipt credential binding does not match")
             current = self._receipt(row)
             if current.state == "presented":
                 if observation == "presented":
@@ -684,7 +696,7 @@ class TerminalBridge:
                 replace(
                     current,
                     state="presented" if observation == "presented" else "known_failed",
-                    presenter_timestamp=_canonical_time(self.clock()),
+                    presenter_timestamp=_canonical_time(now),
                     error_code="" if observation == "presented" else "reconciled_not_presented",
                 )
             )
@@ -717,21 +729,12 @@ class TerminalBridge:
                 "SELECT * FROM terminal_registration WHERE terminal_id = ?",
                 (request.terminal_id,),
             ).fetchone()
-        if row is None:
-            raise OperationalError(
-                OperationalErrorCode.NOT_FOUND,
-                "terminal registration does not exist",
-                retryable=False,
-            )
-        registration = self._registration(row)
-        if peer_uid != registration.uid:
-            raise _invalid("terminal socket peer UID is not authorized")
-        if _parse_time(registration.expires_at) <= now:
-            raise OperationalError(
-                OperationalErrorCode.EXPIRED,
-                "terminal registration is expired",
-                retryable=False,
-            )
+        registration = self._current_registration(
+            request.terminal_id,
+            peer_uid=peer_uid,
+            now=now,
+            row=row,
+        )
         if (
             request.principal_id != registration.principal_id
             or request.session_id != registration.session_id
@@ -740,6 +743,52 @@ class TerminalBridge:
         if request.mode not in registration.capabilities:
             raise _invalid(f"terminal is not authorized for {request.mode!r}")
         return registration
+
+    def _current_registration(
+        self,
+        terminal_id: str,
+        *,
+        peer_uid: int | None,
+        now: datetime,
+        row: sqlite3.Row | None = None,
+    ) -> TerminalRegistration:
+        """Load and reauthenticate the persisted terminal credential."""
+
+        if row is None:
+            with self._lock:
+                row = self._connection.execute(
+                    "SELECT * FROM terminal_registration WHERE terminal_id = ?",
+                    (terminal_id,),
+                ).fetchone()
+        if row is None:
+            raise OperationalError(
+                OperationalErrorCode.NOT_FOUND,
+                "terminal registration does not exist",
+                retryable=False,
+            )
+        registration = self._registration(row)
+        if peer_uid is None or peer_uid != registration.uid:
+            raise _invalid("terminal socket peer UID is not authorized")
+        if _parse_time(registration.expires_at) <= now:
+            raise OperationalError(
+                OperationalErrorCode.EXPIRED,
+                "terminal registration is expired",
+                retryable=False,
+            )
+        self._verify_registration(registration)
+        return registration
+
+    def _verify_registration(self, registration: TerminalRegistration) -> None:
+        try:
+            verified = self.registration_verifier(registration)
+        except Exception:
+            verified = False
+        if not verified:
+            raise OperationalError(
+                OperationalErrorCode.SIGNATURE_INVALID,
+                "terminal registration signature is invalid",
+                retryable=False,
+            )
 
     @staticmethod
     def _request_hash(request: TerminalPresentRequest, *, payload_hash: str) -> str:

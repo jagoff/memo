@@ -285,16 +285,21 @@ def frozen_intent_from_row(row: Mapping[str, object]) -> FrozenPromotionIntent:
     return intent
 
 
-def deterministic_retry_at(created_at: str, attempt_number: int) -> str:
+def deterministic_retry_at(failure_at: str, attempt_number: int) -> str:
+    """Schedule bounded exponential backoff from the observed failure time."""
     if (
         isinstance(attempt_number, bool)
         or not isinstance(attempt_number, int)
         or attempt_number < 1
     ):
         raise ValidationError("attempt_number must be an integer >= 1")
-    canonical = _canonical_timestamp(created_at, field="created_at")
+    canonical = _canonical_timestamp(failure_at, field="failure_at")
     parsed = datetime.fromisoformat(canonical.replace("Z", "+00:00"))
-    delay = min(2 ** (attempt_number - 1), _MAX_RETRY_SECONDS)
+    # Cap the exponent before shifting. Computing ``2 ** attempt_number`` and
+    # only then applying ``min`` allows a corrupt/high retry counter to consume
+    # unbounded CPU and memory even though the resulting delay is capped.
+    exponent = min(attempt_number - 1, _MAX_RETRY_SECONDS.bit_length())
+    delay = min(1 << exponent, _MAX_RETRY_SECONDS)
     return (
         (parsed + timedelta(seconds=delay))
         .astimezone(UTC)
@@ -392,7 +397,7 @@ class DurableOutboxWorker:
     def _reconcile_one(
         self,
         intent: FrozenPromotionIntent,
-    ) -> tuple[MemoryRecord | None, BaseException | None]:
+    ) -> tuple[MemoryRecord | None, BaseException | None, BaseException | None]:
         try:
             saved: MemoryRecord = self.memory.save_operation(
                 operation_key=intent.operation_key,
@@ -412,9 +417,10 @@ class DurableOutboxWorker:
                     "reason": _safe_failure_reason(exc),
                 },
             )
-            return None, exc
+            return None, exc, None
         except Exception as exc:
             attempt_number = intent.attempts + 1
+            failure_at = _canonical_timestamp(self.clock(), field="failure_at")
             self._commit(
                 event_type=DURABLE_PROMOTION_RETRY_SCHEDULED,
                 intent=intent,
@@ -425,13 +431,14 @@ class DurableOutboxWorker:
                     "request_hash": intent.request_hash,
                     "attempt_number": attempt_number,
                     "failure_class": exc.__class__.__name__,
+                    "failure_at": failure_at,
                     "retry_at": deterministic_retry_at(
-                        intent.created_at,
+                        failure_at,
                         attempt_number,
                     ),
                 },
             )
-            raise
+            return None, None, exc
         self._commit(
             event_type=DURABLE_PROMOTION_COMPLETED,
             intent=intent,
@@ -443,7 +450,7 @@ class DurableOutboxWorker:
                 "memory_id": saved.id,
             },
         )
-        return saved, None
+        return saved, None, None
 
     def reconcile(self, intent: FrozenPromotionIntent) -> MemoryRecord:
         """Synchronously reconcile one caller-owned intent."""
@@ -474,9 +481,11 @@ class DurableOutboxWorker:
         current = self.store.outbox_intent(intent.id)
         if current is None:
             raise StorageError("durable promotion intent disappeared from the view")
-        saved, permanent = self._reconcile_one(current)
+        saved, permanent, transient = self._reconcile_one(current)
         if permanent is not None:
             raise permanent
+        if transient is not None:
+            raise transient
         if saved is None:
             raise StorageError("durable promotion reconciliation produced no memory")
         return saved
@@ -489,11 +498,10 @@ class DurableOutboxWorker:
         quarantined = 0
         retried = 0
         for intent in intents:
-            try:
-                saved, permanent = self._reconcile_one(intent)
-            except Exception:
+            saved, permanent, transient = self._reconcile_one(intent)
+            if transient is not None:
                 retried += 1
-                raise
+                continue
             if permanent is not None:
                 quarantined += 1
                 continue

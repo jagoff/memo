@@ -1,14 +1,34 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
+import sqlite3
+
+from memo.errors import StorageError
 
 from ._base import _StoreBase
 
 _log = logging.getLogger(__name__)
 
 _CURRENT_USER_VERSION = 8
+_IDENTITY_BACKFILL_BATCH_SIZE = 500
+
+
+def _require_columns(
+    cx: sqlite3.Connection,
+    *,
+    table: str,
+    expected: set[str],
+    target_version: int,
+) -> None:
+    """Refuse to stamp a migration whose complete schema is not present."""
+    actual = {str(row["name"]) for row in cx.execute(f"PRAGMA table_info({table})").fetchall()}
+    missing = sorted(expected - actual)
+    if missing:
+        raise StorageError(
+            f"schema migration to v{target_version} incomplete for {table}: "
+            f"missing columns {', '.join(missing)}"
+        )
 
 
 class _MigrationsMixin(_StoreBase):
@@ -101,9 +121,15 @@ class _MigrationsMixin(_StoreBase):
                 }
                 for col, ddl in new_cols.items():
                     if col not in cols:
-                        with contextlib.suppress(Exception):
-                            cx.execute(ddl)
+                        cx.execute(ddl)
+                _require_columns(
+                    cx,
+                    table="meta",
+                    expected=set(new_cols),
+                    target_version=3,
+                )
                 self.set_user_version(3)
+                current = 3
             _log.info("migrated to v3: session pattern columns")
 
         # v3 → v4: add verification state tracking columns
@@ -116,8 +142,13 @@ class _MigrationsMixin(_StoreBase):
                 }
                 for col, ddl in new_cols.items():
                     if col not in cols:
-                        with contextlib.suppress(Exception):
-                            cx.execute(ddl)
+                        cx.execute(ddl)
+                _require_columns(
+                    cx,
+                    table="meta",
+                    expected=set(new_cols),
+                    target_version=4,
+                )
                 self.set_user_version(4)
             _log.info("migrated to v4: verification state tracking columns")
             current = 4
@@ -146,30 +177,31 @@ class _MigrationsMixin(_StoreBase):
                     if col not in cols:
                         cx.execute(ddl)
 
-                rows = cx.execute(
+                identity_cursor = cx.execute(
                     "SELECT m.id, m.path, m.title, m.tags, m.topic_key, "
                     "COALESCE(f.body, '') AS body "
                     "FROM meta m LEFT JOIN fts f ON f.id = m.id"
-                ).fetchall()
-                for row in rows:
-                    try:
-                        raw_tags = json.loads(row["tags"] or "[]")
-                    except (TypeError, ValueError):
-                        raw_tags = []
-                    tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
-                    safe_title = sanitize_persisted_text(str(row["title"] or "")).text
-                    safe_body = sanitize_persisted_text(str(row["body"] or "")).text
-                    cx.execute(
-                        "UPDATE meta SET namespace = ?, topic_key = ?, "
-                        "normalized_title = ?, normalized_content_hash = ? WHERE id = ?",
-                        (
-                            namespace_for_index(tags, path=str(row["path"] or "")),
-                            canonical_topic_key(row["topic_key"]),
-                            normalized_title(safe_title),
-                            normalized_content_hash(safe_body),
-                            row["id"],
-                        ),
-                    )
+                )
+                while batch := identity_cursor.fetchmany(_IDENTITY_BACKFILL_BATCH_SIZE):
+                    for row in batch:
+                        try:
+                            raw_tags = json.loads(row["tags"] or "[]")
+                        except (TypeError, ValueError):
+                            raw_tags = []
+                        tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
+                        safe_title = sanitize_persisted_text(str(row["title"] or "")).text
+                        safe_body = sanitize_persisted_text(str(row["body"] or "")).text
+                        cx.execute(
+                            "UPDATE meta SET namespace = ?, topic_key = ?, "
+                            "normalized_title = ?, normalized_content_hash = ? WHERE id = ?",
+                            (
+                                namespace_for_index(tags, path=str(row["path"] or "")),
+                                canonical_topic_key(row["topic_key"]),
+                                normalized_title(safe_title),
+                                normalized_content_hash(safe_body),
+                                row["id"],
+                            ),
+                        )
                 cx.execute(
                     "CREATE INDEX IF NOT EXISTS idx_meta_topic_identity "
                     "ON meta(namespace, topic_key)"

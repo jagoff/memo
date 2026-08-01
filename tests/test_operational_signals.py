@@ -52,12 +52,15 @@ def test_signal_is_fenced_and_idempotent(tmp_path: Path) -> None:
     assert [row.marker for row in store.list_signals()] == ["watch-1"]
 
 
-def test_signal_rejects_missing_or_stale_context(tmp_path: Path) -> None:
+def test_signal_requires_write_context_but_watcher_epoch_is_independent(tmp_path: Path) -> None:
     context = _context()
     store = _store(tmp_path, context)
     with pytest.raises(Exception, match="authenticated epoch context"):
         OperationalStore(tmp_path / "missing", device_id="device-test").remember_signal(
             marker="watch-1", epoch=3
         )
-    with pytest.raises(ValueError, match="epoch"):
-        store.remember_signal(marker="watch-2", epoch=2, fence="control-test")
+    remembered = store.remember_signal(marker="watch-2", epoch=2, fence="leader-a")
+    assert remembered.epoch == 2
+    assert remembered.fence == "leader-a"
+    with pytest.raises(ValueError, match="stale signal epoch"):
+        store.remember_signal(marker="watch-2", epoch=1, fence="leader-old")

@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from memo.atomic_io import atomic_write_text, authority_write_lock
 from memo.errors import OperationalError, OperationalErrorCode
@@ -17,7 +20,7 @@ from memo.identity import PrincipalIdentity
 from memo.operation_ledger_v2 import OperationLedgerV2
 from memo.operation_views import OperationalViewStore
 from memo.operational import OperationalStore
-from memo.operational_epoch import EpochFence, bind_system_context
+from memo.operational_epoch import CommitContext, EpochFence, bind_system_context
 from memo.operational_event import (
     EpochMarkerAuthorization,
     canonical_json_bytes,
@@ -86,6 +89,31 @@ class OperationalRuntimeAuthority:
     key_id: str
 
 
+class _LegacyRuntimeAdmission:
+    """Process-local admission for the compatible unsigned v1 backend.
+
+    V1 cannot provide v2's durable signed authority. This private capability
+    still keeps journal mutation behind the selected store and prevents the
+    public read-only ledger facade from becoming a write bypass.
+    """
+
+    def __init__(self, context: CommitContext) -> None:
+        self._context = context
+
+    def verify(self, context: CommitContext) -> None:
+        if context != self._context:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "legacy operational runtime admission is invalid",
+                retryable=False,
+            )
+
+    @contextmanager
+    def verified(self, context: CommitContext) -> Iterator[None]:
+        self.verify(context)
+        yield
+
+
 def _identity(device_id: str) -> PrincipalIdentity:
     return PrincipalIdentity(
         principal_id=f"memo:{device_id}",
@@ -94,6 +122,23 @@ def _identity(device_id: str) -> PrincipalIdentity:
         device_id=device_id,
         session_id="operational-runtime",
         source_client="memo",
+    )
+
+
+def _legacy_runtime_store(cfg: Config) -> OperationalStore:
+    identity = _identity(cfg.device_id)
+    context = CommitContext(
+        identity=identity,
+        authority_epoch=0,
+        control_oid=f"legacy-runtime-{secrets.token_hex(16)}",
+        origin_device=cfg.device_id,
+    )
+    admission = _LegacyRuntimeAdmission(context)
+    return OperationalStore(
+        cfg.state_dir,
+        device_id=cfg.device_id,
+        context_provider=lambda: context,
+        epoch_fence=cast(EpochFence, admission),
     )
 
 
@@ -404,6 +449,8 @@ def select_operational_store(cfg: Config) -> OperationalStore:
 
     legacy_root = cfg.state_dir / "journal"
     if legacy_root.exists() or (cfg.operational_context_provider is not None and injected is None):
+        if cfg.operational_context_provider is None and cfg.operational_epoch_fence is None:
+            return _legacy_runtime_store(cfg)
         return OperationalStore(
             cfg.state_dir,
             device_id=cfg.device_id,
@@ -420,7 +467,7 @@ def select_operational_store(cfg: Config) -> OperationalStore:
     # CPU install must retain the byte-compatible v1 backend instead of
     # crashing during its first `memo save`.
     if not flag_bool("MEMO_OPERATIONAL_V2_AUTO_ACTIVATE") or sys.platform != "darwin":
-        return OperationalStore(cfg.state_dir, device_id=cfg.device_id)
+        return _legacy_runtime_store(cfg)
     authority = build_fresh_productive_authority(cfg)
     return activate_fresh_operational_v2(cfg, authority=authority)
 

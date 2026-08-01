@@ -316,6 +316,7 @@ def _build_server(
         _srv_feedback.register(server, memory)
         _srv_multimodal.register(server, memory)
         _srv_collaborative.register(server, memory)
+        _srv_mesh.register(server, memory)
         _srv_asof.register(server, memory)
         # Valid-time (world-validity) as-of tools — separate semantics from the
         # transaction-time reconstruction tools above; route through the live
@@ -345,7 +346,6 @@ def _build_server(
     _srv_core_history.register(server, memory)
     _srv_idle_capture.register(server, memory)
     _srv_operational.register(server, memory)
-    _srv_mesh.register(server, memory)
     _srv_resources.register(server, memory)
     _srv_profile.register(server, memory)
     _srv_prompts.register(server, memory)

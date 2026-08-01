@@ -25,6 +25,8 @@ OUTCOME_RECORDED = "memo.operational.outcome.recorded.v1"
 SESSION_CHECKPOINTED = "memo.operational.session.checkpointed.v1"
 SESSION_RECOVERABLE = "memo.operational.session.recoverable.v1"
 SESSION_TERMINATED = "memo.operational.session.terminated.v1"
+SIGNAL_REMEMBERED = "memo.operational.signal.remembered.v1"
+RECEIPT_RECORDED = "memo.operational.receipt.recorded.v1"
 COORDINATION_CREATED = "memo.operational.coordination.created.v1"
 COORDINATION_CLAIMED = "memo.operational.coordination.claimed.v1"
 COORDINATION_COMPLETED = "memo.operational.coordination.completed.v1"
@@ -315,6 +317,26 @@ def _session_terminated(payload: Mapping[str, object]) -> None:
     _string_allow_empty(payload, "summary")
 
 
+def _signal_remembered(payload: Mapping[str, object]) -> None:
+    _exact_fields(
+        payload,
+        frozenset({"marker", "epoch", "fence", "payload", "created_at"}),
+    )
+    _string(payload, "marker")
+    _integer(payload, "epoch")
+    _string_allow_empty(payload, "fence")
+    signal_payload = _mapping(payload, "payload")
+    _json_value(signal_payload, field="payload")
+    _timestamp(payload, "created_at")
+
+
+def _receipt_recorded(payload: Mapping[str, object]) -> None:
+    _exact_fields(payload, frozenset({"operation", "metadata"}))
+    _string(payload, "operation")
+    metadata = _mapping(payload, "metadata")
+    _json_value(metadata, field="metadata")
+
+
 def _coordination_created(payload: Mapping[str, object]) -> None:
     _string(payload, "task_id")
     _string(payload, "summary")
@@ -450,6 +472,7 @@ def _promotion_retry_scheduled(payload: Mapping[str, object]) -> None:
                 "request_hash",
                 "attempt_number",
                 "failure_class",
+                "failure_at",
                 "retry_at",
             }
         ),
@@ -457,6 +480,7 @@ def _promotion_retry_scheduled(payload: Mapping[str, object]) -> None:
     _promotion_binding(payload)
     _integer(payload, "attempt_number", minimum=1)
     _string(payload, "failure_class")
+    _timestamp(payload, "failure_at")
     _timestamp(payload, "retry_at")
 
 
@@ -582,6 +606,8 @@ def _presence_lease(payload: Mapping[str, object]) -> None:
         "id",
         "actor_id",
         "device_id",
+        "principal_id",
+        "session_id",
         "project",
         "workspace",
         "topic",
@@ -611,6 +637,8 @@ EVENT_TYPES: dict[str, PayloadValidator] = {
     SESSION_CHECKPOINTED: _session_checkpointed,
     SESSION_RECOVERABLE: _session_recoverable,
     SESSION_TERMINATED: _session_terminated,
+    SIGNAL_REMEMBERED: _signal_remembered,
+    RECEIPT_RECORDED: _receipt_recorded,
     COORDINATION_CREATED: _coordination_created,
     COORDINATION_CLAIMED: _coordination_claimed,
     COORDINATION_COMPLETED: _coordination_completed,
@@ -701,10 +729,12 @@ __all__ = [
     "PRESENCE_LEASE_EXPIRED",
     "PRESENCE_RENEWED",
     "PRESENCE_UPDATED",
+    "RECEIPT_RECORDED",
     "ROSTER_UPDATED",
     "SESSION_CHECKPOINTED",
     "SESSION_RECOVERABLE",
     "SESSION_TERMINATED",
+    "SIGNAL_REMEMBERED",
     "TASK_ASSIGNED",
     "TASK_CANCELLED",
     "TASK_COMPLETED",

@@ -60,6 +60,8 @@ OPERATIONAL_TOOL_NAMES = frozenset(
         "memo_outcome_record",
         "memo_procedure_candidates",
         "memo_procedure_promote",
+        "memo_signal_list",
+        "memo_signal_remember",
     }
 )
 
@@ -187,8 +189,8 @@ def test_mcp_full_profile_registers_every_decorated_server_tool(
 @pytest.mark.parametrize(
     ("profile", "expected_count"),
     [
-        ("agent", 49),
-        ("core", 66),
+        ("agent", 40),
+        ("core", 57),
         ("full", 170),
     ],
 )
@@ -200,4 +202,10 @@ def test_mcp_profile_tool_counts(
     assert len(names) == expected_count
     assert "memo_version" in names
     assert "memo_graph" in names
-    assert names >= OPERATIONAL_TOOL_NAMES
+    expected_operational = OPERATIONAL_TOOL_NAMES
+    if profile != "full":
+        expected_operational = frozenset(
+            name for name in OPERATIONAL_TOOL_NAMES if not name.startswith("memo_mesh_")
+        )
+        assert not any(name.startswith("memo_mesh_") for name in names)
+    assert names >= expected_operational

@@ -37,12 +37,23 @@ def test_stats_closes_memory(tmp_path: Path) -> None:
         patch("memo.cli_stats.Memory", return_value=mock_memory),
         patch("memo.cli_stats.read_context_cost_log", return_value=[]),
         patch("memo.cli_stats.read_grounding_log", return_value=[]),
-        patch("memo.cli_stats.recall_health", return_value={}),
+        patch(
+            "memo.cli_stats.recall_health",
+            return_value={
+                "fired": 1,
+                "hit_rate": 1.0,
+                "composite_score_threshold": 0.85,
+                "top_composite_score_rate": 1.0,
+                "p50_latency_ms": 12,
+            },
+        ),
         patch("memo.cli_stats.consult_breakdown", return_value={"consumers": []}),
     ):
         result = runner.invoke(cli, ["stats"], env=env)
 
     assert result.exit_code == 0, result.output
+    assert "top composite 100% (final ranking score >0.85)" in result.output
+    assert "strong hits" not in result.output
     mock_memory.close.assert_called_once_with()
 
 
@@ -75,7 +86,9 @@ def test_stats_json_emits_stable_report(tmp_path: Path) -> None:
         result = runner.invoke(cli, ["stats", "--json"], env=env)
 
     assert result.exit_code == 0, result.output
-    assert '"schema": "memo.stats.v1"' in result.output
+    assert '"schema": "memo.stats.v2"' in result.output
     assert '"total": 3' in result.output
-    assert '"tokens_saved": 12' in result.output
+    assert '"context_tokens_injected": 12' in result.output
+    assert '"memories_surfaced": 1' in result.output
+    assert '"tokens_saved"' not in result.output
     mock_memory.close.assert_called_once_with()

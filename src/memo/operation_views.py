@@ -53,9 +53,11 @@ from memo.operational_event_types import (
     PRESENCE_ANNOUNCED,
     PRESENCE_LEASE_EXPIRED,
     PRESENCE_RENEWED,
+    RECEIPT_RECORDED,
     SESSION_CHECKPOINTED,
     SESSION_RECOVERABLE,
     SESSION_TERMINATED,
+    SIGNAL_REMEMBERED,
     TASK_ASSIGNED,
     TASK_CANCELLED,
     TASK_COMPLETED,
@@ -132,6 +134,8 @@ _RESET_STATEMENTS = (
     "DELETE FROM conflicts",
     "DELETE FROM outcomes",
     "DELETE FROM sessions",
+    "DELETE FROM signals",
+    "DELETE FROM receipts",
     "DELETE FROM durable_outbox",
     "DELETE FROM quarantined_events",
 )
@@ -178,6 +182,12 @@ def _event_order(event: OperationalEventV2) -> tuple[str, str, int]:
         event.origin_device,
         event.origin_sequence,
     )
+
+
+def _idempotency_scope(event: OperationalEventV2) -> str:
+    if event.visibility == "shared":
+        return f"{event.project}\0{event.actor.principal_id}"
+    return event.project
 
 
 def _event_from_json(encoded: str, *, description: str) -> OperationalEventV2:
@@ -461,6 +471,101 @@ def _outcome_recorded(
         table="outcomes",
         key=str(payload["task_id"]),
     )
+
+
+def _signal_remembered(
+    connection: sqlite3.Connection,
+    event: OperationalEventV2,
+) -> Mapping[str, object]:
+    payload = _payload(event)
+    marker = str(payload["marker"])
+    incoming_epoch = payload["epoch"]
+    if isinstance(incoming_epoch, bool) or not isinstance(incoming_epoch, int):
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            f"operational signal epoch is invalid: {marker}",
+        )
+    if event.target_id != marker:
+        raise _failure(
+            OperationalErrorCode.INVALID_EVENT,
+            "operational signal target does not match marker",
+        )
+    existing = _read_row(
+        connection,
+        "SELECT row_json FROM signals WHERE marker = ?",
+        marker,
+        description="signals",
+    )
+    if existing is not None:
+        current_epoch = existing.get("epoch")
+        if isinstance(current_epoch, bool) or not isinstance(current_epoch, int):
+            raise _failure(
+                OperationalErrorCode.STORAGE_UNAVAILABLE,
+                f"stored operational signal epoch is invalid: {marker}",
+            )
+        if incoming_epoch < current_epoch:
+            return existing
+        if incoming_epoch == current_epoch:
+            if existing == payload:
+                return existing
+            raise _failure(
+                OperationalErrorCode.IDEMPOTENCY_CONFLICT,
+                f"operational signal epoch identifies different content: {marker}",
+            )
+    row = {
+        **payload,
+        "created_at": _canonical_timestamp(str(payload["created_at"])),
+    }
+    connection.execute(
+        """
+        INSERT INTO signals(marker, epoch, row_json, updated_event_id)
+        VALUES(?, ?, ?, ?)
+        ON CONFLICT(marker) DO UPDATE SET
+          epoch = excluded.epoch,
+          row_json = excluded.row_json,
+          updated_event_id = excluded.updated_event_id
+        """,
+        (marker, incoming_epoch, _json(row), event.event_id),
+    )
+    return row
+
+
+def _receipt_recorded(
+    connection: sqlite3.Connection,
+    event: OperationalEventV2,
+) -> Mapping[str, object]:
+    payload = _payload(event)
+    row = {
+        "schema": "memo.write_receipt.v1",
+        "receipt_id": event.event_id,
+        "operation": payload["operation"],
+        "subject_uri": event.subject_uri,
+        "trace_id": event.trace_id,
+        "actor_id": event.actor.actor_id,
+        "event_hash": event.event_hash,
+        "generated_at": event.created_at,
+        "metadata": payload["metadata"],
+    }
+    connection.execute(
+        """
+        INSERT INTO receipts(
+          receipt_id, operation, subject_uri, row_json, updated_event_id
+        ) VALUES(?, ?, ?, ?, ?)
+        ON CONFLICT(receipt_id) DO UPDATE SET
+          operation = excluded.operation,
+          subject_uri = excluded.subject_uri,
+          row_json = excluded.row_json,
+          updated_event_id = excluded.updated_event_id
+        """,
+        (
+            event.event_id,
+            str(payload["operation"]),
+            event.subject_uri,
+            _json(row),
+            event.event_id,
+        ),
+    )
+    return row
 
 
 def _event_payload_result(
@@ -783,7 +888,8 @@ def _promotion_retry_scheduled(
             f"durable promotion retry attempt is not monotonic: {promotion_id}",
         )
     retry_at = _canonical_timestamp(str(payload["retry_at"]))
-    expected_retry_at = deterministic_retry_at(str(row["created_at"]), requested_attempt)
+    failure_at = _canonical_timestamp(str(payload["failure_at"]))
+    expected_retry_at = deterministic_retry_at(failure_at, requested_attempt)
     if retry_at != expected_retry_at:
         raise _failure(
             OperationalErrorCode.INVALID_EVENT,
@@ -793,6 +899,7 @@ def _promotion_retry_scheduled(
         {
             "status": "retry_scheduled",
             "attempts": requested_attempt,
+            "failure_at": failure_at,
             "retry_at": retry_at,
             "failure_class": payload["failure_class"],
         }
@@ -881,6 +988,8 @@ EVENT_REDUCERS: dict[str, EventReducer] = {
     SESSION_CHECKPOINTED: _session_checkpointed,
     SESSION_RECOVERABLE: _session_recoverable,
     SESSION_TERMINATED: _session_terminated,
+    SIGNAL_REMEMBERED: _signal_remembered,
+    RECEIPT_RECORDED: _receipt_recorded,
     DURABLE_PROMOTION_REQUESTED: _promotion_requested,
     DURABLE_PROMOTION_RETRY_SCHEDULED: _promotion_retry_scheduled,
     DURABLE_PROMOTION_COMPLETED: _promotion_completed,
@@ -1054,12 +1163,13 @@ class OperationalViewStore:
                 (event.event_id,),
             )
             if event.idempotency_key:
+                idempotency_scope = _idempotency_scope(event)
                 existing_key = connection.execute(
                     """
                     SELECT request_hash, event_id FROM idempotency
                     WHERE scope = ? AND idempotency_key = ?
                     """,
-                    (event.project, event.idempotency_key),
+                    (idempotency_scope, event.idempotency_key),
                 ).fetchone()
                 if existing_key is not None:
                     if (
@@ -1070,7 +1180,7 @@ class OperationalViewStore:
                             OperationalErrorCode.IDEMPOTENCY_CONFLICT,
                             (
                                 "idempotency key identifies a different request: "
-                                f"{event.project}/{event.idempotency_key}"
+                                f"{idempotency_scope}/{event.idempotency_key}"
                             ),
                         )
                 else:
@@ -1081,7 +1191,7 @@ class OperationalViewStore:
                         ) VALUES(?, ?, ?, ?, ?)
                         """,
                         (
-                            event.project,
+                            idempotency_scope,
                             event.idempotency_key,
                             event.content_hash,
                             event.event_id,
@@ -1395,6 +1505,16 @@ class OperationalViewStore:
                 connection,
                 "SELECT session_id, row_json FROM sessions",
                 "session_id",
+            ),
+            "signals": self._rows(
+                connection,
+                "SELECT marker, row_json FROM signals",
+                "marker",
+            ),
+            "receipts": self._rows(
+                connection,
+                "SELECT receipt_id, row_json FROM receipts",
+                "receipt_id",
             ),
             "durable_outbox": self._rows(
                 connection,

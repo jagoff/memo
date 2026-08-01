@@ -15,6 +15,7 @@ from typing import Protocol
 import pytest
 
 from memo.errors import OperationalError
+from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner, OperationalVerifier
 from memo.terminal_bridge import (
     PresenterOutcome,
@@ -96,10 +97,20 @@ def _present_in_process(
     results: _Queue,
     presentations: _Queue,
     release: _Event,
+    roster: VerificationRoster,
 ) -> None:
     now = datetime.fromisoformat(now_text)
     presenter = _BlockingProcessPresenter(presentations, release)
-    with TerminalBridge(database, presenter=presenter, clock=lambda: now) as bridge:
+    with TerminalBridge(
+        database,
+        presenter=presenter,
+        clock=lambda: now,
+        registration_verifier=lambda candidate: verify_terminal_registration(
+            candidate,
+            verifier=OperationalVerifier(),
+            roster=roster,
+        ),
+    ) as bridge:
         ready.put("ready")
         if not start.wait(10):
             raise RuntimeError("test process start timed out")
@@ -114,7 +125,7 @@ def _unsigned_registration(
 ) -> TerminalRegistration:
     return TerminalRegistration(
         id=terminal_id,
-        principal_id="principal-a",
+        principal_id="device-a:session-a",
         session_id="session-a",
         uid=os.getuid(),
         capabilities=("inject", "notify"),
@@ -172,7 +183,7 @@ def _request(
         sanitized_payload_hash="",
         deadline=(now + timedelta(minutes=1)).isoformat(),
         idempotency_key=f"present-{event_id}",
-        principal_id="principal-a",
+        principal_id="device-a:session-a",
         session_id="session-a",
     )
 
@@ -262,6 +273,20 @@ def test_registration_signature_binds_all_fields_device_and_key(tmp_path: Path) 
     )
     assert not verify_terminal_registration(
         correctly_signed_wrong_device,
+        verifier=verifier,
+        roster=authority.roster,
+    )
+    wrong_session_principal = sign_terminal_registration(
+        replace(
+            _unsigned_registration(now),
+            principal_id="device-a:other-session",
+        ),
+        signer=authority.signer,
+        key_id=authority.key_id,
+        device_id="device-a",
+    )
+    assert not verify_terminal_registration(
+        wrong_session_principal,
         verifier=verifier,
         roster=authority.roster,
     )
@@ -359,6 +384,151 @@ def test_duplicate_reserves_before_side_effect(tmp_path: Path) -> None:
     assert duplicate == first
 
 
+def test_reopened_bridge_without_verifier_cannot_present(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 7, 31, 12, tzinfo=UTC)
+    authority = build_test_fresh_v2_authority(tmp_path / "authority", device_id="device-a")
+    database = tmp_path / "terminal.sqlite"
+    with TerminalBridge(
+        database,
+        presenter=FakePresenter(),
+        clock=lambda: now,
+        registration_verifier=_registration_verifier(authority),
+    ) as bridge:
+        bridge.register(_registration(now, authority), peer_uid=os.getuid())
+
+    presenter = FakePresenter()
+    with TerminalBridge(database, presenter=presenter, clock=lambda: now) as reopened:
+        with pytest.raises(OperationalError, match="signature is invalid"):
+            reopened.present(_request(now), peer_uid=os.getuid())
+
+    assert presenter.calls == []
+
+
+def test_present_and_reconcile_reauthenticate_current_registration(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 7, 31, 12, tzinfo=UTC)
+    authority = build_test_fresh_v2_authority(tmp_path / "authority", device_id="device-a")
+    current_roster = [authority.roster]
+    presenter = FakePresenter()
+    presenter.outcomes = [RuntimeError("ambiguous presenter failure")]
+
+    def current_verifier(registration: TerminalRegistration) -> bool:
+        return verify_terminal_registration(
+            registration,
+            verifier=OperationalVerifier(),
+            roster=current_roster[0],
+        )
+
+    with TerminalBridge(
+        tmp_path / "terminal.sqlite",
+        presenter=presenter,
+        clock=lambda: now,
+        registration_verifier=current_verifier,
+    ) as bridge:
+        bridge.register(_registration(now, authority), peer_uid=os.getuid())
+        uncertain = bridge.present(_request(now), peer_uid=os.getuid())
+        assert uncertain.state == "uncertain"
+
+        current_roster[0] = replace(
+            authority.roster,
+            version=authority.roster.version + 1,
+            keys=(
+                replace(
+                    authority.roster.keys[0],
+                    revocation_sequence=authority.roster.version + 1,
+                ),
+            ),
+        )
+        with pytest.raises(OperationalError, match="signature is invalid"):
+            bridge.present(_request(now, event_id="event-2"), peer_uid=os.getuid())
+        with pytest.raises(OperationalError, match="signature is invalid"):
+            bridge.reconcile(
+                terminal_id="term-1",
+                event_id="event-1",
+                observation="not_presented",
+                peer_uid=os.getuid(),
+            )
+
+    assert presenter.calls == ["handoff"]
+
+
+def test_reconcile_requires_registration_uid_and_credential_binding(
+    tmp_path: Path,
+) -> None:
+    now = datetime(2026, 7, 31, 12, tzinfo=UTC)
+    authority = build_test_fresh_v2_authority(tmp_path / "authority", device_id="device-a")
+    presenter = FakePresenter()
+    presenter.outcomes = [RuntimeError("ambiguous presenter failure")]
+    with TerminalBridge(
+        tmp_path / "terminal.sqlite",
+        presenter=presenter,
+        clock=lambda: now,
+        registration_verifier=_registration_verifier(authority),
+    ) as bridge:
+        bridge.register(_registration(now, authority), peer_uid=os.getuid())
+        bridge.present(_request(now), peer_uid=os.getuid())
+
+        with pytest.raises(OperationalError, match="UID is not authorized"):
+            bridge.reconcile(
+                terminal_id="term-1",
+                event_id="event-1",
+                observation="not_presented",
+                peer_uid=os.getuid() + 1,
+            )
+        with pytest.raises(OperationalError, match="UID is not authorized"):
+            bridge.reconcile(
+                terminal_id="term-1",
+                event_id="event-1",
+                observation="not_presented",
+            )
+
+        bridge._connection.execute(
+            "UPDATE terminal_registration SET signature = ? WHERE terminal_id = ?",
+            ("tampered", "term-1"),
+        )
+        bridge._connection.commit()
+        with pytest.raises(OperationalError, match="signature is invalid"):
+            bridge.reconcile(
+                terminal_id="term-1",
+                event_id="event-1",
+                observation="not_presented",
+                peer_uid=os.getuid(),
+            )
+
+
+def test_unknown_or_empty_identifiers_never_reach_presenter(tmp_path: Path) -> None:
+    now = datetime(2026, 7, 31, 12, tzinfo=UTC)
+    authority = build_test_fresh_v2_authority(tmp_path / "authority", device_id="device-a")
+    presenter = FakePresenter()
+    with TerminalBridge(
+        tmp_path / "terminal.sqlite",
+        presenter=presenter,
+        clock=lambda: now,
+        registration_verifier=_registration_verifier(authority),
+    ) as bridge:
+        bridge.register(_registration(now, authority), peer_uid=os.getuid())
+
+        with pytest.raises(OperationalError, match="registration does not exist"):
+            bridge.present(
+                _request(now, terminal_id="missing-terminal"),
+                peer_uid=os.getuid(),
+            )
+        with pytest.raises(OperationalError, match="identifiers must be non-empty"):
+            bridge.present(_request(now, event_id=""), peer_uid=os.getuid())
+        with pytest.raises(OperationalError, match="identifiers must be non-empty"):
+            bridge.reconcile(
+                terminal_id="term-1",
+                event_id="",
+                observation="not_presented",
+                peer_uid=os.getuid(),
+            )
+
+    assert presenter.calls == []
+
+
 def test_exactly_once_reservation_is_atomic_across_processes(tmp_path: Path) -> None:
     now = datetime(2026, 7, 31, 12, tzinfo=UTC)
     authority = build_test_fresh_v2_authority(tmp_path / "authority", device_id="device-a")
@@ -390,6 +560,7 @@ def test_exactly_once_reservation_is_atomic_across_processes(tmp_path: Path) -> 
                 results,
                 presentations,
                 release,
+                authority.roster,
             ),
         )
         for _ in range(2)
@@ -470,7 +641,10 @@ def test_uncertain_requires_explicit_negative_reconciliation_before_retry(
         assert len(presenter.calls) == 1
 
         reconciled = bridge.reconcile(
-            terminal_id="term-1", event_id="event-1", observation="not_presented"
+            terminal_id="term-1",
+            event_id="event-1",
+            observation="not_presented",
+            peer_uid=os.getuid(),
         )
         assert reconciled.state == "known_failed"
 

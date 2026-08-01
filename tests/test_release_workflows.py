@@ -112,13 +112,27 @@ def test_built_distributions_only_ship_release_allowlist(tmp_path: Path) -> None
         "statusline",
     }
 
+    macho_magics = {
+        b"\xfe\xed\xfa\xce",
+        b"\xfe\xed\xfa\xcf",
+        b"\xce\xfa\xed\xfe",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\xbe\xba\xfe\xca",
+    }
     with zipfile.ZipFile(wheel) as archive:
         wheel_names = archive.namelist()
+        wheel_magics = {
+            name: archive.read(name)[:4] for name in wheel_names if not name.endswith("/")
+        }
     assert len(wheel_names) == len(set(wheel_names)), "wheel contains duplicate archive entries"
     assert all(
         name.startswith("memo/") or name.startswith(f"mlx_memo-{version}.dist-info/")
         for name in wheel_names
     )
+    assert any(name.endswith("memo_secure_enclave_helper.swift") for name in sdist_names)
+    assert not any(name.endswith(".swift") for name in wheel_names)
+    assert not {name for name, magic in wheel_magics.items() if magic in macho_magics}
     forbidden_parts = {
         ".claude",
         ".devin",

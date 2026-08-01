@@ -67,20 +67,6 @@ _OPERATIONAL_MCP_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-_MESH_MCP_TOOLS: frozenset[str] = frozenset(
-    {
-        "memo_mesh_delivery_ack",
-        "memo_mesh_delivery_reserve",
-        "memo_mesh_message_list",
-        "memo_mesh_message_send",
-        "memo_mesh_presence_announce",
-        "memo_mesh_presence_list",
-        "memo_mesh_status",
-        "memo_mesh_sync_ingest",
-        "memo_mesh_sync_publish",
-    }
-)
-
 AGENT_MCP_TOOLS: frozenset[str] = (
     frozenset(
         {
@@ -114,7 +100,6 @@ AGENT_MCP_TOOLS: frozenset[str] = (
         }
     )
     | _OPERATIONAL_MCP_TOOLS
-    | _MESH_MCP_TOOLS
 )
 
 CORE_MCP_TOOLS: frozenset[str] = (
@@ -156,7 +141,6 @@ CORE_MCP_TOOLS: frozenset[str] = (
         }
     )
     | _OPERATIONAL_MCP_TOOLS
-    | _MESH_MCP_TOOLS
 )
 
 
@@ -182,7 +166,7 @@ def mcp_include_advanced_tools() -> bool:
 
 
 def mcp_profile() -> str:
-    """Resolve the MCP surface profile, defaulting agent clients to 49 tools."""
+    """Resolve the MCP surface profile, defaulting clients to the stable agent tools."""
     profile = _profile("MEMO_MCP_PROFILE", default="agent", strict=True)
     if flags.flag_bool("MEMO_MCP_SLIM"):
         return "core"
@@ -199,9 +183,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("49", "~7k"),
-    "core": ("66", "~8.2k"),
-    "slim": ("66", "~8.2k"),
+    "agent": ("40", "~6k"),
+    "core": ("57", "~7.2k"),
+    "slim": ("57", "~7.2k"),
 }
 
 

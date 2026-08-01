@@ -197,65 +197,46 @@ def test_cli_and_mcp_two_terminal_roundtrip_uses_only_memo_surfaces(
     sent_b = send_b(
         transport_path=root_b,
         remote=remote,
-        actor_id="agent-b",
-        session_id="term-b",
         channel="handoff",
         body="B verified and acknowledged A",
-        target_ids=["device-a:term-a"],
+        target_ids=["device-a:hermetic-session"],
         expects_ack=True,
         idempotency_key="b-message-1",
     )
     publish_b(
         transport_path=root_b,
         remote=remote,
-        actor_id="agent-b",
-        session_id="term-b",
     )
     before_ingest_a = list_a(
         transport_path=root_a,
         remote=remote,
-        actor_id="agent-a",
-        session_id="term-a",
         channel="handoff",
     )
-    assert [row["body"] for row in before_ingest_a["messages"]] == ["A completed the migration"]
+    assert before_ingest_a["messages"] == []
     ingest_a(
         transport_path=root_a,
         remote=remote,
-        actor_id="agent-a",
-        session_id="term-a",
     )
     messages_a = list_a(
         transport_path=root_a,
         remote=remote,
-        actor_id="agent-a",
-        session_id="term-a",
         channel="handoff",
     )
-    assert [row["body"] for row in messages_a["messages"]] == [
-        "A completed the migration",
-        "B verified and acknowledged A",
-    ]
+    assert [row["body"] for row in messages_a["messages"]] == ["B verified and acknowledged A"]
     reserved_a = reserve_a(
         transport_path=root_a,
         remote=remote,
-        actor_id="agent-a",
-        session_id="term-a",
     )
     assert reserved_a["count"] == 1
     ack_a(
         transport_path=root_a,
         remote=remote,
-        actor_id="agent-a",
-        session_id="term-a",
         message_id=sent_b["message_id"],
         idempotency_key="a-ack-1",
     )
     announce_a(
         transport_path=root_a,
         remote=remote,
-        actor_id="agent-a",
-        session_id="term-a",
         project="memo",
         workspace="/work/memo",
         topic="integration",
@@ -265,20 +246,14 @@ def test_cli_and_mcp_two_terminal_roundtrip_uses_only_memo_surfaces(
     publish_a(
         transport_path=root_a,
         remote=remote,
-        actor_id="agent-a",
-        session_id="term-a",
     )
     ingest_b(
         transport_path=root_b,
         remote=remote,
-        actor_id="agent-b",
-        session_id="term-b",
     )
     visible_at_b = presence_b(
         transport_path=root_b,
         remote=remote,
-        actor_id="agent-b",
-        session_id="term-b",
         project="memo",
     )
     assert {row["actor_id"] for row in visible_at_b["presence"]} == {
@@ -333,7 +308,7 @@ def test_mesh_fails_closed_without_v2_or_local_authority(
 def test_mesh_rejects_actor_impersonation_and_unqualified_recipients(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(ValueError, match="cannot contain"):
+    with pytest.raises(ValueError, match="safe terminal-principal syntax"):
         mesh_identity(
             device_id="device-a",
             actor_id="device-b:term-b",
