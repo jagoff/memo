@@ -118,6 +118,16 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_BRIEFING_CHAT_DIGEST",
+        "bool",
+        True,
+        "briefing",
+        "Show a digest of recent chat-insight captures, active chat "
+        "sessions, and active goals in the SessionStart briefing. "
+        "Default on.",
+        opt_out=True,
+    ),
+    _spec(
         "MEMO_BRIEFING_PROFILE",
         "bool",
         True,

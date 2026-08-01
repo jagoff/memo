@@ -501,6 +501,95 @@ def maybe_code_impact_lines(mem: Any, cwd: str | None) -> list[str]:
     return code_impact_lines(mem, cwd)
 
 
+def chat_digest_lines(mem: Any, state_dir: Path) -> list[str]:
+    """'💬 Chat' — recent chat-insight captures, active chat sessions, and
+    active goals for the SessionStart briefing.
+
+    Reads:
+    * ``state_dir/chat/insights/captures.jsonl`` — insight captures from the
+      last 24h (count + the most recently captured title).
+    * ``SessionStore(state_dir/chat/sessions).list_sessions()`` — chat
+      sessions with activity in the last 24h (count).
+    * ``mem.store.list_by_tag("goal", limit=50)`` — up to 3 active goal
+      titles. `list_by_tag` already excludes archived/deleted rows (archiving
+      moves a memory's file to `inactive/` and drops it from the index), so
+      no extra archived-filtering is needed here.
+
+    Gated by ``MEMO_BRIEFING_CHAT_DIGEST`` (default on, checked here so a
+    disabled flag never touches the chat state dir, here or in any other
+    caller). Empty list on anything else — missing files, corrupt data, or
+    nothing to show. Each data source is independently wrapped in
+    ``contextlib.suppress`` so one failing source never hides the others.
+    """
+    import contextlib
+    import json as _json
+    import time as _time
+    from datetime import datetime as _datetime
+
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_BRIEFING_CHAT_DIGEST"):
+        return []
+
+    cutoff = _time.time() - 24 * 3600
+    parts: list[str] = []
+
+    with contextlib.suppress(Exception):
+        captures_path = state_dir / "chat" / "insights" / "captures.jsonl"
+        recent: list[dict[str, Any]] = []
+        if captures_path.is_file():
+            for line in captures_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = _json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    ts = _datetime.strptime(
+                        str(row.get("captured_at")), "%Y-%m-%dT%H:%M:%S"
+                    ).timestamp()
+                except ValueError:
+                    continue
+                if ts >= cutoff:
+                    recent.append(row)
+        if recent:
+            n = len(recent)
+            latest_title = recent[-1].get("title") or "—"
+            parts.append(f"{n} insight{'s' if n != 1 else ''} captured (latest: {latest_title})")
+
+    with contextlib.suppress(Exception):
+        from memo.chat.sessions import SessionStore
+
+        active = 0
+        for row in SessionStore(state_dir / "chat" / "sessions").list_sessions(limit=50):
+            try:
+                ts = _datetime.strptime(str(row.get("last_ts")), "%Y-%m-%dT%H:%M:%S").timestamp()
+            except ValueError:
+                continue
+            if ts >= cutoff:
+                active += 1
+        if active:
+            parts.append(f"{active} chat session{'s' if active != 1 else ''} active")
+
+    lines: list[str] = []
+    if parts:
+        lines.append(f"**💬 Chat** (last 24h): {' · '.join(parts)}")
+
+    with contextlib.suppress(Exception):
+        goals = mem.store.list_by_tag("goal", limit=50)
+        titles = [str(g["title"]) for g in goals if g.get("title")][:3]
+        if titles:
+            lines.append(f"**Active goals:** {'; '.join(titles)}")
+
+    if lines:
+        lines.append("")
+    return lines
+
+
 def memo_native_briefing_lines(
     mem: Any,
     *,
@@ -550,6 +639,12 @@ def memo_native_briefing_lines(
     if flag_bool("MEMO_PROACTIVE_ENABLED"):
         with contextlib.suppress(Exception):
             lines.extend(proactive_lines(mem))
+
+    # ── Chat digest: recent chat-insight captures + active goals ──────────
+    # MEMO_BRIEFING_CHAT_DIGEST is checked inside the helper so a disabled
+    # flag never touches the chat state dir, here or in any other caller.
+    with contextlib.suppress(Exception):
+        lines.extend(chat_digest_lines(mem, mem.cfg.state_dir))
 
     # ── Negative recall: stored failure_pattern anti-memories (⛔, dark by default) ─
     # Off-cognition — surfaces the stored Wrong/Right fact, never a suggestion.
@@ -679,6 +774,7 @@ def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
 
 
 __all__ = [
+    "chat_digest_lines",
     "compact_text",
     "compose_unified_briefing",
     "dream_digest_lines",
