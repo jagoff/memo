@@ -174,7 +174,15 @@ from memo.chat.fusion import normalize_scores, rrf_fuse, source_dedup_key
 
 
 def _src(id_: str, score: float, source: str = "memory", **kw) -> dict:
-    return {"source": source, "id": id_, "title": id_, "type": "note", "score": score, "snippet": "x", **kw}
+    return {
+        "source": source,
+        "id": id_,
+        "title": id_,
+        "type": "note",
+        "score": score,
+        "snippet": "x",
+        **kw,
+    }
 
 
 def test_rrf_prefers_items_in_both_rankings() -> None:
@@ -328,8 +336,13 @@ from memo.chat.dedup import collapse_near_duplicates, dedup_key, normalize_title
 
 def _chunk(n: int, total: int, score: float, snippet: str) -> dict:
     return {
-        "source": "memory", "id": f"m{n}", "type": "note", "score": score,
-        "title": f"Proyecto X (§{n}/{total})", "snippet": snippet, "path": "notes/proyecto-x.md",
+        "source": "memory",
+        "id": f"m{n}",
+        "type": "note",
+        "score": score,
+        "title": f"Proyecto X (§{n}/{total})",
+        "snippet": snippet,
+        "path": "notes/proyecto-x.md",
     }
 
 
@@ -524,8 +537,25 @@ _PRONOUN_PREFIX_RE = re.compile(
     r"^\s*(y\s+(él|ella|eso|esa|ese|esto)|and\s+(he|she|it|that))\b", re.IGNORECASE
 )
 _FILLERS = {
-    "que", "qué", "del", "de", "la", "el", "los", "las", "un", "una", "sobre",
-    "sabes", "sabés", "conocés", "proyecto", "the", "about", "tell", "what",
+    "que",
+    "qué",
+    "del",
+    "de",
+    "la",
+    "el",
+    "los",
+    "las",
+    "un",
+    "una",
+    "sobre",
+    "sabes",
+    "sabés",
+    "conocés",
+    "proyecto",
+    "the",
+    "about",
+    "tell",
+    "what",
 }
 _WORD_RE = re.compile(r"[\wáéíóúñü\-]{3,}", re.IGNORECASE)
 
@@ -536,7 +566,9 @@ def _history_topic(history: list[dict[str, str]] | None) -> str | None:
     for turn in reversed(history):
         if turn.get("role") != "user":
             continue
-        words = [w for w in _WORD_RE.findall(str(turn.get("content", ""))) if w.lower() not in _FILLERS]
+        words = [
+            w for w in _WORD_RE.findall(str(turn.get("content", ""))) if w.lower() not in _FILLERS
+        ]
         if words:
             return " ".join(words[:8])
     return None
@@ -716,20 +748,35 @@ Archivos: `root/events.jsonl` y `root/source_votes.jsonl`, append-only, líneas 
 from pathlib import Path
 
 from memo.chat.feedback import (
-    SourceVote, SourceVoteStore, boost_positive_sources, boost_semantic,
-    filter_negative_sources, question_key,
+    SourceVote,
+    SourceVoteStore,
+    boost_positive_sources,
+    boost_semantic,
+    filter_negative_sources,
+    question_key,
 )
 
 
 def _vote(qk: str, sid: str, rating: str, emb: list[float] | None = None) -> SourceVote:
     return SourceVote(
-        created_at="2026-07-30T00:00:00", question_key=qk, query="q",
-        source_id=sid, rating=rating, query_embedding=emb or [],
+        created_at="2026-07-30T00:00:00",
+        question_key=qk,
+        query="q",
+        source_id=sid,
+        rating=rating,
+        query_embedding=emb or [],
     )
 
 
 def _src(sid: str, score: float) -> dict:
-    return {"source": "memory", "id": sid, "title": sid, "score": score, "normalized_score": score, "snippet": "x"}
+    return {
+        "source": "memory",
+        "id": sid,
+        "title": sid,
+        "score": score,
+        "normalized_score": score,
+        "snippet": "x",
+    }
 
 
 def test_question_key_stable() -> None:
@@ -764,12 +811,14 @@ def test_boost_factor_clamped() -> None:
 
 def test_semantic_boost_by_cosine() -> None:
     votes = [_vote("otra", "a", "up", emb=[1.0, 0.0]), _vote("otra", "b", "down", emb=[1.0, 0.0])]
-    out = boost_semantic([_src("a", 0.4), _src("b", 0.4)], [1.0, 0.0], votes, threshold=0.75, factor=1.5)
+    out = boost_semantic(
+        [_src("a", 0.4), _src("b", 0.4)], [1.0, 0.0], votes, threshold=0.75, factor=1.5
+    )
     by_id = {s["id"]: s for s in out}
     assert by_id["a"].get("source_vote_boost") == 1.5  # up-vote similar
-    assert "source_vote_boost" not in by_id["b"]       # down votes no generalizan
+    assert "source_vote_boost" not in by_id["b"]  # down votes no generalizan
     far = boost_semantic([_src("a", 0.4)], [0.0, 1.0], votes, threshold=0.75, factor=1.5)
-    assert "source_vote_boost" not in far[0]           # coseno 0 < 0.75
+    assert "source_vote_boost" not in far[0]  # coseno 0 < 0.75
 ```
 
 - [ ] **Step 2:** FAIL.
@@ -854,7 +903,9 @@ class SourceVoteStore(_JsonlStore):
 
     def load(self) -> list[SourceVote]:
         fields = {f for f in SourceVote.__dataclass_fields__}
-        return [SourceVote(**{k: v for k, v in d.items() if k in fields}) for d in self._load_dicts()]
+        return [
+            SourceVote(**{k: v for k, v in d.items() if k in fields}) for d in self._load_dicts()
+        ]
 
     def latest_by_pair(self) -> dict[tuple[str, str], SourceVote]:
         latest: dict[tuple[str, str], SourceVote] = {}
@@ -872,7 +923,9 @@ class FeedbackStore(_JsonlStore):
 
     def load(self) -> list[ChatFeedback]:
         fields = {f for f in ChatFeedback.__dataclass_fields__}
-        return [ChatFeedback(**{k: v for k, v in d.items() if k in fields}) for d in self._load_dicts()]
+        return [
+            ChatFeedback(**{k: v for k, v in d.items() if k in fields}) for d in self._load_dicts()
+        ]
 
 
 def filter_negative_sources(
@@ -982,7 +1035,13 @@ from memo.chat.synthesis import REFUSAL, build_messages, filter_by_relevance, sy
 
 
 def _src(sid: str, norm: float, **kw) -> dict:
-    return {"id": sid, "title": f"T{sid}", "snippet": f"cuerpo {sid}", "normalized_score": norm, **kw}
+    return {
+        "id": sid,
+        "title": f"T{sid}",
+        "snippet": f"cuerpo {sid}",
+        "normalized_score": norm,
+        **kw,
+    }
 
 
 def test_floor_is_relative_to_top() -> None:
@@ -1110,16 +1169,44 @@ from memo.chat.fulldoc import dominant_doc_group, resolve_fulldoc
 
 def _chunk(n: int, total: int, path: str = "notes/x.md") -> dict:
     return {
-        "source": "memory", "id": f"m{n}", "type": "note", "score": 1.0,
-        "title": f"Doc X (§{n}/{total})", "snippet": f"parte {n}", "path": path,
+        "source": "memory",
+        "id": f"m{n}",
+        "type": "note",
+        "score": 1.0,
+        "title": f"Doc X (§{n}/{total})",
+        "snippet": f"parte {n}",
+        "path": path,
     }
 
 
 def test_dominant_requires_share_and_chunks() -> None:
-    group = dominant_doc_group([_chunk(1, 2), _chunk(2, 2), {"source": "vault", "id": "v", "title": "otro", "score": 0.1, "snippet": "y", "path": "a.md"}])
+    group = dominant_doc_group(
+        [
+            _chunk(1, 2),
+            _chunk(2, 2),
+            {
+                "source": "vault",
+                "id": "v",
+                "title": "otro",
+                "score": 0.1,
+                "snippet": "y",
+                "path": "a.md",
+            },
+        ]
+    )
     assert group is not None and len(group) == 2
     assert dominant_doc_group([_chunk(1, 2)]) is None  # <2 chunks
-    others = [{"source": "vault", "id": f"v{i}", "title": f"t{i}", "score": 0.1, "snippet": "y", "path": f"{i}.md"} for i in range(4)]
+    others = [
+        {
+            "source": "vault",
+            "id": f"v{i}",
+            "title": f"t{i}",
+            "score": 0.1,
+            "snippet": "y",
+            "path": f"{i}.md",
+        }
+        for i in range(4)
+    ]
     assert dominant_doc_group([_chunk(1, 2), _chunk(2, 2), *others]) is None  # share 2/6 < 0.6
 
 
@@ -1140,13 +1227,29 @@ def test_resolve_vault_uses_repo_get_file() -> None:
             return {"text": "contenido completo"}
 
     members = [
-        {"source": "vault", "id": "v1", "title": "plan (§1/2)", "score": 1.0, "snippet": "a",
-         "path": "docs/plan.md", "repo_name": "vault"},
-        {"source": "vault", "id": "v2", "title": "plan (§2/2)", "score": 0.9, "snippet": "b",
-         "path": "docs/plan.md", "repo_name": "vault"},
+        {
+            "source": "vault",
+            "id": "v1",
+            "title": "plan (§1/2)",
+            "score": 1.0,
+            "snippet": "a",
+            "path": "docs/plan.md",
+            "repo_name": "vault",
+        },
+        {
+            "source": "vault",
+            "id": "v2",
+            "title": "plan (§2/2)",
+            "score": 0.9,
+            "snippet": "b",
+            "path": "docs/plan.md",
+            "repo_name": "vault",
+        },
     ]
     doc = resolve_fulldoc(_Mem(), members)
-    assert doc is not None and doc["text"] == "contenido completo" and doc["fulldoc_source"] == "repo"
+    assert (
+        doc is not None and doc["text"] == "contenido completo" and doc["fulldoc_source"] == "repo"
+    )
 ```
 
 - [ ] **Step 2:** FAIL.
@@ -1277,14 +1380,26 @@ class _FakeMemory:
 
     def search(self, query, *, limit=None, mode="hybrid", **kw):
         return [
-            _FakeRecord(id="m1", title="Nota uno", type="note", score=0.9,
-                        body="cuerpo de la nota uno", path="notes/uno.md"),
+            _FakeRecord(
+                id="m1",
+                title="Nota uno",
+                type="note",
+                score=0.9,
+                body="cuerpo de la nota uno",
+                path="notes/uno.md",
+            ),
         ]
 
     def repo_search(self, query, *, limit=10, **kw):
         return [
-            SimpleNamespace(id="r1", repo_name="vault", path="docs/dos.md", score=0.7,
-                            text="texto del vault", locator="repo:vault:docs/dos.md:1-10@abcd1234"),
+            SimpleNamespace(
+                id="r1",
+                repo_name="vault",
+                path="docs/dos.md",
+                score=0.7,
+                text="texto del vault",
+                locator="repo:vault:docs/dos.md:1-10@abcd1234",
+            ),
         ]
 
     def repo_get_file(self, repo, path, *, start=None, end=None):
@@ -1446,8 +1561,11 @@ def chat_stream(
         query_vec = []
     if query_vec:
         sources = boost_semantic(
-            sources, query_vec, store.load(),
-            threshold=cfg.semantic_threshold, factor=cfg.vote_boost,
+            sources,
+            query_vec,
+            store.load(),
+            threshold=cfg.semantic_threshold,
+            factor=cfg.vote_boost,
         )
 
     yield {"type": "context", "sources": sources[:base_k]}
@@ -1472,7 +1590,10 @@ def chat_stream(
     parts: list[str] = []
     try:
         for token in synthesize_stream(
-            memory._ensure_chat(), memory.cfg.llm_model, question, head,
+            memory._ensure_chat(),
+            memory.cfg.llm_model,
+            question,
+            head,
             max_tokens=cfg.answer_max_tokens,
         ):
             parts.append(token)
@@ -1591,7 +1712,9 @@ def test_ask_non_stream(client) -> None:
 
 
 def test_feedback_source_roundtrip(client) -> None:
-    resp = client.post("/api/feedback/source", json={"source_id": "m1", "query": "hola", "rating": "up"})
+    resp = client.post(
+        "/api/feedback/source", json={"source_id": "m1", "query": "hola", "rating": "up"}
+    )
     assert resp.status_code == 200 and resp.json()["ok"] is True
 
 
@@ -1638,7 +1761,10 @@ class SessionStore:
         path = self._path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"role": role, "text": text, "ts": time.time()}, ensure_ascii=False) + "\n")
+            fh.write(
+                json.dumps({"role": role, "text": text, "ts": time.time()}, ensure_ascii=False)
+                + "\n"
+            )
 
     def get(self, session_id: str) -> list[dict[str, Any]]:
         path = self._path(session_id)
@@ -1659,12 +1785,14 @@ class SessionStore:
         for path in self.root.glob("*.jsonl"):
             turns = self.get(path.stem)
             first_user = next((t["text"] for t in turns if t.get("role") == "user"), "")
-            rows.append({
-                "id": path.stem,
-                "updated": path.stat().st_mtime,
-                "first_query": first_user,
-                "turns": len(turns),
-            })
+            rows.append(
+                {
+                    "id": path.stem,
+                    "updated": path.stat().st_mtime,
+                    "first_query": first_user,
+                    "turns": len(turns),
+                }
+            )
         rows.sort(key=lambda r: r["updated"], reverse=True)
         return rows[:limit]
 
@@ -1715,7 +1843,11 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
     from memo.chat.config import ChatConfig
     from memo.chat.feedback import (
-        ChatFeedback, FeedbackStore, SourceVote, SourceVoteStore, question_key,
+        ChatFeedback,
+        FeedbackStore,
+        SourceVote,
+        SourceVoteStore,
+        question_key,
     )
     from memo.chat.pipeline import chat_stream
     from memo.chat.sessions import SessionStore
@@ -1732,9 +1864,7 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         question = str(body.get("q") or "").strip()
         session_id = body.get("chat_session_id") or None
         history = body.get("history") or (sessions_history(session_id) if session_id else None)
-        events = list(
-            chat_stream(memory, question, history=history, k=body.get("k") or None)
-        )
+        events = list(chat_stream(memory, question, history=history, k=body.get("k") or None))
         if session_id:
             done = next((e for e in events if e.get("type") == "done"), None)
             sessions.append_turn(session_id, "user", question)
@@ -1880,8 +2010,12 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 @chat_group.command(name="serve")
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=8765, show_default=True, type=int)
-@click.option("--dist", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None,
-              help="Directorio dist de la SPA web-chat (opcional).")
+@click.option(
+    "--dist",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Directorio dist de la SPA web-chat (opcional).",
+)
 def chat_serve(host: str, port: int, dist: Path | None) -> None:
     """Serve the chat UI + API over HTTP (requires the [http] extra)."""
     try:
@@ -1980,7 +2114,10 @@ def _done(answer: str, ids: list[str]) -> dict:
 
 
 def test_require_and_forbid_substrings() -> None:
-    query = {"id": "q1", "checks": {"require_substrings": ["Avature"], "forbid_substrings": ["lambda"]}}
+    query = {
+        "id": "q1",
+        "checks": {"require_substrings": ["Avature"], "forbid_substrings": ["lambda"]},
+    }
     ok = apply_checks(query, _done("Avature es una empresa", ["s1"]), 100)
     assert ok["passed"] is True
     bad = apply_checks(query, _done("usa lambda", ["s1"]), 100)
@@ -2031,7 +2168,9 @@ def apply_checks(query: dict[str, Any], done: dict[str, Any], total_ms: int) -> 
         results.append({"check": "forbid_refusal", "passed": REFUSAL not in answer})
     min_sources = checks_spec.get("min_sources")
     if isinstance(min_sources, int):
-        results.append({"check": f"min_sources:{min_sources}", "passed": len(source_ids) >= min_sources})
+        results.append(
+            {"check": f"min_sources:{min_sources}", "passed": len(source_ids) >= min_sources}
+        )
     expected = query.get("expected_source_ids") or []
     if expected:
         hit = any(e in sid or sid in e for e in map(str, expected) for sid in source_ids if sid)
@@ -2050,8 +2189,12 @@ def apply_checks(query: dict[str, Any], done: dict[str, Any], total_ms: int) -> 
 
 ```python
 @eval_group.command(name="chat")
-@click.option("--corpus", type=click.Path(exists=True, path_type=Path),
-              default=Path("eval/chat_regression_corpus.json"), show_default=True)
+@click.option(
+    "--corpus",
+    type=click.Path(exists=True, path_type=Path),
+    default=Path("eval/chat_regression_corpus.json"),
+    show_default=True,
+)
 @click.option("--only", default=None, help="Correr solo el query con este id.")
 def eval_chat_cmd(corpus: Path, only: str | None) -> None:
     """Regression gate: run the corpus through the chat pipeline and check outputs."""
@@ -2075,7 +2218,10 @@ def eval_chat_cmd(corpus: Path, only: str | None) -> None:
         rows.append(apply_checks(query, done, int((_time.monotonic() - t0) * 1000)))
 
     table = Table(title=f"eval chat — {corpus.name}")
-    table.add_column("id"); table.add_column("passed"); table.add_column("ms", justify="right"); table.add_column("failed checks")
+    table.add_column("id")
+    table.add_column("passed")
+    table.add_column("ms", justify="right")
+    table.add_column("failed checks")
     for row in rows:
         failed = ", ".join(c["check"] for c in row["checks"] if not c["passed"])
         table.add_row(row["id"], "✅" if row["passed"] else "❌", str(row["total_ms"]), failed)
@@ -2126,17 +2272,39 @@ def _write(path: Path, lines: list[dict | str]) -> None:
 
 def test_migrates_and_remaps_schema(tmp_path: Path) -> None:
     src, dst = tmp_path / "src", tmp_path / "dst"
-    _write(src / "source_votes.jsonl", [
-        {"created_at": "t", "question_key": "k", "query": "q", "source_id": "s",
-         "rating": "up", "query_embedding": [0.1], "schema": "synapse.source_vote.v1",
-         "extra_synapse_field": 1},
-        "corrupt line",
-    ])
-    _write(src / "events.jsonl", [
-        {"feedback_id": "f1", "created_at": "t", "chat_session_id": "s", "turn_id": "1",
-         "query": "q", "answer": "a", "source_ids": ["x"], "rating": "up",
-         "schema": "synapse.chat_feedback.v1", "trace_id": "ignored"},
-    ])
+    _write(
+        src / "source_votes.jsonl",
+        [
+            {
+                "created_at": "t",
+                "question_key": "k",
+                "query": "q",
+                "source_id": "s",
+                "rating": "up",
+                "query_embedding": [0.1],
+                "schema": "synapse.source_vote.v1",
+                "extra_synapse_field": 1,
+            },
+            "corrupt line",
+        ],
+    )
+    _write(
+        src / "events.jsonl",
+        [
+            {
+                "feedback_id": "f1",
+                "created_at": "t",
+                "chat_session_id": "s",
+                "turn_id": "1",
+                "query": "q",
+                "answer": "a",
+                "source_ids": ["x"],
+                "rating": "up",
+                "schema": "synapse.chat_feedback.v1",
+                "trace_id": "ignored",
+            },
+        ],
+    )
     stats = migrate_feedback(src, dst)
     assert stats == {"events": 1, "votes": 1, "skipped": 1}
     vote = json.loads((dst / "source_votes.jsonl").read_text().splitlines()[0])
@@ -2160,9 +2328,26 @@ import argparse
 import json
 from pathlib import Path
 
-_DEFAULT_BACKUP = Path.home() / ".memo-daemon-backups" / "20260730T213401-synapse-final" / "dot-synapse" / "state" / "feedback"
+_DEFAULT_BACKUP = (
+    Path.home()
+    / ".memo-daemon-backups"
+    / "20260730T213401-synapse-final"
+    / "dot-synapse"
+    / "state"
+    / "feedback"
+)
 _VOTE_FIELDS = {"created_at", "question_key", "query", "source_id", "rating", "query_embedding"}
-_EVENT_FIELDS = {"feedback_id", "created_at", "chat_session_id", "turn_id", "query", "answer", "source_ids", "rating", "correction_text"}
+_EVENT_FIELDS = {
+    "feedback_id",
+    "created_at",
+    "chat_session_id",
+    "turn_id",
+    "query",
+    "answer",
+    "source_ids",
+    "rating",
+    "correction_text",
+}
 
 
 def _migrate_file(src: Path, dst: Path, fields: set[str], schema: str) -> tuple[int, int]:
@@ -2196,12 +2381,16 @@ def _migrate_file(src: Path, dst: Path, fields: set[str], schema: str) -> tuple[
 
 def migrate_feedback(src_dir: Path, dst_dir: Path) -> dict[str, int]:
     votes, vote_skipped = _migrate_file(
-        src_dir / "source_votes.jsonl", dst_dir / "source_votes.jsonl",
-        _VOTE_FIELDS, "memo.chat.source_vote.v1",
+        src_dir / "source_votes.jsonl",
+        dst_dir / "source_votes.jsonl",
+        _VOTE_FIELDS,
+        "memo.chat.source_vote.v1",
     )
     events, event_skipped = _migrate_file(
-        src_dir / "events.jsonl", dst_dir / "events.jsonl",
-        _EVENT_FIELDS, "memo.chat.feedback.v1",
+        src_dir / "events.jsonl",
+        dst_dir / "events.jsonl",
+        _EVENT_FIELDS,
+        "memo.chat.feedback.v1",
     )
     return {"events": events, "votes": votes, "skipped": vote_skipped + event_skipped}
 
@@ -2324,11 +2513,13 @@ def parse_launchctl_list(output: str) -> list[dict[str, object]]:
         if len(parts) != 3 or not parts[2].startswith("com.memo."):
             continue
         pid_raw, exit_raw, label = parts
-        rows.append({
-            "label": label.strip(),
-            "pid": int(pid_raw) if pid_raw.strip().isdigit() else None,
-            "last_exit": int(exit_raw) if exit_raw.strip().lstrip("-").isdigit() else 0,
-        })
+        rows.append(
+            {
+                "label": label.strip(),
+                "pid": int(pid_raw) if pid_raw.strip().isdigit() else None,
+                "last_exit": int(exit_raw) if exit_raw.strip().lstrip("-").isdigit() else 0,
+            }
+        )
     return rows
 
 
@@ -2342,15 +2533,21 @@ def install_chat(memo_bin: str, home: Path, *, port: int = 8765, dist: str | Non
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_chat_plist(memo_bin, str(home), port=port, dist=dist), encoding="utf-8")
     uid = subprocess.run(["id", "-u"], capture_output=True, text=True, check=True).stdout.strip()
-    subprocess.run(["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False)
-    subprocess.run(["launchctl", "bootstrap", f"gui/{uid}", str(path)], capture_output=True, check=True)
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False
+    )
+    subprocess.run(
+        ["launchctl", "bootstrap", f"gui/{uid}", str(path)], capture_output=True, check=True
+    )
     return path
 
 
 def uninstall_chat(home: Path) -> bool:
     path = _plist_path(home)
     uid = subprocess.run(["id", "-u"], capture_output=True, text=True, check=True).stdout.strip()
-    subprocess.run(["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False)
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False
+    )
     if path.exists():
         path.unlink()
         return True
