@@ -337,3 +337,6 @@ def test_run_server_binds_first_then_warms_in_background(monkeypatch, tmp_path) 
     recall_socket.run_server(state_dir)
 
     assert events == ["bind", "warmup"], f"bind must precede the warm-up, got {events}"
+    from memo import mlx_gpu
+
+    assert mlx_gpu._process_priority is False

@@ -709,3 +709,8 @@ def _run_server_locked(
                 mem.close()
         with contextlib.suppress(Exception):
             _cleanup(state_dir)
+        # This normally coincides with process exit, but keeping the module
+        # lifecycle balanced matters for embedded callers and test runners.
+        # Otherwise later GPU work in the same interpreter still identifies
+        # itself as the recall daemon and can block on the priority flock.
+        set_process_gpu_priority(False)

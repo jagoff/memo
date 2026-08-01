@@ -148,12 +148,14 @@ def _prio_path() -> Path:
     return _lock_path().with_name(_PRIO_FILENAME)
 
 
-def _acquire_prio_flock() -> None:
+def _acquire_prio_flock(timeout: float | None = None) -> bool:
     """Take the priority flock (priority process, outermost entry only).
 
     Contention here is priority-vs-priority only (one recall daemon per
-    machine), so a plain blocking acquire is fine. Failure degrades to
-    running without the fast lane — never blocks the caller's real work.
+    machine). An unbounded caller may use a blocking acquire, but a caller
+    with a deadline polls non-blocking so priority-state drift or a duplicate
+    daemon can never violate ``gpu_guard(timeout=...)``. Unexpected failures
+    degrade to running without the fast lane.
     """
     global _prio_fd
     try:
@@ -162,14 +164,34 @@ def _acquire_prio_flock() -> None:
         fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o644)
     except OSError:
         _prio_fd = None
-        return
+        return True
+    if timeout is not None:
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    os.close(fd)
+                    _prio_fd = None
+                    return True
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    os.close(fd)
+                    _prio_fd = None
+                    return False
+                time.sleep(min(_FLOCK_POLL_INTERVAL_S, remaining))
+            else:
+                _prio_fd = fd
+                return True
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
     except OSError:
         os.close(fd)
         _prio_fd = None
-        return
+        return True
     _prio_fd = fd
+    return True
 
 
 def _release_prio_flock() -> None:
@@ -225,8 +247,10 @@ def _acquire_flock(timeout: float | None = None) -> bool:
     daemon at the next release instead of racing it for the grant.
     """
     global _lock_fd
-    if _process_priority:
-        _acquire_prio_flock()
+    deadline = time.monotonic() + max(timeout, 0.0) if timeout is not None else None
+    if _process_priority and not _acquire_prio_flock(timeout=timeout):
+        _lock_fd = None
+        return False
     path = _lock_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,7 +272,6 @@ def _acquire_flock(timeout: float | None = None) -> bool:
             return True
         _lock_fd = fd
         return True
-    deadline = time.monotonic() + max(timeout, 0.0) if timeout is not None else None
     while True:
         if not _process_priority and _priority_waiting():
             # A live priority process wants (or holds) the GPU — don't
