@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from memo.chat import whatsapp_live
 from memo.chat.pipeline import chat_stream
 
 
@@ -113,3 +114,78 @@ def test_synthesis_error_yields_error_event(tmp_path) -> None:
     events = list(chat_stream(mem, "pregunta simple"))
     assert events[-1]["type"] == "error"
     assert events[-1]["answer_partial"] == "parcial"
+
+
+class _NoSearchMemory(_FakeMemory):
+    """search()/repo_search() must never be called on the WA-live exclusive path."""
+
+    def search(self, query, *, limit=None, mode="hybrid", **kw):
+        raise AssertionError("memory.search must not be called on the WA-live path")
+
+    def repo_search(self, query, *, limit=10, **kw):
+        raise AssertionError("memory.repo_search must not be called on the WA-live path")
+
+
+def _assert_not_called(*_args, **_kwargs):
+    raise AssertionError("must not be called")
+
+
+def test_whatsapp_live_recency_query_uses_exclusive_wa_source(tmp_path, monkeypatch) -> None:
+    last_messages_calls: list[dict] = []
+
+    monkeypatch.setattr(
+        whatsapp_live,
+        "resolve_chats",
+        lambda query, db, contacts_index: [("549@s.whatsapp.net", "Ana")],
+    )
+
+    def _fake_last_messages(db, jid, *, limit=10, today_only=False):
+        last_messages_calls.append({"jid": jid, "limit": limit, "today_only": today_only})
+        return [{"ts": "2026-07-31 09:00:00", "is_from_me": False, "content": "todo bien, y vos?"}]
+
+    monkeypatch.setattr(whatsapp_live, "last_messages", _fake_last_messages)
+
+    events = list(chat_stream(_NoSearchMemory(tmp_path), "qué me dijo Ana hoy?"))
+
+    context = next(e for e in events if e["type"] == "context")
+    assert len(context["sources"]) == 1
+    src = context["sources"][0]
+    assert src == {
+        "id": "wa-live:ana",
+        "source": "memory",
+        "type": "whatsapp_live",
+        "title": "WhatsApp · Ana — 2026-07-31",
+        "snippet": "[2026-07-31 09:00:00] Ana: todo bien, y vos?",
+        "score": 0.99,
+        "normalized_score": 0.99,
+    }
+    assert last_messages_calls == [{"jid": "549@s.whatsapp.net", "limit": 200, "today_only": True}]
+
+    done = events[-1]
+    assert done["type"] == "done"
+    assert done["sources"] == [src]
+
+
+def test_non_recency_query_uses_normal_semantic_flow(tmp_path, monkeypatch) -> None:
+    # A non-recency query must never even attempt the WA-live path.
+    monkeypatch.setattr(whatsapp_live, "resolve_chats", _assert_not_called)
+
+    events = list(chat_stream(_FakeMemory(tmp_path), "qué sabés de la nota uno?"))
+
+    context = next(e for e in events if e["type"] == "context")
+    ids = {s["id"] for s in context["sources"]}
+    assert {"m1", "r1"} <= ids
+    assert not any(str(s["id"]).startswith("wa-live:") for s in context["sources"])
+
+
+def test_wa_live_exception_falls_back_to_normal_flow(tmp_path, monkeypatch) -> None:
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("bridge db locked")
+
+    monkeypatch.setattr(whatsapp_live, "resolve_chats", _boom)
+
+    events = list(chat_stream(_FakeMemory(tmp_path), "qué me dijo Ana hoy?"))
+
+    context = next(e for e in events if e["type"] == "context")
+    ids = {s["id"] for s in context["sources"]}
+    assert {"m1", "r1"} <= ids

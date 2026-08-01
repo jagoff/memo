@@ -7,7 +7,9 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from memo.chat import whatsapp_live
 from memo.chat.config import ChatConfig
+from memo.chat.contacts_alias import build_index as build_contacts_index
 from memo.chat.dedup import collapse_near_duplicates, score_of
 from memo.chat.expand import allows_multi_query, classify_query, expand_query
 from memo.chat.feedback import (
@@ -70,6 +72,47 @@ def _apply_title_boost(sources: list[dict[str, Any]], query: str) -> list[dict[s
     return out
 
 
+def _whatsapp_live_source(cfg: ChatConfig, memo_query: str) -> list[dict[str, Any]] | None:
+    """Resolve a single exclusive WA-live source for a recency-intent query.
+
+    The semantic index only stores WhatsApp transcripts as ingested, day-
+    granular chunks, so it structurally can't answer "el último mensaje con
+    X" — this reads the live bridge DB directly for a message-granular,
+    always-current answer instead. Returns ``None`` (caller falls back to
+    normal semantic retrieval) when the query has no recency intent, no
+    chat/messages resolve, or anything on this path raises.
+    """
+    if not whatsapp_live.recency_conversation_intent(memo_query):
+        return None
+    try:
+        db = whatsapp_live.bridge_db_path()
+        contacts_index = build_contacts_index(cfg.contacts_dir) if cfg.contacts_dir else {}
+        chats = whatsapp_live.resolve_chats(memo_query, db, contacts_index)
+        if not chats:
+            return None
+        jid, label = chats[0]
+        singular = whatsapp_live.singular_last_intent(memo_query)
+        today = whatsapp_live.today_only_intent(memo_query)
+        limit = 1 if singular else (200 if today else 10)
+        msgs = whatsapp_live.last_messages(db, jid, limit=limit, today_only=today and not singular)
+        if not msgs:
+            return None
+        last_date = str(msgs[-1].get("ts", ""))[:10]
+        return [
+            {
+                "id": f"wa-live:{label.lower()}",
+                "source": "memory",
+                "type": "whatsapp_live",
+                "title": f"WhatsApp · {label} — {last_date}",
+                "snippet": whatsapp_live.format_transcript(label, msgs),
+                "score": 0.99,
+                "normalized_score": 0.99,
+            }
+        ]
+    except Exception:
+        return None
+
+
 def chat_stream(
     memory: Any,
     question: str,
@@ -85,47 +128,53 @@ def chat_stream(
     retrieval_t0 = time.monotonic()
     yield {"type": "stage", "name": "memo_retrieval", "phase": "start"}
 
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            mem_future = pool.submit(memory.search, memo_query, limit=base_k, mode="hybrid")
-            vault_future = pool.submit(memory.repo_search, memo_query, limit=base_k)
-            mem_sources = [_record_to_source(r) for r in (mem_future.result() or [])]
-            vault_sources = [_hit_to_source(h) for h in (vault_future.result() or [])]
+    dominant = None
+    sources: list[dict[str, Any]] | None = None
+    if cfg.whatsapp_live:
+        sources = _whatsapp_live_source(cfg, memo_query)
 
-        rankings = [mem_sources, vault_sources]
-        if cfg.multi_query and allows_multi_query(classify_query(memo_query)):
-            variants = expand_query(
-                memory._ensure_chat(), memory.cfg.llm_model, memo_query, n=cfg.multi_query_n
-            )
-            for variant in variants:
-                hits = memory.search(variant, limit=base_k, mode="hybrid") or []
-                rankings.append([_record_to_source(r) for r in hits])
-
-        fused = normalize_scores(rrf_fuse(rankings, limit=base_k))
-        fused = _apply_title_boost(fused, memo_query)
-        dominant = dominant_doc_group(fused) if cfg.fulldoc else None
-
-        sources = collapse_near_duplicates(fused)
-        store = SourceVoteStore(cfg.feedback_dir)
-        latest = store.latest_by_pair()
-        qkey = question_key(memo_query)
-        sources = filter_negative_sources(sources, latest, qkey)
-        sources = boost_positive_sources(sources, latest, qkey, factor=cfg.vote_boost)
+    if sources is None:
         try:
-            query_vec = memory.embedder.embed_query(memo_query)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                mem_future = pool.submit(memory.search, memo_query, limit=base_k, mode="hybrid")
+                vault_future = pool.submit(memory.repo_search, memo_query, limit=base_k)
+                mem_sources = [_record_to_source(r) for r in (mem_future.result() or [])]
+                vault_sources = [_hit_to_source(h) for h in (vault_future.result() or [])]
+
+            rankings = [mem_sources, vault_sources]
+            if cfg.multi_query and allows_multi_query(classify_query(memo_query)):
+                variants = expand_query(
+                    memory._ensure_chat(), memory.cfg.llm_model, memo_query, n=cfg.multi_query_n
+                )
+                for variant in variants:
+                    hits = memory.search(variant, limit=base_k, mode="hybrid") or []
+                    rankings.append([_record_to_source(r) for r in hits])
+
+            fused = normalize_scores(rrf_fuse(rankings, limit=base_k))
+            fused = _apply_title_boost(fused, memo_query)
+            dominant = dominant_doc_group(fused) if cfg.fulldoc else None
+
+            sources = collapse_near_duplicates(fused)
+            store = SourceVoteStore(cfg.feedback_dir)
+            latest = store.latest_by_pair()
+            qkey = question_key(memo_query)
+            sources = filter_negative_sources(sources, latest, qkey)
+            sources = boost_positive_sources(sources, latest, qkey, factor=cfg.vote_boost)
+            try:
+                query_vec = memory.embedder.embed_query(memo_query)
+            except Exception:
+                query_vec = []
+            if query_vec:
+                sources = boost_semantic(
+                    sources,
+                    query_vec,
+                    store.load(),
+                    threshold=cfg.semantic_threshold,
+                    factor=cfg.vote_boost,
+                )
         except Exception:
-            query_vec = []
-        if query_vec:
-            sources = boost_semantic(
-                sources,
-                query_vec,
-                store.load(),
-                threshold=cfg.semantic_threshold,
-                factor=cfg.vote_boost,
-            )
-    except Exception:
-        yield {"type": "error", "message": "retrieval failed", "answer_partial": ""}
-        return
+            yield {"type": "error", "message": "retrieval failed", "answer_partial": ""}
+            return
 
     yield {
         "type": "stage",

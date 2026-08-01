@@ -30,6 +30,11 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def _env_path_or_none(name: str) -> Path | None:
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
 @dataclass(frozen=True)
 class ChatConfig:
     base_k: int
@@ -43,6 +48,8 @@ class ChatConfig:
     synth_head: int
     feedback_dir: Path
     sessions_dir: Path
+    whatsapp_live: bool
+    contacts_dir: Path | None
 
     @classmethod
     def load(cls, state_dir: Path) -> ChatConfig:
@@ -59,4 +66,6 @@ class ChatConfig:
             synth_head=_env_int("MEMO_CHAT_SYNTH_HEAD", 8),
             feedback_dir=chat_root / "feedback",
             sessions_dir=chat_root / "sessions",
+            whatsapp_live=_env_bool("MEMO_CHAT_WHATSAPP_LIVE", True),
+            contacts_dir=_env_path_or_none("MEMO_CHAT_CONTACTS_DIR"),
         )
