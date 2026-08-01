@@ -22,7 +22,7 @@ _log = logging.getLogger(__name__)
 @click.command(name="stats")
 @click.option("--json", "as_json", is_flag=True, help="Emit a stable JSON stats report.")
 def stats(as_json: bool) -> None:
-    """Comprehensive stats: utility, recall quality, consumers, tokens saved."""
+    """Comprehensive stats: corpus, recall quality, consumers, and context use."""
     mem = Memory(Config.from_env())
     try:
         cfg = mem.cfg
@@ -31,7 +31,7 @@ def stats(as_json: bool) -> None:
 
         if as_json:
             report: dict[str, object] = {
-                "schema": "memo.stats.v1",
+                "schema": "memo.stats.v2",
                 "corpus": {"total": mem.store.count(), "data_dir": str(cfg.data_dir)},
                 "models": {
                     "profile": cfg.model_profile,
@@ -43,13 +43,14 @@ def stats(as_json: bool) -> None:
                 from memo.dashboard import read_usage_log
 
                 report["utility"] = {
-                    "tokens_saved": sum(
+                    "context_tokens_injected": sum(
                         int(e.get("tokens_est", 0))
                         for e in read_context_cost_log(state_dir, limit=2000)
                     ),
-                    "memories_used": len(
+                    "memories_surfaced": len(
                         {e.get("id") for e in read_usage_log(state_dir, limit=2000) if e.get("id")}
                     ),
+                    "sample_limit": 2000,
                 }
             except Exception as exc:
                 report["utility_error"] = str(exc)
@@ -91,7 +92,7 @@ def stats(as_json: bool) -> None:
     console.print(f"  embedder  {embedder_identity.split('/')[-1]}")
     console.print(f"  llm      {cfg.llm_model.split('/')[-1]}")
 
-    console.print("\n[bold]⚡ Utility (last 7 days)[/bold]")
+    console.print("\n[bold]⚡ Context activity (bounded recent sample)[/bold]")
     total_tokens = 0
     try:
         for e in read_context_cost_log(state_dir, limit=2000):
@@ -120,22 +121,23 @@ def stats(as_json: bool) -> None:
     except Exception as exc:
         _log.debug("grounding log read failed: %s", exc)
 
-    tokens_saved = total_tokens
-    cost_usd = tokens_saved * 0.00001
-
-    console.print(f"  tokens saved      {tokens_saved:,}")
-    console.print(f"  cost $          ${cost_usd:.2f}")
-    console.print(f"  memories used   {len(usage_ids)} unique")
+    console.print(f"  tokens injected   {total_tokens:,}")
+    console.print(f"  memories surfaced {len(usage_ids)} unique")
 
     console.print("\n[bold]🎯 Recall Quality[/bold]")
     try:
         h = recall_health(state_dir)
         if h.get("fired"):
             hit_pct = h.get("hit_rate", 0) * 100
-            strong_pct = h.get("strong_hit_rate", 0) * 100
+            composite_rate = h.get("top_composite_score_rate", h.get("strong_hit_rate", 0))
+            composite_pct = composite_rate * 100
+            composite_threshold = h.get("composite_score_threshold", 0.85)
             console.print(f"  recall hooks   {h['fired']} fired")
             console.print(f"  hit rate      {hit_pct:.0f}%")
-            console.print(f"  strong hits   {strong_pct:.0f}% (score >0.7)")
+            console.print(
+                f"  top composite {composite_pct:.0f}% "
+                f"(final ranking score >{composite_threshold:.2f})"
+            )
             console.print(f"  latency p50  {h.get('p50_latency_ms', '—')}ms")
         else:
             console.print("  (no data)")

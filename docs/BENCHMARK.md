@@ -119,7 +119,7 @@ is a true 7-day window.
 |---|---|
 | Recall hooks fired (log tail, ~31 days) | 1,226 |
 | Hit rate | 99% |
-| Strong hits (score > 0.7) | 97% |
+| Top composite-score rate (>0.7; legacy label “strong hits”) | 97% |
 | Latency, warm daemon, last 7 days (n=129) | p50 616 ms · p95 7,610 ms |
 | Latency, cold subprocess fallback, last 7 days (n=31) | p50 8,935 ms |
 | Consults, by consumer (last ≤500 consult-log rows) | claude-code 95 · synapse 58 · codex 32 · claude 1 (hit rate 97–100% each) |
@@ -297,7 +297,7 @@ rolling comparison; single-day swings exceed the published effect by 5×.
 either direction.
 
 **C5 · HIGH — "(7 days)" mislabeled the telemetry window.** Hook fires / hit
-rate / strong hits come from `recall_health()`, which reads the recall-hook
+rate / top composite-score rate come from `recall_health()`, which reads the recall-hook
 log tail (cap 2,000 rows); the live log spans 2026-06-19 → 2026-07-20 (~31
 days, 1,354 rows). The consult breakdown is the last ≤500 consult-log rows,
 also not day-windowed. Only the latency block is a true 7-day window

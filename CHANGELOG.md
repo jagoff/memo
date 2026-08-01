@@ -9,6 +9,24 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- `memo events list --cursor` now exposes bounded, resumable event pages from
+  the append-only JSONL journal, with an opaque cursor backed by a verified byte
+  offset, while the no-cursor command preserves its legacy JSON list contract.
+  `memo chat-session list --cursor` similarly supports stable
+  session-id pagination so consumers can drain histories larger than 1,000
+  records without replaying earlier pages.
+
+### Changed
+
+- `memo stats --json` now emits `memo.stats.v2`: bounded context activity is
+  reported honestly as `context_tokens_injected` and `memories_surfaced`,
+  leaving estimated savings exclusively to `memo roi`. Recall dashboards and
+  CLIs now name the boosted final ranking value a composite score instead of
+  presenting it as semantic confidence; the ambiguous v1 score fields remain
+  compatibility aliases.
+
 ## [4.7.0] - 2026-07-31
 
 ### Added

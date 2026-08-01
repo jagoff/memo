@@ -3,8 +3,9 @@
 Pins three additions that turn "memo fired" into "memo was useful":
   - dedup_double_fire: the same prompt logged twice (subprocess+daemon) is one
     consult, not two — totals/rates must not double-count it.
-  - strong_hit_rate: share of fired recalls with a high-confidence (>0.85) top
-    hit — the honest relevance number, separate from "returned anything".
+  - top_composite_score_rate: share of fired recalls whose top final ranking
+    score exceeds the configured bar. This score includes ranking boosts and
+    is not semantic confidence or bounded cosine similarity.
   - referenced_rate: share of surfaced memorias later fetched (usage.log) — a
     lower bound on "used", not just "shown".
 """
@@ -71,24 +72,24 @@ def test_dedup_never_merges_empty_prompt_bails() -> None:
     assert len(dedup_double_fire(rows)) == 2
 
 
-def test_strong_hit_rate_splits_confident_from_weak(tmp_path) -> None:
-    # Two strong (>0.85), one weak, one bail. Distinct prompts so dedup leaves
-    # them all.
+def test_top_composite_score_rate_splits_scores_at_threshold(tmp_path) -> None:
+    # Two top composite scores above the bar, one below it, and one bail.
+    # Composite ranking scores can exceed 1 because they include boosts.
     append_recall_log(
         tmp_path,
-        prompt="strong one alpha",
-        hits=[{"id": "a1", "score": 0.91, "title": "A"}],
+        prompt="composite one alpha",
+        hits=[{"id": "a1", "score": 1.41, "title": "A"}],
         via="daemon",
     )
     append_recall_log(
         tmp_path,
-        prompt="strong two beta",
+        prompt="composite two beta",
         hits=[{"id": "b2", "score": 0.88, "title": "B"}],
         via="daemon",
     )
     append_recall_log(
         tmp_path,
-        prompt="weak three gamma",
+        prompt="below threshold gamma",
         hits=[{"id": "c3", "score": 0.62, "title": "C"}],
         via="daemon",
     )
@@ -98,7 +99,12 @@ def test_strong_hit_rate_splits_confident_from_weak(tmp_path) -> None:
     assert health["fired"] == 3
     assert health["bailed"] == 1
     assert health["hit_rate"] == 1.0  # all fired returned something
-    assert health["strong_hit_rate"] == round(2 / 3, 3)  # only 2 were confident
+    assert health["composite_score_threshold"] == 0.85
+    assert health["top_composite_score_rate"] == round(2 / 3, 3)
+    assert health["median_top_composite_score"] == 0.88
+    # v1 fields remain aliases during the compatibility window.
+    assert health["strong_hit_rate"] == health["top_composite_score_rate"]
+    assert health["median_top_score"] == health["median_top_composite_score"]
 
 
 def test_referenced_rate_counts_only_post_surfacing_fetches(tmp_path) -> None:
@@ -141,7 +147,7 @@ def test_usage_log_round_trip_truncates_id(tmp_path) -> None:
     assert rows[-1]["id"] == "abcdefgh"  # 8-char prefix, matches recall.log
 
 
-def test_consult_breakdown_exposes_strong_hit_rate(tmp_path) -> None:
+def test_consult_breakdown_exposes_composite_score_contract_and_v1_aliases(tmp_path) -> None:
     append_recall_log(
         tmp_path,
         prompt="alpha distinct prompt",
@@ -158,7 +164,11 @@ def test_consult_breakdown_exposes_strong_hit_rate(tmp_path) -> None:
     cc = next(c for c in bd["consumers"] if c["consumer"] == "claude-code")
     assert cc["fired"] == 2
     assert cc["hit_rate"] == 1.0
-    assert cc["strong_hit_rate"] == 0.5
+    assert cc["composite_score_threshold"] == 0.85
+    assert cc["top_composite_score_rate"] == 0.5
+    assert cc["median_top_composite_score"] == 0.7
+    assert cc["strong_hit_rate"] == cc["top_composite_score_rate"]
+    assert cc["median_top_score"] == cc["median_top_composite_score"]
 
 
 def test_consult_breakdown_grounded_rate_excludes_unscored_turns(tmp_path) -> None:

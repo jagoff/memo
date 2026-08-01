@@ -35,6 +35,7 @@ from memo.cli_banner import codex_badge_cmd, startup_banner_cmd
 from memo.cli_briefing import briefing
 from memo.cli_capture import capture_stop, capture_tick, episodes_group, resume
 from memo.cli_chat import chat_group
+from memo.cli_chat_session import chat_session_group
 from memo.cli_chronicle import chronicle_cmd
 from memo.cli_code_facts import code_facts_cmd
 from memo.cli_code_intel import code_health_cmd, code_nudge_cmd
@@ -60,6 +61,7 @@ from memo.cli_drift import drift as drift_cmd
 from memo.cli_embed_daemon import embed_daemon_group
 from memo.cli_entities import entities, entity, extract_entities
 from memo.cli_eval import eval_group
+from memo.cli_events import events_group
 from memo.cli_export import export_group
 from memo.cli_federation import federation_group
 from memo.cli_feedback import feedback_group
@@ -414,6 +416,7 @@ cli.add_command(capture_tick)
 cli.add_command(reflect)
 cli.add_command(resume)
 cli.add_command(episodes_group)
+cli.add_command(events_group)
 cli.add_command(diff_cmd)
 cli.add_command(history_cmd)
 cli.add_command(briefing)
@@ -468,6 +471,7 @@ cli.add_command(context_pack_cmd)
 cli.add_command(embed_cmd)
 cli.add_command(chat_ask)
 cli.add_command(chat_group)
+cli.add_command(chat_session_group)
 cli.add_command(rerank_cmd)
 cli.add_command(list_cmd)
 cli.add_command(get)

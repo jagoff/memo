@@ -9,8 +9,10 @@ from unittest.mock import MagicMock
 
 import frontmatter
 import pytest
+from click.testing import CliRunner
 
 from memo.atomic_io import atomic_write_text
+from memo.cli import cli
 from memo.contracts import ActorIdentity, AnswerStatus, normalize_provenance
 from memo.errors import WriteRefused
 from memo.independence_migration import migrate_independence
@@ -60,10 +62,8 @@ def test_operational_snapshot_rebuilds_when_journal_advances(tmp_path):
     store = OperationalStore(tmp_path, device_id="device-a")
     store.set_focus(project="memo", summary="before")
     conflict_id = "anomaly-fixed"
-    store.ledger.append(
-        "anomaly.record",
-        subject_uri=f"memo://anomaly/{conflict_id}",
-        payload={
+    store.record_anomaly(
+        {
             "anomaly_id": conflict_id,
             "kind": "semantic_contradiction",
             "state": "detected",
@@ -88,7 +88,7 @@ def test_operational_commit_rebuilds_when_later_same_device_event_wins_race(
 ):
     store = OperationalStore(tmp_path, device_id="device-a")
     store.state()
-    append = store.ledger.append
+    append = store._ledger.append
 
     def append_then_race(op, **kwargs):
         event = append(op, **kwargs)
@@ -102,7 +102,7 @@ def test_operational_commit_rebuilds_when_later_same_device_event_wins_race(
         )
         return event
 
-    monkeypatch.setattr(store.ledger, "append", append_then_race)
+    monkeypatch.setattr(store._ledger, "append", append_then_race)
 
     store.set_focus(project="memo", summary="superseded before snapshot commit")
     state = store.state()
@@ -110,6 +110,145 @@ def test_operational_commit_rebuilds_when_later_same_device_event_wins_race(
     assert "memo" not in state["focus"]
     assert state["journal_heads"] == store.ledger.head_hashes()
     assert len(store.ledger.validated_events()) == 2
+
+
+def test_operational_ledger_view_rejects_unauthorized_append(tmp_path):
+    store = OperationalStore(tmp_path, device_id="device-a")
+
+    with pytest.raises(PermissionError, match="OperationalStore authorization"):
+        store.ledger.append("focus.set", subject_uri="memo://focus/memo")
+
+
+def test_operational_signal_cli_remembers_lists_and_fences_epochs(tmp_path):
+    env = {
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_CONFIG_FILE": str(tmp_path / "memo-config.toml"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+    }
+    runner = CliRunner()
+
+    remembered = runner.invoke(
+        cli,
+        [
+            "operational",
+            "signal",
+            "remember",
+            "--marker",
+            "watcher:repo:memo",
+            "--epoch",
+            "3",
+            "--fence",
+            "leader-a",
+            "--payload-json",
+            '{"commits": 2}',
+            "--actor-id",
+            "synapse-watcher",
+        ],
+        env=env,
+    )
+    assert remembered.exit_code == 0, remembered.output
+    record = json.loads(remembered.output)
+    assert record["marker"] == "watcher:repo:memo"
+    assert record["epoch"] == 3
+    assert record["fence"] == "leader-a"
+    assert record["payload"] == {"commits": 2}
+
+    stale = runner.invoke(
+        cli,
+        [
+            "operational",
+            "signal",
+            "remember",
+            "--marker",
+            "watcher:repo:memo",
+            "--epoch",
+            "2",
+        ],
+        env=env,
+    )
+    assert stale.exit_code != 0
+    assert "stale signal epoch" in stale.output
+
+    listed = runner.invoke(
+        cli,
+        [
+            "operational",
+            "signal",
+            "list",
+            "--marker",
+            "watcher:repo:memo",
+            "--min-epoch",
+            "3",
+            "--limit",
+            "1",
+        ],
+        env=env,
+    )
+    assert listed.exit_code == 0, listed.output
+    envelope = json.loads(listed.output)
+    assert envelope["count"] == 1
+    assert envelope["signals"] == [record]
+
+
+def test_operational_signal_cli_rejects_non_object_payload(tmp_path):
+    result = CliRunner().invoke(
+        cli,
+        [
+            "operational",
+            "signal",
+            "remember",
+            "--marker",
+            "watcher:repo:memo",
+            "--payload-json",
+            "[]",
+        ],
+        env={
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+            "MEMO_STATE_DIR": str(tmp_path / "state"),
+            "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+            "MEMO_CONFIG_FILE": str(tmp_path / "memo-config.toml"),
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        },
+    )
+
+    assert result.exit_code != 0
+    assert "must decode to a JSON object" in result.output
+
+
+def test_mcp_operational_signal_tools_preserve_json_contract(tmp_path):
+    store = OperationalStore(tmp_path, device_id="device-a")
+    memory = SimpleNamespace(
+        operational=store,
+        cfg=SimpleNamespace(device_id="device-a"),
+    )
+    server = _ToolServer()
+    register_operational_tools(server, memory)
+
+    remembered = server.tools["memo_signal_remember"](
+        "watcher:repo:memo",
+        epoch=4,
+        fence="leader-b",
+        payload={"commits": 3},
+        actor_id="synapse-watcher",
+    )
+    assert remembered == {
+        "marker": "watcher:repo:memo",
+        "epoch": 4,
+        "fence": "leader-b",
+        "payload": {"commits": 3},
+        "created_at": remembered["created_at"],
+    }
+
+    listed = server.tools["memo_signal_list"](
+        marker="watcher:repo:memo",
+        min_epoch=4,
+        limit=1,
+    )
+    assert listed == {"signals": [remembered], "count": 1}
 
 
 def test_operation_ledger_repairs_stale_head_and_rejects_unsafe_timestamps(tmp_path):

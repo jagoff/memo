@@ -7,6 +7,7 @@ agent work.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -24,6 +25,19 @@ from memo.contracts import (
 )
 from memo.operation_ledger import OperationLedger
 from memo.util import utc_now_iso
+
+
+class _LedgerView:
+    """Read-only view exposed to callers; appends must go through the store."""
+
+    def __init__(self, ledger: OperationLedger) -> None:
+        self._ledger = ledger
+
+    def append(self, *args: Any, **kwargs: Any) -> Any:
+        raise PermissionError("operational ledger appends require OperationalStore authorization")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ledger, name)
 
 
 @dataclass(frozen=True)
@@ -71,6 +85,17 @@ class ConflictRecord:
     resolution: str = ""
     evidence_uris: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class OperationalSignal:
+    """Durable watcher marker, fenced by monotonically increasing epoch."""
+
+    marker: str
+    epoch: int
+    fence: str
+    payload: dict[str, Any]
+    created_at: str
 
 
 def _id(prefix: str) -> str:
@@ -127,6 +152,15 @@ def _apply_conflict_resolve(state: ProjectionState, payload: dict[str, Any]) -> 
 
 def _apply_outcome_record(state: ProjectionState, payload: dict[str, Any]) -> None:
     state["outcomes"][payload["task_id"]] = dict(payload)
+
+
+def _apply_signal_remember(state: ProjectionState, payload: dict[str, Any]) -> None:
+    marker = str(payload["marker"])
+    current = state["signals"].get(marker)
+    # Epoch fencing makes delayed watcher writes harmless.
+    if current is not None and int(payload["epoch"]) < int(current.get("epoch", 0)):
+        return
+    state["signals"][marker] = dict(payload)
 
 
 def _resolved_anomaly_patch(payload: dict[str, Any]) -> dict[str, str]:
@@ -196,6 +230,7 @@ _PROJECTION_HANDLERS: dict[str, ProjectionHandler] = {
     "conflict.resolve": _apply_conflict_resolve,
     "outcome.record": _apply_outcome_record,
     "anomaly.record": _apply_anomaly_record,
+    "signal.remember": _apply_signal_remember,
 }
 
 
@@ -244,7 +279,8 @@ def _conflict_matches_query(row: dict[str, Any], query_cf: str) -> bool:
 class OperationalStore:
     def __init__(self, state_dir: Path, *, device_id: str) -> None:
         self.state_dir = Path(state_dir)
-        self.ledger = OperationLedger(self.state_dir, device_id=device_id)
+        self._ledger = OperationLedger(self.state_dir, device_id=device_id)
+        self.ledger = _LedgerView(self._ledger)
         self.snapshot_path = self.state_dir / "operational-state.json"
 
     @staticmethod
@@ -256,6 +292,7 @@ class OperationalStore:
             "attention": {},
             "conflicts": {},
             "outcomes": {},
+            "signals": {},
             "last_event_hash": "",
             "journal_heads": {},
         }
@@ -305,20 +342,25 @@ class OperationalStore:
         subject_uri: str,
         actor: ActorIdentity | None = None,
         trace_id: str = "",
+        event_id: str | None = None,
     ) -> dict[str, Any]:
-        event = self.ledger.append(
-            op,
-            subject_uri=subject_uri,
-            actor=actor,
-            trace_id=trace_id,
-            payload=payload,
-        )
         with authority_write_lock(self.snapshot_path):
+            # Keep the journal append and snapshot projection under one fence.
+            # Otherwise a competing append can advance the head after our
+            # verify-then-append check, causing an ABA-style stale projection.
+            event = self._ledger.append(
+                op,
+                subject_uri=subject_uri,
+                actor=actor,
+                trace_id=trace_id,
+                payload=payload,
+                event_id=event_id,
+            )
             try:
                 state = json.loads(self.snapshot_path.read_text(encoding="utf-8"))
             except (FileNotFoundError, OSError, json.JSONDecodeError):
                 state = {}
-            current_heads = self.ledger.head_hashes()
+            current_heads = self._ledger.head_hashes()
             snapshot_heads = state.get("journal_heads")
             expected_heads = dict(current_heads)
             if event.previous_hash:
@@ -338,6 +380,64 @@ class OperationalStore:
             else:
                 state = self.rebuild()
         return {"event": event.to_dict(), "state": state}
+
+    def record_anomaly(
+        self,
+        payload: dict[str, Any],
+        *,
+        actor: ActorIdentity | None = None,
+    ) -> dict[str, Any]:
+        """Record a validated anomaly through the operational authority.
+
+        The public ledger view is intentionally read-only. Anomaly producers
+        use this domain entrypoint so the journal append and snapshot
+        projection stay inside the same write fence.
+        """
+        event_payload = dict(payload)
+        anomaly_id = str(event_payload.get("anomaly_id") or "").strip()
+        if not anomaly_id:
+            raise ValueError("anomaly_id must not be empty")
+        kind = str(event_payload.get("kind") or "").strip()
+        if not kind:
+            raise ValueError("anomaly kind must not be empty")
+        state = str(event_payload.get("state") or "").strip()
+        if state not in {"detected", "resolved"}:
+            raise ValueError("anomaly state must be detected|resolved")
+        event_payload["anomaly_id"] = anomaly_id
+        event_payload["kind"] = kind
+        event_payload["state"] = state
+        event_payload.setdefault("created_at", utc_now_iso())
+        self._commit(
+            "anomaly.record",
+            event_payload,
+            subject_uri=f"memo://anomaly/{anomaly_id}",
+            actor=actor,
+        )
+        return event_payload
+
+    def import_legacy_event(
+        self,
+        op: str,
+        *,
+        subject_uri: str,
+        trace_id: str,
+        payload: dict[str, Any],
+        event_id: str,
+    ) -> dict[str, Any]:
+        """Import one deterministically identified legacy journal event.
+
+        This is deliberately narrower than exposing ``ledger.append``: only
+        namespaced legacy operations can enter through the migration surface.
+        """
+        if not op.startswith("legacy."):
+            raise ValueError("imported operational event must use the legacy. namespace")
+        return self._commit(
+            op,
+            dict(payload),
+            subject_uri=subject_uri,
+            trace_id=trace_id,
+            event_id=event_id,
+        )["event"]
 
     def set_focus(
         self,
@@ -576,6 +676,99 @@ class OperationalStore:
                 actor=ActorIdentity(actor_id=actor_id, actor_kind="agent"),
             )
             return payload
+
+    def remember_signal(
+        self,
+        *,
+        marker: str,
+        payload: dict[str, Any] | None = None,
+        epoch: int = 0,
+        fence: str = "",
+        actor_id: str = "memo",
+    ) -> OperationalSignal:
+        """Record an idempotent watcher marker in the native journal.
+
+        A marker is the idempotency key. Writes from an older epoch are rejected;
+        callers should rotate ``fence`` when leadership changes.
+        """
+        marker = str(marker).strip()
+        if not marker:
+            raise ValueError("signal marker must not be empty")
+        if int(epoch) < 0:
+            raise ValueError("signal epoch must be non-negative")
+        with authority_write_lock(self.state_dir / "operational-transactions"):
+            state = self._read_snapshot()
+            existing = state["signals"].get(marker)
+            if existing is not None:
+                if int(epoch) < int(existing.get("epoch", 0)):
+                    raise ValueError("stale signal epoch")
+                if int(epoch) == int(existing.get("epoch", 0)):
+                    item = OperationalSignal(
+                        marker=marker,
+                        epoch=int(existing["epoch"]),
+                        fence=str(existing.get("fence", "")),
+                        payload=dict(existing.get("payload") or {}),
+                        created_at=str(existing.get("created_at", "")),
+                    )
+                    self._mirror_signal_event(item)
+                    return item
+            item = OperationalSignal(
+                marker, int(epoch), str(fence), dict(payload or {}), utc_now_iso()
+            )
+            self._commit(
+                "signal.remember",
+                asdict(item),
+                subject_uri=f"memo://signal/{marker}",
+                actor=ActorIdentity(actor_id=actor_id, actor_kind="agent"),
+            )
+            self._mirror_signal_event(item)
+            return item
+
+    def _mirror_signal_event(self, item: OperationalSignal) -> None:
+        """Project a signal revision into the cursored runtime event journal."""
+        from memo.event_surface import ingest_event
+
+        identity = f"{item.marker}\0{item.epoch}\0{item.created_at}".encode()
+        event_id = "signal-" + hashlib.sha256(identity).hexdigest()[:24]
+        ingest_event(
+            {
+                "event_id": event_id,
+                "kind": "signal",
+                "marker": item.marker,
+                "epoch": item.epoch,
+                "fence": item.fence,
+                "payload": dict(item.payload),
+                "created_at": item.created_at,
+            },
+            state_dir=self.state_dir,
+        )
+
+    def list_signals(
+        self,
+        *,
+        marker: str | None = None,
+        min_epoch: int | None = None,
+        limit: int = 100,
+    ) -> list[OperationalSignal]:
+        rows = self._read_snapshot().get("signals", {})
+        out: list[OperationalSignal] = []
+        for key, row in rows.items():
+            if marker and key != marker:
+                continue
+            if min_epoch is not None and int(row.get("epoch", 0)) < min_epoch:
+                continue
+            out.append(
+                OperationalSignal(
+                    key,
+                    int(row.get("epoch", 0)),
+                    str(row.get("fence", "")),
+                    dict(row.get("payload") or {}),
+                    str(row.get("created_at", "")),
+                )
+            )
+        return sorted(out, key=lambda item: (item.epoch, item.created_at), reverse=True)[
+            : max(1, min(limit, 1000))
+        ]
 
     def receipt(
         self,

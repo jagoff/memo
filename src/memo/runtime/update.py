@@ -483,9 +483,8 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     # Git unreachable — fall back to PyPI.
     console.print("[dim]Could not reach git; checking PyPI…[/dim]")
     try:
-        url = "https://pypi.org/pypi/mlx-memo/json"
         with urllib.request.urlopen(  # nosec B310 - constant HTTPS URL
-            url, timeout=10
+            "https://pypi.org/pypi/mlx-memo/json", timeout=10
         ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         latest_version = data["info"]["version"]

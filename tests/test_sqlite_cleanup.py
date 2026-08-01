@@ -203,6 +203,11 @@ def test_store_closes_worker_thread_connections(tmp_path: Path, factory, reader)
     # holder set would let a worker connection vanish before close()/sweep runs.
     store = factory(tmp_path)
 
+    # Do not attribute unreachable connections from an unrelated earlier test
+    # to this store merely because this test is the next one to force a full
+    # collection. This matters in randomized/xdist CI lanes.
+    gc.collect()
+    gc.collect()
     with warnings.catch_warnings(record=True) as captured:
         warnings.simplefilter("always", ResourceWarning)
         threads = [threading.Thread(target=reader, args=(store,)) for _ in range(4)]

@@ -133,7 +133,10 @@ def _invoke(
 ):
     fake = _FakeMemory(hits if hits is not None else [_hit()])
     monkeypatch.setattr("memo.cli_search._get_memory", lambda cfg: fake)
-    return CliRunner().invoke(cli, args, env=_env(tmp_path, codegraph_db))
+    try:
+        return CliRunner().invoke(cli, args, env=_env(tmp_path, codegraph_db))
+    finally:
+        fake.store._conn.close()
 
 
 def test_code_symbol_section_lists_neighbors_and_citing_memory(
