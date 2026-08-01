@@ -102,7 +102,9 @@ class SecureEnclaveP256Backend:
         self._validate_service(service)
         if not (service == _SERVICE_NAMESPACE or service.startswith(_SERVICE_NAMESPACE + ".")):
             raise KeyStoreError("Secure Enclave Keychain service must use operational v2 namespace")
-        self._service = service
+        self._service: str = service
+        self._helper: Path
+        self._helper_sha256: str
         self._helper, self._helper_sha256 = self._install_helper()
         self._verify_helper()
 
