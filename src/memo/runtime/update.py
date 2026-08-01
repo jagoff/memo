@@ -485,9 +485,7 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     try:
         url = "https://pypi.org/pypi/mlx-memo/json"
         urlopen = urllib.request.__dict__["urlopen"]
-        with urlopen(
-            url, timeout=10
-        ) as resp:
+        with urlopen(url, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         latest_version = data["info"]["version"]
     except (urllib.error.URLError, KeyError, json.JSONDecodeError, OSError) as exc:
