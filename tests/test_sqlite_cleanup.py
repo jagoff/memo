@@ -49,6 +49,27 @@ def test_snapshot_backup_resolves_source_strictly(tmp_path: Path, monkeypatch) -
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
 
+def test_snapshot_backup_opens_source_as_read_only_uri(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    with closing(sqlite3.connect(source)) as connection:
+        connection.execute("CREATE TABLE items (id INTEGER PRIMARY KEY)")
+
+    original_connect = sqlite3.connect
+    connect_calls: list[tuple[str | Path, object]] = []
+
+    def recording_connect(database: str | Path, *args, **kwargs):
+        connect_calls.append((database, kwargs.get("uri")))
+        return original_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite_snapshot.sqlite3, "connect", recording_connect)
+
+    sqlite_snapshot._backup_database(source, destination)
+
+    source_uri = f"{source.resolve(strict=True).as_uri()}?mode=ro"
+    assert connect_calls == [(source_uri, True), (destination, None)]
+
+
 def test_snapshot_contract_uses_private_sanitized_scratch(
     tmp_path: Path,
     monkeypatch,
