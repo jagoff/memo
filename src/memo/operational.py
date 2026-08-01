@@ -67,6 +67,12 @@ class _V2LedgerView:
     def verify(self) -> dict[str, Any]:
         return asdict(self.__ledger.verify())
 
+    def encode_bundle(self, bundle: Any) -> bytes:
+        return self.__ledger.encode_bundle(bundle)
+
+    def decode_bundle(self, encoded: bytes) -> Any:
+        return self.__ledger.decode_bundle(encoded)
+
 if TYPE_CHECKING:
     from memo.operation_ledger_v2 import OperationLedgerV2
     from memo.operation_views import OperationalViewStore
@@ -524,6 +530,29 @@ class OperationalStore:
                 replayed=False,
                 result=persisted.result,
             )
+
+    def export_bundles(self, *, origins: tuple[str, ...] | None = None) -> tuple[Any, ...]:
+        """Export verified v2 bundles without exposing the ledger writer."""
+
+        if not self._v2_enabled:
+            raise RuntimeError("operational bundle export requires ledger v2")
+        ledger = cast("OperationLedgerV2", self.__ledger)
+        return ledger.export_bundles(origins=origins)
+
+    def import_bundles(
+        self,
+        bundles: tuple[Any, ...],
+        *,
+        context: CommitContext,
+    ) -> Any:
+        """Import through the authenticated ledger and catch derived views up."""
+
+        if not self._v2_enabled:
+            raise RuntimeError("operational bundle import requires ledger v2")
+        ledger = cast("OperationLedgerV2", self.__ledger)
+        report = ledger.import_bundles(bundles, context=context)
+        self.views.catch_up(ledger)
+        return report
 
     def rebuild(self, *, events: list[Any] | None = None) -> dict[str, Any]:
         if self._v2_enabled:

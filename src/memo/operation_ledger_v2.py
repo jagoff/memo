@@ -3300,6 +3300,72 @@ class OperationLedgerV2:
             "head_hash": bundle.head_hash,
         }
 
+    def encode_bundle(self, bundle: OriginBundle) -> bytes:
+        """Encode one export bundle for immutable operational transport."""
+
+        self._validate_bundle(bundle)
+        return canonical_json_bytes(self._bundle_wire(bundle))
+
+    def decode_bundle(self, encoded: bytes) -> OriginBundle:
+        """Decode canonical transport bytes; signature checks occur on import."""
+
+        try:
+            value = json.loads(encoded.decode("utf-8"))
+            if not isinstance(value, dict) or set(value) != {
+                "anchor",
+                "checkpoint",
+                "events",
+                "head_sequence",
+                "head_hash",
+            }:
+                raise ValueError
+            if canonical_json_bytes(value) != encoded:
+                raise ValueError
+            anchor_value = value["anchor"]
+            event_values = value["events"]
+            if not isinstance(anchor_value, dict) or not isinstance(event_values, list):
+                raise ValueError
+            anchor = self._decode_anchor_bytes(
+                canonical_json_bytes(anchor_value),
+                "operational transport bundle",
+            )
+            events = tuple(
+                self._decode_event_bytes(
+                    canonical_json_bytes(event),
+                    "operational transport bundle",
+                )
+                for event in event_values
+            )
+            checkpoint = _decode_base64url(value["checkpoint"], "bundle checkpoint")
+            head_sequence = value["head_sequence"]
+            head_hash = value["head_hash"]
+            if (
+                isinstance(head_sequence, bool)
+                or not isinstance(head_sequence, int)
+                or not isinstance(head_hash, str)
+            ):
+                raise ValueError
+            return OriginBundle(
+                anchor=anchor,
+                checkpoint=checkpoint,
+                events=events,
+                head_sequence=head_sequence,
+                head_hash=head_hash,
+            )
+        except OperationalError:
+            raise
+        except (
+            TypeError,
+            ValueError,
+            KeyError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ) as exc:
+            raise _failure(
+                OperationalErrorCode.INVALID_EVENT,
+                "invalid canonical operational transport bundle",
+            ) from exc
+
     @staticmethod
     def _position_wire(position: OriginPosition | None, *, origin: str) -> dict[str, object]:
         if position is None:
