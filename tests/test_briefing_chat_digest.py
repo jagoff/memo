@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,11 @@ from memo.briefing import chat_digest_lines
 
 def _iso_local(ts: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
+
+
+def _invalid_at_offset(delta: timedelta) -> str:
+    """Match `memo.memory.record._now_iso()`'s shape: local-offset, ms precision."""
+    return (datetime.now(tz=UTC) + delta).astimezone().isoformat(timespec="milliseconds")
 
 
 def _write_captures(state_dir: Path, rows: list[dict[str, Any]]) -> None:
@@ -152,6 +158,105 @@ def test_flag_off_returns_empty_even_with_data(tmp_path: Path, monkeypatch: Any)
     )
 
     assert chat_digest_lines(mem, tmp_path) == []
+
+
+# ── invalidated (superseded) goals must not surface ─────────────────────────
+# `list_by_tag` only filters soft-deletes; a goal closed via
+# `lifecycle.invalidate_in_place` (contradicted/superseded) keeps its row in
+# `meta` with `invalid_at` stamped. The same tolerant pattern the store's own
+# recall uses (`invalid_at IS NULL OR invalid_at > now`, see
+# `store/bm25_queries.py::_validity_filter`) must apply here.
+
+
+def test_invalidated_goal_in_the_past_is_excluded(tmp_path: Path) -> None:
+    mem = _FakeMem(
+        goals=[
+            {"title": "Closed goal", "invalid_at": _invalid_at_offset(-timedelta(hours=1))},
+        ]
+    )
+
+    assert chat_digest_lines(mem, tmp_path) == []
+
+
+def test_goal_with_future_invalid_at_is_included(tmp_path: Path) -> None:
+    mem = _FakeMem(
+        goals=[
+            {"title": "Still open", "invalid_at": _invalid_at_offset(timedelta(days=1))},
+        ]
+    )
+
+    assert "Still open" in "\n".join(chat_digest_lines(mem, tmp_path))
+
+
+def test_goal_with_null_invalid_at_is_included(tmp_path: Path) -> None:
+    mem = _FakeMem(goals=[{"title": "Never closed", "invalid_at": None}])
+
+    assert "Never closed" in "\n".join(chat_digest_lines(mem, tmp_path))
+
+
+def test_goal_with_unparseable_invalid_at_is_included(tmp_path: Path) -> None:
+    # Tolerant: a corrupt/unexpected invalid_at must not hide a goal.
+    mem = _FakeMem(goals=[{"title": "Weird timestamp", "invalid_at": "not-a-date"}])
+
+    assert "Weird timestamp" in "\n".join(chat_digest_lines(mem, tmp_path))
+
+
+def test_invalidated_goal_excluded_among_mixed_goals(tmp_path: Path) -> None:
+    mem = _FakeMem(
+        goals=[
+            {"title": "Open goal", "invalid_at": None},
+            {"title": "Closed goal", "invalid_at": _invalid_at_offset(-timedelta(hours=1))},
+        ]
+    )
+
+    joined = "\n".join(chat_digest_lines(mem, tmp_path))
+    assert "Open goal" in joined
+    assert "Closed goal" not in joined
+
+
+def test_invalidate_in_place_hides_goal_from_real_store(mock_memory) -> None:
+    """Integration: exercise the production `lifecycle.invalidate_in_place`
+    path (not just a hand-built row) so the fake-store unit tests above are
+    proven against the real `meta` schema/shape too."""
+    rec = mock_memory.save(content="We decided to ship v1", title="Ship v1", tags=["goal"])
+    mock_memory.store.update_validity(
+        id_=rec.id, valid_at=None, invalid_at=_invalid_at_offset(-timedelta(hours=1))
+    )
+
+    assert chat_digest_lines(mock_memory, mock_memory.cfg.state_dir) == []
+
+
+# ── inter-source isolation ───────────────────────────────────────────────────
+
+
+def test_session_store_failure_does_not_hide_captures_or_goals(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import memo.chat.sessions as sessions_mod
+
+    def _boom(self: Any, limit: int = 50) -> Any:
+        raise RuntimeError("sessions store is on fire")
+
+    monkeypatch.setattr(sessions_mod.SessionStore, "list_sessions", _boom)
+
+    _write_captures(
+        tmp_path,
+        [
+            {
+                "memoria_id": "a1",
+                "title": "Recent insight",
+                "score": 90,
+                "chat_session_id": "s1",
+                "captured_at": _iso_local(time.time() - 60),
+            }
+        ],
+    )
+    mem = _FakeMem(goals=[{"title": "Ship task 7"}])
+
+    joined = "\n".join(chat_digest_lines(mem, tmp_path))
+
+    assert "Recent insight" in joined
+    assert "Ship task 7" in joined
 
 
 # ── compositor wiring ────────────────────────────────────────────────────────

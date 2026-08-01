@@ -501,6 +501,31 @@ def maybe_code_impact_lines(mem: Any, cwd: str | None) -> list[str]:
     return code_impact_lines(mem, cwd)
 
 
+def _goal_row_is_active(row: dict[str, Any]) -> bool:
+    """True unless `row["invalid_at"]` is a parseable timestamp <= now.
+
+    Mirrors the store's own validity gate (`store/bm25_queries.py`
+    `_validity_filter`'s default now-gate: `invalid_at IS NULL OR invalid_at
+    > now`) — a goal closed via `lifecycle.invalidate_in_place`
+    (contradicted/superseded) keeps its row in `meta` with `invalid_at`
+    stamped, but must not read as "active" here. Tolerant: a missing or
+    unparseable `invalid_at` keeps the row (never hide a goal over a parsing
+    quirk). Compares tz-aware instants (not raw string lexicographic
+    ordering) so it doesn't depend on `invalid_at` sharing this machine's
+    current UTC offset.
+    """
+    invalid_at = row.get("invalid_at")
+    if not invalid_at:
+        return True
+    try:
+        dt = datetime.fromisoformat(str(invalid_at).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt > datetime.now(tz=UTC)
+
+
 def chat_digest_lines(mem: Any, state_dir: Path) -> list[str]:
     """'💬 Chat' — recent chat-insight captures, active chat sessions, and
     active goals for the SessionStart briefing.
@@ -512,8 +537,10 @@ def chat_digest_lines(mem: Any, state_dir: Path) -> list[str]:
       sessions with activity in the last 24h (count).
     * ``mem.store.list_by_tag("goal", limit=50)`` — up to 3 active goal
       titles. `list_by_tag` already excludes archived/deleted rows (archiving
-      moves a memory's file to `inactive/` and drops it from the index), so
-      no extra archived-filtering is needed here.
+      moves a memory's file to `inactive/` and drops it from the index), but
+      NOT invalidated ones (`lifecycle.invalidate_in_place` closes a
+      superseded goal's `invalid_at` in place without archiving it) — those
+      are filtered here via `_goal_row_is_active`.
 
     Gated by ``MEMO_BRIEFING_CHAT_DIGEST`` (default on, checked here so a
     disabled flag never touches the chat state dir, here or in any other
@@ -581,7 +608,7 @@ def chat_digest_lines(mem: Any, state_dir: Path) -> list[str]:
 
     with contextlib.suppress(Exception):
         goals = mem.store.list_by_tag("goal", limit=50)
-        titles = [str(g["title"]) for g in goals if g.get("title")][:3]
+        titles = [str(g["title"]) for g in goals if g.get("title") and _goal_row_is_active(g)][:3]
         if titles:
             lines.append(f"**Active goals:** {'; '.join(titles)}")
 
