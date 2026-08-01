@@ -192,6 +192,14 @@ def test_internal_shim_state_vars_not_flagged_unknown() -> None:
     assert flags.validate(env=env) == []
 
 
+def test_startup_banner_toggle_not_flagged_unknown() -> None:
+    # MEMO_STARTUP_BANNER=0 is the documented user-facing toggle consumed by
+    # the bash shell shim (runtime/shims.py) — env-only, outside the registry.
+    env = {"MEMO_STARTUP_BANNER": "0"}
+    assert flags.unknown_memo_vars(env=env) == []
+    assert flags.validate(env=env) == []
+
+
 def test_chat_config_vars_not_flagged_unknown() -> None:
     # chat/config.py's 9 MEMO_CHAT_* knobs are env-only (read directly, not
     # through this registry) but must not be reported as typos.
