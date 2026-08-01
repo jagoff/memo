@@ -105,7 +105,11 @@ def test_release_mcpb_build_is_reproducible(
 def test_release_mcpb_builds_python_and_node_archives(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    repo = _fake_repo(tmp_path, "1.2.3")
+    # Longer than Rich's default captured-console width: artifact filenames
+    # must remain intact even when their absolute paths are very long.
+    long_root = tmp_path / ("long-release-path-" * 6)
+    long_root.mkdir()
+    repo = _fake_repo(long_root, "1.2.3")
     (repo / "packaging" / "memo.mcpb").unlink()
     (repo / "packaging" / "memo-node.mcpb").unlink()
     monkeypatch.setenv("MEMO_DEV_REPO", str(repo))
