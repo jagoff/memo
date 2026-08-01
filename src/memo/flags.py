@@ -295,6 +295,7 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_CHAT_SYNTH_HEAD",
         "MEMO_CHAT_WHATSAPP_LIVE",
         "MEMO_CHAT_CONTACTS_DIR",
+        "MEMO_CHAT_INSIGHT",
     }
     return sorted(k for k in src if k.startswith("MEMO_") and k not in REGISTRY and k not in owned)
 

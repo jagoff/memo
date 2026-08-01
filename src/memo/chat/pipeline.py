@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,7 @@ from memo.chat.contacts_alias import build_index as build_contacts_index
 from memo.chat.dedup import collapse_near_duplicates, score_of
 from memo.chat.expand import allows_multi_query, classify_query, expand_query
 from memo.chat.feedback import (
+    FeedbackStore,
     SourceVoteStore,
     boost_positive_sources,
     boost_semantic,
@@ -22,9 +24,12 @@ from memo.chat.feedback import (
 )
 from memo.chat.fulldoc import dominant_doc_group, resolve_fulldoc
 from memo.chat.fusion import normalize_scores, rrf_fuse
+from memo.chat.insight import detect, insight_threshold, is_duplicate
 from memo.chat.rewrite import rewrite_query
 from memo.chat.synthesis import filter_by_relevance, synthesize_stream
 from memo.retrieval_boost import boost_for
+
+_log = logging.getLogger(__name__)
 
 _SNIPPET_CHARS = 700
 
@@ -245,4 +250,14 @@ def chat_stream(
         "phase": "done",
         "ms": int((time.monotonic() - streaming_t0) * 1000),
     }
-    yield _done("".join(parts), "memo.chat")
+    answer = "".join(parts)
+    yield _done(answer, "memo.chat")
+
+    if cfg.insight:
+        try:
+            threshold = insight_threshold(question, FeedbackStore(cfg.feedback_dir).load())
+            candidate = detect(question, answer, sources[:base_k], threshold=threshold)
+            if candidate is not None and not is_duplicate(memory, candidate):
+                yield {"type": "insight_proposal", "candidate": candidate.to_dict()}
+        except Exception:
+            _log.debug("insight proposal detection failed", exc_info=True)

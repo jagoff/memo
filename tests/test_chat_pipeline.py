@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from memo.chat import pipeline as pipeline_module
 from memo.chat import whatsapp_live
 from memo.chat.pipeline import chat_stream
 
@@ -253,3 +254,51 @@ def test_whatsapp_live_disabled_flag_skips_wa_branch(tmp_path, monkeypatch) -> N
     context = next(e for e in events if e["type"] == "context")
     ids = {s["id"] for s in context["sources"]}
     assert {"m1", "r1"} <= ids
+
+
+_LONG_DECISION_ANSWER = (
+    "Acordamos migrar el backend a Python hoy, despues de revisar Api y Deploy "
+    "en profundidad junto al equipo completo. Esta decision se sustenta en las "
+    "fuentes citadas [1] y [2], que documentan el cambio con detalle suficiente "
+    "para justificarlo con contexto historico relevante para todo el proyecto."
+)
+
+
+class _LongAnswerChatBackend(_FakeChatBackend):
+    def chat_stream(self, model, messages, options=None):
+        yield _LONG_DECISION_ANSWER
+
+
+def test_insight_proposal_emitted_after_done_for_long_decision_answer(tmp_path) -> None:
+    mem = _FakeMemory(tmp_path)
+    mem._ensure_chat = lambda: _LongAnswerChatBackend()  # type: ignore[method-assign]
+
+    events = list(chat_stream(mem, "¿Qué acordamos sobre el backend?"))
+
+    assert events[-2]["type"] == "done"
+    assert events[-1]["type"] == "insight_proposal"
+    candidate = events[-1]["candidate"]
+    assert candidate["schema"] == "memo.chat.insight_candidate.v1"
+    assert candidate["suggested_type"] == "decision"
+
+
+def test_insight_proposal_absent_for_short_answer(tmp_path) -> None:
+    events = list(chat_stream(_FakeMemory(tmp_path), "qué sabés de la nota uno?"))
+
+    assert events[-1]["type"] == "done"
+    assert not any(e["type"] == "insight_proposal" for e in events)
+
+
+def test_insight_detect_exception_leaves_stream_intact(tmp_path, monkeypatch) -> None:
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("detect exploded")
+
+    monkeypatch.setattr(pipeline_module, "detect", _boom)
+
+    mem = _FakeMemory(tmp_path)
+    mem._ensure_chat = lambda: _LongAnswerChatBackend()  # type: ignore[method-assign]
+
+    events = list(chat_stream(mem, "¿Qué acordamos sobre el backend?"))
+
+    assert events[-1]["type"] == "done"
+    assert not any(e["type"] == "insight_proposal" for e in events)

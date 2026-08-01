@@ -50,6 +50,7 @@ class ChatConfig:
     sessions_dir: Path
     whatsapp_live: bool
     contacts_dir: Path | None
+    insight: bool
 
     @classmethod
     def load(cls, state_dir: Path) -> ChatConfig:
@@ -68,4 +69,5 @@ class ChatConfig:
             sessions_dir=chat_root / "sessions",
             whatsapp_live=_env_bool("MEMO_CHAT_WHATSAPP_LIVE", True),
             contacts_dir=_env_path_or_none("MEMO_CHAT_CONTACTS_DIR"),
+            insight=_env_bool("MEMO_CHAT_INSIGHT", True),
         )

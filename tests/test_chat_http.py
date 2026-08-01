@@ -66,7 +66,91 @@ def test_feedback_source_malformed_json_returns_400(client) -> None:
 
 def test_deferred_endpoints_501(client) -> None:
     assert client.post("/api/memory/delete", json={}).status_code == 501
-    assert client.post("/api/insight/capture", json={}).status_code == 501
+
+
+def _make_save_spy_memory(tmp_path):
+    """`_FakeMemory` subclass that records `save()` kwargs for the capture endpoint."""
+    from types import SimpleNamespace
+
+    from tests.test_chat_pipeline import _FakeMemory
+
+    class _SaveSpyMemory(_FakeMemory):
+        def __init__(self, tmp_path):
+            super().__init__(tmp_path)
+            self.save_calls: list[dict] = []
+
+        def save(self, **kwargs):
+            self.save_calls.append(kwargs)
+            return SimpleNamespace(id="deadbeef1234")
+
+    return _SaveSpyMemory(tmp_path)
+
+
+def test_insight_capture_valid_candidate_saves_and_logs(tmp_path) -> None:
+    memory = _make_save_spy_memory(tmp_path)
+    app = build_app(memory)
+    client = TestClient(app)
+
+    candidate = {
+        "title": "Acordamos migrar el backend",
+        "body": "Cuerpo de la memoria capturada desde el chat.",
+        "tags": ["decision"],
+        "score": 95,
+        "suggested_type": "decision",
+        "chat_session_id": "s1",
+    }
+    resp = client.post("/api/insight/capture", json={"candidate": candidate})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["memoria_id"] == "deadbeef1234"
+
+    assert memory.save_calls == [
+        {
+            "content": candidate["body"],
+            "title": candidate["title"],
+            "type_": "decision",
+            "tags": ["decision", "chat-capture"],
+        }
+    ]
+
+    captures_path = tmp_path / "chat" / "insights" / "captures.jsonl"
+    lines = captures_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    logged = json.loads(lines[0])
+    assert logged["memoria_id"] == "deadbeef1234"
+    assert logged["title"] == candidate["title"]
+    assert logged["score"] == 95
+    assert logged["chat_session_id"] == "s1"
+    assert "captured_at" in logged
+
+
+def test_insight_capture_empty_title_or_body_returns_400(tmp_path) -> None:
+    memory = _make_save_spy_memory(tmp_path)
+    app = build_app(memory)
+    client = TestClient(app)
+
+    resp = client.post("/api/insight/capture", json={"candidate": {"title": "", "body": ""}})
+    assert resp.status_code == 400
+    assert "error" in resp.json()
+    assert memory.save_calls == []
+
+
+def test_insight_capture_low_score_adds_uncertain_tag(tmp_path) -> None:
+    memory = _make_save_spy_memory(tmp_path)
+    app = build_app(memory)
+    client = TestClient(app)
+
+    candidate = {
+        "title": "Nota de baja confianza",
+        "body": "Cuerpo suficientemente largo para pasar la validacion basica.",
+        "tags": [],
+        "score": 55,
+        "suggested_type": "note",
+    }
+    resp = client.post("/api/insight/capture", json={"candidate": candidate})
+    assert resp.status_code == 200
+    assert memory.save_calls[0]["tags"] == ["chat-capture", "_uncertain"]
 
 
 def test_sessions_endpoints(client) -> None:

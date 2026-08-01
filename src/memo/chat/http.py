@@ -205,8 +205,56 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         return JSONResponse({"error": "deferred to plan 2"}, status_code=501)
 
     @app.post("/api/insight/capture")
-    async def insight_capture() -> Any:
-        return JSONResponse({"error": "deferred to plan 2"}, status_code=501)
+    async def insight_capture(request: Request) -> Any:
+        from memo.memory.record import _VALID_TYPES
+
+        body = await _json_body(request)
+        if body is None:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        candidate = body.get("candidate")
+        if not isinstance(candidate, dict):
+            return JSONResponse({"error": "candidate required"}, status_code=400)
+
+        title = str(candidate.get("title") or "").strip()
+        text_body = str(candidate.get("body") or "").strip()
+        if not title or not text_body:
+            return JSONResponse({"error": "title and body required"}, status_code=400)
+
+        raw_score = candidate.get("score")
+        score = int(raw_score) if isinstance(raw_score, (int, float)) else 0
+
+        tags = [str(t) for t in (candidate.get("tags") or []) if isinstance(t, str)]
+        tags = [*tags, "chat-capture"]
+        if score < 90:
+            tags.append("_uncertain")
+
+        suggested_type = candidate.get("suggested_type")
+        type_ = (
+            suggested_type
+            if isinstance(suggested_type, str) and suggested_type in _VALID_TYPES
+            else "note"
+        )
+
+        record = memory.save(content=text_body, title=title, type_=type_, tags=tags)
+
+        captures_path = memory.cfg.state_dir / "chat" / "insights" / "captures.jsonl"
+        captures_path.parent.mkdir(parents=True, exist_ok=True)
+        with captures_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "memoria_id": record.id,
+                        "title": title,
+                        "score": score,
+                        "chat_session_id": str(candidate.get("chat_session_id") or ""),
+                        "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+
+        return {"ok": True, "memoria_id": record.id}
 
     if dist is not None and (dist / "index.html").exists():
         from fastapi.staticfiles import StaticFiles
