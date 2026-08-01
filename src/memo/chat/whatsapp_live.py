@@ -17,7 +17,6 @@ semantic path instead of breaking the chat response.
 
 from __future__ import annotations
 
-import os
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -104,8 +103,17 @@ def _name_tokens(name: str) -> list[str]:
 
 
 def bridge_db_path() -> Path:
-    """Resolve the bridge ``messages.db`` path (``MEMO_WHATSAPP_DB`` override)."""
-    raw = os.environ.get("MEMO_WHATSAPP_DB", "").strip() or _DEFAULT_DB
+    """Resolve the bridge ``messages.db`` path (``MEMO_WHATSAPP_DB`` flag override).
+
+    ``MEMO_WHATSAPP_DB`` is a registered flag (``flags_misc.py``, also read by
+    ``whatsapp_ingest.py``) — read it through the flags registry, not raw
+    ``os.environ``, so it stays visible to ``memo config validate`` / ``memo
+    config flags`` and satisfies the architecture-boundary check that no
+    registered flag is read directly from the environment.
+    """
+    from memo.flags import flag_str
+
+    raw = flag_str("MEMO_WHATSAPP_DB") or _DEFAULT_DB
     return Path(raw).expanduser()
 
 
