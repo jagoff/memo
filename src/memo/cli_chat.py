@@ -20,6 +20,7 @@ from typing import Any
 import click
 from rich.panel import Panel
 
+from memo.chat.crystallize import crystallize_session
 from memo.cli_common import console, log_cli_consult
 from memo.cli_common import get_memory as _get_memory
 from memo.cli_search import _sources_as_hits
@@ -183,6 +184,23 @@ def chat_ask(
                 f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "
                 f"[dim](score {_format_source_score(s.get('score'))})[/dim]"
             )
+
+
+@chat_group.command(name="crystallize")
+@click.argument("session_id", required=False)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview the crystal without saving it to memo.",
+)
+def chat_crystallize(session_id: str | None, dry_run: bool) -> None:
+    """Synthesize a chat session into a durable memo memory (a "crystal").
+
+    With no SESSION_ID, crystallizes the most recently active session.
+    """
+    memory = _build_memory()
+    result = crystallize_session(memory, session_id, dry_run=dry_run)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 @chat_group.command(name="serve")

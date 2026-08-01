@@ -5,10 +5,12 @@ memo. Mirrors test_cli_consult_attribution for the chat group surface."""
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from click.testing import CliRunner
 
+from memo.chat.sessions import SessionStore
 from memo.cli_chat import chat_group
 from memo.config import Config
 from memo.dashboard import read_recall_log
@@ -71,3 +73,66 @@ def test_chat_ask_silent_without_source(tmp_cfg: Config, monkeypatch) -> None:
     res = CliRunner().invoke(chat_group, ["ask", "what?"], env=_env(tmp_cfg))
     assert res.exit_code == 0, res.output
     assert read_recall_log(tmp_cfg.state_dir, limit=10) == []
+
+
+class _CrystallizeChatBackend:
+    def chat(self, model, messages, options=None):
+        return {
+            "message": {
+                "content": json.dumps(
+                    {"title": "Preview title", "body": "preview body", "tags": ["x"]}
+                )
+            }
+        }
+
+
+class _CrystallizeMemory:
+    """Fake memory for `chat crystallize` CLI tests — save() must not be called
+    under --dry-run."""
+
+    def __init__(self, cfg: Config) -> None:
+        self.cfg = cfg
+        self.save_calls: list[dict] = []
+
+    def _ensure_chat(self):
+        return _CrystallizeChatBackend()
+
+    def save(self, **kwargs):
+        self.save_calls.append(kwargs)
+        return SimpleNamespace(id="mem-cli")
+
+
+def test_chat_crystallize_dry_run_does_not_save(tmp_cfg: Config, monkeypatch) -> None:
+    store = SessionStore(tmp_cfg.state_dir / "chat" / "sessions")
+    store.append_turn("s1", "user", "hola")
+    store.append_turn("s1", "assistant", "respuesta")
+
+    fake_memory = _CrystallizeMemory(tmp_cfg)
+    monkeypatch.setattr("memo.cli_chat._get_memory", lambda cfg: fake_memory)
+
+    res = CliRunner().invoke(chat_group, ["crystallize", "s1", "--dry-run"], env=_env(tmp_cfg))
+
+    assert res.exit_code == 0, res.output
+    assert fake_memory.save_calls == []
+    payload = json.loads(res.output)
+    assert payload["ok"] is True
+    assert payload["dry_run"] is True
+    assert payload["crystal"]["title"] == "Preview title"
+    assert payload["memory_id"] is None
+
+
+def test_chat_crystallize_without_dry_run_saves(tmp_cfg: Config, monkeypatch) -> None:
+    store = SessionStore(tmp_cfg.state_dir / "chat" / "sessions")
+    store.append_turn("s1", "user", "hola")
+    store.append_turn("s1", "assistant", "respuesta")
+
+    fake_memory = _CrystallizeMemory(tmp_cfg)
+    monkeypatch.setattr("memo.cli_chat._get_memory", lambda cfg: fake_memory)
+
+    res = CliRunner().invoke(chat_group, ["crystallize", "s1"], env=_env(tmp_cfg))
+
+    assert res.exit_code == 0, res.output
+    assert len(fake_memory.save_calls) == 1
+    payload = json.loads(res.output)
+    assert payload["ok"] is True
+    assert payload["memory_id"] == "mem-cli"
