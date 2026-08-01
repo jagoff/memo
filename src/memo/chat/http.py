@@ -215,6 +215,8 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
         @app.get("/{path:path}")
         async def spa(path: str) -> Any:
+            if path == "api" or path.startswith("api/"):
+                return JSONResponse({"error": "unknown API route"}, status_code=404)
             candidate = (dist / path).resolve()
             if path and candidate.is_file() and candidate.is_relative_to(dist.resolve()):
                 return FileResponse(candidate)
