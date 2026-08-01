@@ -1,0 +1,39 @@
+{
+  "attempt_id": "hermetic-428f5e633f0d426d86caea6a52c0ff92",
+  "checks": {
+    "ack_roundtrip": true,
+    "acks_bidirectional": true,
+    "continuity_composed": true,
+    "gap_detected": true,
+    "gap_recovered": true,
+    "presence_roundtrip": true,
+    "restart_rebuild": true,
+    "tamper_rejected": true,
+    "terminal_a_observes_b": true,
+    "terminal_b_observes_a": true,
+    "terminal_exactly_once": true,
+    "terminal_mesh_bidirectional": true,
+    "two_peer_convergence": true
+  },
+  "created_at": "2026-07-31T12:00:00+00:00",
+  "evidence": {
+    "continuity_sha256": "34c20547c92c5e4b2c5552304ccc0aaed483103e4932ec84d5c91f3260ed6a05",
+    "git_head_a": "edcf1ab534497cc34d54d99abc6e7fda04f13559c0fc69be61b7104fde068218",
+    "git_head_b": "88a4c057d864aff3373aae6a0f6ad9bf160347271938100ebf44f575c6d2beab",
+    "state_sha256": "7bc95fe752ed65acb80b89b3571578e482b3455f9bf87724081b583f14aa02a5",
+    "terminal_receipt_a": "dfe27783e6aeb35b9413a5c561ea1fb24aa2509d0c2e7df940c3498bd37ee20a",
+    "terminal_receipt_b": "68991918356a7b365356a1782f89e50364078dfe0972c06b3481e8720f246ac0"
+  },
+  "receipt_sha256": "2e2282b908afee8d12fde372709b74a21b7be36437d80a726f443ad5cb4dc7ef",
+  "roster_version": 2,
+  "schema": "memo.definitive_integration.v1",
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "ed25519-3216c4ec0aae455b9cc3f6373e9cc2ed",
+    "roster_version": 2,
+    "signature": "0HAcdYkvoOSCUIMR6W7NFN_VH2bV4_NAx1HVhJwRv_ecLfUiSu2-ZiHJbXsgez23wjIHVBNkuOsVRWhpHIQADA"
+  },
+  "signer_device_id": "device-a",
+  "signer_key_id": "ed25519-3216c4ec0aae455b9cc3f6373e9cc2ed",
+  "topology": "two-independent-peers+git+terminal+restart"
+}

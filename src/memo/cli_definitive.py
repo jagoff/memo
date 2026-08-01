@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import click
@@ -47,6 +48,24 @@ def definitive_benchmark_cmd(events: int, minimum_eps: float) -> None:
     _json(report)
     if not report["ok"]:
         raise click.ClickException("definitive benchmark gate failed")
+
+
+@definitive_group.command(name="integration")
+@click.option(
+    "--receipt",
+    required=True,
+    type=click.Path(path_type=Path, dir_okay=False),
+    help="Write the signed hermetic two-peer integration receipt here.",
+)
+def definitive_integration_cmd(receipt: Path) -> None:
+    """Run message, sync, terminal, ACK, presence, and restart proof."""
+
+    from memo.definitive_integration_runtime import run_hermetic_integration_proof
+
+    report = run_hermetic_integration_proof(receipt_path=receipt)
+    _json(report)
+    if not report["ok"]:
+        raise click.ClickException("definitive integration gate failed")
 
 
 __all__ = ["definitive_group"]

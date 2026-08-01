@@ -1,0 +1,44 @@
+{
+  "created_at": "2026-08-01T03:17:11.250+00:00",
+  "keys": [
+    {
+      "device_id": "device-a",
+      "enrollment_sequence": 1,
+      "fingerprint": "6823dca67d8e87b858c475030b0d50c782810514fbcc58314c748f04f74991ed",
+      "key_id": "ed25519-3216c4ec0aae455b9cc3f6373e9cc2ed",
+      "proof_of_possession": "7MUZ8jVrDJn6W0eAiiUBkAsQrvS6fn8OvxhJfw05-ndIu9P9H3j9vHdTJTuNjKI1Mjk0dgV1GCv-TIniKmZsBA",
+      "public_key": "mdQODCLU9enqHb59bbDVtnNQJSeouYIC2aUBsLekjP4",
+      "revocation_sequence": null,
+      "roles": [
+        "origin"
+      ]
+    },
+    {
+      "device_id": "device-b",
+      "enrollment_sequence": 1,
+      "fingerprint": "5f1e4b661a98114472ab6c4021670cff4577e645299f7ba33f04090393fe4715",
+      "key_id": "ed25519-6f7a15c57b7f4e6faac4d575cd522c6e",
+      "proof_of_possession": "fvg-Aid4_XIhHm2PXm2B9ueCK6uOwELTDzVbV8J7e0iV3t3GPCnLPoAakw_1Ij6GGcXDtTqec88dr0joT5DEDw",
+      "public_key": "ePNPgnvh506Vgtm8w3MtYTspqQfLjVP5r-sJAnFf5Gs",
+      "revocation_sequence": null,
+      "roles": [
+        "origin"
+      ]
+    }
+  ],
+  "local_device_id": "device-a",
+  "peers": [
+    "device-a",
+    "device-b"
+  ],
+  "previous_roster_hash": "8aece76dc6d51b68e6292a663540f7761b5ac19a7a11eef4c61d17eb4a9daf17",
+  "roster_hash": "222fb9c263aff871ae6885931511211fe79647960181b0f27f592d8186d3f7ca",
+  "schema": "memo.operational_roster.v1",
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "ed25519-3216c4ec0aae455b9cc3f6373e9cc2ed",
+    "roster_version": 1,
+    "signature": "fiHa1c907qXKw-hEnqzRvjpLc-YtJlS8AQNAzd7bQsOBlhLhsnSkZYBX3-ks432O3BNlVlvkjNAFbCdmyRUtAw"
+  },
+  "version": 2
+}

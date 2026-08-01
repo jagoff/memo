@@ -1,6 +1,6 @@
 # Checklist vivo — absorción completa de Memflow en Memo
 
-Última actualización: 2026-07-30
+Última actualización: 2026-07-31
 Branch: `feat/memflow-absorption`
 Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
 
@@ -87,6 +87,27 @@ Worktree: `/Users/fer/repos/memo/.worktrees/memflow-absorption`
   `221 passed, 3 failed` por tiempo de fixture.
 
 ### Completado en esta ejecución
+
+- [x] Integración técnica de `master` 4.7.0 y activación v2 firmada en fresh
+  installs, preservando los ledgers v1 existentes como compatibilidad de
+  migración read-only (`8049ac88`, `c4b362e2`, `8b736f95`).
+- [x] Runtime Memo-native implementado en commits separados: coordinación
+  (`42832449`), delivery/ACK (`07afb4a5`), presencia (`e440e3d2`), puente de
+  terminal (`0b7fe362`), continuidad (`19cb7ca8`) y sync Git firmado
+  (`e26b0755`). Ningún módulo importa Memflow o Synapse.
+- [x] Prueba hermética vertical firmada (`16fa5fd6`): dos authorities/rosters,
+  mensaje A→B, gap y recovery, rechazo de tampering, presentación terminal
+  exactly-once, ACK, presencia, sync B→A, continuidad y rebuild tras restart.
+- [x] Comando reproducible `memo definitive integration --receipt <path>`
+  ejecutado con 13/13 checks verdes, incluida comunicación terminal A↔B,
+  observación mutua, ACK bidireccional y presentación exactly-once en ambos
+  extremos. Receipt SHA-256
+  `2e2282b908afee8d12fde372709b74a21b7be36437d80a726f443ad5cb4dc7ef`;
+  evidencia en `docs/eval/memo-native-integration-2026-07-31.json`.
+- [ ] Esta evidencia técnica no acepta Plan 02: sigue faltando el
+  `CapabilityManifest` congelado, firmado y sin blockers con observaciones de
+  ambas Macs. Tampoco sustituye el reboot físico, la migración del estado vivo
+  ni el cutover/retirement de Planes 04–05.
 
 - [x] Alcance fijado: absorber uso vivo de 90 días y dependencias
   indispensables; eliminar capacidades sin uso junto con Memflow.
