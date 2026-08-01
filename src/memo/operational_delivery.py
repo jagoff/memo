@@ -178,28 +178,36 @@ class DeliveryService:
 
     def deliveries(self, *, message_id: str | None = None) -> list[DeliveryView]:
         rows: dict[str, DeliveryView] = {}
-        for event in self.store.ledger.validated_events():
+        events = tuple(self.store.ledger.validated_events())
+        # Imported origins are stored in deterministic origin order, not causal
+        # application order. Materialize every message first so a transition
+        # produced by terminal A can reduce a message produced by terminal B
+        # even when A sorts before B in the local ledger.
+        for event in events:
             payload = event.payload
-            if event.event_type == MESSAGE_SENT:
-                for target in payload["target_ids"]:
-                    target_id = str(target)
-                    delivery_id = _delivery_id(event.event_id, target_id)
-                    rows[delivery_id] = DeliveryView(
-                        id=delivery_id,
-                        message_id=str(payload["message_id"]),
-                        target_id=target_id,
-                        state="pending",
-                        terminal_id=None,
-                        attempt_count=0,
-                        next_attempt_at=str(payload["created_at"]),
-                        deadline_at=event.expires_at,
-                        last_error_code=None,
-                        ack_actor_id=None,
-                        ack_event_id=None,
-                        channel=str(payload["channel"]),
-                        message_event_id=event.event_id,
-                    )
+            if event.event_type != MESSAGE_SENT:
                 continue
+            for target in payload["target_ids"]:
+                target_id = str(target)
+                delivery_id = _delivery_id(event.event_id, target_id)
+                rows[delivery_id] = DeliveryView(
+                    id=delivery_id,
+                    message_id=str(payload["message_id"]),
+                    target_id=target_id,
+                    state="pending",
+                    terminal_id=None,
+                    attempt_count=0,
+                    next_attempt_at=str(payload["created_at"]),
+                    deadline_at=event.expires_at,
+                    last_error_code=None,
+                    ack_actor_id=None,
+                    ack_event_id=None,
+                    channel=str(payload["channel"]),
+                    message_event_id=event.event_id,
+                )
+
+        for event in events:
+            payload = event.payload
             if event.event_type not in {
                 DELIVERY_RESERVED,
                 DELIVERY_PRESENTED,
@@ -214,6 +222,8 @@ class DeliveryService:
             if current is None:
                 continue
             if event.event_type == DELIVERY_ACK_RECORDED:
+                if current.state == "expired":
+                    continue
                 rows[key] = replace(
                     current,
                     state="acknowledged",
@@ -221,6 +231,8 @@ class DeliveryService:
                     ack_actor_id=str(payload["ack_actor_id"]),
                     ack_event_id=str(payload["ack_event_id"]),
                 )
+                continue
+            if current.state in _TERMINAL:
                 continue
             transition = {
                 DELIVERY_RESERVED: "reserved",
@@ -230,6 +242,15 @@ class DeliveryService:
                 DELIVERY_EXPIRED: "expired",
             }[event.event_type]
             attempt = int(payload["attempt_count"])
+            if attempt < current.attempt_count:
+                continue
+            rank = {"reserved": 1, "known_failed": 2, "uncertain": 2, "presented": 3}
+            if (
+                transition != "expired"
+                and attempt == current.attempt_count
+                and rank[transition] < rank.get(current.state, 0)
+            ):
+                continue
             transitioned_at = _parse_time(str(payload["transitioned_at"]))
             next_attempt: str | None = None
             if transition == "known_failed" and attempt < self.retry_policy.max_attempts:

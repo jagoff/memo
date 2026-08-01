@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +14,44 @@ from memo.operational_activation import activate_fresh_operational_v2
 from memo.operational_coordination import CoordinationService
 from memo.operational_delivery import DeliveryService
 from tests.operational_authority import build_test_fresh_v2_authority
+
+
+def test_cross_origin_transition_reduces_after_its_message_even_if_sorted_first() -> None:
+    message_event_id = "event-from-device-b"
+    delivery_id = hashlib.sha256(f"{message_event_id}\0agent-a".encode()).hexdigest()
+    transition = SimpleNamespace(
+        event_type="memo.operational.delivery.reserved.v1",
+        event_id="event-from-device-a",
+        expires_at=None,
+        payload={
+            "delivery_id": delivery_id,
+            "message_id": "message-b",
+            "target_id": "agent-a",
+            "transitioned_at": "2026-07-31T12:00:01Z",
+            "attempt_count": 1,
+            "terminal_id": "terminal-a",
+            "error_code": "",
+        },
+    )
+    message = SimpleNamespace(
+        event_type="memo.operational.coord.message.sent.v1",
+        event_id=message_event_id,
+        expires_at=None,
+        payload={
+            "message_id": "message-b",
+            "target_ids": ("agent-a",),
+            "created_at": "2026-07-31T12:00:00Z",
+            "channel": "handoff",
+        },
+    )
+    ledger = SimpleNamespace(validated_events=lambda: (transition, message))
+    store = SimpleNamespace(backend_version=2, ledger=ledger)
+    service = DeliveryService(store, context_factory=lambda _identity: None)  # type: ignore[arg-type]
+
+    delivery = service.deliveries(message_id="message-b")[0]
+
+    assert delivery.state == "reserved"
+    assert delivery.terminal_id == "terminal-a"
 
 
 @pytest.fixture
