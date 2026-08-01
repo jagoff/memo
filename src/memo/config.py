@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from memo.errors import MemoError
 from memo.model_pins import PINNED_MODEL_REVISIONS, ModelPinError, default_revision, model_spec
 from memo.operational_epoch import CommitContext, EpochFence
+from memo.operational_signing import OperationalSigner
 from memo.platform_detect import is_apple_silicon
 
 _log = logging.getLogger(__name__)
@@ -509,6 +510,13 @@ class Config(BaseModel):
     operational_epoch_fence: EpochFence | None = Field(
         default=None,
         description="Durable epoch fence used to admit operational writes.",
+    )
+    operational_signer: OperationalSigner | None = Field(
+        default=None,
+        description=(
+            "Opaque signer composed by the operational runtime; tests may inject "
+            "an in-memory provider without weakening production key policy."
+        ),
     )
     memories_in_vault: bool = Field(
         default=False,

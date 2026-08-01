@@ -51,6 +51,22 @@ class _LedgerView:
         """Expose integrity verification without exposing ledger mutation."""
         return self.__ledger.verify()
 
+
+class _V2LedgerView:
+    """Read-only public view over the signed v2 ledger."""
+
+    def __init__(self, ledger: OperationLedgerV2) -> None:
+        self.__ledger = ledger
+
+    def append(self, *args: Any, **kwargs: Any) -> Any:
+        raise PermissionError("operational ledger appends require store authorization")
+
+    def validated_events(self) -> Any:
+        return self.__ledger.validated_events()
+
+    def verify(self) -> dict[str, Any]:
+        return asdict(self.__ledger.verify())
+
 if TYPE_CHECKING:
     from memo.operation_ledger_v2 import OperationLedgerV2
     from memo.operation_views import OperationalViewStore
@@ -300,6 +316,7 @@ class OperationalStore:
     views: OperationalViewStore
     epoch_fence: EpochFence | None
     transaction_root: Path
+    backend_version: int
 
     def __init__(self, state_dir: Path, *, device_id: str, context_provider: Callable[[], CommitContext] | None = None, epoch_fence: EpochFence | None = None) -> None:
         self.state_dir = Path(state_dir)
@@ -307,6 +324,7 @@ class OperationalStore:
         self.ledger = _LedgerView(self.__ledger)
         self.snapshot_path = self.state_dir / "operational-state.json"
         self._v2_enabled = False
+        self.backend_version = 1
         # Legacy writers are fail-closed unless an authenticated epoch context
         # provider is explicitly composed (tests may inject an in-memory one).
         self._context_provider = context_provider
@@ -320,16 +338,20 @@ class OperationalStore:
         views: OperationalViewStore,
         epoch_fence: EpochFence,
         transaction_root: Path,
+        context_provider: Callable[[], CommitContext] | None = None,
     ) -> OperationalStore:
         """Construct the dormant v2 service without activating the public facade."""
         instance = cls.__new__(cls)
         instance.state_dir = Path(transaction_root).parent
-        instance.ledger = ledger
+        instance.__ledger = ledger
+        instance.ledger = _V2LedgerView(ledger)
         instance.views = views
         instance.epoch_fence = epoch_fence
         instance.transaction_root = Path(transaction_root)
         instance.snapshot_path = instance.state_dir / "operational-state.json"
         instance._v2_enabled = True
+        instance.backend_version = 2
+        instance._context_provider = context_provider
         return instance
 
     @staticmethod
@@ -347,6 +369,10 @@ class OperationalStore:
         }
 
     def _read_snapshot(self) -> dict[str, Any]:
+        if self._v2_enabled:
+            ledger = cast("OperationLedgerV2", self.__ledger)
+            self.views.catch_up(ledger)
+            return cast(dict[str, Any], self.views.state())
         events = self.ledger.validated_events()
         journal_heads: dict[str, str] = {}
         for event in events:
@@ -416,7 +442,7 @@ class OperationalStore:
         request_hash = hashlib.sha256(
             canonical_json_bytes(asdict(command))
         ).hexdigest()
-        ledger = cast("OperationLedgerV2", self.ledger)
+        ledger = cast("OperationLedgerV2", self.__ledger)
         # Retain the durable epoch fence through the complete append + view
         # commit.  A one-shot ``verify`` here leaves a race where authority
         # activation can advance the marker between validation and fsync,
@@ -500,6 +526,11 @@ class OperationalStore:
             )
 
     def rebuild(self, *, events: list[Any] | None = None) -> dict[str, Any]:
+        if self._v2_enabled:
+            ledger = cast("OperationLedgerV2", self.__ledger)
+            materialized = events if events is not None else ledger.validated_events()
+            self.views.rebuild(materialized)
+            return cast(dict[str, Any], self.views.state())
         state = self._empty()
         for event in events if events is not None else self.ledger.validated_events():
             self._apply(state, event.op, event.payload)
@@ -524,6 +555,14 @@ class OperationalStore:
         trace_id: str = "",
         context: CommitContext | None = None,
     ) -> dict[str, Any]:
+        if self._v2_enabled:
+            return self._commit_v2(
+                op,
+                payload,
+                subject_uri=subject_uri,
+                trace_id=trace_id,
+                context=context,
+            )
         _, admission = self._legacy_admission(
             context,
             purpose="operational writes",
@@ -560,6 +599,95 @@ class OperationalStore:
             else:
                 state = self.rebuild()
         return {"event": event.to_dict(), "state": state}
+
+    def _commit_v2(
+        self,
+        op: str,
+        payload: dict[str, Any],
+        *,
+        subject_uri: str,
+        trace_id: str,
+        context: CommitContext | None,
+    ) -> dict[str, Any]:
+        """Translate the stable public facade into one authenticated v2 command."""
+        from memo.errors import OperationalError, OperationalErrorCode
+        from memo.operational_epoch import CommitContext
+        from memo.operational_event import OperationalCommand, canonical_json_bytes
+        from memo.operational_event_types import (
+            ATTENTION_ACKNOWLEDGED,
+            ATTENTION_ADDED,
+            CONFLICT_OPENED,
+            CONFLICT_RESOLVED,
+            FOCUS_CLEARED,
+            FOCUS_SET,
+            HANDOFF_CONSUMED,
+            HANDOFF_CREATED,
+            OUTCOME_RECORDED,
+        )
+
+        event_types = {
+            "focus.set": FOCUS_SET,
+            "focus.clear": FOCUS_CLEARED,
+            "handoff.create": HANDOFF_CREATED,
+            "handoff.consume": HANDOFF_CONSUMED,
+            "attention.add": ATTENTION_ADDED,
+            "attention.ack": ATTENTION_ACKNOWLEDGED,
+            "conflict.open": CONFLICT_OPENED,
+            "conflict.resolve": CONFLICT_RESOLVED,
+            "outcome.record": OUTCOME_RECORDED,
+        }
+        event_type = event_types.get(op)
+        if event_type is None:
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                f"operational v2 does not admit legacy operation {op!r}",
+                retryable=False,
+            )
+        authenticated = context or (
+            self._context_provider() if self._context_provider else None
+        )
+        if not isinstance(authenticated, CommitContext):
+            raise OperationalError(
+                OperationalErrorCode.INVALID_EVENT,
+                "authenticated epoch context is required for operational v2 writes",
+                retryable=False,
+            )
+        explicit_key = str(payload.get("idempotency_key") or "").strip()
+        request_key = explicit_key or trace_id.strip()
+        if not request_key:
+            request_key = hashlib.sha256(
+                canonical_json_bytes(
+                    {
+                        "op": op,
+                        "payload": payload,
+                        "subject_uri": subject_uri,
+                    }
+                )
+            ).hexdigest()
+        project = str(payload.get("project") or "_global")
+        target_id = str(
+            payload.get("id")
+            or payload.get("task_id")
+            or payload.get("project")
+            or ""
+        ) or None
+        command = OperationalCommand(
+            event_type=event_type,
+            actor=authenticated.identity,
+            target_id=target_id,
+            project=project,
+            workspace="",
+            expires_at=None,
+            visibility=Visibility.LOCAL_ONLY.value,
+            idempotency_key=request_key,
+            caused_by=(),
+            subject_uri=subject_uri,
+            trace_id=trace_id,
+            payload=payload,
+        )
+        result = self.commit(command, context=authenticated)
+        event = json.loads(canonical_json_bytes(result.event))
+        return {"event": event, "state": self._read_snapshot()}
 
     def _legacy_admission(
         self,

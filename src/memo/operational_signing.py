@@ -35,6 +35,7 @@ ALLOWED_SIGNATURE_DOMAINS = frozenset(
         "memo.operational.migration_prepared.v1",
         "memo.operational.system_capability.v1",
         "memo.operational_epoch_authorization.v1",
+        "memo.operational.activation.v1",
         "memo.cutover.vote.v1",
         "memo.cutover.audit_exclusions.v1",
         "memo.cutover.usage_proof.v1",
@@ -251,7 +252,10 @@ class OperationalVerifier:
                 raise SignatureError("anchor signer role is invalid")
             if signer_role == "origin":
                 expected_device = _claim_string(body, "origin_device", required=True)
-        elif domain == "memo.operational_epoch_authorization.v1":
+        elif domain in {
+            "memo.operational_epoch_authorization.v1",
+            "memo.operational.activation.v1",
+        }:
             record_key_field = "key_id"
             require_record_claims = True
             expected_device = _claim_string(body, "device_id", required=True)

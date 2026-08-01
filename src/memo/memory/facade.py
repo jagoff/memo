@@ -174,21 +174,14 @@ class Memory(
         # Native operational continuity and write policy.  These are lightweight
         # (journal paths + lazy snapshot reads), always available, and replace
         # the historical cross-runtime boundary.
-        from memo.operational import OperationalStore as _OperationalStore
+        from memo.operational_activation import select_operational_store
         from memo.write_policy import WritePolicyEngine as _WritePolicyEngine
 
         # Operational writes are authenticated once v2 is activated.  Runtime
         # entrypoints may compose a fence-bound provider on Config (without
         # making the facade aware of transport details); absent a provider the
         # legacy store intentionally fails closed.
-        _context_provider = getattr(cfg, "operational_context_provider", None)
-        _epoch_fence = getattr(cfg, "operational_epoch_fence", None)
-        self.operational = _OperationalStore(
-            cfg.state_dir,
-            device_id=cfg.device_id,
-            context_provider=_context_provider if callable(_context_provider) else None,
-            epoch_fence=_epoch_fence,
-        )
+        self.operational = select_operational_store(cfg)
         self.write_policy = _WritePolicyEngine(self.operational)
         # Helper LLM is lazy — only constructed when a helper-backed path
         # is requested. Users who don't opt in pay nothing.

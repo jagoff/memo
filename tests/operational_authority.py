@@ -31,6 +31,60 @@ class TestOperationalAuthority:
         return self.context
 
 
+@dataclass(frozen=True)
+class TestFreshV2Authority:
+    signer: OperationalSigner
+    roster: VerificationRoster
+    pin_store: AuthorityPinStore
+    fence: EpochFence
+    key_id: str
+
+    def runtime_authority(self):
+        from memo.operational_activation import OperationalRuntimeAuthority
+
+        return OperationalRuntimeAuthority(
+            signer=self.signer,
+            roster=self.roster,
+            pin_store=self.pin_store,
+            fence=self.fence,
+            key_id=self.key_id,
+        )
+
+
+def build_test_fresh_v2_authority(
+    root: Path,
+    *,
+    device_id: str,
+) -> TestFreshV2Authority:
+    authority_root = Path(root).resolve()
+    keys = DeviceKeyStore.in_memory()
+    origin_key = keys.generate(device_id=device_id, roles=("origin",))
+    pin_store = AuthorityPinStore._for_test(
+        authority_root,
+        provider=InMemoryAuthorityPinProvider(),
+    )
+    roster = VerificationRoster.bootstrap(
+        device_id=device_id,
+        key=origin_key,
+        root=authority_root,
+        pin_store=pin_store,
+    )
+    signer = OperationalSigner(keys, roster_version=roster.version)
+    fence = EpochFence(
+        authority_root,
+        roster=roster,
+        verifier=OperationalVerifier(),
+        pin_store=pin_store,
+    )
+    return TestFreshV2Authority(
+        signer=signer,
+        roster=roster,
+        pin_store=pin_store,
+        fence=fence,
+        key_id=origin_key.key_id,
+    )
+
+
 def build_test_operational_authority(
     root: Path,
     *,
