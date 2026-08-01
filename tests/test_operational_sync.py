@@ -1,19 +1,27 @@
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+import os
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from memo.definitive_integration import (
+    sign_integration_receipt,
+    verify_integration_receipt,
+)
 from memo.errors import OperationalError
 from memo.git_transport import GitTransport
 from memo.identity import PrincipalIdentity
 from memo.operation_ledger_v2 import OperationLedgerV2
 from memo.operation_views import OperationalViewStore
 from memo.operational import OperationalStore
+from memo.operational_continuity import ContinuityComposer
 from memo.operational_coordination import CoordinationService
+from memo.operational_delivery import DeliveryService
 from memo.operational_epoch import CommitContext, EpochFence
 from memo.operational_event import (
     EpochMarkerAuthorization,
@@ -25,9 +33,16 @@ from memo.operational_key_store import (
     DeviceKeyStore,
     InMemoryAuthorityPinProvider,
 )
+from memo.operational_presence import PresenceService
 from memo.operational_roster import VerificationRoster
 from memo.operational_signing import OperationalSigner, OperationalVerifier
 from memo.operational_sync import OperationalSync
+from memo.terminal_bridge import (
+    PresenterOutcome,
+    TerminalBridge,
+    TerminalPresentRequest,
+    TerminalRegistration,
+)
 
 
 @dataclass(frozen=True)
@@ -37,6 +52,9 @@ class _Peer:
     store: OperationalStore
     coordination: CoordinationService
     sync: OperationalSync
+    signer: OperationalSigner
+    key_id: str
+    roster: VerificationRoster
 
 
 def _pin_store(root: Path) -> AuthorityPinStore:
@@ -105,11 +123,12 @@ def _peer(
         request_epoch=0,
         request_control_oid="control-0",
     )
+    signer = OperationalSigner(keys, roster_version=2)
     ledger = OperationLedgerV2(
         root / "state",
         device_id=device_id,
         clock=lambda: datetime(2026, 7, 31, 12, tzinfo=UTC),
-        signer=OperationalSigner(keys, roster_version=2),
+        signer=signer,
         verifier=OperationalVerifier(),
         roster=roster,
         roster_root=root / "authority",
@@ -136,7 +155,16 @@ def _peer(
         context_factory=lambda: context,
         clock=lambda: datetime(2026, 7, 31, 12, tzinfo=UTC),
     )
-    return _Peer(identity, context, store, coordination, sync)
+    return _Peer(
+        identity,
+        context,
+        store,
+        coordination,
+        sync,
+        signer,
+        roster.local_key_id,
+        roster,
+    )
 
 
 @pytest.fixture
@@ -321,3 +349,175 @@ def test_tampered_signed_head_fails_closed(two_peer_runtime) -> None:
 
     with pytest.raises(OperationalError, match=r"head|chain"):
         b.sync.ingest()
+
+
+class _Presenter:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def present(self, *, terminal_id: str, mode: str, payload: str) -> PresenterOutcome:
+        del terminal_id, mode
+        self.calls.append(payload)
+        return PresenterOutcome(state="presented")
+
+
+class _NoSessions:
+    def latest_recoverable(self, *, project, workspace):
+        del project, workspace
+        return None
+
+
+def test_send_sync_present_ack_presence_continuity_and_signed_receipt(
+    two_peer_runtime,
+    tmp_path: Path,
+) -> None:
+    a, b, transport = two_peer_runtime
+    now = datetime(2026, 7, 31, 12, tzinfo=UTC)
+    sent = a.coordination.send_message(
+        identity=a.identity,
+        channel="handoff",
+        body="continue the signed integration",
+        target_ids=("agent-b",),
+        expects_ack=True,
+        idempotency_key="vertical-message-1",
+    )
+    a.sync.publish()
+    b.sync.ingest()
+
+    delivery_b = DeliveryService(
+        b.store,
+        context_factory=lambda _identity: b.context,
+        clock=lambda: now,
+    )
+    reserved = delivery_b.reserve_due(identity=b.identity, now=now)
+    assert len(reserved) == 1
+    presenter = _Presenter()
+    terminal = TerminalBridge(
+        tmp_path / "terminal.sqlite",
+        presenter=presenter,
+        clock=lambda: now,
+    )
+    terminal.register(
+        TerminalRegistration(
+            id="terminal-b",
+            principal_id=b.identity.principal_id,
+            session_id=b.identity.session_id,
+            uid=os.getuid(),
+            capabilities=("notify",),
+            issued_at=now.isoformat(),
+            expires_at=(now + timedelta(minutes=5)).isoformat(),
+            nonce="vertical-nonce",
+            signature="vertical-registration-signature",
+        ),
+        peer_uid=os.getuid(),
+    )
+    terminal_receipt = terminal.present(
+        TerminalPresentRequest(
+            event_id=sent.event_id,
+            message_id=sent.message_id,
+            delivery_id=reserved[0].id,
+            terminal_id="terminal-b",
+            mode="notify",
+            payload=sent.body,
+            sanitized_payload_hash="",
+            deadline=(now + timedelta(minutes=1)).isoformat(),
+            idempotency_key="vertical-present-1",
+            principal_id=b.identity.principal_id,
+            session_id=b.identity.session_id,
+        ),
+        peer_uid=os.getuid(),
+    )
+    presented = delivery_b.transition(
+        identity=b.identity,
+        delivery_id=reserved[0].id,
+        state="presented",
+        terminal_id="terminal-b",
+        idempotency_key="vertical-delivery-presented-1",
+        at=now,
+    )
+    acknowledged = delivery_b.acknowledge(
+        identity=b.identity,
+        message_id=sent.message_id,
+        idempotency_key="vertical-ack-1",
+    )
+    presence_b = PresenceService(
+        b.store,
+        context_factory=lambda _identity: b.context,
+        clock=lambda: now,
+    )
+    lease = presence_b.announce(
+        identity=b.identity,
+        project="memo",
+        workspace="/work/memo",
+        topic="integration",
+        intent="verifying",
+        files=("src/memo/operational_sync.py",),
+        ttl_seconds=60,
+        idempotency_key="vertical-presence-1",
+    )
+
+    b.sync.publish()
+    a.sync.ingest()
+    delivery_a = DeliveryService(
+        a.store,
+        context_factory=lambda _identity: a.context,
+        clock=lambda: now,
+    )
+    presence_a = PresenceService(
+        a.store,
+        context_factory=lambda _identity: a.context,
+        clock=lambda: now,
+    )
+    continuity = ContinuityComposer(
+        durable_briefing=lambda **_: "Memo is the sole integrated runtime.",
+        coordination=a.coordination,
+        delivery=delivery_a,
+        presence=presence_a,
+        sessions=_NoSessions(),
+        health=lambda: asdict(a.sync.status()),
+        clock=lambda: now,
+    ).compose(cwd="/work/memo")
+    before_rebuild = a.store.views.state()
+    a.store.rebuild()
+    after_rebuild = a.store.views.state()
+
+    checks = {
+        "two_peer_convergence": a.store.views.state() == b.store.views.state(),
+        "terminal_exactly_once": presenter.calls == [sent.body],
+        "delivery_presented": presented.state == "presented",
+        "ack_roundtrip": delivery_a.status(acknowledged.id).state == "acknowledged",
+        "presence_roundtrip": presence_a.active(project="memo", now=now) == [lease],
+        "continuity_composed": (
+            continuity.durable_available
+            and continuity.operational_available
+            and "Memo is the sole integrated runtime." in continuity.text
+        ),
+        "view_rebuild_stable": before_rebuild == after_rebuild,
+    }
+    assert all(checks.values()), checks
+    evidence = {
+        "git_head_a": transport.read_head("device-a").event_hash,  # type: ignore[union-attr]
+        "git_head_b": transport.read_head("device-b").event_hash,  # type: ignore[union-attr]
+        "terminal_receipt": terminal_receipt.receipt_hash,
+        "continuity_sha256": hashlib.sha256(continuity.text.encode()).hexdigest(),
+        "state_sha256": hashlib.sha256(canonical_json_bytes(after_rebuild)).hexdigest(),
+    }
+    receipt = sign_integration_receipt(
+        attempt_id="hermetic-two-peer-vertical-1",
+        checks=checks,
+        evidence=evidence,
+        signer_device_id="device-a",
+        signer_key_id=a.key_id,
+        roster_version=a.roster.version,
+        created_at=now.isoformat(),
+        signer=a.signer,
+    )
+    verify_integration_receipt(receipt, roster=a.roster)
+
+    assert all(receipt.checks.values())
+    assert receipt.signature is not None
+    with pytest.raises(OperationalError, match="digest"):
+        verify_integration_receipt(
+            replace(receipt, evidence={**receipt.evidence, "state_sha256": "0" * 64}),
+            roster=a.roster,
+        )
