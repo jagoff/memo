@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.jagoff/memo -->
 <!-- Banner: keep it, but make sure it loads fast (<200KB, WebP if possible) -->
 [![memo — local memory for AI](https://raw.githubusercontent.com/jagoff/memo/master/docs/banner.webp)](https://raw.githubusercontent.com/jagoff/memo/master/docs/banner.webp)
 
@@ -20,7 +21,7 @@ Persistent, searchable memory for Claude Code, Codex, Cursor, Cline, Devin, and 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.2/install.sh | bash
 ```
 
 <sub>Prefer a package manager? `uv tool install mlx-memo` · `pipx install mlx-memo` · `brew tap jagoff/memo && brew install mlx-memo`</sub>
@@ -41,14 +42,14 @@ That's it. Your agents pick it up over MCP automatically — the installer wires
 New Mac:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.2/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git
 ```
 
 Agent-managed setup:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.6.2/install.sh | bash
 memo doctor --strict-runtime
 ```
 

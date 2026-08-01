@@ -9,6 +9,15 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.6.2] - 2026-07-31
+
+### Fixed
+
+- MCP registry publish works again: the `mcp-name: io.github.jagoff/memo`
+  ownership marker the registry requires in the PyPI README was dropped by
+  the #130 rewrite, so the v4.6.1 registry step failed validation. The marker
+  is restored and now pinned to `server.json` by a supply-chain test (#147).
+
 ## [4.6.1] - 2026-07-31
 
 ### Fixed
