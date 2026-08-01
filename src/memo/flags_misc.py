@@ -547,7 +547,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "Obsidian",
         "misc",
-        "Vault subdir holding memo's system tree (AI/, Contacts/, Whatsapp/).",
+        "Vault subdir holding memo's system tree (AI/, Contacts/).",
     ),
     _spec(
         "MEMO_MEMORIES_IN_VAULT",
@@ -853,35 +853,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "`memo doctor` compares the installed package against this repo and "
         "warns if they differ at the SAME version (stale build), and "
         "`memo release bump` targets this repo. Empty = checks skipped.",
-    ),
-    # WhatsApp ingest
-    _spec(
-        "MEMO_WHATSAPP_DB",
-        "str",
-        "",
-        "whatsapp",
-        "Path to the whatsapp-mcp bridge SQLite DB to ingest.",
-    ),
-    _spec(
-        "MEMO_WHATSAPP_NOTES_DIR",
-        "str",
-        "",
-        "whatsapp",
-        "Override output dir for ingested WhatsApp notes (default <SYSTEM_DIR>/Whatsapp).",
-    ),
-    _spec(
-        "WHATSAPP_BOT_JID",
-        "str",
-        "",
-        "whatsapp",
-        "WhatsApp bot JID to filter from ingest (e.g., 54911xxx@s.whatsapp.net).",
-    ),
-    _spec(
-        "WA_LISTENER_NOTES_CHAT_JID",
-        "str",
-        "",
-        "whatsapp",
-        "WhatsApp chat JID for the notes destination chat.",
     ),
     # tantivy kill-switch
     _spec(

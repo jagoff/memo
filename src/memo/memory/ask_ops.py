@@ -20,15 +20,11 @@ from memo.memory.prompts import _ASK_IMMUTABLE_UNTRUSTED_DATA_POLICY
 from memo.memory.record import (
     _ASK_SYSTEM_PROMPT,
     MemoryRecord,
-    _is_conversation_query,
-    _is_group_chat,
     _is_recency_query,
-    _is_whatsapp_hit,
     _log,
     _norm_dedup_path,
     _recency_key,
     _vault_dedup_keys,
-    record_from_row,
 )
 from memo.prompt_overrides import resolve_prompt
 from memo.sampling import grounding_chat
@@ -67,12 +63,10 @@ def _context_budget_chars(*, snippet_chars: int, k: int) -> int:
     return max(snippet_chars * max(k, 1) + 1200, 2000)
 
 
-def _ask_search_limit(*, k: int, recency_intent: bool, convo_intent: bool) -> int:
+def _ask_search_limit(*, k: int, recency_intent: bool) -> int:
     """Widen retrieval only for intents that need a broader candidate pool."""
     if recency_intent:
         return max(k, 60)
-    if convo_intent:
-        return max(k, 12)
     return k
 
 
@@ -419,12 +413,9 @@ class _AskOpsMixin(_MemoryBase):
                 _MAX_QUESTION_CHARS,
             )
             question = question[:_MAX_QUESTION_CHARS]
-        # Recency intent ("lo último que dijo X", "last message") and the wider
-        # conversation intent ("mostrame el chat con X", "qué me escribió X")
-        # both widen the pool so the dated transcript isn't crowded out by a
-        # same-named contact/profile card. Only recency biases retrieval toward
-        # *recent* material (freshness decay) — a conversation ask shouldn't
-        # down-weight by age.
+        # Recency intent ("lo último que dijo X", "last message") widens the
+        # pool so the dated note isn't crowded out by a same-named contact/
+        # profile card.
         # Detect intent on the original user question too, not only the
         # (possibly rewritten / context-wrapped) retrieval text. Callers can send
         # memo a cleaned `retrieval_question` that drops the recency token,
@@ -432,18 +423,13 @@ class _AskOpsMixin(_MemoryBase):
         # the raw question so the signal survives.
         intent_src = f"{question} {intent_text or ''}"
         recency_intent = _is_recency_query(intent_src)
-        convo_intent = recency_intent or _is_conversation_query(intent_src)
-        # Recency asks re-sort the pool by in-transcript date (below), but the
+        # Recency asks re-sort the pool by in-note date (below), but the
         # sort can only float candidates that made it into the pool. The newest
         # message of a chat is often semantically bland ("cómo te fue hoy?") and
         # scores low, so a tight pool drops it and the recency sort surfaces a
         # stale-but-relevant chunk instead. Widen the pool for recency so the
         # freshest dated chunk reliably enters before the re-sort.
-        search_limit = _ask_search_limit(
-            k=k,
-            recency_intent=recency_intent,
-            convo_intent=convo_intent,
-        )
+        search_limit = _ask_search_limit(k=k, recency_intent=recency_intent)
         # Lazy-load bodies: defer disk I/O until after reranking
         hits: list[MemoryRecord] = self.search(
             question,
@@ -473,58 +459,11 @@ class _AskOpsMixin(_MemoryBase):
         if flag_bool("MEMO_ASK_MULTI_ROUND") and hits:
             hits = self._multi_round_augment(question, hits, k=k, type_=type_)
 
-        # Recency augmentation: the newest chunk of a long transcript is often
-        # semantically bland ("cómo te fue hoy?") and never makes the candidate
-        # pool on cosine, so the recency re-sort below can't surface it. For a
-        # recency ask, pull the latest chunks of every transcript already
-        # retrieved (same parent note) straight from metadata and fold them in,
-        # so the genuine last message can win the sort.
+        # Recency re-ranking: for a recency ask, float hits by the most recent
+        # in-note date they carry (newest first). Bodies are loaded above, so
+        # _recency_key can read in-note dates.
         if recency_intent:
-            seen_ids = {h.id for h in hits}
-            parents = {
-                p for h in hits if _is_whatsapp_hit(h) and (p := (h.extra or {}).get("parent_path"))
-            }
-            for parent in parents:
-                for row in self.store.chunks_by_parent(parent, limit=3):
-                    if row["id"] in seen_ids:
-                        continue
-                    seen_ids.add(row["id"])
-                    hits.append(record_from_row(row, body=self._read_body(row["path"])))
-
-        # Recency/conversation re-ranking: float WhatsApp transcripts above a
-        # same-named contact/profile card, preferring a 1:1 chat over a same-
-        # named group. For a recency ask, the dated content the hit carries is
-        # the tiebreaker (newest first); for a conversation-only ask the date
-        # is left out so semantic relevance is preserved among ties (the sort is
-        # stable). Gated on `has_wa` for conversation intent so a non-WhatsApp
-        # conversational query isn't destructively re-sorted. Bodies are loaded
-        # above, so _recency_key can read in-transcript dates.
-        has_wa = any(_is_whatsapp_hit(h) for h in hits)
-        if recency_intent or (convo_intent and has_wa):
-            ql = question.lower()
-            # Prefer a 1:1 chat over a same-named group ONLY as a same-date
-            # tiebreaker (below), never over a genuinely newer conversation.
-            prefer_direct = "group" not in ql and "grupo" not in ql
-
-            def _recency_sort_key(h: MemoryRecord) -> tuple[int, str, int]:
-                wa = _is_whatsapp_hit(h)
-                direct = 1 if (prefer_direct and wa and not _is_group_chat(h)) else 0
-                # 1) float ALL transcripts above non-transcripts (a same-named
-                #    contact card sinks regardless of its fresh `updated` stamp);
-                # 2) for a recency ask, newest dated content wins — so a group
-                #    active today beats an older 1:1; 3) prefer a 1:1 only to
-                #    break a date tie. Conversation-only asks leave date="" so
-                #    the 1:1 preference leads.
-                date = _recency_key(h) if recency_intent else ""
-                return (1 if wa else 0, date, direct)
-
-            hits = sorted(hits, key=_recency_sort_key, reverse=True)[:k]
-        elif convo_intent:
-            # The pool was widened for conversation intent (search_limit up to
-            # 12) but no WhatsApp hit surfaced, so the re-sort above — and its
-            # [:k] trim — didn't run. Clamp back to the caller's k so the extra
-            # candidates don't leak into the prompt/sources.
-            hits = hits[:k]
+            hits = sorted(hits, key=_recency_key, reverse=True)[:k]
 
         # Defense in depth for legacy/corrupt index rows and test doubles that
         # bypass Memory.search(): credentials never enter prompts or verbatim

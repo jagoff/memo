@@ -38,7 +38,6 @@ _DEFAULT_VAULT_PATHS = (
 # variants are enumerated here AND covered by memo's case-insensitive matcher
 # (defense in depth).
 _FIXED_VAULT_EXCLUDES = (
-    "Obsidian/Whatsapp/**",
     "Obsidian/AI/**",
     "04-Archive/**",
     "Archive/**",

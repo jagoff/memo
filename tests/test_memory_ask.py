@@ -416,31 +416,20 @@ def test_ask_stream_and_chat_ask_thread_snippet_chars_sentinel(mem_with_stub: Me
 
 
 def test_recency_helpers():
-    from memo.memory import (
-        _is_conversation_query,
-        _is_recency_query,
-        _is_whatsapp_hit,
-        _recency_key,
-    )
+    from memo.memory import _is_recency_query, _recency_key
 
-    assert _is_recency_query("qué fue lo último que dijo Grecia por whatsapp")
+    assert _is_recency_query("qué fue lo último que dijo Grecia")
     assert _is_recency_query("what did Maria last say")
     assert _is_recency_query("su mensaje más reciente")
     assert not _is_recency_query("quién es Grecia")
     assert not _is_recency_query("resumen del proyecto memo")
-    assert _is_conversation_query("mostrame el chat con Grecia")
-    assert _is_conversation_query("qué me escribió Grecia")
-    assert _is_conversation_query("show me my messages with Maria")
-    assert not _is_conversation_query("quién es Grecia")
-    assert not _is_conversation_query("cuándo es el cumple de Grecia")
-    assert not _is_conversation_query("resumen del proyecto memo")
 
-    wa = MemoryRecord(
+    day_log = MemoryRecord(
         id="b" * 32,
-        path="x/WhatsApp · Grecia.md",
-        title="WhatsApp · Grecia 🩷",
+        path="x/Chat · Grecia.md",
+        title="Chat · Grecia 🩷",
         type="reference",
-        tags=["whatsapp", "chat"],
+        tags=["chat"],
         created="2026-05-18T00:00:00",
         updated="2026-05-18T00:00:00",
         body="## 2026-05-17\n- **Grecia 🩷** (16:26): Jajaja está linda",
@@ -455,20 +444,7 @@ def test_recency_helpers():
         updated="2026-05-30T00:00:00",
         body="Grecia Ferrari, 15 años, Santa Fe.",
     )
-    meta = MemoryRecord(
-        id="c" * 32,
-        path="AI/memory/whatsapp-note.md",
-        title="Maria y Grecia completados",
-        type="fact",
-        tags=["whatsapp", "contacts", "vault"],
-        created="2026-05-30T00:00:00",
-        updated="2026-05-30T00:00:00",
-        body="Se completaron los JID de Maria y Grecia.",
-    )
-    assert _is_whatsapp_hit(wa)
-    assert not _is_whatsapp_hit(contact)
-    assert not _is_whatsapp_hit(meta)
-    assert _recency_key(wa) == "2026-05-17 16:26"
+    assert _recency_key(day_log) == "2026-05-17 16:26"
     assert _recency_key(contact) == "2026-05-30"
 
 
@@ -479,10 +455,10 @@ def test_recency_key_multiday_chunk_keeps_time_within_max_day_section():
 
     multiday = MemoryRecord(
         id="d" * 32,
-        path="x/WhatsApp · Grecia.md",
-        title="WhatsApp · Grecia",
+        path="x/Chat · Grecia.md",
+        title="Chat · Grecia",
         type="reference",
-        tags=["whatsapp", "chat"],
+        tags=["chat"],
         created="2026-06-05T00:00:00",
         updated="2026-06-05T00:00:00",
         # 06-03 carries a LATER clock time (23:58) than any 06-04 message.
@@ -512,63 +488,42 @@ def test_recency_key_multiday_chunk_keeps_time_within_max_day_section():
     assert _recency_key(title_dated) == "2026-06-04"
 
 
-def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
-    mem_with_stub: Memory, monkeypatch
-):
+def test_ask_recency_sorts_by_most_recent_date(mem_with_stub: Memory, monkeypatch):
+    """A recency ask floats the hit with the most recent in-note date above a
+    higher-scoring hit whose only date is an older `updated` stamp."""
     contact = MemoryRecord(
         id="a" * 32,
         path="Contacts/Grecia.md",
         title="Grecia",
         type="reference",
         tags=["Obsidian", "Contacts"],
-        created="2026-05-30T00:00:00",
-        updated="2026-05-30T00:00:00",
+        created="2026-05-10T00:00:00",
+        updated="2026-05-10T00:00:00",
         body="Grecia Ferrari, 15 años, Santa Fe.",
         score=0.92,
     )
-    transcript = MemoryRecord(
+    dated_note = MemoryRecord(
         id="b" * 32,
-        path="AI/Whatsapp/Grecia.md",
-        title="WhatsApp · Grecia 🩷",
+        path="AI/memory/nota.md",
+        title="Nota Grecia",
         type="reference",
-        tags=["whatsapp", "chat"],
-        created="2026-05-18T00:00:00",
-        updated="2026-05-18T00:00:00",
-        body="## 2026-05-17\n- **Grecia 🩷** (16:26): Jajaja está linda",
-        score=0.90,
+        tags=["notes"],
+        created="2026-06-05T00:00:00",
+        updated="2026-06-05T00:00:00",
+        body="## 2026-06-01\n- **Grecia 🩷** (16:26): Jajaja está linda",
+        score=0.80,
     )
-    group = MemoryRecord(
-        id="d" * 32,
-        path="AI/Whatsapp/Grecia's group.md",
-        title="WhatsApp · Grecia's group",
-        type="reference",
-        tags=["whatsapp", "chat"],
-        created="2026-05-19T00:00:00",
-        updated="2026-05-19T00:00:00",
-        body="## 2026-05-19\n- **alguien** (10:00): Jajajajaj",
-        score=0.91,
-    )
-    monkeypatch.setattr(Memory, "search", lambda self, q, **kw: [contact, group, transcript])
+    monkeypatch.setattr(Memory, "search", lambda self, q, **kw: [contact, dated_note])
 
     _, sources, _, _ = mem_with_stub._build_ask_context(
-        "qué fue lo último que dijo Grecia por whatsapp",
+        "qué fue lo último que dijo Grecia",
         k=5,
         type_=None,
         snippet_chars=200,
         include_repos=False,
     )
-    assert sources[0]["title"] == "WhatsApp · Grecia's group"
-    assert sources[1]["title"] == "WhatsApp · Grecia 🩷"
-    assert sources[2]["title"] == "Grecia"
-
-    _, sources_c, _, _ = mem_with_stub._build_ask_context(
-        "mostrame el chat con Grecia",
-        k=5,
-        type_=None,
-        snippet_chars=200,
-        include_repos=False,
-    )
-    assert sources_c[0]["title"] == "WhatsApp · Grecia 🩷"
+    assert sources[0]["title"] == "Nota Grecia"
+    assert sources[1]["title"] == "Grecia"
 
     _, sources2, _, _ = mem_with_stub._build_ask_context(
         "quién es Grecia",
@@ -578,77 +533,6 @@ def test_ask_recency_floats_whatsapp_transcript_over_contact_card(
         include_repos=False,
     )
     assert sources2[0]["title"] == "Grecia"
-
-
-def test_ask_conversation_intent_without_whatsapp_preserves_order(
-    mem_with_stub: Memory, monkeypatch
-):
-    top = MemoryRecord(
-        id="a" * 32,
-        path="AI/memory/decision.md",
-        title="Decisión arquitectura",
-        type="fact",
-        tags=["memo"],
-        created="2026-05-10T00:00:00",
-        updated="2026-05-10T00:00:00",
-        body="Migramos a MLX.",
-        score=0.80,
-    )
-    older_but_newer_date = MemoryRecord(
-        id="b" * 32,
-        path="AI/memory/note.md",
-        title="Nota suelta",
-        type="note",
-        tags=["memo"],
-        created="2026-05-25T00:00:00",
-        updated="2026-05-25T00:00:00",
-        body="## 2026-05-25\nalgo",
-        score=0.40,
-    )
-    monkeypatch.setattr(Memory, "search", lambda self, q, **kw: [top, older_but_newer_date])
-
-    _, sources, _, _ = mem_with_stub._build_ask_context(
-        "resumen de la conversación sobre arquitectura",
-        k=5,
-        type_=None,
-        snippet_chars=200,
-        include_repos=False,
-    )
-    assert sources[0]["title"] == "Decisión arquitectura"
-
-
-def test_ask_conversation_intent_without_whatsapp_trims_widened_pool_to_k(
-    mem_with_stub: Memory, monkeypatch
-):
-    """Conversation intent widens the search pool to 12, but the WhatsApp
-    re-sort (with its [:k] trim) only runs when a WA hit exists. Without one,
-    the widened pool must still be clamped back to k — not leak 12 sources."""
-    widened = [
-        MemoryRecord(
-            id=f"{i:032x}",
-            path=f"AI/memory/nota-{i}.md",
-            title=f"Nota {i}",
-            type="note",
-            tags=["memo"],
-            created="2026-05-10T00:00:00",
-            updated="2026-05-10T00:00:00",
-            body=f"contenido {i}",
-            score=0.9 - i * 0.01,
-        )
-        for i in range(12)
-    ]
-    monkeypatch.setattr(Memory, "search", lambda self, q, **kw: list(widened))
-
-    _, sources, _, hits = mem_with_stub._build_ask_context(
-        "mostrame el chat con Grecia",
-        k=5,
-        type_=None,
-        snippet_chars=200,
-        include_repos=False,
-    )
-    assert len(hits) == 5
-    assert len(sources) == 5
-    assert [s["title"] for s in sources] == [f"Nota {i}" for i in range(5)]
 
 
 def test_chat_ask_v2_uses_history_and_context(mem_with_stub: Memory, monkeypatch):

@@ -147,7 +147,7 @@ def test_onboard_yes_runs_all_steps(tmp_path, monkeypatch):
     assert len(mined) == 1 and mined[0]["dry_run"] is False and mined[0]["since_days"] == 90
     assert "7 memorias" in result.output
     assert "aprendizaje 2" in result.output  # las 3 cosas que ya sé de vos
-    assert "memo import whatsapp" in result.output
+    assert "memo import json" in result.output
 
 
 def test_onboard_dry_run_does_not_wire_hook_or_shims(tmp_path, monkeypatch):

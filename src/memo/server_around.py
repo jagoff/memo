@@ -42,7 +42,7 @@ def register(server: Any, memory: Memory) -> None:
         ] = 2,
     ) -> dict[str, Any]:
         """Timeline context around one memory: seq-adjacent sibling chunks for
-        reference-tier chunks (WhatsApp/vault docs), created-time neighbours
+        reference-tier chunks (vault docs), created-time neighbours
         for durable memories. Turns a search hit into narrative context.
         Read-only; window clamped to ±10."""
         before = max(0, min(int(before), 10))

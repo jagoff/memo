@@ -78,7 +78,6 @@ from memo.memory.facade import Memory
 from memo.memory.record import (  # noqa: F401
     _ASK_SYSTEM_PROMPT,
     _CONSOLIDATE_SYSTEM_PROMPT,
-    _CONVERSATION_TOKENS,
     _DERIVE_SYSTEM_PROMPT,
     _EXTRACT_ENTITIES_SYSTEM_PROMPT,
     _ISO_DATE_RE,
@@ -96,10 +95,7 @@ from memo.memory.record import (  # noqa: F401
     _compose_for_embed,
     _derive_title,
     _extract_provenance,
-    _is_conversation_query,
-    _is_group_chat,
     _is_recency_query,
-    _is_whatsapp_hit,
     _log,
     _norm_dedup_path,
     _normalise_tags,

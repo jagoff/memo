@@ -169,8 +169,7 @@ def onboard(ctx: click.Context, yes: bool, days: int | None, dry_run: bool, as_j
 
     # 3/4 — other sources (pointers only; each has its own command)
     console.print(
-        "3/4 · Otras fuentes: [cyan]memo import whatsapp[/cyan] · "
-        "[cyan]memo import json[/cyan] · [cyan]memo import csv[/cyan]"
+        "3/4 · Otras fuentes: [cyan]memo import json[/cyan] · [cyan]memo import csv[/cyan]"
     )
 
     # 4/4 — first briefing: newest memories, straight from disk

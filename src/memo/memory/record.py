@@ -226,11 +226,10 @@ def _vault_dedup_keys(rec: MemoryRecord) -> set[str]:
 # Recency-intent handling for ask()/chat_ask(). "Qué fue lo último que dijo X",
 # "last message", "more recent" are temporal questions: the user wants the most
 # recent content, not the highest semantic match. Pure cosine ranks a same-named
-# contact/profile card (title == the person's name) above the dated transcript.
+# contact/profile card (title == the person's name) above the dated note.
 # We detect the intent cheaply and, when present, re-order the retrieved hits by
-# the most recent calendar date they mention (WhatsApp transcripts carry
-# `## YYYY-MM-DD` day headers + dated chunk titles), floating conversation
-# sources up when the question itself names the channel ("por whatsapp").
+# the most recent calendar date they mention (day-log notes carry `## YYYY-MM-DD`
+# day headers + dated chunk titles).
 _RECENCY_TOKENS = (
     "ultimo",
     "ultima",
@@ -257,7 +256,7 @@ _RECENCY_TOKENS = (
     "said last",
 )
 _ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
-# WhatsApp transcript lines carry per-message clock times: "**yo** (21:06): …".
+# Day-log style notes carry per-message clock times: "**yo** (21:06): …".
 # Used to break same-day ties between sub-chunks of one long day (see _recency_key).
 _CLOCK_TIME_RE = re.compile(r"\((\d{2}:\d{2})\)")
 
@@ -268,71 +267,16 @@ def _is_recency_query(q: str) -> bool:
     return any(tok in ql for tok in _RECENCY_TOKENS)
 
 
-# Conversation intent ("mostrame el chat con X", "qué me escribió X") is the
-# same failure class as recency without the recency word: a person-scoped
-# message query whose dated transcript loses to the same-named contact card on
-# pure cosine. We float WhatsApp transcripts for these too — see _build_ask_context.
-_CONVERSATION_TOKENS = (
-    "mensaje",
-    "mensajes",
-    "chat",
-    "conversación",
-    "conversacion",
-    "escribió",
-    "escribio",
-    "escribiste",
-    "hablé",
-    "hable",
-    "hablamos",
-    "whatsapp",
-    "wpp",
-    "message",
-    "messages",
-    "texted",
-    "wrote",
-    "conversation",
-    "chatted",
-    "talked",
-)
-
-
-def _is_conversation_query(q: str) -> bool:
-    """True when the user asks about a conversation/messages (channel-scoped),
-    even without an explicit recency word. Used to float WhatsApp transcripts
-    above a same-named contact/profile card."""
-    ql = (q or "").lower()
-    return any(tok in ql for tok in _CONVERSATION_TOKENS)
-
-
-def _is_whatsapp_hit(rec: MemoryRecord) -> bool:
-    """True when a hit is an actual WhatsApp *transcript* — keyed on the
-    `WhatsApp · …` title prefix or `source: whatsapp` frontmatter, NOT the
-    generic `whatsapp` tag (meta-notes *about* whatsapp carry that tag too and
-    must not be mistaken for transcripts)."""
-    if (rec.title or "").startswith("WhatsApp ·"):
-        return True
-    return (rec.extra or {}).get("source") == "whatsapp"
-
-
-def _is_group_chat(rec: MemoryRecord) -> bool:
-    """True when a WhatsApp transcript hit is a *group* chat (vs a 1:1).
-    Group transcript titles carry a `group`/`grupo` marker; a question about a
-    person ("lo último que dijo Grecia") wants her 1:1 chat, not a same-named
-    group she belongs to."""
-    tl = (rec.title or "").lower()
-    return "group" in tl or "grupo" in tl
-
-
 def _recency_key(rec: MemoryRecord) -> str:
     """Sortable recency signal: the most recent ISO date the hit mentions in
     its title or body, falling back to the record's updated/created stamp.
     ISO `YYYY-MM-DD` strings sort lexicographically, so `max()` == newest.
 
-    For WhatsApp transcripts a long day is split into several sub-chunks that
-    all share the same `## YYYY-MM-DD` header, so a date-only key ties them and
-    the last message of the day (often the answer to "lo último") never floats
-    to the top. Append the latest clock time found in the body so same-day
-    sub-chunks order by their tail message: "2026-06-04 21:06" > "2026-06-04 19:52".
+    For a long day-log split into several sub-chunks that all share the same
+    `## YYYY-MM-DD` header, a date-only key ties them and the last message of
+    the day (often the answer to "lo último") never floats to the top. Append
+    the latest clock time found in the body so same-day sub-chunks order by
+    their tail message: "2026-06-04 21:06" > "2026-06-04 19:52".
     """
     dates = _ISO_DATE_RE.findall(rec.title or "")
     dates += _ISO_DATE_RE.findall(rec.body or "")

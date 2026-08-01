@@ -18,7 +18,7 @@ Flag specs are split across domain modules to keep each file under 800 lines:
   flags_graph.py    — graph projection / retrieval flags
   flags_behavior.py — entity, session, capture, maintenance, synthesis
   flags_ingest.py   — transcript, briefing, repo indexing
-  flags_misc.py     — embedder, feedback, MCP, cache, misc, ROI, WhatsApp, schema
+  flags_misc.py     — embedder, feedback, MCP, cache, misc, ROI, schema
 """
 
 from __future__ import annotations

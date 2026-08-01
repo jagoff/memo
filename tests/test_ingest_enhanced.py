@@ -161,13 +161,12 @@ def test_ingest_honors_memoignore(tmp_path: Path, runner_env):
 def test_ingest_exclude_glob_double_star(tmp_path: Path, runner_env):
     """`--exclude Sub/Dir/**` skips the whole subtree. The launchd ingest
     invocation passes patterns in this `/**` form; a literal-only matcher
-    silently no-ops them, double-ingesting folders the dedicated importer owns
-    (the WhatsApp double-ingest bug)."""
+    silently no-ops them, double-ingesting folders a dedicated importer owns."""
     vault = _build_vault(
         tmp_path / "vault",
         {
             "01-Projects/active.md": "# Active\n\nIndexed note.",
-            "Obsidian/Whatsapp/Maria.md": "# Maria\n\nA transcript that must be skipped.",
+            "Obsidian/Private/Maria.md": "# Maria\n\nA note that must be skipped.",
         },
     )
 
@@ -179,7 +178,7 @@ def test_ingest_exclude_glob_double_star(tmp_path: Path, runner_env):
             "--name",
             "v",
             "--exclude",
-            "Obsidian/Whatsapp/**",
+            "Obsidian/Private/**",
             "--no-chunk",
             "--no-include-pdf",
             "--no-include-orphan-images",
@@ -192,7 +191,7 @@ def test_ingest_exclude_glob_double_star(tmp_path: Path, runner_env):
     store = _open_store(runner_env)
     paths = [r["path"] for r in _all_rows(store)]
     assert any("active.md" in p for p in paths), f"active note missing: {paths}"
-    assert not any("Whatsapp" in p for p in paths), f"whatsapp subtree leaked: {paths}"
+    assert not any("Private" in p for p in paths), f"excluded subtree leaked: {paths}"
 
 
 def test_ingest_never_double_indexes_vault_memorias(tmp_path: Path, runner_env):
@@ -846,7 +845,7 @@ def test_ingest_audio_without_whisper_warns_and_skips(tmp_path: Path, runner_env
 #         walked this run (e.g. nightly synapse ingest never passes --include-audio,
 #         so every vault-ingest-audio row was deleted each night).
 # Bug 2: find_orphan_images ignored `/**`-form exclude patterns, so images under
-#         excluded subtrees (e.g. Obsidian/Whatsapp/**) were ingested as orphan
+#         excluded subtrees (e.g. Archive/**) were ingested as orphan
 #         standalone memories.
 
 
@@ -983,10 +982,10 @@ def test_orphan_images_excluded_by_glob_star_star_pattern(tmp_path: Path, runner
     closure handles `/**` correctly; `find_orphan_images` previously had
     its own simpler predicate that ignored the trailing `/**`."""
     vault = tmp_path / "vault"
-    # Excluded subtree (/** form, exactly as synapse ops.py passes it).
-    whatsapp_dir = vault / "Obsidian" / "Whatsapp"
-    whatsapp_dir.mkdir(parents=True)
-    (whatsapp_dir / "photo.jpg").write_bytes(b"\xff\xd8\xff fake-jpg")
+    # Excluded subtree (/** form, as a launchd ingest invocation passes it).
+    excluded_dir = vault / "Obsidian" / "Private"
+    excluded_dir.mkdir(parents=True)
+    (excluded_dir / "photo.jpg").write_bytes(b"\xff\xd8\xff fake-jpg")
     # Normal note (not in excluded subtree).
     (vault / "note.md").write_text("# Note\n\nno image references here.", encoding="utf-8")
 
@@ -1003,7 +1002,7 @@ def test_orphan_images_excluded_by_glob_star_star_pattern(tmp_path: Path, runner
             "--name",
             "v",
             "--exclude",
-            "Obsidian/Whatsapp/**",
+            "Obsidian/Private/**",
             "--ocr",
             "--include-orphan-images",
             "--no-include-pdf",
@@ -1139,7 +1138,7 @@ def test_excluded_respeta_limite_de_componente_de_path(tmp_path: Path, runner_en
         {
             "Archived Projects/active.md": "# Active\n\nnota viva sobre proyectos.",
             "Obsidian/AIDA/research.md": "# AIDA\n\nresearch about the AIDA framework.",
-            "Obsidian/WhatsappBackup/notes.md": "# WB\n\nnotas del backup, no excluidas.",
+            "Obsidian/PrivateBackup/notes.md": "# WB\n\nnotas del backup, no excluidas.",
             "Archive/old.md": "# Old\n\narchived note, must be skipped.",
             "Obsidian/AI/mem.md": "# Mem\n\ncurated subtree, must be skipped.",
         },
@@ -1154,7 +1153,7 @@ def test_excluded_respeta_limite_de_componente_de_path(tmp_path: Path, runner_en
             "--name",
             "v",
             "--exclude",
-            "Obsidian/Whatsapp/**",
+            "Obsidian/Private/**",
             *_BASE_ARGS,
         ],
         env=runner_env,
@@ -1165,7 +1164,7 @@ def test_excluded_respeta_limite_de_componente_de_path(tmp_path: Path, runner_en
     paths = {r["path"] for r in _all_rows(_open_store(runner_env))}
     assert "v/Archived Projects/active.md" in paths, paths
     assert "v/Obsidian/AIDA/research.md" in paths, paths
-    assert "v/Obsidian/WhatsappBackup/notes.md" in paths, paths
+    assert "v/Obsidian/PrivateBackup/notes.md" in paths, paths
     assert "v/Archive/old.md" not in paths, paths
     assert "v/Obsidian/AI/mem.md" not in paths, paths
 

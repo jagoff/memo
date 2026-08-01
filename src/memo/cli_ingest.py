@@ -249,7 +249,7 @@ def ingest(
         for pat in exclude_patterns:
             # A trailing `/**` means "this directory and everything under it".
             # The launchd ingest invocation passes patterns in this form
-            # (`Obsidian/Whatsapp/**`); without this they silently no-op and the
+            # (`Archive/**`); without this they silently no-op and the
             # subtree gets double-ingested by both the generic and dedicated
             # importers. Kept case-sensitive — user globs are explicit.
             if pat.endswith("/**"):

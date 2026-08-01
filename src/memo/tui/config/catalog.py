@@ -363,7 +363,6 @@ GROUP_TO_DOMAIN: dict[str, str] = {
     "sync": "Hooks",
     "temporal": "Search",
     "update": "Maintenance",
-    "whatsapp": "Capture",
 }
 
 DOMAIN_TO_FILE: dict[str, str] = {

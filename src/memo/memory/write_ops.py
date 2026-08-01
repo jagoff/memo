@@ -417,7 +417,7 @@ class _WriteOpsMixin(_MemoryBase):
         - `created`: optional ISO8601 override for the `created` field
           (frontmatter + index). When None, defaults to NOW. `updated`
           always reflects this write. Use to back-date imported records
-          (e.g. historical WhatsApp messages) so temporal queries see the
+          (e.g. historical chat messages) so temporal queries see the
           original event time, not ingest time.
         - `auto_derive`: when True, calls the configured helper LLM
           to fill any missing field

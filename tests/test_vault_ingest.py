@@ -45,7 +45,6 @@ def test_build_ingest_command():
 
 def test_fixed_excludes_present():
     for glob in (
-        "Obsidian/Whatsapp/**",
         "Obsidian/AI/**",
         "04-Archive/**",
         "Archive/**",

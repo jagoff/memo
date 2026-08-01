@@ -731,7 +731,7 @@ def _run_config_inner(
     # `reference` tier (MEMO_RECALL_EXCLUDE_REFERENCE, default on) but the
     # explicit mem.search() path does not — without mirroring the exclusion
     # here, ingested vault chunks the hook never surfaces crowd top-K and
-    # depress measured precision (seen live: WhatsApp reference chunks).
+    # depress measured precision (seen live: bulk vault reference chunks).
     from memo.flags import flag_bool, flag_float, flag_int
     from memo.tiers import REFERENCE_TYPES
 
