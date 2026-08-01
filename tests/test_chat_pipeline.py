@@ -189,3 +189,67 @@ def test_wa_live_exception_falls_back_to_normal_flow(tmp_path, monkeypatch) -> N
     context = next(e for e in events if e["type"] == "context")
     ids = {s["id"] for s in context["sources"]}
     assert {"m1", "r1"} <= ids
+
+
+def test_whatsapp_live_default_contacts_dir_derived_from_vault_path(tmp_path, monkeypatch) -> None:
+    # No MEMO_CHAT_CONTACTS_DIR set — must fall back to <vault>/Obsidian/Contacts
+    # derived from memory.cfg.vault_path.
+    contacts_dir = tmp_path / "Obsidian" / "Contacts"
+    contacts_dir.mkdir(parents=True)
+    (contacts_dir / "Ana.md").write_text("- **wa_jid**: 549@s.whatsapp.net\n", encoding="utf-8")
+
+    captured_index: dict = {}
+
+    def _fake_resolve_chats(query, db, contacts_index):
+        captured_index.update(contacts_index)
+        return [("549@s.whatsapp.net", "Ana")]
+
+    monkeypatch.setattr(whatsapp_live, "resolve_chats", _fake_resolve_chats)
+    monkeypatch.setattr(
+        whatsapp_live,
+        "last_messages",
+        lambda db, jid, *, limit=10, today_only=False: [
+            {"ts": "2026-07-31 09:00:00", "is_from_me": False, "content": "todo bien"}
+        ],
+    )
+
+    mem = _NoSearchMemory(tmp_path)
+    mem.cfg.vault_path = tmp_path
+
+    events = list(chat_stream(mem, "qué me dijo Ana hoy?"))
+
+    # The contacts index passed to resolve_chats came from the vault-derived
+    # dir, not an empty fallback — proves the contact (Ana → jid) resolved.
+    assert captured_index
+    context = next(e for e in events if e["type"] == "context")
+    assert context["sources"][0]["id"] == "wa-live:ana"
+
+
+def test_whatsapp_live_no_vault_path_yields_empty_contacts_index(tmp_path, monkeypatch) -> None:
+    # memory.cfg has no vault_path attribute at all (like a fake/stub memory) —
+    # must degrade to an empty contacts index, not crash.
+    captured_index: dict = {}
+
+    def _fake_resolve_chats(query, db, contacts_index):
+        captured_index.update(contacts_index)
+        return []
+
+    monkeypatch.setattr(whatsapp_live, "resolve_chats", _fake_resolve_chats)
+
+    events = list(chat_stream(_FakeMemory(tmp_path), "qué me dijo Ana hoy?"))
+
+    assert captured_index == {}
+    context = next(e for e in events if e["type"] == "context")
+    ids = {s["id"] for s in context["sources"]}
+    assert {"m1", "r1"} <= ids
+
+
+def test_whatsapp_live_disabled_flag_skips_wa_branch(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_CHAT_WHATSAPP_LIVE", "0")
+    monkeypatch.setattr(whatsapp_live, "resolve_chats", _assert_not_called)
+
+    events = list(chat_stream(_FakeMemory(tmp_path), "qué me dijo Ana hoy?"))
+
+    context = next(e for e in events if e["type"] == "context")
+    ids = {s["id"] for s in context["sources"]}
+    assert {"m1", "r1"} <= ids

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
 from memo.chat import whatsapp_live
@@ -72,7 +73,20 @@ def _apply_title_boost(sources: list[dict[str, Any]], query: str) -> list[dict[s
     return out
 
 
-def _whatsapp_live_source(cfg: ChatConfig, memo_query: str) -> list[dict[str, Any]] | None:
+def _default_contacts_dir(memory: Any) -> Path | None:
+    """``<vault>/Obsidian/Contacts`` derived from ``memory.cfg.vault_path``.
+
+    Used only when ``cfg.contacts_dir`` (``MEMO_CHAT_CONTACTS_DIR``) is unset.
+    Defensive ``getattr`` — fake/test memories may not expose ``vault_path``
+    at all — so a missing vault path skips (``None``) rather than raising.
+    """
+    vault_path = getattr(memory.cfg, "vault_path", None)
+    return vault_path / "Obsidian" / "Contacts" if vault_path else None
+
+
+def _whatsapp_live_source(
+    cfg: ChatConfig, memo_query: str, memory: Any
+) -> list[dict[str, Any]] | None:
     """Resolve a single exclusive WA-live source for a recency-intent query.
 
     The semantic index only stores WhatsApp transcripts as ingested, day-
@@ -86,7 +100,8 @@ def _whatsapp_live_source(cfg: ChatConfig, memo_query: str) -> list[dict[str, An
         return None
     try:
         db = whatsapp_live.bridge_db_path()
-        contacts_index = build_contacts_index(cfg.contacts_dir) if cfg.contacts_dir else {}
+        contacts_dir = cfg.contacts_dir or _default_contacts_dir(memory)
+        contacts_index = build_contacts_index(contacts_dir) if contacts_dir else {}
         chats = whatsapp_live.resolve_chats(memo_query, db, contacts_index)
         if not chats:
             return None
@@ -131,7 +146,7 @@ def chat_stream(
     dominant = None
     sources: list[dict[str, Any]] | None = None
     if cfg.whatsapp_live:
-        sources = _whatsapp_live_source(cfg, memo_query)
+        sources = _whatsapp_live_source(cfg, memo_query, memory)
 
     if sources is None:
         try:
