@@ -176,6 +176,7 @@ def test_nonpriority_backs_off_while_priority_flock_held(tmp_path, monkeypatch) 
     # acquirers must NOT take the main lock even when it is free — they
     # yield the grant to the daemon and time out on their own deadline.
     monkeypatch.setenv("MEMO_GPU_LOCK_PATH", str(tmp_path / "gpu.lock"))
+    set_process_gpu_priority(False)
     prio_holder = _hold_lock_as_other_process(str(_prio_path()))
     try:
         with pytest.raises(TimeoutError):
@@ -188,6 +189,24 @@ def test_nonpriority_backs_off_while_priority_flock_held(tmp_path, monkeypatch) 
     with gpu_guard(timeout=1.0):
         entered = True
     assert entered
+
+
+def test_priority_flock_wait_honors_gpu_guard_timeout(tmp_path, monkeypatch) -> None:
+    # A duplicate daemon or stale in-process priority state must not turn a
+    # finite gpu_guard deadline into a blocking priority-flock acquisition.
+    monkeypatch.setenv("MEMO_GPU_LOCK_PATH", str(tmp_path / "gpu.lock"))
+    prio_holder = _hold_lock_as_other_process(str(_prio_path()))
+    set_process_gpu_priority(True)
+    try:
+        started = time.monotonic()
+        with pytest.raises(TimeoutError):
+            with gpu_guard(timeout=0.2):
+                pass  # pragma: no cover - must not enter
+        assert time.monotonic() - started < 2.0
+    finally:
+        set_process_gpu_priority(False)
+        fcntl.flock(prio_holder, fcntl.LOCK_UN)
+        os.close(prio_holder)
 
 
 def test_priority_releases_prio_flock_on_main_lock_timeout(tmp_path, monkeypatch) -> None:
