@@ -93,6 +93,13 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             for event in chat_stream(memory, question, history=history, k=body.get("k") or None):
                 if event.get("type") in ("context", "done"):
                     event = {**event, "chat_session_id": session_id}
+                elif event.get("type") == "insight_proposal":
+                    candidate = event.get("candidate")
+                    if isinstance(candidate, dict):
+                        event = {
+                            **event,
+                            "candidate": {**candidate, "chat_session_id": session_id},
+                        }
                 if event.get("type") == "done":
                     answer = str(event.get("answer", ""))
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -223,7 +230,10 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         raw_score = candidate.get("score")
         score = int(raw_score) if isinstance(raw_score, (int, float)) else 0
 
-        tags = [str(t) for t in (candidate.get("tags") or []) if isinstance(t, str)]
+        raw_tags = candidate.get("tags")
+        tags = (
+            [str(t) for t in raw_tags if isinstance(t, str)] if isinstance(raw_tags, list) else []
+        )
         tags = [*tags, "chat-capture"]
         if score < 90:
             tags.append("_uncertain")

@@ -153,6 +153,44 @@ def test_insight_capture_low_score_adds_uncertain_tag(tmp_path) -> None:
     assert memory.save_calls[0]["tags"] == ["chat-capture", "_uncertain"]
 
 
+def test_insight_capture_non_list_tags_treated_as_empty(tmp_path) -> None:
+    memory = _make_save_spy_memory(tmp_path)
+    app = build_app(memory)
+    client = TestClient(app)
+
+    candidate = {
+        "title": "Nota con tags invalidos",
+        "body": "Cuerpo suficientemente largo para pasar la validacion basica.",
+        "tags": "notalist",
+        "score": 40,
+    }
+    resp = client.post("/api/insight/capture", json={"candidate": candidate})
+    assert resp.status_code == 200
+    assert memory.save_calls[0]["tags"] == ["chat-capture", "_uncertain"]
+
+
+def test_ask_stream_stamps_session_id_on_insight_proposal(tmp_path) -> None:
+    from tests.test_chat_pipeline import _FakeMemory, _LongAnswerChatBackend
+
+    memory = _FakeMemory(tmp_path)
+    memory._ensure_chat = lambda: _LongAnswerChatBackend()  # type: ignore[method-assign]
+    app = build_app(memory)
+    client = TestClient(app)
+
+    with client.stream(
+        "POST",
+        "/api/ask/stream",
+        json={"q": "¿Qué acordamos sobre el backend?", "chat_session_id": "sess-insight"},
+    ) as resp:
+        assert resp.status_code == 200
+        body = "".join(chunk for chunk in resp.iter_text())
+    frames = [json.loads(line[5:]) for line in body.split("\n\n") if line.startswith("data:")]
+    proposal = next(f for f in frames if f["type"] == "insight_proposal")
+    assert proposal["candidate"]["chat_session_id"] == "sess-insight"
+
+    client.post("/api/sessions/delete", json={"session_id": "sess-insight"})
+
+
 def test_sessions_endpoints(client) -> None:
     client.post("/api/ask", json={"q": "hola", "chat_session_id": "s1"})
 
