@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.7.1] - 2026-08-01
+
+### Added
+
+- Memo-native authenticated terminal mesh absorbing Synapse/Memflow coordination:
+  isolated Git peers, signed messages, delivery ACKs, presence, terminal
+  registration, and exactly-once presentation.
+- Reproducible two-peer integration evidence and a per-finding audit ledger.
+
+### Fixed
+
+- Cross-terminal authorization, actor/device binding, local-only federation
+  leaks, SQLite lifecycle warnings, and concurrent terminal write races.
+
 ## [4.7.0] - 2026-07-31
 
 ### Added
