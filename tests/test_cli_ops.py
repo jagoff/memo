@@ -131,28 +131,3 @@ def test_ops_uninstall_rejects_unknown_service():
     result = CliRunner().invoke(ops_group, ["uninstall", "bogus-service"])
     assert result.exit_code != 0
     assert "Invalid value" in result.output
-
-
-def test_ops_install_whatsapp_ingest_dispatches(monkeypatch, tmp_path):
-    import shutil
-
-    captured: dict = {}
-
-    def fake_install_whatsapp_ingest(memo_bin, home):
-        captured["memo_bin"] = memo_bin
-        captured["home"] = home
-        return home / "Library" / "LaunchAgents" / "com.memo.whatsapp-ingest.plist"
-
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/local/bin/memo")
-    monkeypatch.setattr("memo.ops_launchd.install_whatsapp_ingest", fake_install_whatsapp_ingest)
-
-    result = CliRunner().invoke(ops_group, ["install", "whatsapp-ingest"])
-    assert result.exit_code == 0, result.output
-    assert captured["memo_bin"] == "/usr/local/bin/memo"
-
-
-def test_ops_uninstall_whatsapp_ingest_dispatches(monkeypatch):
-    monkeypatch.setattr("memo.ops_launchd.uninstall_whatsapp_ingest", lambda home: True)
-    result = CliRunner().invoke(ops_group, ["uninstall", "whatsapp-ingest"])
-    assert result.exit_code == 0, result.output
-    assert "removed" in result.output

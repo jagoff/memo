@@ -8,7 +8,6 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 CHAT_LABEL = "com.memo.chat"
-WHATSAPP_INGEST_LABEL = "com.memo.whatsapp-ingest"
 
 
 def render_chat_plist(
@@ -42,54 +41,6 @@ def render_chat_plist(
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <key>StandardOutPath</key>
-    <string>{log}</string>
-    <key>StandardErrorPath</key>
-    <string>{log}</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-      <key>PATH</key>
-      <string>{path_env}</string>
-{memo_env_xml}    </dict>
-  </dict>
-</plist>
-"""
-
-
-def render_whatsapp_ingest_plist(memo_bin: str, home: str) -> str:
-    from memo.chat.whatsapp_live import bridge_db_path
-
-    args = [memo_bin, "import", "whatsapp", "--all-chats", "--json"]
-    args_xml = "\n".join(f"      <string>{escape(a)}</string>" for a in args)
-    db = str(bridge_db_path())
-    watch_paths_xml = "\n".join(f"      <string>{escape(p)}</string>" for p in (db, f"{db}-wal"))
-    log = escape(f"{home}/Library/Logs/memo/whatsapp-ingest.log")
-    path_env = escape(f"{home}/.local/bin:/usr/local/bin:/usr/bin:/bin")
-    # Same rationale as render_chat_plist: launchd agents don't inherit the
-    # shell env, so forward MEMO_* vars from the installing shell.
-    memo_env = {k: v for k, v in sorted(os.environ.items()) if k.startswith("MEMO_")}
-    memo_env_xml = "".join(
-        f"      <key>{escape(k)}</key>\n      <string>{escape(v)}</string>\n"
-        for k, v in memo_env.items()
-    )
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>{WHATSAPP_INGEST_LABEL}</string>
-    <key>ProgramArguments</key>
-    <array>
-{args_xml}
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>WatchPaths</key>
-    <array>
-{watch_paths_xml}
-    </array>
-    <key>ThrottleInterval</key>
-    <integer>300</integer>
     <key>StandardOutPath</key>
     <string>{log}</string>
     <key>StandardErrorPath</key>
@@ -149,44 +100,6 @@ def install_chat(memo_bin: str, home: Path, *, port: int = 8765, dist: str | Non
 
 def uninstall_chat(home: Path) -> bool:
     path = _plist_path(home)
-    uid = os.getuid()
-    subprocess.run(
-        ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False
-    )
-    if path.exists():
-        path.unlink()
-        return True
-    return False
-
-
-def _whatsapp_ingest_plist_path(home: Path) -> Path:
-    return home / "Library" / "LaunchAgents" / f"{WHATSAPP_INGEST_LABEL}.plist"
-
-
-def install_whatsapp_ingest(memo_bin: str, home: Path) -> Path:
-    (home / "Library" / "Logs" / "memo").mkdir(parents=True, exist_ok=True)
-    path = _whatsapp_ingest_plist_path(home)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_whatsapp_ingest_plist(memo_bin, str(home)), encoding="utf-8")
-    uid = os.getuid()
-    subprocess.run(
-        ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False
-    )
-    try:
-        subprocess.run(
-            ["launchctl", "bootstrap", f"gui/{uid}", str(path)],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        raise RuntimeError(f"launchctl bootstrap failed: {stderr or exc}") from exc
-    return path
-
-
-def uninstall_whatsapp_ingest(home: Path) -> bool:
-    path = _whatsapp_ingest_plist_path(home)
     uid = os.getuid()
     subprocess.run(
         ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False

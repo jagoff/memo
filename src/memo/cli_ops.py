@@ -169,7 +169,7 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
 
 
 @ops_group.command(name="install")
-@click.argument("service", type=click.Choice(["chat", "whatsapp-ingest"]))
+@click.argument("service", type=click.Choice(["chat"]))
 @click.option("--port", default=8765, show_default=True, type=int)
 @click.option(
     "--dist",
@@ -178,39 +178,29 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
     help="Directorio dist de la SPA (opcional, solo para `chat`).",
 )
 def ops_install(service: str, port: int, dist: Path | None) -> None:
-    """Install a memo launchd agent (chat, whatsapp-ingest)."""
+    """Install a memo launchd agent (chat)."""
     import shutil
+
+    from memo.ops_launchd import install_chat
 
     memo_bin = shutil.which("memo")
     if not memo_bin:
         raise click.ClickException("no encuentro el binario `memo` en PATH")
     try:
-        if service == "chat":
-            from memo.ops_launchd import install_chat
-
-            resolved_dist = str(dist.expanduser().resolve()) if dist else None
-            path = install_chat(memo_bin, Path.home(), port=port, dist=resolved_dist)
-        else:
-            from memo.ops_launchd import install_whatsapp_ingest
-
-            path = install_whatsapp_ingest(memo_bin, Path.home())
+        resolved_dist = str(dist.expanduser().resolve()) if dist else None
+        path = install_chat(memo_bin, Path.home(), port=port, dist=resolved_dist)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"installed {path}")
 
 
 @ops_group.command(name="uninstall")
-@click.argument("service", type=click.Choice(["chat", "whatsapp-ingest"]))
+@click.argument("service", type=click.Choice(["chat"]))
 def ops_uninstall(service: str) -> None:
     """Uninstall a memo launchd agent."""
-    if service == "chat":
-        from memo.ops_launchd import uninstall_chat
+    from memo.ops_launchd import uninstall_chat
 
-        removed = uninstall_chat(Path.home())
-    else:
-        from memo.ops_launchd import uninstall_whatsapp_ingest
-
-        removed = uninstall_whatsapp_ingest(Path.home())
+    removed = uninstall_chat(Path.home())
     click.echo("removed" if removed else "not installed")
 
 

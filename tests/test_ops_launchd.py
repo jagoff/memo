@@ -1,19 +1,14 @@
 import os
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
-import memo.chat.whatsapp_live as whatsapp_live
 from memo.ops_launchd import (
     install_chat,
-    install_whatsapp_ingest,
     parse_launchctl_list,
     render_chat_plist,
-    render_whatsapp_ingest_plist,
     uninstall_chat,
-    uninstall_whatsapp_ingest,
 )
 
 
@@ -141,139 +136,3 @@ def test_uninstall_chat_removes_file_and_returns_bool(tmp_path, monkeypatch) -> 
     assert calls[0][:3] == ["launchctl", "bootout", "gui/501"]
 
     assert uninstall_chat(tmp_path) is False
-
-
-# ── whatsapp-ingest ──────────────────────────────────────────────────────────
-
-
-def _fake_bridge_db(monkeypatch, path: str = "/Users/tester/bridge/messages.db") -> str:
-    monkeypatch.setattr(whatsapp_live, "bridge_db_path", lambda: Path(path))
-    return path
-
-
-def test_render_whatsapp_ingest_plist_contents(monkeypatch) -> None:
-    db = _fake_bridge_db(monkeypatch)
-    plist = render_whatsapp_ingest_plist("/usr/local/bin/memo", "/Users/tester")
-
-    assert "<key>Label</key>" in plist and "com.memo.whatsapp-ingest" in plist
-    assert "/usr/local/bin/memo" in plist
-    assert "<string>import</string>" in plist
-    assert "<string>whatsapp</string>" in plist
-    assert "<string>--all-chats</string>" in plist
-    assert "<string>--json</string>" in plist
-    assert "<key>WatchPaths</key>" in plist
-    assert f"<string>{db}</string>" in plist
-    assert f"<string>{db}-wal</string>" in plist
-    assert "<key>ThrottleInterval</key>" in plist
-    assert "<integer>300</integer>" in plist
-    assert "<key>RunAtLoad</key>" in plist
-    assert "/Users/tester/Library/Logs/memo/whatsapp-ingest.log" in plist
-    # Reference plist (synapse backup) has RunAtLoad + WatchPaths/Throttle only —
-    # no StartCalendarInterval, no KeepAlive.
-    assert "StartCalendarInterval" not in plist
-    assert "KeepAlive" not in plist
-
-
-def test_render_whatsapp_ingest_plist_escapes_xml_ampersand(monkeypatch, tmp_path) -> None:
-    _fake_bridge_db(monkeypatch, "/Users/tester/A&B/messages.db")
-    plist = render_whatsapp_ingest_plist("/usr/local/bin/memo", "/Users/tester")
-    assert "A&amp;B" in plist
-    assert "/Users/tester/A&B/messages.db" not in plist  # raw unescaped ampersand must not survive
-
-    plist_path = tmp_path / "escaped.plist"
-    plist_path.write_text(plist, encoding="utf-8")
-    if shutil.which("plutil") is not None:
-        result = subprocess.run(
-            ["plutil", "-lint", str(plist_path)], capture_output=True, text=True, check=False
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_render_whatsapp_ingest_plist_forwards_memo_env_vars(monkeypatch, tmp_path) -> None:
-    _fake_bridge_db(monkeypatch)
-    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
-    monkeypatch.delenv("NOT_MEMO_UNRELATED", raising=False)
-    monkeypatch.setenv("NOT_MEMO_UNRELATED", "should-not-forward")
-
-    plist = render_whatsapp_ingest_plist("/usr/local/bin/memo", "/Users/tester")
-
-    assert "<key>MEMO_EMBEDDER_DIMS</key>" in plist
-    assert "<string>2560</string>" in plist
-    assert "NOT_MEMO_UNRELATED" not in plist
-
-    plist_path = tmp_path / "env.plist"
-    plist_path.write_text(plist, encoding="utf-8")
-    if shutil.which("plutil") is not None:
-        result = subprocess.run(
-            ["plutil", "-lint", str(plist_path)], capture_output=True, text=True, check=False
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_install_whatsapp_ingest_writes_plist_and_calls_bootout_then_bootstrap(
-    tmp_path, monkeypatch
-) -> None:
-    _fake_bridge_db(monkeypatch)
-    calls: list[list[str]] = []
-
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(os, "getuid", lambda: 501)
-
-    path = install_whatsapp_ingest("/usr/local/bin/memo", tmp_path)
-
-    assert path == tmp_path / "Library" / "LaunchAgents" / "com.memo.whatsapp-ingest.plist"
-    assert path.exists()
-    content = path.read_text(encoding="utf-8")
-    assert "/usr/local/bin/memo" in content
-    assert "--all-chats" in content
-
-    launchctl_calls = [c for c in calls if c[0] == "launchctl"]
-    assert len(launchctl_calls) == 2
-    assert launchctl_calls[0][:3] == ["launchctl", "bootout", "gui/501"]
-    assert launchctl_calls[1][:3] == ["launchctl", "bootstrap", "gui/501"]
-
-
-def test_install_whatsapp_ingest_bootstrap_failure_raises_runtime_error(
-    tmp_path, monkeypatch
-) -> None:
-    _fake_bridge_db(monkeypatch)
-
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        if cmd[:2] == ["launchctl", "bootstrap"]:
-            raise subprocess.CalledProcessError(1, cmd, output="", stderr="bootstrap boom")
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(os, "getuid", lambda: 501)
-
-    with pytest.raises(RuntimeError, match="bootstrap boom"):
-        install_whatsapp_ingest("/usr/local/bin/memo", tmp_path)
-
-    # plist is written before the (failed) bootstrap call
-    assert (tmp_path / "Library" / "LaunchAgents" / "com.memo.whatsapp-ingest.plist").exists()
-
-
-def test_uninstall_whatsapp_ingest_removes_file_and_returns_bool(tmp_path, monkeypatch) -> None:
-    calls: list[list[str]] = []
-
-    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(os, "getuid", lambda: 501)
-
-    plist_dir = tmp_path / "Library" / "LaunchAgents"
-    plist_dir.mkdir(parents=True)
-    plist_path = plist_dir / "com.memo.whatsapp-ingest.plist"
-    plist_path.write_text("stub", encoding="utf-8")
-
-    assert uninstall_whatsapp_ingest(tmp_path) is True
-    assert not plist_path.exists()
-    assert calls[0][:3] == ["launchctl", "bootout", "gui/501"]
-
-    assert uninstall_whatsapp_ingest(tmp_path) is False
