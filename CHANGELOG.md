@@ -9,6 +9,26 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-07-31
+
+### Added
+
+- **Native chat UI over your memory** (`memo chat serve`, rescued from the archived
+  synapse chat): retrieval pipeline (`memo.chat`) with RRF fusion, per-group score
+  normalization, chunk dedup, rules-based follow-up rewrite, gated multi-query
+  expansion, 👍/👎 feedback with exact + semantic vote boosts, relevance floor,
+  and fulldoc inline — streamed as SSE with a vendored React SPA (`web-chat/`).
+- `memo eval chat` — regression gate over the rescued chat corpus
+  (`eval/chat_regression_corpus.json`).
+- `memo ops install|uninstall|status` — launchd lifecycle for the `com.memo.chat`
+  agent (env-forwarding plist, validated `--dist`).
+- One-off migration of synapse chat feedback signals
+  (`scripts/migrate_synapse_chat_state.py`).
+
+### Fixed
+
+- `memo config validate` no longer flags the documented `MEMO_CHAT_*` knobs as typos.
+
 ## [4.6.2] - 2026-07-31
 
 ### Fixed
