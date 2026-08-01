@@ -282,6 +282,10 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_AGENT_TTY",
         "MEMO_CODEX_BADGE_SHOWN",
         "MEMO_STARTUP_BANNER_SHOWN",
+        # User-facing banner toggle consumed by the bash shell shim
+        # (runtime/shims.py). Env-only: the shim can't see the markdown-config
+        # chain, so registering it as a flag would diverge silently.
+        "MEMO_STARTUP_BANNER",
         # chat/config.py-owned knobs: env-only + built-in defaults, read
         # directly (not through this registry's markdown/overlay chain).
         "MEMO_CHAT_BASE_K",
