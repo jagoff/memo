@@ -142,6 +142,30 @@ def test_resolve_chats_returns_empty_when_nothing_matches(db_path: Path) -> None
     assert wa.resolve_chats("qué me dijo carlos", db_path, {}) == []
 
 
+def test_resolve_chats_query_stopwords_do_not_match_a_chat_name_token(db_path: Path) -> None:
+    # Regression: "Mensajes Colegio" has the significant-looking token
+    # "colegio" AND "mensajes" — but "mensajes" is a query stopword (it's
+    # part of how a recency query talks about itself, not a person/place
+    # name) and must never, on its own, match a chat whose name happens to
+    # contain it. Without the full stopword set this chat wrongly matched
+    # "cuáles son los últimos mensajes de Ana" via the "mensajes" token.
+    _add_chat(db_path, "colegio@g.us", "Mensajes Colegio")
+
+    result = wa.resolve_chats("cuáles son los últimos mensajes de Ana", db_path, {})
+
+    assert result == []
+
+
+def test_resolve_chats_stopwords_do_not_kill_legitimate_name_tokens(db_path: Path) -> None:
+    # "colegio" itself is NOT a stopword — a chat legitimately named after a
+    # place/topic must still match when that word is the one doing the work.
+    _add_chat(db_path, "colegio-norte@s.whatsapp.net", "Colegio Norte")
+
+    result = wa.resolve_chats("qué dijeron en el colegio?", db_path, {})
+
+    assert result == [("colegio-norte@s.whatsapp.net", "Colegio Norte")]
+
+
 def test_resolve_chats_missing_db_returns_empty_list(tmp_path: Path) -> None:
     missing = tmp_path / "nope.db"
 

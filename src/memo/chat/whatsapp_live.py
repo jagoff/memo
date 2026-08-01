@@ -34,6 +34,56 @@ _DEFAULT_DB = "~/repos/whatsapp-mcp/whatsapp-bridge/store/messages.db"
 # not match every query that happens to say "chat").
 _GENERIC_NAME_TOKENS = {"group", "grupo", "chat", "family", "familia", "the", "los", "las"}
 
+# Connectives / query words that must never be treated as a name-match
+# trigger, so a chat whose name happens to contain one of these (e.g.
+# "Mensajes Colegio") doesn't wrongly match every query that talks ABOUT
+# messages/recency rather than naming that chat (e.g. "los últimos mensajes
+# de Ana"). Ported verbatim from synapse's `_MATCH_STOPWORDS`.
+_MATCH_STOPWORDS = {
+    "con",
+    "sin",
+    "por",
+    "para",
+    "del",
+    "una",
+    "uno",
+    "unos",
+    "unas",
+    "que",
+    "cual",
+    "cuales",
+    "son",
+    "mis",
+    "esta",
+    "este",
+    "esa",
+    "ese",
+    "mas",
+    "hoy",
+    "today",
+    "with",
+    "and",
+    "for",
+    "the",
+    "mensaje",
+    "mensajes",
+    "chats",
+    "ultimo",
+    "ultima",
+    "ultimos",
+    "ultimas",
+    "last",
+    "latest",
+    "reciente",
+    "recientes",
+    "conversacion",
+    "conversaciones",
+    "conversation",
+    "whatsapp",
+    "dijo",
+    "escribio",
+}
+
 _RECENCY_RE = re.compile(
     r"(últim[oa]s? (mensajes?|conversaci[oó]n)|qué (me )?dijo|"
     r"conversaci[oó]n con|last messages?|what did .{1,40} say)",
@@ -49,7 +99,7 @@ def _name_tokens(name: str) -> list[str]:
     return [
         t
         for t in re.findall(r"[a-záéíóúñ]+", name.lower())
-        if len(t) >= 3 and t not in _GENERIC_NAME_TOKENS
+        if len(t) >= 3 and t not in _GENERIC_NAME_TOKENS and t not in _MATCH_STOPWORDS
     ]
 
 
