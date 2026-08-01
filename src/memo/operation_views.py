@@ -27,8 +27,18 @@ from memo.operational_event import (
 from memo.operational_event_types import (
     ATTENTION_ACKNOWLEDGED,
     ATTENTION_ADDED,
+    CHANNEL_OPENED,
     CONFLICT_OPENED,
     CONFLICT_RESOLVED,
+    COORD_HANDOFF_CONSUMED,
+    COORD_HANDOFF_CREATED,
+    DELIVERY_ACK_RECORDED,
+    DELIVERY_CURSOR_ADVANCED,
+    DELIVERY_EXPIRED,
+    DELIVERY_KNOWN_FAILED,
+    DELIVERY_PRESENTED,
+    DELIVERY_RESERVED,
+    DELIVERY_UNCERTAIN,
     DURABLE_PROMOTION_COMPLETED,
     DURABLE_PROMOTION_REJECTED,
     DURABLE_PROMOTION_REQUESTED,
@@ -37,10 +47,21 @@ from memo.operational_event_types import (
     FOCUS_SET,
     HANDOFF_CONSUMED,
     HANDOFF_CREATED,
+    MESSAGE_SENT,
+    MESSAGE_SUPERSEDED,
     OUTCOME_RECORDED,
+    PRESENCE_ANNOUNCED,
+    PRESENCE_LEASE_EXPIRED,
+    PRESENCE_RENEWED,
     SESSION_CHECKPOINTED,
     SESSION_RECOVERABLE,
     SESSION_TERMINATED,
+    TASK_ASSIGNED,
+    TASK_CANCELLED,
+    TASK_COMPLETED,
+    TASK_CREATED,
+    TASK_EXPIRED,
+    TOPIC_TERMINATED,
 )
 
 if TYPE_CHECKING:
@@ -440,6 +461,14 @@ def _outcome_recorded(
         table="outcomes",
         key=str(payload["task_id"]),
     )
+
+
+def _event_payload_result(
+    _connection: sqlite3.Connection,
+    event: OperationalEventV2,
+) -> Mapping[str, object]:
+    """Persist idempotency while domain services reduce the verified stream."""
+    return _payload(event)
 
 
 def _session_checkpointed(
@@ -856,6 +885,27 @@ EVENT_REDUCERS: dict[str, EventReducer] = {
     DURABLE_PROMOTION_RETRY_SCHEDULED: _promotion_retry_scheduled,
     DURABLE_PROMOTION_COMPLETED: _promotion_completed,
     DURABLE_PROMOTION_REJECTED: _promotion_rejected,
+    CHANNEL_OPENED: _event_payload_result,
+    MESSAGE_SENT: _event_payload_result,
+    MESSAGE_SUPERSEDED: _event_payload_result,
+    TOPIC_TERMINATED: _event_payload_result,
+    COORD_HANDOFF_CREATED: _event_payload_result,
+    COORD_HANDOFF_CONSUMED: _event_payload_result,
+    TASK_CREATED: _event_payload_result,
+    TASK_ASSIGNED: _event_payload_result,
+    TASK_COMPLETED: _event_payload_result,
+    TASK_CANCELLED: _event_payload_result,
+    TASK_EXPIRED: _event_payload_result,
+    DELIVERY_RESERVED: _event_payload_result,
+    DELIVERY_PRESENTED: _event_payload_result,
+    DELIVERY_ACK_RECORDED: _event_payload_result,
+    DELIVERY_KNOWN_FAILED: _event_payload_result,
+    DELIVERY_UNCERTAIN: _event_payload_result,
+    DELIVERY_EXPIRED: _event_payload_result,
+    DELIVERY_CURSOR_ADVANCED: _event_payload_result,
+    PRESENCE_ANNOUNCED: _event_payload_result,
+    PRESENCE_RENEWED: _event_payload_result,
+    PRESENCE_LEASE_EXPIRED: _event_payload_result,
 }
 
 

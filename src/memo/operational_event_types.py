@@ -42,6 +42,27 @@ DURABLE_PROMOTION_REQUESTED = "memo.operational.durable.promotion.requested.v1"
 DURABLE_PROMOTION_RETRY_SCHEDULED = "memo.operational.durable.promotion.retry_scheduled.v1"
 DURABLE_PROMOTION_COMPLETED = "memo.operational.durable.promotion.completed.v1"
 DURABLE_PROMOTION_REJECTED = "memo.operational.durable.promotion.rejected.v1"
+CHANNEL_OPENED = "memo.operational.coord.channel.opened.v1"
+MESSAGE_SENT = "memo.operational.coord.message.sent.v1"
+MESSAGE_SUPERSEDED = "memo.operational.coord.message.superseded.v1"
+TOPIC_TERMINATED = "memo.operational.coord.topic.terminated.v1"
+COORD_HANDOFF_CREATED = "memo.operational.coord.handoff.created.v1"
+COORD_HANDOFF_CONSUMED = "memo.operational.coord.handoff.consumed.v1"
+TASK_CREATED = "memo.operational.coord.task.created.v1"
+TASK_ASSIGNED = "memo.operational.coord.task.assigned.v1"
+TASK_COMPLETED = "memo.operational.coord.task.completed.v1"
+TASK_CANCELLED = "memo.operational.coord.task.cancelled.v1"
+TASK_EXPIRED = "memo.operational.coord.task.expired.v1"
+DELIVERY_RESERVED = "memo.operational.delivery.reserved.v1"
+DELIVERY_PRESENTED = "memo.operational.delivery.presented.v1"
+DELIVERY_KNOWN_FAILED = "memo.operational.delivery.known_failed.v1"
+DELIVERY_UNCERTAIN = "memo.operational.delivery.uncertain.v1"
+DELIVERY_EXPIRED = "memo.operational.delivery.expired.v1"
+DELIVERY_CURSOR_ADVANCED = "memo.operational.delivery.cursor.advanced.v1"
+DELIVERY_ACK_RECORDED = "memo.operational.delivery.ack.recorded.v1"
+PRESENCE_ANNOUNCED = "memo.operational.presence.announced.v1"
+PRESENCE_RENEWED = "memo.operational.presence.renewed.v1"
+PRESENCE_LEASE_EXPIRED = "memo.operational.presence.lease.expired.v1"
 
 
 def _invalid(message: str) -> OperationalError:
@@ -473,6 +494,110 @@ def _promotion_rejected(payload: Mapping[str, object]) -> None:
     _string(payload, "reason")
 
 
+def _channel_opened(payload: Mapping[str, object]) -> None:
+    _string(payload, "channel")
+    _string_allow_empty(payload, "topic")
+
+
+def _message_sent(payload: Mapping[str, object]) -> None:
+    for field in ("message_id", "channel", "body", "actor_id", "created_at"):
+        _string(payload, field)
+    _unique_string_list(payload, "target_ids")
+    _string_allow_empty(payload, "topic")
+    _boolean(payload, "expects_ack")
+    _string_list(payload, "evidence_uris")
+
+
+def _message_superseded(payload: Mapping[str, object]) -> None:
+    for field in ("channel", "message_id", "superseded_by_message_id"):
+        _string(payload, field)
+
+
+def _topic_terminated(payload: Mapping[str, object]) -> None:
+    for field in ("channel", "terminated_at"):
+        _string(payload, field)
+    _string_allow_empty(payload, "topic")
+
+
+def _coord_handoff_created(payload: Mapping[str, object]) -> None:
+    for field in ("id", "message_id", "project", "summary", "from_actor", "created_at"):
+        _string(payload, field)
+    _string_allow_empty(payload, "to_actor")
+    _string_list(payload, "evidence_uris")
+
+
+def _coord_handoff_consumed(payload: Mapping[str, object]) -> None:
+    for field in ("id", "consumed_at", "actor_id"):
+        _string(payload, field)
+
+
+def _task_created(payload: Mapping[str, object]) -> None:
+    for field in ("id", "project", "title", "created_at"):
+        _string(payload, field)
+    _string_allow_empty(payload, "assignee_id")
+
+
+def _task_assigned(payload: Mapping[str, object]) -> None:
+    for field in ("id", "assignee_id", "assigned_at"):
+        _string(payload, field)
+
+
+def _task_completed(payload: Mapping[str, object]) -> None:
+    for field in ("id", "result", "completed_at"):
+        _string(payload, field)
+
+
+def _task_terminal(payload: Mapping[str, object]) -> None:
+    for field in ("id", "at"):
+        _string(payload, field)
+
+
+def _delivery_transition(payload: Mapping[str, object]) -> None:
+    for field in ("delivery_id", "message_id", "target_id", "transitioned_at"):
+        _string(payload, field)
+    _integer(payload, "attempt_count")
+    _string_allow_empty(payload, "terminal_id")
+    _string_allow_empty(payload, "error_code")
+
+
+def _delivery_ack(payload: Mapping[str, object]) -> None:
+    for field in (
+        "delivery_id",
+        "message_id",
+        "target_id",
+        "ack_actor_id",
+        "ack_event_id",
+        "transitioned_at",
+    ):
+        _string(payload, field)
+
+
+def _delivery_cursor(payload: Mapping[str, object]) -> None:
+    for field in ("consumer_id", "channel", "logical_clock", "event_id"):
+        _string(payload, field)
+
+
+def _presence_lease(payload: Mapping[str, object]) -> None:
+    for field in (
+        "id",
+        "actor_id",
+        "device_id",
+        "project",
+        "workspace",
+        "topic",
+        "intent",
+        "expires_at",
+    ):
+        _string(payload, field)
+    _unique_string_list(payload, "files")
+    _integer(payload, "ttl_seconds", minimum=5)
+
+
+def _presence_expiry(payload: Mapping[str, object]) -> None:
+    for field in ("id", "expired_at"):
+        _string(payload, field)
+
+
 EVENT_TYPES: dict[str, PayloadValidator] = {
     FOCUS_SET: _focus_set,
     FOCUS_CLEARED: _focus_cleared,
@@ -503,6 +628,27 @@ EVENT_TYPES: dict[str, PayloadValidator] = {
     DURABLE_PROMOTION_RETRY_SCHEDULED: _promotion_retry_scheduled,
     DURABLE_PROMOTION_COMPLETED: _promotion_completed,
     DURABLE_PROMOTION_REJECTED: _promotion_rejected,
+    CHANNEL_OPENED: _channel_opened,
+    MESSAGE_SENT: _message_sent,
+    MESSAGE_SUPERSEDED: _message_superseded,
+    TOPIC_TERMINATED: _topic_terminated,
+    COORD_HANDOFF_CREATED: _coord_handoff_created,
+    COORD_HANDOFF_CONSUMED: _coord_handoff_consumed,
+    TASK_CREATED: _task_created,
+    TASK_ASSIGNED: _task_assigned,
+    TASK_COMPLETED: _task_completed,
+    TASK_CANCELLED: _task_terminal,
+    TASK_EXPIRED: _task_terminal,
+    DELIVERY_RESERVED: _delivery_transition,
+    DELIVERY_PRESENTED: _delivery_transition,
+    DELIVERY_ACK_RECORDED: _delivery_ack,
+    DELIVERY_KNOWN_FAILED: _delivery_transition,
+    DELIVERY_UNCERTAIN: _delivery_transition,
+    DELIVERY_EXPIRED: _delivery_transition,
+    DELIVERY_CURSOR_ADVANCED: _delivery_cursor,
+    PRESENCE_ANNOUNCED: _presence_lease,
+    PRESENCE_RENEWED: _presence_lease,
+    PRESENCE_LEASE_EXPIRED: _presence_expiry,
 }
 
 
@@ -518,15 +664,25 @@ def validate_event_payload(event_type: str, payload: Mapping[str, object]) -> No
 __all__ = [
     "ATTENTION_ACKNOWLEDGED",
     "ATTENTION_ADDED",
+    "CHANNEL_OPENED",
     "COMPACTION_COMPLETED",
     "CONFLICT_OPENED",
     "CONFLICT_RESOLVED",
     "COORDINATION_CLAIMED",
     "COORDINATION_COMPLETED",
     "COORDINATION_CREATED",
+    "COORD_HANDOFF_CONSUMED",
+    "COORD_HANDOFF_CREATED",
     "CURSOR_ADVANCED",
     "DELIVERY_ACKNOWLEDGED",
+    "DELIVERY_ACK_RECORDED",
+    "DELIVERY_CURSOR_ADVANCED",
     "DELIVERY_ENQUEUED",
+    "DELIVERY_EXPIRED",
+    "DELIVERY_KNOWN_FAILED",
+    "DELIVERY_PRESENTED",
+    "DELIVERY_RESERVED",
+    "DELIVERY_UNCERTAIN",
     "DURABLE_PROMOTION_COMPLETED",
     "DURABLE_PROMOTION_REJECTED",
     "DURABLE_PROMOTION_REQUESTED",
@@ -537,14 +693,25 @@ __all__ = [
     "HANDOFF_CONSUMED",
     "HANDOFF_CREATED",
     "HEALTH_REPORTED",
+    "MESSAGE_SENT",
+    "MESSAGE_SUPERSEDED",
     "OUTCOME_RECORDED",
+    "PRESENCE_ANNOUNCED",
     "PRESENCE_EXPIRED",
+    "PRESENCE_LEASE_EXPIRED",
+    "PRESENCE_RENEWED",
     "PRESENCE_UPDATED",
     "ROSTER_UPDATED",
     "SESSION_CHECKPOINTED",
     "SESSION_RECOVERABLE",
     "SESSION_TERMINATED",
+    "TASK_ASSIGNED",
+    "TASK_CANCELLED",
+    "TASK_COMPLETED",
+    "TASK_CREATED",
+    "TASK_EXPIRED",
     "TERMINAL_COMMAND_FINISHED",
     "TERMINAL_COMMAND_STARTED",
+    "TOPIC_TERMINATED",
     "validate_event_payload",
 ]

@@ -39,6 +39,7 @@ from memo.operational_event_types import (
     TERMINAL_COMMAND_STARTED,
     validate_event_payload,
 )
+from tests.operational_authority import build_test_operational_authority
 
 
 def test_registry_is_closed_and_fully_qualified() -> None:
@@ -236,7 +237,16 @@ def test_real_v1_producer_payloads_are_accepted_for_migration_seed(
 def test_current_v1_producers_emit_migration_seed_payloads_accepted_by_v2(
     tmp_path,
 ) -> None:
-    store = OperationalStore(tmp_path, device_id="device-a")
+    authority = build_test_operational_authority(
+        tmp_path / "test-operational-authority",
+        device_id="device-a",
+    )
+    store = OperationalStore(
+        tmp_path,
+        device_id="device-a",
+        context_provider=authority.context_provider,
+        epoch_fence=authority.fence,
+    )
     store.set_focus(project="memo", summary="ship")
     store.clear_focus("memo")
     handoff = store.create_handoff(
