@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from pathlib import Path
 from typing import Any
 
 import click
@@ -165,3 +166,51 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
     """Drop REL_PATH from VAULT_LABEL's tombstones."""
     removed = IngestExcludeStore().remove(vault_label=vault_label, rel_path=rel_path)
     console.print("[green]✓ removed[/green]" if removed else "[dim]not found[/dim]")
+
+
+@ops_group.command(name="install")
+@click.argument("service", type=click.Choice(["chat"]))
+@click.option("--port", default=8765, show_default=True, type=int)
+@click.option(
+    "--dist",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Directorio dist de la SPA (opcional).",
+)
+def ops_install(service: str, port: int, dist: Path | None) -> None:
+    """Install a memo launchd agent (currently: chat)."""
+    import shutil
+
+    from memo.ops_launchd import install_chat
+
+    memo_bin = shutil.which("memo")
+    if not memo_bin:
+        raise click.ClickException("no encuentro el binario `memo` en PATH")
+    resolved_dist = str(dist.expanduser().resolve()) if dist else None
+    try:
+        path = install_chat(memo_bin, Path.home(), port=port, dist=resolved_dist)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"installed {path}")
+
+
+@ops_group.command(name="uninstall")
+@click.argument("service", type=click.Choice(["chat"]))
+def ops_uninstall(service: str) -> None:
+    """Uninstall a memo launchd agent."""
+    from memo.ops_launchd import uninstall_chat
+
+    click.echo("removed" if uninstall_chat(Path.home()) else "not installed")
+
+
+@ops_group.command(name="status")
+def ops_status() -> None:
+    """Show all com.memo.* launchd agents."""
+    import subprocess
+
+    from memo.ops_launchd import parse_launchctl_list
+
+    out = subprocess.run(["launchctl", "list"], capture_output=True, text=True, check=True).stdout
+    for row in parse_launchctl_list(out):
+        state = f"pid {row['pid']}" if row["pid"] else f"exit {row['last_exit']}"
+        click.echo(f"{row['label']}\t{state}")

@@ -124,7 +124,7 @@ A 7-phase nightly pipeline: inventory → mine signals → resolve conflicts →
 
 **Prompts and memories stay on your machine.** Embedder, reranker, and LLM all run in-process. No telemetry. Memory travels only if *you* point `memo sync` at a git remote you own. Normal startup is fully offline; remote update checks and auto-update require an explicit opt-in. → **[Privacy and network policy](https://github.com/jagoff/memo/blob/master/PRIVACY.md)**
 
-Also in the box: cross-agent `memo resume` (reopen any session from any agent), cross-Mac git sync, a knowledge graph with optional codegraph symbol edges, encrypted secret storage, OCR/audio ingestion, evidence packs, outcome learning, and signed federation. → **[Full feature reference](https://github.com/jagoff/memo/blob/master/docs/reference.md)**
+Also in the box: cross-agent `memo resume` (reopen any session from any agent), cross-Mac git sync, a knowledge graph with optional codegraph symbol edges, encrypted secret storage, OCR/audio ingestion, evidence packs, outcome learning, signed federation, and a local chat UI over your memory (`memo chat serve`). → **[Full feature reference](https://github.com/jagoff/memo/blob/master/docs/reference.md)**
 
 ---
 
@@ -167,7 +167,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 | Install detail, installer knobs, new-Mac migration | [reference.md › Install](https://github.com/jagoff/memo/blob/master/docs/reference.md#install-detail) |
 | Per-client MCP setup (Claude Desktop, Cursor, Cline, Continue) | [reference.md › MCP setup](https://github.com/jagoff/memo/blob/master/docs/reference.md#mcp-setup) |
 | Ambient recall, capture, and tuning | [reference.md › Ambient memory](https://github.com/jagoff/memo/blob/master/docs/reference.md#ambient-memory) |
-| Full CLI reference (137 commands) + `memo tui` | [reference.md › CLI](https://github.com/jagoff/memo/blob/master/docs/reference.md#cli-reference) |
+| Full CLI reference (138 commands) + `memo tui` | [reference.md › CLI](https://github.com/jagoff/memo/blob/master/docs/reference.md#cli-reference) |
 | All `MEMO_*` flags and model profiles | [reference.md › Configuration](https://github.com/jagoff/memo/blob/master/docs/reference.md#configuration) |
 | Architecture and design notes | [reference.md › Design](https://github.com/jagoff/memo/blob/master/docs/reference.md#design-and-comparison) |
 | Privacy and network policy | [PRIVACY.md](https://github.com/jagoff/memo/blob/master/PRIVACY.md) |
