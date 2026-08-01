@@ -1711,4 +1711,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "collision scan; older open collisions expire to 'stale'.",
         min_val=1,
     ),
+    _spec(
+        "MEMO_COORD_DELIVERY_WINDOW",
+        "int",
+        1800,
+        "coordination",
+        "A pending directive is only injected while its counterpart session "
+        "was updated within this many seconds; directives about idle "
+        "counterparts are held (row stays open) until they resume.",
+        min_val=1,
+    ),
 )
