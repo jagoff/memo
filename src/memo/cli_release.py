@@ -759,7 +759,10 @@ def release_mcpb(output: Path | None, node_output: Path | None) -> None:
     except OSError as exc:
         raise click.ClickException(f"could not build MCPB: {exc}") from exc
     for destination in destinations:
-        console.print(f"[green]✓[/green] built {destination}")
+        # Artifact paths are intended to be copyable and machine-readable.
+        # Rich's default wrapping can split a filename itself when the absolute
+        # path is wider than the terminal (for example ``memo.mc\npb``).
+        console.print(f"[green]✓[/green] built {destination}", soft_wrap=True)
 
 
 @release_group.command(name="check")

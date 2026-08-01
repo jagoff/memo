@@ -36,6 +36,7 @@ def test_dependabot_covers_every_shipped_dependency_surface() -> None:
         ("docker", "/"),
         ("github-actions", "/"),
         ("npm", "/editors/vscode"),
+        ("npm", "/web-chat"),
         ("uv", "/"),
     }
     assert all(entry["schedule"]["interval"] == "weekly" for entry in updates)
@@ -75,9 +76,24 @@ def test_dependency_security_workflow_is_frozen_and_enforcing() -> None:
     assert "uv export --frozen" in workflow
     assert "pip-audit==2.10.1" in workflow
     assert "pip-audit --strict" in workflow
+    assert "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in workflow
+    assert "cache-dependency-path: web-chat/package-lock.json" in workflow
+    assert "npm ci" in workflow
+    assert "npm audit --audit-level=low" in workflow
     assert "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294" in workflow
     assert "pull_request:" in workflow
     assert "schedule:" in workflow
+
+
+def test_web_chat_ci_type_checks_and_builds() -> None:
+    workflow = (WORKFLOWS / "test.yml").read_text(encoding="utf-8")
+
+    assert "web-chat:" in workflow
+    assert "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in workflow
+    assert "cache-dependency-path: web-chat/package-lock.json" in workflow
+    assert "npm ci" in workflow
+    assert "npm run typecheck" in workflow
+    assert "npm run build" in workflow
 
 
 def test_slow_test_workflow_installs_test_collection_dependencies() -> None:

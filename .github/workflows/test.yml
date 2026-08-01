@@ -66,6 +66,28 @@ jobs:
           .venv/bin/diff-cover coverage.xml
           --compare-branch=origin/master --fail-under=80 --show-uncovered
 
+  web-chat:
+    name: Web chat
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web-chat/package-lock.json
+      - name: Install web chat dependencies
+        working-directory: web-chat
+        run: npm ci
+      - name: Type-check web chat
+        working-directory: web-chat
+        run: npm run typecheck
+      - name: Build web chat
+        working-directory: web-chat
+        run: npm run build
+
   test-int8:
     # MEMO_VEC_QUANTIZE now defaults to int8 for fresh installs (v3.10.0), but
     # the `test` job above forces it `off` (tests/conftest.py) because many
