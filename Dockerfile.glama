@@ -51,12 +51,15 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY --from=builder /dist/ /tmp/dist/
 RUN wheel=$(find /tmp/dist -name '*.whl' -print -quit) \
-    && test -n "$wheel" \
-    && test -n "$EXPECTED_VERSION" \
+    && { test -n "$wheel" || { echo "ERROR: no wheel in /tmp/dist (builder stage produced nothing)" >&2; exit 1; }; } \
     && python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0 \
     && python -m pip install --require-hashes -r /tmp/dist/runtime-requirements.txt \
     && python -m pip install --no-deps "$wheel" \
-    && EXPECTED_VERSION="$EXPECTED_VERSION" python -c "import os; import memo; expected = os.environ['EXPECTED_VERSION']; installed = memo.__version__; assert installed == expected, f'{installed} != {expected}'" \
+    && if [ -n "$EXPECTED_VERSION" ]; then \
+         EXPECTED_VERSION="$EXPECTED_VERSION" python -c "import os; import memo; expected = os.environ['EXPECTED_VERSION']; installed = memo.__version__; assert installed == expected, f'{installed} != {expected}'"; \
+       else \
+         python -c "import memo; print('memo', memo.__version__, '(EXPECTED_VERSION not pinned — local build)')"; \
+       fi \
     && rm -rf /tmp/dist
 
 RUN python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['MEMO_ST_EMBEDDER_MODEL'], revision=os.environ['MEMO_ST_EMBEDDER_REVISION'])"
