@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import pty
 import subprocess
@@ -15,7 +14,7 @@ import memo.terminal_presenter as presenter
 from memo.errors import TerminalDeliveryError
 
 
-def test_tiocsti_preserves_every_input_byte(monkeypatch) -> None:
+def test_low_level_tiocsti_preserves_every_input_byte(monkeypatch) -> None:
     master_fd, slave_fd = pty.openpty()
     target = Path(os.ttyname(slave_fd))
     injected: list[bytes] = []
@@ -23,23 +22,22 @@ def test_tiocsti_preserves_every_input_byte(monkeypatch) -> None:
         presenter.fcntl, "ioctl", lambda _fd, _request, value: injected.append(value)
     )
     try:
-        transport = presenter.deliver_input(target, b"hello\r", terminal_app="")
+        presenter._deliver_tiocsti(target, b"hello\r")
 
         assert injected == [b"h", b"e", b"l", b"l", b"o", b"\r"]
-        assert transport == "tiocsti"
     finally:
         os.close(slave_fd)
         os.close(master_fd)
 
 
-def test_ghostty_fallback_targets_exact_tty_and_submits_atomically(monkeypatch) -> None:
-    calls: list[tuple[str, tuple[str, ...], dict[str, str]]] = []
+def test_ghostty_fallback_targets_and_submits_to_exact_tty_atomically(monkeypatch) -> None:
+    calls: list[tuple[str, tuple[str, ...], str | None]] = []
 
     def deny(_tty: Path, _payload: bytes) -> None:
         raise PermissionError("kernel denied TIOCSTI")
 
-    def run(script: str, *args: str, **kwargs: str):
-        calls.append((script, args, kwargs))
+    def run(script: str, *args: str, prompt_text: str | None = None):
+        calls.append((script, args, prompt_text))
         return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
 
     monkeypatch.setattr(presenter, "_deliver_tiocsti", deny)
@@ -53,51 +51,53 @@ def test_ghostty_fallback_targets_exact_tty_and_submits_atomically(monkeypatch) 
 
     assert transport == "ghostty-applescript"
     assert calls[0][1] == ("/dev/ttys003", "1")
-    assert calls[0][2] == {"prompt_text": "hello from memo"}
+    assert calls[0][2] == "hello from memo"
     assert "candidateTty is targetTty" in calls[0][0]
     assert 'send key "enter" to candidateTerminal' in calls[0][0]
+    assert "focus" not in calls[0][0]
+    assert "activate" not in calls[0][0]
     assert "System Events" not in calls[0][0]
     assert len(calls) == 1
 
 
-def test_terminal_app_fallback_keeps_payload_out_of_argv_and_clipboard(monkeypatch) -> None:
-    calls: list[tuple[str, tuple[str, ...], dict[str, str]]] = []
+@pytest.mark.parametrize("payload", [b"draft only", b"submit\r"])
+def test_terminal_app_always_fails_before_any_global_or_tiocsti_input(
+    monkeypatch,
+    payload: bytes,
+) -> None:
+    calls: list[str] = []
     monkeypatch.setattr(
         presenter,
         "_deliver_tiocsti",
-        lambda _tty, _payload: (_ for _ in ()).throw(PermissionError()),
+        lambda _tty, _payload: calls.append("tiocsti"),
+    )
+    monkeypatch.setattr(
+        presenter,
+        "_run_osascript",
+        lambda *_args, **_kwargs: calls.append("osascript"),
     )
 
-    def run(script: str, *args: str, **kwargs: str):
-        calls.append((script, args, kwargs))
-        return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+    with pytest.raises(OSError, match="no safe exact-session") as raised:
+        presenter.deliver_input(
+            Path("/dev/ttys003"),
+            payload,
+            terminal_app="Terminal",
+        )
 
-    monkeypatch.setattr(presenter, "_run_osascript", run)
-
-    transport = presenter.deliver_input(
-        Path("/dev/ttys003"),
-        b"hello 'quoted'\r",
-        terminal_app="Terminal",
-    )
-
-    assert transport == "terminal-applescript"
-    assert calls[0][1] == ("/dev/ttys003", "1")
-    assert calls[0][2] == {"prompt_text": "hello 'quoted'"}
-    assert "tty of candidateTab is targetTty" in calls[0][0]
-    assert "clipboard" not in calls[0][0].lower()
-    assert "do script promptText in foundTab" in calls[0][0]
+    assert raised.value.errno is not None
+    assert calls == []
 
 
 def test_iterm_fallback_writes_to_exact_session_without_newline(monkeypatch) -> None:
-    calls: list[tuple[str, tuple[str, ...], dict[str, str]]] = []
+    calls: list[tuple[str, tuple[str, ...], str | None]] = []
     monkeypatch.setattr(
         presenter,
         "_deliver_tiocsti",
         lambda _tty, _payload: (_ for _ in ()).throw(PermissionError()),
     )
 
-    def run(script: str, *args: str, **kwargs: str):
-        calls.append((script, args, kwargs))
+    def run(script: str, *args: str, prompt_text: str | None = None):
+        calls.append((script, args, prompt_text))
         return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
 
     monkeypatch.setattr(presenter, "_run_osascript", run)
@@ -110,41 +110,34 @@ def test_iterm_fallback_writes_to_exact_session_without_newline(monkeypatch) -> 
 
     assert transport == "iterm-applescript"
     assert calls[0][1] == ("/dev/ttys007", "0")
-    assert calls[0][2] == {"prompt_text": "draft only"}
+    assert calls[0][2] == "draft only"
+    assert 'tell application id "com.googlecode.iterm2"' in calls[0][0]
     assert "tty of candidateSession is targetTty" in calls[0][0]
     assert "newline false" in calls[0][0]
 
 
-def test_osascript_receives_sensitive_text_over_stdin_not_argv(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+def test_osascript_timeout_is_raised_without_body_bearing_context(monkeypatch) -> None:
+    secret = "secret prompt must not escape"
+    calls: list[tuple[list[str], str | None]] = []
 
-    def run(command: list[str], **kwargs: object):
-        captured["command"] = command
-        captured.update(kwargs)
-        return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
-
-    monkeypatch.setattr(presenter.subprocess, "run", run)
-    secret = 'secret "prompt"\nwith another line'
-
-    presenter._run_osascript(
-        "on run argv\nset promptText to __MEMO_PROMPT_LITERAL__\nreturn promptText\nend run",
-        "/dev/ttys003",
-        prompt_text=secret,
-    )
-
-    assert all(secret not in part for part in captured["command"])
-    assert json.dumps(secret, ensure_ascii=False) in str(captured["input"])
-    assert "__MEMO_PROMPT_LITERAL__" not in str(captured["input"])
-
-
-def test_osascript_timeout_becomes_safe_delivery_error(monkeypatch) -> None:
-    def timeout(*_args: object, **_kwargs: object) -> None:
-        raise subprocess.TimeoutExpired(["osascript"], timeout=5)
+    def timeout(command, **kwargs):
+        calls.append((command, kwargs.get("input")))
+        raise subprocess.TimeoutExpired(command, 5)
 
     monkeypatch.setattr(presenter.subprocess, "run", timeout)
 
-    with pytest.raises(TerminalDeliveryError, match="timed out"):
-        presenter._run_osascript('return "ok"')
+    with pytest.raises(OSError, match="automation timed out") as raised:
+        presenter._run_osascript(
+            f"set promptText to {presenter._PROMPT_LITERAL_MARKER}",
+            "/dev/ttys003",
+            prompt_text=secret,
+        )
+
+    assert secret not in repr(calls[0][0])
+    assert secret in str(calls[0][1])
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert secret not in repr(raised.value)
 
 
 def test_osascript_rejects_invalid_payload_marker_without_starting(monkeypatch) -> None:
@@ -162,110 +155,149 @@ def test_osascript_rejects_invalid_payload_marker_without_starting(monkeypatch) 
     assert started is False
 
 
-def test_osascript_start_failure_becomes_safe_delivery_error(monkeypatch) -> None:
+def test_osascript_start_failure_is_redacted_and_body_free(monkeypatch) -> None:
     def missing_binary(*_args: object, **_kwargs: object) -> None:
         raise FileNotFoundError("private executable path")
 
     monkeypatch.setattr(presenter.subprocess, "run", missing_binary)
 
-    with pytest.raises(TerminalDeliveryError, match="automation could not start") as exc:
+    with pytest.raises(TerminalDeliveryError, match="automation could not start") as raised:
         presenter._run_osascript('return "ok"')
 
-    assert "private executable path" not in str(exc.value)
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert "private executable path" not in str(raised.value)
 
 
-def test_non_utf8_payload_becomes_safe_delivery_error() -> None:
-    with pytest.raises(TerminalDeliveryError, match="payload is not UTF-8"):
-        presenter._split_payload(b"\xff")
+def test_non_utf8_payload_is_redacted_and_body_free() -> None:
+    with pytest.raises(TerminalDeliveryError, match="payload is not UTF-8") as raised:
+        presenter._split_payload(b"secret\xffbody")
+
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert "secret" not in repr(raised.value)
 
 
-@pytest.mark.parametrize(
-    ("terminal_app", "expected_error"),
-    [
-        ("Ghostty", "Ghostty could not find the registered TTY"),
-        ("Terminal", "Terminal could not find the registered TTY"),
-        ("iTerm2", "iTerm2 could not find the registered TTY"),
-    ],
-)
-def test_exact_session_fallback_reports_target_not_found(
-    monkeypatch,
-    terminal_app: str,
-    expected_error: str,
-) -> None:
-    monkeypatch.setattr(
-        presenter,
-        "_deliver_tiocsti",
-        lambda _tty, _payload: (_ for _ in ()).throw(PermissionError()),
-    )
-    monkeypatch.setattr(
-        presenter,
-        "_run_osascript",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0,
-            stdout="not found\n",
-            stderr="",
-        ),
-    )
-
-    with pytest.raises(TerminalDeliveryError, match=expected_error):
-        presenter.deliver_input(
-            Path("/dev/ttys003"),
-            b"secret payload\r",
-            terminal_app=terminal_app,
-        )
-
-
-def test_unexpected_fallback_oserror_is_redacted(monkeypatch) -> None:
-    monkeypatch.setattr(
-        presenter,
-        "_deliver_tiocsti",
-        lambda _tty, _payload: (_ for _ in ()).throw(PermissionError()),
-    )
-    monkeypatch.setattr(
-        presenter,
-        "_deliver_ghostty",
-        lambda _tty, _payload: (_ for _ in ()).throw(OSError("private fallback detail")),
-    )
-
-    with pytest.raises(TerminalDeliveryError, match="terminal input delivery failed") as exc:
-        presenter.deliver_input(
-            Path("/dev/ttys003"),
-            b"secret payload\r",
-            terminal_app="Ghostty",
-        )
-
-    assert "private fallback detail" not in str(exc.value)
-
-
-def test_partial_tiocsti_never_replays_payload_through_fallback(monkeypatch) -> None:
+def test_partial_tiocsti_failure_never_falls_back_or_redelivers(monkeypatch) -> None:
+    master_fd, slave_fd = pty.openpty()
+    target = Path(os.ttyname(slave_fd))
     injected: list[bytes] = []
-    fallbacks: list[bytes] = []
 
-    def inject(_fd: int, _request: int, value: bytes) -> None:
-        if injected:
-            raise PermissionError("kernel denied remaining bytes")
+    def partial(_fd, _request, value: bytes) -> None:
         injected.append(value)
+        if len(injected) == 2:
+            raise PermissionError("kernel stopped TIOCSTI")
 
-    monkeypatch.setattr(presenter.fcntl, "ioctl", inject)
-    monkeypatch.setattr(
-        presenter,
-        "_deliver_ghostty",
-        lambda _tty, payload: fallbacks.append(payload),
-    )
+    monkeypatch.setattr(presenter.fcntl, "ioctl", partial)
+    try:
+        with pytest.raises(OSError, match="partial input delivery"):
+            presenter._deliver_tiocsti(target, b"hello\r")
 
-    with pytest.raises(TerminalDeliveryError, match="partial"):
-        presenter.deliver_input(Path("/dev/null"), b"abc", terminal_app="Ghostty")
-
-    assert injected == [b"a"]
-    assert fallbacks == []
+        assert injected == [b"h", b"e"]
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
 
 
-def test_missing_platform_fallback_has_actionable_error(monkeypatch) -> None:
+def test_exact_session_failure_never_falls_back_to_tiocsti(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fail_exact(_tty: Path, _payload: bytes) -> None:
+        calls.append("ghostty")
+        raise OSError("ambiguous exact-session failure")
+
+    monkeypatch.setattr(presenter, "_deliver_ghostty", fail_exact)
     monkeypatch.setattr(
         presenter,
         "_deliver_tiocsti",
-        lambda _tty, _payload: (_ for _ in ()).throw(PermissionError()),
+        lambda _tty, _payload: calls.append("tiocsti"),
     )
 
-    with pytest.raises(TerminalDeliveryError, match="no exact-session fallback"):
-        presenter.deliver_input(Path("/dev/pts/7"), b"hello\r", terminal_app="")
+    with pytest.raises(OSError, match="terminal input delivery failed"):
+        presenter.deliver_input(Path("/dev/ttys003"), b"body\r", terminal_app="Ghostty")
+
+    assert calls == ["ghostty"]
+
+
+def test_tmux_transport_resolves_exact_pane_and_keeps_body_out_of_argv(monkeypatch) -> None:
+    calls: list[tuple[list[str], bytes | None]] = []
+
+    def deny(_tty: Path, _payload: bytes) -> None:
+        raise PermissionError("hardened kernel")
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs.get("input")))
+        stdout = b"%1\t/dev/pts/8\n%2\t/dev/pts/7\n" if "list-panes" in args else b""
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr=b"")
+
+    monkeypatch.setattr(presenter, "_deliver_tiocsti", deny)
+    monkeypatch.setattr(presenter.subprocess, "run", run)
+
+    transport = presenter.deliver_input(
+        Path("/dev/pts/7"),
+        "linux secrét\r".encode(),
+        terminal_app="tmux",
+    )
+
+    assert transport == "tmux"
+    assert calls[0][0] == ["tmux", "list-panes", "-a", "-F", "#{pane_id}\t#{pane_tty}"]
+    assert calls[1][1] == "linux secrét".encode()
+    assert all("linux secrét" not in repr(args) for args, _body in calls)
+    paste_args = next(args for args, _body in calls if "paste-buffer" in args)
+    enter_args = next(args for args, _body in calls if "send-keys" in args)
+    assert paste_args[-2:] == ["-t", "%2"]
+    assert enter_args[-2:] == ["%2", "Enter"]
+
+
+def test_tmux_cleanup_failure_does_not_mask_primary_delivery_error(monkeypatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def run(*args: str, input_bytes: bytes | None = None):
+        calls.append(args)
+        if "list-panes" in args:
+            return SimpleNamespace(returncode=0, stdout=b"%2\t/dev/pts/7\n", stderr=b"")
+        if "paste-buffer" in args:
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+        if "delete-buffer" in args:
+            raise OSError("cleanup failed")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(presenter, "_run_tmux", run)
+
+    with pytest.raises(OSError, match="could not deliver terminal input"):
+        presenter._deliver_tmux(Path("/dev/pts/7"), b"body")
+
+    assert any("delete-buffer" in args for args in calls)
+
+
+def test_linux_capability_requires_tmux_or_explicit_kernel_opt_in(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    policy = tmp_path / "legacy_tiocsti"
+    monkeypatch.setattr(presenter, "_LINUX_TIOCSTI_POLICY", policy)
+    monkeypatch.setattr(presenter.termios, "TIOCSTI", 0x5412, raising=False)
+
+    policy.write_text("0\n", encoding="ascii")
+    assert not presenter.exact_tty_transport_supported(Path("/dev/pts/7"), "")
+    assert presenter.exact_tty_transport_supported(Path("/dev/pts/7"), "tmux")
+
+    policy.write_text("1\n", encoding="ascii")
+    assert presenter.exact_tty_transport_supported(Path("/dev/pts/7"), "")
+    assert not presenter.exact_tty_transport_supported(Path("/dev/ttys007"), "")
+    assert not presenter.exact_tty_transport_supported(Path("/dev/ttys007"), "Terminal")
+    assert presenter.exact_tty_transport_supported(Path("/dev/ttys007"), "Ghostty")
+    assert presenter.exact_tty_transport_supported(Path("/dev/ttys007"), "iTerm2")
+
+
+def test_hardened_linux_without_exact_transport_is_rejected_explicitly(monkeypatch) -> None:
+    monkeypatch.setattr(
+        presenter,
+        "_deliver_tiocsti",
+        lambda _tty, _payload: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+
+    with pytest.raises(OSError, match="no safe exact-TTY Linux input transport") as raised:
+        presenter.deliver_input(Path("/dev/pts/7"), b"do not deliver\r", terminal_app="")
+
+    assert raised.value.errno is not None

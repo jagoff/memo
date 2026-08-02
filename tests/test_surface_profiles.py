@@ -146,13 +146,13 @@ def test_mcp_full_profile_keeps_advanced_tools(tmp_path, monkeypatch) -> None:
         mem.close()
 
 
-def test_agent_tools_definition_is_43_and_excludes_idle_from_removal(monkeypatch) -> None:
+def test_agent_tools_definition_is_41_and_excludes_idle_from_removal(monkeypatch) -> None:
     monkeypatch.setenv("MEMO_MCP_PROFILE", "agent")
     monkeypatch.delenv("MEMO_MCP_SLIM", raising=False)
     from memo.surface import AGENT_MCP_TOOLS, mcp_tools_to_remove
 
     removed = mcp_tools_to_remove()
-    assert len(AGENT_MCP_TOOLS) == 43
+    assert len(AGENT_MCP_TOOLS) == 41
     for name in (
         "memo_idle_capture",
         "memo_pop_notification",
@@ -167,14 +167,15 @@ def test_agent_tools_definition_is_43_and_excludes_idle_from_removal(monkeypatch
     ):
         assert name in AGENT_MCP_TOOLS
         assert name not in removed
+    assert "memo_terminal_list" not in removed
 
 
 def test_token_cost_recognizes_agent() -> None:
     from memo.surface import mcp_profile_token_cost
 
     count, cost, reduced = mcp_profile_token_cost("agent")
-    assert count == "43"
-    assert cost == "~4.3k"
+    assert count == "41"
+    assert cost == "~4.1k"
     assert reduced is True
 
 
@@ -183,8 +184,8 @@ def test_token_cost_core_and_slim_are_reduced() -> None:
 
     for profile in ("core", "slim"):
         count, cost, reduced = mcp_profile_token_cost(profile)
-        assert count == "60"
-        assert cost == "~5.5k"
+        assert count == "58"
+        assert cost == "~5.3k"
         assert reduced is True
 
 
@@ -193,8 +194,8 @@ def test_token_cost_full_is_not_reduced() -> None:
 
     for profile in ("full", "default"):
         count, cost, reduced = mcp_profile_token_cost(profile)
-        assert count == "164"
-        assert cost == "~18.3k"
+        assert count == "162"
+        assert cost == "~18.1k"
         assert reduced is False
 
 
@@ -204,8 +205,8 @@ def test_token_cost_active_default_resolves_to_agent(monkeypatch) -> None:
     from memo.surface import mcp_profile_token_cost
 
     count, cost, reduced = mcp_profile_token_cost()
-    assert count == "43"
-    assert cost == "~4.3k"
+    assert count == "41"
+    assert cost == "~4.1k"
     assert reduced is True
 
 

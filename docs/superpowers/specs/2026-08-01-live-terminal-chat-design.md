@@ -1,5 +1,12 @@
 # Live Terminal Chat Design
 
+> **Status (2026-08-02): superseded; not an active product contract.** Memo's
+> direct terminal-input path now fails closed: the CLI and MCP `send`/`enter`
+> mutators are removed, automatic terminal registration is disabled, and
+> legacy registrations are non-deliverable. This document is preserved as the
+> historical design record. Live delivery must not return until a
+> receiver-bound API can prove explicit authority over the destination agent.
+
 ## Goal
 
 Turn Memo's asynchronous handoff/attention coordination into an optional
