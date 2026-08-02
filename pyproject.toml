@@ -323,6 +323,7 @@ ignore = [
 ]
 "tests/**" = [
     "S105",  # hardcoded "password"-looking test fixtures (fake tokens)
+    "S106",  # "password"-looking keyword args (e.g. pass_name=) in fixtures
     "S108",  # hardcoded /tmp paths in fixtures (never real temp-file handling)
     "S110",  # try/except/pass in test cleanup
     "SIM117",  # nested `with patch(...)` reads cleaner than one combined with

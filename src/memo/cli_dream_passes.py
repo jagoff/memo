@@ -1532,6 +1532,17 @@ def _render_run_summary(receipt: dict[str, Any], dry_run: bool) -> None:
             f"  signal gather:             {sg['files_processed']} files, "
             f"{sg['memories_saved']} saved, {sg.get('skipped_dup', 0)} dup skipped"
         )
+    ps_summary = receipt.get("phases_summary")
+    if ps_summary and ps_summary.get("count"):
+        slow = ps_summary.get("slowest") or {}
+        slow_s = f", slowest {slow.get('phase')} {slow.get('duration_ms')}ms" if slow else ""
+        resumed = ps_summary.get("resumed") or 0
+        resumed_s = f", {resumed} resumed" if resumed else ""
+        console.print(
+            f"  phases:                    {ps_summary['count']} in "
+            f"{ps_summary.get('total_duration_ms', 0)}ms "
+            f"({ps_summary.get('mutations', 0)} mutations{slow_s}{resumed_s})"
+        )
     if receipt["errors"]:
         for e in receipt["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")

@@ -49,7 +49,7 @@ _TRUTHY = ("1", "true", "yes", "on")
 # tuner; skipped when the OFF p50 rounds to 0 — stub/tiny corpora).
 FLAG_LATENCY_HEADROOM = 1.25
 
-GateKind = Literal["recall", "tuner", "manual"]
+GateKind = Literal["recall", "tuner", "manual", "shadow"]
 
 # Gates the nightly code-drift pass (`cli_dream_passes._run_code_drift`); the
 # canonical FlagSpec lives in flags_misc.py with the other dream pass flags.
@@ -77,6 +77,9 @@ class GateSpec:
     # Companion env pins required for the ON measurement (and written to the
     # overlay alongside the flag when it graduates).
     extra_flags: tuple[tuple[str, str], ...] = ()
+    # shadow-kind only: which comparable axis dream_shadow measures (e.g.
+    # "latency" / "precision"). Empty for non-shadow gates.
+    shadow_metric: str = ""
 
 
 def _g(
@@ -86,8 +89,11 @@ def _g(
     *,
     mode: str = "vec",
     extra_flags: tuple[tuple[str, str], ...] = (),
+    shadow_metric: str = "",
 ) -> tuple[str, GateSpec]:
-    return flag, GateSpec(flag, kind, reason, mode=mode, extra_flags=extra_flags)
+    return flag, GateSpec(
+        flag, kind, reason, mode=mode, extra_flags=extra_flags, shadow_metric=shadow_metric
+    )
 
 
 # The graduation contract: one entry per dark *_ENABLED flag. Completeness is
@@ -241,6 +247,38 @@ GATES: dict[str, GateSpec] = dict(
         _g("MEMO_DREAM_PROFILE_ENABLED", "manual", "meta: gates profile distillation"),
         _g("MEMO_DREAM_RETAG_GLOBAL_ENABLED", "manual", "meta: gates the retag pass"),
         _g("MEMO_DREAM_CHRONICLE_ENABLED", "manual", "meta: gates the chronicle diary pass"),
+        # --- learning-loop phases (Fase 3-8): observability / safety, human-gated
+        _g(
+            "MEMO_DREAM_LEDGER_ENABLED",
+            "manual",
+            "meta: append-only learning ledger; observability, no recall effect",
+        ),
+        _g(
+            "MEMO_DREAM_INCREMENTAL_ENABLED",
+            "manual",
+            "meta: incremental-maintenance skip; correctness-gated, not recall-measurable",
+        ),
+        _g(
+            "MEMO_DREAM_INDEX_REPAIR_ENABLED",
+            "manual",
+            "meta: derived-index auto-repair; safety decision, human flips",
+        ),
+        _g(
+            "MEMO_DREAM_STAGING_ENABLED",
+            "manual",
+            "meta: write-conflict staging quarantine; workflow decision, human flips",
+        ),
+        _g(
+            "MEMO_DREAM_SHADOW_ENABLED",
+            "manual",
+            "meta: shadow-measure opt-in phases without mutating; human reviews evidence",
+        ),
+        _g(
+            "MEMO_DREAM_TUNE_STRICT_GATE_ENABLED",
+            "manual",
+            "meta: enforce full six-condition tuner graduation_gate; verdict recorded "
+            "as shadow evidence while off, human flips after review",
+        ),
         # MEMO_DREAM_VALIDITY_EXTRACT_ENABLED / MEMO_DREAM_GRADUATION_ENABLED /
         # MEMO_DREAM_FLAG_GRADUATION_ENABLED graduated to default-ON in v4.3.0 —
         # no longer dark flags, so they carry no gate (test_no_graduated_or_stale_gates).
@@ -484,6 +522,14 @@ def run_flag_graduation_pass(
         res["measured"] = candidates
 
         if labels.prompts:
+            # Fase 8 — absolute latency ceiling (the backstop the RELATIVE
+            # headroom gate below cannot provide: when the OFF p50 rounds to 0 the
+            # ratio gate is skipped, so an ON p50 that balloons to seconds on the
+            # recall hook would otherwise graduate).
+            from memo.dream_shadow import latency_ceiling_gate
+
+            _ceil = flag_int("MEMO_FLAG_GRADUATION_LATENCY_CEILING_MS")
+            ceiling_ms = 1500.0 if _ceil is None else float(_ceil)
             curated = _curated_label_set(cfg.state_dir)
             for name in candidates:
                 gate = GATES[name]
@@ -495,6 +541,8 @@ def run_flag_graduation_pass(
                 budget = off.get("latency_ms_p50", 0.0) * FLAG_LATENCY_HEADROOM
                 if win and budget > 0 and on.get("latency_ms_p50", 0.0) > budget:
                     win, verdict["latency_rejected"] = False, True
+                if win and not latency_ceiling_gate(on.get("latency_ms_p50", 0.0), ceiling_ms):
+                    win, verdict["latency_ceiling_rejected"] = False, True
                 if win and curated is not None:
                     c_off = measure_flag(mem, curated, k=k, spec=gate, enabled=False, floor=floor)
                     c_on = measure_flag(mem, curated, k=k, spec=gate, enabled=True, floor=floor)

@@ -304,6 +304,16 @@ SPECS: tuple[FlagSpec, ...] = (
         "Per-memory local LLM timeout for nightly HyPE generation; long enough for a cold model load.",
         min_val=1.0,
     ),
+    _spec(
+        "MEMO_DREAM_HYPE_BUDGET_S",
+        "float",
+        0.0,
+        "ingest",
+        "Wall-clock budget (seconds) for the nightly HyPE pass; the untouched "
+        "backlog tail carries to the next night (backlog_remaining). 0 disables "
+        "the budget (drain the whole night_cap).",
+        min_val=0.0,
+    ),
     # verbatim turn-level index (Total Recall F1)
     _spec(
         "MEMO_VERBATIM_INDEX",
