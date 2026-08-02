@@ -90,8 +90,11 @@ def is_homebrew_install() -> bool:
     )
 
 
-def _runtime_install_report(cwd: Path | None = None) -> dict[str, Any]:
+def _runtime_install_report(
+    cwd: Path | None = None, *, package_file: Path | None = None
+) -> dict[str, Any]:
     cwd = _safe_resolve(cwd or Path.cwd())
+    package_path = _safe_resolve(package_file or Path(__file__))
     memo_cmd, memo_resolved = _resolve_command("memo", prefer_invoked=True)
     mcp_cmd, mcp_resolved = _resolve_command("memo-mcp", sibling_of=memo_resolved)
     py_resolved = _safe_resolve(Path(sys.executable))
@@ -128,6 +131,15 @@ def _runtime_install_report(cwd: Path | None = None) -> dict[str, Any]:
             "install mode is unknown; recommended: `pipx install mlx-memo` "
             "or `uv tool install mlx-memo`"
         )
+    if (
+        mode in {"pipx", "uv tool", "homebrew"}
+        and primary_root is not None
+        and not _path_is_relative_to(package_path, primary_root)
+    ):
+        warnings.append(
+            f"memo Python package loaded from {package_path}, outside the isolated runtime "
+            f"{primary_root}; clear PYTHONPATH or reinstall without an editable source link"
+        )
 
     return {
         "mode": mode,
@@ -137,6 +149,7 @@ def _runtime_install_report(cwd: Path | None = None) -> dict[str, Any]:
         "mcp_cmd": str(mcp_cmd) if mcp_cmd else None,
         "mcp_resolved": str(mcp_resolved) if mcp_resolved else None,
         "python": str(py_resolved),
+        "package_path": str(package_path),
         "warnings": warnings,
     }
 
