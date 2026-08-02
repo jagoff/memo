@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from memo.errors import TerminalValidationError
+from memo.errors import TerminalDeliveryError, TerminalValidationError
 
 if TYPE_CHECKING:
     from memo.config import Config
@@ -558,13 +558,15 @@ class TerminalBridge:
                 terminal_app=registration.terminal_app,
             )
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            safe_error = str(exc) if isinstance(exc, TerminalDeliveryError) else type(exc).__name__
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE terminal_receipts SET status = 'failed', error = ? "
                     "WHERE receipt_id = ?",
-                    (type(exc).__name__, receipt_id),
+                    (safe_error, receipt_id),
                 )
-            raise TerminalValidationError("terminal delivery failed") from exc
+            detail = f": {safe_error}" if isinstance(exc, TerminalDeliveryError) else ""
+            raise TerminalValidationError(f"terminal delivery failed{detail}") from exc
 
         delivered_at = _now()
         with self._connect() as conn:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from memo.errors import TerminalValidationError
+from memo.errors import TerminalDeliveryError, TerminalValidationError
 from memo.terminal_live import ProcessSnapshot, TerminalBridge, _is_local_tty_path
 
 
@@ -326,6 +326,47 @@ def test_presenter_timeout_cannot_leave_pending_receipt(tmp_cfg) -> None:
         receipt = bridge.history()[0]
         assert receipt.status == "failed"
         assert receipt.error == "TimeoutExpired"
+        assert "secret terminal body" not in repr(receipt)
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+
+def test_safe_presenter_failure_is_actionable_without_leaking_payload(tmp_cfg) -> None:
+    master_fd, slave_fd = pty.openpty()
+    tty = Path(os.ttyname(slave_fd))
+
+    def probe(pid: int) -> ProcessSnapshot:
+        return ProcessSnapshot(
+            pid=pid,
+            uid=os.getuid(),
+            tty=tty,
+            started_at="Sat Aug 1 12:00:00 2026",
+            pgid=pid,
+            foreground_pgid=pid,
+            command="codex",
+        )
+
+    def timeout(_tty: Path, _payload: bytes, *, terminal_app: str) -> str:
+        raise TerminalDeliveryError("terminal automation timed out")
+
+    try:
+        bridge = TerminalBridge(tmp_cfg, process_probe=probe, presenter=timeout)
+        registration = bridge.register(agent="codex", tty=tty, pid=4242)
+
+        with pytest.raises(
+            TerminalValidationError,
+            match="delivery failed: terminal automation timed out",
+        ):
+            bridge.send(
+                registration.id,
+                "secret terminal body",
+                message_id="safe-timeout-1",
+            )
+
+        receipt = bridge.history()[0]
+        assert receipt.status == "failed"
+        assert receipt.error == "terminal automation timed out"
         assert "secret terminal body" not in repr(receipt)
     finally:
         os.close(slave_fd)
