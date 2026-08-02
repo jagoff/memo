@@ -282,33 +282,32 @@ class GraphStore:
             normalized_extractor = "legacy"
         normalized_confidence = max(0.0, min(1.0, float(confidence)))
         normalized_version = extractor_version.strip() or "0"
+        seen_entities: set[tuple[str, str]] = set()
         with self._tx() as cx:
-            # Get current entity_ids for this memory so we can
-            # decrement mention_count if any are removed.
+            # Get current entity_ids for this memory so removed and retained
+            # entities both have their derived mention_count repaired below.
             old_eids = [
-                r["entity_id"]
+                int(r["entity_id"])
                 for r in cx.execute(
                     "SELECT entity_id FROM entity_memory WHERE memory_id = ?",
                     (memory_id,),
                 ).fetchall()
             ]
+            touched_eids = set(old_eids)
             cx.execute(
                 "DELETE FROM entity_memory WHERE memory_id = ?",
                 (memory_id,),
             )
-            # Decrement mention_count for old entities (will be
-            # re-incremented if they're still present).
-            for eid in old_eids:
-                cx.execute(
-                    "UPDATE entities SET mention_count = MAX(0, mention_count - 1) WHERE id = ?",
-                    (eid,),
-                )
 
             for ent in entities:
                 name = (ent.get("name") or "").strip().lower()
                 etype = (ent.get("type") or "").strip().lower()
                 if not name or etype not in VALID_ENTITY_TYPES:
                     continue
+                identity = (name, etype)
+                if identity in seen_entities:
+                    continue
+                seen_entities.add(identity)
                 # Upsert entity row.
                 cx.execute(
                     "INSERT INTO entities (name, type, mention_count, first_seen, last_seen) "
@@ -321,13 +320,15 @@ class GraphStore:
                 ).fetchone()
                 if eid is None:
                     continue
+                entity_id = int(eid["id"])
+                touched_eids.add(entity_id)
                 cx.execute(
                     "INSERT OR IGNORE INTO entity_memory "
                     "(entity_id, memory_id, occurrences, extracted_at, extractor, "
                     "extractor_version, confidence, updated_at) "
                     "VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
                     (
-                        eid["id"],
+                        entity_id,
                         memory_id,
                         extracted_at,
                         normalized_extractor,
@@ -336,15 +337,21 @@ class GraphStore:
                         extracted_at,
                     ),
                 )
-                # Bump mention_count + adjust first/last_seen.
+                # Adjust temporal bounds. mention_count is derived from the
+                # link table after every old and new membership is settled.
                 cx.execute(
-                    "UPDATE entities SET mention_count = mention_count + 1, "
-                    "  first_seen = MIN(first_seen, ?), "
+                    "UPDATE entities SET first_seen = MIN(first_seen, ?), "
                     "  last_seen  = MAX(last_seen, ?) "
                     "WHERE id = ?",
-                    (memory_date, memory_date, eid["id"]),
+                    (memory_date, memory_date, entity_id),
                 )
                 n += 1
+            for entity_id in touched_eids:
+                cx.execute(
+                    "UPDATE entities SET mention_count = "
+                    "(SELECT COUNT(*) FROM entity_memory WHERE entity_id = ?) WHERE id = ?",
+                    (entity_id, entity_id),
+                )
             self._mark_projection_dirty(cx)
         return n
 
@@ -398,7 +405,7 @@ class GraphStore:
 
     def drop_for_memoria(self, memory_id: str) -> int:
         """Called when a memory is deleted. Removes all entity_memory
-        edges for it and decrements mention_count on each touched
+        edges for it and recomputes mention_count on each touched
         entity, then cascades to drop any semantic_relations rows touching
         this memory (as source OR target). Returns the number of
         entity_memory edges removed."""
@@ -416,14 +423,15 @@ class GraphStore:
             )
             for eid in old:
                 cx.execute(
-                    "UPDATE entities SET mention_count = MAX(0, mention_count - 1) WHERE id = ?",
-                    (eid,),
+                    "UPDATE entities SET mention_count = "
+                    "(SELECT COUNT(*) FROM entity_memory WHERE entity_id = ?) WHERE id = ?",
+                    (eid, eid),
                 )
+            cx.execute(
+                "DELETE FROM semantic_relations WHERE source_id = ? OR target_id = ?",
+                (memory_id, memory_id),
+            )
             self._mark_projection_dirty(cx)
-        # Separate tx (the lock is non-reentrant): drop orphaned semantic edges
-        # in BOTH directions — source and target — so deleting a memory that was
-        # the TARGET of a relation leaves no dangling row.
-        self.delete_semantic_relations_for_memory(memory_id)
         return len(old)
 
     def canonicalize_existing(self) -> int:

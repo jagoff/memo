@@ -420,7 +420,8 @@ def migrate_independence_cmd(
     from memo.runtime.codex import _codex_home
 
     runtime_mcp = resolve_isolated_memo_mcp()
-    memo_bin = str(runtime_mcp.with_name("memo")) if runtime_mcp is not None else "memo"
+    runtime_cli = runtime_mcp.with_name("memo") if runtime_mcp is not None else None
+    memo_bin = str(runtime_cli) if runtime_cli is not None and runtime_cli.is_file() else "memo"
 
     _json(
         migrate_independence(
