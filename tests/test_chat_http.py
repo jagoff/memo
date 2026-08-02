@@ -8,6 +8,19 @@ from fastapi.testclient import TestClient  # noqa: E402
 from memo.chat.http import build_app  # noqa: E402
 
 
+def _assert_chat_security_headers(resp) -> None:
+    assert resp.headers["cache-control"] == "no-store"
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["x-frame-options"] == "DENY"
+    assert resp.headers["referrer-policy"] == "no-referrer"
+    csp = resp.headers["content-security-policy"]
+    assert "default-src 'self'" in csp
+    assert "script-src 'self'" in csp
+    assert "connect-src 'self'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert "object-src 'none'" in csp
+
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
 
@@ -284,6 +297,14 @@ def test_spa_fallback_does_not_swallow_unknown_api_routes(tmp_path) -> None:
     resp = c.get("/cualquier/ruta")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
+    _assert_chat_security_headers(resp)
+
+
+def test_chat_api_responses_include_spa_compatible_security_headers(client) -> None:
+    resp = client.get("/api/sessions")
+
+    assert resp.status_code == 200
+    _assert_chat_security_headers(resp)
 
 
 def test_chat_http_rejects_dns_rebinding_and_cross_site_requests(client) -> None:
