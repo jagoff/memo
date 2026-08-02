@@ -219,6 +219,16 @@ GATES: dict[str, GateSpec] = dict(
         ),
         _g("MEMO_DREAM_ANTICIPATE_ENABLED", "manual", "meta: gates the anticipate pass"),
         _g("MEMO_DREAM_HYPE_ENABLED", "manual", "meta: gates the nightly HyPE indexer"),
+        _g(
+            "MEMO_DREAM_VECTOR_HYGIENE_ENABLED",
+            "manual",
+            "meta: rebuildable cache/vec0 compaction; operational cost and retention policy require a human flip",
+        ),
+        _g(
+            "MEMO_DREAM_VECTOR_VIEWS_ENABLED",
+            "manual",
+            "meta: nightly derived title/tag views; embedding cost and recall gate require a human flip",
+        ),
         _g("MEMO_DREAM_COMMUNITIES_ENABLED", "manual", "meta: gates the communities pass"),
         _g("MEMO_DREAM_ENTITY_CANON_ENABLED", "manual", "meta: gates the entity-canon pass"),
         _g("MEMO_DREAM_EDGE_VERIFY_ENABLED", "manual", "meta: gates the edge-verify pass"),

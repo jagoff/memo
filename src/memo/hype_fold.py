@@ -50,18 +50,27 @@ def hype_fold(
         return doc_hits
 
     q_score_by_id: dict[str, float] = {}
+    q_kind_by_id: dict[str, str] = {}
     for qh in question_hits:
         mid = str(qh["memory_id"])
         score = float(qh["score"])
         if score > q_score_by_id.get(mid, -1.0):
             q_score_by_id[mid] = score
+            q_kind_by_id[mid] = str(qh.get("view_kind") or "hypothetical_question")
 
     doc_ids = {str(h["id"]) for h in doc_hits}
     out: list[dict[str, Any]] = []
     for hit in doc_hits:
         q_score = q_score_by_id.get(str(hit["id"]))
         if q_score is not None and q_score > float(hit.get("score") or 0.0):
-            out.append({**hit, "score": q_score, "hype": True})
+            out.append(
+                {
+                    **hit,
+                    "score": q_score,
+                    "hype": True,
+                    "hype_kind": q_kind_by_id.get(str(hit["id"]), "hypothetical_question"),
+                }
+            )
         else:
             out.append(hit)
 
@@ -71,7 +80,14 @@ def hype_fold(
         meta = fetch_meta(mid)
         if meta is None:
             continue
-        out.append({**meta, "score": q_score, "hype": True})
+        out.append(
+            {
+                **meta,
+                "score": q_score,
+                "hype": True,
+                "hype_kind": q_kind_by_id.get(mid, "hypothetical_question"),
+            }
+        )
 
     out.sort(key=lambda r: float(r.get("score") or 0.0), reverse=True)
     return out[:limit]

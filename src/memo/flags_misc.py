@@ -3,6 +3,28 @@ from __future__ import annotations
 from memo.flags_base import FlagSpec, _spec
 
 SPECS: tuple[FlagSpec, ...] = (
+    _spec(
+        "MEMO_DREAM_VECTOR_HYGIENE_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Nightly prune/compact of rebuildable vector sidecars. Markdown and user feedback are preserved; default off until the local DB has been measured.",
+    ),
+    _spec(
+        "MEMO_DREAM_VECTOR_VIEWS_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Nightly deterministic title/tag vector views in the rebuildable HyPE sidecar.",
+    ),
+    _spec(
+        "MEMO_DREAM_VECTOR_VIEWS_NIGHT_CAP",
+        "int",
+        1000,
+        "dream",
+        "Maximum title/tag vector views generated per nightly run.",
+        min_val=1,
+    ),
     # feedback boosting
     _spec(
         "MEMO_FEEDBACK_DISABLED",

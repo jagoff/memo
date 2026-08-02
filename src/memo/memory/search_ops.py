@@ -326,6 +326,25 @@ class _SearchOpsMixin(_MemoryBase):
                     exclude_tags=exclude_tags,
                     as_of=as_of,
                 )
+                if flag_bool("MEMO_HYPE_ENABLED"):
+                    before_hype = len(vec_hits)
+                    vec_hits = self._hype_fold_candidates(
+                        vec_hits,
+                        emb,
+                        k_each,
+                        type_=type_,
+                        exclude_types=exclude_types,
+                        exclude_tags=exclude_tags,
+                        as_of=as_of,
+                    )
+                    variant_warning = self._hype_variant_mismatch_warning()
+                    _add_trace(
+                        "hype_fold",
+                        mode="hybrid",
+                        input_count=before_hype,
+                        output_count=len(vec_hits),
+                        **({"warning": variant_warning} if variant_warning else {}),
+                    )
             except Exception as exc:
                 _log.warning(
                     "embedder unavailable, vec leg disabled in hybrid mode: %s",
@@ -834,6 +853,7 @@ class _SearchOpsMixin(_MemoryBase):
         *,
         type_: str | None = None,
         exclude_types: set[str] | None = None,
+        exclude_tags: set[str] | None = None,
         as_of: str | None = None,
     ) -> list[dict[str, Any]]:
         """Max-fold HyPE question-space candidates into the vec doc hits.
@@ -863,6 +883,7 @@ class _SearchOpsMixin(_MemoryBase):
                 )
                 self._hype_store = store
             pool = flag_int("MEMO_HYPE_FOLD_POOL") or 30
+            oversample = flag_int("MEMO_HYPE_FOLD_OVERSAMPLE") or 2
 
             def _fetch_meta_filtered(memory_id: str) -> dict[str, Any] | None:
                 row: dict[str, Any] | None = self.store.get(memory_id)
@@ -877,9 +898,18 @@ class _SearchOpsMixin(_MemoryBase):
                     return None
                 if exclude_types and row.get("type") in exclude_types:
                     return None
+                if exclude_tags and exclude_tags.intersection(row.get("tags") or ()):
+                    return None
                 return row
 
-            return hype_fold(rows, emb, store, _fetch_meta_filtered, pool=pool, limit=limit)
+            return hype_fold(
+                rows,
+                emb,
+                store,
+                _fetch_meta_filtered,
+                pool=pool * max(1, oversample),
+                limit=limit,
+            )
         except Exception as exc:
             _log.warning("hype_fold failed, using doc hits: %s", exc, exc_info=True)
             return rows

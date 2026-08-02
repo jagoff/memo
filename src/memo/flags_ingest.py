@@ -279,6 +279,15 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=5,
     ),
     _spec(
+        "MEMO_HYPE_FOLD_OVERSAMPLE",
+        "int",
+        2,
+        "ingest",
+        "Over-fetch multiplier for question/view candidates before max-folding per memory.",
+        min_val=1,
+        max_val=8,
+    ),
+    _spec(
         "MEMO_HYPE_EMBED_RAW",
         "bool",
         False,
@@ -286,6 +295,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "Embed stored HyPE questions WITHOUT the query prefix (document-side), "
         "so fold scores share the doc-cosine scale. Changing this requires "
         "`memo dream hype --reembed`.",
+    ),
+    _spec(
+        "MEMO_DREAM_HYPE_TIMEOUT_S",
+        "float",
+        180.0,
+        "ingest",
+        "Per-memory local LLM timeout for nightly HyPE generation; long enough for a cold model load.",
+        min_val=1.0,
     ),
     # verbatim turn-level index (Total Recall F1)
     _spec(

@@ -108,12 +108,13 @@ def _llm_questions(mem: Any, title: str, body: str, *, n: int) -> list[str] | No
     thinking False). Prompt asks for a JSON array of `n` short questions this
     note answers. Filters out too-short (<12 chars) / too-long (>200 chars)
     entries, dedups, caps at `n`. Returns `None` on timeout or parse failure."""
+    from .flags import flag_float
     from .memory.record import chat_with_timeout
 
     prompt = f"N = {n}\nTitle: {title}\nBody:\n{body}"
     out = chat_with_timeout(
         mem._ensure_chat(),
-        timeout=30,
+        timeout=flag_float("MEMO_DREAM_HYPE_TIMEOUT_S") or 180.0,
         model=mem.cfg.helper_model,
         messages=[{"role": "system", "content": _SYS}, {"role": "user", "content": prompt}],
         options={"temperature": 0.0, "max_tokens": 256, "thinking": False},
@@ -152,6 +153,24 @@ def _llm_questions(mem: Any, title: str, body: str, *, n: int) -> list[str] | No
     return questions
 
 
+def _memory_body(mem: Any, memory_id: str) -> tuple[str, bool]:
+    """Read HyPE input from FTS, falling back to canonical Markdown.
+
+    FTS is a rebuildable retrieval index and older/partially rebuilt databases
+    can contain a NULL body while the Markdown source is healthy.  Passing
+    that NULL through as the literal ``"None"`` (or an empty prompt) makes the
+    model return an apparently valid empty list and silently loses coverage.
+    """
+    body = mem.store.get_fts_body(memory_id)
+    if body and body.strip().lower() != "none":
+        return body, False
+    record = mem.get(memory_id) if callable(getattr(mem, "get", None)) else None
+    canonical = getattr(record, "body", None)
+    if canonical is None and isinstance(record, dict):
+        canonical = record.get("body") or record.get("_body")
+    return str(canonical or ""), bool(canonical)
+
+
 def run_hype_pass(
     cfg: Any,
     mem: Any,
@@ -175,6 +194,8 @@ def run_hype_pass(
         "pruned": 0,
         "backlog_remaining": 0,
         "errors_items": 0,
+        "empty_items": 0,
+        "error_samples": [],
     }
     store: HypeStore | None = None
     try:
@@ -198,10 +219,25 @@ def run_hype_pass(
             return res
 
         for item in backlog:
-            body = mem.store.get_fts_body(item["id"])
+            body, used_fallback = _memory_body(mem, item["id"])
+            if used_fallback:
+                res.setdefault("body_fallback_items", 0)
+                res["body_fallback_items"] += 1
             questions = _llm_questions(mem, item["title"], body, n=questions_per_memory)
-            if not questions:
+            # `None` means the LLM timed out/returned malformed output. An
+            # empty list is a valid, explicit "this note yields no useful
+            # question" result and must not turn a healthy run into a total
+            # failure (or retry forever).
+            if questions is None:
                 res["errors_items"] += 1
+                if len(res["error_samples"]) < 10:
+                    res["error_samples"].append(
+                        {"memory_id": item["id"], "reason": "llm_timeout_or_invalid_output"}
+                    )
+                continue
+            if not questions:
+                res["empty_items"] += 1
+                store.mark_attempt(item["id"], item["body_hash"], "empty")
                 continue
             try:
                 variant = _active_variant()
@@ -215,14 +251,21 @@ def run_hype_pass(
                 )
                 res["generated"] += inserted
                 res["memories"] += 1
-            except Exception:  # one memory must never abort the pass
+            except Exception as exc:  # one memory must never abort the pass
                 res["errors_items"] += 1
+                if len(res["error_samples"]) < 10:
+                    res["error_samples"].append(
+                        {
+                            "memory_id": item["id"],
+                            "reason": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
                 continue
 
         # Honest remaining count: failed items (counted in errors_items) were
         # never written to the store, so they're still pending — the cheap
         # proxy is len(backlog) minus the ones that succeeded (res["memories"]).
-        res["backlog_remaining"] = max(0, len(backlog) - res["memories"])
+        res["backlog_remaining"] = res["errors_items"]
 
         live_ids = {
             mid
@@ -231,7 +274,9 @@ def run_hype_pass(
         }
         res["pruned"] = store.prune_orphans(live_ids)
         res["status"] = (
-            "all_items_failed" if res["errors_items"] == len(backlog) and backlog else "done"
+            "all_items_failed"
+            if res["errors_items"] == len(backlog) and backlog and res["empty_items"] == 0
+            else "done"
         )
     except Exception as exc:  # surfaced via receipt["errors"], never silent
         res["status"] = "error"

@@ -234,6 +234,20 @@ def test_flag_on_question_space_candidate_surfaces(
     assert both[1].score == pytest.approx(0.8, abs=1e-3)
 
 
+@pytest.mark.float32_precision
+def test_flag_on_question_space_candidate_surfaces_in_hybrid(
+    hype_mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default hybrid path must benefit from the same question index."""
+    rec_a = hype_mem.save(content="zzalpha note body", title="Alpha zzalpha")
+    rec_b = hype_mem.save(content="zzbeta note body", title="Beta zzbeta")
+    _populate_hype(hype_mem.cfg, rec_b.id, list(_QUERY_VEC))
+    monkeypatch.setenv("MEMO_HYPE_ENABLED", "1")
+    out = hype_mem.search("zzquery topic", mode="hybrid", limit=1)
+    assert out and out[0].id == rec_b.id
+    assert rec_a.id != out[0].id
+
+
 def test_flag_on_fold_appended_candidate_respects_type_filter(
     hype_mem, monkeypatch: pytest.MonkeyPatch
 ) -> None:

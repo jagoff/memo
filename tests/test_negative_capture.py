@@ -117,6 +117,19 @@ def test_supersede_unresolved_ids_is_safe(mem_with_stub, enabled):
     assert _failure_patterns(mem) == []
 
 
+def test_supersede_missing_markdown_is_unresolved_not_error(mem_with_stub, enabled):
+    mem = mem_with_stub
+
+    def _missing(_id):
+        raise FileNotFoundError("source Markdown removed")
+
+    mem.get = _missing
+    res = negative_capture.capture_from_supersede(
+        mem, superseded_id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", superseding_id="bbbbbbbb"
+    )
+    assert res == {"status": "unresolved", "captured_id": None}
+
+
 # ── default-off no-op ────────────────────────────────────────────────────────
 
 

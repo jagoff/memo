@@ -32,8 +32,10 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _question_id(memory_id: str, text: str) -> str:
-    return hashlib.sha256(f"{memory_id}:{text}".encode()).hexdigest()[:32]
+def _question_id(
+    memory_id: str, text: str, view_kind: str = "hypothetical_question"
+) -> str:
+    return hashlib.sha256(f"{memory_id}:{view_kind}:{text}".encode()).hexdigest()[:32]
 
 
 class HypeStore(_ConnectionMixin):
@@ -73,9 +75,15 @@ class HypeStore(_ConnectionMixin):
             "CREATE TABLE IF NOT EXISTS hype_questions ("
             "question_id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, "
             "question TEXT NOT NULL, body_hash TEXT NOT NULL, model TEXT NOT NULL, "
-            "created_at TEXT NOT NULL, variant TEXT NOT NULL DEFAULT 'query')"
+            "created_at TEXT NOT NULL, variant TEXT NOT NULL DEFAULT 'query', "
+            "view_kind TEXT NOT NULL DEFAULT 'hypothetical_question')"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hype_mem ON hype_questions(memory_id)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS hype_attempts ("
+            "memory_id TEXT PRIMARY KEY, body_hash TEXT NOT NULL, status TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL)"
+        )
         # Inline ALTER-guard migration: a DB created before `variant` existed
         # needs the column backfilled — its rows were all embedded with the
         # query prefix (the only variant that ever existed then), so 'query'
@@ -85,6 +93,12 @@ class HypeStore(_ConnectionMixin):
             conn.execute(
                 "ALTER TABLE hype_questions ADD COLUMN variant TEXT NOT NULL DEFAULT 'query'"
             )
+        if "view_kind" not in cols:
+            conn.execute(
+                "ALTER TABLE hype_questions ADD COLUMN view_kind TEXT NOT NULL "
+                "DEFAULT 'hypothetical_question'"
+            )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_hype_kind ON hype_questions(view_kind)")
         conn.execute(
             "CREATE TABLE IF NOT EXISTS hype_schema_meta ("
             "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
@@ -182,6 +196,7 @@ class HypeStore(_ConnectionMixin):
         model: str,
         questions: list[tuple[str, list[float]]],
         variant: str = "query",
+        view_kind: str = "hypothetical_question",
     ) -> int:
         """Delete old rows for `memory_id`, insert `(question_text, embedding)` rows.
 
@@ -195,13 +210,16 @@ class HypeStore(_ConnectionMixin):
             old_ids = [
                 str(r["question_id"])
                 for r in cx.execute(
-                    "SELECT question_id FROM hype_questions WHERE memory_id = ?",
-                    (memory_id,),
+                    "SELECT question_id FROM hype_questions WHERE memory_id = ? AND view_kind = ?",
+                    (memory_id, view_kind),
                 ).fetchall()
             ]
             for old_id in old_ids:
                 cx.execute("DELETE FROM hype_vec WHERE question_id = ?", (old_id,))
-            cx.execute("DELETE FROM hype_questions WHERE memory_id = ?", (memory_id,))
+            cx.execute(
+                "DELETE FROM hype_questions WHERE memory_id = ? AND view_kind = ?",
+                (memory_id, view_kind),
+            )
             for text, embedding in questions:
                 if len(embedding) != self.dims:
                     raise ValueError(
@@ -209,25 +227,62 @@ class HypeStore(_ConnectionMixin):
                         f"store expects {self.dims}. Usually a swapped model / "
                         f"MEMO_EMBEDDER_DIMS."
                     )
-                qid = _question_id(memory_id, text)
+                qid = _question_id(memory_id, text, view_kind)
                 cx.execute(
                     "INSERT INTO hype_vec (question_id, embedding) VALUES (?, ?)",
                     (qid, serialize_float32(embedding)),
                 )
                 cx.execute(
                     "INSERT INTO hype_questions "
-                    "(question_id, memory_id, question, body_hash, model, created_at, variant) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (qid, memory_id, text, body_hash, model, created_at, variant),
+                    "(question_id, memory_id, question, body_hash, model, created_at, variant, view_kind) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (qid, memory_id, text, body_hash, model, created_at, variant, view_kind),
+                )
+            if view_kind == "hypothetical_question":
+                cx.execute(
+                    "INSERT INTO hype_attempts (memory_id, body_hash, status, updated_at) "
+                    "VALUES (?, ?, 'indexed', ?) "
+                    "ON CONFLICT(memory_id) DO UPDATE SET body_hash=excluded.body_hash, "
+                    "status=excluded.status, updated_at=excluded.updated_at",
+                    (memory_id, body_hash, created_at),
                 )
         return len(questions)
 
-    def body_hash_for(self, memory_id: str) -> str | None:
+    def view_body_hash_for(self, memory_id: str, view_kind: str) -> str | None:
+        """Return the watermark for one derived view kind."""
         row = self._conn.execute(
-            "SELECT body_hash FROM hype_questions WHERE memory_id = ? LIMIT 1",
-            (memory_id,),
+            "SELECT body_hash FROM hype_questions "
+            "WHERE memory_id = ? AND view_kind = ? LIMIT 1",
+            (memory_id, view_kind),
         ).fetchone()
         return str(row["body_hash"]) if row else None
+
+    def mark_attempt(self, memory_id: str, body_hash: str, status: str) -> None:
+        """Record a non-error derivation outcome, including a valid empty view."""
+        with self._tx() as cx:
+            cx.execute(
+                "INSERT INTO hype_attempts (memory_id, body_hash, status, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(memory_id) DO UPDATE SET body_hash=excluded.body_hash, "
+                "status=excluded.status, updated_at=excluded.updated_at",
+                (memory_id, body_hash, status, _now_iso()),
+            )
+
+    def body_hash_for(self, memory_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT body_hash FROM hype_questions "
+            "WHERE memory_id = ? AND view_kind = 'hypothetical_question' LIMIT 1",
+            (memory_id,),
+        ).fetchone()
+        if row:
+            return str(row["body_hash"])
+        attempt = self._conn.execute(
+            "SELECT body_hash, status FROM hype_attempts WHERE memory_id = ?",
+            (memory_id,),
+        ).fetchone()
+        if attempt and str(attempt["status"]) in {"indexed", "empty"}:
+            return str(attempt["body_hash"])
+        return None
 
     def knn(self, embedding: list[float], k: int) -> list[dict[str, Any]]:
         """`[{memory_id, question, score}]`, best question per memory, sorted
@@ -238,7 +293,7 @@ class HypeStore(_ConnectionMixin):
             )
         k = max(1, int(k))
         rows = self._conn.execute(
-            "SELECT q.memory_id, q.question, v.distance AS distance "
+            "SELECT q.memory_id, q.question, q.view_kind, v.distance AS distance "
             "FROM hype_vec v JOIN hype_questions q ON v.question_id = q.question_id "
             "WHERE v.embedding MATCH ? AND v.k = ? ORDER BY distance ASC LIMIT ?",
             (serialize_float32(embedding), k, k),
@@ -252,6 +307,7 @@ class HypeStore(_ConnectionMixin):
                 best_by_memory[memory_id] = {
                     "memory_id": memory_id,
                     "question": str(r["question"]),
+                    "view_kind": str(r["view_kind"]),
                     "score": score,
                 }
         return sorted(best_by_memory.values(), key=lambda d: d["score"], reverse=True)
@@ -274,6 +330,7 @@ class HypeStore(_ConnectionMixin):
                 for qid in qids:
                     cx.execute("DELETE FROM hype_vec WHERE question_id = ?", (qid,))
                 cur = cx.execute("DELETE FROM hype_questions WHERE memory_id = ?", (memory_id,))
+                cx.execute("DELETE FROM hype_attempts WHERE memory_id = ?", (memory_id,))
                 removed += cur.rowcount
         return removed
 

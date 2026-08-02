@@ -770,6 +770,57 @@ def dream_run(
 
         # HyPE — nightly hypothetical-question generation (builds the index dark;
         # the read-path fold is gated separately by MEMO_HYPE_ENABLED) ---------
+        if flag_bool("MEMO_DREAM_VECTOR_HYGIENE_ENABLED"):
+            progress.update(step, description="[vector-hygiene] compacting derived indexes...")
+            try:
+                from memo import dream_vector
+
+                receipt["vector_hygiene"] = dream_vector.run_vector_hygiene(
+                    cfg, mem, dry_run=dry_run
+                )
+                if receipt["vector_hygiene"].get("status") == "error":
+                    receipt["errors"].append(
+                        f"vector_hygiene: {receipt['vector_hygiene'].get('error')}"
+                    )
+                progress.update(
+                    step,
+                    description=(
+                        "[vector-hygiene] [green]✓[/green]  "
+                        f"{receipt['vector_hygiene'].get('cache_pruned', 0)} cache rows"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"vector_hygiene: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[vector-hygiene] [yellow]warn[/yellow]")
+
+        if flag_bool("MEMO_DREAM_VECTOR_VIEWS_ENABLED"):
+            progress.update(step, description="[vector-views] indexing title/tag views...")
+            try:
+                from memo import dream_vector_views
+
+                receipt["vector_views"] = dream_vector_views.run_title_view_pass(
+                    cfg,
+                    mem,
+                    night_cap=1000
+                    if (_vc := flag_int("MEMO_DREAM_VECTOR_VIEWS_NIGHT_CAP")) is None
+                    else _vc,
+                    dry_run=dry_run,
+                )
+                if receipt["vector_views"].get("status") == "error":
+                    receipt["errors"].append(
+                        f"vector_views: {receipt['vector_views'].get('error')}"
+                    )
+                progress.update(
+                    step,
+                    description=(
+                        "[vector-views] [green]✓[/green]  "
+                        f"{receipt['vector_views'].get('indexed', 0)} indexed"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"vector_views: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[vector-views] [yellow]warn[/yellow]")
+
         if flag_bool("MEMO_DREAM_HYPE_ENABLED"):
             progress.update(step, description="[hype] generating questions...")
             try:

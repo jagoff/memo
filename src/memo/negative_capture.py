@@ -175,6 +175,11 @@ def capture_from_supersede(
             return {"status": "dry_run", "captured_id": None}
         captured_id = _persist(mem, payload, prov_hash)
         return {"status": "captured", "captured_id": captured_id}
+    except FileNotFoundError:
+        # The index can retain a supersede pair after its source Markdown was
+        # removed externally.  This is an unresolved provenance record, not a
+        # capture failure; keep the nightly pass healthy and actionable.
+        return {"status": "unresolved", "captured_id": None}
     except Exception as exc:
         # Surfaced (not swallowed): the caller records ``error`` in its receipt.
         _log.warning("negative_capture (supersede) failed: %s", exc)

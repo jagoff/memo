@@ -70,6 +70,20 @@ class _FakeMem:
         return object()  # never actually invoked; _llm_questions is monkeypatched
 
 
+class _NullFtsMem(_FakeMem):
+    def get(self, id_: str) -> dict | None:
+        row = self.store.get(id_)
+        return {"body": row.get("_body", "")} if row else None
+
+
+def test_memory_body_falls_back_when_fts_body_is_null():
+    mem = _NullFtsMem({"id1": _mem_row()})
+    mem.store.get_fts_body = lambda _id: ""  # type: ignore[method-assign]
+    body, used_fallback = dh._memory_body(mem, "id1")
+    assert body == "some body text"
+    assert used_fallback is True
+
+
 def _mem_row(type_="decision", body_hash="h1", title="Decision about X"):
     return {"type": type_, "body_hash": body_hash, "title": title, "_body": "some body text"}
 
@@ -298,16 +312,16 @@ def test_run_hype_pass_llm_none_skips_item_without_aborting(tmp_path, monkeypatc
 
 
 def test_run_hype_pass_llm_empty_list_skips_item(tmp_path, monkeypatch):
-    # Single-item backlog where that one item fails is also the
-    # all-items-failed case (Fix 4) — status reflects the total wash.
+    # An explicit empty list is a valid no-question result, not an LLM failure.
     memories = {"id1": _mem_row(body_hash="h1")}
     mem = _FakeMem(memories, state_dir=tmp_path)
     cfg = _FakeCfg(tmp_path / "memvec.db")
     monkeypatch.setattr(dh, "_llm_questions", lambda mem, title, body, *, n: [])
 
     res = dh.run_hype_pass(cfg, mem, dry_run=False)
-    assert res["status"] == "all_items_failed"
-    assert res["errors_items"] == 1
+    assert res["status"] == "done"
+    assert res["errors_items"] == 0
+    assert res["empty_items"] == 1
     assert res["generated"] == 0
 
 
