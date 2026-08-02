@@ -53,7 +53,8 @@ def test_store_roundtrip_and_latest_wins(tmp_path: Path) -> None:
     store = SourceVoteStore(tmp_path)
     store.record(_vote("k1", "s1", "up"))
     store.record(_vote("k1", "s1", "down"))
-    (tmp_path / "source_votes.jsonl").open("a").write("not json\n")
+    with (tmp_path / "source_votes.jsonl").open("a") as handle:
+        handle.write("not json\n")
     latest = SourceVoteStore(tmp_path).latest_by_pair()
     assert latest[("k1", "s1")].rating == "down"
 
@@ -90,9 +91,10 @@ def test_source_vote_skip_shape_corrupt(tmp_path: Path) -> None:
     store = SourceVoteStore(tmp_path)
     store.record(_vote("k1", "s1", "up"))
     # Append shape-corrupt line (valid JSON but missing required field)
-    (tmp_path / "source_votes.jsonl").open("a").write(
-        '{"created_at":"2026-07-30T00:00:00","question_key":"k1","query":"q","source_id":"s2"}\n'
-    )
+    with (tmp_path / "source_votes.jsonl").open("a") as handle:
+        handle.write(
+            '{"created_at":"2026-07-30T00:00:00","question_key":"k1","query":"q","source_id":"s2"}\n'
+        )
     store.record(_vote("k1", "s3", "down"))
     # Load should skip the shape-corrupt line and return only 2 valid votes
     votes = SourceVoteStore(tmp_path).load()
@@ -126,11 +128,12 @@ def test_feedback_store_roundtrip_and_corrupt(tmp_path: Path) -> None:
     store.append(fb1)
     store.append(fb2)
     # Append corrupt JSON line
-    (tmp_path / "events.jsonl").open("a").write("not json\n")
-    # Append shape-corrupt line (valid JSON but missing required field)
-    (tmp_path / "events.jsonl").open("a").write(
-        '{"feedback_id":"f3","created_at":"2026-07-30T00:00:00","chat_session_id":"s"}\n'
-    )
+    with (tmp_path / "events.jsonl").open("a") as handle:
+        handle.write("not json\n")
+        # Append shape-corrupt line (valid JSON but missing required field)
+        handle.write(
+            '{"feedback_id":"f3","created_at":"2026-07-30T00:00:00","chat_session_id":"s"}\n'
+        )
     # Load should skip corrupt lines and return only 2 valid events
     feedbacks = FeedbackStore(tmp_path).load()
     assert len(feedbacks) == 2
