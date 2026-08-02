@@ -592,7 +592,7 @@ class TerminalBridge:
         bounded = max(1, min(limit, 500))
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM terminal_receipts ORDER BY created_at DESC, receipt_id DESC LIMIT ?",
+                "SELECT * FROM terminal_receipts ORDER BY rowid DESC LIMIT ?",
                 (bounded,),
             ).fetchall()
         return [self._receipt_from_row(row) for row in rows]
