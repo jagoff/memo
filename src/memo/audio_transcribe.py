@@ -38,7 +38,7 @@ def whisper_available() -> bool:
         return _WHISPER_OK
     _WHISPER_CHECKED = True
     try:
-        import mlx_whisper  # type: ignore[import-not-found]  # noqa: F401
+        import mlx_whisper  # type: ignore[import-not-found,import-untyped]  # noqa: F401
 
         _WHISPER_OK = True
     except ImportError as exc:
