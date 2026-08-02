@@ -86,6 +86,8 @@ def test_install_shims_writes_executable_self_contained_script(tmp_cfg, tmp_path
     assert "# memo-shim" in content
     assert 'startup-banner --agent "$_AGENT"' in content
     assert 'codex-badge --agent "$_AGENT"' in content
+    assert "terminal register" not in content
+    assert "tty <&2" in content
     assert "memflow" not in content.lower()
     assert "synapse" not in content.lower()
 
@@ -169,11 +171,11 @@ def test_codex_shim_prints_startup_banner_once_for_nested_call(tmp_path) -> None
 
     assert proc.returncode == 0
     calls = log_path.read_text(encoding="utf-8").splitlines()
-    assert sum(call.startswith("terminal register --agent codex") for call in calls) == 1
+    assert not any(call.startswith("terminal register") for call in calls)
     assert calls.count("startup-banner --agent codex") == 1
 
 
-def test_shim_registers_exact_terminal_before_agent_exec(tmp_path) -> None:
+def test_shim_uses_stderr_tty_with_redirected_stdin_and_clears_stale_id(tmp_path) -> None:
     shim_dir = tmp_path / "shim"
     tools_dir = tmp_path / "tools"
     real_dir = tmp_path / "real"
@@ -188,7 +190,9 @@ def test_shim_registers_exact_terminal_before_agent_exec(tmp_path) -> None:
     )
     real = real_dir / "codex"
     real.write_text(
-        '#!/usr/bin/env bash\nprintf "agent:%s\\n" "$MEMO_AGENT_TTY" >> "$MEMO_TEST_LOG"\n',
+        "#!/usr/bin/env bash\n"
+        'printf "agent:%s:%s\\n" "$MEMO_AGENT_TTY" "${MEMO_TERMINAL_ID:-unset}" '
+        '>> "$MEMO_TEST_LOG"\n',
         encoding="utf-8",
     )
     memo.chmod(0o755)
@@ -206,11 +210,12 @@ def test_shim_registers_exact_terminal_before_agent_exec(tmp_path) -> None:
                 "MEMO_TEST_LOG": str(log_path),
                 "MEMO_STARTUP_BANNER": "0",
                 "MEMO_CODEX_BADGE": "0",
-                "MEMO_AGENT_TTY": "",
+                "MEMO_AGENT_TTY": "/dev/ttys999",
+                "MEMO_TERMINAL_ID": "term-deadbeefdeadbeef",
                 "TERM_PROGRAM": "ghostty",
             },
-            stdin=slave_fd,
-            stdout=slave_fd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=slave_fd,
             timeout=5,
         )
@@ -220,9 +225,42 @@ def test_shim_registers_exact_terminal_before_agent_exec(tmp_path) -> None:
 
     assert proc.returncode == 0
     lines = log_path.read_text(encoding="utf-8").splitlines()
-    assert lines[0].startswith(f"memo:terminal register --agent codex --tty {tty_path} --pid ")
-    assert f"--terminal-app ghostty --project {project} --id-only" in lines[0]
-    assert lines[1] == f"agent:{tty_path}"
+    assert lines == [f"agent:{tty_path}:unset"]
+
+
+def test_shim_without_tty_clears_inherited_tty_and_terminal_id(tmp_path) -> None:
+    shim_dir = tmp_path / "shim"
+    real_dir = tmp_path / "real"
+    log_path = tmp_path / "agent.log"
+    real_dir.mkdir()
+    real = real_dir / "codex"
+    real.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "agent:%s:%s\\n" "${MEMO_AGENT_TTY:-unset}" '
+        '"${MEMO_TERMINAL_ID:-unset}" >> "$MEMO_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    real.chmod(0o755)
+    install_shims(("codex",), shim_dir)
+
+    proc = subprocess.run(
+        [str(shim_dir / "codex")],
+        env={
+            **os.environ,
+            "PATH": os.pathsep.join([str(real_dir), os.environ["PATH"]]),
+            "MEMO_TEST_LOG": str(log_path),
+            "MEMO_STARTUP_BANNER": "0",
+            "MEMO_CODEX_BADGE": "0",
+            "MEMO_AGENT_TTY": "/dev/ttys999",
+            "MEMO_TERMINAL_ID": "term-deadbeefdeadbeef",
+        },
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=5,
+    )
+
+    assert proc.returncode == 0
+    assert log_path.read_text(encoding="utf-8").splitlines() == ["agent:unset:unset"]
 
 
 def test_codex_badge_uses_memo_notify_protocol(tmp_cfg, tmp_path, monkeypatch) -> None:

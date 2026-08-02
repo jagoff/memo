@@ -106,6 +106,14 @@ produces compressed backups. No transport or conflict-resolution strategy
 is finalised. This is separate from the stable federation bundle protocol,
 which performs bounded, signed, ACL-scoped exchange without automatic merge.
 
+## terminal_live.py / terminal_presenter.py
+
+Legacy exact-TTY input and presentation internals. Terminal mutation tools are
+not exposed through CLI or any MCP profile, automatic shim registration is
+disabled, and the bridge fails closed. This code remains experimental until a
+receiver-bound transport can atomically prove authority over the destination
+PID and process-start identity before delivering the first byte.
+
 ## versioning.py
 
 Per-memory version history and diff UI. Stores a snapshot of each memory

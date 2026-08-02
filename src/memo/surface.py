@@ -95,9 +95,7 @@ AGENT_MCP_TOOLS: frozenset[str] = (
             "memo_pop_notification",
             "memo_profile",
             "memo_start_session",
-            "memo_terminal_enter",
             "memo_terminal_list",
-            "memo_terminal_send",
             "memo_save_text",
             "memo_version",
             "memo_write_queue_status",
@@ -136,9 +134,7 @@ CORE_MCP_TOOLS: frozenset[str] = (
             "memo_session_get",
             "memo_session_list",
             "memo_stats",
-            "memo_terminal_enter",
             "memo_terminal_list",
-            "memo_terminal_send",
             "memo_review_due",
             "memo_supersede",
             "memo_unforget",
@@ -173,7 +169,7 @@ def mcp_include_advanced_tools() -> bool:
 
 
 def mcp_profile() -> str:
-    """Resolve the MCP surface profile, defaulting agent clients to 30 tools."""
+    """Resolve the MCP surface profile, defaulting agent clients to 41 tools."""
     profile = _profile("MEMO_MCP_PROFILE", default="agent", strict=True)
     if flags.flag_bool("MEMO_MCP_SLIM"):
         return "core"
@@ -190,9 +186,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("43", "~4.3k"),
-    "core": ("60", "~5.5k"),
-    "slim": ("60", "~5.5k"),
+    "agent": ("41", "~4.1k"),
+    "core": ("58", "~5.3k"),
+    "slim": ("58", "~5.3k"),
 }
 
 
@@ -201,5 +197,5 @@ def mcp_profile_token_cost(profile: str | None = None) -> tuple[str, str, bool]:
     (or the active profile when ``None``). ``is_reduced`` is False only for the
     full/default surface — the costly one doctor warns about."""
     resolved = profile if profile is not None else mcp_profile()
-    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("164", "~18.3k"))
+    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("162", "~18.1k"))
     return count, cost, resolved in _PROFILE_TOKEN_COST

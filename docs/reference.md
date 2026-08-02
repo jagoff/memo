@@ -44,7 +44,7 @@ agent-memory projects. For the complete live flag registry, run
   wording of past local transcript turns through a private, lexical-only FTS5
   index that never enters ambient recall.
 - **Fewer tokens, not more.** Recall injects the relevant answer on a bounded
-  budget, and the default MCP surface exposes 43 tools instead of the full 164.
+  budget, and the default MCP surface exposes 41 tools instead of the full 162.
 
 ---
 
@@ -248,12 +248,12 @@ Released wheels include the Claude/Codex/Devin agent assets, so a normal
 checkout, pass `--repo /path/to/memo` to test uncommitted plugin changes.
 
 Tools surface inside the agent as `mcp__memo__memo_*`. Agent installs default to
-a 43-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
+a 41-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`,
 `search`, `unified_briefing`, `version`, lifecycle, session/capture
 notifications, and Memo-native evidence, operational-continuity, and
-outcome-learning helpers, plus registered-terminal live chat) so
+outcome-learning helpers, plus registered-terminal status) so
 administrative schemas don't consume model context — set
-`MEMO_MCP_PROFILE=core`/`slim` (60 tools) or `full`/`default` (164 tools) only
+`MEMO_MCP_PROFILE=core`/`slim` (58 tools) or `full`/`default` (162 tools) only
 for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
@@ -385,37 +385,25 @@ are intentionally absent from the default agent profile:
 
 ## Live terminal coordination
 
-Agent shims installed by `memo install-shims` register their exact local TTY,
-PID, agent name, terminal application, and project. Registrations are scoped to
-the current OS user and revalidated before each delivery. Native
-`TERM_PROGRAM` values such as `Apple_Terminal` and `iTerm.app` are normalized
-to their supported presenters. A new process reusing the same TTY receives a
-new terminal id, so stale callers cannot silently address its replacement. Use
-the CLI to inspect or address registrations directly:
+Legacy exact-TTY input is disabled fail-closed. TIOCSTI, terminal application
+automation, and tmux can identify a TTY/session but cannot bind the first input
+byte atomically to the registered PID and process birth identity. Agent shims
+therefore capture the local TTY for notifications but do not auto-register an
+input target. Existing registrations are not advertised and are pruned when
+listed.
+
+The CLI retains only read-only inspection and receipt history:
 
 ```bash
 memo terminal list --json
-memo terminal send --to term-0123456789abcdef --message "status?" --submit
-memo terminal enter --to term-0123456789abcdef
 memo terminal history --json
 ```
 
-The equivalent always-on MCP tools are `memo_terminal_list`,
-`memo_terminal_send`, and `memo_terminal_enter`. A live message contains a
-reply-to terminal id so the receiving agent can answer through the same tool.
-`enter` sends only a carriage return and refuses stale, mismatched, or
-non-foreground targets. Receipt history contains routing and outcome metadata,
-never message bodies; failed target validation and presenter failures are
-recorded as `failed` receipts.
-
-On macOS, Ghostty and iTerm use exact-session application APIs; Terminal.app
-uses its exact tab API for submitted input and avoids clipboard mutation.
-Linux `/dev/pts/N` registration and validation are supported, but delivery on
-a hardened kernel still requires an available exact-session transport:
-generic terminals that deny `TIOCSTI` fail closed and produce a failed receipt
-instead of writing lookalike output that the target process never receives.
-Handoffs and attention remain the durable asynchronous channel; terminal chat
-is immediate and same-machine only.
+The read-only `memo_terminal_list` tool remains on every MCP profile and
+honestly returns no deliverable legacy target. `memo_terminal_send` and
+`memo_terminal_enter` are not registered on any MCP profile. The central bridge
+also fails closed until a cooperative or native process-bound receiver exists.
+Use handoffs and attention for durable agent coordination.
 
 ## MCP tools
 
@@ -423,9 +411,9 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 
 | Profile | Tool count | Schema tokens | Use |
 |---|---:|---:|---|
-| `agent` (default) | 43 | ~4.3k | Essential memory, evidence, continuity, lifecycle, live terminal chat, and outcome-learning surface. |
-| `core` / `slim` | 60 | ~5.5k | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
-| `full` / `default` | 164 | ~18.3k | Every advanced domain module and diagnostic tool. |
+| `agent` (default) | 41 | ~4.1k | Essential memory, evidence, continuity, lifecycle, terminal status, and outcome-learning surface. |
+| `core` / `slim` | 58 | ~5.3k | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
+| `full` / `default` | 162 | ~18.1k | Every advanced domain module and diagnostic tool. |
 
 Mutating MCP calls pass through a bounded process-local FIFO by default
 (`MEMO_MCP_WRITE_QUEUE_SIZE=32`); read-only calls bypass it. The
@@ -440,7 +428,7 @@ metadata. Use the full profile's `mem_relation_reviews`, `mem_judge`, and
 `MEMO_RELATION_CANDIDATES_ENABLED=0` and
 `MEMO_RELATION_ANNOTATIONS_ENABLED=0` flags remain rollback controls.
 
-The default `agent` profile exposes exactly 43 tools:
+The default `agent` profile exposes exactly 41 tools:
 
 `memo_ask`, `memo_attention_ack`, `memo_attention_add`, `memo_conflict_open`,
 `memo_conflict_resolve`, `memo_context`, `memo_delete`, `memo_evidence_pack`,
@@ -452,9 +440,8 @@ The default `agent` profile exposes exactly 43 tools:
 `memo_procedure_promote`, `memo_profile`, `memo_rename`, `memo_review_due`,
 `memo_save`, `memo_save_text`, `memo_search`, `memo_signal_list`,
 `memo_signal_remember`, `memo_start_session`,
-`memo_supersede`, `memo_terminal_enter`, `memo_terminal_list`,
-`memo_terminal_send`, `memo_unified_briefing`, `memo_update`, `memo_version`,
-`memo_write_queue_status`.
+`memo_supersede`, `memo_terminal_list`, `memo_unified_briefing`, `memo_update`,
+`memo_version`, `memo_write_queue_status`.
 
 The `core` / `slim` profile adds CRUD/admin-lite tools:
 
@@ -1156,7 +1143,7 @@ plaintext disclosure operations.
 | ingest-daemon | `memo ingest-daemon start` | Serialized repo/batch indexing with dedupe and failure ledger. |
 | maint-daemon | `memo maint-daemon start` | Background cleanup and synthesis. |
 
-### All 141 top-level CLI commands
+### All 142 top-level CLI commands
 
 <details>
 <summary>Complete command inventory</summary>
@@ -1366,8 +1353,8 @@ read-only, `$EDITOR`, and backup restore paths.
 
 ### Token economy
 
-The default MCP profile exposes 43 tools (~4.3k schema tokens), compared with
-164 tools (~18.3k) on the full profile. The bundled Claude Code recall hook also
+The default MCP profile exposes 41 tools (~4.1k schema tokens), compared with
+162 tools (~18.1k) on the full profile. The bundled Claude Code recall hook also
 pins `MEMO_RECALL_TOP_K=1` and `MEMO_RECALL_TOKEN_BUDGET=160`; the general
 runtime default remains 600 tokens for clients that do not use that hook.
 

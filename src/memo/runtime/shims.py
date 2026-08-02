@@ -30,11 +30,30 @@ set -euo pipefail
 _MEMO_BIN_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 _AGENT="$(basename "$0")"
 # Capture the TTY before the agent changes it, so async hooks can write
-# idle-capture notifications directly to this terminal.
-if [ -z "${MEMO_AGENT_TTY:-}" ] && [ -t 2 ]; then
-    MEMO_AGENT_TTY="$(tty 2>/dev/null || true)"
-    export MEMO_AGENT_TTY
+# idle-capture notifications directly to this terminal. `tty` reads stdin by
+# default, so explicitly bind it to the descriptor that passed `-t`.
+_MEMO_DETECTED_TTY=""
+if [ -t 2 ]; then
+    _MEMO_DETECTED_TTY="$(tty <&2 2>/dev/null || true)"
+elif [ -t 1 ]; then
+    _MEMO_DETECTED_TTY="$(tty <&1 2>/dev/null || true)"
+elif [ -t 0 ]; then
+    _MEMO_DETECTED_TTY="$(tty <&0 2>/dev/null || true)"
 fi
+case "$_MEMO_DETECTED_TTY" in
+    /dev/tty*|/dev/pts/*)
+        if [ "${MEMO_AGENT_TTY:-}" != "$_MEMO_DETECTED_TTY" ]; then
+            unset MEMO_TERMINAL_ID
+        fi
+        MEMO_AGENT_TTY="$_MEMO_DETECTED_TTY"
+        export MEMO_AGENT_TTY
+        ;;
+    *)
+        # A path-shaped inherited value is not evidence that this process still
+        # owns that terminal; it may be stale or already reused.
+        unset MEMO_AGENT_TTY MEMO_TERMINAL_ID
+        ;;
+esac
 _NEXT=""
 IFS=':' read -ra _DIRS <<< "$PATH"
 for _D in "${_DIRS[@]:-}"; do
@@ -50,18 +69,9 @@ if [ -z "$_NEXT" ]; then
     exit 127
 fi
 _MEMO="$(command -v memo 2>/dev/null || true)"
-if [ -n "$_MEMO" ] && [ -n "${MEMO_AGENT_TTY:-}" ] && [ "${MEMO_TERMINAL_REGISTRATION_ATTEMPTED:-0}" != "1" ]; then
-    MEMO_TERMINAL_REGISTRATION_ATTEMPTED=1
-    export MEMO_TERMINAL_REGISTRATION_ATTEMPTED
-    MEMO_TERMINAL_ID="$("$_MEMO" terminal register \
-        --agent "$_AGENT" \
-        --tty "$MEMO_AGENT_TTY" \
-        --pid "$$" \
-        --terminal-app "${TERM_PROGRAM:-}" \
-        --project "$PWD" \
-        --id-only 2>/dev/null || true)"
-    [ -n "$MEMO_TERMINAL_ID" ] && export MEMO_TERMINAL_ID
-fi
+# Legacy TTY input is not process-bound, so shims intentionally do not
+# auto-register a live input target. Keep stale ids out of child processes.
+unset MEMO_TERMINAL_ID MEMO_TERMINAL_REGISTRATION_ATTEMPTED
 if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ "${MEMO_STARTUP_BANNER_SHOWN:-0}" != "1" ]; then
     MEMO_STARTUP_BANNER_SHOWN=1
     export MEMO_STARTUP_BANNER_SHOWN
@@ -84,7 +94,7 @@ _TTY_MARKER = "# memo-agent-tty"
 # shell env) can still find the active terminal via _read_agent_tty_file().
 _TTY_SNIPPET = (
     "\n{m}\n"
-    '[ -t 1 ] && export MEMO_AGENT_TTY="$(tty 2>/dev/null || true)"'
+    '[ -t 1 ] && export MEMO_AGENT_TTY="$(tty <&1 2>/dev/null || true)"'
     " && printf '%s' \"$MEMO_AGENT_TTY\""
     ' > "${{XDG_DATA_HOME:-$HOME/.local/share}}/memo/agent_tty" 2>/dev/null || true'
     "  {m}\n"

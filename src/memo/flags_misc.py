@@ -183,15 +183,15 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "mcp",
-        "Expose only the 26 core inline tools (skip domain modules). "
-        "Reduces tool count from ~116 to 26 for local/constrained LLMs.",
+        "Select the 58-tool core MCP surface (skip advanced domain modules) "
+        "for local/constrained LLMs.",
     ),
     _spec(
         "MEMO_MCP_PROFILE",
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 30 tools) | core/slim (stable core) | full/default (all tools).",
+        "MCP surface profile: agent (default, 41 tools) | core/slim (58 stable-core tools) | full/default (162 tools).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(

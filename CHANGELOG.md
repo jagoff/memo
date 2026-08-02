@@ -20,18 +20,22 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- Live terminal input now fails closed: the CLI and MCP `send`/`enter`
+  mutators and automatic shim registration are disabled, and legacy terminal
+  registrations are non-deliverable. Read-only diagnostics remain available
+  while a receiver-bound API with explicit destination authority is designed.
 - Live terminal coordination now recognizes the native `Apple_Terminal` and
   `iTerm.app` `TERM_PROGRAM` values, rotates a registration id when a new
   process replaces an agent on the same TTY, and records target-validation
   failures instead of leaving them outside receipt history.
 - macOS terminal presentation keeps message bodies out of process arguments,
   converts AppleScript timeouts into failed receipts, submits Ghostty input to
-  the exact terminal without a global-focus race, and no longer uses the
-  clipboard for Terminal.app delivery. A partially successful `TIOCSTI`
+  the exact terminal without a global-focus race, and removes unsafe
+  Terminal.app delivery entirely. A partially successful `TIOCSTI`
   injection is never replayed through a fallback transport.
-- Live terminal delivery now reports safe transport failures such as an
-  unresponsive terminal automation endpoint in both the CLI error and receipt,
-  while unexpected exception details remain redacted.
+- The fail-closed internal terminal bridge preserves safe transport diagnostics
+  in receipts while redacting unexpected exception details; no delivery mutator
+  is exposed through CLI or MCP.
 
 ### Changed
 
