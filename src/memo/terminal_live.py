@@ -25,8 +25,10 @@ if TYPE_CHECKING:
 _AGENTS = frozenset({"blackbox", "claude", "codex", "devin", "gemini", "opencode"})
 _TERMINAL_APPS = {
     "": "",
+    "apple_terminal": "Terminal",
     "terminal": "Terminal",
     "iterm": "iTerm",
+    "iterm.app": "iTerm2",
     "iterm2": "iTerm2",
     "ghostty": "Ghostty",
 }
@@ -346,11 +348,21 @@ class TerminalBridge:
         now = _now()
         with self._connect() as conn:
             existing = conn.execute(
-                "SELECT id, created_at FROM terminal_registrations WHERE tty = ?",
+                "SELECT id, pid, uid, agent, process_started_at, created_at "
+                "FROM terminal_registrations WHERE tty = ?",
                 (str(canonical_tty),),
             ).fetchone()
-            registration_id = str(existing["id"]) if existing else f"term-{secrets.token_hex(8)}"
-            created_at = str(existing["created_at"]) if existing else now
+            same_process = bool(
+                existing
+                and int(existing["pid"]) == pid
+                and int(existing["uid"]) == snapshot.uid
+                and str(existing["agent"]) == normalized_agent
+                and str(existing["process_started_at"]) == snapshot.started_at
+            )
+            registration_id = (
+                str(existing["id"]) if same_process else f"term-{secrets.token_hex(8)}"
+            )
+            created_at = str(existing["created_at"]) if same_process else now
             conn.execute(
                 """
                 INSERT INTO terminal_registrations (
@@ -358,12 +370,14 @@ class TerminalBridge:
                     process_started_at, created_at, last_seen_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(tty) DO UPDATE SET
+                    id = excluded.id,
                     pid = excluded.pid,
                     uid = excluded.uid,
                     agent = excluded.agent,
                     terminal_app = excluded.terminal_app,
                     project = excluded.project,
                     process_started_at = excluded.process_started_at,
+                    created_at = excluded.created_at,
                     last_seen_at = excluded.last_seen_at
                 """,
                 (
@@ -493,11 +507,13 @@ class TerminalBridge:
         sender_id = (sender or "").strip()
         if sender_id and not _REGISTRATION_ID_RE.fullmatch(sender_id):
             raise TerminalValidationError("terminal sender id is malformed")
+        resolved_target_id = target_id.strip()
+        if not _REGISTRATION_ID_RE.fullmatch(resolved_target_id):
+            raise TerminalValidationError("terminal target id is malformed")
         existing = self._existing_receipt(resolved_message_id)
         if existing is not None:
             return replace(existing, status="duplicate")
 
-        registration = self._live_target(target_id)
         now = _now()
         receipt_id = f"rcpt-{secrets.token_hex(8)}"
         with self._connect() as conn:
@@ -512,7 +528,7 @@ class TerminalBridge:
                     (
                         receipt_id,
                         resolved_message_id,
-                        target_id,
+                        resolved_target_id,
                         sender_id,
                         kind,
                         now,
@@ -525,12 +541,23 @@ class TerminalBridge:
                 return replace(duplicate, status="duplicate")
 
         try:
+            registration = self._live_target(resolved_target_id)
+        except TerminalValidationError as exc:
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE terminal_receipts SET status = 'failed', error = ? "
+                    "WHERE receipt_id = ?",
+                    (str(exc), receipt_id),
+                )
+            raise
+
+        try:
             transport = self._present(
                 Path(registration.tty),
                 payload,
                 terminal_app=registration.terminal_app,
             )
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE terminal_receipts SET status = 'failed', error = ? "

@@ -9,6 +9,12 @@ import subprocess
 import termios
 from pathlib import Path
 
+_PROMPT_LITERAL_MARKER = "__MEMO_PROMPT_LITERAL__"
+
+
+class _PartialTIOCSTIError(OSError):
+    """TIOCSTI failed after at least one byte reached the target."""
+
 
 def _deliver_tiocsti(tty: Path, payload: bytes) -> None:
     request = getattr(termios, "TIOCSTI", None)
@@ -16,21 +22,48 @@ def _deliver_tiocsti(tty: Path, payload: bytes) -> None:
         raise OSError("TIOCSTI is unavailable")
     flags = os.O_RDWR | getattr(os, "O_NOCTTY", 0)
     fd = os.open(tty, flags)
+    injected = 0
     try:
         for byte in payload:
-            fcntl.ioctl(fd, request, bytes([byte]))
+            try:
+                fcntl.ioctl(fd, request, bytes([byte]))
+            except OSError as exc:
+                if injected:
+                    raise _PartialTIOCSTIError(f"TIOCSTI stopped after {injected} bytes") from exc
+                raise
+            injected += 1
     finally:
         os.close(fd)
 
 
-def _run_osascript(script: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["osascript", "-e", script, *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
+def _run_osascript(
+    script: str,
+    *args: str,
+    prompt_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    command = ["osascript", "-e", script, *args]
+    script_input: str | None = None
+    if prompt_text is not None:
+        if script.count(_PROMPT_LITERAL_MARKER) != 1:
+            raise OSError("terminal automation payload marker is invalid")
+        script_input = script.replace(
+            _PROMPT_LITERAL_MARKER,
+            json.dumps(prompt_text, ensure_ascii=False),
+        )
+        command = ["osascript", "-", *args]
+    try:
+        return subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            input=script_input,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise OSError("terminal automation timed out") from exc
+    except OSError as exc:
+        raise OSError("terminal automation could not start") from exc
 
 
 def _split_payload(payload: bytes) -> tuple[str, bool]:
@@ -45,7 +78,8 @@ def _split_payload(payload: bytes) -> tuple[str, bool]:
 _GHOSTTY_INPUT_SCRIPT = r"""
 on run argv
   set targetTty to item 1 of argv
-  set promptText to item 2 of argv
+  set submitPrompt to ((item 2 of argv) is "1")
+  set promptText to __MEMO_PROMPT_LITERAL__
 
   tell application "Ghostty"
     repeat with candidateWindow in windows
@@ -54,9 +88,8 @@ on run argv
           try
             set candidateTty to tty of candidateTerminal
             if candidateTty is targetTty then
-              focus candidateTerminal
-              delay 0.1
               if promptText is not "" then input text promptText to candidateTerminal
+              if submitPrompt then send key "enter" to candidateTerminal
               return "ok"
             end if
           end try
@@ -68,21 +101,11 @@ on run argv
 end run
 """
 
-_GHOSTTY_ENTER_SCRIPT = r"""
-tell application "Ghostty" to activate
-delay 0.35
-tell application "System Events" to key code 36
-"""
-
 _TERMINAL_INPUT_SCRIPT = r"""
 on run argv
   set targetTty to item 1 of argv
   set submitPrompt to ((item 2 of argv) is "1")
-  set promptText to item 3 of argv
-  set oldClipboard to ""
-  try
-    set oldClipboard to the clipboard as text
-  end try
+  set promptText to __MEMO_PROMPT_LITERAL__
 
   tell application "Terminal"
     set foundTab to missing value
@@ -98,6 +121,10 @@ on run argv
       if foundTab is not missing value then exit repeat
     end repeat
     if foundTab is missing value then return "not found"
+    if submitPrompt then
+      do script promptText in foundTab
+      return "ok"
+    end if
     set selected tab of foundWindow to foundTab
     set index of foundWindow to 1
     activate
@@ -105,14 +132,10 @@ on run argv
 
   delay 0.1
   if promptText is not "" then
-    set the clipboard to promptText
-    tell application "System Events" to keystroke "v" using command down
+    tell application "System Events"
+      tell process "Terminal" to keystroke promptText
+    end tell
   end if
-  if submitPrompt then tell application "System Events" to key code 36
-  delay 0.1
-  try
-    set the clipboard to oldClipboard
-  end try
   return "ok"
 end run
 """
@@ -120,18 +143,24 @@ end run
 
 def _deliver_ghostty(tty: Path, payload: bytes) -> None:
     body, submit = _split_payload(payload)
-    result = _run_osascript(_GHOSTTY_INPUT_SCRIPT, str(tty), body)
+    result = _run_osascript(
+        _GHOSTTY_INPUT_SCRIPT,
+        str(tty),
+        "1" if submit else "0",
+        prompt_text=body,
+    )
     if result.returncode != 0 or result.stdout.strip() != "ok":
         raise OSError("Ghostty could not find the registered TTY")
-    if submit:
-        entered = _run_osascript(_GHOSTTY_ENTER_SCRIPT)
-        if entered.returncode != 0:
-            raise OSError("Ghostty could not submit terminal input")
 
 
 def _deliver_terminal(tty: Path, payload: bytes) -> None:
     body, submit = _split_payload(payload)
-    result = _run_osascript(_TERMINAL_INPUT_SCRIPT, str(tty), "1" if submit else "0", body)
+    result = _run_osascript(
+        _TERMINAL_INPUT_SCRIPT,
+        str(tty),
+        "1" if submit else "0",
+        prompt_text=body,
+    )
     if result.returncode != 0 or result.stdout.strip() != "ok":
         raise OSError("Terminal could not find the registered TTY")
 
@@ -143,7 +172,7 @@ def _deliver_iterm(tty: Path, payload: bytes, *, app_name: str) -> None:
 on run argv
   set targetTty to item 1 of argv
   set submitPrompt to ((item 2 of argv) is "1")
-  set promptText to item 3 of argv
+  set promptText to __MEMO_PROMPT_LITERAL__
 
   tell application {app_literal}
     repeat with candidateWindow in windows
@@ -164,7 +193,12 @@ on run argv
   return "not found"
 end run
 """
-    result = _run_osascript(script, str(tty), "1" if submit else "0", body)
+    result = _run_osascript(
+        script,
+        str(tty),
+        "1" if submit else "0",
+        prompt_text=body,
+    )
     if result.returncode != 0 or result.stdout.strip() != "ok":
         raise OSError(f"{app_name} could not find the registered TTY")
 
@@ -174,6 +208,8 @@ def deliver_input(tty: Path, payload: bytes, *, terminal_app: str) -> str:
     try:
         _deliver_tiocsti(tty, payload)
         return "tiocsti"
+    except _PartialTIOCSTIError as partial_error:
+        raise OSError("terminal input delivery was partial; refusing fallback") from partial_error
     except OSError as direct_error:
         try:
             if terminal_app == "Ghostty":
@@ -187,4 +223,6 @@ def deliver_input(tty: Path, payload: bytes, *, terminal_app: str) -> str:
                 return "iterm-applescript"
         except OSError as fallback_error:
             raise OSError("terminal input delivery failed") from fallback_error
-        raise OSError("terminal input injection is unavailable") from direct_error
+        raise OSError(
+            "terminal input injection is unavailable: no exact-session fallback"
+        ) from direct_error

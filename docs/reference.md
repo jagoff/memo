@@ -387,8 +387,11 @@ are intentionally absent from the default agent profile:
 
 Agent shims installed by `memo install-shims` register their exact local TTY,
 PID, agent name, terminal application, and project. Registrations are scoped to
-the current OS user and revalidated before each delivery. Use the CLI to inspect
-or address them directly:
+the current OS user and revalidated before each delivery. Native
+`TERM_PROGRAM` values such as `Apple_Terminal` and `iTerm.app` are normalized
+to their supported presenters. A new process reusing the same TTY receives a
+new terminal id, so stale callers cannot silently address its replacement. Use
+the CLI to inspect or address registrations directly:
 
 ```bash
 memo terminal list --json
@@ -401,8 +404,18 @@ The equivalent always-on MCP tools are `memo_terminal_list`,
 `memo_terminal_send`, and `memo_terminal_enter`. A live message contains a
 reply-to terminal id so the receiving agent can answer through the same tool.
 `enter` sends only a carriage return and refuses stale, mismatched, or
-non-foreground targets. Handoffs and attention remain the durable asynchronous
-channel; terminal chat is immediate and same-machine only.
+non-foreground targets. Receipt history contains routing and outcome metadata,
+never message bodies; failed target validation and presenter failures are
+recorded as `failed` receipts.
+
+On macOS, Ghostty and iTerm use exact-session application APIs; Terminal.app
+uses its exact tab API for submitted input and avoids clipboard mutation.
+Linux `/dev/pts/N` registration and validation are supported, but delivery on
+a hardened kernel still requires an available exact-session transport:
+generic terminals that deny `TIOCSTI` fail closed and produce a failed receipt
+instead of writing lookalike output that the target process never receives.
+Handoffs and attention remain the durable asynchronous channel; terminal chat
+is immediate and same-machine only.
 
 ## MCP tools
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import pty
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -100,6 +101,72 @@ def test_register_persists_same_uid_tty_and_prunes_stale_process(tmp_cfg) -> Non
         os.close(master_fd)
 
 
+@pytest.mark.parametrize(
+    ("reported", "canonical"),
+    [
+        pytest.param("Apple_Terminal", "Terminal", id="apple-terminal"),
+        pytest.param("iTerm.app", "iTerm2", id="iterm-app"),
+    ],
+)
+def test_register_accepts_term_program_aliases(tmp_cfg, reported: str, canonical: str) -> None:
+    master_fd, slave_fd = pty.openpty()
+    tty = Path(os.ttyname(slave_fd))
+
+    def probe(pid: int) -> ProcessSnapshot:
+        return ProcessSnapshot(
+            pid=pid,
+            uid=os.getuid(),
+            tty=tty,
+            started_at="Sat Aug 1 12:00:00 2026",
+            pgid=pid,
+            foreground_pgid=pid,
+            command="codex",
+        )
+
+    try:
+        registration = TerminalBridge(tmp_cfg, process_probe=probe).register(
+            agent="codex",
+            tty=tty,
+            pid=4242,
+            terminal_app=reported,
+        )
+
+        assert registration.terminal_app == canonical
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+
+def test_replacing_process_on_same_tty_rotates_registration_id(tmp_cfg) -> None:
+    master_fd, slave_fd = pty.openpty()
+    tty = Path(os.ttyname(slave_fd))
+
+    def probe(pid: int) -> ProcessSnapshot:
+        return ProcessSnapshot(
+            pid=pid,
+            uid=os.getuid(),
+            tty=tty,
+            started_at=f"process-start-{pid}",
+            pgid=pid,
+            foreground_pgid=pid,
+            command="codex",
+        )
+
+    try:
+        bridge = TerminalBridge(tmp_cfg, process_probe=probe)
+        original = bridge.register(agent="codex", tty=tty, pid=4242)
+        refreshed = bridge.register(agent="codex", tty=tty, pid=4242)
+        replacement = bridge.register(agent="codex", tty=tty, pid=4343)
+
+        assert refreshed.id == original.id
+        assert replacement.id != original.id
+        assert bridge.registration_id(original.id) == ""
+        assert bridge.registration_id(replacement.id) == replacement.id
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+
 def test_send_strips_terminal_controls_and_is_idempotent(registered_bridge) -> None:
     bridge, registration, payloads, _state = registered_bridge
 
@@ -128,6 +195,31 @@ def test_send_refuses_when_agent_is_not_foreground(registered_bridge) -> None:
     with pytest.raises(TerminalValidationError, match="foreground"):
         bridge.send(registration.id, "do not deliver")
 
+    assert payloads == []
+
+
+def test_target_validation_failures_are_receipted(registered_bridge) -> None:
+    bridge, registration, payloads, state = registered_bridge
+
+    with pytest.raises(TerminalValidationError, match="not found"):
+        bridge.send(
+            "term-0123456789abcdef",
+            "missing target",
+            message_id="missing-target-1",
+        )
+    state["foreground_pgid"] = 9999
+    with pytest.raises(TerminalValidationError, match="foreground"):
+        bridge.send(registration.id, "background target", message_id="background-target-1")
+
+    history = bridge.history(limit=2)
+    assert [(item.message_id, item.status) for item in history] == [
+        ("background-target-1", "failed"),
+        ("missing-target-1", "failed"),
+    ]
+    assert "foreground" in history[0].error
+    assert "not found" in history[1].error
+    assert "background target" not in repr(history[0])
+    assert "missing target" not in repr(history[1])
     assert payloads == []
 
 
@@ -200,6 +292,40 @@ def test_failed_delivery_is_receipted_without_message_body(tmp_cfg) -> None:
         receipt = bridge.history()[0]
         assert receipt.status == "failed"
         assert receipt.error == "OSError"
+        assert "secret terminal body" not in repr(receipt)
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+
+def test_presenter_timeout_cannot_leave_pending_receipt(tmp_cfg) -> None:
+    master_fd, slave_fd = pty.openpty()
+    tty = Path(os.ttyname(slave_fd))
+
+    def probe(pid: int) -> ProcessSnapshot:
+        return ProcessSnapshot(
+            pid=pid,
+            uid=os.getuid(),
+            tty=tty,
+            started_at="Sat Aug 1 12:00:00 2026",
+            pgid=pid,
+            foreground_pgid=pid,
+            command="codex",
+        )
+
+    def timeout(_tty: Path, _payload: bytes, *, terminal_app: str) -> str:
+        raise subprocess.TimeoutExpired(["osascript"], timeout=5)
+
+    try:
+        bridge = TerminalBridge(tmp_cfg, process_probe=probe, presenter=timeout)
+        registration = bridge.register(agent="codex", tty=tty, pid=4242)
+
+        with pytest.raises(TerminalValidationError, match="delivery failed"):
+            bridge.send(registration.id, "secret terminal body", message_id="timeout-1")
+
+        receipt = bridge.history()[0]
+        assert receipt.status == "failed"
+        assert receipt.error == "TimeoutExpired"
         assert "secret terminal body" not in repr(receipt)
     finally:
         os.close(slave_fd)
