@@ -15,7 +15,7 @@ def client(tmp_path, monkeypatch):
 
     memory = _FakeMemory(tmp_path)
     app = build_app(memory)
-    return TestClient(app)
+    return TestClient(app, base_url="http://127.0.0.1")
 
 
 def test_ask_stream_sse(client) -> None:
@@ -34,10 +34,51 @@ def test_ask_non_stream(client) -> None:
     assert resp.json()["type"] == "done"
 
 
-def test_ask_non_stream_survives_invalid_session_id(client) -> None:
-    # SessionStore._path raises ValueError on an invalid session id — the
-    # stream path already guards append_turn against it; /api/ask must too.
+def test_ask_non_stream_rejects_invalid_session_id(client) -> None:
+    # Reject before running retrieval instead of silently answering without
+    # persisting the requested session.
     resp = client.post("/api/ask", json={"q": "hola", "chat_session_id": "bad id!"})
+    assert resp.status_code == 400
+    assert resp.json() == {"error": "invalid chat_session_id"}
+
+
+@pytest.mark.parametrize("endpoint", ["/api/ask", "/api/ask/stream"])
+@pytest.mark.parametrize("session_id", [123, False, [], {}])
+def test_ask_rejects_non_string_session_ids(client, endpoint, session_id) -> None:
+    resp = client.post(endpoint, json={"q": "hola", "chat_session_id": session_id})
+
+    assert resp.status_code == 400
+    assert resp.json() == {"error": "invalid chat_session_id"}
+
+
+@pytest.mark.parametrize("endpoint", ["/api/ask", "/api/ask/stream"])
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ({"q": 123}, "q required and must be a string"),
+        ({"q": ["hola"]}, "q required and must be a string"),
+        ({"q": "hola", "history": 123}, "history must be a list"),
+        ({"q": "hola", "history": "not-a-list"}, "history must be a list"),
+        ({"q": "hola", "k": True}, "k must be an integer between 1 and 100"),
+        ({"q": "hola", "k": "5"}, "k must be an integer between 1 and 100"),
+        ({"q": "hola", "k": -1}, "k must be an integer between 1 and 100"),
+        ({"q": "hola", "k": 101}, "k must be an integer between 1 and 100"),
+    ],
+)
+def test_ask_rejects_invalid_typed_inputs(client, endpoint, body, error) -> None:
+    resp = client.post(endpoint, json=body)
+
+    assert resp.status_code == 400
+    assert resp.json() == {"error": error}
+
+
+@pytest.mark.parametrize("endpoint", ["/api/ask", "/api/ask/stream"])
+def test_ask_tolerates_malformed_items_inside_history_list(client, endpoint) -> None:
+    resp = client.post(
+        endpoint,
+        json={"q": "hola", "history": [1, "x", None, {"role": [], "text": {}}]},
+    )
+
     assert resp.status_code == 200
 
 
@@ -60,6 +101,23 @@ def test_feedback_source_malformed_json_returns_400(client) -> None:
     resp = client.post(
         "/api/feedback/source", content=b"not json", headers={"Content-Type": "application/json"}
     )
+    assert resp.status_code == 400
+    assert "error" in resp.json()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "body"),
+    [
+        ("/api/feedback", {"rating": "up", "sources": 123}),
+        ("/api/feedback", {"rating": "sideways", "sources": []}),
+        ("/api/feedback/source", {"source_id": "m1", "query": 123, "rating": "up"}),
+        ("/api/feedback/source", {"source_id": "", "query": "hola", "rating": "up"}),
+        ("/api/feedback/source", {"source_id": "m1", "query": "hola", "rating": "x"}),
+    ],
+)
+def test_feedback_rejects_invalid_typed_inputs(client, endpoint, body) -> None:
+    resp = client.post(endpoint, json=body)
+
     assert resp.status_code == 400
     assert "error" in resp.json()
 
@@ -143,7 +201,7 @@ def test_ask_normalizes_ui_history_before_rewrite(tmp_path) -> None:
 
     memory = _SpyMemory(tmp_path)
     app = build_app(memory)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     history = [
         {"role": "user", "text": "qué sabés del proyecto memo daemon"},
@@ -170,7 +228,7 @@ def test_ask_stream_normalizes_ui_history_before_rewrite(tmp_path) -> None:
 
     memory = _SpyMemory(tmp_path)
     app = build_app(memory)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     history = [
         {"role": "user", "text": "qué sabés del proyecto memo daemon"},
@@ -216,7 +274,7 @@ def test_spa_fallback_does_not_swallow_unknown_api_routes(tmp_path) -> None:
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text("<!doctype html><html></html>")
     app = build_app(_FakeMemory(tmp_path), dist=dist)
-    c = TestClient(app)
+    c = TestClient(app, base_url="http://127.0.0.1")
 
     resp = c.get("/api/nonexistent")
     assert resp.status_code == 404
@@ -226,3 +284,20 @@ def test_spa_fallback_does_not_swallow_unknown_api_routes(tmp_path) -> None:
     resp = c.get("/cualquier/ruta")
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
+
+
+def test_chat_http_rejects_dns_rebinding_and_cross_site_requests(client) -> None:
+    rebound = client.get("/api/sessions", headers={"Host": "attacker.example"})
+    assert rebound.status_code == 403
+
+    cross_site = client.get(
+        "/api/sessions",
+        headers={"Origin": "https://attacker.example", "Sec-Fetch-Site": "cross-site"},
+    )
+    assert cross_site.status_code == 403
+
+
+def test_chat_http_rejects_oversized_request_body(client) -> None:
+    resp = client.post("/api/ask", json={"q": "x" * 1_048_577})
+
+    assert resp.status_code == 413

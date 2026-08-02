@@ -5,8 +5,10 @@ memo. Mirrors test_cli_consult_attribution for the chat group surface."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from click.testing import CliRunner
 
 from memo.cli_chat import chat_group
@@ -71,3 +73,34 @@ def test_chat_ask_silent_without_source(tmp_cfg: Config, monkeypatch) -> None:
     res = CliRunner().invoke(chat_group, ["ask", "what?"], env=_env(tmp_cfg))
     assert res.exit_code == 0, res.output
     assert read_recall_log(tmp_cfg.state_dir, limit=10) == []
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.0.2.10"])  # noqa: S104
+def test_chat_serve_rejects_non_loopback_bind(host: str) -> None:
+    result = CliRunner().invoke(chat_group, ["serve", "--host", host])
+
+    assert result.exit_code == 1
+    assert "only accepts loopback hosts" in result.output
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_chat_serve_accepts_loopback_bind(host: str, monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+    memory = SimpleNamespace()
+    monkeypatch.setattr("memo.cli_chat._build_memory", lambda: memory)
+    monkeypatch.setattr("memo.chat.http.build_app", lambda mem, dist=None: (mem, dist))
+
+    def fake_run(app, **kwargs) -> None:
+        seen.update(app=app, **kwargs)
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    result = CliRunner().invoke(
+        chat_group,
+        ["serve", "--host", host, "--port", "9876", "--dist", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["host"] == host
+    assert seen["port"] == 9876
+    assert seen["app"] == (memory, tmp_path)

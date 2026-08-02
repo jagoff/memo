@@ -196,6 +196,13 @@ def chat_ask(
 )
 def chat_serve(host: str, port: int, dist: Path | None) -> None:
     """Serve the chat UI + API over HTTP (requires the [http] extra)."""
+    from memo.http_auth import is_loopback_host
+
+    if not is_loopback_host(host):
+        raise click.ClickException(
+            "chat serve has no remote authentication and only accepts loopback "
+            "hosts (127.0.0.1, ::1, or localhost)"
+        )
     try:
         import uvicorn
     except ImportError as exc:
