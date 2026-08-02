@@ -176,15 +176,14 @@ class ReceiverSupervisor:
         with self._receipts_lock:
             if mid in self._receipts:
                 return self._receipts[mid]
-        if req.get("op") != "write" or not isinstance(req.get("text"), str):
-            out = {"ok": False, "error": "invalid request"}
-        else:
-            try:
-                n = self.session.write(req["text"])
-                out = {"ok": True, "message_id": mid, "bytes": n}
-            except Exception as exc:
-                out = {"ok": False, "message_id": mid, "error": str(exc)}
-        with self._receipts_lock:
+            if req.get("op") != "write" or not isinstance(req.get("text"), str):
+                out = {"ok": False, "error": "invalid request"}
+            else:
+                try:
+                    n = self.session.write(req["text"])
+                    out = {"ok": True, "message_id": mid, "bytes": n}
+                except Exception as exc:
+                    out = {"ok": False, "message_id": mid, "error": str(exc)}
             self._receipts[mid] = out
             self._receipts.move_to_end(mid)
             while len(self._receipts) > 1024:
