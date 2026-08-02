@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gc
+import weakref
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -122,6 +124,21 @@ def _connected_graph(tmp_path: Path) -> GraphStore:
         )
     graph.rebuild_edges()
     return graph
+
+
+def test_projection_store_does_not_keep_graph_store_alive(tmp_path: Path) -> None:
+    graph = _connected_graph(tmp_path)
+    graph_ref = weakref.ref(graph)
+
+    del graph
+    survivor = graph_ref()
+    try:
+        assert survivor is None
+    finally:
+        if survivor is not None:
+            survivor.close()
+        del survivor
+        gc.collect()
 
 
 def test_projection_rebuild_activates_complete_version(tmp_path: Path) -> None:

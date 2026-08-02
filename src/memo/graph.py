@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import weakref
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -221,9 +222,20 @@ class GraphStore:
             )
         # Higher layers may compose an application-specific read projection.
         # GraphStore stays a foundation leaf and owns only raw graph storage.
-        self.projection = (
-            projection_factory(self._conn, self._tx) if projection_factory is not None else None
-        )
+        if projection_factory is None:
+            self.projection = None
+        else:
+            owner_ref = weakref.ref(self)
+
+            @contextmanager
+            def projection_tx() -> Iterator[sqlite3.Connection]:
+                owner = owner_ref()
+                if owner is None:
+                    raise RuntimeError("graph store is closed")
+                with owner._tx() as connection:
+                    yield connection
+
+            self.projection = projection_factory(self._conn, projection_tx)
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
