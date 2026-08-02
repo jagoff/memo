@@ -392,7 +392,7 @@ therefore capture the local TTY for notifications but do not auto-register an
 input target. Existing registrations are not advertised and are pruned when
 listed.
 
-The CLI retains only read-only inspection and receipt history:
+The CLI retains read-only inspection and receipt history by default:
 
 ```bash
 memo terminal list --json
@@ -401,9 +401,31 @@ memo terminal history --json
 
 The read-only `memo_terminal_list` tool remains on every MCP profile and
 honestly returns no deliverable legacy target. `memo_terminal_send` and
-`memo_terminal_enter` are not registered on any MCP profile. The central bridge
-also fails closed until a cooperative or native process-bound receiver exists.
-Use handoffs and attention for durable agent coordination.
+`memo_terminal_enter` are not registered on any MCP profile.
+
+For applications that explicitly opt in, Memo provides a receiver-bound
+transport backed by a nested PTY. The receiver owns the PTY master; each
+operation authenticates the peer UID and a random capability, then revalidates
+the child PID, process birth identity, TTY, and foreground process group before
+writing. Requests are idempotent by `message_id` and the capability is read
+from a mode-0600 file rather than passed in process arguments:
+
+```bash
+export MEMO_TERMINAL_RECEIVER_ENABLED=1
+memo terminal receiver attach \
+  --capability-file ~/.local/state/memo/receiver.cap -- codex
+memo terminal receiver send --socket SOCKET --capability-file ~/.local/state/memo/receiver.cap \
+  --message-id msg-1 --message 'hello' --submit
+memo terminal receiver enter --socket SOCKET --capability-file ~/.local/state/memo/receiver.cap \
+  --message-id msg-2
+```
+
+When the same flag is enabled, the MCP server additionally registers
+`memo_terminal_receiver_send` and `memo_terminal_receiver_enter`; they accept a
+socket path and capability-file path, never a raw capability. The flag is
+disabled by default and legacy exact-TTY mutators remain unavailable. Use
+handoffs and attention for durable agent coordination when the receiver is not
+appropriate.
 
 ## MCP tools
 

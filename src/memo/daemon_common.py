@@ -44,6 +44,11 @@ def socket_path_for(state_dir: Path, name: str) -> Path:
     digest = hashlib.sha256(str(state_dir.expanduser()).encode("utf-8")).hexdigest()[:16]
     uid = os.getuid() if hasattr(os, "getuid") else "nouid"
     root = Path(tempfile.gettempdir()) / f"memo-{uid}"
+    # ``tempfile.gettempdir()`` can itself be a long per-user macOS path.
+    # Keep the fallback below AF_UNIX's 104-byte sockaddr limit even when the
+    # test/runtime temp root is deeply nested.
+    if len(str(root / f"{name}-{digest}.sock")) >= _AF_UNIX_SAFE_PATH_LEN:
+        root = Path(Path(tempfile.gettempdir()).anchor) / "tmp" / f"memo-{uid}"
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return root / f"{name}-{digest}.sock"
 

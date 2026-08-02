@@ -1,134 +1,231 @@
-"""Receiver-bound Unix transport for terminal/PTY writes.
+"""Receiver-bound Unix transport for safe Memo terminal delivery.
 
-The API is intentionally small: :class:`ReceiverSupervisor` owns a socket and
-PTY child, while :class:`ReceiverClient` sends authenticated JSON messages.
+The supervisor owns a nested PTY and is the only process that writes to its
+master.  Senders talk to a short-lived, user-owned Unix socket and must prove
+both peer UID and a per-session capability.  The child PID/start identity and
+foreground process group are checked immediately before every write.
 """
+
 from __future__ import annotations
 
+import contextlib
+import ctypes
+import hashlib
+import hmac
 import json
 import os
 import pty
 import secrets
 import socket
+import struct
+import sys
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+from memo.daemon_common import socket_path_for
+from memo.terminal_live import ProcessSnapshot, _process_snapshot, _strip_terminal_controls
+
 MAX_FRAME = 64 * 1024
+_MAX_RECEIPTS = 1024
+_SOCKET_TIMEOUT = 5.0
+_MESSAGE_ID_MAX = 128
 
 
-def _sanitize(value: Any) -> Any:
-    if isinstance(value, str):
-        # Keep printable text plus common whitespace; reject NUL and terminal
-        # control sequences before they reach a PTY.
-        return "".join(c for c in value if c in "\n\r\t" or ord(c) >= 32 and ord(c) != 127)
-    if isinstance(value, dict):
-        return {_sanitize(str(k)): _sanitize(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_sanitize(v) for v in value]
-    return value
+def read_capability_file(path: Path | str) -> str:
+    """Read a mode-0600 capability without putting it in process argv."""
+
+    capability_path = Path(path)
+    info = capability_path.stat()
+    if info.st_uid != os.getuid() or info.st_mode & 0o777 != 0o600:
+        raise ValueError("capability file must be owned by the current user and mode 0600")
+    with capability_path.open(encoding="ascii") as stream:
+        capability = stream.read().strip()
+    if not capability:
+        raise ValueError("capability file is empty")
+    return capability
 
 
 def _peer_uid(conn: socket.socket) -> int | None:
+    """Return the authenticated peer UID, or ``None`` if unsupported."""
+
     if hasattr(socket, "SO_PEERCRED"):
-        import struct
         raw = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
         return struct.unpack("3i", raw)[1]
     if hasattr(conn, "getpeereid"):
         return conn.getpeereid()[0]  # type: ignore[attr-defined]
+    if sys.platform == "darwin":
+        euid = ctypes.c_uint()
+        egid = ctypes.c_uint()
+        libc = ctypes.CDLL(None, use_errno=True)
+        getpeereid = libc.getpeereid
+        getpeereid.argtypes = [
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_uint),
+            ctypes.POINTER(ctypes.c_uint),
+        ]
+        getpeereid.restype = ctypes.c_int
+        if getpeereid(conn.fileno(), ctypes.byref(euid), ctypes.byref(egid)) == 0:
+            return int(euid.value)
     return None
 
 
-def _proc_start(pid: int) -> str | None:
-    if os.name != "posix":
-        return None
-    try:
-        if Path("/proc").is_dir():
-            fields = (Path(f"/proc/{pid}/stat").read_text()).split()
-            return fields[21]
-    except (OSError, IndexError):
-        return None
-    return None
+def _fingerprint(request: dict[str, Any]) -> str:
+    material = json.dumps(
+        {
+            "op": request.get("op"),
+            "text": request.get("text"),
+            "submit": request.get("submit"),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
 
 
 class ReceiverSession:
-    """Owns a PTY master and validates child identity before every write."""
+    """Own a PTY master and validate child identity before every write."""
 
-    def __init__(self, master_fd: int, child_pid: int, *, child_start: str | None = None):
+    def __init__(
+        self,
+        master_fd: int,
+        child_pid: int,
+        *,
+        child_start: str | None = None,
+        child_tty: str | None = None,
+    ) -> None:
+        if master_fd < 0 or child_pid <= 1:
+            raise ValueError("invalid receiver PTY identity")
         self.master_fd = master_fd
         self.child_pid = child_pid
-        self.child_start = child_start if child_start is not None else _proc_start(child_pid)
+        self.child_start = child_start
+        self.child_tty = child_tty
         self._closed = False
         self._lock = threading.Lock()
+        self._capture_identity()
 
     @classmethod
-    def fork(cls, argv: list[str]) -> "ReceiverSession":
+    def fork(cls, argv: list[str]) -> ReceiverSession:
+        if not argv or not argv[0].strip():
+            raise ValueError("receiver command is required")
         pid, fd = pty.fork()
         if pid == 0:
-            os.execvp(argv[0], argv)
-        return cls(fd, pid)
+            os.execvp(argv[0], argv)  # noqa: S606 - explicit receiver command, no shell
+        session = cls(fd, pid)
+        if session.child_start is None or session.child_tty is None:
+            session.close()
+            raise RuntimeError("receiver child identity could not be established")
+        return session
+
+    def _capture_identity(self) -> None:
+        for _ in range(100):
+            snapshot = _process_snapshot(self.child_pid)
+            if isinstance(snapshot, ProcessSnapshot):
+                self.child_start = str(snapshot.started_at)
+                self.child_tty = str(snapshot.tty)
+                return
+            time.sleep(0.01)
 
     def alive(self) -> bool:
         if self._closed:
             return False
-        try:
-            os.kill(self.child_pid, 0)
-        except OSError:
-            return False
-        if self.child_start is not None and _proc_start(self.child_pid) != self.child_start:
-            return False
-        return True
+        snapshot = _process_snapshot(self.child_pid)
+        return self._identity_matches(snapshot, require_foreground=True)
 
-    def write(self, text: str) -> int:
-        text = _sanitize(text)
-        if not isinstance(text, str) or len(text.encode()) > MAX_FRAME:
+    def _identity_matches(
+        self, snapshot: ProcessSnapshot | object, *, require_foreground: bool
+    ) -> bool:
+        if not isinstance(snapshot, ProcessSnapshot):
+            return False
+        if self.child_start is None or self.child_tty is None:
+            return False
+        return (
+            hmac.compare_digest(str(snapshot.started_at), self.child_start)
+            and str(snapshot.tty) == self.child_tty
+            and (not require_foreground or snapshot.pgid == snapshot.foreground_pgid)
+        )
+
+    def _write_bytes(self, payload: bytes) -> int:
+        if len(payload) > MAX_FRAME:
             raise ValueError("frame too large")
         with self._lock:
             if not self.alive():
                 raise RuntimeError("stale or dead child")
-            return os.write(self.master_fd, text.encode())
+            written = 0
+            while written < len(payload):
+                try:
+                    count = os.write(self.master_fd, payload[written:])
+                except OSError:
+                    raise
+                if count <= 0:
+                    raise OSError("receiver PTY write made no progress")
+                written += count
+            return written
+
+    def write(self, text: str, *, submit: bool = False) -> int:
+        if not isinstance(text, str):
+            raise ValueError("receiver text must be a string")
+        sanitized = _strip_terminal_controls(text)
+        payload = sanitized.encode("utf-8") + (b"\r" if submit else b"")
+        return self._write_bytes(payload)
+
+    def enter(self) -> int:
+        return self._write_bytes(b"\r")
 
     def close(self) -> None:
         with self._lock:
-            if not self._closed:
-                self._closed = True
-                try:
-                    os.close(self.master_fd)
-                except OSError:
-                    pass
+            if self._closed:
+                return
+            self._closed = True
+            with contextlib.suppress(OSError):
+                os.close(self.master_fd)
+            snapshot = _process_snapshot(self.child_pid)
+            if self._identity_matches(snapshot, require_foreground=False):
+                with contextlib.suppress(OSError, ProcessLookupError):
+                    os.killpg(os.getpgid(self.child_pid), 15)
+            for _ in range(20):
+                with contextlib.suppress(ChildProcessError, OSError):
+                    waited, _ = os.waitpid(self.child_pid, os.WNOHANG)
+                    if waited == self.child_pid:
+                        return
+                time.sleep(0.01)
+            snapshot = _process_snapshot(self.child_pid)
+            if self._identity_matches(snapshot, require_foreground=False):
+                with contextlib.suppress(OSError, ProcessLookupError):
+                    os.killpg(os.getpgid(self.child_pid), 9)
+            with contextlib.suppress(ChildProcessError, OSError):
+                os.waitpid(self.child_pid, os.WNOHANG)
 
 
 class ReceiverSupervisor:
     """Authenticated newline-delimited JSON receiver server."""
 
-    def __init__(self, state_dir: Path | str, session: ReceiverSession):
+    def __init__(self, state_dir: Path | str, session: ReceiverSession) -> None:
         if os.name != "posix":
             raise RuntimeError("receiver transport requires Unix")
         self.state_dir = Path(state_dir)
-        self.socket_path = self.state_dir / "receiver.sock"
-        self.session = session
         self.capability = secrets.token_urlsafe(32)
+        self.socket_path = socket_path_for(self.state_dir, f"receiver-{secrets.token_hex(8)}")
+        self.session = session
         self._sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
-        self._receipts: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._receipts: OrderedDict[str, tuple[str, dict[str, Any]]] = OrderedDict()
         self._receipts_lock = threading.Lock()
 
     def start(self) -> Path:
         self.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(self.state_dir, 0o700)
-        try:
-            self.socket_path.unlink()
-        except FileNotFoundError:
-            pass
+        self.state_dir.chmod(0o700)
+        self.socket_path.unlink(missing_ok=True)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.bind(str(self.socket_path))
-        os.chmod(self.socket_path, 0o600)
+        self.socket_path.chmod(0o600)
         sock.listen(8)
         sock.settimeout(0.2)
         self._sock = sock
-        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread = threading.Thread(target=self._serve, name="memo-receiver", daemon=True)
         self._thread.start()
         return self.socket_path
 
@@ -137,15 +234,21 @@ class ReceiverSupervisor:
         while not self._stop.is_set():
             try:
                 conn, _ = self._sock.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
+            conn.settimeout(_SOCKET_TIMEOUT)
             threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    @staticmethod
+    def _response(conn: socket.socket, response: dict[str, Any]) -> None:
+        conn.sendall(json.dumps(response, separators=(",", ":")).encode("utf-8") + b"\n")
 
     def _handle(self, conn: socket.socket) -> None:
         try:
-            if _peer_uid(conn) not in (None, os.getuid()):
+            if _peer_uid(conn) != os.getuid():
+                self._response(conn, {"ok": False, "error": "unauthorized"})
                 return
             buf = b""
             while len(buf) <= MAX_FRAME:
@@ -153,70 +256,110 @@ class ReceiverSupervisor:
                 if not chunk:
                     break
                 buf += chunk
-                if b"\n" in buf:
-                    line, _, _ = buf.partition(b"\n")
-                    if len(line) > MAX_FRAME:
-                        return
-                    try:
-                        req = json.loads(line.decode())
-                    except (ValueError, UnicodeError):
-                        return
-                    resp = self._dispatch(req)
-                    conn.sendall(json.dumps(resp, separators=(",", ":")).encode() + b"\n")
+                if b"\n" not in buf:
+                    continue
+                line = buf.split(b"\n", 1)[0]
+                if len(line) > MAX_FRAME:
+                    self._response(conn, {"ok": False, "error": "frame too large"})
                     return
+                try:
+                    request = json.loads(line.decode("utf-8"))
+                except (ValueError, UnicodeError):
+                    self._response(conn, {"ok": False, "error": "invalid request"})
+                    return
+                self._response(conn, self._dispatch(request))
+                return
+            self._response(conn, {"ok": False, "error": "frame too large"})
+        except (OSError, TimeoutError):
+            return
         finally:
             conn.close()
 
-    def _dispatch(self, req: Any) -> dict[str, Any]:
-        if not isinstance(req, dict) or req.get("capability") != self.capability:
+    def _dispatch(self, request: Any) -> dict[str, Any]:
+        if not isinstance(request, dict):
+            return {"ok": False, "error": "invalid request"}
+        capability = request.get("capability")
+        if not isinstance(capability, str) or not hmac.compare_digest(capability, self.capability):
             return {"ok": False, "error": "unauthorized"}
-        mid = req.get("message_id")
-        if not isinstance(mid, str) or not mid:
+        message_id = request.get("message_id")
+        if not isinstance(message_id, str) or not message_id or len(message_id) > _MESSAGE_ID_MAX:
             return {"ok": False, "error": "message_id required"}
+        fingerprint = _fingerprint(request)
         with self._receipts_lock:
-            if mid in self._receipts:
-                return self._receipts[mid]
-            if req.get("op") != "write" or not isinstance(req.get("text"), str):
-                out = {"ok": False, "error": "invalid request"}
-            else:
-                try:
-                    n = self.session.write(req["text"])
-                    out = {"ok": True, "message_id": mid, "bytes": n}
-                except Exception as exc:
-                    out = {"ok": False, "message_id": mid, "error": str(exc)}
-            self._receipts[mid] = out
-            self._receipts.move_to_end(mid)
-            while len(self._receipts) > 1024:
+            existing = self._receipts.get(message_id)
+            if existing is not None:
+                old_fingerprint, old_response = existing
+                if not hmac.compare_digest(old_fingerprint, fingerprint):
+                    return {"ok": False, "message_id": message_id, "error": "message_id conflict"}
+                return old_response
+            try:
+                op = request.get("op")
+                if op == "write" and isinstance(request.get("text"), str):
+                    count = self.session.write(
+                        request["text"], submit=bool(request.get("submit", False))
+                    )
+                elif op == "enter":
+                    count = self.session.enter()
+                else:
+                    raise ValueError("invalid request")
+                response = {"ok": True, "message_id": message_id, "bytes": count}
+            except Exception as exc:
+                response = {"ok": False, "message_id": message_id, "error": str(exc)}
+            self._receipts[message_id] = (fingerprint, response)
+            self._receipts.move_to_end(message_id)
+            while len(self._receipts) > _MAX_RECEIPTS:
                 self._receipts.popitem(last=False)
-        return out
+            return response
 
     def close(self) -> None:
         self._stop.set()
         if self._sock is not None:
-            self._sock.close()
+            with contextlib.suppress(OSError):
+                self._sock.close()
         if self._thread is not None:
             self._thread.join(timeout=1)
-        try:
-            self.socket_path.unlink()
-        except FileNotFoundError:
-            pass
+        self.socket_path.unlink(missing_ok=True)
         self.session.close()
 
 
 class ReceiverClient:
-    def __init__(self, socket_path: Path | str, capability: str):
-        self.socket_path, self.capability = Path(socket_path), capability
+    """Authenticated client used by the experimental receiver CLI/MCP path."""
 
-    def send(self, *, message_id: str, text: str) -> dict[str, Any]:
-        req = {"capability": self.capability, "message_id": message_id, "op": "write", "text": text}
-        raw = json.dumps(req, separators=(",", ":")).encode()
+    def __init__(
+        self, socket_path: Path | str, capability: str, *, timeout: float = _SOCKET_TIMEOUT
+    ):
+        self.socket_path = Path(socket_path)
+        self.capability = capability
+        self.timeout = timeout
+
+    def send(self, *, message_id: str, text: str, submit: bool = False) -> dict[str, Any]:
+        return self._request(
+            {"op": "write", "message_id": message_id, "text": text, "submit": submit}
+        )
+
+    def enter(self, *, message_id: str) -> dict[str, Any]:
+        return self._request({"op": "enter", "message_id": message_id})
+
+    def _request(self, fields: dict[str, Any]) -> dict[str, Any]:
+        request = {"capability": self.capability, **fields}
+        raw = json.dumps(request, separators=(",", ":")).encode("utf-8")
         if len(raw) > MAX_FRAME:
             raise ValueError("frame too large")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.connect(str(self.socket_path)); s.sendall(raw + b"\n")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(self.timeout)
+            sock.connect(str(self.socket_path))
+            sock.sendall(raw + b"\n")
             data = b""
             while not data.endswith(b"\n"):
-                chunk = s.recv(4096)
-                if not chunk: break
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
                 data += chunk
-        return json.loads(data.decode())
+                if len(data) > MAX_FRAME:
+                    raise ValueError("frame too large")
+        if not data.endswith(b"\n"):
+            raise RuntimeError("receiver returned an incomplete response")
+        response = json.loads(data.decode("utf-8"))
+        if not isinstance(response, dict):
+            raise RuntimeError("receiver returned an invalid response")
+        return response

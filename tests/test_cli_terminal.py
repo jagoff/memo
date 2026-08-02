@@ -39,3 +39,26 @@ def test_terminal_list_and_history_are_empty_by_default(tmp_cfg) -> None:
     assert history.exit_code == 0, history.output
     assert json.loads(listed.output) == []
     assert json.loads(history.output) == []
+
+
+def test_receiver_mutators_are_fail_closed_without_explicit_opt_in(tmp_cfg) -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "terminal",
+            "receiver",
+            "send",
+            "--socket",
+            str(tmp_cfg.state_dir / "missing.sock"),
+            "--capability-file",
+            str(tmp_cfg.state_dir / "missing.cap"),
+            "--message-id",
+            "m1",
+            "--message",
+            "hello",
+        ],
+        env=_env(tmp_cfg),
+    )
+
+    assert result.exit_code != 0
+    assert "receiver-bound terminal transport is disabled" in result.output
