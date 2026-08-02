@@ -42,9 +42,9 @@ def _enforce_resource_hygiene(request: pytest.FixtureRequest):
         yield
         return
 
-    gc.collect()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", ResourceWarning)
+        gc.collect()
         yield
         gc.collect()
 

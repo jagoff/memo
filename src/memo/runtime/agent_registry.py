@@ -432,6 +432,31 @@ def _isolated_runtime_smoke(
             return False, False, str(exc)[:500]
 
 
+def _runtime_command_matches(command: str, runtime: Path | None) -> bool:
+    if not command or runtime is None:
+        return False
+    candidate = Path(command)
+    if not candidate.is_absolute():
+        resolved = shutil.which(command)
+        if not resolved:
+            return False
+        candidate = Path(resolved)
+    try:
+        return candidate.resolve() == runtime.resolve()
+    except OSError:
+        return candidate == runtime
+
+
+def _runtime_detail_matches(raw_detail: str, runtime: Path | None) -> bool:
+    if runtime is not None and str(runtime) in raw_detail:
+        return True
+    for line in raw_detail.splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key.strip().lower() == "command":
+            return _runtime_command_matches(value.strip(), runtime)
+    return False
+
+
 def _probe_agent_configuration(
     *,
     adapter: AgentAdapter,
@@ -463,7 +488,7 @@ def _probe_agent_configuration(
             except ValueError:
                 parsed = None
         if parsed is None:
-            config_runtime = bool(runtime and str(runtime) in raw_detail)
+            config_runtime = _runtime_detail_matches(raw_detail, runtime)
             profile_current = adapter.mcp_profile in raw_detail
         else:
             transport_value = parsed.get("transport")
@@ -471,7 +496,7 @@ def _probe_agent_configuration(
             command = str(transport.get("command") or "")
             env_value = transport.get("env")
             mcp_env = env_value if isinstance(env_value, dict) else {}
-            config_runtime = bool(runtime and command == str(runtime))
+            config_runtime = _runtime_command_matches(command, runtime)
             profile_current = mcp_env.get("MEMO_MCP_PROFILE") == adapter.mcp_profile
         return config_ok, config_runtime, profile_current, raw_detail[:500]
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
