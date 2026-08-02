@@ -9,6 +9,8 @@ import subprocess
 import termios
 from pathlib import Path
 
+from memo.errors import TerminalDeliveryError
+
 _PROMPT_LITERAL_MARKER = "__MEMO_PROMPT_LITERAL__"
 
 
@@ -45,7 +47,7 @@ def _run_osascript(
     script_input: str | None = None
     if prompt_text is not None:
         if script.count(_PROMPT_LITERAL_MARKER) != 1:
-            raise OSError("terminal automation payload marker is invalid")
+            raise TerminalDeliveryError("terminal automation payload marker is invalid")
         script_input = script.replace(
             _PROMPT_LITERAL_MARKER,
             json.dumps(prompt_text, ensure_ascii=False),
@@ -61,9 +63,9 @@ def _run_osascript(
             input=script_input,
         )
     except subprocess.TimeoutExpired as exc:
-        raise OSError("terminal automation timed out") from exc
+        raise TerminalDeliveryError("terminal automation timed out") from exc
     except OSError as exc:
-        raise OSError("terminal automation could not start") from exc
+        raise TerminalDeliveryError("terminal automation could not start") from exc
 
 
 def _split_payload(payload: bytes) -> tuple[str, bool]:
@@ -72,7 +74,7 @@ def _split_payload(payload: bytes) -> tuple[str, bool]:
     try:
         return body.decode("utf-8"), submit
     except UnicodeDecodeError as exc:  # defensive: bridge always supplies UTF-8
-        raise OSError("terminal payload is not UTF-8") from exc
+        raise TerminalDeliveryError("terminal payload is not UTF-8") from exc
 
 
 _GHOSTTY_INPUT_SCRIPT = r"""
@@ -150,7 +152,7 @@ def _deliver_ghostty(tty: Path, payload: bytes) -> None:
         prompt_text=body,
     )
     if result.returncode != 0 or result.stdout.strip() != "ok":
-        raise OSError("Ghostty could not find the registered TTY")
+        raise TerminalDeliveryError("Ghostty could not find the registered TTY")
 
 
 def _deliver_terminal(tty: Path, payload: bytes) -> None:
@@ -162,7 +164,7 @@ def _deliver_terminal(tty: Path, payload: bytes) -> None:
         prompt_text=body,
     )
     if result.returncode != 0 or result.stdout.strip() != "ok":
-        raise OSError("Terminal could not find the registered TTY")
+        raise TerminalDeliveryError("Terminal could not find the registered TTY")
 
 
 def _deliver_iterm(tty: Path, payload: bytes, *, app_name: str) -> None:
@@ -200,7 +202,7 @@ end run
         prompt_text=body,
     )
     if result.returncode != 0 or result.stdout.strip() != "ok":
-        raise OSError(f"{app_name} could not find the registered TTY")
+        raise TerminalDeliveryError(f"{app_name} could not find the registered TTY")
 
 
 def deliver_input(tty: Path, payload: bytes, *, terminal_app: str) -> str:
@@ -209,7 +211,9 @@ def deliver_input(tty: Path, payload: bytes, *, terminal_app: str) -> str:
         _deliver_tiocsti(tty, payload)
         return "tiocsti"
     except _PartialTIOCSTIError as partial_error:
-        raise OSError("terminal input delivery was partial; refusing fallback") from partial_error
+        raise TerminalDeliveryError(
+            "terminal input delivery was partial; refusing fallback"
+        ) from partial_error
     except OSError as direct_error:
         try:
             if terminal_app == "Ghostty":
@@ -221,8 +225,10 @@ def deliver_input(tty: Path, payload: bytes, *, terminal_app: str) -> str:
             if terminal_app in {"iTerm", "iTerm2"}:
                 _deliver_iterm(tty, payload, app_name=terminal_app)
                 return "iterm-applescript"
+        except TerminalDeliveryError:
+            raise
         except OSError as fallback_error:
-            raise OSError("terminal input delivery failed") from fallback_error
-        raise OSError(
+            raise TerminalDeliveryError("terminal input delivery failed") from fallback_error
+        raise TerminalDeliveryError(
             "terminal input injection is unavailable: no exact-session fallback"
         ) from direct_error

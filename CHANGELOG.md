@@ -29,6 +29,9 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   the exact terminal without a global-focus race, and no longer uses the
   clipboard for Terminal.app delivery. A partially successful `TIOCSTI`
   injection is never replayed through a fallback transport.
+- Live terminal delivery now reports safe transport failures such as an
+  unresponsive terminal automation endpoint in both the CLI error and receipt,
+  while unexpected exception details remain redacted.
 
 ### Changed
 
