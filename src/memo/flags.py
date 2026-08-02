@@ -282,6 +282,11 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_AGENT_TTY",
         "MEMO_CODEX_BADGE_SHOWN",
         "MEMO_STARTUP_BANNER_SHOWN",
+        # Legacy live-terminal shims exported these into already-running agent
+        # sessions.  New shims remove them, but config validation must remain
+        # compatible for the lifetime of a process started before the upgrade.
+        "MEMO_TERMINAL_ID",
+        "MEMO_TERMINAL_REGISTRATION_ATTEMPTED",
         # User-facing banner toggle consumed by the bash shell shim
         # (runtime/shims.py). Env-only: the shim can't see the markdown-config
         # chain, so registering it as a flag would diverge silently.
