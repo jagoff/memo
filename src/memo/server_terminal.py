@@ -23,7 +23,6 @@ def register(server: Any, memory: Any) -> None:
     if not flag_bool("MEMO_TERMINAL_RECEIVER_ENABLED"):
         return
 
-    @annotated_tool(server)
     def memo_terminal_receiver_send(
         socket: str,
         capability_file: str,
@@ -38,7 +37,6 @@ def register(server: Any, memory: Any) -> None:
             submit=submit,
         )
 
-    @annotated_tool(server)
     def memo_terminal_receiver_enter(
         socket: str,
         capability_file: str,
@@ -48,3 +46,9 @@ def register(server: Any, memory: Any) -> None:
         return ReceiverClient(socket, read_capability_file(capability_file)).enter(
             message_id=message_id
         )
+
+    # Register only after the explicit opt-in check. Keeping the decorator
+    # application dynamic preserves the default MCP tool-count contract while
+    # making the experimental mutators absent when the flag is disabled.
+    annotated_tool(server)(memo_terminal_receiver_send)
+    annotated_tool(server)(memo_terminal_receiver_enter)

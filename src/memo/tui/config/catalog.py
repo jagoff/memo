@@ -361,6 +361,7 @@ GROUP_TO_DOMAIN: dict[str, str] = {
     "session": "Recall",
     "store": "Storage",
     "sync": "Hooks",
+    "terminal": "Advanced",
     "temporal": "Search",
     "update": "Maintenance",
     "whatsapp": "Capture",
