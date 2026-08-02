@@ -69,11 +69,11 @@ Most memory servers *add* context. memo is built to remove it.
 
 | Profile | Tools | Schema tokens |
 |---|---:|---:|
-| `agent` (default) | 40 | ~4.0k |
-| `core` / `slim` | 57 | ~5.2k |
-| `full` / `default` | 161 | ~18k |
+| `agent` (default) | 43 | ~4.3k |
+| `core` / `slim` | 60 | ~5.5k |
+| `full` / `default` | 164 | ~18.3k |
 
-The default MCP surface is 40 tools, not 161: about 75% fewer tool schemas. It exposes **40 tools / ~4.0k schema tokens** versus **161 tools / ~18k tokens** on the full surface — overhead paid every session, in every client.
+The default MCP surface is 43 tools, not 164: about 74% fewer tool schemas. It exposes **43 tools / ~4.3k schema tokens** versus **164 tools / ~18.3k tokens** on the full surface — overhead paid every session, in every client.
 
 Ambient recall injects one relevant memory before the model answers. The bundled Claude Code hook caps that injection at ~160 tokens. `memo roi` reads the real grounding and re-ask ledgers, then estimates accumulated savings with disclosed defaults (350 tokens per grounded recall and 900 per avoided re-ask).
 
@@ -183,7 +183,7 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 
 **Session & History:** `history` `as-of` `diff` `record-history` `session` `chat-session` `resume` `reflect` `mine-history` `episodes` `chronicle`
 
-**Maintenance:** `reindex` `maintain` `review` `dream` `consolidate` `synthesize` `dedupe` `retier` `contradict` `coordinate` `invalidate` `temporal` `compress-context` `ops`
+**Maintenance:** `reindex` `maintain` `review` `dream` `consolidate` `synthesize` `dedupe` `retier` `contradict` `coordinate` `terminal` `invalidate` `temporal` `compress-context` `ops`
 
 **Analysis & Quality:** `health` `stats` `doctor` `journey-check` `lint` `drift` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps` `outcome` `profile` `confidence` `graduation` `hype` `definitive` `evidence`
 

@@ -71,6 +71,7 @@ from memo import server_session_patterns as _srv_session_patterns
 from memo import server_sync as _srv_sync
 from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
+from memo import server_terminal as _srv_terminal
 from memo import server_verbatim as _srv_verbatim
 from memo import server_version as _srv_version
 from memo.config import Config
@@ -344,6 +345,7 @@ def _build_server(
     _srv_core_history.register(server, memory)
     _srv_idle_capture.register(server, memory)
     _srv_operational.register(server, memory)
+    _srv_terminal.register(server, memory)
     _srv_resources.register(server, memory)
     _srv_profile.register(server, memory)
     _srv_prompts.register(server, memory)

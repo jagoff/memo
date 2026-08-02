@@ -25,7 +25,7 @@ _SHIM_MARKER = "# memo-shim"
 
 _SHIM_TEMPLATE = """\
 #!/usr/bin/env bash
-# memo-shim v3 — written by `memo install-shims`. Do not edit manually.
+# memo-shim v4 — written by `memo install-shims`. Do not edit manually.
 set -euo pipefail
 _MEMO_BIN_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 _AGENT="$(basename "$0")"
@@ -50,6 +50,18 @@ if [ -z "$_NEXT" ]; then
     exit 127
 fi
 _MEMO="$(command -v memo 2>/dev/null || true)"
+if [ -n "$_MEMO" ] && [ -n "${MEMO_AGENT_TTY:-}" ] && [ "${MEMO_TERMINAL_REGISTRATION_ATTEMPTED:-0}" != "1" ]; then
+    MEMO_TERMINAL_REGISTRATION_ATTEMPTED=1
+    export MEMO_TERMINAL_REGISTRATION_ATTEMPTED
+    MEMO_TERMINAL_ID="$("$_MEMO" terminal register \
+        --agent "$_AGENT" \
+        --tty "$MEMO_AGENT_TTY" \
+        --pid "$$" \
+        --terminal-app "${TERM_PROGRAM:-}" \
+        --project "$PWD" \
+        --id-only 2>/dev/null || true)"
+    [ -n "$MEMO_TERMINAL_ID" ] && export MEMO_TERMINAL_ID
+fi
 if [ -n "$_MEMO" ] && [ "${MEMO_STARTUP_BANNER:-1}" != "0" ] && [ "${MEMO_STARTUP_BANNER_SHOWN:-0}" != "1" ]; then
     MEMO_STARTUP_BANNER_SHOWN=1
     export MEMO_STARTUP_BANNER_SHOWN
