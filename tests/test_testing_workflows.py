@@ -83,7 +83,7 @@ def test_stability_workflow_is_replayable_and_never_masks_flakes() -> None:
     }
     job = workflow["jobs"]["stability"]
     assert job["runs-on"] == "ubuntu-latest"
-    assert job["timeout-minutes"] == 75
+    assert job["timeout-minutes"] == 90
     assert job["steps"][:2] == [
         {"uses": CHECKOUT_ACTION, "with": {"persist-credentials": False}},
         {"uses": SETUP_PYTHON_ACTION, "with": {"python-version": "3.13"}},
