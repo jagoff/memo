@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-08-02
+
 ### Added
 
 - `memo events list --cursor` now exposes bounded, resumable event pages from
@@ -17,9 +19,27 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   `memo chat-session list --cursor` similarly supports stable
   session-id pagination so consumers can drain histories larger than 1,000
   records without replaying earlier pages.
+- MCP saves support deferred embedding over stdio, preserving fast writes while
+  keeping the markdown source of truth and later index convergence intact.
+- Read-only live-terminal inventory and receipt diagnostics are available over
+  CLI and MCP. Unsafe input delivery remains fail-closed and is not exposed.
 
 ### Fixed
 
+- The archived Memflow and Synapse agent-integration state now migrates fully
+  into memo, including exact, idempotent chat feedback signals, without leaving
+  a second runtime or database in service.
+- Runtime provenance, SQLite and audit resource cleanup, graph projection
+  teardown, bounded GPU-lock waits, and local Docker builds are hardened for
+  production and CI isolation.
+- Vault re-ingest now self-heals missing legacy FTS bodies even when the source
+  hash is unchanged, and the integrity auditor validates Markdown, PDF, image,
+  and audio references without misclassifying external media paths.
+- Tantivy uses short, cross-process writer leases and refreshes long-lived
+  readers per query, so MCP, CLI, and daemons can update one index without lock
+  starvation or stale search snapshots.
+- Chat HTTP/SSE boundaries, destructive session resets, rejection quotas, and
+  loopback enforcement are safe under concurrent requests.
 - `memo config validate` accepts the retired live-terminal shim variables in
   agent processes that were already running when the fail-closed upgrade was
   installed; fresh shims still remove those variables.

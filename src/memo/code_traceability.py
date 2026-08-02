@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
-from memo.code_evidence import normalize_code_path
+from memo.code_evidence import CodegraphEvidenceResolver, normalize_code_path
 
 
 @dataclass(frozen=True)
@@ -249,6 +249,9 @@ class CodeReferenceResolver:
         self.repo_root = repo_root
         self.repo_id = repo_id or codegraph_repo_id(repo_root)
         self.nodes: list[sqlite3.Row] = []
+        self.nodes_by_path: dict[str, list[sqlite3.Row]] = {}
+        self._evidence_resolver: CodegraphEvidenceResolver | None = None
+        self._evidence_by_path: dict[str, dict[str, Any]] = {}
         if db_path.is_file():
             try:
                 conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -259,18 +262,40 @@ class CodeReferenceResolver:
                     conn.close()
             except sqlite3.Error:
                 self.nodes = []
+        for row in self.nodes:
+            self.nodes_by_path.setdefault(str(row["file_path"]), []).append(row)
+
+    def _matching_nodes(self, relative: str) -> list[sqlite3.Row]:
+        """Resolve exact and repo-prefixed paths without scanning every node."""
+        parts = relative.split("/")
+        candidate_paths = dict.fromkeys("/".join(parts[index:]) for index in range(len(parts)))
+        return [
+            row
+            for candidate in candidate_paths
+            for row in self.nodes_by_path.get(candidate, ())
+        ]
+
+    def _code_evidence(self, file_path: str) -> dict[str, Any]:
+        normalized = normalize_code_path(file_path)
+        cached = self._evidence_by_path.get(normalized)
+        if cached is not None:
+            return cached
+        if self._evidence_resolver is None:
+            self._evidence_resolver = CodegraphEvidenceResolver(
+                db_path=self.db_path,
+                repo_root=self.repo_root,
+                repo_id=self.repo_id,
+            )
+        evidence = self._evidence_resolver.resolve(paths=[normalized]).to_dict()
+        self._evidence_by_path[normalized] = evidence
+        return evidence
 
     def resolve(self, extra: dict[str, Any] | None) -> tuple[CodeReference, ...]:
         payload = extra or {}
         refs = _explicit_references(payload)
         for captured, relation in _captured_paths(payload):
             relative = _relative_capture(captured, self.repo_root)
-            matches = [
-                row
-                for row in self.nodes
-                if relative == str(row["file_path"])
-                or relative.endswith("/" + str(row["file_path"]))
-            ]
+            matches = self._matching_nodes(relative)
             if not matches:
                 continue
             matches.sort(
@@ -286,16 +311,9 @@ class CodeReferenceResolver:
         for key in sorted(unique):
             ref = unique[key]
             if not ref.code_evidence and ref.file_path:
-                from memo.code_evidence import codegraph_evidence
-
                 ref = replace(
                     ref,
-                    code_evidence=codegraph_evidence(
-                        db_path=self.db_path,
-                        repo_root=self.repo_root,
-                        repo_id=self.repo_id,
-                        paths=[ref.file_path],
-                    ).to_dict(),
+                    code_evidence=self._code_evidence(ref.file_path),
                 )
             resolved.append(ref)
         return tuple(resolved)

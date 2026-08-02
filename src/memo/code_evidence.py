@@ -212,6 +212,147 @@ def _bounded_gaps(
     return gaps[:_GAP_LIMIT], limitations
 
 
+class CodegraphEvidenceResolver:
+    """Reuse one CodeGraph metadata snapshot across many evidence requests.
+
+    Projection rebuilds resolve thousands of memory-to-code links in one pass.
+    Loading the full ``files`` table and spawning ``git rev-parse`` per link
+    made that pass quadratic in I/O and created thousands of short-lived
+    processes.  A resolver is intentionally short-lived: it snapshots the
+    provider database and repository HEAD once, then serves bounded path/scope
+    envelopes from that stable view.
+    """
+
+    def __init__(
+        self,
+        *,
+        db_path: Path,
+        repo_root: Path,
+        repo_id: str | None = None,
+    ) -> None:
+        self.db_path = db_path
+        self.repo_root = repo_root
+        self.repo_id = repo_id
+        self.commit_sha = _git_head(repo_root)
+        self.metadata: dict[str, str] = {}
+        self.files: dict[str, sqlite3.Row] = {}
+        self.schema_version = "?"
+        self.load_status = "missing"
+        self.load_error: str | None = None
+
+        if not db_path.is_file():
+            return
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            try:
+                self.metadata = _metadata(conn)
+                self.files = _file_rows(conn)
+                schema_row = conn.execute("SELECT MAX(version) FROM schema_versions").fetchone()
+                self.schema_version = (
+                    str(schema_row[0]) if schema_row and schema_row[0] is not None else "?"
+                )
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            self.load_status = "unreadable"
+            self.load_error = type(exc).__name__
+            return
+        self.load_status = "loaded"
+
+    def resolve(
+        self,
+        *,
+        paths: tuple[str, ...] | list[str] = (),
+        scopes: tuple[str, ...] | list[str] = (),
+    ) -> CodeEvidenceEnvelope:
+        """Build one fail-closed envelope from the captured snapshot."""
+        requested_paths = tuple(sorted({normalize_code_path(path) for path in paths if path}))
+        requested_scopes = tuple(
+            sorted({normalize_code_path(scope).rstrip("/") for scope in scopes if scope})
+        )
+        if self.load_status != "loaded":
+            unreadable = self.load_status == "unreadable"
+            limitation = (
+                f"CodeGraph metadata unreadable: {self.load_error}."
+                if unreadable
+                else "CodeGraph index is missing."
+            )
+            return CodeEvidenceEnvelope(
+                provider="codegraph",
+                provider_version=None,
+                repo_id=self.repo_id,
+                commit_sha=self.commit_sha,
+                index_generation=None,
+                indexed_at=None,
+                requested_paths=requested_paths,
+                requested_scopes=requested_scopes,
+                coverage_status="unknown",
+                recording_status="unreadable" if unreadable else "missing",
+                freshness="unknown",
+                limitations=(limitation,),
+            )
+
+        expanded = set(requested_paths)
+        if requested_scopes:
+            for indexed_path in self.files:
+                if any(code_path_in_scope(indexed_path, scope) for scope in requested_scopes):
+                    expanded.add(indexed_path)
+
+        gaps, stale, checked_freshness = _codegraph_freshness(
+            self.repo_root,
+            self.files,
+            expanded,
+        )
+        limitations: list[str] = []
+        if requested_scopes:
+            limitations.append(
+                "Scope coverage is bounded to paths recorded by CodeGraph; excluded tracked "
+                "files cannot be reconstructed from the provider database."
+            )
+        if not requested_paths and not requested_scopes:
+            limitations.append(
+                "No path or scope was requested, so freshness was not checked against source "
+                "bytes."
+            )
+        gaps, limitations = _bounded_gaps(gaps, limitations)
+
+        index_state = self.metadata.get("index_state", "")
+        discovered = self.metadata.get("files_discovered")
+        accounted = self.metadata.get("files_accounted")
+        recording = (
+            "complete"
+            if index_state == "complete" and discovered is not None and discovered == accounted
+            else "partial"
+        )
+        coverage = (
+            "known_gaps"
+            if gaps
+            else ("complete" if expanded or recording == "complete" else "unknown")
+        )
+        freshness = "stale" if stale else ("current" if checked_freshness else "unknown")
+        updated_at = self.metadata.get("updated_at")
+        generation = (
+            f"codegraph:{self.schema_version}:"
+            f"{updated_at or int(self.db_path.stat().st_mtime_ns)}"
+        )
+        return CodeEvidenceEnvelope(
+            provider="codegraph",
+            provider_version=self.metadata.get("indexed_with_version"),
+            repo_id=self.repo_id,
+            commit_sha=self.commit_sha,
+            index_generation=generation,
+            indexed_at=_indexed_at(updated_at, self.db_path),
+            requested_paths=requested_paths,
+            requested_scopes=requested_scopes,
+            coverage_status=coverage,
+            recording_status=recording,
+            freshness=freshness,
+            gaps=tuple(gaps),
+            limitations=tuple(limitations),
+        )
+
+
 def codegraph_evidence(
     *,
     db_path: Path,
@@ -221,101 +362,11 @@ def codegraph_evidence(
     scopes: tuple[str, ...] | list[str] = (),
 ) -> CodeEvidenceEnvelope:
     """Build a fail-closed CodeGraph envelope for requested files/scopes."""
-    requested_paths = tuple(sorted({normalize_code_path(path) for path in paths if path}))
-    requested_scopes = tuple(
-        sorted({normalize_code_path(scope).rstrip("/") for scope in scopes if scope})
-    )
-    if not db_path.is_file():
-        return CodeEvidenceEnvelope(
-            provider="codegraph",
-            provider_version=None,
-            repo_id=repo_id,
-            commit_sha=_git_head(repo_root),
-            index_generation=None,
-            indexed_at=None,
-            requested_paths=requested_paths,
-            requested_scopes=requested_scopes,
-            coverage_status="unknown",
-            recording_status="missing",
-            freshness="unknown",
-            limitations=("CodeGraph index is missing.",),
-        )
-
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        try:
-            metadata = _metadata(conn)
-            files = _file_rows(conn)
-            schema_row = conn.execute("SELECT MAX(version) FROM schema_versions").fetchone()
-            schema_version = str(schema_row[0]) if schema_row and schema_row[0] is not None else "?"
-        finally:
-            conn.close()
-    except sqlite3.Error as exc:
-        return CodeEvidenceEnvelope(
-            provider="codegraph",
-            provider_version=None,
-            repo_id=repo_id,
-            commit_sha=_git_head(repo_root),
-            index_generation=None,
-            indexed_at=None,
-            requested_paths=requested_paths,
-            requested_scopes=requested_scopes,
-            coverage_status="unknown",
-            recording_status="unreadable",
-            freshness="unknown",
-            limitations=(f"CodeGraph metadata unreadable: {type(exc).__name__}.",),
-        )
-
-    expanded = set(requested_paths)
-    if requested_scopes:
-        for indexed_path in files:
-            if any(code_path_in_scope(indexed_path, scope) for scope in requested_scopes):
-                expanded.add(indexed_path)
-
-    gaps, stale, checked_freshness = _codegraph_freshness(repo_root, files, expanded)
-
-    limitations: list[str] = []
-    if requested_scopes:
-        limitations.append(
-            "Scope coverage is bounded to paths recorded by CodeGraph; excluded tracked files "
-            "cannot be reconstructed from the provider database."
-        )
-    if not requested_paths and not requested_scopes:
-        limitations.append(
-            "No path or scope was requested, so freshness was not checked against source bytes."
-        )
-    gaps, limitations = _bounded_gaps(gaps, limitations)
-
-    index_state = metadata.get("index_state", "")
-    discovered = metadata.get("files_discovered")
-    accounted = metadata.get("files_accounted")
-    recording = (
-        "complete"
-        if index_state == "complete" and discovered is not None and discovered == accounted
-        else "partial"
-    )
-    coverage = (
-        "known_gaps" if gaps else ("complete" if expanded or recording == "complete" else "unknown")
-    )
-    freshness = "stale" if stale else ("current" if checked_freshness else "unknown")
-    updated_at = metadata.get("updated_at")
-    generation = f"codegraph:{schema_version}:{updated_at or int(db_path.stat().st_mtime_ns)}"
-    return CodeEvidenceEnvelope(
-        provider="codegraph",
-        provider_version=metadata.get("indexed_with_version"),
+    return CodegraphEvidenceResolver(
+        db_path=db_path,
+        repo_root=repo_root,
         repo_id=repo_id,
-        commit_sha=_git_head(repo_root),
-        index_generation=generation,
-        indexed_at=_indexed_at(updated_at, db_path),
-        requested_paths=requested_paths,
-        requested_scopes=requested_scopes,
-        coverage_status=coverage,
-        recording_status=recording,
-        freshness=freshness,
-        gaps=tuple(gaps),
-        limitations=tuple(limitations),
-    )
+    ).resolve(paths=paths, scopes=scopes)
 
 
 def _repo_coverage_gaps(

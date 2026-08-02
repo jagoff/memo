@@ -310,3 +310,65 @@ def test_audit_data_integrity_validates_external_vault_ingest_rows(tmp_path: Pat
     assert result.returncode == 0, result.stdout
     assert "✓ healthy:           1" in result.stdout
     assert "✗ bad_path:          0" in result.stdout
+
+
+def test_audit_data_integrity_validates_external_vault_ingest_media_rows(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    state_dir = tmp_path / "state"
+    source_dir = tmp_path / "external" / "Work" / "attachments"
+    data_dir.mkdir()
+    state_dir.mkdir()
+    source_dir.mkdir(parents=True)
+
+    fixtures = [
+        ("vault-ingest-pdf", "report.pdf", "indexed PDF text"),
+        ("vault-ingest-image", "diagram.webp", "indexed OCR text"),
+        ("vault-ingest-audio", "meeting.m4a", "indexed transcript"),
+    ]
+    connection = sqlite3.connect(state_dir / "memvec.db")
+    try:
+        connection.execute(
+            "CREATE TABLE meta ("
+            "id TEXT PRIMARY KEY, path TEXT, title TEXT, body_hash TEXT, "
+            "updated TEXT, extra_json TEXT"
+            ")"
+        )
+        connection.execute("CREATE VIRTUAL TABLE fts USING fts5(id UNINDEXED, title, tags, body)")
+        for index, (source, name, indexed_body) in enumerate(fixtures):
+            source_path = source_dir / name
+            source_path.write_bytes(b"external source fixture")
+            logical_path = f"work/attachments/{name}"
+            extra = {
+                "source": source,
+                "vault": "work",
+                "abs_path": str(source_path),
+                "parent_path": logical_path,
+            }
+            memory_id = str(index + 1) * 32
+            connection.execute(
+                "INSERT INTO meta "
+                "(id, path, title, body_hash, updated, extra_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    memory_id,
+                    logical_path,
+                    name,
+                    hashlib.sha256(indexed_body.encode("utf-8")).hexdigest()[:16],
+                    "2026-08-02T00:00:00Z",
+                    json.dumps(extra),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",
+                (memory_id, name, source, indexed_body),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = _run_audit(tmp_path, data_dir, state_dir)
+
+    assert result.returncode == 0, result.stdout
+    assert "✓ healthy:           3" in result.stdout
+    assert "✗ bad_path:          0" in result.stdout

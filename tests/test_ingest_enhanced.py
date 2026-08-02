@@ -1129,6 +1129,47 @@ def test_ingest_pdf_sin_cambios_no_reembebe_ni_toca_updated(
     assert _open_store(runner_env).get_by_path_ci("v/doc.pdf")["updated"] == updated_first
 
 
+def test_ingest_unchanged_source_repairs_missing_fts_body(
+    tmp_path: Path, runner_env, monkeypatch
+):
+    """An unchanged hash must not hide a damaged legacy FTS projection.
+
+    Re-ingest is the supported self-healing path for external vault rows, so a
+    NULL body must force one upsert even without ``--force``.
+    """
+    vault = _build_vault(
+        tmp_path / "vault",
+        {"note.md": "# Durable fact\n\nThe searchable production body is intact."},
+    )
+    calls = {"n": 0}
+
+    def _counting_embed(self, inputs):
+        calls["n"] += len(inputs)
+        return _stub_embed(self, inputs)
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _counting_embed)
+    args = ["ingest", str(vault), "--name", "v", *_BASE_ARGS]
+    first = CliRunner().invoke(cli, args, env=runner_env)
+    assert first.exit_code == 0, first.output
+    store = _open_store(runner_env)
+    existing = store.get_by_path_ci("v/note.md")
+    assert existing is not None
+    store._conn.execute("DELETE FROM fts WHERE id = ?", (existing["id"],))
+    store._conn.execute(
+        "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, NULL)",
+        (existing["id"], existing["title"], "reference"),
+    )
+    store._conn.commit()
+    embeds_after_first = calls["n"]
+
+    second = CliRunner().invoke(cli, args, env=runner_env)
+
+    assert second.exit_code == 0, second.output
+    assert calls["n"] == embeds_after_first + 1
+    repaired = _all_rows(_open_store(runner_env))[0]
+    assert repaired["body"] == "# Durable fact\n\nThe searchable production body is intact."
+
+
 def test_excluded_respeta_limite_de_componente_de_path(tmp_path: Path, runner_env):
     """Los patrones de exclusión matchean por componente de path: `Archive`
     excluye `Archive/` pero NO `Archived Projects/`; `Obsidian/AI` excluye su
