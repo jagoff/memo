@@ -131,7 +131,14 @@ def test_enter_delivers_only_carriage_return(registered_bridge) -> None:
     assert receipt.status == "delivered"
 
 
-@pytest.mark.parametrize("message", ["", "\x1b[31m\r", "x" * (16 * 1024 + 1)])
+@pytest.mark.parametrize(
+    "message",
+    [
+        pytest.param("", id="empty"),
+        pytest.param("\x1b[31m\r", id="control-only"),
+        pytest.param("x" * (16 * 1024 + 1), id="oversized"),
+    ],
+)
 def test_send_rejects_empty_control_only_and_oversized_messages(
     registered_bridge,
     message: str,
@@ -140,6 +147,17 @@ def test_send_rejects_empty_control_only_and_oversized_messages(
 
     with pytest.raises(TerminalValidationError):
         bridge.send(registration.id, message)
+
+    assert payloads == []
+
+
+def test_send_rejects_unbounded_or_malformed_routing_ids(registered_bridge) -> None:
+    bridge, registration, payloads, _state = registered_bridge
+
+    with pytest.raises(TerminalValidationError, match="message id"):
+        bridge.send(registration.id, "hello", message_id="x" * 129)
+    with pytest.raises(TerminalValidationError, match="sender id"):
+        bridge.send(registration.id, "hello", sender="not a terminal")
 
     assert payloads == []
 

@@ -149,6 +149,7 @@ from memo.cli_statusline import install_statusline
 from memo.cli_sync import sync_group
 from memo.cli_synthesize import synthesize_cmd
 from memo.cli_temporal import temporal_group
+from memo.cli_terminal import terminal_group
 from memo.cli_token_gate import token_gate_cmd
 from memo.cli_token_savings import token_savings_cmd
 from memo.cli_tokens import tokens_cmd
@@ -219,6 +220,7 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
             "retier",
             "contradict",
             "coordinate",
+            "terminal",
             "invalidate",
             "temporal",
             "compress-context",
@@ -529,6 +531,7 @@ cli.add_command(export_group)
 cli.add_command(collaborative_group)
 cli.add_command(contradict_group)
 cli.add_command(coordinate_group)
+cli.add_command(terminal_group)
 cli.add_command(http_api)
 cli.add_command(startup_banner_cmd)
 cli.add_command(codex_badge_cmd)
@@ -570,6 +573,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "startup-banner",
     "codex-badge",
     "install-shims",
+    "terminal",
 }
 
 

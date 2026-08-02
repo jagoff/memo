@@ -154,6 +154,8 @@ def test_codex_shim_prints_startup_banner_once_for_nested_call(tmp_path) -> None
                 "MEMO_TEST_LOG": str(log_path),
                 "MEMO_CODEX_BADGE": "0",
                 "MEMO_STARTUP_BANNER_SHOWN": "0",
+                "MEMO_AGENT_TTY": "",
+                "TERM_PROGRAM": "ghostty",
             },
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -166,7 +168,63 @@ def test_codex_shim_prints_startup_banner_once_for_nested_call(tmp_path) -> None
         os.close(master_fd)
 
     assert proc.returncode == 0
-    assert log_path.read_text(encoding="utf-8").splitlines() == ["startup-banner --agent codex"]
+    calls = log_path.read_text(encoding="utf-8").splitlines()
+    assert sum(call.startswith("terminal register --agent codex") for call in calls) == 1
+    assert calls.count("startup-banner --agent codex") == 1
+
+
+def test_shim_registers_exact_terminal_before_agent_exec(tmp_path) -> None:
+    shim_dir = tmp_path / "shim"
+    tools_dir = tmp_path / "tools"
+    real_dir = tmp_path / "real"
+    project = tmp_path / "project"
+    log_path = tmp_path / "order.log"
+    for directory in (tools_dir, real_dir, project):
+        directory.mkdir()
+    memo = tools_dir / "memo"
+    memo.write_text(
+        '#!/usr/bin/env bash\nprintf "memo:%s\\n" "$*" >> "$MEMO_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    real = real_dir / "codex"
+    real.write_text(
+        '#!/usr/bin/env bash\nprintf "agent:%s\\n" "$MEMO_AGENT_TTY" >> "$MEMO_TEST_LOG"\n',
+        encoding="utf-8",
+    )
+    memo.chmod(0o755)
+    real.chmod(0o755)
+    install_shims(("codex",), shim_dir)
+    master_fd, slave_fd = pty.openpty()
+    tty_path = os.ttyname(slave_fd)
+    try:
+        proc = subprocess.run(
+            [str(shim_dir / "codex")],
+            cwd=project,
+            env={
+                **os.environ,
+                "PATH": os.pathsep.join([str(tools_dir), str(real_dir), os.environ["PATH"]]),
+                "MEMO_TEST_LOG": str(log_path),
+                "MEMO_STARTUP_BANNER": "0",
+                "MEMO_CODEX_BADGE": "0",
+                "MEMO_AGENT_TTY": "",
+                "TERM_PROGRAM": "ghostty",
+            },
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            timeout=5,
+        )
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+    assert proc.returncode == 0
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith(
+        f"memo:terminal register --agent codex --tty {tty_path} --pid "
+    )
+    assert f"--terminal-app ghostty --project {project} --id-only" in lines[0]
+    assert lines[1] == f"agent:{tty_path}"
 
 
 def test_codex_badge_uses_memo_notify_protocol(tmp_cfg, tmp_path, monkeypatch) -> None:

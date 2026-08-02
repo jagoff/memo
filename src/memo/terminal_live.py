@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import builtins
 import os
+import re
 import secrets
 import sqlite3
 import stat
 import subprocess
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING
 
 from memo.errors import TerminalValidationError
 
@@ -80,6 +81,8 @@ ProcessProbe = Callable[[int], ProcessSnapshot | None]
 Presenter = Callable[..., str]
 
 _MAX_MESSAGE_BYTES = 16 * 1024
+_MESSAGE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_REGISTRATION_ID_RE = re.compile(r"term-[0-9a-f]{16}\Z")
 
 
 def _default_presenter(tty: Path, payload: bytes, *, terminal_app: str) -> str:
@@ -170,6 +173,33 @@ def _command_matches_agent(command: str, agent: str) -> bool:
     )
 
 
+def _consume_csi(message: str, index: int) -> int:
+    while index < len(message) and not ("@" <= message[index] <= "~"):
+        index += 1
+    return index + (index < len(message))
+
+
+def _consume_osc(message: str, index: int) -> int:
+    while index < len(message):
+        if message[index] == "\x07":
+            return index + 1
+        if message[index : index + 2] == "\x1b\\":
+            return index + 2
+        index += 1
+    return index
+
+
+def _consume_escape(message: str, index: int) -> int:
+    index += 1
+    if index >= len(message):
+        return index
+    if message[index] == "[":
+        return _consume_csi(message, index + 1)
+    if message[index] == "]":
+        return _consume_osc(message, index + 1)
+    return index + 1
+
+
 def _strip_terminal_controls(message: str) -> str:
     if len(message.encode("utf-8")) > _MAX_MESSAGE_BYTES:
         raise TerminalValidationError("terminal message exceeds 16 KiB")
@@ -178,26 +208,7 @@ def _strip_terminal_controls(message: str) -> str:
     while i < len(message):
         char = message[i]
         if char == "\x1b":
-            i += 1
-            if i < len(message) and message[i] == "[":
-                i += 1
-                while i < len(message) and not ("@" <= message[i] <= "~"):
-                    i += 1
-                i += i < len(message)
-                continue
-            if i < len(message) and message[i] == "]":
-                i += 1
-                while i < len(message):
-                    if message[i] == "\x07":
-                        i += 1
-                        break
-                    if message[i : i + 2] == "\x1b\\":
-                        i += 2
-                        break
-                    i += 1
-                continue
-            if i < len(message):
-                i += 1
+            i = _consume_escape(message, i)
             continue
         if char in {"\n", "\t"} or unicodedata.category(char) != "Cc":
             result.append(char)
@@ -387,6 +398,18 @@ class TerminalBridge:
                 )
         return live
 
+    def registration_id(self, registration_id: str) -> str:
+        """Return an exact live registration id, or an empty string."""
+        return registration_id if any(item.id == registration_id for item in self.list()) else ""
+
+    def registration_id_for_tty(self, tty: str | Path) -> str:
+        """Resolve a live registration by exact canonical TTY."""
+        try:
+            canonical = str(_canonical_tty(tty))
+        except TerminalValidationError:
+            return ""
+        return next((item.id for item in self.list() if item.tty == canonical), "")
+
     @staticmethod
     def _receipt_from_row(row: sqlite3.Row) -> TerminalReceipt:
         return TerminalReceipt(
@@ -447,8 +470,11 @@ class TerminalBridge:
         kind: str,
     ) -> TerminalReceipt:
         resolved_message_id = (message_id or f"msg-{secrets.token_hex(12)}").strip()
-        if not resolved_message_id:
-            raise TerminalValidationError("terminal message id cannot be empty")
+        if not _MESSAGE_ID_RE.fullmatch(resolved_message_id):
+            raise TerminalValidationError("terminal message id is malformed or too long")
+        sender_id = (sender or "").strip()
+        if sender_id and not _REGISTRATION_ID_RE.fullmatch(sender_id):
+            raise TerminalValidationError("terminal sender id is malformed")
         existing = self._existing_receipt(resolved_message_id)
         if existing is not None:
             return replace(existing, status="duplicate")
@@ -469,7 +495,7 @@ class TerminalBridge:
                         receipt_id,
                         resolved_message_id,
                         target_id,
-                        (sender or "").strip(),
+                        sender_id,
                         kind,
                         now,
                     ),

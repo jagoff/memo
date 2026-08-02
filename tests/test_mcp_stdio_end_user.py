@@ -66,7 +66,7 @@ async def test_stdio_process_exposes_full_surface_and_core_crud(tmp_path: Path) 
     try:
         async with Client(config, timeout=20, init_timeout=20) as client:
             tools = await client.list_tools()
-            assert len(tools) == 161
+            assert len(tools) == 164
 
             version = (await client.call_tool("memo_version", {})).data
             assert version["version"]
