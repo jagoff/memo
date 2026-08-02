@@ -22,6 +22,22 @@ def _normalize_history(history: Any) -> list[dict[str, str]] | None:
     ]
 
 
+def _spa_response(
+    path: str,
+    *,
+    dist: Path,
+    file_response: Any,
+    json_response: Any,
+) -> Any:
+    """Serve one SPA path while keeping unknown API routes as JSON 404s."""
+    if path == "api" or path.startswith("api/"):
+        return json_response({"error": "unknown API route"}, status_code=404)
+    candidate = (dist / path).resolve()
+    if path and candidate.is_file() and candidate.is_relative_to(dist.resolve()):
+        return file_response(candidate)
+    return file_response(dist / "index.html")
+
+
 def build_app(memory: Any, *, dist: Path | None = None) -> Any:
     from fastapi import FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -215,11 +231,11 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
         @app.get("/{path:path}")
         async def spa(path: str) -> Any:
-            if path == "api" or path.startswith("api/"):
-                return JSONResponse({"error": "unknown API route"}, status_code=404)
-            candidate = (dist / path).resolve()
-            if path and candidate.is_file() and candidate.is_relative_to(dist.resolve()):
-                return FileResponse(candidate)
-            return FileResponse(dist / "index.html")
+            return _spa_response(
+                path,
+                dist=dist,
+                file_response=FileResponse,
+                json_response=JSONResponse,
+            )
 
     return app

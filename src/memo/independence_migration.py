@@ -96,56 +96,92 @@ def _is_memo_briefing_hook(value: object) -> bool:
     return isinstance(command, str) and "memo" in command and "briefing --compact" in command
 
 
-def _migrate_codex_hooks(path: Path, *, write: bool, memo_bin: str) -> str:
-    """Replace the retired Memflow SessionStart hook without touching foreign hooks."""
+def _load_codex_session_start(
+    path: Path,
+) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None, list[object] | None]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return "error"
+        return "error", None, None, None
     if not isinstance(payload, dict):
-        return "error"
+        return "error", None, None, None
     hooks = payload.get("hooks")
     if not isinstance(hooks, dict):
-        return "unchanged"
+        return "unchanged", None, None, None
     session_start = hooks.get("SessionStart")
     if not isinstance(session_start, list):
-        return "unchanged"
+        return "unchanged", None, None, None
+    return "ready", payload, hooks, session_start
 
-    has_memo_briefing = any(
-        _is_memo_briefing_hook(hook)
-        for group in session_start
-        if isinstance(group, dict) and isinstance(group.get("hooks"), list)
-        for hook in group["hooks"]
-    )
+
+def _has_memo_briefing(session_start: list[object]) -> bool:
+    for group in session_start:
+        if not isinstance(group, dict):
+            continue
+        group_hooks = group.get("hooks")
+        if isinstance(group_hooks, list) and any(
+            _is_memo_briefing_hook(hook) for hook in group_hooks
+        ):
+            return True
+    return False
+
+
+def _migrate_codex_hook_group(
+    group: object,
+    *,
+    has_memo_briefing: bool,
+    memo_bin: str,
+) -> tuple[object | None, bool, bool]:
+    if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+        return group, False, has_memo_briefing
+
+    original_hooks = group["hooks"]
+    migrated = False
+    migrated_hooks: list[object] = []
+    for hook in original_hooks:
+        if not _is_legacy_memflow_startup_hook(hook):
+            migrated_hooks.append(hook)
+            continue
+        migrated = True
+        if has_memo_briefing:
+            continue
+        replacement = dict(hook)
+        replacement.update(
+            {
+                "type": "command",
+                "command": f"MEMO_NONINTERACTIVE=1 {memo_bin} briefing --compact",
+                "timeout": 5,
+                "statusMessage": "Loading memo briefing",
+            }
+        )
+        migrated_hooks.append(replacement)
+        has_memo_briefing = True
+
+    if not migrated_hooks and original_hooks:
+        return None, migrated, has_memo_briefing
+    migrated_group = dict(group)
+    migrated_group["hooks"] = migrated_hooks
+    return migrated_group, migrated, has_memo_briefing
+
+
+def _migrate_codex_hooks(path: Path, *, write: bool, memo_bin: str) -> str:
+    """Replace the retired Memflow SessionStart hook without touching foreign hooks."""
+    status, payload, hooks, session_start = _load_codex_session_start(path)
+    if status != "ready":
+        return status
+    assert payload is not None and hooks is not None and session_start is not None
+
+    has_memo_briefing = _has_memo_briefing(session_start)
     migrated = False
     migrated_groups: list[object] = []
     for group in session_start:
-        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
-            migrated_groups.append(group)
-            continue
-        original_hooks = group["hooks"]
-        migrated_hooks: list[object] = []
-        for hook in original_hooks:
-            if not _is_legacy_memflow_startup_hook(hook):
-                migrated_hooks.append(hook)
-                continue
-            migrated = True
-            if has_memo_briefing:
-                continue
-            replacement = dict(hook)
-            replacement.update(
-                {
-                    "type": "command",
-                    "command": f"MEMO_NONINTERACTIVE=1 {memo_bin} briefing --compact",
-                    "timeout": 5,
-                    "statusMessage": "Loading memo briefing",
-                }
-            )
-            migrated_hooks.append(replacement)
-            has_memo_briefing = True
-        if migrated_hooks or not original_hooks:
-            migrated_group = dict(group)
-            migrated_group["hooks"] = migrated_hooks
+        migrated_group, group_migrated, has_memo_briefing = _migrate_codex_hook_group(
+            group,
+            has_memo_briefing=has_memo_briefing,
+            memo_bin=memo_bin,
+        )
+        migrated = migrated or group_migrated
+        if migrated_group is not None:
             migrated_groups.append(migrated_group)
 
     if not migrated:
