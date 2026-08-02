@@ -20,6 +20,9 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- `memo config validate` accepts the retired live-terminal shim variables in
+  agent processes that were already running when the fail-closed upgrade was
+  installed; fresh shims still remove those variables.
 - Live terminal input now fails closed: the CLI and MCP `send`/`enter`
   mutators and automatic shim registration are disabled, and legacy terminal
   registrations are non-deliverable. Read-only diagnostics remain available

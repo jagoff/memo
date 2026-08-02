@@ -187,6 +187,8 @@ def test_internal_shim_state_vars_not_flagged_unknown() -> None:
         "MEMO_STARTUP_BANNER_SHOWN": "1",
         "MEMO_CODEX_BADGE_SHOWN": "1",
         "MEMO_AGENT_TTY": "/dev/ttys001",
+        "MEMO_TERMINAL_ID": "term-deadbeefdeadbeef",
+        "MEMO_TERMINAL_REGISTRATION_ATTEMPTED": "1",
     }
     assert flags.unknown_memo_vars(env=env) == []
     assert flags.validate(env=env) == []
