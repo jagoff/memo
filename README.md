@@ -167,12 +167,12 @@ Python ≥ 3.13 (the installer handles this via `uv` if you don't have it). Firs
 | Install detail, installer knobs, new-Mac migration | [reference.md › Install](https://github.com/jagoff/memo/blob/master/docs/reference.md#install-detail) |
 | Per-client MCP setup (Claude Desktop, Cursor, Cline, Continue) | [reference.md › MCP setup](https://github.com/jagoff/memo/blob/master/docs/reference.md#mcp-setup) |
 | Ambient recall, capture, and tuning | [reference.md › Ambient memory](https://github.com/jagoff/memo/blob/master/docs/reference.md#ambient-memory) |
-| Full CLI reference (141 commands) + `memo tui` | [reference.md › CLI](https://github.com/jagoff/memo/blob/master/docs/reference.md#cli-reference) |
+| Full CLI reference (142 commands) + `memo tui` | [reference.md › CLI](https://github.com/jagoff/memo/blob/master/docs/reference.md#cli-reference) |
 | All `MEMO_*` flags and model profiles | [reference.md › Configuration](https://github.com/jagoff/memo/blob/master/docs/reference.md#configuration) |
 | Architecture and design notes | [reference.md › Design](https://github.com/jagoff/memo/blob/master/docs/reference.md#design-and-comparison) |
 | Privacy and network policy | [PRIVACY.md](https://github.com/jagoff/memo/blob/master/PRIVACY.md) |
 
-### All 141 top-level CLI commands
+### All 142 top-level CLI commands
 
 <details>
 <summary>Complete command inventory (kept here so CI detects CLI/documentation drift)</summary>
