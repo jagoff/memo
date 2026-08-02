@@ -41,6 +41,7 @@ def _spa_response(
 def build_app(memory: Any, *, dist: Path | None = None) -> Any:
     from fastapi import FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+    from starlette.middleware import Middleware
 
     from memo.chat.config import ChatConfig
     from memo.chat.feedback import (
@@ -52,10 +53,28 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
     )
     from memo.chat.pipeline import chat_stream
     from memo.chat.sessions import SessionStore, iso_ts
+    from memo.http_auth import (
+        LocalRequestGuardMiddleware,
+        RateLimitMiddleware,
+        RequestSizeLimitMiddleware,
+    )
 
     cfg = ChatConfig.load(memory.cfg.state_dir)
     sessions = SessionStore(cfg.sessions_dir)
-    app = FastAPI(title="memo chat", docs_url=None, redoc_url=None)
+    # Chat has no bearer-token flow: constrain it to same-origin loopback HTTP,
+    # reject DNS-rebinding/cross-site requests, and bound local request pressure.
+    # `memo chat serve` independently rejects non-loopback bind addresses so the
+    # network policy remains safe even before the first request reaches ASGI.
+    app = FastAPI(
+        title="memo chat",
+        docs_url=None,
+        redoc_url=None,
+        middleware=[
+            Middleware(RateLimitMiddleware),
+            Middleware(LocalRequestGuardMiddleware),
+            Middleware(RequestSizeLimitMiddleware),
+        ],
+    )
 
     async def _json_body(request: Request) -> dict[str, Any] | None:
         try:
@@ -73,13 +92,48 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             return None
         return [{"role": t.get("role", ""), "content": t.get("text", "")} for t in turns][-12:]
 
-    def _run(body: dict[str, Any]) -> list[dict[str, Any]]:
-        question = str(body.get("q") or "").strip()
-        given_session_id = body.get("chat_session_id") or None
+    def requested_session_id(body: dict[str, Any]) -> str | None:
+        """Validate an optional caller-owned id before doing retrieval work."""
+        raw = body.get("chat_session_id")
+        if raw is None or raw == "":
+            return None
+        if not isinstance(raw, str):
+            raise ValueError("invalid chat_session_id")
+        # SessionStore owns the path-safe id grammar. Reading here validates it
+        # without duplicating that security boundary in the HTTP layer.
+        try:
+            sessions.get(raw)
+        except ValueError as exc:
+            raise ValueError("invalid chat_session_id") from exc
+        return raw
+
+    def request_inputs(
+        body: dict[str, Any],
+    ) -> tuple[str, int | None, list[dict[str, str]] | None]:
+        """Validate the untyped JSON surface before it reaches retrieval."""
+        raw_question = body.get("q")
+        if not isinstance(raw_question, str) or not raw_question.strip():
+            raise ValueError("q required and must be a string")
+        if len(raw_question) > 4096:
+            raise ValueError("q must be at most 4096 characters")
+        raw_k = body.get("k")
+        if raw_k is not None and (type(raw_k) is not int or not 1 <= raw_k <= 100):
+            raise ValueError("k must be an integer between 1 and 100")
+        raw_history = body.get("history")
+        if raw_history is not None and not isinstance(raw_history, list):
+            raise ValueError("history must be a list")
+        return raw_question.strip(), raw_k, _normalize_history(raw_history)
+
+    def _run(
+        question: str,
+        *,
+        given_session_id: str | None,
+        history: list[dict[str, str]] | None,
+        k: int | None,
+    ) -> list[dict[str, Any]]:
         session_id = given_session_id or uuid.uuid4().hex[:12]
-        history = _normalize_history(body.get("history")) or sessions_history(given_session_id)
         events = []
-        for event in chat_stream(memory, question, history=history, k=body.get("k") or None):
+        for event in chat_stream(memory, question, history=history, k=k):
             if event.get("type") in ("context", "done"):
                 event = {**event, "chat_session_id": session_id}
             events.append(event)
@@ -97,16 +151,17 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         body = await _json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-        question = str(body.get("q") or "").strip()
-        if not question:
-            return JSONResponse({"error": "q required"}, status_code=400)
-        given_session_id = body.get("chat_session_id") or None
+        try:
+            question, k, explicit_history = request_inputs(body)
+            given_session_id = requested_session_id(body)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
         session_id = given_session_id or uuid.uuid4().hex[:12]
-        history = _normalize_history(body.get("history")) or sessions_history(given_session_id)
+        history = explicit_history or sessions_history(given_session_id)
 
         def _generate() -> Any:
             answer = ""
-            for event in chat_stream(memory, question, history=history, k=body.get("k") or None):
+            for event in chat_stream(memory, question, history=history, k=k):
                 if event.get("type") in ("context", "done"):
                     event = {**event, "chat_session_id": session_id}
                 if event.get("type") == "done":
@@ -129,9 +184,18 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         body = await _json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-        if not str(body.get("q") or "").strip():
-            return JSONResponse({"error": "q required"}, status_code=400)
-        events = _run(body)
+        try:
+            question, k, explicit_history = request_inputs(body)
+            given_session_id = requested_session_id(body)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        history = explicit_history or sessions_history(given_session_id)
+        events = _run(
+            question,
+            given_session_id=given_session_id,
+            history=history,
+            k=k,
+        )
         done = next((e for e in reversed(events) if e.get("type") in {"done", "error"}), None)
         return JSONResponse(done or {"type": "error", "message": "no events"})
 
@@ -140,6 +204,12 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         body = await _json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        sources = body.get("sources", [])
+        rating = body.get("rating")
+        if not isinstance(sources, list):
+            return JSONResponse({"error": "sources must be a list"}, status_code=400)
+        if rating not in {"up", "down"}:
+            return JSONResponse({"error": "rating must be 'up' or 'down'"}, status_code=400)
         fb = ChatFeedback(
             feedback_id=uuid.uuid4().hex[:12],
             created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -147,8 +217,10 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             turn_id=str(body.get("turn_id") or ""),
             query=str(body.get("query") or ""),
             answer=str(body.get("answer") or ""),
-            source_ids=[str(s.get("id")) for s in body.get("sources") or [] if isinstance(s, dict)],
-            rating=str(body.get("rating") or ""),
+            source_ids=[
+                s["id"] for s in sources if isinstance(s, dict) and isinstance(s.get("id"), str)
+            ],
+            rating=rating,
             correction_text=str(body.get("correction_text") or ""),
         )
         FeedbackStore(cfg.feedback_dir).append(fb)
@@ -159,17 +231,28 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         body = await _json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-        query = str(body.get("query") or "")
+        query = body.get("query")
+        source_id = body.get("source_id")
+        rating = body.get("rating")
+        if not isinstance(query, str) or not query.strip() or len(query) > 4096:
+            return JSONResponse(
+                {"error": "query required as a string of at most 4096 characters"},
+                status_code=400,
+            )
+        if not isinstance(source_id, str) or not source_id:
+            return JSONResponse({"error": "source_id required as a string"}, status_code=400)
+        if rating not in {"up", "down"}:
+            return JSONResponse({"error": "rating must be 'up' or 'down'"}, status_code=400)
         try:
-            embedding = memory.embedder.embed_query(query) if query else []
+            embedding = memory.embedder.embed_query(query)
         except Exception:
             embedding = []
         vote = SourceVote(
             created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
             question_key=question_key(query),
             query=query,
-            source_id=str(body.get("source_id") or ""),
-            rating=str(body.get("rating") or ""),
+            source_id=source_id,
+            rating=rating,
             query_embedding=list(embedding),
         )
         SourceVoteStore(cfg.feedback_dir).record(vote)
