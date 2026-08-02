@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import shlex
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -649,6 +650,235 @@ def test_independence_migration_replaces_dead_memflow_codex_hook_preserving_fore
     )
 
 
+def test_independence_migration_quotes_memo_binary_and_ignores_substring_decoys(
+    tmp_cfg,
+    tmp_path,
+):
+    hooks_path = tmp_path / "hooks.json"
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "/legacy/bin/memflow startup-banner --codex-hook",
+                                },
+                                {
+                                    "type": "command",
+                                    "command": "memorable briefing --compact",
+                                },
+                                {
+                                    "type": "command",
+                                    "command": "printf 'memflow startup-banner'",
+                                },
+                                {
+                                    "type": "command",
+                                    "command": "printf memflow startup-banner",
+                                },
+                                {
+                                    "type": "command",
+                                    "command": "printf memo briefing --compact",
+                                },
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    memo_bin = "/opt/Memo Tools/memo; touch /tmp/should-not-run"
+    memory = Memory(tmp_cfg)
+    try:
+        report = migrate_independence(
+            memory,
+            write=True,
+            config_paths=[],
+            codex_hooks_path=hooks_path,
+            memo_bin=memo_bin,
+        )
+    finally:
+        memory.close()
+
+    assert report["agent_integrations"]["migrated"] == 1
+    migrated = json.loads(hooks_path.read_text(encoding="utf-8"))
+    commands = [hook["command"] for hook in migrated["hooks"]["SessionStart"][0]["hooks"]]
+    assert shlex.split(commands[0]) == [
+        "MEMO_NONINTERACTIVE=1",
+        memo_bin,
+        "briefing",
+        "--compact",
+    ]
+    assert commands[1:] == [
+        "memorable briefing --compact",
+        "printf 'memflow startup-banner'",
+        "printf memflow startup-banner",
+        "printf memo briefing --compact",
+    ]
+
+
+def test_independence_migration_recognizes_env_wrapped_hook_commands(tmp_cfg, tmp_path):
+    hooks_path = tmp_path / "hooks.json"
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "/usr/bin/env -i MEMFLOW_ROOT=/legacy "
+                                        "/legacy/bin/memflow startup-banner --codex-hook"
+                                    ),
+                                },
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "/usr/bin/env MEMO_NONINTERACTIVE=1 "
+                                        "/opt/memo/bin/memo briefing --compact"
+                                    ),
+                                },
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    memory = Memory(tmp_cfg)
+    try:
+        report = migrate_independence(
+            memory,
+            write=True,
+            config_paths=[],
+            codex_hooks_path=hooks_path,
+        )
+    finally:
+        memory.close()
+
+    assert report["agent_integrations"]["migrated"] == 1
+    migrated = json.loads(hooks_path.read_text(encoding="utf-8"))
+    commands = [hook["command"] for hook in migrated["hooks"]["SessionStart"][0]["hooks"]]
+    assert commands == ["/usr/bin/env MEMO_NONINTERACTIVE=1 /opt/memo/bin/memo briefing --compact"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "memflow startup-banner --codex-hook && foreign-tool session-start",
+        "memflow startup-banner --codex-hook || foreign-tool session-start",
+        "memflow startup-banner --codex-hook ; foreign-tool session-start",
+        "memflow startup-banner --codex-hook | foreign-tool session-start",
+        "memflow startup-banner --codex-hook\nforeign-tool session-start",
+        "memflow startup-banner --codex-hook > output.log",
+        "memflow startup-banner --codex-hook >> output.log",
+        "memflow startup-banner --codex-hook < input.txt",
+        "( memflow startup-banner --codex-hook )",
+        "memflow startup-banner --codex-hook $(foreign-tool)",
+        "memflow startup-banner --codex-hook `foreign-tool`",
+    ),
+    ids=(
+        "and",
+        "or",
+        "semicolon",
+        "pipe",
+        "newline",
+        "redirect-output",
+        "append-output",
+        "redirect-input",
+        "subshell-group",
+        "command-substitution",
+        "backtick-substitution",
+    ),
+)
+def test_independence_migration_preserves_compound_legacy_hooks(
+    tmp_cfg,
+    tmp_path,
+    command,
+):
+    hooks_path = tmp_path / "hooks.json"
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": command,
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    memory = Memory(tmp_cfg)
+    try:
+        report = migrate_independence(
+            memory,
+            write=True,
+            config_paths=[],
+            codex_hooks_path=hooks_path,
+        )
+    finally:
+        memory.close()
+
+    assert report["agent_integrations"]["unchanged"] == 1
+    persisted = json.loads(hooks_path.read_text(encoding="utf-8"))
+    assert persisted["hooks"]["SessionStart"][0]["hooks"][0]["command"] == command
+
+
+def test_independence_migration_reports_unsafe_hook_write(tmp_cfg, tmp_path):
+    target = tmp_path / "real-hooks.json"
+    original = json.dumps(
+        {
+            "hooks": {
+                "SessionStart": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "memflow startup-banner --codex-hook",
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    )
+    target.write_text(original, encoding="utf-8")
+    hooks_path = tmp_path / "hooks.json"
+    hooks_path.symlink_to(target)
+    memory = Memory(tmp_cfg)
+    try:
+        report = migrate_independence(
+            memory,
+            write=True,
+            config_paths=[],
+            codex_hooks_path=hooks_path,
+        )
+    finally:
+        memory.close()
+
+    assert report["agent_integrations"] == {
+        "checked": 1,
+        "migrated": 0,
+        "unchanged": 0,
+        "errors": 1,
+    }
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_migrate_independence_cli_discovers_default_config_paths(tmp_path):
     home = tmp_path / "home"
     config_path = home / ".config" / "memo" / "config.toml"
@@ -681,7 +911,56 @@ def test_migrate_independence_cli_discovers_default_config_paths(tmp_path):
     }
 
 
-def test_migrate_independence_cli_discovers_codex_hooks(tmp_path):
+def test_independence_migration_preserves_config_prose_and_comments(tmp_cfg, tmp_path):
+    config = tmp_path / "advanced-config.md"
+    config.write_text(
+        "# Migration notes\n"
+        "MEMO_SYNC_MEMFLOW_ENABLED is documented here and must remain.\n"
+        "MEMO_EMIT_LEDGER: nota histórica que debe permanecer.\n"
+        "MEMO_CACHE_BACKEND: memflow aparece en prosa, no como configuración.\n"
+        "MEMO_EMIT_LEDGER=1 era el valor viejo; esta línea es prosa.\n"
+        "# MEMO_EMIT_LEDGER=1 is a historical example.\n"
+        "```toml\n"
+        'MEMO_CACHE_BACKEND="memflow"\n'
+        'note = """\n'
+        "MEMO_EMIT_LEDGER=1\n"
+        '"""\n'
+        "literal = '''\n"
+        "MEMO_EMIT_RECEIPTS=1\n"
+        "'''\n"
+        "MEMO_SYNC_MEMFLOW_ENABLED=1\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    memory = Memory(tmp_cfg)
+    try:
+        report = migrate_independence(memory, write=True, config_paths=[config])
+    finally:
+        memory.close()
+
+    assert report["config"]["migrated"] == 1
+    assert config.read_text(encoding="utf-8") == (
+        "# Migration notes\n"
+        "MEMO_SYNC_MEMFLOW_ENABLED is documented here and must remain.\n"
+        "MEMO_EMIT_LEDGER: nota histórica que debe permanecer.\n"
+        "MEMO_CACHE_BACKEND: memflow aparece en prosa, no como configuración.\n"
+        "MEMO_EMIT_LEDGER=1 era el valor viejo; esta línea es prosa.\n"
+        "# MEMO_EMIT_LEDGER=1 is a historical example.\n"
+        "```toml\n"
+        'MEMO_CACHE_BACKEND="vault"\n'
+        'note = """\n'
+        "MEMO_EMIT_LEDGER=1\n"
+        '"""\n'
+        "literal = '''\n"
+        "MEMO_EMIT_RECEIPTS=1\n"
+        "'''\n"
+        "```\n"
+    )
+
+
+def test_migrate_independence_cli_discovers_codex_hooks(tmp_path, monkeypatch):
+    from memo.runtime import agent_registry
+
     codex_home = tmp_path / "codex"
     codex_home.mkdir()
     hooks_path = codex_home / "hooks.json"
@@ -707,6 +986,10 @@ def test_migrate_independence_cli_discovers_codex_hooks(tmp_path):
         ),
         encoding="utf-8",
     )
+    orphan_runtime = tmp_path / "orphan-runtime" / "memo-mcp"
+    orphan_runtime.parent.mkdir()
+    orphan_runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(agent_registry, "resolve_isolated_memo_mcp", lambda: orphan_runtime)
     env = {
         "HOME": str(tmp_path / "home"),
         "CODEX_HOME": str(codex_home),
@@ -730,7 +1013,7 @@ def test_migrate_independence_cli_discovers_codex_hooks(tmp_path):
     assert report["agent_integrations"]["migrated"] == 1
     migrated = json.loads(hooks_path.read_text(encoding="utf-8"))
     command = migrated["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert command.endswith("memo briefing --compact")
+    assert command == "MEMO_NONINTERACTIVE=1 memo briefing --compact"
     assert "memflow" not in command.lower()
 
 
@@ -777,6 +1060,28 @@ def test_independence_migration_handles_nested_provenance_and_prevalidates_ledge
         assert config.read_text(encoding="utf-8") == 'MEMO_CACHE_BACKEND="vault"\n'
     finally:
         memory.close()
+
+
+def test_independence_migration_reports_unreadable_legacy_encoding(tmp_cfg, tmp_path):
+    legacy = tmp_path / "legacy.jsonl"
+    legacy.write_bytes(b'\xff{"op":"focus.set"}\n')
+    memory = Memory(tmp_cfg)
+    try:
+        report = migrate_independence(
+            memory,
+            write=True,
+            legacy_ledger=legacy,
+            config_paths=[],
+        )
+    finally:
+        memory.close()
+
+    assert report["legacy_ledger"] == {
+        "checked": 0,
+        "imported": 0,
+        "errors": 1,
+        "skipped": 0,
+    }
 
 
 def test_independence_migration_legacy_ledger_retry_is_idempotent(tmp_cfg, tmp_path):

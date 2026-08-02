@@ -84,6 +84,84 @@ def test_runtime_report_warns_when_pythonpath_shadows_isolated_install(monkeypat
     assert any("PYTHONPATH" in warning for warning in report["warnings"])
 
 
+@pytest.mark.parametrize(
+    ("relative_root", "manager_env", "manager_home", "expected_mode"),
+    (
+        (
+            Path("custom-pipx-home/venvs/mlx-memo"),
+            "PIPX_HOME",
+            Path("custom-pipx-home"),
+            "pipx",
+        ),
+        (
+            Path("custom-uv-tool-dir/mlx-memo"),
+            "UV_TOOL_DIR",
+            Path("custom-uv-tool-dir"),
+            "uv tool",
+        ),
+    ),
+)
+def test_runtime_report_checks_package_provenance_for_custom_tool_roots(
+    monkeypatch,
+    tmp_path,
+    relative_root,
+    manager_env,
+    manager_home,
+    expected_mode,
+):
+    root = tmp_path / relative_root
+    bin_dir = root / "bin"
+    bin_dir.mkdir(parents=True)
+    for name in ("memo", "memo-mcp", "python"):
+        (bin_dir / name).touch()
+
+    package_file = root / "lib" / "python" / "site-packages" / "memo" / "runtime" / "detect.py"
+    package_file.parent.mkdir(parents=True)
+    package_file.touch()
+    monkeypatch.delenv("PIPX_HOME", raising=False)
+    monkeypatch.delenv("UV_TOOL_DIR", raising=False)
+    monkeypatch.setenv(manager_env, str(tmp_path / manager_home))
+    monkeypatch.setattr(cli_mod.shutil, "which", lambda name: str(bin_dir / name))
+    monkeypatch.setattr(sys, "executable", str(bin_dir / "python"))
+
+    report = cli_mod._runtime_install_report(cwd=tmp_path / "repo", package_file=package_file)
+
+    assert report["mode"] == expected_mode
+    assert report["warnings"] == []
+
+    shadow_file = tmp_path / "checkout" / "src" / "memo" / "runtime" / "detect.py"
+    shadow_file.parent.mkdir(parents=True)
+    shadow_file.touch()
+    shadow_report = cli_mod._runtime_install_report(
+        cwd=tmp_path / "checkout", package_file=shadow_file
+    )
+
+    assert shadow_report["mode"] == expected_mode
+    assert not any("install mode is unknown" in warning for warning in shadow_report["warnings"])
+    assert any("outside the isolated runtime" in warning for warning in shadow_report["warnings"])
+    assert any("PYTHONPATH" in warning for warning in shadow_report["warnings"])
+
+
+def test_runtime_report_accepts_conventional_prefix_layout(monkeypatch, tmp_path):
+    root = tmp_path / "usr" / "local"
+    bin_dir = root / "bin"
+    bin_dir.mkdir(parents=True)
+    for name in ("memo", "memo-mcp", "python"):
+        (bin_dir / name).touch()
+
+    package_file = root / "lib" / "python3.13" / "site-packages" / "memo" / "runtime" / "detect.py"
+    package_file.parent.mkdir(parents=True)
+    package_file.touch()
+    monkeypatch.setattr(cli_mod.shutil, "which", lambda name: str(bin_dir / name))
+    monkeypatch.setattr(sys, "executable", str(bin_dir / "python"))
+
+    report = cli_mod._runtime_install_report(cwd=tmp_path / "repo", package_file=package_file)
+
+    assert report["mode"] == "unknown"
+    assert any("install mode is unknown" in warning for warning in report["warnings"])
+    assert not any("outside the isolated runtime" in warning for warning in report["warnings"])
+
+
 def test_runtime_report_warns_for_project_venv(monkeypatch, tmp_path):
     root = tmp_path / "rag" / ".venv"
     bin_dir = root / "bin"

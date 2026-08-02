@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -437,7 +438,15 @@ def _runtime_command_matches(command: str, runtime: Path | None) -> bool:
         return False
     candidate = Path(command)
     if not candidate.is_absolute():
-        resolved = shutil.which(command)
+        try:
+            parsed = shlex.split(command)
+        except ValueError:
+            return False
+        if len(parsed) != 1:
+            return False
+        candidate = Path(parsed[0])
+    if not candidate.is_absolute():
+        resolved = shutil.which(str(candidate))
         if not resolved:
             return False
         candidate = Path(resolved)
@@ -448,12 +457,49 @@ def _runtime_command_matches(command: str, runtime: Path | None) -> bool:
 
 
 def _runtime_detail_matches(raw_detail: str, runtime: Path | None) -> bool:
-    if runtime is not None and str(runtime) in raw_detail:
-        return True
     for line in raw_detail.splitlines():
         key, separator, value = line.partition(":")
-        if separator and key.strip().lower() == "command":
-            return _runtime_command_matches(value.strip(), runtime)
+        if (
+            separator
+            and key.strip().lower() == "command"
+            and _runtime_command_matches(value.strip(), runtime)
+        ):
+            return True
+    return False
+
+
+def _environment_segment_profile_matches(segment: str, expected_profile: str) -> bool:
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        return False
+    assignments = [token.partition("=") for token in tokens]
+    valid = bool(assignments) and all(
+        separator and key.isidentifier() for key, separator, _ in assignments
+    )
+    return valid and any(
+        key == "MEMO_MCP_PROFILE" and value == expected_profile
+        for key, _separator, value in assignments
+    )
+
+
+def _profile_detail_matches(raw_detail: str, expected_profile: str) -> bool:
+    environment_indent: int | None = None
+    for raw_line in raw_detail.splitlines():
+        stripped = raw_line.strip()
+        indent = len(raw_line) - len(raw_line.lstrip())
+        if environment_indent is not None:
+            if stripped and indent > environment_indent:
+                if _environment_segment_profile_matches(stripped, expected_profile):
+                    return True
+                continue
+            environment_indent = None
+        key, separator, value = stripped.partition(":")
+        if separator and key.strip().lower() in {"env", "environment"}:
+            if _environment_segment_profile_matches(value.strip(), expected_profile):
+                return True
+            if not value.strip():
+                environment_indent = indent
     return False
 
 
@@ -489,7 +535,7 @@ def _probe_agent_configuration(
                 parsed = None
         if parsed is None:
             config_runtime = _runtime_detail_matches(raw_detail, runtime)
-            profile_current = adapter.mcp_profile in raw_detail
+            profile_current = _profile_detail_matches(raw_detail, adapter.mcp_profile)
         else:
             transport_value = parsed.get("transport")
             transport = transport_value if isinstance(transport_value, dict) else {}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -62,6 +63,16 @@ def _path_is_relative_to(path: Path, parent: Path) -> bool:
 def _install_mode(root: Path | None) -> str:
     if root is None:
         return "unknown"
+    pipx_home = os.environ.get("PIPX_HOME")
+    if pipx_home:
+        pipx_venvs = _safe_resolve(Path(pipx_home).expanduser() / "venvs")
+        if root.parent == pipx_venvs:
+            return "pipx"
+    uv_tool_dir = os.environ.get("UV_TOOL_DIR")
+    if uv_tool_dir:
+        uv_tools = _safe_resolve(Path(uv_tool_dir).expanduser())
+        if root.parent == uv_tools:
+            return "uv tool"
     parts = set(root.parts)
     root_s = str(root)
     if "pipx" in parts and "venvs" in parts:
@@ -131,11 +142,7 @@ def _runtime_install_report(
             "install mode is unknown; recommended: `pipx install mlx-memo` "
             "or `uv tool install mlx-memo`"
         )
-    if (
-        mode in {"pipx", "uv tool", "homebrew"}
-        and primary_root is not None
-        and not _path_is_relative_to(package_path, primary_root)
-    ):
+    if primary_root is not None and not _path_is_relative_to(package_path, primary_root):
         warnings.append(
             f"memo Python package loaded from {package_path}, outside the isolated runtime "
             f"{primary_root}; clear PYTHONPATH or reinstall without an editable source link"

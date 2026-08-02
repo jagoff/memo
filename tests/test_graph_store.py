@@ -57,6 +57,73 @@ def test_record_extraction_is_idempotent(tmp_path: Path) -> None:
     assert len(g.memory_entities("m1")) == 1
 
 
+def test_record_extraction_deduplicates_normalized_entities(tmp_path: Path) -> None:
+    g = _store(tmp_path)
+    entities = [
+        {"name": "Memo", "type": "project"},
+        {"name": " memo ", "type": " PROJECT "},
+    ]
+
+    assert (
+        g.record_extraction(
+            memory_id="m1",
+            memory_date="2026-01-01",
+            entities=entities,
+            extracted_at="2026-01-01T00:00:00Z",
+        )
+        == 1
+    )
+    assert (
+        g.record_extraction(
+            memory_id="m1",
+            memory_date="2026-01-01",
+            entities=entities,
+            extracted_at="2026-01-02T00:00:00Z",
+        )
+        == 1
+    )
+    assert g.memory_entities("m1") == [{"name": "memo", "type": "project", "mention_count": 1}]
+
+
+def test_record_extraction_repairs_corrupt_counts_for_old_and_touched_entities(
+    tmp_path: Path,
+) -> None:
+    graph = _store(tmp_path)
+    graph.record_extraction(
+        memory_id="m1",
+        memory_date="2026-01-01",
+        entities=[
+            {"name": "Memo", "type": "project"},
+            {"name": "Legacy", "type": "concept"},
+        ],
+        extracted_at="2026-01-01T00:00:00Z",
+    )
+    graph.record_extraction(
+        memory_id="m2",
+        memory_date="2026-01-02",
+        entities=[{"name": "Memo", "type": "project"}],
+        extracted_at="2026-01-02T00:00:00Z",
+    )
+    graph._conn.execute("UPDATE entities SET mention_count = 99")
+    graph._conn.commit()
+
+    graph.record_extraction(
+        memory_id="m1",
+        memory_date="2026-01-01",
+        entities=[
+            {"name": "Memo", "type": "project"},
+            {"name": "Current", "type": "concept"},
+        ],
+        extracted_at="2026-01-03T00:00:00Z",
+    )
+
+    counts = {
+        str(row["name"]): int(row["mention_count"])
+        for row in graph._conn.execute("SELECT name, mention_count FROM entities")
+    }
+    assert counts == {"current": 1, "legacy": 0, "memo": 2}
+
+
 def test_legacy_entity_memory_rows_gain_conservative_provenance(tmp_path: Path) -> None:
     db = tmp_path / "graph.db"
     cx = sqlite3.connect(db)
@@ -121,6 +188,25 @@ def test_drop_for_memoria(tmp_path: Path) -> None:
     g.drop_for_memoria("m1")
     assert g.memory_entities("m1") == []
     assert g.entity_memories("Widget") == []
+
+
+def test_drop_for_memoria_repairs_corrupt_mention_count(tmp_path: Path) -> None:
+    graph = _store(tmp_path)
+    for memory_id in ("m1", "m2"):
+        graph.record_extraction(
+            memory_id=memory_id,
+            memory_date="2026-01-01",
+            entities=[{"name": "Shared", "type": "concept"}],
+            extracted_at="2026-01-01T00:00:00Z",
+        )
+    graph._conn.execute("UPDATE entities SET mention_count = 99 WHERE name = 'shared'")
+    graph._conn.commit()
+
+    assert graph.drop_for_memoria("m1") == 1
+
+    assert graph.memory_entities("m2") == [
+        {"name": "shared", "type": "concept", "mention_count": 1}
+    ]
 
 
 def test_two_memorias_share_entity(tmp_path: Path) -> None:

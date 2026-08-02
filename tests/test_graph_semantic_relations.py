@@ -111,6 +111,33 @@ def test_drop_for_memoria_cascades_to_target_semantic_relations(tmp_path) -> Non
     assert graph.semantic_relations_for(source_id="a") == []
 
 
+def test_drop_for_memoria_cascades_in_one_transaction(tmp_path) -> None:
+    graph = GraphStore(tmp_path / "graph.db")
+    graph.record_extraction(
+        memory_id="a",
+        memory_date="2026-08-01",
+        entities=[{"name": "Memo", "type": "project"}],
+        extracted_at="2026-08-01T00:00:00Z",
+    )
+    graph.upsert_semantic_relation(
+        source_kind="memory",
+        source_id="a",
+        target_kind="memory",
+        target_id="b",
+        relation="supports",
+        derived_from="test",
+    )
+    statements: list[str] = []
+    graph._conn.set_trace_callback(statements.append)
+
+    graph.drop_for_memoria("a")
+
+    assert sum(statement == "BEGIN IMMEDIATE" for statement in statements) == 1
+    assert sum(statement == "COMMIT" for statement in statements) == 1
+    assert any(statement.startswith("DELETE FROM entity_memory") for statement in statements)
+    assert any(statement.startswith("DELETE FROM semantic_relations") for statement in statements)
+
+
 def test_store_relations_and_delete_by_derived_from(tmp_path) -> None:
     graph = GraphStore(tmp_path / "graph.db")
     rel = extract_relations_batch(

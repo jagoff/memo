@@ -315,6 +315,104 @@ def test_claude_doctor_accepts_bare_command_resolved_to_isolated_runtime(
     assert profile_current is True
 
 
+def test_agent_doctor_requires_exact_command_and_profile_fields(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime(tmp_path)
+    adapter = registry.AGENT_REGISTRY["claude-code"]
+    other_runtime = tmp_path / "other" / "memo-mcp"
+    raw = (
+        f"Command: {other_runtime}\n"
+        f"Diagnostic: expected runtime {runtime}\n"
+        "Environment: MEMO_MCP_PROFILE=not-agent\n"
+    )
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "/usr/bin/claude")
+    monkeypatch.setattr(
+        registry.subprocess,
+        "run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=raw,
+            stderr="",
+        ),
+    )
+
+    configured, runtime_current, profile_current, _detail = registry._probe_agent_configuration(
+        adapter=adapter,
+        slug="claude-code",
+        root=tmp_path,
+        runtime=runtime,
+        probe=True,
+        binary="/usr/bin/claude",
+    )
+
+    assert configured is True
+    assert runtime_current is False
+    assert profile_current is False
+
+
+def test_agent_doctor_ignores_profile_in_diagnostic_text(monkeypatch, tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    adapter = registry.AGENT_REGISTRY["claude-code"]
+    raw = (
+        f"Command: {runtime}\n"
+        "Environment: MEMO_MCP_PROFILE=not-agent\n"
+        "Diagnostic: expected MEMO_MCP_PROFILE=agent\n"
+    )
+    monkeypatch.setattr(registry.shutil, "which", lambda _name: "/usr/bin/claude")
+    monkeypatch.setattr(
+        registry.subprocess,
+        "run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=raw,
+            stderr="",
+        ),
+    )
+
+    _configured, _runtime_current, profile_current, _detail = registry._probe_agent_configuration(
+        adapter=adapter,
+        slug="claude-code",
+        root=tmp_path,
+        runtime=runtime,
+        probe=True,
+        binary="/usr/bin/claude",
+    )
+
+    assert profile_current is False
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Command: memo-mcp\nEnvironment: MEMO_MCP_PROFILE=agent\n",
+        (
+            "memo:\n"
+            "  Type: stdio\n"
+            "  Command: memo-mcp\n"
+            "  Environment:\n"
+            "    MEMO_NONINTERACTIVE=1\n"
+            "    MEMO_MCP_PROFILE=agent\n"
+            "    MEMO_SOURCE=claude-code\n"
+        ),
+        "command: memo-mcp\nenv: MEMO_SOURCE=claude-code MEMO_MCP_PROFILE=agent\n",
+    ],
+)
+def test_agent_doctor_parses_supported_environment_formats(raw: str) -> None:
+    assert registry._profile_detail_matches(raw, "agent") is True
+
+
+def test_runtime_command_match_accepts_quoted_path_with_spaces(tmp_path: Path) -> None:
+    runtime = tmp_path / "Memo Runtime" / "memo-mcp"
+    runtime.parent.mkdir()
+    runtime.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    assert registry._runtime_command_matches(f"'{runtime}'", runtime) is True
+
+
 def test_verify_agent_reports_probe_and_storage_failures(monkeypatch, tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     registry._write_mandate(tmp_path / "AGENTS.md", dry_run=False)

@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
 import frontmatter
 
 from memo.atomic_io import atomic_write_text
+from memo.config_md import _TOML_BLOCK_RE
 from memo.contracts import LEGACY_PROVENANCE_KEYS, PROVENANCE_KEYS, normalize_provenance
 
 _REMOVED_FLAGS = {
@@ -23,6 +25,18 @@ _REMOVED_FLAGS = {
     "MEMO_SYNAPSE_CLIENT_TIMEOUT",
     "MEMO_SYNAPSE_EXECUTABLE",
 }
+_REMOVED_FLAG_ASSIGNMENT_RE = re.compile(
+    rf"^\s*(?:export\s+)?(?:{'|'.join(sorted(map(re.escape, _REMOVED_FLAGS)))})\s*=",
+    re.IGNORECASE,
+)
+_LEGACY_CACHE_ASSIGNMENT_RE = re.compile(
+    r"""^(\s*(?:export\s+)?MEMO_CACHE_BACKEND\s*=\s*)(["']?)memflow\b\2""",
+    re.IGNORECASE,
+)
+_SHELL_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_ENV_OPTIONS_WITH_VALUE = frozenset({"-C", "--chdir", "-S", "--split-string", "-u", "--unset"})
+_ENV_OPTIONS_WITHOUT_VALUE = frozenset({"-0", "--ignore-environment", "--null", "-i"})
+_SHELL_PUNCTUATION = ";&|<>()`"
 
 
 def _migrate_markdown(path: Path, *, write: bool) -> str:
@@ -49,8 +63,96 @@ def _migrate_markdown(path: Path, *, write: bool) -> str:
     post.metadata["extra"] = extra
     rendered = frontmatter.dumps(post)
     if write and rendered != original:
-        atomic_write_text(path, rendered)
+        try:
+            atomic_write_text(path, rendered)
+        except (OSError, ValueError):
+            return "error"
     return "migrated"
+
+
+def _is_escaped(text: str, index: int) -> bool:
+    backslashes = 0
+    while index > backslashes and text[index - backslashes - 1] == "\\":
+        backslashes += 1
+    return backslashes % 2 == 1
+
+
+def _toml_multiline_state(line: str, active: str | None) -> tuple[str | None, bool]:
+    """Track TOML multiline strings so migration never edits their contents."""
+    protected = active is not None
+    quote: str | None = None
+    index = 0
+    while index < len(line):
+        if active is not None:
+            if line.startswith(active, index) and (active == "'''" or not _is_escaped(line, index)):
+                active = None
+                index += 3
+            else:
+                index += 1
+            continue
+        char = line[index]
+        if quote is not None:
+            if char == quote and (quote == "'" or not _is_escaped(line, index)):
+                quote = None
+            index += 1
+            continue
+        if char == "#":
+            break
+        delimiter = next(
+            (candidate for candidate in ('"""', "'''") if line.startswith(candidate, index)),
+            None,
+        )
+        if delimiter is not None:
+            active = delimiter
+            protected = True
+            index += 3
+            continue
+        if char in {"'", '"'}:
+            quote = char
+        index += 1
+    return active, protected
+
+
+def _migrate_config_assignments(original: str, *, toml: bool = False) -> tuple[str, bool]:
+    lines: list[str] = []
+    changed = False
+    multiline: str | None = None
+    for line in original.splitlines(keepends=True):
+        multiline, protected = _toml_multiline_state(line, multiline) if toml else (None, False)
+        if not protected and _REMOVED_FLAG_ASSIGNMENT_RE.search(line):
+            changed = True
+            continue
+        updated = (
+            line
+            if protected
+            else _LEGACY_CACHE_ASSIGNMENT_RE.sub(
+                r"\1\2vault\2",
+                line,
+            )
+        )
+        changed = changed or updated != line
+        lines.append(updated)
+    return "".join(lines), changed
+
+
+def _migrate_markdown_config(original: str) -> tuple[str, bool]:
+    parts: list[str] = []
+    cursor = 0
+    changed = False
+    for match in _TOML_BLOCK_RE.finditer(original):
+        raw_block = match.group(0)
+        body_start = match.start(1) - match.start(0)
+        closing_start = len(raw_block) - len("```")
+        body = raw_block[body_start:closing_start]
+        updated, block_changed = _migrate_config_assignments(body, toml=True)
+        parts.append(original[cursor : match.start(0)])
+        parts.append(raw_block[:body_start])
+        parts.append(updated)
+        parts.append(raw_block[closing_start:])
+        changed = changed or block_changed
+        cursor = match.end(0)
+    parts.append(original[cursor:])
+    return "".join(parts), changed
 
 
 def _migrate_config(path: Path, *, write: bool) -> str:
@@ -58,42 +160,105 @@ def _migrate_config(path: Path, *, write: bool) -> str:
         original = path.read_text(encoding="utf-8")
     except OSError:
         return "error"
-    lines: list[str] = []
-    changed = False
-    for line in original.splitlines(keepends=True):
-        if any(re.search(rf"\b{re.escape(flag)}\b", line) for flag in _REMOVED_FLAGS):
-            changed = True
-            continue
-        updated = re.sub(
-            r"""(MEMO_CACHE_BACKEND\s*(?:=|:)\s*)(["']?)memflow\b\2""",
-            r"\1\2vault\2",
-            line,
-            flags=re.IGNORECASE,
+    if path.suffix.lower() == ".md":
+        rendered, changed = _migrate_markdown_config(original)
+    else:
+        rendered, changed = _migrate_config_assignments(
+            original, toml=path.suffix.lower() == ".toml"
         )
-        changed = changed or updated != line
-        lines.append(updated)
     if not changed:
         return "unchanged"
     if write:
-        atomic_write_text(path, "".join(lines))
+        try:
+            atomic_write_text(path, rendered)
+        except (OSError, ValueError):
+            return "error"
     return "migrated"
 
 
 def _is_legacy_memflow_startup_hook(value: object) -> bool:
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) or value.get("type") not in (None, "command"):
         return False
     command = value.get("command")
     if not isinstance(command, str):
         return False
-    lowered = command.lower()
-    return "memflow" in lowered and "startup-banner" in lowered
+    argv = _hook_command_argv(command)
+    return (
+        len(argv) >= 2
+        and _executable_name(argv[0]) == "memflow"
+        and argv[1].lower() == "startup-banner"
+    )
 
 
 def _is_memo_briefing_hook(value: object) -> bool:
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) or value.get("type") not in (None, "command"):
         return False
     command = value.get("command")
-    return isinstance(command, str) and "memo" in command and "briefing --compact" in command
+    if not isinstance(command, str):
+        return False
+    argv = _hook_command_argv(command)
+    return (
+        len(argv) >= 3
+        and _executable_name(argv[0]) == "memo"
+        and argv[1:3] == ["briefing", "--compact"]
+    )
+
+
+def _executable_name(token: str) -> str:
+    name = token.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name.removesuffix(".exe")
+
+
+def _simple_shell_argv(command: str) -> list[str]:
+    if "\r" in command or "\n" in command or "$(" in command or "`" in command:
+        return []
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=_SHELL_PUNCTUATION)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        argv = list(lexer)
+    except ValueError:
+        return []
+    if any(token and set(token) <= set(_SHELL_PUNCTUATION) for token in argv):
+        return []
+    return argv
+
+
+def _hook_command_argv(command: str) -> list[str]:
+    """Return the real executable and args for a simple hook command.
+
+    Initial POSIX assignments and the standard ``env`` wrapper are supported.
+    Shell pipelines/wrappers and compound commands intentionally fail closed:
+    migration must neither classify a later argument such as
+    ``printf memo briefing --compact`` as the executable nor replace a legacy
+    command while silently deleting another action chained to it.
+    """
+    argv = _simple_shell_argv(command)
+    index = 0
+    while index < len(argv) and _SHELL_ASSIGNMENT_RE.match(argv[index]):
+        index += 1
+    if index >= len(argv) or _executable_name(argv[index]) != "env":
+        return argv[index:]
+
+    index += 1
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--":
+            index += 1
+            break
+        if _SHELL_ASSIGNMENT_RE.match(arg) or arg in _ENV_OPTIONS_WITHOUT_VALUE:
+            index += 1
+            continue
+        if arg in _ENV_OPTIONS_WITH_VALUE:
+            index += 2
+            continue
+        if arg.startswith(("--chdir=", "--split-string=", "--unset=")):
+            index += 1
+            continue
+        if arg.startswith("-"):
+            return []
+        break
+    return argv[index:]
 
 
 def _load_codex_session_start(
@@ -149,7 +314,7 @@ def _migrate_codex_hook_group(
         replacement.update(
             {
                 "type": "command",
-                "command": f"MEMO_NONINTERACTIVE=1 {memo_bin} briefing --compact",
+                "command": (f"MEMO_NONINTERACTIVE=1 {shlex.quote(memo_bin)} briefing --compact"),
                 "timeout": 5,
                 "statusMessage": "Loading memo briefing",
             }
@@ -188,10 +353,13 @@ def _migrate_codex_hooks(path: Path, *, write: bool, memo_bin: str) -> str:
         return "unchanged"
     hooks["SessionStart"] = migrated_groups
     if write:
-        atomic_write_text(
-            path,
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        )
+        try:
+            atomic_write_text(
+                path,
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            )
+        except (OSError, ValueError):
+            return "error"
     return "migrated"
 
 
@@ -199,8 +367,13 @@ def _import_legacy_ledger(memory: Any, path: Path, *, write: bool) -> dict[str, 
     report = {"checked": 0, "imported": 0, "errors": 0, "skipped": 0}
     if not path.is_file():
         return report
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    source_id = _legacy_source_id(path)
+    try:
+        raw_ledger = path.read_bytes()
+        source_id = _legacy_source_id(path)
+    except OSError:
+        report["errors"] = 1
+        return report
+    digest = hashlib.sha256(raw_ledger).hexdigest()
     stamp_path = memory.cfg.state_dir / "independence-migration.json"
     stamp = _read_migration_stamp(stamp_path)
     if (
@@ -209,7 +382,7 @@ def _import_legacy_ledger(memory: Any, path: Path, *, write: bool) -> dict[str, 
     ):
         report["skipped"] = 1
         return report
-    parsed = _parse_legacy_ledger(path, report)
+    parsed = _parse_legacy_ledger(raw_ledger, report)
     if report["errors"]:
         return report
 
@@ -243,14 +416,16 @@ def _read_migration_stamp(path: Path) -> dict[str, Any]:
 
 
 def _parse_legacy_ledger(
-    path: Path,
+    raw_ledger: bytes,
     report: dict[str, int],
 ) -> list[tuple[int, dict[str, Any]]]:
     parsed: list[tuple[int, dict[str, Any]]] = []
-    for line_number, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(),
-        start=1,
-    ):
+    try:
+        lines = raw_ledger.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        report["errors"] += 1
+        return parsed
+    for line_number, line in enumerate(lines, start=1):
         if not line.strip():
             continue
         report["checked"] += 1
