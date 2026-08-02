@@ -18,6 +18,18 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   session-id pagination so consumers can drain histories larger than 1,000
   records without replaying earlier pages.
 
+### Fixed
+
+- Live terminal coordination now recognizes the native `Apple_Terminal` and
+  `iTerm.app` `TERM_PROGRAM` values, rotates a registration id when a new
+  process replaces an agent on the same TTY, and records target-validation
+  failures instead of leaving them outside receipt history.
+- macOS terminal presentation keeps message bodies out of process arguments,
+  converts AppleScript timeouts into failed receipts, submits Ghostty input to
+  the exact terminal without a global-focus race, and no longer uses the
+  clipboard for Terminal.app delivery. A partially successful `TIOCSTI`
+  injection is never replayed through a fallback transport.
+
 ### Changed
 
 - `memo stats --json` now emits `memo.stats.v2`: bounded context activity is
