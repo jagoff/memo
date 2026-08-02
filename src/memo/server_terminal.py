@@ -15,8 +15,8 @@ from memo.terminal_live import TerminalBridge
 
 
 def _reply_envelope(message: str, sender_id: str) -> str:
-    encoded = json.dumps(message, ensure_ascii=False).replace("<", "\\u003c").replace(
-        ">", "\\u003e"
+    encoded = (
+        json.dumps(message, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e")
     )
     if not sender_id:
         return (
@@ -54,7 +54,9 @@ def register(server: Any, memory: Any) -> None:
     @annotated_tool(server, **WRITE)
     def memo_terminal_send(
         to: Annotated[str, Field(description="Exact terminal id returned by memo_terminal_list.")],
-        message: Annotated[str, Field(description="Prompt or reply to type into the target agent.")],
+        message: Annotated[
+            str, Field(description="Prompt or reply to type into the target agent.")
+        ],
         submit: Annotated[
             bool,
             Field(description="Press Return after typing so the target agent receives the prompt."),

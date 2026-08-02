@@ -42,7 +42,7 @@ def _split_payload(payload: bytes) -> tuple[str, bool]:
         raise OSError("terminal payload is not UTF-8") from exc
 
 
-_GHOSTTY_INPUT_SCRIPT = r'''
+_GHOSTTY_INPUT_SCRIPT = r"""
 on run argv
   set targetTty to item 1 of argv
   set promptText to item 2 of argv
@@ -66,15 +66,15 @@ on run argv
   end tell
   return "not found"
 end run
-'''
+"""
 
-_GHOSTTY_ENTER_SCRIPT = r'''
+_GHOSTTY_ENTER_SCRIPT = r"""
 tell application "Ghostty" to activate
 delay 0.35
 tell application "System Events" to key code 36
-'''
+"""
 
-_TERMINAL_INPUT_SCRIPT = r'''
+_TERMINAL_INPUT_SCRIPT = r"""
 on run argv
   set targetTty to item 1 of argv
   set submitPrompt to ((item 2 of argv) is "1")
@@ -115,7 +115,7 @@ on run argv
   end try
   return "ok"
 end run
-'''
+"""
 
 
 def _deliver_ghostty(tty: Path, payload: bytes) -> None:
@@ -139,7 +139,7 @@ def _deliver_terminal(tty: Path, payload: bytes) -> None:
 def _deliver_iterm(tty: Path, payload: bytes, *, app_name: str) -> None:
     body, submit = _split_payload(payload)
     app_literal = json.dumps(app_name)
-    script = f'''
+    script = f"""
 on run argv
   set targetTty to item 1 of argv
   set submitPrompt to ((item 2 of argv) is "1")
@@ -163,7 +163,7 @@ on run argv
   end tell
   return "not found"
 end run
-'''
+"""
     result = _run_osascript(script, str(tty), "1" if submit else "0", body)
     if result.returncode != 0 or result.stdout.strip() != "ok":
         raise OSError(f"{app_name} could not find the registered TTY")
