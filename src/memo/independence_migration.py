@@ -79,6 +79,86 @@ def _migrate_config(path: Path, *, write: bool) -> str:
     return "migrated"
 
 
+def _is_legacy_memflow_startup_hook(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    command = value.get("command")
+    if not isinstance(command, str):
+        return False
+    lowered = command.lower()
+    return "memflow" in lowered and "startup-banner" in lowered
+
+
+def _is_memo_briefing_hook(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    command = value.get("command")
+    return isinstance(command, str) and "memo" in command and "briefing --compact" in command
+
+
+def _migrate_codex_hooks(path: Path, *, write: bool, memo_bin: str) -> str:
+    """Replace the retired Memflow SessionStart hook without touching foreign hooks."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "error"
+    if not isinstance(payload, dict):
+        return "error"
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict):
+        return "unchanged"
+    session_start = hooks.get("SessionStart")
+    if not isinstance(session_start, list):
+        return "unchanged"
+
+    has_memo_briefing = any(
+        _is_memo_briefing_hook(hook)
+        for group in session_start
+        if isinstance(group, dict) and isinstance(group.get("hooks"), list)
+        for hook in group["hooks"]
+    )
+    migrated = False
+    migrated_groups: list[object] = []
+    for group in session_start:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            migrated_groups.append(group)
+            continue
+        original_hooks = group["hooks"]
+        migrated_hooks: list[object] = []
+        for hook in original_hooks:
+            if not _is_legacy_memflow_startup_hook(hook):
+                migrated_hooks.append(hook)
+                continue
+            migrated = True
+            if has_memo_briefing:
+                continue
+            replacement = dict(hook)
+            replacement.update(
+                {
+                    "type": "command",
+                    "command": f"MEMO_NONINTERACTIVE=1 {memo_bin} briefing --compact",
+                    "timeout": 5,
+                    "statusMessage": "Loading memo briefing",
+                }
+            )
+            migrated_hooks.append(replacement)
+            has_memo_briefing = True
+        if migrated_hooks or not original_hooks:
+            migrated_group = dict(group)
+            migrated_group["hooks"] = migrated_hooks
+            migrated_groups.append(migrated_group)
+
+    if not migrated:
+        return "unchanged"
+    hooks["SessionStart"] = migrated_groups
+    if write:
+        atomic_write_text(
+            path,
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        )
+    return "migrated"
+
+
 def _import_legacy_ledger(memory: Any, path: Path, *, write: bool) -> dict[str, int]:
     report = {"checked": 0, "imported": 0, "errors": 0, "skipped": 0}
     if not path.is_file():
@@ -231,6 +311,8 @@ def migrate_independence(
     write: bool = False,
     legacy_ledger: Path | None = None,
     config_paths: list[Path] | None = None,
+    codex_hooks_path: Path | None = None,
+    memo_bin: str = "memo",
 ) -> dict[str, Any]:
     """Migrate provenance/config/journal data without contacting another system."""
     markdown = {"checked": 0, "migrated": 0, "unchanged": 0, "errors": 0}
@@ -261,6 +343,13 @@ def migrate_independence(
         key = "errors" if result == "error" else result
         configs[key] += 1
 
+    integrations = {"checked": 0, "migrated": 0, "unchanged": 0, "errors": 0}
+    if codex_hooks_path is not None and codex_hooks_path.is_file():
+        integrations["checked"] = 1
+        result = _migrate_codex_hooks(codex_hooks_path, write=write, memo_bin=memo_bin)
+        key = "errors" if result == "error" else result
+        integrations[key] += 1
+
     ledger = (
         _import_legacy_ledger(memory, legacy_ledger, write=write)
         if legacy_ledger is not None
@@ -273,6 +362,7 @@ def migrate_independence(
         "mode": "write" if write else "dry-run",
         "markdown": markdown,
         "config": configs,
+        "agent_integrations": integrations,
         "legacy_ledger": ledger,
         "journal": memory.operational.ledger.verify(),
     }
