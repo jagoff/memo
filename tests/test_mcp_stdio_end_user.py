@@ -104,9 +104,7 @@ async def test_stdio_process_exposes_full_surface_and_core_crud(tmp_path: Path) 
             assert [hit["id"] for hit in searched["hits"]] == [memory_id]
 
             assert (await client.call_tool("memo_rerank", {"query": "", "hits": []})).data == []
-            assert (
-                await client.call_tool("memo_consolidate_list_archived", {})
-            ).data == []
+            assert (await client.call_tool("memo_consolidate_list_archived", {})).data == []
             relation_reviews = (await client.call_tool("mem_relation_reviews", {})).data
             assert relation_reviews == {"pending": [], "count": 0}
 
@@ -127,9 +125,7 @@ async def test_stdio_process_exposes_full_surface_and_core_crud(tmp_path: Path) 
             ).data
             assert updated["title"] == "stdio journey updated"
 
-            history = (
-                await client.call_tool("memo_history", {"id": memory_id, "limit": 10})
-            ).data
+            history = (await client.call_tool("memo_history", {"id": memory_id, "limit": 10})).data
             assert {event["op"] for event in history} >= {"save", "update"}
 
             deleted = (await client.call_tool("memo_delete", {"id": memory_id})).data

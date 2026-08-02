@@ -301,15 +301,13 @@ def test_claude_doctor_accepts_bare_command_resolved_to_isolated_runtime(
         ),
     )
 
-    configured, runtime_current, profile_current, _detail = (
-        registry._probe_agent_configuration(
-            adapter=adapter,
-            slug="claude-code",
-            root=tmp_path,
-            runtime=runtime,
-            probe=True,
-            binary="/usr/bin/claude",
-        )
+    configured, runtime_current, profile_current, _detail = registry._probe_agent_configuration(
+        adapter=adapter,
+        slug="claude-code",
+        root=tmp_path,
+        runtime=runtime,
+        probe=True,
+        binary="/usr/bin/claude",
     )
 
     assert configured is True

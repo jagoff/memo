@@ -635,9 +635,7 @@ def test_independence_migration_replaces_dead_memflow_codex_hook_preserving_fore
     }
     migrated = json.loads(hooks_path.read_text(encoding="utf-8"))
     commands = [
-        hook["command"]
-        for group in migrated["hooks"]["SessionStart"]
-        for hook in group["hooks"]
+        hook["command"] for group in migrated["hooks"]["SessionStart"] for hook in group["hooks"]
     ]
     assert commands == [
         "MEMO_NONINTERACTIVE=1 /opt/memo/bin/memo briefing --compact",
