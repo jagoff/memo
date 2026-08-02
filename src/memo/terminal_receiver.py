@@ -303,7 +303,7 @@ class ReceiverSupervisor:
                 else:
                     raise ValueError("invalid request")
                 response = {"ok": True, "message_id": message_id, "bytes": count}
-            except Exception as exc:
+            except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
                 response = {"ok": False, "message_id": message_id, "error": str(exc)}
             self._receipts[message_id] = (fingerprint, response)
             self._receipts.move_to_end(message_id)
