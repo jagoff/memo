@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import memo.terminal_presenter as presenter
+from memo.errors import TerminalDeliveryError
 
 
 def test_tiocsti_preserves_every_input_byte(monkeypatch) -> None:
@@ -136,14 +137,104 @@ def test_osascript_receives_sensitive_text_over_stdin_not_argv(monkeypatch) -> N
     assert "__MEMO_PROMPT_LITERAL__" not in str(captured["input"])
 
 
-def test_osascript_timeout_becomes_safe_oserror(monkeypatch) -> None:
+def test_osascript_timeout_becomes_safe_delivery_error(monkeypatch) -> None:
     def timeout(*_args: object, **_kwargs: object) -> None:
         raise subprocess.TimeoutExpired(["osascript"], timeout=5)
 
     monkeypatch.setattr(presenter.subprocess, "run", timeout)
 
-    with pytest.raises(OSError, match="timed out"):
+    with pytest.raises(TerminalDeliveryError, match="timed out"):
         presenter._run_osascript('return "ok"')
+
+
+def test_osascript_rejects_invalid_payload_marker_without_starting(monkeypatch) -> None:
+    started = False
+
+    def run(*_args: object, **_kwargs: object) -> None:
+        nonlocal started
+        started = True
+
+    monkeypatch.setattr(presenter.subprocess, "run", run)
+
+    with pytest.raises(TerminalDeliveryError, match="payload marker is invalid"):
+        presenter._run_osascript('return "ok"', prompt_text="secret")
+
+    assert started is False
+
+
+def test_osascript_start_failure_becomes_safe_delivery_error(monkeypatch) -> None:
+    def missing_binary(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError("private executable path")
+
+    monkeypatch.setattr(presenter.subprocess, "run", missing_binary)
+
+    with pytest.raises(TerminalDeliveryError, match="automation could not start") as exc:
+        presenter._run_osascript('return "ok"')
+
+    assert "private executable path" not in str(exc.value)
+
+
+def test_non_utf8_payload_becomes_safe_delivery_error() -> None:
+    with pytest.raises(TerminalDeliveryError, match="payload is not UTF-8"):
+        presenter._split_payload(b"\xff")
+
+
+@pytest.mark.parametrize(
+    ("terminal_app", "expected_error"),
+    [
+        ("Ghostty", "Ghostty could not find the registered TTY"),
+        ("Terminal", "Terminal could not find the registered TTY"),
+        ("iTerm2", "iTerm2 could not find the registered TTY"),
+    ],
+)
+def test_exact_session_fallback_reports_target_not_found(
+    monkeypatch,
+    terminal_app: str,
+    expected_error: str,
+) -> None:
+    monkeypatch.setattr(
+        presenter,
+        "_deliver_tiocsti",
+        lambda _tty, _payload: (_ for _ in ()).throw(PermissionError()),
+    )
+    monkeypatch.setattr(
+        presenter,
+        "_run_osascript",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="not found\n",
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(TerminalDeliveryError, match=expected_error):
+        presenter.deliver_input(
+            Path("/dev/ttys003"),
+            b"secret payload\r",
+            terminal_app=terminal_app,
+        )
+
+
+def test_unexpected_fallback_oserror_is_redacted(monkeypatch) -> None:
+    monkeypatch.setattr(
+        presenter,
+        "_deliver_tiocsti",
+        lambda _tty, _payload: (_ for _ in ()).throw(PermissionError()),
+    )
+    monkeypatch.setattr(
+        presenter,
+        "_deliver_ghostty",
+        lambda _tty, _payload: (_ for _ in ()).throw(OSError("private fallback detail")),
+    )
+
+    with pytest.raises(TerminalDeliveryError, match="terminal input delivery failed") as exc:
+        presenter.deliver_input(
+            Path("/dev/ttys003"),
+            b"secret payload\r",
+            terminal_app="Ghostty",
+        )
+
+    assert "private fallback detail" not in str(exc.value)
 
 
 def test_partial_tiocsti_never_replays_payload_through_fallback(monkeypatch) -> None:
@@ -162,7 +253,7 @@ def test_partial_tiocsti_never_replays_payload_through_fallback(monkeypatch) -> 
         lambda _tty, payload: fallbacks.append(payload),
     )
 
-    with pytest.raises(OSError, match="partial"):
+    with pytest.raises(TerminalDeliveryError, match="partial"):
         presenter.deliver_input(Path("/dev/null"), b"abc", terminal_app="Ghostty")
 
     assert injected == [b"a"]
@@ -176,5 +267,5 @@ def test_missing_platform_fallback_has_actionable_error(monkeypatch) -> None:
         lambda _tty, _payload: (_ for _ in ()).throw(PermissionError()),
     )
 
-    with pytest.raises(OSError, match="no exact-session fallback"):
+    with pytest.raises(TerminalDeliveryError, match="no exact-session fallback"):
         presenter.deliver_input(Path("/dev/pts/7"), b"hello\r", terminal_app="")
