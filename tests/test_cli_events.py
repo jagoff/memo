@@ -479,6 +479,64 @@ def test_cli_cursor_accepts_empty_origin_and_since_requires_cursor(tmp_path: Pat
     assert "--since requires --cursor" in unpaginated_since.output
 
 
+def test_cli_ingest_accepts_valid_payload(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["events", "ingest", json.dumps({"event_id": "cli-evt-1", "kind": "agent"})],
+        env=_env(tmp_path),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["accepted"] is True
+
+
+def test_cli_ingest_missing_event_id_fails_cleanly(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["events", "ingest", json.dumps({"kind": "agent"})],
+        env=_env(tmp_path),
+    )
+
+    assert result.exit_code == 2
+    assert "event_id is required" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_ingest_invalid_kind_fails_cleanly(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["events", "ingest", json.dumps({"event_id": "cli-evt-2", "kind": "bogus"})],
+        env=_env(tmp_path),
+    )
+
+    assert result.exit_code == 2
+    assert "kind must be" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_ingest_duplicate_conflicting_payload_fails_cleanly(tmp_path: Path) -> None:
+    runner = CliRunner()
+    runner.invoke(
+        cli,
+        ["events", "ingest", json.dumps({"event_id": "cli-evt-3", "kind": "agent", "data": {}})],
+        env=_env(tmp_path),
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "events",
+            "ingest",
+            json.dumps({"event_id": "cli-evt-3", "kind": "agent", "data": {"changed": True}}),
+        ],
+        env=_env(tmp_path),
+    )
+
+    assert result.exit_code == 2
+    assert "different payload" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_ingest_reconciles_legacy_prefix_once_then_reads_only_delta(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -214,6 +214,57 @@ def test_get_finds_session_created_via_chat_http_api(
     assert [t["role"] for t in payload["turns"]] == ["user", "assistant"]
 
 
+def test_get_finds_session_created_via_cli_start(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "chat_sessions.json"
+    _write_sessions(
+        state_path,
+        {
+            "cs-native": {
+                "session_id": "cs-native",
+                "client": "codex",
+                "created_at": 5.0,
+                "turns": [],
+            }
+        },
+    )
+    monkeypatch.setattr(cli_chat_session, "_path", lambda: state_path)
+
+    result = CliRunner().invoke(
+        cli_chat_session.chat_session_group,
+        ["get", "cs-native", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["session_id"] == "cs-native"
+    assert payload["source"] == "cli"
+
+
+def test_get_treats_id_invalid_for_the_http_store_as_not_found(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A session id the CLI's own (looser) regex accepts but the HTTP
+    SessionStore's (stricter, no-dots) regex rejects must not raise a raw
+    ValueError — it's just absent from that store.
+    """
+    state_path = tmp_path / "chat_sessions.json"
+    http_root = tmp_path / "chat" / "sessions"
+    monkeypatch.setattr(cli_chat_session, "_path", lambda: state_path)
+    monkeypatch.setattr(cli_chat_session, "_http_sessions_root", lambda: http_root)
+
+    result = CliRunner().invoke(
+        cli_chat_session.chat_session_group,
+        ["get", "sess.with.dots", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert "session not found" in result.output
+
+
 def test_get_still_fails_cleanly_when_session_is_nowhere(
     monkeypatch,
     tmp_path: Path,
