@@ -341,7 +341,12 @@ class _RepoStoreMixin(_StoreBase):
                 if not isinstance(emb, list) or len(emb) != dims:
                     continue
                 updates.append(
-                    (serialize_float32([float(value) for value in emb]), str(row["model"]), dims, str(row["input_hash"]))
+                    (
+                        serialize_float32([float(value) for value in emb]),
+                        str(row["model"]),
+                        dims,
+                        str(row["input_hash"]),
+                    )
                 )
             except (ValueError, TypeError, json.JSONDecodeError):
                 continue

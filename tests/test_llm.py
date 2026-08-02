@@ -77,9 +77,11 @@ def test_unload_all_returns_false_when_nothing_loaded():
 
 def test_unload_named_clears_only_that_model(monkeypatch):
     monkeypatch.setattr("memo.llm.gpu_guard", nullcontext)
-    monkeypatch.setattr("mlx.core.clear_cache", lambda: None)
     chat = MLXChat()
     # Inject fake loaded state (no MLX): unload manipulates these dicts.
+    # unload()'s own `import mlx.core as mx` is wrapped in a try/except
+    # ImportError, so this needs no mlx.core mock — real or absent, both
+    # paths leave _loaded/_last_use correctly updated.
     chat._loaded.update({"a": object(), "b": object()})
     chat._last_use.update({"a": 1.0, "b": 2.0})
     assert chat.unload("a") is True
@@ -90,7 +92,6 @@ def test_unload_named_clears_only_that_model(monkeypatch):
 
 def test_unload_all_clears_everything(monkeypatch):
     monkeypatch.setattr("memo.llm.gpu_guard", nullcontext)
-    monkeypatch.setattr("mlx.core.clear_cache", lambda: None)
     chat = MLXChat()
     chat._loaded.update({"a": object(), "b": object()})
     assert chat.unload() is True

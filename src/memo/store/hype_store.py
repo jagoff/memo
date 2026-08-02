@@ -32,9 +32,7 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _question_id(
-    memory_id: str, text: str, view_kind: str = "hypothetical_question"
-) -> str:
+def _question_id(memory_id: str, text: str, view_kind: str = "hypothetical_question") -> str:
     return hashlib.sha256(f"{memory_id}:{view_kind}:{text}".encode()).hexdigest()[:32]
 
 
@@ -251,8 +249,7 @@ class HypeStore(_ConnectionMixin):
     def view_body_hash_for(self, memory_id: str, view_kind: str) -> str | None:
         """Return the watermark for one derived view kind."""
         row = self._conn.execute(
-            "SELECT body_hash FROM hype_questions "
-            "WHERE memory_id = ? AND view_kind = ? LIMIT 1",
+            "SELECT body_hash FROM hype_questions WHERE memory_id = ? AND view_kind = ? LIMIT 1",
             (memory_id, view_kind),
         ).fetchone()
         return str(row["body_hash"]) if row else None

@@ -270,9 +270,7 @@ class CodeReferenceResolver:
         parts = relative.split("/")
         candidate_paths = dict.fromkeys("/".join(parts[index:]) for index in range(len(parts)))
         return [
-            row
-            for candidate in candidate_paths
-            for row in self.nodes_by_path.get(candidate, ())
+            row for candidate in candidate_paths for row in self.nodes_by_path.get(candidate, ())
         ]
 
     def _code_evidence(self, file_path: str) -> dict[str, Any]:

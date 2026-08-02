@@ -312,8 +312,7 @@ class CodegraphEvidenceResolver:
             )
         if not requested_paths and not requested_scopes:
             limitations.append(
-                "No path or scope was requested, so freshness was not checked against source "
-                "bytes."
+                "No path or scope was requested, so freshness was not checked against source bytes."
             )
         gaps, limitations = _bounded_gaps(gaps, limitations)
 
@@ -333,8 +332,7 @@ class CodegraphEvidenceResolver:
         freshness = "stale" if stale else ("current" if checked_freshness else "unknown")
         updated_at = self.metadata.get("updated_at")
         generation = (
-            f"codegraph:{self.schema_version}:"
-            f"{updated_at or int(self.db_path.stat().st_mtime_ns)}"
+            f"codegraph:{self.schema_version}:{updated_at or int(self.db_path.stat().st_mtime_ns)}"
         )
         return CodeEvidenceEnvelope(
             provider="codegraph",

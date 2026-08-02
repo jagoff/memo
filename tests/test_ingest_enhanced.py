@@ -1129,9 +1129,7 @@ def test_ingest_pdf_sin_cambios_no_reembebe_ni_toca_updated(
     assert _open_store(runner_env).get_by_path_ci("v/doc.pdf")["updated"] == updated_first
 
 
-def test_ingest_unchanged_source_repairs_missing_fts_body(
-    tmp_path: Path, runner_env, monkeypatch
-):
+def test_ingest_unchanged_source_repairs_missing_fts_body(tmp_path: Path, runner_env, monkeypatch):
     """An unchanged hash must not hide a damaged legacy FTS projection.
 
     Re-ingest is the supported self-healing path for external vault rows, so a

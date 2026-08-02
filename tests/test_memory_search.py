@@ -468,6 +468,7 @@ def test_hybrid_search_skips_rerank_when_rrf_has_confident_winner(
         }
 
     monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(mem_with_stub.store, "count", lambda: 1)
     monkeypatch.setattr(
         mem_with_stub.store,
         "search",
@@ -524,6 +525,7 @@ def test_hybrid_search_still_reranks_ambiguous_rrf_results(
         return hits[:top_n]
 
     monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(mem_with_stub.store, "count", lambda: 1)
     monkeypatch.setattr(
         mem_with_stub.store,
         "search",
@@ -579,6 +581,7 @@ def test_hybrid_search_includes_exact_bm25_candidates_before_rerank(
         return hits[:top_n]
 
     monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(mem_with_stub.store, "count", lambda: 1)
     monkeypatch.setattr(
         mem_with_stub.store,
         "search",
