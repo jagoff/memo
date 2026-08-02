@@ -35,6 +35,15 @@ def test_search_returns_matching(mem_with_stub: Memory):
     assert any(h.title == "A" for h in hits)
 
 
+def test_empty_search_does_not_load_embedder(mem_with_stub: Memory, monkeypatch):
+    def _unexpected_embed(_query: str) -> list[float]:
+        raise AssertionError("empty corpus must not load the embedder")
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed_query", _unexpected_embed)
+
+    assert mem_with_stub.search("anything", mode="hybrid") == []
+
+
 def test_contextual_retrieval_prepends_context_only_when_enabled(
     mem_with_stub: Memory, monkeypatch
 ):

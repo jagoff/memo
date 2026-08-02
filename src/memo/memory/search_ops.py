@@ -205,6 +205,13 @@ class _SearchOpsMixin(_MemoryBase):
             _add_trace("candidate_generation", mode=mode, output_count=0)
             _add_trace("final", output_count=0)
             return []
+        # Avoid loading an embedder/reranker merely to prove that an isolated
+        # or newly-created store has no candidates. Read-through searches must
+        # continue so their backing tier gets a chance to materialize results.
+        if not read_through and self.store.count() == 0:
+            _add_trace("candidate_generation", mode=mode, output_count=0)
+            _add_trace("final", output_count=0)
+            return []
         # Credentials are managed only through the explicit secret API. Legacy
         # `type: secret` rows must never be returned by any search mode, even if
         # a caller asks for that type or forgets to pass an exclusion set.

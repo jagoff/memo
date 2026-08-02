@@ -9,6 +9,7 @@ The actual generation path needs MLX and is exercised under
 from __future__ import annotations
 
 import sys
+from contextlib import nullcontext
 from types import ModuleType
 
 from memo.llm import MLXChat, _apply_chat_template, _prompt_cache_enabled
@@ -74,7 +75,9 @@ def test_unload_all_returns_false_when_nothing_loaded():
     assert chat.unload() is False
 
 
-def test_unload_named_clears_only_that_model():
+def test_unload_named_clears_only_that_model(monkeypatch):
+    monkeypatch.setattr("memo.llm.gpu_guard", nullcontext)
+    monkeypatch.setattr("mlx.core.clear_cache", lambda: None)
     chat = MLXChat()
     # Inject fake loaded state (no MLX): unload manipulates these dicts.
     chat._loaded.update({"a": object(), "b": object()})
@@ -85,7 +88,9 @@ def test_unload_named_clears_only_that_model():
     assert chat.unload("missing") is False
 
 
-def test_unload_all_clears_everything():
+def test_unload_all_clears_everything(monkeypatch):
+    monkeypatch.setattr("memo.llm.gpu_guard", nullcontext)
+    monkeypatch.setattr("mlx.core.clear_cache", lambda: None)
     chat = MLXChat()
     chat._loaded.update({"a": object(), "b": object()})
     assert chat.unload() is True

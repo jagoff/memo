@@ -72,6 +72,7 @@ def _hybrid_mem(tmp_path, monkeypatch):
         vault_path=tmp_path / "vault",
         state_dir=tmp_path / "state",
         embedder_dims=4,
+        reranker_enabled=False,
     )
     return Memory(cfg), cfg
 
