@@ -150,6 +150,67 @@ class _SessionLockPool:
             del self.states[session_id]
 
 
+class _OperationLease:
+    """Idempotently release a shared or exclusive operation gate lease."""
+
+    def __init__(self, gate: "_OperationGate", *, exclusive: bool) -> None:
+        self.gate = gate
+        self.exclusive = exclusive
+        self.released = False
+
+    def release(self) -> None:
+        if self.released:
+            return
+        self.released = True
+        self.gate.release(exclusive=self.exclusive)
+
+
+class _OperationGate:
+    """Fair event-loop-local reader/writer gate for session mutations."""
+
+    def __init__(self) -> None:
+        self.readers = 0
+        self.writer = False
+        self.waiting_writers = 0
+        self.changed = asyncio.Event()
+
+    def _wake(self) -> None:
+        previous = self.changed
+        self.changed = asyncio.Event()
+        previous.set()
+
+    async def acquire_shared(self) -> _OperationLease:
+        while self.writer or self.waiting_writers:
+            changed = self.changed
+            await changed.wait()
+        self.readers += 1
+        return _OperationLease(self, exclusive=False)
+
+    async def acquire_exclusive(self) -> _OperationLease:
+        self.waiting_writers += 1
+        acquired = False
+        try:
+            while self.writer or self.readers:
+                changed = self.changed
+                await changed.wait()
+            self.writer = True
+            acquired = True
+            return _OperationLease(self, exclusive=True)
+        finally:
+            self.waiting_writers -= 1
+            if not acquired and not self.writer and self.waiting_writers == 0:
+                self._wake()
+
+    def release(self, *, exclusive: bool) -> None:
+        if exclusive:
+            self.writer = False
+            self._wake()
+            return
+        self.readers -= 1
+        if self.readers == 0:
+            self._wake()
+
+
 def _spa_response(
     path: str,
     *,
@@ -187,6 +248,7 @@ class _ChatApi:
         self.run_sync = run_sync
         self.heavy_slots = asyncio.Semaphore(_MAX_HEAVY_IN_FLIGHT)
         self.session_locks = _SessionLockPool()
+        self.operation_gate = _OperationGate()
 
     @staticmethod
     async def _json_body(request: Any) -> dict[str, Any] | None:
@@ -330,19 +392,24 @@ class _ChatApi:
             question, k, explicit_history, session_id, given_session_id = self._prepare_ask(body)
         except ValueError:
             return self.json_response({"error": "invalid chat request"}, status_code=400)
-        session_lease = await self.session_locks.acquire(session_id)
+        operation_lease = await self.operation_gate.acquire_shared()
+        session_lease = None
         heavy_lease = None
+
+        def release_all() -> None:
+            if heavy_lease is not None:
+                heavy_lease.release()
+            if session_lease is not None:
+                session_lease.release()
+            operation_lease.release()
+
         try:
+            session_lease = await self.session_locks.acquire(session_id)
             heavy_lease = await self._reserve_heavy_slot()
             if heavy_lease is None:
-                session_lease.release()
+                release_all()
                 return self._busy_response()
-            lease = heavy_lease
             history = await self._resolve_history(explicit_history, given_session_id)
-
-            def finalize() -> None:
-                lease.release()
-                session_lease.release()
 
             return self.streaming_response(
                 self._stream_frames_async(
@@ -353,12 +420,10 @@ class _ChatApi:
                 ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-                finalizer=finalize,
+                finalizer=release_all,
             )
         except BaseException:
-            if heavy_lease is not None:
-                heavy_lease.release()
-            session_lease.release()
+            release_all()
             raise
 
     async def ask(self, request: Any) -> Any:
@@ -369,9 +434,11 @@ class _ChatApi:
             question, k, explicit_history, session_id, given_session_id = self._prepare_ask(body)
         except ValueError:
             return self.json_response({"error": "invalid chat request"}, status_code=400)
-        session_lease = await self.session_locks.acquire(session_id)
+        operation_lease = await self.operation_gate.acquire_shared()
+        session_lease = None
         heavy_lease = None
         try:
+            session_lease = await self.session_locks.acquire(session_id)
             heavy_lease = await self._reserve_heavy_slot()
             if heavy_lease is None:
                 return self._busy_response()
@@ -386,7 +453,9 @@ class _ChatApi:
         finally:
             if heavy_lease is not None:
                 heavy_lease.release()
-            session_lease.release()
+            if session_lease is not None:
+                session_lease.release()
+            operation_lease.release()
         done = next(
             (event for event in reversed(events) if event.get("type") in {"done", "error"}), None
         )
@@ -506,15 +575,23 @@ class _ChatApi:
             self.sessions.validate_id(session_id)
         except ValueError:
             return self.json_response({"error": "invalid session id"}, status_code=400)
-        session_lease = await self.session_locks.acquire(session_id)
+        operation_lease = await self.operation_gate.acquire_shared()
+        session_lease = None
         try:
+            session_lease = await self.session_locks.acquire(session_id)
             return {"ok": await self.run_sync(self.sessions.delete, session_id)}
         finally:
-            session_lease.release()
+            if session_lease is not None:
+                session_lease.release()
+            operation_lease.release()
 
     async def delete_all_sessions(self) -> Any:
-        deleted = await self.run_sync(self.sessions.delete_all)
-        return {"ok": True, "deleted": deleted}
+        operation_lease = await self.operation_gate.acquire_exclusive()
+        try:
+            deleted = await self.run_sync(self.sessions.delete_all)
+            return {"ok": True, "deleted": deleted}
+        finally:
+            operation_lease.release()
 
     async def suggestions(self, limit: int = 8) -> Any:
         if not 1 <= limit <= 100:

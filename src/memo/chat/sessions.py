@@ -7,6 +7,7 @@ import math
 import re
 import time
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,36 @@ _MAX_RECENT_SCAN_BYTES = 4 * 1024 * 1024
 def iso_ts(ts: float) -> str:
     """Format an epoch-seconds timestamp the way the rest of chat/ does."""
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
+
+
+def _iter_reverse_lines(path: Path) -> Iterator[bytes]:
+    """Yield bounded JSONL tail lines newest-first in linear time."""
+
+    chunk_size = 8192
+    pending: deque[bytes] = deque()
+    with path.open("rb") as fh:
+        fh.seek(0, 2)
+        position = fh.tell()
+        scanned = 0
+        while position > 0 and scanned < _MAX_RECENT_SCAN_BYTES:
+            read_size = min(chunk_size, position, _MAX_RECENT_SCAN_BYTES - scanned)
+            position -= read_size
+            fh.seek(position)
+            block = fh.read(read_size)
+            scanned += len(block)
+            parts = block.split(b"\n")
+            if len(parts) == 1:
+                pending.appendleft(block)
+                continue
+
+            pending.appendleft(parts[-1])
+            yield b"".join(pending)
+            yield from reversed(parts[1:-1])
+            pending = deque([parts[0]])
+
+        # Only reaching the start proves the remaining fragment is complete.
+        if position == 0 and pending:
+            yield b"".join(pending)
 
 
 class SessionStore:
@@ -124,46 +155,13 @@ class SessionStore:
         if not path.exists():
             return []
 
-        chunk_size = 8192
         newest_turns: list[dict[str, Any]] = []
-        # Fragments of the one line that crosses the next backwards-read
-        # boundary. A deque keeps even a multi-megabyte corrupt line linear.
-        pending: deque[bytes] = deque()
-
-        def collect(raw_line: bytes) -> None:
+        for raw_line in _iter_reverse_lines(path):
             parsed = self._parse_turn(raw_line)
             if parsed is not None:
                 newest_turns.append(parsed)
-
-        with path.open("rb") as fh:
-            fh.seek(0, 2)
-            position = fh.tell()
-            scanned = 0
-            while position > 0 and scanned < _MAX_RECENT_SCAN_BYTES and len(newest_turns) < limit:
-                read_size = min(chunk_size, position, _MAX_RECENT_SCAN_BYTES - scanned)
-                position -= read_size
-                fh.seek(position)
-                block = fh.read(read_size)
-                scanned += len(block)
-                parts = block.split(b"\n")
-                if len(parts) == 1:
-                    pending.appendleft(block)
-                    continue
-
-                pending.appendleft(parts[-1])
-                collect(b"".join(pending))
                 if len(newest_turns) >= limit:
                     break
-                for raw_line in reversed(parts[1:-1]):
-                    collect(raw_line)
-                    if len(newest_turns) >= limit:
-                        break
-                pending = deque([parts[0]])
-
-            # Only the start of the file proves the remaining fragment is a
-            # complete first line. At the scan cap it must stay unparsed.
-            if position == 0 and len(newest_turns) < limit and pending:
-                collect(b"".join(pending))
         return list(reversed(newest_turns[:limit]))
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
