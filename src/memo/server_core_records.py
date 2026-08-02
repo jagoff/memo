@@ -88,6 +88,13 @@ def register(server: Any, memory: Memory) -> None:
                 "'project' or None keep auto-detection. Other values are rejected."
             ),
         ] = None,
+        defer_embed: Annotated[
+            bool,
+            Field(
+                description="Persist markdown and the text index immediately, but leave "
+                "the semantic vector pending for a later memo_reindex call."
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Persist `content` to memo.
 
@@ -108,6 +115,10 @@ def register(server: Any, memory: Memory) -> None:
         tier, +0.10 boost everywhere); `"project"` or None keep the default
         auto-detection. An explicit `project:` tag in `tags` always wins
         either way.
+
+        `defer_embed` mirrors CLI `memo save --defer-embed`: it persists
+        markdown + BM25 immediately and marks the semantic vector pending for
+        `memo_reindex`. Extraction mode ignores it, matching the CLI.
         """
         from memo.flags import flag_bool
         from memo.memory import WriteRefused
@@ -144,6 +155,7 @@ def register(server: Any, memory: Memory) -> None:
                 auto_derive=auto_derive,
                 auto_project=auto_project,
                 extra=safe_extra,
+                defer_embed=defer_embed,
             )
         except WriteRefused as exc:
             return {
