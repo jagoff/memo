@@ -10,7 +10,6 @@ import os
 import pty
 import secrets
 import socket
-import stat
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -45,7 +44,7 @@ def _proc_start(pid: int) -> str | None:
     if os.name != "posix":
         return None
     try:
-        if Path("/proc") .is_dir():
+        if Path("/proc").is_dir():
             fields = (Path(f"/proc/{pid}/stat").read_text()).split()
             return fields[21]
     except (OSError, IndexError):
