@@ -194,6 +194,7 @@ packages = ["src/memo"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--import-mode=importlib", "--strict-markers", "--strict-config"]
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "requires_mlx: smoke test que carga modelos MLX reales (Apple Silicon only). Auto-skipea sin mlx_lm.",
     "slow: tests >1s (real MLX model loads); no default deselection — CI jobs pass `-m 'not slow'` explicitly (nightly slow-tests runs them).",
