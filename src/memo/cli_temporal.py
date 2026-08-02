@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import click
+from rich.markup import escape
 from rich.table import Table
 
 from memo.cli_common import console
@@ -254,15 +255,15 @@ def temporal_timeline(entity: str, entity_type: str | None, as_json: bool) -> No
         )
         return
 
-    console.print(f"[bold]Timeline for '{entity}' ({timeline.entity_type})[/bold]")
+    console.print(f"[bold]Timeline for '{escape(entity)}' ({escape(timeline.entity_type)})[/bold]")
     console.print(f"First seen: {timeline.first_seen}")
     console.print(f"Last seen: {timeline.last_seen}")
     console.print()
 
     for event in timeline.events:
-        console.print(f"[cyan]{event.date}[/cyan] [dim][{event.memory_id[:8]}][/dim]")
-        console.print(f"  [yellow]{event.title}[/yellow] ({event.type})")
-        console.print(f"  {event.snippet}")
+        console.print(f"[cyan]{event.date}[/cyan] [dim]{escape(f'[{event.memory_id[:8]}]')}[/dim]")
+        console.print(f"  [yellow]{escape(event.title)}[/yellow] ({escape(event.type)})")
+        console.print(f"  {escape(event.snippet)}")
         console.print()
 
 

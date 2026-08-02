@@ -128,7 +128,10 @@ def associate(
                 cand[mid] = [weighted, tok, weighted]
             else:
                 c[0] += weighted
-                if weighted > c[2]:
+                # tok_act iterates a dict built from set unions, whose order is
+                # subject to per-process hash randomization; break ties on the
+                # token name so `via` attribution is stable across runs.
+                if weighted > c[2] or (weighted == c[2] and tok < c[1]):
                     c[1], c[2] = tok, weighted
 
     # Co-recall boost: memories historically recalled alongside the seeds.

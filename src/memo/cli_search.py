@@ -11,6 +11,7 @@ import sys
 from dataclasses import asdict
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -340,7 +341,7 @@ def ask(
         return
     console.print(
         Panel.fit(
-            out["answer"] or "[dim](no answer)[/dim]",
+            escape(out["answer"]) if out["answer"] else "[dim](no answer)[/dim]",
             title=f"❓ {question[:60]}",
             border_style="cyan",
         )
@@ -348,8 +349,9 @@ def ask(
     if out["sources"]:
         console.print("[dim]sources:[/dim]")
         for s in out["sources"]:
+            id_short = s["id_short"]
             console.print(
-                f"  [dim][{s['id_short']}][/dim] {s['title'][:60]}  "
+                f"  [dim]{escape(f'[{id_short}]')}[/dim] {escape(s['title'][:60])}  "
                 f"[dim](score {_format_source_score(s.get('score'))})[/dim]"
             )
 
@@ -632,7 +634,7 @@ def chat_ask(
         return
     console.print(
         Panel.fit(
-            envelope["answer"] or "[dim](no answer)[/dim]",
+            escape(envelope["answer"]) if envelope["answer"] else "[dim](no answer)[/dim]",
             title=f"❓ {question[:60]}",
             border_style="magenta",
         )
@@ -640,8 +642,10 @@ def chat_ask(
     if envelope["sources"]:
         console.print("[dim]sources:[/dim]")
         for s in envelope["sources"]:
+            id_short = s.get("id_short", "?")
             console.print(
-                f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "
+                f"  [dim]{escape(f'[{id_short}]')}[/dim] "
+                f"{escape((s.get('title', '') or '')[:60])}  "
                 f"[dim](score {_format_source_score(s.get('score'))})[/dim]"
             )
 
