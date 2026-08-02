@@ -94,8 +94,60 @@ class _HeavyLease:
         self.released = True
         self.semaphore.release()
 
-    async def release_async(self) -> None:
-        self.release()
+
+class _SessionLockState:
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.users = 0
+
+
+class _SessionLease:
+    """Idempotently release one event-loop-local session lock."""
+
+    def __init__(
+        self,
+        pool: "_SessionLockPool",
+        session_id: str,
+        state: _SessionLockState,
+    ) -> None:
+        self.pool = pool
+        self.session_id = session_id
+        self.state = state
+        self.released = False
+
+    def release(self) -> None:
+        if self.released:
+            return
+        self.released = True
+        self.state.lock.release()
+        self.pool.drop(self.session_id, self.state)
+
+
+class _SessionLockPool:
+    """Serialize work per session without retaining locks for old sessions."""
+
+    def __init__(self) -> None:
+        self.states: dict[str, _SessionLockState] = {}
+
+    async def acquire(self, session_id: str) -> _SessionLease:
+        # Dictionary operations are atomic with respect to other tasks because
+        # this pool is only touched on the owning asyncio event loop.
+        state = self.states.get(session_id)
+        if state is None:
+            state = _SessionLockState()
+            self.states[session_id] = state
+        state.users += 1
+        try:
+            await state.lock.acquire()
+        except BaseException:
+            self.drop(session_id, state)
+            raise
+        return _SessionLease(self, session_id, state)
+
+    def drop(self, session_id: str, state: _SessionLockState) -> None:
+        state.users -= 1
+        if state.users == 0 and self.states.get(session_id) is state:
+            del self.states[session_id]
 
 
 def _spa_response(
@@ -125,7 +177,6 @@ class _ChatApi:
         *,
         json_response: Any,
         streaming_response: Any,
-        background_task: Any,
         run_sync: Any,
     ) -> None:
         self.memory = memory
@@ -133,9 +184,9 @@ class _ChatApi:
         self.sessions = sessions
         self.json_response = json_response
         self.streaming_response = streaming_response
-        self.background_task = background_task
         self.run_sync = run_sync
         self.heavy_slots = asyncio.Semaphore(_MAX_HEAVY_IN_FLIGHT)
+        self.session_locks = _SessionLockPool()
 
     @staticmethod
     async def _json_body(request: Any) -> dict[str, Any] | None:
@@ -192,10 +243,7 @@ class _ChatApi:
     def _append_session(self, session_id: str, question: str, answer: str | None) -> None:
         try:
             if answer is not None:
-                self.sessions.validate_text(answer, "answer")
-            self.sessions.append_turn(session_id, "user", question)
-            if answer is not None:
-                self.sessions.append_turn(session_id, "assistant", answer)
+                self.sessions.append_exchange(session_id, question, answer)
         except ValueError:
             pass
 
@@ -229,7 +277,7 @@ class _ChatApi:
     ) -> Generator[str]:
         from memo.chat.pipeline import chat_stream
 
-        answer = ""
+        answer = None
         for event in chat_stream(self.memory, question, history=history, k=k):
             if event.get("type") in ("context", "done"):
                 event = {**event, "chat_session_id": session_id}
@@ -245,7 +293,6 @@ class _ChatApi:
         session_id: str,
         history: list[dict[str, str]] | None,
         k: int | None,
-        lease: _HeavyLease,
     ) -> Any:
         iterator = self._stream_frames(
             question,
@@ -261,7 +308,6 @@ class _ChatApi:
                 yield frame
         finally:
             iterator.close()
-            lease.release()
 
     async def _reserve_heavy_slot(self) -> _HeavyLease | None:
         if self.heavy_slots.locked():
@@ -284,28 +330,36 @@ class _ChatApi:
             question, k, explicit_history, session_id, given_session_id = self._prepare_ask(body)
         except ValueError:
             return self.json_response({"error": "invalid chat request"}, status_code=400)
-        lease = await self._reserve_heavy_slot()
-        if lease is None:
-            return self._busy_response()
-        response = None
+        session_lease = await self.session_locks.acquire(session_id)
+        heavy_lease = None
         try:
+            heavy_lease = await self._reserve_heavy_slot()
+            if heavy_lease is None:
+                session_lease.release()
+                return self._busy_response()
+            lease = heavy_lease
             history = await self._resolve_history(explicit_history, given_session_id)
-            response = self.streaming_response(
+
+            def finalize() -> None:
+                lease.release()
+                session_lease.release()
+
+            return self.streaming_response(
                 self._stream_frames_async(
                     question,
                     session_id=session_id,
                     history=history,
                     k=k,
-                    lease=lease,
                 ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-                background=self.background_task(lease.release_async),
+                finalizer=finalize,
             )
-            return response
-        finally:
-            if response is None:
-                lease.release()
+        except BaseException:
+            if heavy_lease is not None:
+                heavy_lease.release()
+            session_lease.release()
+            raise
 
     async def ask(self, request: Any) -> Any:
         body = await self._json_body(request)
@@ -315,10 +369,12 @@ class _ChatApi:
             question, k, explicit_history, session_id, given_session_id = self._prepare_ask(body)
         except ValueError:
             return self.json_response({"error": "invalid chat request"}, status_code=400)
-        lease = await self._reserve_heavy_slot()
-        if lease is None:
-            return self._busy_response()
+        session_lease = await self.session_locks.acquire(session_id)
+        heavy_lease = None
         try:
+            heavy_lease = await self._reserve_heavy_slot()
+            if heavy_lease is None:
+                return self._busy_response()
             history = await self._resolve_history(explicit_history, given_session_id)
             events = await self.run_sync(
                 self._run,
@@ -328,7 +384,9 @@ class _ChatApi:
                 k=k,
             )
         finally:
-            lease.release()
+            if heavy_lease is not None:
+                heavy_lease.release()
+            session_lease.release()
         done = next(
             (event for event in reversed(events) if event.get("type") in {"done", "error"}), None
         )
@@ -445,9 +503,14 @@ class _ChatApi:
         if not isinstance(session_id, str):
             return self.json_response({"error": "invalid session id"}, status_code=400)
         try:
-            return {"ok": await self.run_sync(self.sessions.delete, session_id)}
+            self.sessions.validate_id(session_id)
         except ValueError:
             return self.json_response({"error": "invalid session id"}, status_code=400)
+        session_lease = await self.session_locks.acquire(session_id)
+        try:
+            return {"ok": await self.run_sync(self.sessions.delete, session_id)}
+        finally:
+            session_lease.release()
 
     async def delete_all_sessions(self) -> Any:
         deleted = await self.run_sync(self.sessions.delete_all)
@@ -539,7 +602,7 @@ def _mount_spa(
 
 
 def build_app(memory: Any, *, dist: Path | None = None) -> Any:
-    from fastapi import BackgroundTasks, FastAPI, Request
+    from fastapi import FastAPI, Request
     from fastapi.concurrency import run_in_threadpool
     from fastapi.middleware import Middleware
     from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -555,6 +618,19 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
 
     cfg = ChatConfig.load(memory.cfg.state_dir)
     sessions = SessionStore(cfg.sessions_dir)
+
+    class FinalizingStreamingResponse(StreamingResponse):
+        """Run cleanup for every ASGI exit, including early disconnects."""
+
+        def __init__(self, *args: Any, finalizer: Any, **kwargs: Any) -> None:
+            self._memo_finalizer = finalizer
+            super().__init__(*args, **kwargs)
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                self._memo_finalizer()
 
     def json_response(
         content: Any,
@@ -577,11 +653,6 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             media_type="application/json",
         )
 
-    def background_task(function: Any) -> Any:
-        tasks = BackgroundTasks()
-        tasks.add_task(function)
-        return tasks
-
     # Chat has no bearer-token flow: constrain it to same-origin loopback HTTP,
     # reject DNS-rebinding/cross-site requests, and bound local request pressure.
     # `memo chat serve` independently rejects non-loopback bind addresses so the
@@ -592,8 +663,8 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         redoc_url=None,
         middleware=[
             Middleware(SecurityHeadersMiddleware, headers=_CHAT_SECURITY_HEADERS),
-            Middleware(RateLimitMiddleware),
             Middleware(LocalRequestGuardMiddleware),
+            Middleware(RateLimitMiddleware),
             Middleware(RequestSizeLimitMiddleware),
         ],
     )
@@ -602,8 +673,7 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         cfg,
         sessions,
         json_response=json_response,
-        streaming_response=StreamingResponse,
-        background_task=background_task,
+        streaming_response=FinalizingStreamingResponse,
         run_sync=run_in_threadpool,
     )
     _register_api_routes(app, api, Request)

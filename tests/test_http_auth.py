@@ -341,7 +341,11 @@ def test_no_auth_http_guard_rejects_browser_cross_site_and_simple_posts(
         routes=[Route("/chat/stream", sensitive, methods=["POST"])],
         middleware=build_http_middleware(allow_no_auth=True),
     )
-    with TestClient(app, base_url="http://127.0.0.1:18768") as client:
+    with TestClient(
+        app,
+        base_url="http://127.0.0.1:18768",
+        client=("127.0.0.1", 50000),
+    ) as client:
         response = client.post("/chat/stream", headers=headers, content=b"{}")
 
     assert response.status_code == status_code
@@ -357,7 +361,11 @@ def test_no_auth_http_guard_allows_loopback_json_posts() -> None:
         routes=[Route("/chat/stream", sensitive, methods=["POST"])],
         middleware=build_http_middleware(allow_no_auth=True),
     )
-    with TestClient(app, base_url="http://localhost:18768") as client:
+    with TestClient(
+        app,
+        base_url="http://localhost:18768",
+        client=("127.0.0.1", 50000),
+    ) as client:
         cli_response = client.post("/chat/stream", json={})
         browser_response = client.post(
             "/chat/stream",
@@ -370,6 +378,56 @@ def test_no_auth_http_guard_allows_loopback_json_posts() -> None:
 
     assert cli_response.status_code == 200
     assert browser_response.status_code == 200
+
+
+def test_no_auth_http_guard_rejects_remote_peer_with_loopback_host() -> None:
+    from memo.http_auth import build_http_middleware
+
+    async def sensitive(_request) -> PlainTextResponse:
+        pytest.fail("remote request reached the sensitive route")
+
+    app = Starlette(
+        routes=[Route("/chat/stream", sensitive, methods=["POST"])],
+        middleware=build_http_middleware(allow_no_auth=True),
+    )
+    with TestClient(
+        app,
+        base_url="http://127.0.0.1:18768",
+        client=("192.0.2.10", 50000),
+    ) as client:
+        response = client.post("/chat/stream", json={})
+
+    assert response.status_code == 403
+
+
+def test_no_auth_guard_rejections_do_not_consume_rate_limit() -> None:
+    from memo.http_auth import build_http_middleware
+
+    async def sensitive(_request) -> PlainTextResponse:
+        return PlainTextResponse("ok")
+
+    app = Starlette(
+        routes=[Route("/chat/stream", sensitive, methods=["POST"])],
+        middleware=build_http_middleware(
+            allow_no_auth=True,
+            max_requests=1,
+            window_seconds=60,
+        ),
+    )
+    with TestClient(
+        app,
+        base_url="http://127.0.0.1:18768",
+        client=("127.0.0.1", 50000),
+    ) as client:
+        rejected = client.post(
+            "/chat/stream",
+            json={},
+            headers={"Origin": "https://attacker.example"},
+        )
+        allowed = client.post("/chat/stream", json={})
+
+    assert rejected.status_code == 403
+    assert allowed.status_code == 200
 
 
 def test_memo_mcp_server_attaches_shared_auth_provider(
