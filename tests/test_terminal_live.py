@@ -98,10 +98,18 @@ def registered_bridge(tmp_cfg):
         os.close(master_fd)
 
 
-def test_register_persists_same_uid_tty_and_prunes_stale_process(tmp_cfg) -> None:
+def test_register_persists_same_uid_tty_and_prunes_stale_process(tmp_cfg, monkeypatch) -> None:
     master_fd, slave_fd = pty.openpty()
     tty = Path(os.ttyname(slave_fd))
     alive = True
+    timestamps = iter(
+        [
+            "2026-08-01T12:00:00+00:00",
+            "2026-08-01T12:00:01+00:00",
+            "2026-08-01T12:00:02+00:00",
+        ]
+    )
+    monkeypatch.setattr(terminal_live, "_now", lambda: next(timestamps))
 
     def probe(pid: int) -> ProcessSnapshot | None:
         if not alive:
@@ -131,9 +139,14 @@ def test_register_persists_same_uid_tty_and_prunes_stale_process(tmp_cfg) -> Non
             project="/tmp/memo",
         )
 
-        assert bridge.list() == [registration]
-        assert registration.tty == str(tty)
-        assert registration.agent == "codex"
+        listed = bridge.list()
+        assert len(listed) == 1
+        assert listed[0].id == registration.id
+        assert listed[0].created_at == registration.created_at
+        assert listed[0].last_seen_at == "2026-08-01T12:00:01+00:00"
+        assert listed[0].last_seen_at > registration.last_seen_at
+        assert listed[0].tty == registration.tty == str(tty)
+        assert listed[0].agent == registration.agent == "codex"
 
         alive = False
         assert bridge.list() == []
