@@ -38,7 +38,7 @@ def whisper_available() -> bool:
         return _WHISPER_OK
     _WHISPER_CHECKED = True
     try:
-        import mlx_whisper  # type: ignore[import-not-found]  # noqa: F401
+        import mlx_whisper  # type: ignore[import-not-found,import-untyped]  # noqa: F401
 
         _WHISPER_OK = True
     except ImportError as exc:
@@ -58,7 +58,7 @@ def transcribe_audio(audio_path: Path) -> str:
     if not p.exists() or not p.is_file():
         return ""
     try:
-        import mlx_whisper  # type: ignore[import-not-found]
+        import mlx_whisper  # type: ignore[import-not-found,import-untyped]
 
         from memo.flags import flag_str
 
