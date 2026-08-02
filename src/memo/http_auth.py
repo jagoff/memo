@@ -284,6 +284,16 @@ class LocalRequestGuardMiddleware:
             await self.app(scope, receive, send)
             return
 
+        client = scope.get("client")
+        if (
+            not isinstance(client, (list, tuple))
+            or not client
+            or not isinstance(client[0], str)
+            or not _is_loopback_address(client[0])
+        ):
+            await self._reject(scope, receive, send, status_code=403)
+            return
+
         headers = Headers(scope=scope)
         host_values = headers.getlist("host")
         authority = _split_authority(host_values[0]) if len(host_values) == 1 else None
@@ -348,16 +358,16 @@ def build_http_middleware(
 
     from starlette.middleware import Middleware
 
-    middleware = [
-        Middleware(SecurityHeadersMiddleware),
+    middleware = [Middleware(SecurityHeadersMiddleware)]
+    if allow_no_auth:
+        middleware.append(Middleware(LocalRequestGuardMiddleware))
+    middleware.append(
         Middleware(
             RateLimitMiddleware,
             max_requests=max_requests,
             window_seconds=window_seconds,
-        ),
-    ]
-    if allow_no_auth:
-        middleware.append(Middleware(LocalRequestGuardMiddleware))
+        )
+    )
     middleware.append(Middleware(RequestSizeLimitMiddleware))
     return middleware
 
@@ -478,6 +488,18 @@ def is_loopback_host(host: str) -> bool:
     normalized = host.strip().lower().rstrip(".")
     if normalized == "localhost":
         return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_loopback_address(address: str) -> bool:
+    """Validate the numeric peer address supplied by the ASGI server."""
+
+    normalized = address.strip()
     if normalized.startswith("[") and normalized.endswith("]"):
         normalized = normalized[1:-1]
     try:

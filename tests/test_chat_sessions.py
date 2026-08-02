@@ -46,6 +46,27 @@ def test_append_rejects_invalid_text_before_touching_file(tmp_path, role, text) 
     assert not store._path("s1").exists()
 
 
+def test_append_exchange_validates_both_turns_before_touching_file(tmp_path) -> None:
+    store = SessionStore(tmp_path)
+
+    with pytest.raises(ValueError):
+        store.append_exchange("s1", "valid question", "invalid \ud800 answer")
+
+    assert not store._path("s1").exists()
+
+
+def test_append_exchange_persists_adjacent_turns(tmp_path) -> None:
+    store = SessionStore(tmp_path)
+
+    store.append_exchange("s1", "question", "answer")
+
+    turns = store.get("s1")
+    assert [(turn["role"], turn["text"]) for turn in turns] == [
+        ("user", "question"),
+        ("assistant", "answer"),
+    ]
+
+
 def test_get_skips_non_dict_lines(tmp_path) -> None:
     store = SessionStore(tmp_path)
     store.append_turn("s1", "user", "hola")
@@ -100,6 +121,28 @@ def test_get_recent_reads_tail_and_skips_malformed_lines(tmp_path) -> None:
     turns = store.get_recent("s1", limit=3)
 
     assert [turn["text"] for turn in turns] == ["turn-18", "turn-19", "last"]
+
+
+def test_get_recent_parses_each_long_tail_line_once(tmp_path, monkeypatch) -> None:
+    store = SessionStore(tmp_path)
+    for index in range(30):
+        store.append_turn("s1", "user", f"turn-{index}-" + "x" * 9000)
+    original_parse = SessionStore._parse_turn
+    parse_calls = 0
+
+    def spy_parse(raw_line):
+        nonlocal parse_calls
+        parse_calls += 1
+        return original_parse(raw_line)
+
+    monkeypatch.setattr(SessionStore, "_parse_turn", staticmethod(spy_parse))
+
+    turns = store.get_recent("s1", limit=12)
+
+    assert [turn["text"].split("-", 2)[:2] for turn in turns] == [
+        ["turn", str(index)] for index in range(18, 30)
+    ]
+    assert parse_calls <= 13
 
 
 def test_readers_skip_json_integer_beyond_interpreter_limit(tmp_path) -> None:

@@ -5,6 +5,8 @@ memo. Mirrors test_cli_consult_attribution for the chat group surface."""
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -81,6 +83,35 @@ def test_chat_serve_rejects_non_loopback_bind(host: str) -> None:
 
     assert result.exit_code == 1
     assert "only accepts loopback hosts" in result.output
+
+
+def test_chat_serve_rejects_remote_bind_without_optional_http_imports() -> None:
+    code = r"""
+import builtins
+from click.testing import CliRunner
+
+real_import = builtins.__import__
+
+def guarded_import(name, *args, **kwargs):
+    if name.split('.', 1)[0] in {'fastapi', 'starlette'}:
+        raise ImportError(f'blocked optional dependency: {name}')
+    return real_import(name, *args, **kwargs)
+
+builtins.__import__ = guarded_import
+from memo.cli_chat import chat_group
+result = CliRunner().invoke(chat_group, ['serve', '--host', '0.0.0.0'])
+print(result.output)
+raise SystemExit(0 if result.exit_code == 1 and 'only accepts loopback hosts' in result.output else 1)
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])

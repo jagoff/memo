@@ -12,6 +12,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 from memo.chat.http import build_app  # noqa: E402
 
 
+def _local_test_client(app) -> TestClient:
+    return TestClient(
+        app,
+        base_url="http://127.0.0.1",
+        client=("127.0.0.1", 50000),
+    )
+
+
 def _post_json_document(client, endpoint: str, body: dict) -> object:
     payload = json.dumps(body, ensure_ascii=True).encode()
     return client.post(endpoint, content=payload, headers={"Content-Type": "application/json"})
@@ -37,7 +45,7 @@ def client(tmp_path, monkeypatch):
 
     memory = _FakeMemory(tmp_path)
     app = build_app(memory)
-    return TestClient(app, base_url="http://127.0.0.1")
+    return _local_test_client(app)
 
 
 def test_ask_stream_sse(client) -> None:
@@ -61,7 +69,7 @@ def test_ask_stream_escapes_model_surrogate_and_releases_capacity(tmp_path, monk
     monkeypatch.setattr(chat_http, "_MAX_HEAVY_IN_FLIGHT", 1)
     monkeypatch.setattr("memo.chat.pipeline.chat_stream", surrogate_stream)
     app = build_app(_FakeMemory(tmp_path))
-    local_client = TestClient(app, base_url="http://127.0.0.1")
+    local_client = _local_test_client(app)
 
     first = local_client.post("/api/ask/stream", json={"q": "first"})
     second = local_client.post("/api/ask/stream", json={"q": "second"})
@@ -339,7 +347,7 @@ def test_ask_normalizes_ui_history_before_rewrite(tmp_path) -> None:
 
     memory = _SpyMemory(tmp_path)
     app = build_app(memory)
-    client = TestClient(app, base_url="http://127.0.0.1")
+    client = _local_test_client(app)
 
     history = [
         {"role": "user", "text": "qué sabés del proyecto memo daemon"},
@@ -366,7 +374,7 @@ def test_ask_stream_normalizes_ui_history_before_rewrite(tmp_path) -> None:
 
     memory = _SpyMemory(tmp_path)
     app = build_app(memory)
-    client = TestClient(app, base_url="http://127.0.0.1")
+    client = _local_test_client(app)
 
     history = [
         {"role": "user", "text": "qué sabés del proyecto memo daemon"},
@@ -412,7 +420,7 @@ def test_spa_fallback_does_not_swallow_unknown_api_routes(tmp_path) -> None:
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text("<!doctype html><html></html>")
     app = build_app(_FakeMemory(tmp_path), dist=dist)
-    c = TestClient(app, base_url="http://127.0.0.1")
+    c = _local_test_client(app)
 
     resp = c.get("/api/nonexistent")
     assert resp.status_code == 404
@@ -441,6 +449,34 @@ def test_chat_http_rejects_dns_rebinding_and_cross_site_requests(client) -> None
         headers={"Origin": "https://attacker.example", "Sec-Fetch-Site": "cross-site"},
     )
     assert cross_site.status_code == 403
+
+
+def test_chat_http_rejects_remote_peer_even_with_loopback_host(tmp_path) -> None:
+    from tests.test_chat_pipeline import _FakeMemory
+
+    app = build_app(_FakeMemory(tmp_path))
+    remote_client = TestClient(
+        app,
+        base_url="http://127.0.0.1",
+        client=("192.0.2.10", 50000),
+    )
+
+    response = remote_client.get("/api/sessions")
+
+    assert response.status_code == 403
+
+
+def test_chat_guard_rejections_do_not_exhaust_rate_limit(client) -> None:
+    for _ in range(301):
+        rejected = client.get(
+            "/api/sessions",
+            headers={"Origin": "https://attacker.example"},
+        )
+        assert rejected.status_code == 403
+
+    allowed = client.get("/api/sessions")
+
+    assert allowed.status_code == 200
 
 
 def test_chat_http_rejects_oversized_request_body(client) -> None:
@@ -491,7 +527,7 @@ def test_ask_reads_only_recent_session_history_once(tmp_path, monkeypatch) -> No
     cfg = ChatConfig.load(memory.cfg.state_dir)
     SessionStore(cfg.sessions_dir).append_turn("once", "user", "primera")
     app = build_app(memory)
-    local_client = TestClient(app, base_url="http://127.0.0.1")
+    local_client = _local_test_client(app)
 
     response = local_client.post("/api/ask", json={"q": "seguimiento", "chat_session_id": "once"})
 
@@ -513,7 +549,7 @@ def test_session_endpoints_skip_corrupt_jsonl_turns(tmp_path) -> None:
         fh.write(json.dumps({"role": "user", "text": "\ud800", "ts": 1}) + "\n")
 
     app = build_app(memory)
-    local_client = TestClient(app, base_url="http://127.0.0.1")
+    local_client = _local_test_client(app)
     listing = local_client.get("/api/sessions")
     history = local_client.get("/api/sessions/legacy")
 
@@ -659,5 +695,151 @@ async def test_heavy_slot_is_recovered_after_request_cancellation(tmp_path, monk
 
         monkeypatch.setattr(chat_http._ChatApi, "_run", lambda *args, **kwargs: [])
         recovered = await async_client.post("/api/ask", json={"q": "works"})
+
+    assert recovered.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_same_session_asks_are_serialized_and_exchanges_stay_adjacent(
+    tmp_path, monkeypatch
+) -> None:
+    import httpx
+
+    from tests.test_chat_pipeline import _FakeMemory
+
+    first_started = threading.Event()
+    second_started = threading.Event()
+    release_first = threading.Event()
+
+    def ordered_stream(_memory, question, **_kwargs):
+        if question == "first":
+            first_started.set()
+            assert release_first.wait(timeout=5)
+        else:
+            second_started.set()
+        yield {"type": "done", "answer": f"answer-{question}", "sources": []}
+
+    monkeypatch.setattr("memo.chat.pipeline.chat_stream", ordered_stream)
+    app = build_app(_FakeMemory(tmp_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        first = asyncio.create_task(
+            client.post("/api/ask", json={"q": "first", "chat_session_id": "shared"})
+        )
+        assert await asyncio.to_thread(first_started.wait, 2)
+        second = asyncio.create_task(
+            client.post("/api/ask", json={"q": "second", "chat_session_id": "shared"})
+        )
+        await asyncio.sleep(0.05)
+        assert not second_started.is_set()
+
+        release_first.set()
+        responses = await asyncio.gather(first, second)
+        history = (await client.get("/api/sessions/shared")).json()["turns"]
+
+    assert all(response.status_code == 200 for response in responses)
+    assert [(turn["role"], turn["text"]) for turn in history] == [
+        ("user", "first"),
+        ("assistant", "answer-first"),
+        ("user", "second"),
+        ("assistant", "answer-second"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_waits_for_same_session_ask_and_cannot_be_recreated(
+    tmp_path, monkeypatch
+) -> None:
+    import httpx
+
+    from tests.test_chat_pipeline import _FakeMemory
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_stream(_memory, question, **_kwargs):
+        started.set()
+        assert release.wait(timeout=5)
+        yield {"type": "done", "answer": f"answer-{question}", "sources": []}
+
+    monkeypatch.setattr("memo.chat.pipeline.chat_stream", blocking_stream)
+    app = build_app(_FakeMemory(tmp_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        ask = asyncio.create_task(
+            client.post("/api/ask", json={"q": "question", "chat_session_id": "race"})
+        )
+        assert await asyncio.to_thread(started.wait, 2)
+        delete = asyncio.create_task(
+            client.post("/api/sessions/delete", json={"session_id": "race"})
+        )
+        await asyncio.sleep(0.05)
+        assert not delete.done()
+
+        release.set()
+        ask_response, delete_response = await asyncio.gather(ask, delete)
+        history = (await client.get("/api/sessions/race")).json()["turns"]
+
+    assert ask_response.status_code == 200
+    assert delete_response.json() == {"ok": True}
+    assert history == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_mode", ["disconnect", "send_failure"])
+async def test_stream_capacity_is_released_when_asgi_exits_before_iteration(
+    tmp_path, monkeypatch, exit_mode
+) -> None:
+    import httpx
+
+    import memo.chat.http as chat_http
+    from tests.test_chat_pipeline import _FakeMemory
+
+    monkeypatch.setattr(chat_http, "_MAX_HEAVY_IN_FLIGHT", 1)
+    app = build_app(_FakeMemory(tmp_path))
+    payload = json.dumps({"q": "abandoned"}).encode()
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/ask/stream",
+        "raw_path": b"/api/ask/stream",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"127.0.0.1"),
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(payload)).encode()),
+        ],
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 80),
+        "state": {},
+    }
+    incoming = [{"type": "http.request", "body": payload, "more_body": False}]
+    if exit_mode == "disconnect":
+        incoming.append({"type": "http.disconnect"})
+    never = asyncio.Event()
+
+    async def receive():
+        if incoming:
+            return incoming.pop(0)
+        await never.wait()
+        raise AssertionError("unreachable")
+
+    async def send(message):
+        if exit_mode == "send_failure" and message["type"] == "http.response.start":
+            raise RuntimeError("transport failed")
+
+    if exit_mode == "send_failure":
+        with pytest.raises(RuntimeError, match="transport failed"):
+            await asyncio.wait_for(app(scope, receive, send), timeout=2)
+    else:
+        await asyncio.wait_for(app(scope, receive, send), timeout=2)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        recovered = await client.post("/api/ask", json={"q": "recovered"})
 
     assert recovered.status_code == 200

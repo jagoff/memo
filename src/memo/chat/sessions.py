@@ -6,6 +6,7 @@ import json
 import math
 import re
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,23 @@ class SessionStore:
                 + "\n"
             )
 
+    def append_exchange(self, session_id: str, question: str, answer: str) -> None:
+        """Append one complete user/assistant exchange with a single write."""
+        path = self._path(session_id)
+        question = self.validate_text(question, "question")
+        answer = self.validate_text(answer, "answer")
+        timestamp = time.time()
+        payload = "".join(
+            json.dumps(turn, ensure_ascii=False) + "\n"
+            for turn in (
+                {"role": "user", "text": question, "ts": timestamp},
+                {"role": "assistant", "text": answer, "ts": timestamp},
+            )
+        ).encode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("ab") as fh:
+            fh.write(payload)
+
     def get(self, session_id: str) -> list[dict[str, Any]]:
         path = self._path(session_id)
         if not path.exists():
@@ -107,28 +125,46 @@ class SessionStore:
             return []
 
         chunk_size = 8192
+        newest_turns: list[dict[str, Any]] = []
+        # Fragments of the one line that crosses the next backwards-read
+        # boundary. A deque keeps even a multi-megabyte corrupt line linear.
+        pending: deque[bytes] = deque()
+
+        def collect(raw_line: bytes) -> None:
+            parsed = self._parse_turn(raw_line)
+            if parsed is not None:
+                newest_turns.append(parsed)
+
         with path.open("rb") as fh:
             fh.seek(0, 2)
             position = fh.tell()
-            data = b""
-            while position > 0 and len(data) < _MAX_RECENT_SCAN_BYTES:
-                read_size = min(chunk_size, position, _MAX_RECENT_SCAN_BYTES - len(data))
+            scanned = 0
+            while position > 0 and scanned < _MAX_RECENT_SCAN_BYTES and len(newest_turns) < limit:
+                read_size = min(chunk_size, position, _MAX_RECENT_SCAN_BYTES - scanned)
                 position -= read_size
                 fh.seek(position)
-                data = fh.read(read_size) + data
+                block = fh.read(read_size)
+                scanned += len(block)
+                parts = block.split(b"\n")
+                if len(parts) == 1:
+                    pending.appendleft(block)
+                    continue
 
-                raw_lines = data.splitlines()
-                # The first line is potentially partial until the start of
-                # the file is reached. Never parse that fragment as a turn.
-                complete_lines = raw_lines if position == 0 else raw_lines[1:]
-                turns = [
-                    parsed
-                    for raw_line in complete_lines
-                    if (parsed := self._parse_turn(raw_line)) is not None
-                ]
-                if len(turns) >= limit or position == 0 or len(data) >= _MAX_RECENT_SCAN_BYTES:
-                    return turns[-limit:]
-        return []
+                pending.appendleft(parts[-1])
+                collect(b"".join(pending))
+                if len(newest_turns) >= limit:
+                    break
+                for raw_line in reversed(parts[1:-1]):
+                    collect(raw_line)
+                    if len(newest_turns) >= limit:
+                        break
+                pending = deque([parts[0]])
+
+            # Only the start of the file proves the remaining fragment is a
+            # complete first line. At the scan cap it must stay unparsed.
+            if position == 0 and len(newest_turns) < limit and pending:
+                collect(b"".join(pending))
+        return list(reversed(newest_turns[:limit]))
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
         if not self.root.exists():

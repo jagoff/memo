@@ -10,6 +10,7 @@ as `memo chat ask` — a more natural command hierarchy.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import sys
@@ -26,6 +27,20 @@ from memo.cli_search import _sources_as_hits
 from memo.config import Config
 
 _log = logging.getLogger(__name__)
+
+
+def _is_loopback_bind(host: str) -> bool:
+    """Check a chat bind without importing the optional HTTP stack."""
+
+    normalized = host.strip().lower().rstrip(".")
+    if normalized == "localhost":
+        return True
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 def _format_source_score(score: object) -> str:
@@ -196,9 +211,7 @@ def chat_ask(
 )
 def chat_serve(host: str, port: int, dist: Path | None) -> None:
     """Serve the chat UI + API over HTTP (requires the [http] extra)."""
-    from memo.http_auth import is_loopback_host
-
-    if not is_loopback_host(host):
+    if not _is_loopback_bind(host):
         raise click.ClickException(
             "chat serve has no remote authentication and only accepts loopback "
             "hosts (127.0.0.1, ::1, or localhost)"
