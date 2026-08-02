@@ -137,6 +137,33 @@ def test_register_accepts_term_program_aliases(tmp_cfg, reported: str, canonical
         os.close(master_fd)
 
 
+def test_register_rejects_process_that_does_not_match_declared_agent(tmp_cfg) -> None:
+    master_fd, slave_fd = pty.openpty()
+    tty = Path(os.ttyname(slave_fd))
+
+    def probe(pid: int) -> ProcessSnapshot:
+        return ProcessSnapshot(
+            pid=pid,
+            uid=os.getuid(),
+            tty=tty,
+            started_at="Sat Aug 1 12:00:00 2026",
+            pgid=pid,
+            foreground_pgid=pid,
+            command="zsh -f",
+        )
+
+    try:
+        bridge = TerminalBridge(tmp_cfg, process_probe=probe)
+
+        with pytest.raises(TerminalValidationError, match=r"does not match.*agent"):
+            bridge.register(agent="codex", tty=tty, pid=4242)
+
+        assert bridge.list() == []
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+
 def test_replacing_process_on_same_tty_rotates_registration_id(tmp_cfg) -> None:
     master_fd, slave_fd = pty.openpty()
     tty = Path(os.ttyname(slave_fd))

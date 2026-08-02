@@ -337,6 +337,8 @@ class TerminalBridge:
         snapshot = self._probe(pid)
         if snapshot is None or snapshot.uid != os.getuid():
             raise TerminalValidationError("agent process is unavailable")
+        if not _command_matches_agent(snapshot.command, normalized_agent):
+            raise TerminalValidationError("agent process does not match requested agent")
         canonical_tty = _canonical_tty(tty, uid=snapshot.uid)
         try:
             process_tty = _canonical_tty(snapshot.tty, uid=snapshot.uid)

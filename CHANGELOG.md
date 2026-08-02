@@ -32,6 +32,9 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 - Live terminal delivery now reports safe transport failures such as an
   unresponsive terminal automation endpoint in both the CLI error and receipt,
   while unexpected exception details remain redacted.
+- Live terminal registration now rejects a process whose command does not match
+  the declared agent instead of persisting a target that immediately becomes
+  stale.
 
 ### Changed
 
