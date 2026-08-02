@@ -4,12 +4,22 @@ from __future__ import annotations
 
 import os
 import pty
+import stat
 from pathlib import Path
 
 import pytest
 
 from memo.errors import TerminalValidationError
-from memo.terminal_live import ProcessSnapshot, TerminalBridge
+from memo.terminal_live import ProcessSnapshot, TerminalBridge, _is_local_tty_path
+
+
+def test_local_tty_path_accepts_linux_devpts_and_rejects_non_device_paths() -> None:
+    char_mode = stat.S_IFCHR | 0o620
+
+    assert _is_local_tty_path(Path("/dev/pts/7"), char_mode)
+    assert _is_local_tty_path(Path("/dev/ttys000"), char_mode)
+    assert not _is_local_tty_path(Path("/tmp/pts/7"), char_mode)
+    assert not _is_local_tty_path(Path("/dev/pts/7"), stat.S_IFREG | 0o600)
 
 
 @pytest.fixture

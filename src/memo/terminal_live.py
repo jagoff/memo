@@ -95,6 +95,22 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def _is_local_tty_path(path: Path, mode: int) -> bool:
+    return path.is_relative_to(Path("/dev")) and stat.S_ISCHR(mode)
+
+
+def _path_is_tty(path: Path) -> bool:
+    flags = os.O_RDWR | os.O_NONBLOCK | getattr(os, "O_NOCTTY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return False
+    try:
+        return os.isatty(fd)
+    finally:
+        os.close(fd)
+
+
 def _canonical_tty(value: str | Path, *, uid: int | None = None) -> Path:
     raw = Path(value).expanduser()
     if not raw.is_absolute():
@@ -104,11 +120,13 @@ def _canonical_tty(value: str | Path, *, uid: int | None = None) -> Path:
         info = path.stat()
     except OSError as exc:
         raise TerminalValidationError("terminal target is unavailable") from exc
-    if path.parent != Path("/dev") or not stat.S_ISCHR(info.st_mode):
+    if not _is_local_tty_path(path, info.st_mode):
         raise TerminalValidationError("terminal target is not a local TTY")
     expected_uid = os.getuid() if uid is None else uid
     if info.st_uid != expected_uid:
         raise TerminalValidationError("terminal target belongs to another user")
+    if not _path_is_tty(path):
+        raise TerminalValidationError("terminal target is not a local TTY")
     return path
 
 
