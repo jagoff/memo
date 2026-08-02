@@ -8,6 +8,7 @@ import secrets
 import stat
 import time
 from collections import deque
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,8 +150,9 @@ class RequestSizeLimitMiddleware:
 class SecurityHeadersMiddleware:
     """Apply defensive, API-safe response headers to every HTTP response."""
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: Any, *, headers: Mapping[str, str] | None = None) -> None:
         self.app = app
+        self.headers = dict(_SECURITY_HEADERS if headers is None else headers)
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") != "http":
@@ -160,7 +162,7 @@ class SecurityHeadersMiddleware:
         async def secure_send(message: dict[str, Any]) -> None:
             if message.get("type") == "http.response.start":
                 headers = MutableHeaders(scope=message)
-                for name, value in _SECURITY_HEADERS.items():
+                for name, value in self.headers.items():
                     headers[name] = value
             await send(message)
 

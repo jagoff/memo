@@ -3,8 +3,25 @@
 import json
 import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse, StreamingResponse
+
+_CHAT_SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; connect-src 'self'; "
+        "img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
+    ),
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+}
 
 
 def _normalize_history(history: Any) -> list[dict[str, str]] | None:
@@ -26,56 +43,25 @@ def _spa_response(
     path: str,
     *,
     dist: Path,
-    file_response: Any,
-    json_response: Any,
 ) -> Any:
     """Serve one SPA path while keeping unknown API routes as JSON 404s."""
     if path == "api" or path.startswith("api/"):
-        return json_response({"error": "unknown API route"}, status_code=404)
+        return JSONResponse({"error": "unknown API route"}, status_code=404)
     candidate = (dist / path).resolve()
     if path and candidate.is_file() and candidate.is_relative_to(dist.resolve()):
-        return file_response(candidate)
-    return file_response(dist / "index.html")
+        return FileResponse(candidate)
+    return FileResponse(dist / "index.html")
 
 
-def build_app(memory: Any, *, dist: Path | None = None) -> Any:
-    from fastapi import FastAPI, Request
-    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-    from starlette.middleware import Middleware
+class _ChatApi:
+    """Bound chat HTTP handlers, split from app wiring for auditable contracts."""
 
-    from memo.chat.config import ChatConfig
-    from memo.chat.feedback import (
-        ChatFeedback,
-        FeedbackStore,
-        SourceVote,
-        SourceVoteStore,
-        question_key,
-    )
-    from memo.chat.pipeline import chat_stream
-    from memo.chat.sessions import SessionStore, iso_ts
-    from memo.http_auth import (
-        LocalRequestGuardMiddleware,
-        RateLimitMiddleware,
-        RequestSizeLimitMiddleware,
-    )
+    def __init__(self, memory: Any, cfg: Any, sessions: Any) -> None:
+        self.memory = memory
+        self.cfg = cfg
+        self.sessions = sessions
 
-    cfg = ChatConfig.load(memory.cfg.state_dir)
-    sessions = SessionStore(cfg.sessions_dir)
-    # Chat has no bearer-token flow: constrain it to same-origin loopback HTTP,
-    # reject DNS-rebinding/cross-site requests, and bound local request pressure.
-    # `memo chat serve` independently rejects non-loopback bind addresses so the
-    # network policy remains safe even before the first request reaches ASGI.
-    app = FastAPI(
-        title="memo chat",
-        docs_url=None,
-        redoc_url=None,
-        middleware=[
-            Middleware(RateLimitMiddleware),
-            Middleware(LocalRequestGuardMiddleware),
-            Middleware(RequestSizeLimitMiddleware),
-        ],
-    )
-
+    @staticmethod
     async def _json_body(request: Request) -> dict[str, Any] | None:
         try:
             body = await request.json()
@@ -83,34 +69,31 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             return None
         return body if isinstance(body, dict) else None
 
-    def sessions_history(session_id: str | None) -> list[dict[str, str]] | None:
+    def _sessions_history(self, session_id: str | None) -> list[dict[str, str]] | None:
         if not session_id:
             return None
         try:
-            turns = sessions.get(session_id)
+            turns = self.sessions.get(session_id)
         except ValueError:
             return None
         return [{"role": t.get("role", ""), "content": t.get("text", "")} for t in turns][-12:]
 
-    def requested_session_id(body: dict[str, Any]) -> str | None:
-        """Validate an optional caller-owned id before doing retrieval work."""
+    def _requested_session_id(self, body: dict[str, Any]) -> str | None:
         raw = body.get("chat_session_id")
         if raw is None or raw == "":
             return None
         if not isinstance(raw, str):
             raise ValueError("invalid chat_session_id")
-        # SessionStore owns the path-safe id grammar. Reading here validates it
-        # without duplicating that security boundary in the HTTP layer.
         try:
-            sessions.get(raw)
+            self.sessions.get(raw)
         except ValueError as exc:
             raise ValueError("invalid chat_session_id") from exc
         return raw
 
-    def request_inputs(
+    @staticmethod
+    def _request_inputs(
         body: dict[str, Any],
     ) -> tuple[str, int | None, list[dict[str, str]] | None]:
-        """Validate the untyped JSON surface before it reaches retrieval."""
         raw_question = body.get("q")
         if not isinstance(raw_question, str) or not raw_question.strip():
             raise ValueError("q required and must be a string")
@@ -124,84 +107,103 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             raise ValueError("history must be a list")
         return raw_question.strip(), raw_k, _normalize_history(raw_history)
 
+    def _prepare_ask(
+        self,
+        body: dict[str, Any],
+    ) -> tuple[str, int | None, list[dict[str, str]] | None, str]:
+        question, k, explicit_history = self._request_inputs(body)
+        given_session_id = self._requested_session_id(body)
+        session_id = given_session_id or uuid.uuid4().hex[:12]
+        history = explicit_history or self._sessions_history(given_session_id)
+        return question, k, history, session_id
+
+    def _append_session(self, session_id: str, question: str, answer: str | None) -> None:
+        try:
+            self.sessions.append_turn(session_id, "user", question)
+            if answer is not None:
+                self.sessions.append_turn(session_id, "assistant", answer)
+        except ValueError:
+            pass
+
     def _run(
+        self,
         question: str,
         *,
-        given_session_id: str | None,
+        session_id: str,
         history: list[dict[str, str]] | None,
         k: int | None,
     ) -> list[dict[str, Any]]:
-        session_id = given_session_id or uuid.uuid4().hex[:12]
+        from memo.chat.pipeline import chat_stream
+
         events = []
-        for event in chat_stream(memory, question, history=history, k=k):
+        for event in chat_stream(self.memory, question, history=history, k=k):
             if event.get("type") in ("context", "done"):
                 event = {**event, "chat_session_id": session_id}
             events.append(event)
-        done = next((e for e in events if e.get("type") == "done"), None)
-        try:
-            sessions.append_turn(session_id, "user", question)
-            if done:
-                sessions.append_turn(session_id, "assistant", str(done.get("answer", "")))
-        except ValueError:
-            pass
+        done = next((event for event in events if event.get("type") == "done"), None)
+        answer = str(done.get("answer", "")) if done else None
+        self._append_session(session_id, question, answer)
         return events
 
-    @app.post("/api/ask/stream")
-    async def ask_stream(request: Request) -> Any:
-        body = await _json_body(request)
+    def _stream_frames(
+        self,
+        question: str,
+        *,
+        session_id: str,
+        history: list[dict[str, str]] | None,
+        k: int | None,
+    ) -> Iterator[str]:
+        from memo.chat.pipeline import chat_stream
+
+        answer = ""
+        for event in chat_stream(self.memory, question, history=history, k=k):
+            if event.get("type") in ("context", "done"):
+                event = {**event, "chat_session_id": session_id}
+            if event.get("type") == "done":
+                answer = str(event.get("answer", ""))
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        self._append_session(session_id, question, answer)
+
+    async def ask_stream(self, request: Request) -> Any:
+        body = await self._json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         try:
-            question, k, explicit_history = request_inputs(body)
-            given_session_id = requested_session_id(body)
+            question, k, history, session_id = self._prepare_ask(body)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        session_id = given_session_id or uuid.uuid4().hex[:12]
-        history = explicit_history or sessions_history(given_session_id)
-
-        def _generate() -> Any:
-            answer = ""
-            for event in chat_stream(memory, question, history=history, k=k):
-                if event.get("type") in ("context", "done"):
-                    event = {**event, "chat_session_id": session_id}
-                if event.get("type") == "done":
-                    answer = str(event.get("answer", ""))
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-            try:
-                sessions.append_turn(session_id, "user", question)
-                sessions.append_turn(session_id, "assistant", answer)
-            except ValueError:
-                pass
-
         return StreamingResponse(
-            _generate(),
+            self._stream_frames(
+                question,
+                session_id=session_id,
+                history=history,
+                k=k,
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    @app.post("/api/ask")
-    async def ask(request: Request) -> Any:
-        body = await _json_body(request)
+    async def ask(self, request: Request) -> Any:
+        body = await self._json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         try:
-            question, k, explicit_history = request_inputs(body)
-            given_session_id = requested_session_id(body)
+            question, k, history, session_id = self._prepare_ask(body)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        history = explicit_history or sessions_history(given_session_id)
-        events = _run(
+        events = self._run(
             question,
-            given_session_id=given_session_id,
+            session_id=session_id,
             history=history,
             k=k,
         )
-        done = next((e for e in reversed(events) if e.get("type") in {"done", "error"}), None)
+        done = next((event for event in reversed(events) if event.get("type") in {"done", "error"}), None)
         return JSONResponse(done or {"type": "error", "message": "no events"})
 
-    @app.post("/api/feedback")
-    async def feedback(request: Request) -> Any:
-        body = await _json_body(request)
+    async def feedback(self, request: Request) -> Any:
+        from memo.chat.feedback import ChatFeedback, FeedbackStore
+
+        body = await self._json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         sources = body.get("sources", [])
@@ -210,7 +212,7 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             return JSONResponse({"error": "sources must be a list"}, status_code=400)
         if rating not in {"up", "down"}:
             return JSONResponse({"error": "rating must be 'up' or 'down'"}, status_code=400)
-        fb = ChatFeedback(
+        feedback = ChatFeedback(
             feedback_id=uuid.uuid4().hex[:12],
             created_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
             chat_session_id=str(body.get("chat_session_id") or ""),
@@ -218,17 +220,20 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             query=str(body.get("query") or ""),
             answer=str(body.get("answer") or ""),
             source_ids=[
-                s["id"] for s in sources if isinstance(s, dict) and isinstance(s.get("id"), str)
+                source["id"]
+                for source in sources
+                if isinstance(source, dict) and isinstance(source.get("id"), str)
             ],
             rating=rating,
             correction_text=str(body.get("correction_text") or ""),
         )
-        FeedbackStore(cfg.feedback_dir).append(fb)
-        return {"ok": True, "feedback_id": fb.feedback_id}
+        FeedbackStore(self.cfg.feedback_dir).append(feedback)
+        return {"ok": True, "feedback_id": feedback.feedback_id}
 
-    @app.post("/api/feedback/source")
-    async def feedback_source(request: Request) -> Any:
-        body = await _json_body(request)
+    async def feedback_source(self, request: Request) -> Any:
+        from memo.chat.feedback import SourceVote, SourceVoteStore, question_key
+
+        body = await self._json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         query = body.get("query")
@@ -244,7 +249,7 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
         if rating not in {"up", "down"}:
             return JSONResponse({"error": "rating must be 'up' or 'down'"}, status_code=400)
         try:
-            embedding = memory.embedder.embed_query(query)
+            embedding = self.memory.embedder.embed_query(query)
         except Exception:
             embedding = []
         vote = SourceVote(
@@ -255,70 +260,117 @@ def build_app(memory: Any, *, dist: Path | None = None) -> Any:
             rating=rating,
             query_embedding=list(embedding),
         )
-        SourceVoteStore(cfg.feedback_dir).record(vote)
+        SourceVoteStore(self.cfg.feedback_dir).record(vote)
         return {"ok": True}
 
-    @app.get("/api/sessions")
-    async def list_sessions(limit: int = 50) -> Any:
-        return {"sessions": sessions.list_sessions(limit=limit)}
+    async def list_sessions(self, limit: int = 50) -> Any:
+        return {"sessions": self.sessions.list_sessions(limit=limit)}
 
-    @app.get("/api/sessions/{session_id}")
-    async def get_session(session_id: str) -> Any:
+    async def get_session(self, session_id: str) -> Any:
+        from memo.chat.sessions import iso_ts
+
         try:
-            turns = sessions.get(session_id)
+            turns = self.sessions.get(session_id)
         except ValueError:
             return JSONResponse({"error": "invalid session id"}, status_code=400)
         return {
             "session_id": session_id,
             "turns": [
                 {
-                    "role": t.get("role", ""),
-                    "text": t.get("text", ""),
-                    "at": iso_ts(t["ts"]) if t.get("ts") is not None else None,
+                    "role": turn.get("role", ""),
+                    "text": turn.get("text", ""),
+                    "at": iso_ts(turn["ts"]) if turn.get("ts") is not None else None,
                 }
-                for t in turns
+                for turn in turns
             ],
         }
 
-    @app.post("/api/sessions/delete")
-    async def delete_session(request: Request) -> Any:
-        body = await _json_body(request)
+    async def delete_session(self, request: Request) -> Any:
+        body = await self._json_body(request)
         if body is None:
             return JSONResponse({"error": "invalid JSON body"}, status_code=400)
         try:
-            return {"ok": sessions.delete(str(body.get("session_id") or ""))}
+            return {"ok": self.sessions.delete(str(body.get("session_id") or ""))}
         except ValueError:
             return JSONResponse({"error": "invalid session id"}, status_code=400)
 
-    @app.post("/api/sessions/delete-all")
-    async def delete_all_sessions() -> Any:
-        return {"ok": True, "deleted": sessions.delete_all()}
+    async def delete_all_sessions(self) -> Any:
+        return {"ok": True, "deleted": self.sessions.delete_all()}
 
-    @app.get("/api/suggestions")
-    async def suggestions(limit: int = 8) -> Any:
-        chips = [{"label": q, "query": q} for q in sessions.recent_queries(limit=limit)]
+    async def suggestions(self, limit: int = 8) -> Any:
+        chips = [{"label": query, "query": query} for query in self.sessions.recent_queries(limit=limit)]
         return {"chips": chips}
 
-    @app.post("/api/memory/delete")
+    @staticmethod
     async def memory_delete() -> Any:
         return JSONResponse({"error": "deferred to plan 2"}, status_code=501)
 
-    @app.post("/api/insight/capture")
+    @staticmethod
     async def insight_capture() -> Any:
         return JSONResponse({"error": "deferred to plan 2"}, status_code=501)
 
-    if dist is not None and (dist / "index.html").exists():
-        from fastapi.staticfiles import StaticFiles
 
-        app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+def _register_api_routes(app: Any, api: _ChatApi) -> None:
+    app.add_api_route("/api/ask/stream", api.ask_stream, methods=["POST"])
+    app.add_api_route("/api/ask", api.ask, methods=["POST"])
+    app.add_api_route("/api/feedback", api.feedback, methods=["POST"])
+    app.add_api_route("/api/feedback/source", api.feedback_source, methods=["POST"])
+    app.add_api_route("/api/sessions", api.list_sessions, methods=["GET"])
+    app.add_api_route("/api/sessions/{session_id}", api.get_session, methods=["GET"])
+    app.add_api_route("/api/sessions/delete", api.delete_session, methods=["POST"])
+    app.add_api_route("/api/sessions/delete-all", api.delete_all_sessions, methods=["POST"])
+    app.add_api_route("/api/suggestions", api.suggestions, methods=["GET"])
+    app.add_api_route("/api/memory/delete", api.memory_delete, methods=["POST"])
+    app.add_api_route("/api/insight/capture", api.insight_capture, methods=["POST"])
 
-        @app.get("/{path:path}")
-        async def spa(path: str) -> Any:
-            return _spa_response(
-                path,
-                dist=dist,
-                file_response=FileResponse,
-                json_response=JSONResponse,
-            )
 
+class _SpaEndpoint:
+    def __init__(self, dist: Path) -> None:
+        self.dist = dist
+
+    async def __call__(self, path: str) -> Any:
+        return _spa_response(path, dist=self.dist)
+
+
+def _mount_spa(app: Any, dist: Path | None) -> None:
+    if dist is None or not (dist / "index.html").exists():
+        return
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+    app.add_api_route("/{path:path}", _SpaEndpoint(dist), methods=["GET"])
+
+
+def build_app(memory: Any, *, dist: Path | None = None) -> Any:
+    from fastapi import FastAPI
+    from starlette.middleware import Middleware
+
+    from memo.chat.config import ChatConfig
+    from memo.chat.sessions import SessionStore
+    from memo.http_auth import (
+        LocalRequestGuardMiddleware,
+        RateLimitMiddleware,
+        RequestSizeLimitMiddleware,
+        SecurityHeadersMiddleware,
+    )
+
+    cfg = ChatConfig.load(memory.cfg.state_dir)
+    sessions = SessionStore(cfg.sessions_dir)
+    # Chat has no bearer-token flow: constrain it to same-origin loopback HTTP,
+    # reject DNS-rebinding/cross-site requests, and bound local request pressure.
+    # `memo chat serve` independently rejects non-loopback bind addresses so the
+    # network policy remains safe even before the first request reaches ASGI.
+    app = FastAPI(
+        title="memo chat",
+        docs_url=None,
+        redoc_url=None,
+        middleware=[
+            Middleware(SecurityHeadersMiddleware, headers=_CHAT_SECURITY_HEADERS),
+            Middleware(RateLimitMiddleware),
+            Middleware(LocalRequestGuardMiddleware),
+            Middleware(RequestSizeLimitMiddleware),
+        ],
+    )
+    _register_api_routes(app, _ChatApi(memory, cfg, sessions))
+    _mount_spa(app, dist)
     return app
