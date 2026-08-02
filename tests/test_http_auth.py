@@ -430,6 +430,44 @@ def test_no_auth_guard_rejections_do_not_consume_rate_limit() -> None:
     assert allowed.status_code == 200
 
 
+def test_no_auth_guard_rate_limits_rejections_with_separate_quota() -> None:
+    from starlette.middleware import Middleware
+
+    from memo.http_auth import LocalRequestGuardMiddleware, RateLimitMiddleware
+
+    async def sensitive(_request) -> PlainTextResponse:
+        return PlainTextResponse("ok")
+
+    app = Starlette(
+        routes=[Route("/chat/stream", sensitive, methods=["POST"])],
+        middleware=[
+            Middleware(
+                LocalRequestGuardMiddleware,
+                max_rejections=2,
+                rejection_window_seconds=60,
+            ),
+            Middleware(RateLimitMiddleware, max_requests=1, window_seconds=60),
+        ],
+    )
+    with TestClient(
+        app,
+        base_url="http://127.0.0.1:18768",
+        client=("127.0.0.1", 50000),
+    ) as client:
+        statuses = [
+            client.post(
+                "/chat/stream",
+                json={},
+                headers={"Origin": "https://attacker.example"},
+            ).status_code
+            for _ in range(3)
+        ]
+        allowed = client.post("/chat/stream", json={})
+
+    assert statuses == [403, 403, 429]
+    assert allowed.status_code == 200
+
+
 def test_memo_mcp_server_attaches_shared_auth_provider(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

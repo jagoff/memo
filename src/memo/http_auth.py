@@ -28,6 +28,7 @@ _MIN_TOKEN_CHARS = 32
 _MAX_TOKEN_CHARS = 4096
 _DEFAULT_RATE_LIMIT = 300
 _DEFAULT_RATE_WINDOW_SECONDS = 60
+_DEFAULT_REJECTION_RATE_LIMIT = 1200
 _MAX_RATE_BUCKETS = 4096
 MAX_HTTP_REQUEST_BYTES = 1_048_576
 
@@ -169,6 +170,32 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, secure_send)
 
 
+class _RateWindow:
+    """Thread-safe, process-local sliding-window counter by peer address."""
+
+    def __init__(self, max_requests: int, window_seconds: int) -> None:
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.requests: dict[str, deque[float]] = {}
+        self.lock = Lock()
+
+    def allow(self, scope: dict[str, Any]) -> bool:
+        client = scope.get("client")
+        key = str(client[0]) if isinstance(client, (list, tuple)) and client else "unknown"
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+        with self.lock:
+            if key not in self.requests and len(self.requests) >= _MAX_RATE_BUCKETS:
+                key = "overflow"
+            bucket = self.requests.setdefault(key, deque())
+            while bucket and bucket[0] <= cutoff:
+                bucket.popleft()
+            if len(bucket) >= self.max_requests:
+                return False
+            bucket.append(now)
+            return True
+
+
 class RateLimitMiddleware:
     """Bound HTTP requests per source address with process-local windows."""
 
@@ -184,8 +211,7 @@ class RateLimitMiddleware:
         self.app = app
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self._requests: dict[str, deque[float]] = {}
-        self._lock = Lock()
+        self._window = _RateWindow(max_requests, window_seconds)
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") != "http" or self._allow(scope):
@@ -198,20 +224,7 @@ class RateLimitMiddleware:
         )(scope, receive, send)
 
     def _allow(self, scope: dict[str, Any]) -> bool:
-        client = scope.get("client")
-        key = str(client[0]) if isinstance(client, (list, tuple)) and client else "unknown"
-        now = time.monotonic()
-        cutoff = now - self.window_seconds
-        with self._lock:
-            if key not in self._requests and len(self._requests) >= _MAX_RATE_BUCKETS:
-                key = "overflow"
-            bucket = self._requests.setdefault(key, deque())
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
-            if len(bucket) >= self.max_requests:
-                return False
-            bucket.append(now)
-            return True
+        return self._window.allow(scope)
 
 
 def _split_authority(value: str) -> tuple[str, int | None] | None:
@@ -276,8 +289,17 @@ def _same_loopback_origin(
 class LocalRequestGuardMiddleware:
     """Close browser CSRF and DNS-rebinding paths for unauthenticated MCP HTTP."""
 
-    def __init__(self, app: Any) -> None:
+    def __init__(
+        self,
+        app: Any,
+        *,
+        max_rejections: int = _DEFAULT_REJECTION_RATE_LIMIT,
+        rejection_window_seconds: int = _DEFAULT_RATE_WINDOW_SECONDS,
+    ) -> None:
+        if max_rejections < 1 or rejection_window_seconds < 1:
+            raise ValueError("HTTP rejection rate limit and window must be positive")
         self.app = app
+        self.rejections = _RateWindow(max_rejections, rejection_window_seconds)
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") != "http":
@@ -332,14 +354,21 @@ class LocalRequestGuardMiddleware:
 
         await self.app(scope, receive, send)
 
-    @staticmethod
     async def _reject(
+        self,
         scope: dict[str, Any],
         receive: Any,
         send: Any,
         *,
         status_code: int,
     ) -> None:
+        if not self.rejections.allow(scope):
+            await JSONResponse(
+                {"detail": "Too many rejected requests"},
+                status_code=429,
+                headers={"Retry-After": str(self.rejections.window_seconds)},
+            )(scope, receive, send)
+            return
         detail = (
             "Content-Type must be application/json"
             if status_code == 415

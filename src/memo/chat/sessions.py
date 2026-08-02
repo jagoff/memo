@@ -133,10 +133,12 @@ class SessionStore:
 
     def get(self, session_id: str) -> list[dict[str, Any]]:
         path = self._path(session_id)
-        if not path.exists():
+        try:
+            fh = path.open("rb")
+        except FileNotFoundError:
             return []
         turns = []
-        with path.open("rb") as fh:
+        with fh:
             for line in fh:
                 parsed = self._parse_turn(line)
                 if parsed is not None:
@@ -152,16 +154,16 @@ class SessionStore:
         if type(limit) is not int or limit < 1:
             raise ValueError("limit must be a positive integer")
         path = self._path(session_id)
-        if not path.exists():
-            return []
-
         newest_turns: list[dict[str, Any]] = []
-        for raw_line in _iter_reverse_lines(path):
-            parsed = self._parse_turn(raw_line)
-            if parsed is not None:
-                newest_turns.append(parsed)
-                if len(newest_turns) >= limit:
-                    break
+        try:
+            for raw_line in _iter_reverse_lines(path):
+                parsed = self._parse_turn(raw_line)
+                if parsed is not None:
+                    newest_turns.append(parsed)
+                    if len(newest_turns) >= limit:
+                        break
+        except FileNotFoundError:
+            return []
         return list(reversed(newest_turns[:limit]))
 
     def list_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
