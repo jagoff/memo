@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json as _json
 import sqlite3
+import time
 from typing import TYPE_CHECKING, Any
 
 from .tiers import DURABLE_TYPES
@@ -68,6 +69,28 @@ def _embed_question(mem: Any, question: str) -> list[float]:
     if flag_bool("MEMO_HYPE_EMBED_RAW"):
         return list(mem.embedder.embed([question])[0])
     return list(mem.embedder.embed_query(question))
+
+
+def _embed_questions(mem: Any, questions: list[str]) -> list[list[float]]:
+    """Batch-embed a memory's HyPE questions in the active variant — one
+    forward pass instead of one call per question.
+
+    Raw variant → document-side `embed(list)` (already batched). Query variant
+    → `embed_queries(list)` when the embedder supports it (keeps the asymmetric
+    prefix INSIDE the embedder — MLX invariant #1), falling back to per-question
+    `embed_query` for embedders without the batch method. `embed`/`embed_queries`
+    take a Sequence[str], never a bare str (MLX invariant #2).
+    """
+    from .flags import flag_bool
+
+    if not questions:
+        return []
+    if flag_bool("MEMO_HYPE_EMBED_RAW"):
+        return [list(v) for v in mem.embedder.embed(list(questions))]
+    batch = getattr(mem.embedder, "embed_queries", None)
+    if callable(batch):
+        return [list(v) for v in batch(list(questions))]
+    return [list(mem.embedder.embed_query(q)) for q in questions]
 
 
 def select_backlog(mem: Any, store: HypeStore, *, cap: int) -> list[dict[str, Any]]:
@@ -177,15 +200,24 @@ def run_hype_pass(
     *,
     questions_per_memory: int = 3,
     night_cap: int = 400,
+    budget_s: float | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """One nightly HyPE pass. Never raises — the cli_dream caller records a
     returned ``status="error"`` in ``receipt["errors"]``.
 
-    Per memory: `_llm_questions` → `embed_query` per question (str, one at a
-    time) → `store.replace_for_memory`. A single memory's failure doesn't
-    abort the pass (counted in `errors_items`). Prunes orphans against the
-    live durable id set at the end. `dry_run` only computes the backlog.
+    Per memory: read the input body (FTS → canonical Markdown fallback) →
+    `_llm_questions` → batch-embed the questions in one forward pass
+    (`_embed_questions`) → `store.replace_for_memory`. A single memory's failure
+    doesn't abort the pass (counted in `errors_items`). A memory with no
+    recoverable body is recorded as `missing_source` (not a false empty
+    success) and watermarked so it isn't retried until its body reappears.
+
+    `budget_s` caps wall-clock: when exceeded the loop stops and the untouched
+    tail is reflected in `backlog_remaining` (with `budget_hit=True`). Prunes
+    orphans against the live durable id set at the end. `dry_run` only computes
+    the backlog. The global `night_cap` is never raised — a large backlog is
+    drained incrementally across nights, not in one oversized run.
     """
     res: dict[str, Any] = {
         "status": "skipped",
@@ -193,8 +225,12 @@ def run_hype_pass(
         "memories": 0,
         "pruned": 0,
         "backlog_remaining": 0,
+        "processed": 0,
         "errors_items": 0,
         "empty_items": 0,
+        "missing_source_items": 0,
+        "body_fallback_items": 0,
+        "budget_hit": False,
         "error_samples": [],
     }
     store: HypeStore | None = None
@@ -218,10 +254,25 @@ def run_hype_pass(
             res["backlog_remaining"] = len(backlog)
             return res
 
+        variant = _active_variant()
+        deadline = (time.monotonic() + budget_s) if budget_s and budget_s > 0 else None
         for item in backlog:
+            if deadline is not None and time.monotonic() >= deadline:
+                res["budget_hit"] = True
+                break
+            res["processed"] += 1
             body, used_fallback = _memory_body(mem, item["id"])
+            # A memory with no recoverable body (FTS NULL and empty/absent
+            # canonical Markdown) yields a hollow prompt that the LLM answers
+            # with a spurious empty list. Record it as missing_source (never a
+            # success) and watermark it so it isn't retried until a real body
+            # reappears (body_hash changes) — separate from a genuine "no
+            # useful question" empty.
+            if not body.strip():
+                res["missing_source_items"] += 1
+                store.mark_attempt(item["id"], item["body_hash"], "missing_source")
+                continue
             if used_fallback:
-                res.setdefault("body_fallback_items", 0)
                 res["body_fallback_items"] += 1
             questions = _llm_questions(mem, item["title"], body, n=questions_per_memory)
             # `None` means the LLM timed out/returned malformed output. An
@@ -240,8 +291,7 @@ def run_hype_pass(
                 store.mark_attempt(item["id"], item["body_hash"], "empty")
                 continue
             try:
-                variant = _active_variant()
-                pairs = [(q, _embed_question(mem, q)) for q in questions]
+                pairs = list(zip(questions, _embed_questions(mem, questions), strict=True))
                 inserted = store.replace_for_memory(
                     item["id"],
                     item["body_hash"],
@@ -262,10 +312,12 @@ def run_hype_pass(
                     )
                 continue
 
-        # Honest remaining count: failed items (counted in errors_items) were
-        # never written to the store, so they're still pending — the cheap
-        # proxy is len(backlog) minus the ones that succeeded (res["memories"]).
-        res["backlog_remaining"] = res["errors_items"]
+        # Honest remaining count: failed items (errors_items) were never
+        # written, and any tail skipped by the wall-clock budget is untouched —
+        # both are still pending. (missing_source/empty items ARE watermarked,
+        # so they are NOT pending.)
+        unprocessed = len(backlog) - res["processed"]
+        res["backlog_remaining"] = res["errors_items"] + unprocessed
 
         live_ids = {
             mid
@@ -273,11 +325,7 @@ def run_hype_pass(
             if (row := mem.store.get(mid)) is not None and row.get("type") in DURABLE_TYPES
         }
         res["pruned"] = store.prune_orphans(live_ids)
-        res["status"] = (
-            "all_items_failed"
-            if res["errors_items"] == len(backlog) and backlog and res["empty_items"] == 0
-            else "done"
-        )
+        res["status"] = _hype_status(res, len(backlog))
     except Exception as exc:  # surfaced via receipt["errors"], never silent
         res["status"] = "error"
         res["error"] = f"{type(exc).__name__}: {exc}"
@@ -285,6 +333,26 @@ def run_hype_pass(
         if store is not None:
             store.close()
     return res
+
+
+def _hype_status(res: dict[str, Any], backlog_size: int) -> str:
+    """Terminal status for a completed (non-dry, non-raising) HyPE pass.
+
+    ``all_items_failed`` only when EVERY processed item hit an LLM/store error
+    with nothing else to show for the run — a night whose items were legitimately
+    empty, missing a body, or partly succeeded (or was cut short by the budget)
+    is ``done``, not a failure.
+    """
+    if (
+        backlog_size
+        and res["processed"] > 0
+        and res["errors_items"] == res["processed"]
+        and res["empty_items"] == 0
+        and res["missing_source_items"] == 0
+        and not res["budget_hit"]
+    ):
+        return "all_items_failed"
+    return "done"
 
 
 def run_hype_reembed(cfg: Any, mem: Any) -> dict[str, Any]:

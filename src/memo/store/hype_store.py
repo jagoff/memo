@@ -280,7 +280,7 @@ class HypeStore(_ConnectionMixin):
             "SELECT body_hash, status FROM hype_attempts WHERE memory_id = ?",
             (memory_id,),
         ).fetchone()
-        if attempt and str(attempt["status"]) in {"indexed", "empty"}:
+        if attempt and str(attempt["status"]) in {"indexed", "empty", "missing_source"}:
             return str(attempt["body_hash"])
         return None
 

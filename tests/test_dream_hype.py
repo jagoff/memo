@@ -405,6 +405,76 @@ def test_run_hype_pass_all_items_failed_status(tmp_path, monkeypatch):
     assert res["memories"] == 0
 
 
+def test_run_hype_pass_missing_source_not_counted_as_empty(tmp_path, monkeypatch):
+    """A memory with no recoverable body (FTS NULL and empty canonical) must be
+    recorded as missing_source — never a false 'empty' success — and never sent
+    to the LLM. It is watermarked so a second run skips it."""
+    memories = {"id1": {"type": "decision", "body_hash": "h1", "title": "T", "_body": ""}}
+    mem = _FakeMem(memories, state_dir=tmp_path)
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+
+    llm_called: list[int] = []
+    monkeypatch.setattr(
+        dh, "_llm_questions", lambda *a, **k: llm_called.append(1) or ["q?"]
+    )
+
+    res = dh.run_hype_pass(cfg, mem, dry_run=False)
+    assert res["status"] == "done"
+    assert res["missing_source_items"] == 1
+    assert res["empty_items"] == 0
+    assert res["memories"] == 0
+    assert not llm_called  # never sent a hollow prompt to the model
+
+    # Second run: the missing_source attempt is a watermark, so no re-attempt.
+    second = dh.run_hype_pass(cfg, mem, dry_run=False)
+    assert second["status"] == "skipped"
+
+
+def test_run_hype_pass_budget_stops_and_carries_remaining(tmp_path, monkeypatch):
+    """The wall-clock budget stops the loop early; the untouched tail is
+    reflected in backlog_remaining with budget_hit=True (status stays 'done')."""
+    memories = {
+        "id1": _mem_row(body_hash="h1", title="A"),
+        "id2": _mem_row(body_hash="h2", title="B"),
+        "id3": _mem_row(body_hash="h3", title="C"),
+    }
+    mem = _FakeMem(memories, state_dir=tmp_path)
+    cfg = _FakeCfg(tmp_path / "memvec.db")
+    monkeypatch.setattr(dh, "_llm_questions", lambda mem, title, body, *, n: ["q1?"])
+    # deadline calc -> 100 (deadline=110); iter1 check -> 100 (<110, process);
+    # iter2 check -> 200 (>=110, break).
+    clock = iter([100.0, 100.0, 200.0, 200.0, 200.0])
+    monkeypatch.setattr(dh.time, "monotonic", lambda: next(clock))
+
+    res = dh.run_hype_pass(cfg, mem, night_cap=400, budget_s=10.0, dry_run=False)
+    assert res["status"] == "done"
+    assert res["budget_hit"] is True
+    assert res["processed"] == 1
+    assert res["memories"] == 1
+    assert res["backlog_remaining"] == 2  # two untouched items still pending
+
+
+def test_embed_questions_uses_batch_when_embedder_supports_it():
+    """Query-variant HyPE embeds all of a memory's questions in one forward pass
+    via embed_queries when available (no per-question embed_query calls)."""
+
+    class _BatchEmbedder(_FakeEmbedder):
+        def __init__(self):
+            super().__init__()
+            self.batch_calls: list[list[str]] = []
+
+        def embed_queries(self, qs):
+            self.batch_calls.append(list(qs))
+            return [self._fn(q) for q in qs]
+
+    mem = _FakeMem({})
+    mem.embedder = _BatchEmbedder()  # type: ignore[assignment]
+    out = dh._embed_questions(mem, ["alpha?", "beta?"])
+    assert len(out) == 2
+    assert mem.embedder.batch_calls == [["alpha?", "beta?"]]
+    assert mem.embedder.query_calls == []
+
+
 def test_run_hype_pass_prunes_orphans(tmp_path, monkeypatch):
     """A memory indexed previously but no longer live gets pruned at pass end."""
     cfg = _FakeCfg(tmp_path / "memvec.db")
