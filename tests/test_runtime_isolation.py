@@ -54,11 +54,34 @@ def test_runtime_report_accepts_pipx_install(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_mod.shutil, "which", fake_which)
     monkeypatch.setattr(sys, "executable", str(bin_dir / "python"))
 
-    report = cli_mod._runtime_install_report(cwd=tmp_path / "repo")
+    report = cli_mod._runtime_install_report(
+        cwd=tmp_path / "repo", package_file=root / "lib" / "python" / "memo" / "detect.py"
+    )
 
     assert report["mode"] == "pipx"
     assert report["root"] == str(root)
     assert report["warnings"] == []
+
+
+def test_runtime_report_warns_when_pythonpath_shadows_isolated_install(monkeypatch, tmp_path):
+    root = tmp_path / ".local" / "share" / "uv" / "tools" / "mlx-memo"
+    bin_dir = root / "bin"
+    bin_dir.mkdir(parents=True)
+    for name in ("memo", "memo-mcp", "python"):
+        (bin_dir / name).touch()
+
+    source_file = tmp_path / "repo" / "src" / "memo" / "runtime" / "detect.py"
+    source_file.parent.mkdir(parents=True)
+    source_file.touch()
+
+    monkeypatch.setattr(cli_mod.shutil, "which", lambda name: str(bin_dir / name))
+    monkeypatch.setattr(sys, "executable", str(bin_dir / "python"))
+    report = cli_mod._runtime_install_report(cwd=tmp_path / "repo", package_file=source_file)
+
+    assert report["mode"] == "uv tool"
+    assert report["package_path"] == str(source_file)
+    assert any("outside the isolated runtime" in warning for warning in report["warnings"])
+    assert any("PYTHONPATH" in warning for warning in report["warnings"])
 
 
 def test_runtime_report_warns_for_project_venv(monkeypatch, tmp_path):
@@ -97,7 +120,10 @@ def test_runtime_report_prefers_invoked_memo_over_path(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "executable", str(active_bin / "python"))
     monkeypatch.setattr(cli_mod.shutil, "which", lambda name: str(path_bin / name))
 
-    report = cli_mod._runtime_install_report(cwd=tmp_path / "repo")
+    report = cli_mod._runtime_install_report(
+        cwd=tmp_path / "repo",
+        package_file=active_root / "lib" / "python" / "memo" / "detect.py",
+    )
 
     assert report["root"] == str(active_root)
     assert report["memo_resolved"] == str(active_bin / "memo")

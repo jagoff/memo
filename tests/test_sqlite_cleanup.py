@@ -133,18 +133,19 @@ def _cleanup_without_warnings(factory) -> list[warnings.WarningMessage]:
 
 
 def test_cleanup_warning_capture_ignores_preexisting_garbage(tmp_path: Path) -> None:
-    class CyclicConnectionHolder:
+    class CyclicWarningEmitter:
         def __init__(self) -> None:
-            self.connection = sqlite3.connect(tmp_path / "ambient.db")
             self.cycle = self
 
-    holder = CyclicConnectionHolder()
-    del holder
+        def __del__(self) -> None:
+            warnings.warn("ambient sqlite resource", ResourceWarning, stacklevel=1)
 
-    # The preexisting connection is deliberately leaked to exercise the
-    # attribution boundary. Capture its warning here so it does not pollute the
-    # suite summary; the helper's inner filter still records warnings produced
-    # by VersionStore itself.
+    emitter = CyclicWarningEmitter()
+    del emitter
+
+    # Simulate an unrelated SQLite ResourceWarning without deliberately leaking
+    # a real connection. The helper's inner filter still records warnings
+    # produced by VersionStore itself.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ResourceWarning)
         warnings_seen = _cleanup_without_warnings(lambda: VersionStore(tmp_path / "versions.db"))
