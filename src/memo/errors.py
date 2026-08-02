@@ -73,6 +73,10 @@ class SetupError(MemoError, RuntimeError):
     """Declarative agent setup could not complete safely."""
 
 
+class TerminalValidationError(MemoError, RuntimeError):
+    """A live-terminal target or delivery failed local safety validation."""
+
+
 class StorageError(MemoError, RuntimeError):
     """A storage-layer operation (sqlite / filesystem) failed. Wraps the
     low-level error with operation context so callers don't see bare
