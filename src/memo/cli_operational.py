@@ -416,13 +416,20 @@ def migrate_independence_cmd(
 ) -> None:
     """Migrate legacy integration metadata into Memo-native contracts."""
     from memo.independence_migration import migrate_independence
+    from memo.runtime.agent_registry import resolve_isolated_memo_mcp
+    from memo.runtime.codex import _codex_home
+
+    runtime_mcp = resolve_isolated_memo_mcp()
+    memo_bin = str(runtime_mcp.with_name("memo")) if runtime_mcp is not None else "memo"
 
     _json(
         migrate_independence(
             memory,
             write=write,
             legacy_ledger=legacy_ledger,
-            config_paths=list(config_paths),
+            config_paths=list(config_paths) or None,
+            codex_hooks_path=_codex_home() / "hooks.json",
+            memo_bin=memo_bin,
         )
     )
 

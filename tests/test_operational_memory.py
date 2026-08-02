@@ -562,6 +562,180 @@ def test_independence_migration_rewrites_provenance_and_is_idempotent(
         memory.close()
 
 
+def test_independence_migration_replaces_dead_memflow_codex_hook_preserving_foreign(
+    tmp_cfg,
+    tmp_path,
+):
+    hooks_path = tmp_path / "codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup|resume|clear",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "MEMFLOW_PROJECT_ROOT=/Users/test/repos/memflow "
+                                        "/Users/test/repos/memflow/.venv/bin/memflow "
+                                        "startup-banner --agent codex --codex-hook"
+                                    ),
+                                    "statusMessage": "Loading Memflow status",
+                                    "timeout": 3,
+                                }
+                            ],
+                        },
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "foreign-tool session-start",
+                                    "timeout": 5,
+                                }
+                            ]
+                        },
+                    ],
+                    "UserPromptSubmit": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "MEMO_NONINTERACTIVE=1 memo recall-hook",
+                                    "timeout": 12,
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    memory = Memory(tmp_cfg)
+    try:
+        report = migrate_independence(
+            memory,
+            write=True,
+            config_paths=[],
+            codex_hooks_path=hooks_path,
+            memo_bin="/opt/memo/bin/memo",
+        )
+    finally:
+        memory.close()
+
+    assert report["agent_integrations"] == {
+        "checked": 1,
+        "migrated": 1,
+        "unchanged": 0,
+        "errors": 0,
+    }
+    migrated = json.loads(hooks_path.read_text(encoding="utf-8"))
+    commands = [
+        hook["command"]
+        for group in migrated["hooks"]["SessionStart"]
+        for hook in group["hooks"]
+    ]
+    assert commands == [
+        "MEMO_NONINTERACTIVE=1 /opt/memo/bin/memo briefing --compact",
+        "foreign-tool session-start",
+    ]
+    assert migrated["hooks"]["SessionStart"][0]["hooks"][0]["statusMessage"] == (
+        "Loading memo briefing"
+    )
+    assert migrated["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"].endswith(
+        "memo recall-hook"
+    )
+
+
+def test_migrate_independence_cli_discovers_default_config_paths(tmp_path):
+    home = tmp_path / "home"
+    config_path = home / ".config" / "memo" / "config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        'MEMO_CACHE_BACKEND="memflow"\nMEMO_SYNC_MEMFLOW_ENABLED=1\n',
+        encoding="utf-8",
+    )
+    env = {
+        "HOME": str(home),
+        "CODEX_HOME": str(tmp_path / "codex"),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_EMBEDDER_DIMS": "4",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+
+    result = CliRunner().invoke(cli, ["migrate-independence", "--write"], env=env)
+
+    assert result.exit_code == 0, result.output
+    assert config_path.read_text(encoding="utf-8") == 'MEMO_CACHE_BACKEND="vault"\n'
+    assert json.loads(result.output)["config"] == {
+        "checked": 1,
+        "migrated": 1,
+        "unchanged": 0,
+        "errors": 0,
+    }
+
+
+def test_migrate_independence_cli_discovers_codex_hooks(tmp_path):
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    hooks_path = codex_home / "hooks.json"
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "/Users/test/repos/memflow/.venv/bin/memflow "
+                                        "startup-banner --agent codex --codex-hook"
+                                    ),
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = {
+        "HOME": str(tmp_path / "home"),
+        "CODEX_HOME": str(codex_home),
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+        "MEMO_VAULT_PATH": str(tmp_path / "vault"),
+        "MEMO_EMBEDDER_DIMS": "4",
+        "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "MEMO_SKIP_MODEL_VERSION_CHECK": "1",
+    }
+
+    result = CliRunner().invoke(
+        cli,
+        ["migrate-independence", "--write", "--config", str(tmp_path / "missing")],
+        env=env,
+    )
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["agent_integrations"]["migrated"] == 1
+    migrated = json.loads(hooks_path.read_text(encoding="utf-8"))
+    command = migrated["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+    assert command.endswith("memo briefing --compact")
+    assert "memflow" not in command.lower()
+
+
 def test_independence_migration_handles_nested_provenance_and_prevalidates_ledger(
     tmp_cfg,
     monkeypatch,
