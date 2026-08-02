@@ -220,9 +220,7 @@ def test_shim_registers_exact_terminal_before_agent_exec(tmp_path) -> None:
 
     assert proc.returncode == 0
     lines = log_path.read_text(encoding="utf-8").splitlines()
-    assert lines[0].startswith(
-        f"memo:terminal register --agent codex --tty {tty_path} --pid "
-    )
+    assert lines[0].startswith(f"memo:terminal register --agent codex --tty {tty_path} --pid ")
     assert f"--terminal-app ghostty --project {project} --id-only" in lines[0]
     assert lines[1] == f"agent:{tty_path}"
 

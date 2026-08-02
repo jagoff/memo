@@ -14,7 +14,9 @@ def test_tiocsti_preserves_every_input_byte(monkeypatch) -> None:
     master_fd, slave_fd = pty.openpty()
     target = Path(os.ttyname(slave_fd))
     injected: list[bytes] = []
-    monkeypatch.setattr(presenter.fcntl, "ioctl", lambda _fd, _request, value: injected.append(value))
+    monkeypatch.setattr(
+        presenter.fcntl, "ioctl", lambda _fd, _request, value: injected.append(value)
+    )
     try:
         transport = presenter.deliver_input(target, b"hello\r", terminal_app="")
 
