@@ -823,6 +823,88 @@ async def test_delete_all_waits_for_in_flight_asks_and_cannot_be_recreated(
 
 
 @pytest.mark.asyncio
+async def test_delete_all_does_not_drain_same_session_backlog(tmp_path, monkeypatch) -> None:
+    import httpx
+
+    from tests.test_chat_pipeline import _FakeMemory
+
+    first_started = threading.Event()
+    second_started = threading.Event()
+    release_first = threading.Event()
+
+    def blocking_stream(_memory, question, **_kwargs):
+        if question == "first":
+            first_started.set()
+            assert release_first.wait(timeout=5)
+        else:
+            second_started.set()
+        yield {"type": "done", "answer": f"answer-{question}", "sources": []}
+
+    monkeypatch.setattr("memo.chat.pipeline.chat_stream", blocking_stream)
+    app = build_app(_FakeMemory(tmp_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        first = asyncio.create_task(
+            client.post("/api/ask", json={"q": "first", "chat_session_id": "backlog"})
+        )
+        assert await asyncio.to_thread(first_started.wait, 2)
+        second = asyncio.create_task(
+            client.post("/api/ask", json={"q": "second", "chat_session_id": "backlog"})
+        )
+        await asyncio.sleep(0.05)
+        delete = asyncio.create_task(client.post("/api/sessions/delete-all", json={}))
+        await asyncio.sleep(0.05)
+
+        release_first.set()
+        delete_response = await asyncio.wait_for(delete, timeout=2)
+        assert not second_started.is_set()
+        first_response, second_response = await asyncio.gather(first, second)
+        history = (await client.get("/api/sessions/backlog")).json()["turns"]
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert delete_response.json() == {"ok": True, "deleted": 1}
+    assert history == []
+
+
+@pytest.mark.asyncio
+async def test_get_session_blocks_delete_all_during_file_read(tmp_path, monkeypatch) -> None:
+    import httpx
+
+    from memo.chat.sessions import SessionStore
+    from tests.test_chat_pipeline import _FakeMemory
+
+    store = SessionStore(tmp_path / "chat" / "sessions")
+    store.append_exchange("read-race", "question", "answer")
+    real_get = SessionStore.get
+    read_started = threading.Event()
+    release_read = threading.Event()
+
+    def blocking_get(self, session_id):
+        if session_id == "read-race":
+            read_started.set()
+            assert release_read.wait(timeout=5)
+        return real_get(self, session_id)
+
+    monkeypatch.setattr(SessionStore, "get", blocking_get)
+    app = build_app(_FakeMemory(tmp_path))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
+        read = asyncio.create_task(client.get("/api/sessions/read-race"))
+        assert await asyncio.to_thread(read_started.wait, 2)
+        delete = asyncio.create_task(client.post("/api/sessions/delete-all", json={}))
+        await asyncio.sleep(0.05)
+        assert not delete.done()
+
+        release_read.set()
+        read_response, delete_response = await asyncio.gather(read, delete)
+
+    assert read_response.status_code == 200
+    assert [turn["text"] for turn in read_response.json()["turns"]] == ["question", "answer"]
+    assert delete_response.json() == {"ok": True, "deleted": 1}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("exit_mode", ["disconnect", "send_failure"])
 async def test_stream_capacity_is_released_when_asgi_exits_before_iteration(
     tmp_path, monkeypatch, exit_mode

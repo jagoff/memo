@@ -172,6 +172,7 @@ class _OperationGate:
         self.readers = 0
         self.writer = False
         self.waiting_writers = 0
+        self.generation = 0
         self.changed = asyncio.Event()
 
     def _wake(self) -> None:
@@ -194,6 +195,9 @@ class _OperationGate:
                 changed = self.changed
                 await changed.wait()
             self.writer = True
+            # Requests that entered before a destructive reset must not recreate
+            # session files after the reset finishes.
+            self.generation += 1
             acquired = True
             return _OperationLease(self, exclusive=True)
         finally:
@@ -324,9 +328,6 @@ class _ChatApi:
             if event.get("type") in ("context", "done"):
                 event = {**event, "chat_session_id": session_id}
             events.append(event)
-        done = next((event for event in events if event.get("type") == "done"), None)
-        answer = str(done.get("answer", "")) if done else None
-        self._append_session(session_id, question, answer)
         return events
 
     def _stream_frames(
@@ -336,6 +337,7 @@ class _ChatApi:
         session_id: str,
         history: list[dict[str, str]] | None,
         k: int | None,
+        persist: bool,
     ) -> Generator[str]:
         from memo.chat.pipeline import chat_stream
 
@@ -346,7 +348,8 @@ class _ChatApi:
             if event.get("type") == "done":
                 answer = str(event.get("answer", ""))
             yield f"data: {json.dumps(event, ensure_ascii=True)}\n\n"
-        self._append_session(session_id, question, answer)
+        if persist:
+            self._append_session(session_id, question, answer)
 
     async def _stream_frames_async(
         self,
@@ -355,12 +358,14 @@ class _ChatApi:
         session_id: str,
         history: list[dict[str, str]] | None,
         k: int | None,
+        persist: bool,
     ) -> Any:
         iterator = self._stream_frames(
             question,
             session_id=session_id,
             history=history,
             k=k,
+            persist=persist,
         )
         try:
             while True:
@@ -392,19 +397,22 @@ class _ChatApi:
             question, k, explicit_history, session_id, given_session_id = self._prepare_ask(body)
         except ValueError:
             return self.json_response({"error": "invalid chat request"}, status_code=400)
-        operation_lease = await self.operation_gate.acquire_shared()
+        generation = self.operation_gate.generation
         session_lease = None
+        operation_lease = None
         heavy_lease = None
 
         def release_all() -> None:
             if heavy_lease is not None:
                 heavy_lease.release()
+            if operation_lease is not None:
+                operation_lease.release()
             if session_lease is not None:
                 session_lease.release()
-            operation_lease.release()
 
         try:
             session_lease = await self.session_locks.acquire(session_id)
+            operation_lease = await self.operation_gate.acquire_shared()
             heavy_lease = await self._reserve_heavy_slot()
             if heavy_lease is None:
                 release_all()
@@ -417,6 +425,7 @@ class _ChatApi:
                     session_id=session_id,
                     history=history,
                     k=k,
+                    persist=generation == self.operation_gate.generation,
                 ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -434,11 +443,13 @@ class _ChatApi:
             question, k, explicit_history, session_id, given_session_id = self._prepare_ask(body)
         except ValueError:
             return self.json_response({"error": "invalid chat request"}, status_code=400)
-        operation_lease = await self.operation_gate.acquire_shared()
+        generation = self.operation_gate.generation
         session_lease = None
+        operation_lease = None
         heavy_lease = None
         try:
             session_lease = await self.session_locks.acquire(session_id)
+            operation_lease = await self.operation_gate.acquire_shared()
             heavy_lease = await self._reserve_heavy_slot()
             if heavy_lease is None:
                 return self._busy_response()
@@ -450,12 +461,17 @@ class _ChatApi:
                 history=history,
                 k=k,
             )
+            if generation == self.operation_gate.generation:
+                done = next((event for event in events if event.get("type") == "done"), None)
+                answer = str(done.get("answer", "")) if done else None
+                await self.run_sync(self._append_session, session_id, question, answer)
         finally:
             if heavy_lease is not None:
                 heavy_lease.release()
+            if operation_lease is not None:
+                operation_lease.release()
             if session_lease is not None:
                 session_lease.release()
-            operation_lease.release()
         done = next(
             (event for event in reversed(events) if event.get("type") in {"done", "error"}), None
         )
@@ -549,9 +565,20 @@ class _ChatApi:
         from memo.chat.sessions import iso_ts
 
         try:
-            turns = await self.run_sync(self.sessions.get, session_id)
+            self.sessions.validate_id(session_id)
         except ValueError:
             return self.json_response({"error": "invalid session id"}, status_code=400)
+        session_lease = None
+        operation_lease = None
+        try:
+            session_lease = await self.session_locks.acquire(session_id)
+            operation_lease = await self.operation_gate.acquire_shared()
+            turns = await self.run_sync(self.sessions.get, session_id)
+        finally:
+            if operation_lease is not None:
+                operation_lease.release()
+            if session_lease is not None:
+                session_lease.release()
         return {
             "session_id": session_id,
             "turns": [
@@ -575,15 +602,17 @@ class _ChatApi:
             self.sessions.validate_id(session_id)
         except ValueError:
             return self.json_response({"error": "invalid session id"}, status_code=400)
-        operation_lease = await self.operation_gate.acquire_shared()
         session_lease = None
+        operation_lease = None
         try:
             session_lease = await self.session_locks.acquire(session_id)
+            operation_lease = await self.operation_gate.acquire_shared()
             return {"ok": await self.run_sync(self.sessions.delete, session_id)}
         finally:
+            if operation_lease is not None:
+                operation_lease.release()
             if session_lease is not None:
                 session_lease.release()
-            operation_lease.release()
 
     async def delete_all_sessions(self) -> Any:
         operation_lease = await self.operation_gate.acquire_exclusive()
