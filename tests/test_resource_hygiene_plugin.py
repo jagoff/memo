@@ -17,6 +17,10 @@ def _expose_repo_to_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "PYTHONPATH", os.pathsep.join((repo_root, current)) if current else repo_root
     )
+    # Keep pytester's subprocess focused on the explicitly loaded hygiene plugin.
+    # Third-party auto-loaded plugins can emit unrelated startup warnings before
+    # pytest produces a terminal summary, especially under PYTHONWARNINGS=error.
+    monkeypatch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
 
 def test_resource_warning_filter_rejects_only_unclosed_resources() -> None:
@@ -46,9 +50,7 @@ def test_resource_hygiene_flag_fails_an_unclosed_sqlite_test(
     pytester.makepyfile(
         """
         import sqlite3
-        import pytest
 
-        @pytest.mark.resource_hygiene
         def test_leak():
             sqlite3.connect(\":memory:\")
         """
