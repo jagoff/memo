@@ -59,6 +59,21 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 - The fail-closed internal terminal bridge preserves safe transport diagnostics
   in receipts while redacting unexpected exception details; no delivery mutator
   is exposed through CLI or MCP.
+- `memo ask`, `memo diff`, `memo entity`, `memo invalidate` (preview), `memo
+  temporal timeline`, and `memo synthesize` no longer silently drop `[id]`
+  citations, memory ids, or titles from their plain-text output: Rich's
+  console markup parser was swallowing any bracketed substring it couldn't
+  resolve as a style tag, most visibly ids starting with a hex letter (`a`-`f`).
+  `--json` output was always correct.
+- `memo events ingest` returns a clean CLI error instead of an unhandled
+  traceback on invalid input (missing `event_id`, invalid `kind`, or a
+  duplicate `event_id` with a conflicting payload).
+- `memo chat-session get`/`list` now surface sessions created through `memo
+  chat serve`'s HTTP/SSE API, which previously lived in a separate,
+  unconnected per-session store invisible to the CLI.
+- `memo related`'s `via` attribution is now deterministic across repeated runs
+  of the same query; tied candidate scores no longer depend on set/dict
+  iteration order.
 
 ### Changed
 
