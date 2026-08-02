@@ -62,6 +62,33 @@ def test_resource_hygiene_flag_fails_an_unclosed_sqlite_test(
     result.stdout.fnmatch_lines(["*unclosed database*"])
 
 
+def test_resource_hygiene_flag_catches_a_leak_pending_before_test_setup(
+    pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _expose_repo_to_subprocess(monkeypatch)
+    monkeypatch.delenv("PYTHONWARNINGS", raising=False)
+    pytester.makepyfile(
+        """
+        import gc
+        import sqlite3
+
+        gc.disable()
+        cycle = []
+        connection = sqlite3.connect(\":memory:\")
+        cycle.append((cycle, connection))
+        del connection, cycle
+
+        def test_noop():
+            pass
+        """
+    )
+    result = pytester.runpytest_subprocess(
+        "-p", "tests.resource_hygiene_plugin", "--resource-hygiene", "-q"
+    )
+    result.assert_outcomes(passed=1, errors=1)
+    result.stdout.fnmatch_lines(["*unclosed database*"])
+
+
 def test_resource_hygiene_plugin_is_inert_without_flag(
     pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:

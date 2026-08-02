@@ -277,6 +277,46 @@ def test_codex_doctor_reads_unmasked_json_profile(monkeypatch, tmp_path: Path) -
     assert report["checks"]["profile_current"] is True
 
 
+def test_claude_doctor_accepts_bare_command_resolved_to_isolated_runtime(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runtime = _runtime(tmp_path)
+    adapter = registry.AGENT_REGISTRY["claude-code"]
+
+    def fake_which(name: str) -> str | None:
+        return {
+            "claude": "/usr/bin/claude",
+            "memo-mcp": str(runtime),
+        }.get(name)
+
+    monkeypatch.setattr(registry.shutil, "which", fake_which)
+    monkeypatch.setattr(
+        registry.subprocess,
+        "run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout="Command: memo-mcp\nEnvironment: MEMO_MCP_PROFILE=agent\n",
+            stderr="",
+        ),
+    )
+
+    configured, runtime_current, profile_current, _detail = (
+        registry._probe_agent_configuration(
+            adapter=adapter,
+            slug="claude-code",
+            root=tmp_path,
+            runtime=runtime,
+            probe=True,
+            binary="/usr/bin/claude",
+        )
+    )
+
+    assert configured is True
+    assert runtime_current is True
+    assert profile_current is True
+
+
 def test_verify_agent_reports_probe_and_storage_failures(monkeypatch, tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     registry._write_mandate(tmp_path / "AGENTS.md", dry_run=False)
