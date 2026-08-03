@@ -23,7 +23,7 @@ def test_dashboard_rejects_dns_rebinding_host_before_reading_data() -> None:
         object(),
         "<html></html>",
         5,
-        capability_token="test-token",  # noqa: S106 - test-only capability
+        capability_token="test-token",
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -53,7 +53,7 @@ def test_dashboard_allows_same_origin_loopback_request() -> None:
         object(),
         "<html></html>",
         5,
-        capability_token="test-token",  # noqa: S106 - test-only capability
+        capability_token="test-token",
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -84,7 +84,7 @@ def test_dashboard_rejects_local_client_without_capability() -> None:
         object(),
         "<html></html>",
         5,
-        capability_token="test-token",  # noqa: S106 - test-only capability
+        capability_token="test-token",
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

@@ -11,7 +11,7 @@ import builtins
 import datetime as _dt
 import json
 import re as _re
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import frontmatter
 
@@ -25,6 +25,9 @@ from memo.memory.record import (
 )
 from memo.prompt_overrides import resolve_prompt
 from memo.tiers import SENSITIVE_TYPES
+
+if TYPE_CHECKING:
+    from memo.memory.facade import Memory
 
 
 def _sort_updated_utc(value: Any) -> _dt.datetime:
@@ -766,7 +769,19 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 and not dry_run
             ):
                 try:
-                    rec = self.save(
+                    # Fase 7 — inside a dream run with MEMO_DREAM_STAGING_ENABLED,
+                    # a write-conflict (WriteRefused) parks the candidate in dream
+                    # staging (returns None) instead of losing it; every other
+                    # error re-raises into the except below. Outside a dream run
+                    # (or flag off) this is exactly self.save, so interactive
+                    # `memo synthesize` keeps raising as before.
+                    from memo.dream_staging import staged_save
+
+                    rec = staged_save(
+                        cast("Memory", self),
+                        self.cfg,
+                        kind="synthesis",
+                        source_ids=source_ids,
                         content=body,
                         title=title,
                         type_="synthesis",
@@ -778,10 +793,13 @@ class _ConsolidateOpsMixin(_MemoryBase):
                             "synthesis_confidence": confidence,
                         },
                     )
-                    result["saved"] = True
-                    result["id"] = rec.id
-                    existing_hashes.add(sources_hash)
-                    saved += 1
+                    if rec is not None:
+                        result["saved"] = True
+                        result["id"] = rec.id
+                        existing_hashes.add(sources_hash)
+                        saved += 1
+                    else:
+                        result["staged"] = True  # parked pending conflict resolution
                 except Exception as exc:
                     _log.warning("synthesize: save failed: %s", exc)
 

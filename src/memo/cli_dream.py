@@ -25,6 +25,7 @@ from contextlib import ExitStack
 from typing import Any, cast
 
 import click
+from rich.markup import escape
 
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
@@ -55,6 +56,12 @@ from memo.cli_dream_passes import (
     _run_validity_extract,
 )
 from memo.config import Config
+from memo.dream_phases import (
+    CHECKPOINT_NAME,
+    DreamCheckpoint,
+    PhaseRecorder,
+    summarize_phases,
+)
 from memo.dream_utils import (
     _corpus_fingerprint,
     _iso_now,
@@ -271,6 +278,12 @@ def dream_cmd() -> None:
     is_flag=True,
     help="Run every pass even if the corpus is unchanged (disable the convergence guard).",
 )
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Resume an interrupted run: skip phases already committed this cycle "
+    "(no repeated LLM calls / mutations). Restored from the phase checkpoint.",
+)
 def dream_run(
     dry_run: bool,
     as_json: bool,
@@ -285,6 +298,7 @@ def dream_run(
     skip_prewarm: bool,
     skip_presynthesis: bool,
     force: bool,
+    resume: bool,
 ) -> None:
     """Run the full dream pipeline once.
 
@@ -293,8 +307,11 @@ def dream_run(
       memo dream run
     """
     cfg = Config.from_env()
-    tag = "[dim](dry-run)[/dim] " if dry_run else ""
-    console.print(f"{tag}[bold cyan]memo dream[/bold cyan] — starting pipeline...")
+    # Keep --json output pure: the human banner would otherwise land on stdout
+    # ahead of the JSON receipt and break `memo dream run --json | jq`.
+    if not as_json:
+        tag = "[dim](dry-run)[/dim] " if dry_run else ""
+        console.print(f"{tag}[bold cyan]memo dream[/bold cyan] — starting pipeline...")
 
     # Single-owner lock: a second `dream run` (manual, or the com.memo.dream
     # LaunchAgent firing while one is already in flight) would otherwise race on
@@ -315,7 +332,7 @@ def dream_run(
     _prev_fp = read_previous_fingerprint(cfg)
 
     from memo.dream_flags import CODE_DRIFT_FLAG  # import registers the flag spec
-    from memo.flags import flag_bool, flag_int
+    from memo.flags import flag_bool, flag_float, flag_int
 
     _evict_max = flag_int("MEMO_DREAM_EVICT_MAX_COUNT") or 0
     _compress_threshold = flag_int("MEMO_DREAM_COMPRESS_THRESHOLD") or 0
@@ -381,6 +398,8 @@ def dream_run(
     # the last good night and `memo dream status`/doctor report healthy while
     # the 03:00 pipeline is silently dead.
     mem: Any = None
+    _checkpoint: DreamCheckpoint | None = None
+    _pipeline_completed = False
     _pipeline_stack = ExitStack()
     try:
         _pipeline_stack.enter_context(derived_save_scope())
@@ -391,18 +410,77 @@ def dream_run(
         mem = _get_memory(cfg)
         progress.update(step, description="[green]memory loaded ✓[/green]")
 
+        # Fase 1 — per-phase instrumentation + resumable checkpoint. The run
+        # fingerprint is the PREVIOUS completed run's corpus fp: stable across a
+        # crash+restart (a crashed run never rewrites last.json) yet naturally
+        # invalidated once a full run stamps a new corpus_fp. dry-run stays
+        # ephemeral — no checkpoint, no resume.
+        _checkpoint = (
+            None
+            if dry_run
+            else DreamCheckpoint(_state_path(cfg) / CHECKPOINT_NAME, _prev_fp or "cold")
+        )
+        rec = PhaseRecorder(receipt, mem=mem, checkpoint=_checkpoint, resume=resume and not dry_run)
+
+        # Fase 7 — dream conflict-staging. Inside a run with
+        # MEMO_DREAM_STAGING_ENABLED a write-conflict on a dream-minted memory
+        # (e.g. synthesis) parks the candidate in staging instead of losing it;
+        # resume re-applies any parked proposal whose blocking conflict a human
+        # has since resolved (never resolves a conflict itself). Scope-gated so
+        # interactive `memo synthesize` saves are unaffected.
+        if flag_bool("MEMO_DREAM_STAGING_ENABLED") and not dry_run:
+            from memo import dream_staging
+
+            _pipeline_stack.enter_context(dream_staging.dream_staging_scope())
+            try:
+                receipt["staging_resume"] = dream_staging.resume_staged_proposals(cfg, mem)
+            except Exception as exc:
+                receipt["errors"].append(f"staging_resume: {type(exc).__name__}: {exc}")
+
+        # Fase 5 — per-pass incremental skip. When on, a content-derived pass
+        # whose durable-content dependency is unchanged since its last successful
+        # run is skipped (finer than the whole-pipeline convergence guard). Gated
+        # default-off; a skip is recorded in the receipt and is self-healing.
+        from memo import dream_incremental
+
+        _incremental = flag_bool("MEMO_DREAM_INCREMENTAL_ENABLED") and not dry_run
+
         # Orientation — read-only inventory before mutations -----------------
         if not skip_orientation:
-            _run_orientation_phase(mem, receipt, progress, step)
+            rec.timed(
+                "orientation",
+                lambda: _run_orientation_phase(mem, receipt, progress, step),
+                fragment_key="orientation",
+            )
+
+        # Fase 6 — derived-index health check. Gated default-off: when on, scans
+        # for divergence (NULL FTS bodies, orphan vectors/chunks, wrong dims,
+        # MD↔index drift, duplicate HyPE attempts) and repairs ONLY derived
+        # orphans — never a canonical .md. Best-effort, runs before mutations.
+        if flag_bool("MEMO_DREAM_INDEX_REPAIR_ENABLED") and not dry_run:
+            try:
+                from memo.store.index_health import check_index_health
+
+                receipt["index_health"] = check_index_health(cfg, mem, repair=True)
+                _ih_errs = receipt["index_health"].get("errors") or []
+                if _ih_errs:
+                    receipt["errors"].append(f"index_health: {len(_ih_errs)} sub-check error(s)")
+            except Exception as exc:
+                receipt["errors"].append(f"index_health: {type(exc).__name__}: {exc}")
 
         # Phase 0 — Signal gather: mine new transcripts since last dream run --
-        _run_signal_gather_phase(
-            cfg,
-            enabled=not skip_signal_gather and not dry_run,
-            receipt=receipt,
-            progress=progress,
-            overall=overall,
-            step=step,
+        rec.timed(
+            "signal_gather",
+            lambda: _run_signal_gather_phase(
+                cfg,
+                enabled=not skip_signal_gather and not dry_run,
+                receipt=receipt,
+                progress=progress,
+                overall=overall,
+                step=step,
+            ),
+            fragment_key="signal_gathered",
+            resumable=True,
         )
 
         # Convergence guard — if signal-gather added nothing and the corpus
@@ -476,6 +554,47 @@ def dream_run(
             except Exception as exc:
                 receipt["errors"].append(f"tuner: {type(exc).__name__}: {exc}")
                 progress.update(step, description="[tune] recall self-tuner [yellow]warn[/yellow]")
+
+        # Fase 4 — learning-metrics snapshot for the audit trail: the eleven
+        # measures (precision/noise before-after cohort, answerability, grounding
+        # coverage, later-usefulness, correction rate, synthesis acceptance,
+        # created→used, p50/p95 latency) assembled from existing logs. Gated by
+        # the ledger flag (it IS audit data), never re-runs the eval, best-effort.
+        if flag_bool("MEMO_DREAM_LEDGER_ENABLED") and not dry_run:
+            try:
+                from memo import dream_metrics
+                from memo.tuned_overlay import params_version
+
+                _tuner = receipt.get("tuner") or {}
+                receipt["learning_metrics"] = dream_metrics.learning_metrics(
+                    cfg,
+                    mem,
+                    params_version=params_version(cfg.state_dir),
+                    k=5 if (_lmk := flag_int("MEMO_DREAM_TUNE_K")) is None else _lmk,
+                    before=_tuner.get("before"),
+                    after=_tuner.get("after"),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"learning_metrics: {type(exc).__name__}: {exc}")
+
+        # Fase 8 — shadow mode: measure-only evidence for opt-in phases without
+        # mutating production. Reverts any overlay a shadow-reclassified flag was
+        # auto-graduated into and snapshots the per-flag review rollup. Gated +
+        # best-effort; producers (record_recall_shadow / maybe_shadow) attach as
+        # flags are classified kind="shadow".
+        if flag_bool("MEMO_DREAM_SHADOW_ENABLED") and not dry_run:
+            try:
+                from memo import dream_shadow
+                from memo.dream_flags import GATES
+
+                receipt["shadow_review"] = {
+                    "reclassify_reverted": dream_shadow.migrate_reclassified_overlay(
+                        cfg.state_dir, GATES
+                    ),
+                    "review": dream_shadow.review_rows(cfg.state_dir, GATES),
+                }
+            except Exception as exc:
+                receipt["errors"].append(f"shadow: {type(exc).__name__}: {exc}")
 
         # Curated graph-signal tuner (graph-off plus bounded alpha candidates).
         # Runs after the general pass; both merge the overlay so they coexist.
@@ -770,19 +889,76 @@ def dream_run(
 
         # HyPE — nightly hypothetical-question generation (builds the index dark;
         # the read-path fold is gated separately by MEMO_HYPE_ENABLED) ---------
+        if flag_bool("MEMO_DREAM_VECTOR_HYGIENE_ENABLED"):
+            progress.update(step, description="[vector-hygiene] compacting derived indexes...")
+            try:
+                from memo import dream_vector
+
+                receipt["vector_hygiene"] = dream_vector.run_vector_hygiene(
+                    cfg, mem, dry_run=dry_run
+                )
+                if receipt["vector_hygiene"].get("status") == "error":
+                    receipt["errors"].append(
+                        f"vector_hygiene: {receipt['vector_hygiene'].get('error')}"
+                    )
+                progress.update(
+                    step,
+                    description=(
+                        "[vector-hygiene] [green]✓[/green]  "
+                        f"{receipt['vector_hygiene'].get('cache_pruned', 0)} cache rows"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"vector_hygiene: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[vector-hygiene] [yellow]warn[/yellow]")
+
+        if flag_bool("MEMO_DREAM_VECTOR_VIEWS_ENABLED"):
+            progress.update(step, description="[vector-views] indexing title/tag views...")
+            try:
+                from memo import dream_vector_views
+
+                receipt["vector_views"] = dream_vector_views.run_title_view_pass(
+                    cfg,
+                    mem,
+                    night_cap=1000
+                    if (_vc := flag_int("MEMO_DREAM_VECTOR_VIEWS_NIGHT_CAP")) is None
+                    else _vc,
+                    dry_run=dry_run,
+                )
+                if receipt["vector_views"].get("status") == "error":
+                    receipt["errors"].append(
+                        f"vector_views: {receipt['vector_views'].get('error')}"
+                    )
+                progress.update(
+                    step,
+                    description=(
+                        "[vector-views] [green]✓[/green]  "
+                        f"{receipt['vector_views'].get('indexed', 0)} indexed"
+                    ),
+                )
+            except Exception as exc:
+                receipt["errors"].append(f"vector_views: {type(exc).__name__}: {exc}")
+                progress.update(step, description="[vector-views] [yellow]warn[/yellow]")
+
         if flag_bool("MEMO_DREAM_HYPE_ENABLED"):
             progress.update(step, description="[hype] generating questions...")
             try:
                 from memo import dream_hype
 
-                receipt["hype"] = dream_hype.run_hype_pass(
-                    cfg,
-                    mem,
-                    questions_per_memory=3
-                    if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None
-                    else _qpm,
-                    night_cap=400 if (_nc := flag_int("MEMO_HYPE_NIGHT_CAP")) is None else _nc,
-                    dry_run=dry_run,
+                receipt["hype"] = rec.timed(
+                    "hype",
+                    lambda: dream_hype.run_hype_pass(
+                        cfg,
+                        mem,
+                        questions_per_memory=3
+                        if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None
+                        else _qpm,
+                        night_cap=400 if (_nc := flag_int("MEMO_HYPE_NIGHT_CAP")) is None else _nc,
+                        budget_s=flag_float("MEMO_DREAM_HYPE_BUDGET_S") or None,
+                        dry_run=dry_run,
+                    ),
+                    fragment_key="hype",
+                    resumable=True,
                 )
                 if receipt["hype"].get("status") == "error":
                     receipt["errors"].append(f"hype: {receipt['hype'].get('error')}")
@@ -1037,7 +1213,11 @@ def dream_run(
             # 1. Contradictions ----------------------------------------------
             progress.update(step, description="[1/6] contradictions — scanning corpus...")
             try:
-                res = _run_contradict(mem, dry_run=dry_run)
+                res = rec.timed(
+                    "contradict",
+                    lambda: _run_contradict(mem, dry_run=dry_run),
+                    resumable=True,
+                )
                 if "error" in res:
                     receipt["errors"].append(f"contradict: {res['error']}")
                 receipt["superseded"] = res.get("superseded", [])
@@ -1072,7 +1252,11 @@ def dream_run(
                 completed=0,
             )
             try:
-                res = _run_consolidate_dups(mem, dry_run=dry_run)
+                res = rec.timed(
+                    "consolidate_dups",
+                    lambda: _run_consolidate_dups(mem, dry_run=dry_run),
+                    resumable=True,
+                )
                 if "error" in res:
                     receipt["errors"].append(f"consolidate: {res['error']}")
                 receipt["merged"] = res.get("merged", [])
@@ -1092,7 +1276,11 @@ def dream_run(
                 step, description="[3/6] stale memories — detecting...", total=None, completed=0
             )
             try:
-                res = _run_stale(mem, dry_run=dry_run)
+                res = rec.timed(
+                    "stale",
+                    lambda: _run_stale(mem, dry_run=dry_run),
+                    resumable=True,
+                )
                 if "error" in res:
                     receipt["errors"].append(f"stale: {res['error']}")
                 for _ae in res.get("errors", []):
@@ -1117,7 +1305,20 @@ def dream_run(
                 completed=0,
             )
             try:
-                res = _run_synthesis(mem, dry_run=dry_run)
+                res = rec.timed(
+                    "synthesis",
+                    lambda: (
+                        dream_incremental.run_or_skip(
+                            cfg.state_dir,
+                            "synthesis",
+                            dream_incremental.durable_content_fingerprint(mem),
+                            lambda: _run_synthesis(mem, dry_run=dry_run),
+                        )
+                        if _incremental
+                        else _run_synthesis(mem, dry_run=dry_run)
+                    ),
+                    resumable=True,
+                )
                 if "error" in res:
                     receipt["errors"].append(f"synthesize: {res['error']}")
                 receipt["synthesized"] = res.get("synthesized", [])
@@ -1143,7 +1344,20 @@ def dream_run(
                 completed=0,
             )
             try:
-                res = _run_entities(mem, dry_run=dry_run)
+                res = rec.timed(
+                    "entities",
+                    lambda: (
+                        dream_incremental.run_or_skip(
+                            cfg.state_dir,
+                            "entities",
+                            dream_incremental.durable_content_fingerprint(mem),
+                            lambda: _run_entities(mem, dry_run=dry_run),
+                        )
+                        if _incremental
+                        else _run_entities(mem, dry_run=dry_run)
+                    ),
+                    resumable=True,
+                )
                 if "error" in res:
                     receipt["errors"].append(f"entities: {res['error']}")
                 receipt["entities_extracted"] = res.get("extracted", 0)
@@ -1169,7 +1383,11 @@ def dream_run(
             # pipeline handler and abort every remaining pass (roi/prune/evict/
             # compress/prewarm). Isolate it here like every sibling pass does.
             try:
-                graph_projection = _run_graph_projection(mem, dry_run=dry_run)
+                graph_projection = rec.timed(
+                    "graph_projection",
+                    lambda: _run_graph_projection(mem, dry_run=dry_run),
+                    fragment_key="graph_projection",
+                )
                 receipt["graph_projection"] = graph_projection
                 if graph_projection.get("status") == "error":
                     receipt["errors"].append(f"graph_projection: {graph_projection.get('error')}")
@@ -1191,7 +1409,11 @@ def dream_run(
             # Same isolation rationale as graph projection above: an unexpected
             # error class must not escape and abort every remaining pass.
             try:
-                code_drift = _run_code_drift(mem, dry_run=dry_run)
+                code_drift = rec.timed(
+                    "code_drift",
+                    lambda: _run_code_drift(mem, dry_run=dry_run),
+                    fragment_key="code_drift",
+                )
                 receipt["code_drift"] = code_drift
                 if "error" in code_drift:
                     receipt["errors"].append(f"code_drift: {code_drift['error']}")
@@ -1218,7 +1440,11 @@ def dream_run(
                 completed=0,
             )
             try:
-                res = _run_roi_reconcile(mem, dry_run=dry_run)
+                res = rec.timed(
+                    "roi_reconcile",
+                    lambda: _run_roi_reconcile(mem, dry_run=dry_run),
+                    resumable=True,
+                )
                 if "error" in res:
                     receipt["errors"].append(f"roi_reconcile: {res['error']}")
                 receipt["roi_reconciled"] = res.get("reconciled", 0)
@@ -1245,7 +1471,10 @@ def dream_run(
                 step, description="[7/7] ROI decay — adjusting scores...", total=None, completed=0
             )
             try:
-                res = _run_roi_decay(mem, dry_run=dry_run)
+                res = rec.timed(
+                    "roi_decay",
+                    lambda: _run_roi_decay(mem, dry_run=dry_run),
+                )
                 if "error" in res:
                     receipt["errors"].append(f"roi_decay: {res['error']}")
                 receipt["roi_decayed"] = res.get("decayed", 0)
@@ -1275,12 +1504,15 @@ def dream_run(
 
                 roi_floor = flag_float("MEMO_DREAM_PRUNE_FLOOR") or 0.15
                 min_age = 90 if (_ma := flag_int("MEMO_DREAM_PRUNE_MIN_AGE_DAYS")) is None else _ma
-                pruned = _run_prune_floor(
-                    mem,
-                    roi_floor=roi_floor,
-                    min_age_days=min_age,
-                    dry_run=False,
-                    errors=receipt["errors"],
+                pruned = rec.timed(
+                    "prune_floor",
+                    lambda: _run_prune_floor(
+                        mem,
+                        roi_floor=roi_floor,
+                        min_age_days=min_age,
+                        dry_run=False,
+                        errors=receipt["errors"],
+                    ),
                 )
                 receipt["pruned_floor"] = pruned
                 progress.update(
@@ -1303,8 +1535,11 @@ def dream_run(
                 completed=0,
             )
             try:
-                evicted = _run_eviction(
-                    mem, max_count=_evict_max, dry_run=dry_run, errors=receipt["errors"]
+                evicted = rec.timed(
+                    "eviction",
+                    lambda: _run_eviction(
+                        mem, max_count=_evict_max, dry_run=dry_run, errors=receipt["errors"]
+                    ),
                 )
                 receipt["evicted"] = evicted
                 progress.update(
@@ -1327,7 +1562,10 @@ def dream_run(
                 completed=0,
             )
             try:
-                compressed = _run_compress(mem, threshold=_compress_threshold, dry_run=False)
+                compressed = rec.timed(
+                    "compress",
+                    lambda: _run_compress(mem, threshold=_compress_threshold, dry_run=False),
+                )
                 receipt["compressed"] = compressed
                 progress.update(
                     step,
@@ -1349,7 +1587,11 @@ def dream_run(
                 completed=0,
             )
             try:
-                pw = _run_prewarm_queries(cfg, mem, n=_prewarm_n)
+                pw = rec.timed(
+                    "prewarm",
+                    lambda: _run_prewarm_queries(cfg, mem, n=_prewarm_n),
+                    fragment_key="prewarm",
+                )
                 receipt["prewarm"] = pw
                 progress.update(
                     step,
@@ -1371,7 +1613,11 @@ def dream_run(
                 completed=0,
             )
             try:
-                ps = _run_presynthesis(cfg, mem, top_n=_presynthesis_n, dry_run=dry_run)
+                ps = rec.timed(
+                    "presynthesis",
+                    lambda: _run_presynthesis(cfg, mem, top_n=_presynthesis_n, dry_run=dry_run),
+                    resumable=True,
+                )
                 receipt["presynthesis"] = ps
                 progress.update(
                     step,
@@ -1388,7 +1634,11 @@ def dream_run(
         if flag_bool("MEMO_DREAM_EVAL_ENABLED") and not dry_run:
             progress.update(step, description="[12] harvest labels — mining grounding.log...")
             try:
-                receipt["harvest_labels"] = _run_harvest_labels(cfg)
+                receipt["harvest_labels"] = rec.timed(
+                    "harvest_labels",
+                    lambda: _run_harvest_labels(cfg),
+                    fragment_key="harvest_labels",
+                )
                 _hl = receipt["harvest_labels"]
                 progress.update(
                     step,
@@ -1403,12 +1653,16 @@ def dream_run(
 
             progress.update(step, description="[13] eval recall — retrieval-only eval...")
             try:
-                receipt["eval_recall"] = _run_eval_recall(
-                    cfg,
-                    mem,
-                    max_labels=200
-                    if (_ml := flag_int("MEMO_DREAM_EVAL_MAX_LABELS")) is None
-                    else _ml,
+                receipt["eval_recall"] = rec.timed(
+                    "eval_recall",
+                    lambda: _run_eval_recall(
+                        cfg,
+                        mem,
+                        max_labels=200
+                        if (_ml := flag_int("MEMO_DREAM_EVAL_MAX_LABELS")) is None
+                        else _ml,
+                    ),
+                    fragment_key="eval_recall",
                 )
                 _ev = receipt["eval_recall"]
                 progress.update(
@@ -1425,7 +1679,11 @@ def dream_run(
 
             progress.update(step, description="[14] capture weights — citation-type feedback...")
             try:
-                receipt["capture_weights"] = _run_capture_weights(cfg, mem)
+                receipt["capture_weights"] = rec.timed(
+                    "capture_weights",
+                    lambda: _run_capture_weights(cfg, mem),
+                    fragment_key="capture_weights",
+                )
                 _cw = receipt["capture_weights"]
                 _cw_top = f" · top {_cw['top']}" if _cw.get("top") else ""
                 progress.update(
@@ -1442,17 +1700,52 @@ def dream_run(
 
         # Mark step task complete so spinner stops
         progress.update(step, total=1, completed=1)
+        _pipeline_completed = True
     except Exception as exc:
         # A crash before/around the per-pass guards must not vanish silently:
         # record it and fall through to the receipt write so the failed night
-        # is visible to `memo dream status`/doctor.
+        # is visible to `memo dream status`/doctor. The phase checkpoint is
+        # deliberately NOT cleared here so a `--resume` run can skip the phases
+        # that already committed before the crash.
         receipt["errors"].append(f"pipeline: {type(exc).__name__}: {exc}")
         _log.exception("dream pipeline crashed before completion")
     finally:
         _pipeline_stack.close()
 
+    # Fase 3 — auditable learning ledger: judge prior nights' reversible archives
+    # (close-the-loop) then record tonight's mutations with provenance + rollback
+    # handles. Gated default-off; best-effort so a ledger failure never affects
+    # the receipt or the night. Runs after the finally so it captures whatever
+    # mutations landed even if the pipeline crashed mid-way.
+    if flag_bool("MEMO_DREAM_LEDGER_ENABLED"):
+        try:
+            from memo import dream_ledger
+
+            _resolved = (
+                dream_ledger.resolve_open_actions(
+                    cfg.state_dir, lambda mid: mem.store.get(mid) is not None
+                )
+                if not dry_run
+                else {}
+            )
+            _recorded = dream_ledger.record_from_receipt(cfg.state_dir, receipt, dry_run=dry_run)
+            receipt["ledger"] = {
+                "recorded": _recorded,
+                "resolved": _resolved,
+                "summary": dream_ledger.summarize(cfg.state_dir),
+            }
+        except Exception as exc:
+            receipt["errors"].append(f"ledger: {type(exc).__name__}: {exc}")
+
+    # Fase 1 — roll per-phase records into a compact summary for status/JSON.
+    receipt["phases_summary"] = summarize_phases(receipt)
+
     # Persist receipt + timestamp --------------------------------------------
     if not dry_run:
+        # A fully-completed run has nothing to resume: drop the checkpoint so the
+        # next night starts clean. An interrupted run keeps it for `--resume`.
+        if _pipeline_completed and _checkpoint is not None:
+            _checkpoint.clear()
         try:
             d = _state_path(cfg)
             d.mkdir(parents=True, exist_ok=True)
@@ -1582,6 +1875,188 @@ def dream_status() -> None:
     if data.get("errors"):
         for e in data["errors"]:
             console.print(f"  [yellow]warn:[/yellow] {e}")
+
+
+@dream_cmd.command(name="ledger")
+@click.option("--limit", type=int, default=30, help="Most recent ledger entries to show.")
+@click.option(
+    "--open", "open_only", is_flag=True, help="Show only still-open actions (no outcome yet)."
+)
+@click.option(
+    "--json", "as_json", is_flag=True, help="Emit the ledger entries/summary as raw JSON."
+)
+def dream_ledger_cmd(limit: int, open_only: bool, as_json: bool) -> None:
+    """Auditable learning ledger (Fase 3): the chain of dream mutations
+    (supersede/merge/archive) and their later reinforced/rollback outcomes.
+
+    Populated only when ``MEMO_DREAM_LEDGER_ENABLED`` is on for the nightly run.
+    """
+    from memo import dream_ledger
+
+    cfg = Config.from_env()
+    summary = dream_ledger.summarize(cfg.state_dir)
+    rows = (
+        dream_ledger.open_actions(cfg.state_dir, limit=limit)
+        if open_only
+        else dream_ledger.read_ledger(cfg.state_dir, limit=limit)
+    )
+    if as_json:
+        click.echo(json.dumps({"summary": summary, "entries": rows}, indent=2, ensure_ascii=False))
+        return
+    console.print(
+        f"[bold]dream ledger:[/bold] {summary['actions']} actions · {summary['outcomes']} outcomes "
+        f"· {summary['open']} open · {summary['rollback_candidates']} rollback-candidates"
+    )
+    if summary["by_action"]:
+        parts = ", ".join(f"{k}={v}" for k, v in sorted(summary["by_action"].items()))
+        console.print(f"  by action: {parts}")
+    if not rows:
+        console.print(
+            "  [dim](no entries — enable MEMO_DREAM_LEDGER_ENABLED for the nightly run)[/dim]"
+        )
+        return
+    for r in rows:
+        if r.get("kind") == "outcome":
+            console.print(
+                f"  [dim]{r.get('ts')}[/dim] outcome→{r.get('outcome')} "
+                f"({r.get('verdict')}) for {str(r.get('action_id'))[:8]}"
+            )
+        else:
+            aff = ",".join(str(a)[:8] for a in (r.get("affected_ids") or [])) or "-"
+            pass_name = escape(f"[{r.get('pass_name')}]")
+            console.print(
+                f"  [dim]{r.get('ts')}[/dim] {r.get('action')} {pass_name} "
+                f"→ {aff}  ({str(r.get('entry_id'))[:8]})"
+            )
+
+
+@dream_cmd.command(name="index-health")
+@click.option("--repair", is_flag=True, help="Delete derived orphans (never touches .md).")
+@click.option("--json", "as_json", is_flag=True, help="Emit the full report as JSON.")
+def dream_index_health_cmd(repair: bool, as_json: bool) -> None:
+    """Fase 6: derived-index health check — detect (and optionally repair)
+    divergence between the Markdown source of truth and the sqlite index.
+    Repair only ever removes derived orphans; canonical .md files are untouched.
+    """
+    from memo.store.index_health import check_index_health
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+    res = check_index_health(cfg, mem, repair=repair)
+    if as_json:
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False))
+        return
+    console.print(f"[bold]index health:[/bold] {res.get('status')}")
+    for name, v in (res.get("checks") or {}).items():
+        count = v.get("count", 0)
+        style = "green" if count == 0 else "yellow"
+        console.print(f"  {name}: [{style}]{count}[/{style}]")
+    if res.get("repaired"):
+        console.print(f"  [cyan]repaired:[/cyan] {res['repaired']}")
+    for e in res.get("errors") or []:
+        console.print(f"  [red]error:[/red] {e}")
+
+
+@dream_cmd.command(name="staging")
+@click.option(
+    "--resume",
+    "do_resume",
+    is_flag=True,
+    help="Re-apply parked proposals whose conflicts are resolved.",
+)
+@click.option("--drop", "drop_id", default=None, help="Drop a staged proposal by id.")
+@click.option("--json", "as_json", is_flag=True, help="Emit as raw JSON.")
+def dream_staging_cmd(do_resume: bool, drop_id: str | None, as_json: bool) -> None:
+    """Fase 7: dream conflict-staging — dream-minted memories parked by a write
+    conflict, awaiting human conflict resolution (MEMO_DREAM_STAGING_ENABLED).
+    """
+    from memo import dream_staging
+
+    cfg = Config.from_env()
+    if drop_id:
+        ok = dream_staging.drop_staged(cfg, drop_id)
+        click.echo(
+            json.dumps({"dropped": ok})
+            if as_json
+            else (f"dropped {drop_id}" if ok else "not found")
+        )
+        return
+    if do_resume:
+        mem = _get_memory(cfg)
+        res = dream_staging.resume_staged_proposals(cfg, mem)
+        click.echo(json.dumps(res, indent=2) if as_json else f"resumed: {res}")
+        return
+    staged = dream_staging.list_staged(cfg)
+    if as_json:
+        click.echo(json.dumps([p.to_dict() for p in staged], indent=2, ensure_ascii=False))
+        return
+    if not staged:
+        console.print(
+            "[dim]no staged proposals (enable MEMO_DREAM_STAGING_ENABLED for the nightly run)[/dim]"
+        )
+        return
+    console.print(f"[bold]dream staging:[/bold] {len(staged)} parked proposal(s)")
+    for p in staged:
+        console.print(f"  [bold]{p.proposal_id}[/bold] ({p.kind}) attempts={p.attempts}")
+        console.print(f"    conflict: {p.conflict_summary or '-'}")
+        console.print(f"    resolve:  {dream_staging.resolve_command(p)}")
+
+
+@dream_cmd.command(name="shadow")
+@click.option(
+    "--status", "show_status", is_flag=True, help="Per shadow-flag review rollup (default view)."
+)
+@click.option("--promote", "promote_flag", default=None, help="Promote a review-ready shadow flag.")
+@click.option(
+    "--reject", "reject_flag", default=None, help="Reject a shadowed flag (needs --reason)."
+)
+@click.option("--reason", default="", help="Reason for --reject.")
+@click.option(
+    "--apply", "do_apply", is_flag=True, help="With --promote, persist the config change."
+)
+@click.option("--force-latency", is_flag=True, help="With --promote, override the latency ceiling.")
+@click.option("--json", "as_json", is_flag=True, help="Emit as raw JSON.")
+def dream_shadow_cmd(
+    show_status: bool,
+    promote_flag: str | None,
+    reject_flag: str | None,
+    reason: str,
+    do_apply: bool,
+    force_latency: bool,
+    as_json: bool,
+) -> None:
+    """Fase 8: shadow mode — measure-only evidence for opt-in phases without
+    mutating production; a human promotes a flag only after enough consecutive
+    clean nights (MEMO_DREAM_SHADOW_ENABLED).
+    """
+    from memo import dream_shadow
+    from memo.dream_flags import GATES
+
+    cfg = Config.from_env()
+    if reject_flag:
+        ok = dream_shadow.reject(cfg, reject_flag, reason or "manual")
+        click.echo(json.dumps({"rejected": ok}) if as_json else f"rejected {reject_flag}: {ok}")
+        return
+    if promote_flag:
+        res = dream_shadow.promote(cfg, promote_flag, force_latency=force_latency, apply=do_apply)
+        click.echo(json.dumps(res, indent=2, ensure_ascii=False) if as_json else str(res))
+        return
+    rows = dream_shadow.review_rows(cfg.state_dir, GATES)
+    if as_json:
+        click.echo(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+    if not rows:
+        console.print(
+            "[dim]no shadow-kind flags declared (classify a gate kind='shadow' to populate)[/dim]"
+        )
+        return
+    console.print(f"[bold]dream shadow:[/bold] {len(rows)} shadow flag(s)")
+    for r in rows:
+        ready = "[green]review-ready[/green]" if r["review_ready"] else "[dim]accruing[/dim]"
+        console.print(
+            f"  [bold]{r['flag']}[/bold] {ready}  streak {r['streak']}/{r['review_nights']} "
+            f"· meanΔ {r['mean_delta']} · cost_p50 {r['cost_p50']}ms · {r['last_verdict']}"
+        )
 
 
 @dream_cmd.command(name="timeline")
@@ -1724,7 +2199,7 @@ def dream_hype_cmd(dry_run: bool, reembed: bool, as_json: bool) -> None:
         raise click.UsageError("--dry-run cannot be combined with --reembed")
 
     from memo import dream_hype
-    from memo.flags import flag_int
+    from memo.flags import flag_float, flag_int
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
@@ -1745,6 +2220,7 @@ def dream_hype_cmd(dry_run: bool, reembed: bool, as_json: bool) -> None:
         if (_qpm := flag_int("MEMO_HYPE_QUESTIONS_PER_MEMORY")) is None
         else _qpm,
         night_cap=400 if (_nc := flag_int("MEMO_HYPE_NIGHT_CAP")) is None else _nc,
+        budget_s=flag_float("MEMO_DREAM_HYPE_BUDGET_S") or None,
         dry_run=dry_run,
     )
     if as_json:
@@ -1860,7 +2336,8 @@ def dream_folder_abstracts_cmd(dry_run: bool, as_json: bool) -> None:
         return
     console.print(f"[bold]folder-abstracts:[/bold] {res.get('status')}")
     for a in res.get("abstracts", []):
-        console.print(f"  [{a['status']}] {a['folder'] or '(root)'}")
+        status = a["status"]
+        console.print(f"  {escape(f'[{status}]')} {a['folder'] or '(root)'}")
 
 
 @dream_cmd.command(name="retag")

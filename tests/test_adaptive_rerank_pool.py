@@ -124,6 +124,7 @@ def _captured_pool(
     captured: dict[str, Any] = {}
 
     # Patch store.search to return our controlled vec hits
+    monkeypatch.setattr(mem.store, "count", lambda: 1)
     monkeypatch.setattr(mem.store, "search", lambda *a, **kw: hits)
     # Patch store.search_bm25 to return empty
     monkeypatch.setattr(mem.store, "search_bm25", lambda *a, **kw: [])

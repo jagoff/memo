@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 
 import click
+from rich.markup import escape
 
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
@@ -99,7 +100,9 @@ def synthesize_cmd(
             if r.get("saved")
             else ("[yellow]proposed[/yellow]" if r.get("title") else "[dim]no insight[/dim]")
         )
-        mid = f"  [{r['id'][:8]}]" if r.get("id") else "          "
-        console.print(f"{mid} {status} [{conf}] {title} (from {n_sources} memories)")
+        mid = escape(f"  [{r['id'][:8]}]") if r.get("id") else "          "
+        console.print(
+            f"{mid} {status} {escape(f'[{conf}]')} {escape(title)} (from {n_sources} memories)"
+        )
         if r.get("rationale"):
-            console.print(f"          [dim]{r['rationale']}[/dim]")
+            console.print(f"          [dim]{escape(r['rationale'])}[/dim]")

@@ -11,6 +11,7 @@ def _capture_weights(mock_memory, monkeypatch, query: str) -> list[float]:
         return []
 
     monkeypatch.setattr("memo.memory.search_ops._rrf_fuse", fake_fuse)
+    monkeypatch.setattr(mock_memory.store, "count", lambda: 1)
     mock_memory.search(query, mode="hybrid")
     return captured["weights"]
 

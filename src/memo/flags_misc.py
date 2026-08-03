@@ -3,6 +3,145 @@ from __future__ import annotations
 from memo.flags_base import FlagSpec, _spec
 
 SPECS: tuple[FlagSpec, ...] = (
+    _spec(
+        "MEMO_DREAM_VECTOR_HYGIENE_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Nightly prune/compact of rebuildable vector sidecars. Markdown and user feedback are preserved; default off until the local DB has been measured.",
+    ),
+    _spec(
+        "MEMO_DREAM_VECTOR_VIEWS_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Nightly deterministic title/tag vector views in the rebuildable HyPE sidecar.",
+    ),
+    _spec(
+        "MEMO_DREAM_VECTOR_VIEWS_NIGHT_CAP",
+        "int",
+        1000,
+        "dream",
+        "Maximum title/tag vector views generated per nightly run.",
+        min_val=1,
+    ),
+    # --- dream learning-loop phases (Fase 3-8): all default-off, opt-in -------
+    _spec(
+        "MEMO_DREAM_LEDGER_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Record an auditable learning-ledger entry (signal→action→evidence→"
+        "confidence→applied_change→outcome→rollback) for every mutating dream "
+        "action. Read-only append log; does not change what dream does.",
+    ),
+    _spec(
+        "MEMO_DREAM_INCREMENTAL_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Skip heavy maintenance passes for corpus regions whose cluster / "
+        "watermark fingerprint is unchanged since the last run (entities, "
+        "consolidate, graph, synthesis). Derived-index only; Markdown unchanged.",
+    ),
+    _spec(
+        "MEMO_DREAM_INDEX_REPAIR_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Allow the index health check to auto-repair DERIVED indexes only "
+        "(orphan vec/fts rows, stale caches); Markdown stays the source of "
+        "truth and is never modified. Off = report-only.",
+    ),
+    _spec(
+        "MEMO_DREAM_STAGING_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Route a dream-minted memory that hits a write conflict into a staging "
+        "quarantine (with conflict id + evidence) instead of losing it, so a "
+        "human can resolve and re-apply later.",
+    ),
+    _spec(
+        "MEMO_DREAM_STAGING_MAX",
+        "int",
+        200,
+        "dream",
+        "Maximum staged proposals retained; oldest are dropped past this cap.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_DREAM_SHADOW_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Shadow mode: measure the impact of opt-in dream phases and emit a "
+        "comparable receipt WITHOUT changing production behavior. Graduation "
+        "stays a human decision after reviewing the shadow evidence.",
+    ),
+    _spec(
+        "MEMO_SHADOW_REVIEW_NIGHTS",
+        "int",
+        5,
+        "dream",
+        "Consecutive shadow nights of evidence required before a human may "
+        "graduate a shadowed phase.",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_FLAG_GRADUATION_LATENCY_CEILING_MS",
+        "int",
+        1500,
+        "dream",
+        "Absolute recall-hook latency ceiling (ms) a dark flag must respect to "
+        "graduate; guards against graph-signal-style latency regressions.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_DREAM_TUNE_MIN_LABELS",
+        "int",
+        12,
+        "dream",
+        "Minimum labeled samples the tuner needs before it may graduate a "
+        "config change (statistical-floor gate; too few labels = no graduation).",
+        min_val=1,
+    ),
+    _spec(
+        "MEMO_DREAM_TUNE_LATENCY_HEADROOM",
+        "float",
+        1.25,
+        "dream",
+        "Maximum ratio of post-change recall latency to baseline the tuner "
+        "tolerates before rejecting a candidate config.",
+        min_val=1.0,
+    ),
+    _spec(
+        "MEMO_DREAM_TUNE_HOOK_BUDGET_MS",
+        "float",
+        3000.0,
+        "dream",
+        "Recall-hook latency budget (ms) the tuner's latency gate enforces.",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_DREAM_TUNE_MIN_MARGIN",
+        "float",
+        0.0,
+        "dream",
+        "Minimum precision improvement margin required for the tuner to "
+        "graduate a config change (0.0 = any strict improvement qualifies).",
+        min_val=0.0,
+    ),
+    _spec(
+        "MEMO_DREAM_TUNE_STRICT_GATE_ENABLED",
+        "bool",
+        False,
+        "dream",
+        "Enforce the full six-condition graduation_gate (min labels, precision "
+        "margin, noise, absolute+relative latency, experiment+rollback) before "
+        "the tuner applies a change. Default off: the verdict is still RECORDED "
+        "every night (shadow evidence) but not enforced until graduated.",
+    ),
     # feedback boosting
     _spec(
         "MEMO_FEEDBACK_DISABLED",

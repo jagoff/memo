@@ -234,6 +234,20 @@ def test_flag_on_question_space_candidate_surfaces(
     assert both[1].score == pytest.approx(0.8, abs=1e-3)
 
 
+@pytest.mark.float32_precision
+def test_flag_on_question_space_candidate_surfaces_in_hybrid(
+    hype_mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default hybrid path must benefit from the same question index."""
+    rec_a = hype_mem.save(content="zzalpha note body", title="Alpha zzalpha")
+    rec_b = hype_mem.save(content="zzbeta note body", title="Beta zzbeta")
+    _populate_hype(hype_mem.cfg, rec_b.id, list(_QUERY_VEC))
+    monkeypatch.setenv("MEMO_HYPE_ENABLED", "1")
+    out = hype_mem.search("zzquery topic", mode="hybrid", limit=1)
+    assert out and out[0].id == rec_b.id
+    assert rec_a.id != out[0].id
+
+
 def test_flag_on_fold_appended_candidate_respects_type_filter(
     hype_mem, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -252,6 +266,25 @@ def test_flag_on_fold_appended_candidate_respects_type_filter(
     out = hype_mem.search("zzquery topic", mode="vec", type_="decision", limit=5)
     assert rec_b.id not in [r.id for r in out]
     assert [r.id for r in out] == [rec_a.id]
+
+
+def test_flag_on_fold_appended_candidate_respects_exclude_tags(
+    hype_mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fold-appended candidate must also honor `exclude_tags`, the same as
+    the SQL-level vec doc leg — `_fetch_meta_filtered` re-checks it because
+    fold-appended rows are materialized straight from `store.get`, with no
+    filter awareness of its own."""
+    rec_a = hype_mem.save(content="zzalpha note body", title="Alpha zzalpha")
+    rec_b = hype_mem.save(content="zzbeta note body", title="Beta zzbeta", tags=["blocked"])
+    # B is only reachable via the question-space fold (doc vector orthogonal).
+    _populate_hype(hype_mem.cfg, rec_b.id, list(_QUERY_VEC))
+    monkeypatch.setenv("MEMO_HYPE_ENABLED", "1")
+
+    out = hype_mem.search("zzquery topic", mode="vec", exclude_tags={"blocked"}, limit=5)
+
+    assert rec_b.id not in [r.id for r in out]
+    assert rec_a.id in [r.id for r in out]
 
 
 def test_flag_on_fold_appended_candidate_respects_validity(

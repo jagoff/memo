@@ -432,7 +432,12 @@ def ingest(
             # Mirror of the multi-chunk skip: an unchanged body (PDF/audio/
             # orphan-image re-run) is neither re-embedded nor upserted, so
             # `updated` keeps its original timestamp.
-            if existing and existing["body_hash"] == body_hash and not force:
+            if (
+                existing
+                and existing["body_hash"] == body_hash
+                and store.has_searchable_body(existing["id"])
+                and not force
+            ):
                 skipped_unchanged += 1
                 return None
             try:
@@ -480,7 +485,12 @@ def ingest(
             chunk_path = f"{store_path}#chunk-{seq}"
             id_, existing = _resolve_ingest_row(store, chunk_path)
             chunk_body_hash = hashlib.sha256(chunk_body.encode("utf-8")).hexdigest()[:16]
-            if existing and existing["body_hash"] == chunk_body_hash and not force:
+            if (
+                existing
+                and existing["body_hash"] == chunk_body_hash
+                and store.has_searchable_body(existing["id"])
+                and not force
+            ):
                 continue
             chunk_composed = chunk_body[: cfg.max_content_chars]
             try:
@@ -632,7 +642,12 @@ def ingest(
                 body, tags = _redact_secrets_for_index(body, tags)
                 body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
                 _, existing = _resolve_ingest_row(store, store_path)
-                if existing and existing["body_hash"] == body_hash and not force:
+                if (
+                    existing
+                    and existing["body_hash"] == body_hash
+                    and store.has_searchable_body(existing["id"])
+                    and not force
+                ):
                     skipped_unchanged += 1
                     continue
 

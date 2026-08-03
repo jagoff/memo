@@ -484,6 +484,33 @@ def run_tuning_pass(
             knob_results[knob]["verdict"] = "would_apply"
             return res
 
+        # Fase 4 — full six-condition graduation gate on the selected winner.
+        # Always COMPUTED and recorded (shadow evidence: what the strict gate
+        # would decide tonight); only ENFORCED when MEMO_DREAM_TUNE_STRICT_GATE_ENABLED
+        # is graduated on. Best-effort: a gate-computation failure never blocks
+        # the tuner's existing (already-gated) apply path.
+        try:
+            from memo import dream_metrics
+            from memo.flags import flag_bool
+
+            grad = dream_metrics.graduation_gate(
+                w_before,
+                w_after,
+                n_labels=int(res.get("n_labels", 0)),
+                latency_before=float(w_before.get("latency_ms_p50", 0.0)),
+                latency_after=float(w_after.get("latency_ms_p50", 0.0)),
+                experiment_recorded=True,  # record_pending below IS the experiment
+                rollback_exists=True,  # overlay + saved knob baseline are the rollback
+                **dream_metrics.tune_gate_thresholds(),
+            )
+            res["graduation_gate"] = grad
+            if flag_bool("MEMO_DREAM_TUNE_STRICT_GATE_ENABLED") and not grad["ok"]:
+                res["status"] = "gate_rejected"
+                knob_results[knob]["verdict"] = "gate_rejected"
+                return res
+        except Exception as exc:  # gate is advisory unless graduated; never fatal
+            res["graduation_gate_error"] = f"{type(exc).__name__}: {exc}"
+
         # Merge, don't clobber: preserve every param a prior pass set (float
         # knobs AND the retrieval pass's bool/str levers) so the tuners coexist.
         version_before = params_version(cfg.state_dir)

@@ -108,6 +108,20 @@ def test_associate_entity_2hop_discovery():
     assert "target" in ids  # found via entity 2-hop, not a shared seed entity
 
 
+def test_associate_via_tiebreak_is_deterministic_regardless_of_token_order():
+    # "cand" is reachable via two equally-rare seed entities ("alpha", "zeta").
+    # Before the fix, `via` picked whichever token the caller happened to
+    # process first — order that (with a real store) depends on set/dict
+    # iteration subject to hash randomization. It must now always resolve
+    # to the same (lexicographically smaller) token, regardless of order.
+    a_first = FakeStore({"seed": ["alpha", "zeta"], "cand": ["alpha", "zeta"]})
+    z_first = FakeStore({"seed": ["zeta", "alpha"], "cand": ["zeta", "alpha"]})
+    for store in (a_first, z_first):
+        hits = associate(["seed"], store=store, codegraph_adj=None, exclude_ids=frozenset({"seed"}))
+        cand_hit = next(h for h in hits if h.id == "cand")
+        assert cand_hit.via == "alpha"
+
+
 def test_associate_overlap_ranks_multi_token_higher():
     # 'both' connects via two specific seed entities; 'one' via a single one.
     store = FakeStore({"seed": ["x", "y"], "both": ["x", "y"], "one": ["x"]})

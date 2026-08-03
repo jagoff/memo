@@ -80,6 +80,294 @@ def test_dream_run_wraps_validity_pass_error_into_receipt(mock_memory, monkeypat
     assert any("validity_extract" in e and "validity kaput" in e for e in receipt["errors"])
 
 
+def test_dream_run_invokes_vector_hygiene_pass_when_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_HYGIENE_ENABLED", "1")
+
+    called: list[bool] = []
+
+    def fake_pass(cfg, mem, *, dry_run=False):
+        called.append(True)
+        return {"status": "done", "cache_packed": 1, "cache_pruned": 2}
+
+    monkeypatch.setattr("memo.dream_vector.run_vector_hygiene", fake_pass)
+
+    receipt = _run(mock_memory)
+    assert called == [True]
+    assert receipt["vector_hygiene"]["cache_pruned"] == 2
+    assert not any("vector_hygiene" in e for e in receipt["errors"])
+
+
+def test_dream_run_skips_vector_hygiene_pass_when_flag_off(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_HYGIENE_ENABLED", "0")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.dream_vector.run_vector_hygiene",
+        lambda *a, **k: called.append(True),
+    )
+
+    receipt = _run(mock_memory)
+    assert called == []
+    assert "vector_hygiene" not in receipt
+
+
+def test_dream_run_wraps_vector_hygiene_pass_error_into_receipt(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_HYGIENE_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_vector.run_vector_hygiene",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("hygiene kaput")),
+    )
+
+    receipt = _run(mock_memory)
+    assert any("vector_hygiene" in e and "hygiene kaput" in e for e in receipt["errors"])
+
+
+def test_dream_run_reports_vector_hygiene_pass_internal_error_status(mock_memory, monkeypatch):
+    """The pass can also fail "softly" (returns status=error) rather than
+    raising; dream_run must fold that into receipt["errors"] too."""
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_HYGIENE_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_vector.run_vector_hygiene",
+        lambda *a, **k: {"status": "error", "error": "soft failure"},
+    )
+
+    receipt = _run(mock_memory)
+    assert any("vector_hygiene" in e and "soft failure" in e for e in receipt["errors"])
+
+
+def test_dream_run_invokes_vector_views_pass_when_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_VIEWS_ENABLED", "1")
+
+    called: list[bool] = []
+
+    def fake_pass(cfg, mem, *, night_cap=1000, dry_run=False):
+        called.append(True)
+        return {"status": "done", "indexed": 5, "backlog": 5, "errors": 0}
+
+    monkeypatch.setattr("memo.dream_vector_views.run_title_view_pass", fake_pass)
+
+    receipt = _run(mock_memory)
+    assert called == [True]
+    assert receipt["vector_views"]["indexed"] == 5
+    assert not any("vector_views" in e for e in receipt["errors"])
+
+
+def test_dream_run_skips_vector_views_pass_when_flag_off(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_VIEWS_ENABLED", "0")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.dream_vector_views.run_title_view_pass",
+        lambda *a, **k: called.append(True),
+    )
+
+    receipt = _run(mock_memory)
+    assert called == []
+    assert "vector_views" not in receipt
+
+
+def test_dream_run_wraps_vector_views_pass_error_into_receipt(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_VIEWS_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_vector_views.run_title_view_pass",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("views kaput")),
+    )
+
+    receipt = _run(mock_memory)
+    assert any("vector_views" in e and "views kaput" in e for e in receipt["errors"])
+
+
+def test_dream_run_reports_vector_views_pass_internal_error_status(mock_memory, monkeypatch):
+    """Mirrors the vector-hygiene soft-error test: the pass can fail without
+    raising (status=error), and dream_run must still fold that into
+    receipt["errors"]."""
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_VIEWS_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_vector_views.run_title_view_pass",
+        lambda *a, **k: {"status": "error", "error": "soft failure"},
+    )
+
+    receipt = _run(mock_memory)
+    assert any("vector_views" in e and "soft failure" in e for e in receipt["errors"])
+
+
+def test_dream_run_invokes_index_health_when_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_INDEX_REPAIR_ENABLED", "1")
+
+    called: list[bool] = []
+
+    def fake_check(cfg, mem, *, repair=False):
+        called.append(True)
+        return {"status": "ok", "errors": []}
+
+    monkeypatch.setattr("memo.store.index_health.check_index_health", fake_check)
+
+    receipt = _run(mock_memory)
+    assert called == [True]
+    assert receipt["index_health"]["status"] == "ok"
+    assert not any("index_health" in e for e in receipt["errors"])
+
+
+def test_dream_run_skips_index_health_when_flag_off(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_INDEX_REPAIR_ENABLED", "0")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.store.index_health.check_index_health",
+        lambda *a, **k: called.append(True),
+    )
+
+    receipt = _run(mock_memory)
+    assert called == []
+    assert "index_health" not in receipt
+
+
+def test_dream_run_reports_index_health_sub_check_errors(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_INDEX_REPAIR_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.store.index_health.check_index_health",
+        lambda *a, **k: {"status": "issues", "errors": ["orphan_chunks: boom"]},
+    )
+
+    receipt = _run(mock_memory)
+    assert any("index_health" in e and "1 sub-check error" in e for e in receipt["errors"])
+
+
+def test_dream_run_wraps_index_health_raised_error_into_receipt(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_INDEX_REPAIR_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.store.index_health.check_index_health",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("index_health kaput")),
+    )
+
+    receipt = _run(mock_memory)
+    assert any("index_health" in e and "index_health kaput" in e for e in receipt["errors"])
+
+
+def test_dream_run_invokes_staging_resume_when_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_STAGING_ENABLED", "1")
+
+    called: list[bool] = []
+
+    def fake_resume(cfg, mem):
+        called.append(True)
+        return {"reapplied": 1, "dropped": 0}
+
+    monkeypatch.setattr("memo.dream_staging.resume_staged_proposals", fake_resume)
+
+    receipt = _run(mock_memory)
+    assert called == [True]
+    assert receipt["staging_resume"] == {"reapplied": 1, "dropped": 0}
+    assert not any("staging_resume" in e for e in receipt["errors"])
+
+
+def test_dream_run_skips_staging_resume_when_flag_off(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_STAGING_ENABLED", "0")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.dream_staging.resume_staged_proposals",
+        lambda *a, **k: called.append(True),
+    )
+
+    receipt = _run(mock_memory)
+    assert called == []
+    assert "staging_resume" not in receipt
+
+
+def test_dream_run_wraps_staging_resume_error_into_receipt(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_STAGING_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_staging.resume_staged_proposals",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("staging kaput")),
+    )
+
+    receipt = _run(mock_memory)
+    assert any("staging_resume" in e and "staging kaput" in e for e in receipt["errors"])
+
+
+def test_dream_run_invokes_learning_metrics_when_ledger_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_LEDGER_ENABLED", "1")
+
+    called: list[bool] = []
+
+    def fake_metrics(cfg, mem, *, params_version, k=5, before=None, after=None):
+        called.append(True)
+        return {"precision_before": 0.5, "precision_after": 0.6}
+
+    monkeypatch.setattr("memo.dream_metrics.learning_metrics", fake_metrics)
+
+    receipt = _run(mock_memory)
+    assert called == [True]
+    assert receipt["learning_metrics"]["precision_after"] == 0.6
+
+
+def test_dream_run_skips_learning_metrics_when_ledger_flag_off(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_LEDGER_ENABLED", "0")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.dream_metrics.learning_metrics",
+        lambda *a, **k: called.append(True),
+    )
+
+    receipt = _run(mock_memory)
+    assert called == []
+    assert "learning_metrics" not in receipt
+
+
+def test_dream_run_wraps_learning_metrics_error_into_receipt(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_LEDGER_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_metrics.learning_metrics",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("metrics kaput")),
+    )
+
+    receipt = _run(mock_memory)
+    assert any("learning_metrics" in e and "metrics kaput" in e for e in receipt["errors"])
+
+
+def test_dream_run_invokes_shadow_review_when_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_SHADOW_ENABLED", "1")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.dream_shadow.migrate_reclassified_overlay",
+        lambda *a, **k: (called.append(True), [])[1],
+    )
+    monkeypatch.setattr("memo.dream_shadow.review_rows", lambda *a, **k: [{"flag": "x"}])
+
+    receipt = _run(mock_memory)
+    assert called == [True]
+    assert receipt["shadow_review"]["review"] == [{"flag": "x"}]
+    assert receipt["shadow_review"]["reclassify_reverted"] == []
+
+
+def test_dream_run_skips_shadow_review_when_flag_off(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_SHADOW_ENABLED", "0")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.dream_shadow.review_rows",
+        lambda *a, **k: called.append(True),
+    )
+
+    receipt = _run(mock_memory)
+    assert called == []
+    assert "shadow_review" not in receipt
+
+
+def test_dream_run_wraps_shadow_review_error_into_receipt(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_SHADOW_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_shadow.migrate_reclassified_overlay",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("shadow kaput")),
+    )
+
+    receipt = _run(mock_memory)
+    assert any("shadow" in e and "shadow kaput" in e for e in receipt["errors"])
+
+
 def test_dream_run_persists_receipt_when_memory_load_crashes(monkeypatch, tmp_path):
     """F1: a hard crash before the per-pass guards (here Memory construction)
     must STILL persist a receipt carrying the error — otherwise

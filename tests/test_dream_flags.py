@@ -121,6 +121,23 @@ def test_win_streak_graduates_flag_to_overlay(tmp_cfg, monkeypatch):
     assert entry["baseline"]["precision_at_k"] == 0.8
 
 
+def test_absolute_latency_ceiling_blocks_win_when_relative_gate_skipped(tmp_cfg, monkeypatch):
+    """Fase 8: when OFF p50 rounds to 0 the RELATIVE headroom gate is skipped, so
+    a candidate whose ON p50 balloons to seconds would otherwise win. The
+    absolute latency-ceiling backstop must reject it (no streak, no graduate)."""
+    _mini_registry(monkeypatch)
+    # precision improves, but ON latency 6000ms >> ceiling; OFF p50 == 0 so the
+    # relative headroom gate (budget = 0) does not fire — only the ceiling can.
+    _stub_measure(monkeypatch, on=_metrics(0.9, p50=6000.0), off=_metrics(0.4, p50=0.0))
+    monkeypatch.setenv("MEMO_FLAG_GRADUATION_LATENCY_CEILING_MS", "1500")
+
+    res = df.run_flag_graduation_pass(tmp_cfg, mem=None, today=TODAY)
+    verdict = res["flags"][_FLAG]
+    assert verdict["verdict"] == "lose"
+    assert verdict.get("latency_ceiling_rejected") is True
+    assert df.load_state(tmp_cfg.state_dir)["flags"][_FLAG]["streak"] == 0
+
+
 def test_lose_resets_streak(tmp_cfg, monkeypatch):
     _mini_registry(monkeypatch)
     _stub_measure(monkeypatch, on=_metrics(0.8), off=_metrics(0.4))

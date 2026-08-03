@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "4.7.0"
+version = "4.8.0"
 description = "Local-first semantic memory for AI agents — time-travel, contradiction radar, automatic synthesis. MLX (Apple Silicon) or CPU sentence-transformers (Linux) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -323,6 +323,7 @@ ignore = [
 ]
 "tests/**" = [
     "S105",  # hardcoded "password"-looking test fixtures (fake tokens)
+    "S106",  # "password"-looking keyword args (e.g. pass_name=) in fixtures
     "S108",  # hardcoded /tmp paths in fixtures (never real temp-file handling)
     "S110",  # try/except/pass in test cleanup
     "SIM117",  # nested `with patch(...)` reads cleaner than one combined with

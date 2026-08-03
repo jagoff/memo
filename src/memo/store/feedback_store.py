@@ -14,6 +14,35 @@ serialize_float32 = import_sqlite_vec().serialize_float32
 class _FeedbackMixin(_StoreBase):
     # -- source-level feedback (👍 / 👎) ------------------------------------
 
+    def compact_feedback_vectors(self, *, dry_run: bool = False) -> dict[str, int | bool]:
+        """Rebuild the derived feedback vec0 table without re-embedding.
+
+        vec0 allocates storage in chunks; repeated vote replacement can leave
+        a tiny live table backed by a very large vector-chunk footprint. The
+        Markdown/user-signal rows remain authoritative and are copied before
+        the virtual table is recreated.
+        """
+        rows = self._conn.execute(
+            "SELECT feedback_id, source_id, query_emb FROM source_feedback_vec"
+        ).fetchall()
+        result: dict[str, int | bool] = {"before": len(rows), "after": len(rows), "rebuilt": False}
+        if dry_run or not rows:
+            return result
+        with self._tx() as cx:
+            cx.execute("DROP TABLE source_feedback_vec")
+            cx.execute(
+                f"CREATE VIRTUAL TABLE source_feedback_vec USING vec0("
+                f"feedback_id TEXT PRIMARY KEY, source_id TEXT PARTITION KEY, "
+                f"query_emb FLOAT[{self.dims}] distance_metric=cosine)"
+            )
+            cx.executemany(
+                "INSERT INTO source_feedback_vec (feedback_id, source_id, query_emb) "
+                "VALUES (?, ?, ?)",
+                [(r["feedback_id"], r["source_id"], r["query_emb"]) for r in rows],
+            )
+        result["rebuilt"] = True
+        return result
+
     def record_source_feedback(
         self,
         *,

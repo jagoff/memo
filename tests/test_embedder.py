@@ -223,6 +223,72 @@ def test_embed_query_no_cache_calls_embed_each_time(monkeypatch):
     assert len(calls) == 2
 
 
+# -- embed_queries (batch) --------------------------------------------------
+
+
+def test_embed_queries_prepends_prefix_and_batches_misses():
+    emb = MLXEmbedder(expected_dims=4)
+    seen: list[list[str]] = []
+
+    def fake_embed(inputs):
+        seen.append(list(inputs))
+        return [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
+
+    emb.embed = fake_embed  # type: ignore[method-assign]
+    out = emb.embed_queries(["alpha", "beta"])
+
+    assert out == [[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]
+    # One batched embed() call, both prefixed with the asymmetric-retrieval instruction.
+    assert seen == [[_QUERY_INSTRUCTION_PREFIX + "alpha", _QUERY_INSTRUCTION_PREFIX + "beta"]]
+
+
+def test_embed_queries_empty_string_gets_zero_vector_without_embed_call():
+    emb = MLXEmbedder(expected_dims=4)
+    calls: list[list[str]] = []
+
+    def fake_embed(inputs):
+        calls.append(list(inputs))
+        return [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
+
+    emb.embed = fake_embed  # type: ignore[method-assign]
+    out = emb.embed_queries(["", "  ", "real"])
+
+    assert out[0] == [0.0, 0.0, 0.0, 0.0]
+    assert out[1] == [0.0, 0.0, 0.0, 0.0]
+    assert out[2] == [1.0, 0.0, 0.0, 0.0]
+    # Only the non-empty query reaches embed().
+    assert calls == [[_QUERY_INSTRUCTION_PREFIX + "real"]]
+
+
+def test_embed_queries_all_empty_never_calls_embed():
+    emb = MLXEmbedder(expected_dims=4)
+    calls: list[list[str]] = []
+    emb.embed = lambda inputs: calls.append(list(inputs))  # type: ignore[method-assign]
+
+    out = emb.embed_queries(["", "   "])
+
+    assert out == [[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]]
+    assert calls == []
+
+
+def test_embed_queries_serves_cached_entries_without_embed_call(monkeypatch):
+    monkeypatch.setenv("MEMO_QUERY_CACHE_SIZE", "8")
+    emb = MLXEmbedder(expected_dims=4)
+    calls: list[list[str]] = []
+
+    def fake_embed(inputs):
+        calls.append(list(inputs))
+        return [[1.0, 0.0, 0.0, 0.0] for _ in inputs]
+
+    emb.embed = fake_embed  # type: ignore[method-assign]
+    q = "test_embed_queries_cache unique probe"
+    first = emb.embed_queries([q])
+    second = emb.embed_queries([q, q])
+
+    assert first == second[:1] == second[1:]
+    assert len(calls) == 1  # only the first (cache-populating) call reached embed()
+
+
 # -- misc contracts --------------------------------------------------------
 
 
