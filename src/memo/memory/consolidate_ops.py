@@ -11,7 +11,7 @@ import builtins
 import datetime as _dt
 import json
 import re as _re
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import frontmatter
 
@@ -25,6 +25,9 @@ from memo.memory.record import (
 )
 from memo.prompt_overrides import resolve_prompt
 from memo.tiers import SENSITIVE_TYPES
+
+if TYPE_CHECKING:
+    from memo.memory.facade import Memory
 
 
 def _sort_updated_utc(value: Any) -> _dt.datetime:
@@ -775,7 +778,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     from memo.dream_staging import staged_save
 
                     rec = staged_save(
-                        self,
+                        cast("Memory", self),
                         self.cfg,
                         kind="synthesis",
                         source_ids=source_ids,
