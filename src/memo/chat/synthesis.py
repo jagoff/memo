@@ -20,6 +20,15 @@ def filter_by_relevance(sources: list[dict[str, Any]], *, floor: float) -> list[
     return kept if kept else [max(sources, key=score_of)]
 
 
+def _format_source(index: int, source: dict[str, Any]) -> str:
+    block = f"[{index + 1}] {source.get('title', '')}\n{source.get('snippet', '')}"
+    related = source.get("related_ids")
+    if related:
+        pointer = ", ".join(f"{title} ({sid})" for sid, title in related)
+        block += f"\n(+{len(related)} related: {pointer})"
+    return block
+
+
 def build_messages(
     question: str, sources: list[dict[str, Any]], *, today: str
 ) -> list[dict[str, str]]:
@@ -34,9 +43,7 @@ def build_messages(
         "- No agregues conocimiento externo a los SNIPPETS.\n"
         f'- Si los SNIPPETS no responden la pregunta, respondé exactamente: "{REFUSAL}"'
     )
-    snippets = "\n\n".join(
-        f"[{i + 1}] {s.get('title', '')}\n{s.get('snippet', '')}" for i, s in enumerate(sources)
-    )
+    snippets = "\n\n".join(_format_source(i, s) for i, s in enumerate(sources))
     return [
         {"role": "system", "content": f"{header}\n\n{rules}"},
         {"role": "user", "content": f"PREGUNTA: {question}\n\nSNIPPETS:\n{snippets}"},

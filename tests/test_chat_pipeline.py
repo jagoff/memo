@@ -113,3 +113,54 @@ def test_synthesis_error_yields_error_event(tmp_path) -> None:
     events = list(chat_stream(mem, "pregunta simple"))
     assert events[-1]["type"] == "error"
     assert events[-1]["answer_partial"] == "parcial"
+
+
+class _FakeGraph:
+    def memory_entities(self, memory_id):
+        if memory_id in ("m1", "m2"):
+            return [{"name": "proyecto-omega", "type": "topic", "mention_count": 1}]
+        return []
+
+    def total_indexed_memories(self):
+        return 10
+
+    def entity_doc_freqs(self, names):
+        return {"proyecto-omega": 1.0} if "proyecto-omega" in names else {}
+
+
+class _TwoNoteMemory(_FakeMemory):
+    def __init__(self, tmp_path):
+        super().__init__(tmp_path)
+        self.graph = _FakeGraph()
+
+    def search(self, query, *, limit=None, mode="hybrid", **kw):
+        return [
+            _FakeRecord(
+                id="m1", title="Nota uno", type="note", score=0.9,
+                body="cuerpo uno sobre proyecto omega", path="notes/uno.md",
+            ),
+            _FakeRecord(
+                id="m2", title="Nota dos", type="note", score=0.85,
+                body="cuerpo dos sobre proyecto omega", path="notes/dos.md",
+            ),
+        ]
+
+
+def test_graph_compact_collapses_related_sources_when_enabled(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_CHAT_GRAPH_COMPACT", "1")
+
+    events = list(chat_stream(_TwoNoteMemory(tmp_path), "qué sabés del proyecto omega?"))
+    context = next(e for e in events if e["type"] == "context")
+    ids = [s["id"] for s in context["sources"]]
+
+    assert ids.count("m1") + ids.count("m2") == 1  # one survivor, not both
+    assert "r1" in ids
+    survivor = next(s for s in context["sources"] if s["id"] in ("m1", "m2"))
+    assert len(survivor.get("related_ids") or []) == 1
+
+
+def test_graph_compact_noop_when_disabled(tmp_path) -> None:
+    events = list(chat_stream(_TwoNoteMemory(tmp_path), "qué sabés del proyecto omega?"))
+    context = next(e for e in events if e["type"] == "context")
+    ids = {s["id"] for s in context["sources"]}
+    assert {"m1", "m2", "r1"} <= ids
