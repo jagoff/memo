@@ -48,7 +48,7 @@ def compact_by_entity_overlap(
 
 ### Prompt rendering
 
-Wherever the synthesis prompt currently renders one source's snippet, also render `related_ids` as a short trailing note (e.g. `(+2 related: 90a3aa5e, a78346ac)`), reusing the existing `[id]` short-citation convention (`recall_logic.CITE_INSTRUCTION`) so the LLM can still reference a collapsed source by id if the representative's content isn't enough — the information isn't lost, just not paid for by default.
+Wherever the synthesis prompt currently renders one source's snippet, also render `related_ids` as a short trailing note, e.g. `(+1 related: Nota dos (m2))` — title plus parenthesized id, deliberately NOT `recall_logic.CITE_INSTRUCTION`'s `[id]` bracket format. `build_messages`'s own "Reglas" instructs the model to avoid `[n]`-style bracket citation markers in its answer entirely; reusing bracket syntax here risks teaching the model to imitate it. The information isn't lost, just not paid for by default — the LLM can still reference a collapsed source by id if the representative's content isn't enough.
 
 ### Config
 
