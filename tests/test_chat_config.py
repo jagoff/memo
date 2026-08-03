@@ -14,6 +14,8 @@ def test_defaults_match_production(tmp_path: Path) -> None:
     assert cfg.fulldoc is True
     assert cfg.answer_max_tokens == 1200
     assert cfg.synth_head == 8
+    assert cfg.graph_compact is False
+    assert cfg.graph_compact_min_idf == 0.5
     assert cfg.feedback_dir == tmp_path / "chat" / "feedback"
     assert cfg.sessions_dir == tmp_path / "chat" / "sessions"
 
@@ -26,3 +28,11 @@ def test_env_overrides(tmp_path: Path, monkeypatch) -> None:
     assert cfg.base_k == 5
     assert cfg.multi_query is False
     assert cfg.relevance_floor == 0.4
+
+
+def test_graph_compact_env_overrides(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_CHAT_GRAPH_COMPACT", "1")
+    monkeypatch.setenv("MEMO_CHAT_GRAPH_COMPACT_MIN_IDF", "0.7")
+    cfg = ChatConfig.load(tmp_path)
+    assert cfg.graph_compact is True
+    assert cfg.graph_compact_min_idf == 0.7
