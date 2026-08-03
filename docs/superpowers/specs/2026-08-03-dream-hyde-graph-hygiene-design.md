@@ -54,17 +54,19 @@ Add the three flags to the dream LaunchAgent's `EnvironmentVariables`,
 scoped to the nightly job only — no source-code change, no new
 markdown-config key, no change to any already-graduated flag.
 
-1. Edit `~/repos/memo/launchd/com.memo.dream.plist` — this file is the
-   committed template *and* the deployed form (no `__HOME__`-style
-   placeholder substitution for this agent, unlike `recall-daemon`). Add
-   three `<key>`/`<string>` entries to the existing `EnvironmentVariables`
-   dict, alongside `MEMO_DREAM_COMMUNITIES_ENABLED` etc.:
+1. Edit the committed template `~/repos/memo/launchd/com.memo.dream.plist`
+   (it still carries `__HOME__`/`__MEMO_BIN__` placeholders — same pattern
+   as every other agent in the fleet). Add three `<key>`/`<string>` entries
+   to the existing `EnvironmentVariables` dict, alongside
+   `MEMO_DREAM_COMMUNITIES_ENABLED` etc.:
    ```
    MEMO_DREAM_HYDE_TUNE_ENABLED = 1
    MEMO_DREAM_ENTITY_CANON_ENABLED = 1
    MEMO_DREAM_EDGE_VERIFY_ENABLED = 1
    ```
-   Then copy the edited template to `~/Library/LaunchAgents/com.memo.dream.plist`.
+   Then re-render (substitute `__HOME__` → `$HOME`, `__MEMO_BIN__` →
+   `command -v memo`) into `~/Library/LaunchAgents/com.memo.dream.plist`,
+   matching the deployed copy's existing already-substituted values.
 2. Reload the agent:
    ```bash
    launchctl bootout gui/$(id -u)/com.memo.dream
