@@ -185,6 +185,41 @@ def test_feedback_sim_threshold_flag_takes_effect(mem_with_stub: Memory, monkeyp
     assert score_after == pytest.approx(score_before or 0.0)
 
 
+def test_compact_feedback_vectors_noop_on_empty_table(mem_with_stub: Memory):
+    result = mem_with_stub.store.compact_feedback_vectors()
+    assert result == {"before": 0, "after": 0, "rebuilt": False}
+
+
+def test_compact_feedback_vectors_dry_run_reports_without_rebuilding(mem_with_stub: Memory):
+    rec = mem_with_stub.save(content="alpha body", title="Alpha")
+    mem_with_stub.feedback_record(rec.id, query_text="alpha", rating="up")
+
+    result = mem_with_stub.store.compact_feedback_vectors(dry_run=True)
+
+    assert result == {"before": 1, "after": 1, "rebuilt": False}
+
+
+def test_compact_feedback_vectors_rebuilds_table_preserving_rows(mem_with_stub: Memory):
+    rec_a = mem_with_stub.save(content="alpha body", title="Alpha")
+    rec_b = mem_with_stub.save(content="beta body", title="Beta")
+    mem_with_stub.feedback_record(rec_a.id, query_text="alpha", rating="up")
+    mem_with_stub.feedback_record(rec_b.id, query_text="beta", rating="down")
+
+    result = mem_with_stub.store.compact_feedback_vectors()
+
+    assert result["before"] == 2
+    assert result["after"] == 2
+    assert result["rebuilt"] is True
+    rows = mem_with_stub.store._conn.execute(
+        "SELECT source_id FROM source_feedback_vec ORDER BY source_id"
+    ).fetchall()
+    assert sorted(r["source_id"] for r in rows) == sorted([rec_a.id, rec_b.id])
+    # Compacting again on the freshly-rebuilt table is a clean no-op re-rebuild.
+    second = mem_with_stub.store.compact_feedback_vectors()
+    assert second["rebuilt"] is True
+    assert second["before"] == 2
+
+
 def test_feedback_boost_cap_flag_takes_effect(mem_with_stub: Memory, monkeypatch):
     """MEMO_FEEDBACK_BOOST_CAP must cap the applied boost (same regression
     class as above: env flag discarded by non-None kwarg defaults). A fresh

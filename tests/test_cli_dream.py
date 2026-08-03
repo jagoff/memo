@@ -80,6 +80,103 @@ def test_dream_run_wraps_validity_pass_error_into_receipt(mock_memory, monkeypat
     assert any("validity_extract" in e and "validity kaput" in e for e in receipt["errors"])
 
 
+def test_dream_run_invokes_vector_hygiene_pass_when_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_HYGIENE_ENABLED", "1")
+
+    called: list[bool] = []
+
+    def fake_pass(cfg, mem, *, dry_run=False):
+        called.append(True)
+        return {"status": "done", "cache_packed": 1, "cache_pruned": 2}
+
+    monkeypatch.setattr("memo.dream_vector.run_vector_hygiene", fake_pass)
+
+    receipt = _run(mock_memory)
+    assert called == [True]
+    assert receipt["vector_hygiene"]["cache_pruned"] == 2
+    assert not any("vector_hygiene" in e for e in receipt["errors"])
+
+
+def test_dream_run_skips_vector_hygiene_pass_when_flag_off(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_HYGIENE_ENABLED", "0")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.dream_vector.run_vector_hygiene",
+        lambda *a, **k: called.append(True),
+    )
+
+    receipt = _run(mock_memory)
+    assert called == []
+    assert "vector_hygiene" not in receipt
+
+
+def test_dream_run_wraps_vector_hygiene_pass_error_into_receipt(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_HYGIENE_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_vector.run_vector_hygiene",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("hygiene kaput")),
+    )
+
+    receipt = _run(mock_memory)
+    assert any("vector_hygiene" in e and "hygiene kaput" in e for e in receipt["errors"])
+
+
+def test_dream_run_reports_vector_hygiene_pass_internal_error_status(mock_memory, monkeypatch):
+    """The pass can also fail "softly" (returns status=error) rather than
+    raising; dream_run must fold that into receipt["errors"] too."""
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_HYGIENE_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_vector.run_vector_hygiene",
+        lambda *a, **k: {"status": "error", "error": "soft failure"},
+    )
+
+    receipt = _run(mock_memory)
+    assert any("vector_hygiene" in e and "soft failure" in e for e in receipt["errors"])
+
+
+def test_dream_run_invokes_vector_views_pass_when_flag_on(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_VIEWS_ENABLED", "1")
+
+    called: list[bool] = []
+
+    def fake_pass(cfg, mem, *, night_cap=1000, dry_run=False):
+        called.append(True)
+        return {"status": "done", "indexed": 5, "backlog": 5, "errors": 0}
+
+    monkeypatch.setattr("memo.dream_vector_views.run_title_view_pass", fake_pass)
+
+    receipt = _run(mock_memory)
+    assert called == [True]
+    assert receipt["vector_views"]["indexed"] == 5
+    assert not any("vector_views" in e for e in receipt["errors"])
+
+
+def test_dream_run_skips_vector_views_pass_when_flag_off(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_VIEWS_ENABLED", "0")
+
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "memo.dream_vector_views.run_title_view_pass",
+        lambda *a, **k: called.append(True),
+    )
+
+    receipt = _run(mock_memory)
+    assert called == []
+    assert "vector_views" not in receipt
+
+
+def test_dream_run_wraps_vector_views_pass_error_into_receipt(mock_memory, monkeypatch):
+    monkeypatch.setenv("MEMO_DREAM_VECTOR_VIEWS_ENABLED", "1")
+    monkeypatch.setattr(
+        "memo.dream_vector_views.run_title_view_pass",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("views kaput")),
+    )
+
+    receipt = _run(mock_memory)
+    assert any("vector_views" in e and "views kaput" in e for e in receipt["errors"])
+
+
 def test_dream_run_persists_receipt_when_memory_load_crashes(monkeypatch, tmp_path):
     """F1: a hard crash before the per-pass guards (here Memory construction)
     must STILL persist a receipt carrying the error — otherwise
