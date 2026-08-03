@@ -1110,9 +1110,14 @@ def test_native_process_birth_identity_has_subsecond_or_tick_precision() -> None
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin libproc layout only")
 def test_darwin_process_birth_identity_matches_live_libproc_layout() -> None:
-    identity = _darwin_process_birth_identity(os.getpid())
-    prefix, seconds, microseconds = identity.split(":")
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        identity = _darwin_process_birth_identity(process.pid)
+        prefix, seconds, microseconds = identity.split(":")
 
-    assert prefix == "darwin-start"
-    assert abs(time.time() - int(seconds)) < 60
-    assert 0 <= int(microseconds) < 1_000_000
+        assert prefix == "darwin-start"
+        assert 0 <= time.time() - int(seconds) < 60
+        assert 0 <= int(microseconds) < 1_000_000
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
