@@ -37,6 +37,14 @@ The last dream receipt showed 245 entities with 13 duplicate merges found
 by the (currently manual, ad hoc) dedup path — signal that entity-canon and
 edge-verify have real noise to work on.
 
+**Update (post-activation, 2026-08-03):** the real corpus turned out to be
+far larger than that receipt suggested — the live end-to-end run (see
+Execution notes below) saw 8619 entities and 37.1M naive pairs, MinHash/LSH
+blocking cut that to 2789 candidates, and the 30-pair/night LLM-confirmation
+cap produced 12 real merges on the first run. The activation decision still
+holds (MinHash/LSH blocking is built for exactly this scale), but "245
+entities" undersold the actual backlog by ~35x.
+
 None of the three flags have a dotted markdown-config key registered in
 `src/memo/tui/config/catalog.py` (`path_to_env()` doesn't list them), so
 `memo config set <key> <value>` cannot reach them today. The mechanism
@@ -101,12 +109,44 @@ Rejected alternatives:
 | `HYDE_TUNE` | Low | Self-measuring, self-applying, self-reverting; gated by the curated eval set; refuses to activate under live hybrid mode (hook-budget guard) | `memo dream tune --rollback`, or remove the plist line |
 | `ENTITY_CANON` | Low-medium | Bounded to 30 LLM-confirmed pairs/night; merge is a real mutation (`entity_aliases`) with no automated undo | Manually reverse specific `entity_aliases` rows if a bad merge surfaces; remove the plist line to stop new merges |
 | `EDGE_VERIFY` | Low | Confidence-only curation, floored, never deletes, never touches recall ranking | Remove the plist line; no state mutation to undo beyond confidence scores, which re-earn from evidence |
+| Nightly MLX/GPU contention (discovered during activation, not in the original design) | Medium — operational, not correctness | The three passes add real MLX/LLM load to the 03:00 window; the always-on `com.memo.watch` LaunchAgent (`KeepAlive`, holds a 30B model in continuous GPU residency) can lock-contend with `memo dream run`'s in-process embedder fallback badly enough to hang the whole pipeline (observed: ~35 minutes, no completion, during end-to-end verification — see Execution notes) | Kill the stuck `memo dream run` process (safe — checkpointed, `--resume`-capable) and retry; root fix (dream/watch MLX coordination) is a separate follow-up, not part of this activation |
 
 Monitoring: `memo dream status` after each of the next 2-3 nightly runs —
 check `receipt["errors"]` is clean and inspect the entity-canon /
-edge-verify pass results (pairs proposed/confirmed, edges adjusted).
+edge-verify pass results (pairs proposed/confirmed, edges adjusted). Given
+the contention risk above, also check that the run *completed* at all (a
+receipt timestamp that hasn't advanced past the previous day is the signal
+to look for).
 `memo dream graduate-flags --status` does not track manual-kind flags'
 outcomes automatically; the receipt is the source of truth for these three.
+
+## Execution notes (post-activation, 2026-08-03)
+
+Live end-to-end verification hit and resolved a real production incident,
+unrelated to this design's correctness: the first real (non-dry-run)
+`launchctl kickstart` of `com.memo.dream` hung for ~35 minutes in a
+pre-existing, unrelated pipeline phase (per-memory entity extraction during
+signal-gather), never reaching any of the three new passes. Root cause:
+`com.memo.watch` (a separate `KeepAlive` LaunchAgent holding a 30B
+generation model + 4B reranker in continuous MLX/GPU residency) contended
+with `memo dream run`'s in-process embedder fallback for the same shared
+MLX advisory lock. Stopping `memo watch`, retrying, and restoring it
+afterward confirmed the diagnosis: the retry completed in ~22 minutes with
+all three passes reporting `status: "done"` (`entity_canon`, `edge_verify`)
+and `"hyde_loses"` (`hyde_tuner`, a real completed A/B, not an error), zero
+entries in `receipt["errors"]`.
+
+Also discovered as a side effect, out of scope for this plan to fix
+(requires a `src/memo/` edit): `dream_tune.py`'s `_curated_raw()` resolves
+its curated-labels fallback path relative to `__file__`, which only lands on
+`eval/regression_labels.json` in a dev/editable checkout — under the real
+installed `uv tool` runtime this activation targets, that path is
+unreachable, so `tuner`/`graph_tuner`/`hyde_tuner` all silently ran on
+mined-only labels (`curated_used: false`) instead of the curated regression
+set. This makes the `hyde_loses` verdict from the first real run
+untrustworthy pending that fix, and likely affects the safety story for the
+already-graduated `tune`/`tune-boost` passes too. Tracked as a follow-up
+bug, not fixed here.
 
 ## Out of scope
 
