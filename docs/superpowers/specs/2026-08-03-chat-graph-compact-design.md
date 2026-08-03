@@ -19,7 +19,7 @@ Two graph-and-retrieval experiments are already closed and must not be relitigat
 
 This design is deliberately a **different** application: it never changes *which* memories get retrieved or how they're ranked. It only changes how compactly an *already-decided* source list is rendered before synthesis. That sidesteps both closed experiments' failure mode (which was about the wrong things going into the ranked pool or the wrong things floating to the top).
 
-The one landmine that *does* carry over: **raw (unweighted) entity overlap is unsafe.** The `memo-graph-injection-negative` writeup found that ubiquitous entities ("memo", "synapse") dominate raw overlap scoring and produce wrong associations. This design reuses the fix that made that safe — **IDF weighting** (`GraphStore.total_indexed_memories()` + `entity_doc_freqs()`, the same primitives `graph_proximity.graph_boost_factory` already uses) — rather than re-deriving it.
+The one landmine that *does* carry over: **raw (unweighted) entity overlap is unsafe.** The `memo-graph-injection-negative` writeup found that ubiquitous entities ("memo", "synapse") dominate raw overlap scoring and produce wrong associations, and that the fix was IDF weighting. That mechanism (`MEMO_RECALL_GRAPH_PROXIMITY` / `graph_proximity.graph_boost_factory`) has since been removed from the codebase entirely — retrieval no longer uses `graph_proximity.py` (its current docstring: "Retrieval serving no longer uses this module"). What survives, unused, are the two primitives it was built on: `GraphStore.total_indexed_memories()` and `GraphStore.entity_doc_freqs()` (`src/memo/graph.py:669,675`), still tested (`tests/test_graph_store.py`), just orphaned. This design revives them with a freshly-written IDF helper — `idf(df, total) = max(0.0, log(total / df))` when `df > 0`, else `0.0` — not by importing now-dead code.
 
 ## Design
 
@@ -41,7 +41,7 @@ def compact_by_entity_overlap(
 ### Data flow
 
 1. For each source dict in the pipeline's `fused` list, fetch its canonical entity set via `memory.graph.memory_entities(source["id"])` (existing primitive, already used in `contextual.py`).
-2. One batched call to `memory.graph.entity_doc_freqs(all_entity_names)` + `memory.graph.total_indexed_memories()` — same batching shape as `graph_proximity.py`, not per-pair.
+2. One batched call to `memory.graph.entity_doc_freqs(all_entity_names)` + `memory.graph.total_indexed_memories()` — one query for the whole source list, not per-pair.
 3. Single greedy pass, sources sorted by relevance descending (mirrors `recall_logic.collapse_near_dups`'s structure): walk sources in that order, keeping a list of group representatives seen so far. For each source, compare its entity set against each existing representative's; join the *first* representative where `Σ(IDF of shared entities) / union-weight ≥ min_idf_overlap`, else start a new singleton group with this source as its own representative.
 4. For each group with size ≥ `min_group_size`: keep the highest-relevance member's full dict; attach a `related_ids: list[tuple[id, title]]` field listing the dropped members; drop the rest from the returned list entirely.
 5. Return the compacted list. Everything downstream — `filter_by_relevance`, the `[:cfg.synth_head]` slice, prompt assembly — is unchanged. Dropping redundant members before the `synth_head` slice also means a non-redundant source that would otherwise have been pushed out of the top-8 now gets a slot.
