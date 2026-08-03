@@ -25,6 +25,7 @@ from contextlib import ExitStack
 from typing import Any, cast
 
 import click
+from rich.markup import escape
 
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
@@ -1922,8 +1923,9 @@ def dream_ledger_cmd(limit: int, open_only: bool, as_json: bool) -> None:
             )
         else:
             aff = ",".join(str(a)[:8] for a in (r.get("affected_ids") or [])) or "-"
+            pass_name = escape(f"[{r.get('pass_name')}]")
             console.print(
-                f"  [dim]{r.get('ts')}[/dim] {r.get('action')} [{r.get('pass_name')}] "
+                f"  [dim]{r.get('ts')}[/dim] {r.get('action')} {pass_name} "
                 f"→ {aff}  ({str(r.get('entry_id'))[:8]})"
             )
 
@@ -2334,7 +2336,8 @@ def dream_folder_abstracts_cmd(dry_run: bool, as_json: bool) -> None:
         return
     console.print(f"[bold]folder-abstracts:[/bold] {res.get('status')}")
     for a in res.get("abstracts", []):
-        console.print(f"  [{a['status']}] {a['folder'] or '(root)'}")
+        status = a["status"]
+        console.print(f"  {escape(f'[{status}]')} {a['folder'] or '(root)'}")
 
 
 @dream_cmd.command(name="retag")
