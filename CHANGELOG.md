@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.8.1] - 2026-08-03
+
+### Fixed
+
+- The MCP write-coordinator no longer masks legitimate business-rule
+  validation errors (e.g. `memo_procedure_promote` rejecting a memory that
+  lacks sufficient outcome evidence) behind a generic "coordinated MCP write
+  failed safely" message. Root cause: FastMCP's own tool dispatch wraps any
+  exception a tool raises into its own `ToolError` (chained via `__cause__`)
+  before the coordinator's exception-type check ever sees it, so the
+  existing `except MemoError` branch could never match in production — only
+  the generic mask branch could. The coordinator's generic handler now
+  inspects `e.__cause__` and, when it is a `MemoError`, propagates that
+  original error and message instead of the opaque mask; truly
+  unknown/unexpected exceptions are still masked as before. Found via live
+  MCP tool-by-tool testing during a production-readiness audit.
+
 ## [4.8.0] - 2026-08-02
 
 ### Added
