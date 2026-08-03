@@ -123,9 +123,7 @@ def run_or_skip(
     if should_skip(state_dir, pass_name, fingerprint):
         return {"status": "skipped_incremental", "fingerprint": fingerprint}
     result = runner()
-    errored = isinstance(result, dict) and (
-        "error" in result or result.get("status") == "error"
-    )
+    errored = isinstance(result, dict) and ("error" in result or result.get("status") == "error")
     if not errored:
         record_success(state_dir, pass_name, fingerprint)
     return result if isinstance(result, dict) else {"result": result}

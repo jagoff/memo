@@ -112,9 +112,7 @@ def _append_ledger(state_dir: Path, entry: dict[str, Any]) -> None:
     from memo.dashboard_logs import _write_jsonl_entry
 
     row = {"ts": datetime.now(UTC).isoformat(timespec="seconds"), **entry}
-    _write_jsonl_entry(
-        _ledger_path(state_dir), row, cap=_LEDGER_CAP, size_limit=_LEDGER_SIZE_LIMIT
-    )
+    _write_jsonl_entry(_ledger_path(state_dir), row, cap=_LEDGER_CAP, size_limit=_LEDGER_SIZE_LIMIT)
 
 
 def read_observations(
@@ -278,7 +276,9 @@ def record_recall_shadow(
     cost is the ON p50. Never mutates anything but the shadow ledger/state.
     Returns the observation fragment (for the caller's ``receipt['shadow']``)."""
     try:
-        d_prec = round(float(on.get("precision_at_k", 0.0)) - float(off.get("precision_at_k", 0.0)), 4)
+        d_prec = round(
+            float(on.get("precision_at_k", 0.0)) - float(off.get("precision_at_k", 0.0)), 4
+        )
         d_noise = round(float(on.get("noise_at_k", 0.0)) - float(off.get("noise_at_k", 0.0)), 4)
         cost_ms = round(float(on.get("latency_ms_p50", 0.0)), 1)
         obs: dict[str, Any] = {
@@ -401,9 +401,7 @@ def shadow_summary(state_dir: Path, flag: str) -> dict[str, Any]:
 def review_rows(state_dir: Path, gates: dict[str, Any]) -> list[dict[str, Any]]:
     """One :func:`shadow_summary` per shadow-kind gate — the ``memo dream shadow
     --status`` table source. Pure over the passed ``gates`` mapping."""
-    shadow_flags = sorted(
-        name for name, g in gates.items() if getattr(g, "kind", "") == "shadow"
-    )
+    shadow_flags = sorted(name for name, g in gates.items() if getattr(g, "kind", "") == "shadow")
     return [shadow_summary(state_dir, name) for name in shadow_flags]
 
 

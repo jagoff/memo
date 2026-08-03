@@ -187,9 +187,7 @@ def _provenance_hash(save_kwargs: dict[str, Any], source_ids: Sequence[str]) -> 
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:16]
 
 
-def _capture_conflict(
-    mem: Memory, conflict: dict[str, Any]
-) -> tuple[list[str], str, list[str]]:
+def _capture_conflict(mem: Memory, conflict: dict[str, Any]) -> tuple[list[str], str, list[str]]:
     """Extract (conflict_ids, summary, evidence_uris) for a WriteRefused.
 
     The WriteRefused only carries the first blocking conflict id + reason. We
@@ -219,9 +217,7 @@ def _capture_conflict(
     return conflict_ids, summary, evidence
 
 
-def _enforce_cap(
-    proposals: list[StagedProposal], max_staged: int
-) -> list[StagedProposal]:
+def _enforce_cap(proposals: list[StagedProposal], max_staged: int) -> list[StagedProposal]:
     """Drop the oldest ``staged`` proposals beyond the cap (list order = age)."""
     if max_staged <= 0:
         return proposals

@@ -409,8 +409,6 @@ def summarize_phases(receipt: dict[str, Any]) -> dict[str, Any]:
         "errors": sum(len(p.get("errors", []) or []) for p in phases),
         "resumed": sum(1 for p in phases if p.get("resumed")),
         "slowest": (
-            {"phase": slowest["phase"], "duration_ms": slowest["duration_ms"]}
-            if slowest
-            else None
+            {"phase": slowest["phase"], "duration_ms": slowest["duration_ms"]} if slowest else None
         ),
     }

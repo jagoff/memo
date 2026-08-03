@@ -58,8 +58,9 @@ def _raise_storage(**_kwargs: Any) -> Any:
     raise StorageError("disk on fire")
 
 
-def _stage_one(cfg, mem, *, kind="synthesis", title="T", source_ids=("a", "b"),
-               conflict=None, extra=None):
+def _stage_one(
+    cfg, mem, *, kind="synthesis", title="T", source_ids=("a", "b"), conflict=None, extra=None
+):
     """Helper: stage a single proposal directly via `stage_proposal`."""
     save_kwargs: dict[str, Any] = {"content": "body", "title": title, "type_": "synthesis"}
     if extra is not None:
@@ -82,8 +83,13 @@ def test_staged_save_flag_off_is_passthrough_and_propagates_refused(tmp_cfg, mon
     with mod.dream_staging_scope():
         with pytest.raises(WriteRefused):
             mod.staged_save(
-                mem, tmp_cfg, kind="synthesis", source_ids=["a"],
-                content="body", title="T", type_="synthesis",
+                mem,
+                tmp_cfg,
+                kind="synthesis",
+                source_ids=["a"],
+                content="body",
+                title="T",
+                type_="synthesis",
             )
     # Passthrough: nothing was parked.
     assert mod.list_staged(tmp_cfg) == []
@@ -95,8 +101,13 @@ def test_staged_save_outside_scope_is_passthrough_and_propagates_refused(tmp_cfg
 
     with pytest.raises(WriteRefused):
         mod.staged_save(
-            mem, tmp_cfg, kind="synthesis", source_ids=["a"],
-            content="body", title="T", type_="synthesis",
+            mem,
+            tmp_cfg,
+            kind="synthesis",
+            source_ids=["a"],
+            content="body",
+            title="T",
+            type_="synthesis",
         )
     assert mod.list_staged(tmp_cfg) == []
 
@@ -107,8 +118,13 @@ def test_staged_save_inside_scope_parks_refused_and_returns_none(tmp_cfg, monkey
 
     with mod.dream_staging_scope():
         result = mod.staged_save(
-            mem, tmp_cfg, kind="synthesis", source_ids=["a", "b"],
-            content="body", title="T", type_="synthesis",
+            mem,
+            tmp_cfg,
+            kind="synthesis",
+            source_ids=["a", "b"],
+            content="body",
+            title="T",
+            type_="synthesis",
         )
 
     assert result is None
@@ -131,8 +147,13 @@ def test_staged_save_reraises_non_refused_error(tmp_cfg, monkeypatch):
     with mod.dream_staging_scope():
         with pytest.raises(StorageError):
             mod.staged_save(
-                mem, tmp_cfg, kind="synthesis", source_ids=["a"],
-                content="body", title="T", type_="synthesis",
+                mem,
+                tmp_cfg,
+                kind="synthesis",
+                source_ids=["a"],
+                content="body",
+                title="T",
+                type_="synthesis",
             )
     # Only WriteRefused parks; every other error re-raises and stages nothing.
     assert mod.list_staged(tmp_cfg) == []
@@ -144,8 +165,13 @@ def test_staged_save_success_returns_record_and_stages_nothing(tmp_cfg, monkeypa
 
     with mod.dream_staging_scope():
         result = mod.staged_save(
-            mem, tmp_cfg, kind="synthesis", source_ids=["a"],
-            content="body", title="T", type_="synthesis",
+            mem,
+            tmp_cfg,
+            kind="synthesis",
+            source_ids=["a"],
+            content="body",
+            title="T",
+            type_="synthesis",
         )
 
     assert result is not None
@@ -227,8 +253,7 @@ def test_stage_proposal_degrades_when_active_conflicts_raises(tmp_cfg):
 # --- cap enforcement --------------------------------------------------------
 def test_enforce_cap_drops_oldest_staged():
     proposals = [
-        mod.StagedProposal(f"p{i}", "synthesis", {}, (), (), "", (), "t")
-        for i in range(4)
+        mod.StagedProposal(f"p{i}", "synthesis", {}, (), (), "", (), "t") for i in range(4)
     ]
     kept = mod._enforce_cap(proposals, 2)
 
@@ -360,9 +385,7 @@ def test_drop_staged_removes_by_id_and_reports(tmp_cfg):
 
 
 def test_resolve_command_uses_first_conflict_id():
-    p = mod.StagedProposal(
-        "dream-x-abc", "x", {}, (), ("conf-42",), "", (), "2026-01-01T00:00:00Z"
-    )
+    p = mod.StagedProposal("dream-x-abc", "x", {}, (), ("conf-42",), "", (), "2026-01-01T00:00:00Z")
     cmd = mod.resolve_command(p)
     assert "conf-42" in cmd
     assert cmd.startswith("memo operational conflict resolve conf-42")

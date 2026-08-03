@@ -401,9 +401,7 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
                 results[i] = [0.0] * self.expected_dims
                 continue
             if self._query_cache is not None:
-                cached = self._query_cache.get(
-                    f"{self._model_identity()}:{self.expected_dims}:{q}"
-                )
+                cached = self._query_cache.get(f"{self._model_identity()}:{self.expected_dims}:{q}")
                 if cached is not None:
                     results[i] = cached
                     continue

@@ -309,7 +309,10 @@ def _created_used(state_dir: Path) -> float | None:
     from memo import outcome
 
     u = outcome.compute_utilities(state_dir)
-    return created_used_ratio(int((u.get("surfaced_total", 0) and u.get("grounded_total", 0)) or 0), int(u.get("surfaced_total", 0) or 0))
+    return created_used_ratio(
+        int((u.get("surfaced_total", 0) and u.get("grounded_total", 0)) or 0),
+        int(u.get("surfaced_total", 0) or 0),
+    )
 
 
 def _latency_percentiles(state_dir: Path) -> tuple[float | None, float | None]:

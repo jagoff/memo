@@ -16,11 +16,7 @@ from memo import dream_ledger as mod
 
 
 def _is_hex_id(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 32
-        and all(c in string.hexdigits for c in value)
-    )
+    return isinstance(value, str) and len(value) == 32 and all(c in string.hexdigits for c in value)
 
 
 # --- record_action -------------------------------------------------------
@@ -332,9 +328,7 @@ def test_resolve_open_actions_reinforces_still_archived(tmp_path: Path) -> None:
     from datetime import UTC, datetime, timedelta
 
     old = datetime(2020, 1, 1, tzinfo=UTC)
-    mod.record_action(
-        tmp_path, action="archive_stale", affected_ids=["gone9999"], now=old
-    )
+    mod.record_action(tmp_path, action="archive_stale", affected_ids=["gone9999"], now=old)
     # Nothing came back to life -> reinforced.
     out = mod.resolve_open_actions(tmp_path, lambda _mid: False, now=old + timedelta(days=1))
     assert out["reinforced"] == 1
@@ -346,10 +340,10 @@ def test_resolve_open_actions_flags_resurrected_as_rollback(tmp_path: Path) -> N
     from datetime import UTC, datetime, timedelta
 
     old = datetime(2020, 1, 1, tzinfo=UTC)
-    aid = mod.record_action(
-        tmp_path, action="supersede", affected_ids=["back0001"], now=old
+    aid = mod.record_action(tmp_path, action="supersede", affected_ids=["back0001"], now=old)
+    out = mod.resolve_open_actions(
+        tmp_path, lambda mid: mid == "back0001", now=old + timedelta(days=1)
     )
-    out = mod.resolve_open_actions(tmp_path, lambda mid: mid == "back0001", now=old + timedelta(days=1))
     assert out["rollback_candidate"] == 1
     folded = mod.get_action(tmp_path, str(aid))
     assert folded["outcome"]["outcome"] == "rollback_candidate"

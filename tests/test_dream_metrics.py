@@ -74,47 +74,32 @@ def test_noise_gate_tolerates_epsilon_representation_noise() -> None:
 
 
 def test_latency_gate_passes_within_both_ratio_and_budget() -> None:
-    assert (
-        mod.latency_gate(100.0, 120.0, headroom=1.25, hook_budget_ms=3000.0) is True
-    )
+    assert mod.latency_gate(100.0, 120.0, headroom=1.25, hook_budget_ms=3000.0) is True
 
 
 def test_latency_gate_rejects_over_absolute_budget() -> None:
     # Ratio would pass (baseline huge) but the absolute hook budget is blown.
-    assert (
-        mod.latency_gate(100.0, 4000.0, headroom=1000.0, hook_budget_ms=3000.0)
-        is False
-    )
+    assert mod.latency_gate(100.0, 4000.0, headroom=1000.0, hook_budget_ms=3000.0) is False
 
 
 def test_latency_gate_rejects_ratio_regression_within_budget() -> None:
     # Under the absolute budget, but 200ms > 1.25 * 100ms baseline.
-    assert (
-        mod.latency_gate(100.0, 200.0, headroom=1.25, hook_budget_ms=3000.0) is False
-    )
+    assert mod.latency_gate(100.0, 200.0, headroom=1.25, hook_budget_ms=3000.0) is False
 
 
 def test_latency_gate_skips_ratio_when_baseline_rounds_to_zero() -> None:
     # round(0.04, 1) == 0.0 -> the ratio is meaningless and skipped; only the
     # absolute budget matters, so a large-but-under-budget latency passes.
-    assert (
-        mod.latency_gate(0.04, 500.0, headroom=1.25, hook_budget_ms=3000.0) is True
-    )
+    assert mod.latency_gate(0.04, 500.0, headroom=1.25, hook_budget_ms=3000.0) is True
 
 
 def test_latency_gate_enforces_budget_even_when_ratio_skipped() -> None:
     # Zero-ish baseline skips the ratio, but the absolute budget still bites.
-    assert (
-        mod.latency_gate(0.04, 4000.0, headroom=1.25, hook_budget_ms=3000.0)
-        is False
-    )
+    assert mod.latency_gate(0.04, 4000.0, headroom=1.25, hook_budget_ms=3000.0) is False
 
 
 def test_latency_gate_boundary_at_exact_budget_passes() -> None:
-    assert (
-        mod.latency_gate(100.0, 3000.0, headroom=100.0, hook_budget_ms=3000.0)
-        is True
-    )
+    assert mod.latency_gate(100.0, 3000.0, headroom=100.0, hook_budget_ms=3000.0) is True
 
 
 # --- graduation_gate ---------------------------------------------------------
@@ -254,9 +239,7 @@ def test_correction_rate_all_positive_is_zero() -> None:
 
 
 def test_correction_rate_all_bad_is_one() -> None:
-    rate, sample = mod.correction_rate(
-        [{"verdict": "negative"}, {"verdict": "correction"}]
-    )
+    rate, sample = mod.correction_rate([{"verdict": "negative"}, {"verdict": "correction"}])
     assert rate == 1.0
     assert sample == 2
 

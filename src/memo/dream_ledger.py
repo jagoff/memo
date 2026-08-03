@@ -258,9 +258,7 @@ def open_actions(state_dir: Path, *, limit: int = 500) -> list[dict[str, Any]]:
     entries = _read_all(state_dir)
     resolved = {e.get("action_id") for e in entries if e.get("kind") == _OUTCOME}
     unresolved = [
-        e
-        for e in entries
-        if e.get("kind") == _ACTION and e.get("entry_id") not in resolved
+        e for e in entries if e.get("kind") == _ACTION and e.get("entry_id") not in resolved
     ]
     if limit >= 0:
         return unresolved[:limit]
@@ -351,7 +349,10 @@ def record_from_receipt(
             candidate_ids=archived,
             affected_ids=archived,
             evidence={"merged_id": item.get("merged_id"), "archived": len(archived)},
-            reversal={"type": "inactive_md_multi", "handles": [f"inactive/{a}.md" for a in archived]},
+            reversal={
+                "type": "inactive_md_multi",
+                "handles": [f"inactive/{a}.md" for a in archived],
+            },
         ):
             _bump("merge")
 
@@ -392,7 +393,7 @@ def resolve_open_actions(
     skipped}``. ``is_live`` is injected so this stays MLX-free and unit-testable.
     Never raises.
     """
-    cutoff = (now or datetime.now(UTC))
+    cutoff = now or datetime.now(UTC)
     out = {"reinforced": 0, "rollback_candidate": 0, "skipped": 0}
     reversible = {"supersede", "archive_stale", "merge"}
     for action in open_actions(state_dir):

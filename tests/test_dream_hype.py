@@ -414,9 +414,7 @@ def test_run_hype_pass_missing_source_not_counted_as_empty(tmp_path, monkeypatch
     cfg = _FakeCfg(tmp_path / "memvec.db")
 
     llm_called: list[int] = []
-    monkeypatch.setattr(
-        dh, "_llm_questions", lambda *a, **k: llm_called.append(1) or ["q?"]
-    )
+    monkeypatch.setattr(dh, "_llm_questions", lambda *a, **k: llm_called.append(1) or ["q?"])
 
     res = dh.run_hype_pass(cfg, mem, dry_run=False)
     assert res["status"] == "done"

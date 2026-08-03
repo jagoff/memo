@@ -100,7 +100,7 @@ def test_dashboard_http_responses_send_csp_and_browser_hardening(tmp_cfg) -> Non
         "<html></html>",
         5,
         csp="test-csp",
-        capability_token="test-token",  # noqa: S106 - test-only capability
+        capability_token="test-token",
     )
     headers: list[tuple[str, str]] = []
     fake = SimpleNamespace(

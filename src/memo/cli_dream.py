@@ -419,9 +419,7 @@ def dream_run(
             if dry_run
             else DreamCheckpoint(_state_path(cfg) / CHECKPOINT_NAME, _prev_fp or "cold")
         )
-        rec = PhaseRecorder(
-            receipt, mem=mem, checkpoint=_checkpoint, resume=resume and not dry_run
-        )
+        rec = PhaseRecorder(receipt, mem=mem, checkpoint=_checkpoint, resume=resume and not dry_run)
 
         # Fase 7 — dream conflict-staging. Inside a run with
         # MEMO_DREAM_STAGING_ENABLED a write-conflict on a dream-minted memory
@@ -465,9 +463,7 @@ def dream_run(
                 receipt["index_health"] = check_index_health(cfg, mem, repair=True)
                 _ih_errs = receipt["index_health"].get("errors") or []
                 if _ih_errs:
-                    receipt["errors"].append(
-                        f"index_health: {len(_ih_errs)} sub-check error(s)"
-                    )
+                    receipt["errors"].append(f"index_health: {len(_ih_errs)} sub-check error(s)")
             except Exception as exc:
                 receipt["errors"].append(f"index_health: {type(exc).__name__}: {exc}")
 
@@ -1310,14 +1306,16 @@ def dream_run(
             try:
                 res = rec.timed(
                     "synthesis",
-                    lambda: dream_incremental.run_or_skip(
-                        cfg.state_dir,
-                        "synthesis",
-                        dream_incremental.durable_content_fingerprint(mem),
-                        lambda: _run_synthesis(mem, dry_run=dry_run),
-                    )
-                    if _incremental
-                    else _run_synthesis(mem, dry_run=dry_run),
+                    lambda: (
+                        dream_incremental.run_or_skip(
+                            cfg.state_dir,
+                            "synthesis",
+                            dream_incremental.durable_content_fingerprint(mem),
+                            lambda: _run_synthesis(mem, dry_run=dry_run),
+                        )
+                        if _incremental
+                        else _run_synthesis(mem, dry_run=dry_run)
+                    ),
                     resumable=True,
                 )
                 if "error" in res:
@@ -1347,14 +1345,16 @@ def dream_run(
             try:
                 res = rec.timed(
                     "entities",
-                    lambda: dream_incremental.run_or_skip(
-                        cfg.state_dir,
-                        "entities",
-                        dream_incremental.durable_content_fingerprint(mem),
-                        lambda: _run_entities(mem, dry_run=dry_run),
-                    )
-                    if _incremental
-                    else _run_entities(mem, dry_run=dry_run),
+                    lambda: (
+                        dream_incremental.run_or_skip(
+                            cfg.state_dir,
+                            "entities",
+                            dream_incremental.durable_content_fingerprint(mem),
+                            lambda: _run_entities(mem, dry_run=dry_run),
+                        )
+                        if _incremental
+                        else _run_entities(mem, dry_run=dry_run)
+                    ),
                     resumable=True,
                 )
                 if "error" in res:
@@ -1878,8 +1878,12 @@ def dream_status() -> None:
 
 @dream_cmd.command(name="ledger")
 @click.option("--limit", type=int, default=30, help="Most recent ledger entries to show.")
-@click.option("--open", "open_only", is_flag=True, help="Show only still-open actions (no outcome yet).")
-@click.option("--json", "as_json", is_flag=True, help="Emit the ledger entries/summary as raw JSON.")
+@click.option(
+    "--open", "open_only", is_flag=True, help="Show only still-open actions (no outcome yet)."
+)
+@click.option(
+    "--json", "as_json", is_flag=True, help="Emit the ledger entries/summary as raw JSON."
+)
 def dream_ledger_cmd(limit: int, open_only: bool, as_json: bool) -> None:
     """Auditable learning ledger (Fase 3): the chain of dream mutations
     (supersede/merge/archive) and their later reinforced/rollback outcomes.
@@ -1906,7 +1910,9 @@ def dream_ledger_cmd(limit: int, open_only: bool, as_json: bool) -> None:
         parts = ", ".join(f"{k}={v}" for k, v in sorted(summary["by_action"].items()))
         console.print(f"  by action: {parts}")
     if not rows:
-        console.print("  [dim](no entries — enable MEMO_DREAM_LEDGER_ENABLED for the nightly run)[/dim]")
+        console.print(
+            "  [dim](no entries — enable MEMO_DREAM_LEDGER_ENABLED for the nightly run)[/dim]"
+        )
         return
     for r in rows:
         if r.get("kind") == "outcome":
@@ -1950,7 +1956,12 @@ def dream_index_health_cmd(repair: bool, as_json: bool) -> None:
 
 
 @dream_cmd.command(name="staging")
-@click.option("--resume", "do_resume", is_flag=True, help="Re-apply parked proposals whose conflicts are resolved.")
+@click.option(
+    "--resume",
+    "do_resume",
+    is_flag=True,
+    help="Re-apply parked proposals whose conflicts are resolved.",
+)
 @click.option("--drop", "drop_id", default=None, help="Drop a staged proposal by id.")
 @click.option("--json", "as_json", is_flag=True, help="Emit as raw JSON.")
 def dream_staging_cmd(do_resume: bool, drop_id: str | None, as_json: bool) -> None:
@@ -1962,7 +1973,11 @@ def dream_staging_cmd(do_resume: bool, drop_id: str | None, as_json: bool) -> No
     cfg = Config.from_env()
     if drop_id:
         ok = dream_staging.drop_staged(cfg, drop_id)
-        click.echo(json.dumps({"dropped": ok}) if as_json else (f"dropped {drop_id}" if ok else "not found"))
+        click.echo(
+            json.dumps({"dropped": ok})
+            if as_json
+            else (f"dropped {drop_id}" if ok else "not found")
+        )
         return
     if do_resume:
         mem = _get_memory(cfg)
@@ -1974,7 +1989,9 @@ def dream_staging_cmd(do_resume: bool, drop_id: str | None, as_json: bool) -> No
         click.echo(json.dumps([p.to_dict() for p in staged], indent=2, ensure_ascii=False))
         return
     if not staged:
-        console.print("[dim]no staged proposals (enable MEMO_DREAM_STAGING_ENABLED for the nightly run)[/dim]")
+        console.print(
+            "[dim]no staged proposals (enable MEMO_DREAM_STAGING_ENABLED for the nightly run)[/dim]"
+        )
         return
     console.print(f"[bold]dream staging:[/bold] {len(staged)} parked proposal(s)")
     for p in staged:
@@ -1984,11 +2001,17 @@ def dream_staging_cmd(do_resume: bool, drop_id: str | None, as_json: bool) -> No
 
 
 @dream_cmd.command(name="shadow")
-@click.option("--status", "show_status", is_flag=True, help="Per shadow-flag review rollup (default view).")
+@click.option(
+    "--status", "show_status", is_flag=True, help="Per shadow-flag review rollup (default view)."
+)
 @click.option("--promote", "promote_flag", default=None, help="Promote a review-ready shadow flag.")
-@click.option("--reject", "reject_flag", default=None, help="Reject a shadowed flag (needs --reason).")
+@click.option(
+    "--reject", "reject_flag", default=None, help="Reject a shadowed flag (needs --reason)."
+)
 @click.option("--reason", default="", help="Reason for --reject.")
-@click.option("--apply", "do_apply", is_flag=True, help="With --promote, persist the config change.")
+@click.option(
+    "--apply", "do_apply", is_flag=True, help="With --promote, persist the config change."
+)
 @click.option("--force-latency", is_flag=True, help="With --promote, override the latency ceiling.")
 @click.option("--json", "as_json", is_flag=True, help="Emit as raw JSON.")
 def dream_shadow_cmd(
@@ -2021,7 +2044,9 @@ def dream_shadow_cmd(
         click.echo(json.dumps(rows, indent=2, ensure_ascii=False))
         return
     if not rows:
-        console.print("[dim]no shadow-kind flags declared (classify a gate kind='shadow' to populate)[/dim]")
+        console.print(
+            "[dim]no shadow-kind flags declared (classify a gate kind='shadow' to populate)[/dim]"
+        )
         return
     console.print(f"[bold]dream shadow:[/bold] {len(rows)} shadow flag(s)")
     for r in rows:

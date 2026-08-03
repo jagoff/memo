@@ -45,9 +45,7 @@ def _reach_apply(monkeypatch, tmp_path):
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
     monkeypatch.setattr(dt, "build_labels", lambda cfg, **k: _one_label())
     monkeypatch.setattr(dt, "load_baseline", lambda sd: None)
-    monkeypatch.setattr(
-        dt, "search_min_sim", lambda *a, **k: (0.5, _metrics(0.2), _metrics(0.2))
-    )
+    monkeypatch.setattr(dt, "search_min_sim", lambda *a, **k: (0.5, _metrics(0.2), _metrics(0.2)))
 
     def _fake_search(mem, labels, *, k, floor, knob, current, grid, max_evals):
         if knob == _MMR:
@@ -89,7 +87,9 @@ def test_gate_enforced_blocks_apply_when_flag_on(tmp_path, monkeypatch):
 
 def test_gate_ok_applies_when_flag_on(tmp_path, monkeypatch):
     _reach_apply(monkeypatch, tmp_path)
-    monkeypatch.setattr(dream_metrics, "graduation_gate", lambda *a, **k: {"ok": True, "reasons": []})
+    monkeypatch.setattr(
+        dream_metrics, "graduation_gate", lambda *a, **k: {"ok": True, "reasons": []}
+    )
     monkeypatch.setenv("MEMO_DREAM_TUNE_STRICT_GATE_ENABLED", "1")
 
     res = dt.run_tuning_pass(_cfg(tmp_path), _StubMem(), k=5)

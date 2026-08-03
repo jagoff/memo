@@ -296,9 +296,7 @@ def check_index_health(cfg: Any, mem: Any, *, repair: bool = False) -> dict[str,
                 "SELECT memory_id, COUNT(*) AS n FROM hype_attempts "
                 "GROUP BY memory_id HAVING COUNT(*) > 1"
             ).fetchall()
-            offenders = [
-                {"memory_id": str(r["memory_id"]), "count": int(r["n"])} for r in rows
-            ]
+            offenders = [{"memory_id": str(r["memory_id"]), "count": int(r["n"])} for r in rows]
             checks["duplicate_hype_attempts"] = _summary(offenders)
             if repair and offenders:
                 removed = 0
@@ -341,13 +339,10 @@ def check_index_health(cfg: Any, mem: Any, *, repair: bool = False) -> dict[str,
     # -- 11. Stale caches (informational: embed-cache size vs live corpus) ----
     try:
         if _table_exists(conn, "repo_embedding_cache"):
-            cache_rows = conn.execute(
-                "SELECT COUNT(*) AS n FROM repo_embedding_cache"
-            ).fetchone()
+            cache_rows = conn.execute("SELECT COUNT(*) AS n FROM repo_embedding_cache").fetchone()
             live_mem = conn.execute("SELECT COUNT(*) AS n FROM meta").fetchone()
             by_model = conn.execute(
-                "SELECT model, dims, COUNT(*) AS n FROM repo_embedding_cache "
-                "GROUP BY model, dims"
+                "SELECT model, dims, COUNT(*) AS n FROM repo_embedding_cache GROUP BY model, dims"
             ).fetchall()
             sample: list[Any] = [
                 {
@@ -368,9 +363,7 @@ def check_index_health(cfg: Any, mem: Any, *, repair: bool = False) -> dict[str,
     except Exception as exc:
         errors.append(f"stale_caches: {exc}")
 
-    problem_count = sum(
-        v["count"] for name, v in checks.items() if name not in _INFORMATIONAL
-    )
+    problem_count = sum(v["count"] for name, v in checks.items() if name not in _INFORMATIONAL)
     status = "issues" if problem_count > 0 or errors else "ok"
 
     return {"status": status, "checks": checks, "repaired": repaired, "errors": errors}

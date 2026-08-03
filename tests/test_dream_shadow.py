@@ -163,9 +163,7 @@ def test_read_observations_excludes_event_rows(tmp_path: Path) -> None:
 # --- shadow_summary / review-ready ----------------------------------------------
 
 
-def test_shadow_summary_not_review_ready_before_enough_nights(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_shadow_summary_not_review_ready_before_enough_nights(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_SHADOW_REVIEW_NIGHTS", "3")
     _seed_nights(tmp_path, "MEMO_X", ["d1", "d2"], _WIN_ON)
     summary = mod.shadow_summary(tmp_path, "MEMO_X")
@@ -174,9 +172,7 @@ def test_shadow_summary_not_review_ready_before_enough_nights(
     assert summary["review_ready"] is False
 
 
-def test_shadow_summary_review_ready_after_enough_clean_nights(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_shadow_summary_review_ready_after_enough_clean_nights(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_SHADOW_REVIEW_NIGHTS", "3")
     _seed_nights(tmp_path, "MEMO_X", ["d1", "d2", "d3"], _WIN_ON)
     summary = mod.shadow_summary(tmp_path, "MEMO_X")
@@ -184,9 +180,7 @@ def test_shadow_summary_review_ready_after_enough_clean_nights(
     assert summary["review_ready"] is True
 
 
-def test_shadow_summary_not_review_ready_after_decision(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_shadow_summary_not_review_ready_after_decision(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_SHADOW_REVIEW_NIGHTS", "3")
     _seed_nights(tmp_path, "MEMO_X", ["d1", "d2", "d3"], _WIN_ON)
     assert mod.shadow_summary(tmp_path, "MEMO_X")["review_ready"] is True
@@ -208,9 +202,7 @@ def test_promote_refuses_when_not_review_ready(tmp_path: Path, monkeypatch) -> N
     assert "not review-ready" in result["error"]
 
 
-def test_promote_returns_config_set_command_when_review_ready(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_promote_returns_config_set_command_when_review_ready(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_SHADOW_REVIEW_NIGHTS", "3")
     monkeypatch.setattr(mod, "_gate", lambda f: _StubGate(shadow_metric="precision"))
     monkeypatch.setattr(mod, "_env_to_path", lambda: {"MEMO_X": "recall.graph_boost"})
@@ -223,9 +215,7 @@ def test_promote_returns_config_set_command_when_review_ready(
     assert result["command"] == "memo config set recall.graph_boost true"
 
 
-def test_promote_export_fallback_when_no_markdown_key(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_promote_export_fallback_when_no_markdown_key(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_SHADOW_REVIEW_NIGHTS", "2")
     monkeypatch.setattr(mod, "_gate", lambda f: _StubGate(shadow_metric="precision"))
     monkeypatch.setattr(mod, "_env_to_path", lambda: {})  # no markdown-config surface
@@ -237,9 +227,7 @@ def test_promote_export_fallback_when_no_markdown_key(
     assert "command" not in result
 
 
-def test_promote_refuses_latency_metric_over_ceiling(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_promote_refuses_latency_metric_over_ceiling(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_SHADOW_REVIEW_NIGHTS", "3")
     monkeypatch.setenv("MEMO_FLAG_GRADUATION_LATENCY_CEILING_MS", "100")
     monkeypatch.setattr(mod, "_gate", lambda f: _StubGate(shadow_metric="latency_ms"))
@@ -252,9 +240,7 @@ def test_promote_refuses_latency_metric_over_ceiling(
     assert "exceeds ceiling" in result["error"]
 
 
-def test_promote_latency_over_ceiling_passes_with_force(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_promote_latency_over_ceiling_passes_with_force(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MEMO_SHADOW_REVIEW_NIGHTS", "3")
     monkeypatch.setenv("MEMO_FLAG_GRADUATION_LATENCY_CEILING_MS", "100")
     monkeypatch.setattr(mod, "_gate", lambda f: _StubGate(shadow_metric="latency_ms"))
