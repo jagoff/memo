@@ -114,8 +114,10 @@ Expected: three lines, each `1`.
 - [ ] **Step 4: Verify the placeholders are untouched**
 
 Run: `grep -c '__HOME__\|__MEMO_BIN__' launchd/com.memo.dream.plist`
-Expected: `3` (one `__MEMO_BIN__` in `ProgramArguments`, two `__HOME__` in
-the log paths — unchanged from before this edit).
+Expected: `5` (the header comment's prose mentions both placeholders on one
+line, plus `__MEMO_BIN__` in `ProgramArguments` and `__HOME__` in the two
+log paths and the `PATH` entry — unchanged from before this edit; the exact
+number matters less than that it's identical before and after).
 
 - [ ] **Step 5: Commit**
 
