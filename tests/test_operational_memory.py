@@ -1280,3 +1280,38 @@ def test_update_and_delete_enforce_native_policy_and_trust_ceiling(
     updated = memory.update(record.id, content="Design B is active.")
     assert updated is not None
     assert updated.body == "Design B is active."
+
+
+def test_conflict_list_shows_only_blocking_by_default(tmp_path):
+    """`conflict resolve` needs an id the CLI had no way to produce."""
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    runner = CliRunner()
+
+    opened = runner.invoke(
+        cli,
+        ["operational", "conflict", "open", "billing_provider", "stripe vs adyen"],
+        env=env,
+    )
+    assert opened.exit_code == 0, opened.output
+    conflict_id = json.loads(opened.output)["id"]
+
+    listed = runner.invoke(cli, ["operational", "conflict", "list"], env=env)
+    assert listed.exit_code == 0, listed.output
+    assert [row["id"] for row in json.loads(listed.output)] == [conflict_id]
+
+    resolved = runner.invoke(
+        cli,
+        ["operational", "conflict", "resolve", conflict_id, "qa artifact", "--actor", "fer"],
+        env=env,
+    )
+    assert resolved.exit_code == 0, resolved.output
+
+    after = runner.invoke(cli, ["operational", "conflict", "list"], env=env)
+    assert json.loads(after.output) == []
+
+    every = runner.invoke(cli, ["operational", "conflict", "list", "--all"], env=env)
+    assert [row["id"] for row in json.loads(every.output)] == [conflict_id]

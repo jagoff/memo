@@ -378,7 +378,7 @@ def test_run_negative_capture_pass_noop_when_disabled(mem_with_stub, monkeypatch
 # happens via `maintain` never mints its ⛔ lesson.
 
 
-def _seed_and_run_maintain(mock_memory, tmp_path, *, capture_on: bool):
+def _seed_and_run_maintain(mock_memory, tmp_path, *, capture_on: bool, expect_exit: int = 0):
     import json as _json
     from unittest.mock import patch
 
@@ -408,7 +408,9 @@ def _seed_and_run_maintain(mock_memory, tmp_path, *, capture_on: bool):
             ["maintain", "--skip-consolidate", "--skip-stale", "--skip-synthesize", "--json"],
             env=env,
         )
-    assert res.exit_code == 0, res.output
+    # A run that deliberately injects a pass failure exits 1 (P1 audit); the
+    # receipt is complete either way, which is what these tests assert on.
+    assert res.exit_code == expect_exit, res.output
     receipt = _json.loads(res.output[res.output.index("{") :])
     return old, new, receipt
 
@@ -446,7 +448,9 @@ def test_maintain_supersede_surfaces_capture_error_in_receipt(mock_memory, tmp_p
         lambda *a, **k: {"status": "error", "error": "RuntimeError: boom", "captured_id": None},
     )
 
-    _old, _new, receipt = _seed_and_run_maintain(mock_memory, tmp_path, capture_on=True)
+    _old, _new, receipt = _seed_and_run_maintain(
+        mock_memory, tmp_path, capture_on=True, expect_exit=1
+    )
 
     assert receipt["superseded"], receipt  # supersede completed despite the error
     assert any("negative_capture: RuntimeError: boom" in e for e in receipt["errors"])

@@ -256,24 +256,37 @@ def _conflict_member_ids(row: dict[str, Any]) -> list[str]:
     return out
 
 
+_TOKEN_SPLIT_RE = re.compile(r"[^0-9a-z]+")
+_MIN_TOKEN_LEN = 3
+
+
+def _topic_tokens(text: str) -> set[str]:
+    """Significant whole-word tokens of a topic, case- and punctuation-folded."""
+    return {t for t in _TOKEN_SPLIT_RE.split(str(text).casefold()) if len(t) >= _MIN_TOKEN_LEN}
+
+
 def _conflict_matches_query(row: dict[str, Any], query_cf: str) -> bool:
     """Whether a write whose topic is ``query_cf`` is subject to ``row``.
 
     Id-scoped (semantic-contradiction) conflicts match ONLY when the query
     references one of their subject memory ids — never their prose ``summary``,
     so common words like "memo"/"contradiction"/"between" no longer freeze
-    unrelated writes. Topic-scoped (manually-opened) conflicts keep matching
-    on their ``topic`` (not the prose summary).
+    unrelated writes.
+
+    Topic-scoped (manually-opened) conflicts match only when the write's topic
+    contains EVERY significant token of the conflict topic, as whole words. A
+    substring or single-token overlap is not enough: a conflict opened on
+    ``test_conflict`` must not freeze "test coverage for the recall hook". A
+    topic with no significant token freezes nothing — it stays resolvable by id
+    through ``memo operational conflict resolve``.
     """
     member_ids = _conflict_member_ids(row)
     if member_ids:
         return any(mid.casefold() in query_cf for mid in member_ids)
-    topic_cf = str(row.get("topic", "")).casefold()
-    if not topic_cf:
+    topic_tokens = _topic_tokens(row.get("topic", ""))
+    if not topic_tokens:
         return False
-    if query_cf in topic_cf or topic_cf in query_cf:
-        return True
-    return any(token in topic_cf for token in query_cf.split() if len(token) >= 3)
+    return topic_tokens.issubset(_topic_tokens(query_cf))
 
 
 class OperationalStore:

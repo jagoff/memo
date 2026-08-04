@@ -801,7 +801,9 @@ class _ConsolidateOpsMixin(_MemoryBase):
                     else:
                         result["staged"] = True  # parked pending conflict resolution
                 except Exception as exc:
-                    _log.warning("synthesize: save failed: %s", exc)
+                    detail = f"{type(exc).__name__}: {exc}"
+                    result["error"] = detail
+                    _log.warning("synthesize: save failed: %s", detail)
 
             out.append(result)
 
