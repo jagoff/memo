@@ -195,6 +195,26 @@ SPECS: tuple[FlagSpec, ...] = (
         "Default off; ambient recall does not use context packs.",
     ),
     _spec(
+        "MEMO_CONTEXT_GRAPH_COMPACT",
+        "bool",
+        False,
+        "search",
+        "Collapse memo_context_pack hits that share a rare (IDF-weighted) entity "
+        "with a higher-ranked hit before they occupy a bucket slot. Mirrors "
+        "MEMO_CHAT_GRAPH_COMPACT's algorithm via a thin adapter. Default off; "
+        "no dedicated eval harness exists yet for memo_context_pack.",
+    ),
+    _spec(
+        "MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF",
+        "float",
+        0.5,
+        "search",
+        "Minimum IDF-weighted entity overlap required to collapse two "
+        "memo_context_pack hits (matches MEMO_CHAT_GRAPH_COMPACT_MIN_IDF's "
+        "default). Conservative starting point.",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_CONTEXT_SURFACE",
         "bool",
         True,

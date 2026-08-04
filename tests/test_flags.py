@@ -77,6 +77,15 @@ def test_evidence_graph_compact_vars_are_registered_not_unknown() -> None:
     assert flags.validate(env=env) == []
 
 
+def test_context_graph_compact_flags_registered() -> None:
+    assert flags.flag_bool("MEMO_CONTEXT_GRAPH_COMPACT") is False
+    assert flags.flag_float("MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF") == 0.5
+    env = {"MEMO_CONTEXT_GRAPH_COMPACT": "1", "MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF": "0.7"}
+    assert flags.flag_bool("MEMO_CONTEXT_GRAPH_COMPACT", env=env) is True
+    assert flags.flag_float("MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF", env=env) == 0.7
+    assert flags.validate(env=env) == []
+
+
 def test_typed_coercion() -> None:
     env = {
         "MEMO_RECALL_TOP_K": "7",
