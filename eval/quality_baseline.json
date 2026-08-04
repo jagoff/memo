@@ -47,6 +47,7 @@
     "src/memo/collaborative.py": 1,
     "src/memo/config.py": 2,
     "src/memo/consolidation.py": 3,
+    "src/memo/context_compact.py": 1,
     "src/memo/context_surface.py": 1,
     "src/memo/contextual.py": 4,
     "src/memo/contextual_retrieval.py": 1,
