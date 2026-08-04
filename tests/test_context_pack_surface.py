@@ -148,3 +148,54 @@ def test_context_pack_mcp_logs_consult(mem_with_stub, monkeypatch) -> None:
         }
     ]
     assert captured["kwargs"]["read_through"] is False
+
+
+class _CompactFakeGraph:
+    def memory_entities(self, memory_id):
+        if memory_id in ("m1", "m2"):
+            return [{"name": "proyecto-omega", "type": "topic", "mention_count": 1}]
+        return []
+
+    def total_indexed_memories(self):
+        return 10
+
+    def entity_doc_freqs(self, names):
+        return {"proyecto-omega": 1.0} if "proyecto-omega" in names else {}
+
+
+def _omega_hits():
+    return [
+        _hit(id="m1", title="Nota uno", score=0.9, body="cuerpo uno sobre proyecto omega"),
+        _hit(id="m2", title="Nota dos", score=0.85, body="cuerpo dos sobre proyecto omega"),
+    ]
+
+
+def test_context_pack_graph_compact_collapses_when_enabled(mem_with_stub, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_CONTEXT_PACK", "1")
+    monkeypatch.setenv("MEMO_CONTEXT_GRAPH_COMPACT", "1")
+    mem_with_stub.search = lambda *a, **kw: _omega_hits()  # type: ignore[method-assign]
+    monkeypatch.setattr(mem_with_stub, "graph", _CompactFakeGraph())
+    server = build_server(memory=mem_with_stub)
+    tool = asyncio.run(server.get_tool("memo_context_pack"))
+
+    payload = tool.fn(question="qué sabés del proyecto omega?")
+
+    rows = payload["current_facts"] + payload["supporting_context"] + payload["stale_or_conflicting"]
+    ids = {row["id"] for row in rows}
+    assert len(ids) == 1
+    assert ids <= {"m1", "m2"}
+
+
+def test_context_pack_graph_compact_noop_when_disabled(mem_with_stub, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_CONTEXT_PACK", "1")
+    monkeypatch.setenv("MEMO_CONTEXT_GRAPH_COMPACT", "0")
+    mem_with_stub.search = lambda *a, **kw: _omega_hits()  # type: ignore[method-assign]
+    monkeypatch.setattr(mem_with_stub, "graph", _CompactFakeGraph())
+    server = build_server(memory=mem_with_stub)
+    tool = asyncio.run(server.get_tool("memo_context_pack"))
+
+    payload = tool.fn(question="qué sabés del proyecto omega?")
+
+    rows = payload["current_facts"] + payload["supporting_context"] + payload["stale_or_conflicting"]
+    ids = {row["id"] for row in rows}
+    assert ids == {"m1", "m2"}
