@@ -150,4 +150,21 @@ SPECS: tuple[FlagSpec, ...] = (
         "graph",
         "Deprecated compatibility switch; graph-only expansion is not served.",
     ),
+    _spec(
+        "MEMO_EVIDENCE_GRAPH_COMPACT",
+        "bool",
+        False,
+        "graph",
+        "Collapse memo_evidence_pack hits sharing a rare entity into one "
+        "representative before packing (citing absorbed hits by id).",
+    ),
+    _spec(
+        "MEMO_EVIDENCE_GRAPH_COMPACT_MIN_IDF",
+        "float",
+        0.5,
+        "graph",
+        "Minimum IDF-weighted entity overlap required to collapse two "
+        "evidence_pack hits into one representative.",
+        min_val=0.0,
+    ),
 )
