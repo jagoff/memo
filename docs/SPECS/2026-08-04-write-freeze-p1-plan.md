@@ -613,6 +613,25 @@ gh pr create --fill --base master
 
 ---
 
+## Follow-ups this change surfaced
+
+`receipt["errors"]` mixes real pass failures with benign outcomes, which is a
+large part of why nobody could act on it. Two cases found while implementing:
+
+1. **Fixed here.** `crush_cache: FileNotFoundError` was recorded when the cache
+   directory simply did not exist yet. With the new exit code, every first
+   `memo maintain` on a fresh install would have reported failure. It is now
+   treated as "nothing to evict".
+2. **Left alone, deliberately.** `vacuum <id>: record is no longer deleted
+   before cutoff` (`cli_maintain.py:369`) fires when a row was restored or
+   already hard-deleted between listing and acting — a benign race, recorded as
+   an error. It now makes `memo maintain --vacuum` exit 1. Impact is nil for the
+   nightly (`--vacuum` is manual and opt-in, and the nightly script does not
+   pass it), and reclassifying it would mean changing the subject assertion of a
+   housekeeping *contract* test. The right fix is a severity channel on the
+   receipt so `errors` means "failed" and a separate key means "skipped" —
+   worth doing, but as its own change, not smuggled into this one.
+
 ## Out of scope
 
 - The 29 remaining blocking `semantic_contradiction` conflicts. They have real
