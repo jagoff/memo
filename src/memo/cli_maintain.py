@@ -735,6 +735,11 @@ def maintain_cmd(
             receipt["crush_cache_evicted"] = CrushCache(cfg.state_dir).evict_expired(
                 ttl_days=flag_crusher_cache_ttl_days()
             )
+    except FileNotFoundError:
+        # No cache directory yet (fresh install, or nothing was ever crushed):
+        # there is nothing to evict. Not a failure — recording it as one would
+        # make every first run of a new install report an error.
+        pass
     except Exception as exc:
         receipt["errors"].append(f"crush_cache: {type(exc).__name__}: {exc}")
 
@@ -807,6 +812,13 @@ def maintain_cmd(
         except Exception as exc:
             receipt["errors"].append(f"outcome: {type(exc).__name__}: {exc}")
 
+    # A refused or failed synthesis save is a pass failure, not a quiet skip.
+    # Fold it in before the receipt is persisted so it reaches the stored run,
+    # the operator, and the exit code alike.
+    for item in receipt["synthesized"]:
+        if item.get("error"):
+            receipt["errors"].append(f"synthesize: {item['error']}")
+
     # Persist receipt + timestamp (the daily guard reads the timestamp). Even
     # a dry-run stamps so a preview doesn't immediately re-trigger; the guard
     # cares only about "ran recently".
@@ -829,6 +841,8 @@ def maintain_cmd(
 
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
+        if receipt["errors"] and not dry_run:
+            raise SystemExit(1)
         return
 
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
@@ -859,7 +873,10 @@ def maintain_cmd(
         )
     if receipt["errors"]:
         for e in receipt["errors"]:
-            console.print(f"  [yellow]warn:[/yellow] {e}")
+            console.print(f"  [red]error:[/red] {e}")
+        # A dry run changed nothing, so it reports without failing.
+        if not dry_run:
+            raise SystemExit(1)
 
 
 @maintain_cmd.command(name="undo")
