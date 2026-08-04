@@ -670,3 +670,49 @@ This also exposes a weakness in the gate itself: it compares code against a
 drifting corpus, so it fires on corpus change and cannot distinguish that from a
 ranking regression. Worth its own follow-up — pin the gate to a frozen corpus
 snapshot, or report corpus delta separately from code delta.
+
+## Task 4 result — verified against the live store
+
+`uv run --no-sync memo maintain`, 2026-08-04, after the fix and after resolving
+the three abandoned conflicts:
+
+```
+tantivy update_meta failed: normalize() argument 2 must be str, not None
+memo maintain
+  contradictions superseded: 5 (archive), evolutions marked: 45
+  duplicate clusters merged: 15
+  forget_after TTLs applied: 0
+  stale memories archived: 0
+  emergent syntheses: 10 saved, 10 proposed
+  synthesis: 10 new clusters synthesized
+  outcome loop: roi_score re-derived for 167 memories, 0 dead-weight archived
+EXIT=0   (19:41 wall clock)
+```
+
+Against the pre-fix run earlier the same day:
+
+| | before | after |
+|---|---|---|
+| `synthesize: save failed` | present (write frozen) | gone |
+| emergent syntheses | 9 saved / 10 proposed | **10 / 10** |
+| exit code | 0 while losing candidates | 0, nothing failed |
+
+The synthesis pass no longer loses candidates, and exit 0 now means what it says.
+
+### Two things this run surfaced
+
+1. **`tantivy update_meta failed: normalize() argument 2 must be str, not None`**
+   — printed to the console but absent from `receipt["errors"]`, so it did not
+   reach the exit code. This is the same silent-failure class P1 addressed, in a
+   subsystem P1 did not touch. Unrelated to this change (nothing here goes near
+   the tantivy index). Deserves its own fix; it is now the clearest remaining
+   instance of "a failure that only exists as a console line".
+
+2. **19:41 wall clock**, against the ~10 min pre-fix baseline. The run did
+   roughly twice the work (15 duplicate clusters merged versus 4, 45 evolutions
+   versus 48, 167 memories reconciled versus 149), so this is not evidence of a
+   slowdown from the change — but it is well past any reasonable interactive
+   budget and is exactly P2's subject.
+
+3. **`0 dead-weight archived`** again, with 5,457 never-accessed candidates in
+   the corpus. Unchanged by this work, and the core of P0.
