@@ -21,34 +21,39 @@
 
 `~/.local/share/memo/operational-state.json` holds 82 conflicts, 33 of them
 blocking (`freeze_write=true` ∧ `lifecycle_state ∈ {detected, acknowledged}`).
-Four are abandoned QA artifacts with no subject memories:
+Three are abandoned QA artifacts with no subject memories:
 
 | id | topic | summary |
 |---|---|---|
 | `conflict-9a4e7272767009fa` | `test_conflict` | test conflict |
 | `conflict-bf2df3acb5445436` | `test_conflict` | test conflict |
 | `conflict-eb771c58abebb8f7` | `test_conflict` | test conflict |
-| `conflict-be01f617aa5d8d6e` | `zzz_mcp_qa_probe_conflict` | Testing memo_conflict_open from MCP QA audit |
 
-Because they carry no `metadata.memory_ids`, `_conflict_matches_query` falls to
-its topic branch, whose last line is:
+A fourth QA artifact, `conflict-be01f617aa5d8d6e` (topic
+`zzz_mcp_qa_probe_conflict`), matches the same over-broad rule but carries
+`freeze_write: false`, so it never refused a write. It is left alone.
+
+Because the three carry no `metadata.memory_ids`, `_conflict_matches_query`
+falls to its topic branch, whose last line is:
 
 ```python
 return any(token in topic_cf for token in query_cf.split() if len(token) >= 3)
 ```
 
 `token in topic_cf` is a substring test against the conflict's topic, so any
-write whose topic contains the word `test` matches `test_conflict`, and any
-write containing `mcp` matches `zzz_mcp_qa_probe_conflict`. Verified against the
-live function:
+write whose topic contains the word `test` matches `test_conflict`. Verified
+end-to-end through `WritePolicyEngine.preflight` against the live store, old
+rule versus new:
 
 ```
-FROZEN by ['test_conflict']              | test coverage for the recall hook
-FROZEN by ['zzz_mcp_qa_probe_conflict']  | mcp server registration
-FROZEN by ['zzz_mcp_qa_probe_conflict']  | add mcp tool for graph
-FROZEN by ['test_conflict']              | flaky test in CI
-ok                                       | postgres not mongo
+ REFUSED (before) ->  allowed (now) | test coverage for the recall hook
+ allowed (before) ->  allowed (now) | mcp server registration
+ REFUSED (before) ->  allowed (now) | flaky test in CI
+ allowed (before) ->  allowed (now) | postgres not mongo
 ```
+
+Measure through `preflight`, not through `_conflict_matches_query` directly —
+the matcher ignores `freeze_write`, so a direct call overstates the blast radius.
 
 `tests/test_write_freeze_gc.py` already fixed this class of bug for *id-scoped*
 semantic-contradiction conflicts. The topic-scoped branch is the remaining hole.
@@ -348,16 +353,16 @@ Run, and read the output before continuing:
 memo operational conflict list
 ```
 
-Then resolve exactly the four QA artifacts identified in the context table:
+Then resolve exactly the three QA artifacts identified in the context table:
 ```bash
 for id in conflict-9a4e7272767009fa conflict-bf2df3acb5445436 \
-          conflict-eb771c58abebb8f7 conflict-be01f617aa5d8d6e; do
+          conflict-eb771c58abebb8f7; do
   memo operational conflict resolve "$id" "abandoned QA artifact, closed during P1 audit" --actor fer
 done
 ```
 
-Verify none of the four remain and that the count of blocking conflicts dropped
-by exactly four:
+Verify none of the three remain and that the count of blocking conflicts dropped
+by exactly three (33 → 30):
 ```bash
 memo operational conflict list | grep -c '"id"'
 ```

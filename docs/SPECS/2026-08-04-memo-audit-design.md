@@ -93,6 +93,16 @@ A conflict whose payload reads `test conflict` is freezing writes in the
 production store, and the synthesis pass silently lost its output. The
 `consolidation` pass separately timed out. **The command exited 0.**
 
+Follow-up measurement (2026-08-04, after the spec was written): three abandoned
+QA conflicts share the topic `test_conflict`, all with `freeze_write: true`.
+Because `_conflict_matches_query` substring-matched the write's tokens against
+the conflict topic, **every durable write whose topic contained the token
+`test` was refused**. Confirmed through `WritePolicyEngine.preflight` against
+the live store. A fourth QA artifact (`zzz_mcp_qa_probe_conflict`) matches the
+same broken rule but has `freeze_write: false` and never refused anything —
+measure blast radius through `preflight`, not through the matcher, which
+ignores the freeze flag.
+
 ### Fix
 
 1. Resolve or purge `conflict-9a4e7272767009fa` and audit for other synthetic
