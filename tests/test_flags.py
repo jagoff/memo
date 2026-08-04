@@ -64,7 +64,7 @@ def test_graph_integration_flags_have_safe_defaults(tmp_path: Path) -> None:
 
 def test_evidence_graph_compact_flags_have_safe_defaults(tmp_path: Path) -> None:
     env = _isolated_env(tmp_path)
-    assert flags.flag_bool("MEMO_EVIDENCE_GRAPH_COMPACT", env=env) is False
+    assert flags.flag_bool("MEMO_EVIDENCE_GRAPH_COMPACT", env=env) is True
     assert flags.flag_float("MEMO_EVIDENCE_GRAPH_COMPACT_MIN_IDF", env=env) == 0.5
 
 
@@ -78,10 +78,10 @@ def test_evidence_graph_compact_vars_are_registered_not_unknown() -> None:
 
 
 def test_context_graph_compact_flags_registered() -> None:
-    assert flags.flag_bool("MEMO_CONTEXT_GRAPH_COMPACT") is False
+    assert flags.flag_bool("MEMO_CONTEXT_GRAPH_COMPACT") is True
     assert flags.flag_float("MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF") == 0.5
-    env = {"MEMO_CONTEXT_GRAPH_COMPACT": "1", "MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF": "0.7"}
-    assert flags.flag_bool("MEMO_CONTEXT_GRAPH_COMPACT", env=env) is True
+    env = {"MEMO_CONTEXT_GRAPH_COMPACT": "0", "MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF": "0.7"}
+    assert flags.flag_bool("MEMO_CONTEXT_GRAPH_COMPACT", env=env) is False
     assert flags.flag_float("MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF", env=env) == 0.7
     assert flags.validate(env=env) == []
 

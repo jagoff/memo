@@ -153,10 +153,12 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_EVIDENCE_GRAPH_COMPACT",
         "bool",
-        False,
+        True,
         "graph",
         "Collapse memo_evidence_pack hits sharing a rare entity into one "
-        "representative before packing (citing absorbed hits by id).",
+        "representative before packing (citing absorbed hits by id). Graduated "
+        "2026-08-04 after ad-hoc validation against the live index showed no "
+        "coverage regression (see memo decision 2830cb72).",
     ),
     _spec(
         "MEMO_EVIDENCE_GRAPH_COMPACT_MIN_IDF",
