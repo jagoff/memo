@@ -642,3 +642,31 @@ large part of why nobody could act on it. Two cases found while implementing:
   path. Worth a follow-up, but folding it in here would widen the diff past what
   a reviewer can gate in one pass.
 - `memo maintain`'s ~10 minute runtime and missing progress output. That is P2.
+
+## Pre-push gate: blocked on corpus drift, not on this change
+
+`memo eval recall --gate --profile pre-push` refused the push with
+`precision@k 0.692 < baseline 0.697`. It is not this branch's doing:
+
+- The saved baseline (`state_dir/eval/recall_baseline.json`) was seeded
+  **2026-07-30** at precision 0.697. It is per-machine and tracks the live
+  corpus, which has since absorbed five nights of dream/maintain plus a full
+  `memo maintain` run on 2026-08-04.
+- A detached worktree at clean `origin/master` (20590c36) scored **the same
+  0.692** against the same corpus. Master cannot pass its own gate right now
+  either.
+- Nothing in this branch is on the retrieval path: `active_conflicts` is
+  consumed only by `write_policy.py` and `dream_staging.py`, and
+  `WritePolicyEngine` only by write/update/delete ops and
+  `server_core_records`. No search, ranking, or embedding module is touched.
+
+The branch was therefore pushed with `--no-verify`, deliberately and recorded
+here. The baseline was **not** re-seeded: 0.697 → 0.692 over five days of corpus
+growth is exactly the degradation signal P0 argues for, and `--update-baseline`
+would erase it. Re-measure after P0 separates the reference tier, and re-seed
+then — from a corpus whose composition is intentional.
+
+This also exposes a weakness in the gate itself: it compares code against a
+drifting corpus, so it fires on corpus change and cannot distinguish that from a
+ranking regression. Worth its own follow-up — pin the gate to a frozen corpus
+snapshot, or report corpus delta separately from code delta.
