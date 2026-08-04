@@ -370,6 +370,24 @@ def _vacuum_soft_deleted(
     return vacuumed, len(ids), errors
 
 
+def _fold_synthesis_errors(receipt: dict[str, Any]) -> None:
+    """Promote per-cluster synthesis failures into the run-level error list.
+
+    A refused or failed synthesis save is a pass failure, not a quiet skip.
+    Called before the receipt is persisted so the stored run, the operator, and
+    the exit code all see the same thing.
+    """
+    for item in receipt["synthesized"]:
+        if item.get("error"):
+            receipt["errors"].append(f"synthesize: {item['error']}")
+
+
+def _fail_on_pass_errors(receipt: dict[str, Any], *, dry_run: bool) -> None:
+    """Exit non-zero when a pass failed. A dry run changed nothing, so it does not."""
+    if receipt["errors"] and not dry_run:
+        raise SystemExit(1)
+
+
 @click.group(name="maintain", invoke_without_command=True)
 @click.option("--dry-run", is_flag=True, help="Preview actions; change nothing.")
 @click.option(
@@ -812,12 +830,7 @@ def maintain_cmd(
         except Exception as exc:
             receipt["errors"].append(f"outcome: {type(exc).__name__}: {exc}")
 
-    # A refused or failed synthesis save is a pass failure, not a quiet skip.
-    # Fold it in before the receipt is persisted so it reaches the stored run,
-    # the operator, and the exit code alike.
-    for item in receipt["synthesized"]:
-        if item.get("error"):
-            receipt["errors"].append(f"synthesize: {item['error']}")
+    _fold_synthesis_errors(receipt)
 
     # Persist receipt + timestamp (the daily guard reads the timestamp). Even
     # a dry-run stamps so a preview doesn't immediately re-trigger; the guard
@@ -841,8 +854,7 @@ def maintain_cmd(
 
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
-        if receipt["errors"] and not dry_run:
-            raise SystemExit(1)
+        _fail_on_pass_errors(receipt, dry_run=dry_run)
         return
 
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
@@ -871,12 +883,9 @@ def maintain_cmd(
             f"  outcome loop: roi_score re-derived for {receipt['outcome_reconciled']} "
             f"memories, {len(receipt['dead_archived'])} dead-weight archived"
         )
-    if receipt["errors"]:
-        for e in receipt["errors"]:
-            console.print(f"  [red]error:[/red] {e}")
-        # A dry run changed nothing, so it reports without failing.
-        if not dry_run:
-            raise SystemExit(1)
+    for e in receipt["errors"]:
+        console.print(f"  [red]error:[/red] {e}")
+    _fail_on_pass_errors(receipt, dry_run=dry_run)
 
 
 @maintain_cmd.command(name="undo")
