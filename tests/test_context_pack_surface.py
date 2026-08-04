@@ -180,7 +180,9 @@ def test_context_pack_graph_compact_collapses_when_enabled(mem_with_stub, monkey
 
     payload = tool.fn(question="qué sabés del proyecto omega?")
 
-    rows = payload["current_facts"] + payload["supporting_context"] + payload["stale_or_conflicting"]
+    rows = (
+        payload["current_facts"] + payload["supporting_context"] + payload["stale_or_conflicting"]
+    )
     ids = {row["id"] for row in rows}
     assert len(ids) == 1
     assert ids <= {"m1", "m2"}
@@ -196,6 +198,8 @@ def test_context_pack_graph_compact_noop_when_disabled(mem_with_stub, monkeypatc
 
     payload = tool.fn(question="qué sabés del proyecto omega?")
 
-    rows = payload["current_facts"] + payload["supporting_context"] + payload["stale_or_conflicting"]
+    rows = (
+        payload["current_facts"] + payload["supporting_context"] + payload["stale_or_conflicting"]
+    )
     ids = {row["id"] for row in rows}
     assert ids == {"m1", "m2"}
