@@ -57,11 +57,12 @@ CODE_DRIFT_FLAG = "MEMO_DREAM_CODE_DRIFT_ENABLED"
 # Gates auto-repair inside the code-drift pass; canonical FlagSpec in
 # flags_misc.py next to MEMO_DREAM_CODE_DRIFT_ENABLED.
 CODE_REPAIR_FLAG = "MEMO_DREAM_CODE_REPAIR_ENABLED"
-# Dark scalar flags (default 0.0 = OFF) that owe a graduation gate like any
-# bool dark flag: the A/B seam pins them "0"/"1" (0.0 = off, 1.0 = full
-# boost), so the recall gate measures them unchanged. Explicit allowlist —
-# most float knobs are tuner territory, not graduation candidates.
-_DARK_SCALAR_FLAGS = ("MEMO_RECALL_CODE_PROXIMITY_BOOST",)
+# Dark flags that owe a graduation gate like any bool `*_ENABLED` flag but
+# escape the automatic `dark_flags()` bool filter — either a scalar (the A/B
+# seam pins "0"/"1", e.g. 0.0 = off, 1.0 = full boost) or a bool whose name
+# doesn't end in `_ENABLED`. Explicit allowlist — most float knobs are tuner
+# territory, not graduation candidates.
+_DARK_SCALAR_FLAGS = ("MEMO_RECALL_CODE_PROXIMITY_BOOST", "MEMO_GRAPH_SEMANTIC_RELATIONS")
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,12 @@ GATES: dict[str, GateSpec] = dict(
             "context-risk trigger; measurable via avoid@k on release/delete prompts, human flips",
         ),
         _g("MEMO_GRAPH_REASON_ENABLED", "manual", "attribution metadata only, no ranking effect"),
+        _g(
+            "MEMO_GRAPH_SEMANTIC_RELATIONS",
+            "manual",
+            "extra relation rows on the graph_reason dict; only has effect "
+            "when MEMO_GRAPH_REASON_ENABLED is also on, no ranking effect",
+        ),
         _g("MEMO_VERDICT_ENABLED", "manual", "next-turn reaction telemetry; no retrieval effect"),
         _g("MEMO_MAINT_SLEEP_CYCLE_ENABLED", "manual", "background maintenance; op cost decision"),
         _g(
