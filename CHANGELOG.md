@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-08-04
+
+### Added
+
+- Graph-aware source compaction for chat/ask: chat sources that share a rare,
+  IDF-weighted entity are collapsed into one representative source plus a
+  `related_ids` pointer, cutting synthesis-prompt token cost. IDF weighting
+  avoids the ubiquitous-entity landmine hit by a prior graph-injection
+  experiment (common entities no longer force unrelated sources together).
+  Gated by new default-off `MEMO_CHAT_GRAPH_COMPACT` /
+  `MEMO_CHAT_GRAPH_COMPACT_MIN_IDF` env vars. (#186)
+
+### Changed
+
+- Bumped `aiohttp` 3.14.1 -> 3.14.3 and `cryptography` 49.0.0 -> 50.0.0 to
+  patched versions (CVE fixes).
+
 ## [4.8.1] - 2026-08-03
 
 ### Fixed
