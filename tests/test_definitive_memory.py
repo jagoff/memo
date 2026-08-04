@@ -152,6 +152,7 @@ class _RareEntityGraph:
 
 
 def test_evidence_pack_graph_compact_noop_when_disabled(mem_with_stub, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_EVIDENCE_GRAPH_COMPACT", "0")
     hits = [
         _graph_hit("hit-a", title="Retry policy", body="Standard retry policy.", score=1.0),
         _graph_hit(
