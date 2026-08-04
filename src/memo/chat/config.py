@@ -41,6 +41,8 @@ class ChatConfig:
     fulldoc: bool
     answer_max_tokens: int
     synth_head: int
+    graph_compact: bool
+    graph_compact_min_idf: float
     feedback_dir: Path
     sessions_dir: Path
 
@@ -57,6 +59,8 @@ class ChatConfig:
             fulldoc=_env_bool("MEMO_CHAT_FULLDOC", True),
             answer_max_tokens=_env_int("MEMO_CHAT_ANSWER_MAX_TOKENS", 1200),
             synth_head=_env_int("MEMO_CHAT_SYNTH_HEAD", 8),
+            graph_compact=_env_bool("MEMO_CHAT_GRAPH_COMPACT", False),
+            graph_compact_min_idf=_env_float("MEMO_CHAT_GRAPH_COMPACT_MIN_IDF", 0.5),
             feedback_dir=chat_root / "feedback",
             sessions_dir=chat_root / "sessions",
         )

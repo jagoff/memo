@@ -27,7 +27,7 @@ dependencies = [
     "click>=8.1.7",
     "rich>=13.7",
     "pydantic>=2.6",
-    "cryptography>=42.0",
+    "cryptography>=50.0",
     # Pinned to a tested range: the vec0 PARTITION KEY / metadata-column
     # filtering the store relies on is alpha API — cap below 0.2 to avoid
     # silent breakage on an upstream change. Tested against 0.1.9.

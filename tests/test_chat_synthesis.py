@@ -58,3 +58,14 @@ def test_floor_noop_when_negative() -> None:
 def test_floor_never_empties_even_when_top_fails() -> None:
     kept = filter_by_relevance([_src("a", 1.0), _src("b", 0.5)], floor=2.0)
     assert [s["id"] for s in kept] == ["a"]
+
+
+def test_build_messages_includes_related_ids() -> None:
+    src = _src("a", 1.0, related_ids=[("b", "Nota B")])
+    messages = build_messages("¿pregunta?", [src], today="03/08/2026")
+    assert "(+1 related: Nota B (b))" in messages[1]["content"]
+
+
+def test_build_messages_omits_related_line_when_absent() -> None:
+    messages = build_messages("¿pregunta?", [_src("a", 1.0)], today="03/08/2026")
+    assert "related:" not in messages[1]["content"]

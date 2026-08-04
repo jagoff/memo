@@ -203,9 +203,9 @@ def test_startup_banner_toggle_not_flagged_unknown() -> None:
 
 
 def test_chat_config_vars_not_flagged_unknown() -> None:
-    # chat/config.py's 9 MEMO_CHAT_* knobs are env-only (read directly, not
+    # chat/config.py's 11 MEMO_CHAT_* knobs are env-only (read directly, not
     # through this registry) but must not be reported as typos.
-    env = {"MEMO_CHAT_BASE_K": "5"}
+    env = {"MEMO_CHAT_BASE_K": "5", "MEMO_CHAT_GRAPH_COMPACT": "1"}
     assert flags.unknown_memo_vars(env=env) == []
     assert flags.validate(env=env) == []
 
