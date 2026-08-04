@@ -136,12 +136,20 @@ class _TwoNoteMemory(_FakeMemory):
     def search(self, query, *, limit=None, mode="hybrid", **kw):
         return [
             _FakeRecord(
-                id="m1", title="Nota uno", type="note", score=0.9,
-                body="cuerpo uno sobre proyecto omega", path="notes/uno.md",
+                id="m1",
+                title="Nota uno",
+                type="note",
+                score=0.9,
+                body="cuerpo uno sobre proyecto omega",
+                path="notes/uno.md",
             ),
             _FakeRecord(
-                id="m2", title="Nota dos", type="note", score=0.85,
-                body="cuerpo dos sobre proyecto omega", path="notes/dos.md",
+                id="m2",
+                title="Nota dos",
+                type="note",
+                score=0.85,
+                body="cuerpo dos sobre proyecto omega",
+                path="notes/dos.md",
             ),
         ]
 
