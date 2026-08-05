@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import click
+from rich.markup import escape
 from rich.table import Table
 
 from memo.cli_common import _short, console
@@ -217,12 +218,12 @@ def _display_pair_excerpt(rec, label: str, *, stale_days: int = 180) -> None:
         f"[bold cyan]{label}[/bold cyan] · {rec.id[:8]} · "
         f"[dim]{rec.type}[/dim] · updated={rec.updated[:10]}{age_marker}"
     )
-    console.print(f"  [bold]{rec.title}[/bold]")
+    console.print(f"  [bold]{escape(rec.title)}[/bold]")
     body = (rec.body or "").strip()
     if len(body) > 600:
         body = body[:599] + "…"
     for line in body.splitlines():
-        console.print(f"  {line}")
+        console.print(f"  {escape(line)}")
     console.print()
 
 

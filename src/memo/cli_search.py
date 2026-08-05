@@ -196,9 +196,9 @@ def search(
         h_dict = h.to_dict()
         tbl.add_row(
             f"{h.score:.3f}" if h.score is not None else "—",
-            h.type,
-            h.title + _fact_badge(h_dict),
-            ", ".join(h.tags) or "—",
+            escape(h.type),
+            escape(h.title + _fact_badge(h_dict)),
+            escape(", ".join(h.tags) or "—"),
         )
     console.print(tbl)
     if explain and trace is not None:
@@ -289,8 +289,8 @@ def context_cmd(
         return
     console.print(
         Panel.fit(
-            payload["prompt"] or "[dim](no memory context)[/dim]",
-            title=f"context: {question[:60]}",
+            escape(payload["prompt"]) if payload["prompt"] else "[dim](no memory context)[/dim]",
+            title=f"context: {escape(question[:60])}",
             border_style="cyan",
         )
     )

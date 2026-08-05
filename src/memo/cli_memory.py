@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -320,10 +321,11 @@ def save(
     pending = "\n[yellow]index pending:[/yellow] run `memo reindex`" if rec.index_pending else ""
     console.print(
         Panel.fit(
-            f"[bold]{rec.title}[/bold]\n"
+            f"[bold]{escape(rec.title)}[/bold]\n"
             f"[dim]id:[/dim] {rec.id}\n"
-            f"[dim]path:[/dim] {rec.path}\n"
-            f"[dim]type:[/dim] {rec.type}  [dim]tags:[/dim] {', '.join(rec.tags) or '—'}"
+            f"[dim]path:[/dim] {escape(str(rec.path))}\n"
+            f"[dim]type:[/dim] {escape(rec.type)}  "
+            f"[dim]tags:[/dim] {escape(', '.join(rec.tags) or '—')}"
             f"{pending}",
             title=f"✓ {action}",
             border_style="green",
@@ -352,7 +354,9 @@ def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
     tbl.add_column("title", overflow="fold")
     tbl.add_column("tags", overflow="fold")
     for r in items:
-        tbl.add_row(r.updated[:19], r.type, r.title, ", ".join(r.tags) or "—")
+        tbl.add_row(
+            r.updated[:19], escape(r.type), escape(r.title), escape(", ".join(r.tags) or "—")
+        )
     console.print(tbl)
 
 
@@ -401,13 +405,13 @@ def get(id_: str, as_json: bool) -> None:
         return
     console.print(
         Panel.fit(
-            f"[bold]{rec.title}[/bold]\n"
-            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
-            f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
+            f"[bold]{escape(rec.title)}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {escape(rec.type)}\n"
+            f"[dim]tags:[/dim] {escape(', '.join(rec.tags) or '—')}\n"
             f"[dim]created:[/dim] {rec.created}\n"
             f"[dim]updated:[/dim] {rec.updated}\n\n"
-            f"{rec.body}",
-            title=rec.title,
+            f"{escape(rec.body or '')}",
+            title=escape(rec.title),
             border_style="cyan",
         )
     )
@@ -465,9 +469,9 @@ def update(
         return
     console.print(
         Panel.fit(
-            f"[bold]{rec.title}[/bold]\n"
-            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
-            f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
+            f"[bold]{escape(rec.title)}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {escape(rec.type)}\n"
+            f"[dim]tags:[/dim] {escape(', '.join(rec.tags) or '—')}\n"
             f"[dim]updated:[/dim] {rec.updated}",
             title="✓ updated",
             border_style="yellow",
@@ -507,8 +511,8 @@ def rename(title: str, id_: str | None, as_json: bool) -> None:
         return
     console.print(
         Panel.fit(
-            f"[bold]{rec.title}[/bold]\n"
-            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
+            f"[bold]{escape(rec.title)}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {escape(rec.type)}\n"
             f"[dim]updated:[/dim] {rec.updated}",
             title="✓ renamed",
             border_style="yellow",
