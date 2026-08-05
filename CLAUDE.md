@@ -9,9 +9,15 @@ server, and a CLI. Single-user, runs offline. PyPI distribution name is `mlx-mem
 ## Dev commands
 
 ```bash
+# One-time setup (fresh clone/worktree — pytest is an optional-dependency
+# extra, not a base dep, so plain `uv sync` alone leaves pytest missing)
+uv sync --extra dev          # pytest, ruff, mypy, hypothesis, etc.
+uv sync --all-extras         # + http/tantivy/multimodal/ocr, needed for those test modules
+
 # Tests (no MLX needed — MLX tests skip automatically on non-Apple Silicon)
 uv run --no-sync pytest tests/                          # full suite
 uv run --no-sync pytest tests/test_foo.py::test_bar -v  # single test
+uv run --no-sync pytest tests/ -m "not slow"             # skip real-MLX-load tests (>1s each)
 
 # Type checking
 uv run --no-sync mypy src/memo/
@@ -25,6 +31,13 @@ uv run --no-sync memo <cmd>
 # Validate MEMO_* flags (typos, unknown vars)
 uv run --no-sync memo config validate
 ```
+
+If `memo doctor` warns `memo Python package loaded from .../src/memo/..., outside
+the isolated runtime`, a stray `PYTHONPATH=src` (relative to a `~/repos/memo`
+cwd) is shadowing the isolated `uv tool` install with this working tree's
+source — `memo --version` looks right while the code that actually runs is
+stale. `unset PYTHONPATH` before verifying a fix against the real installed
+binary.
 
 ## Working tree is shared (read before any git op)
 
@@ -43,6 +56,10 @@ master advances underneath you, and a `git checkout` in another session moves
   your commit, bump versions + CHANGELOG, commit, `git push origin HEAD:master`,
   tag, `git worktree remove --force`. Check `git ls-remote --tags origin vX.Y.Z`
   first — a concurrent session may have taken your version number.
+  **`master` is GitHub-branch-protected** (10 required status checks, no direct
+  push — verified: `git push origin HEAD:master` fails with `GH006: Protected
+  branch update failed`) — land changes via `gh pr create` + merge, not a raw
+  push, even from an isolated worktree with a clean fast-forward.
 - Nothing is lost on entanglement (commits live in `git reflog`, uncommitted
   work stays in the tree). Rebuild a clean branch with
   `git checkout <branch> -- <only your files>` (zsh does NOT word-split `$VAR` —
@@ -264,6 +281,10 @@ The `.md` files are canonical; the sqlite index is **derived and replayable**:
 - Real MLX forward passes are gated by `@pytest.mark.requires_mlx` (auto-skipped
   when `mlx_lm` isn't importable).
 - Never read or write the developer's real vault.
+- Changing hooks, daemon lifecycle, install/runtime plumbing, or migration
+  paths: run the broad suite plus the focused modules —
+  `tests/test_recall_hooks.py`, `tests/test_recall_server.py`,
+  `tests/test_runtime_isolation.py`.
 
 ## Config & errors
 
