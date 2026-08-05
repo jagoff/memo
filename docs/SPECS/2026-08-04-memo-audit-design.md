@@ -145,31 +145,67 @@ Meanwhile the outcome loop reported `roi_score re-derived for 149 memories,
 0 dead-weight archived` — the archival machinery exists and fired against
 5,457 never-accessed candidates without archiving any of them.
 
-This is the most plausible single explanation for `referenced_rate = 0.011`:
-recall injects reference-tier text that reads as topically related, so it is
-never followed up on.
+### Correction (measured 2026-08-05, before planning P0)
 
-### Fix
+Two claims in the paragraphs above are wrong. Both were written from corpus
+statistics without checking what recall actually does, and measuring closed the
+gap.
 
-1. **Separate the pools.** Reference-tier content gets its own namespace and
-   leaves the default recall/search candidate pool. Retrieving it becomes an
-   explicit opt-in (a flag, a scope argument, or a dedicated command) rather
-   than the default competing path.
-2. **Stop cross-tier score comparison.** Scores from different tiers are not
-   commensurable today; either normalize per tier or refuse to merge-rank them.
-   Only this sub-item depends on P4; pool separation and archival do not.
-3. **Make dead-weight archival actually fire.** Define the criterion
-   explicitly (`access_count = 0` ∧ age > N days ∧ not pinned), report how many
-   candidates matched and how many were archived, and fail loudly when the
-   count is zero against a non-empty candidate set.
+**1. Reference does not dilute ambient recall — it is already excluded.**
+`MEMO_RECALL_EXCLUDE_REFERENCE` defaults to `True` and is effectively `True` on
+this machine; `recall_logic.py:2112` drops `REFERENCE_TYPES` from the candidate
+pool. Checking 1,000 lines of `grounding.log` against `meta`, the types recall
+actually injects are:
+
+```
+389 note · 243 decision · 149 fact · 105 bug · 93 procedure
+8 preference · 4 failure_pattern · 4 feedback · 2 synthesis · 0 reference
+```
+
+Zero reference records. The 3.499-versus-0.564 inversion is real but happens in
+**explicit `memo search`**, which does not apply the exclusion — a CLI-surface
+problem, not an ambient-recall one.
+
+**2. `referenced_rate = 0.011` is not a failure signal.** It counts surfaced
+memories that later appear in `usage.log`, which is written only by
+`contextual.record_click` — reached from `memo get`, `memo contextual
+record-click`, and the matching MCP tool. Recall injects the memory *body*, so
+an agent has no reason to re-fetch by id; the metric measures a behavior the
+design makes unnecessary. It is also bounded differently on each side:
+`usage.log` is capped at 500 entries (244 today) while the denominator comes
+from 1,709 surfaced records. The honest usefulness signal is `grounded_rate`
+(0.489), which is outcome-based.
+
+**What survives.** The dead weight is real and so is the search inversion; only
+the ambient-recall framing and the `referenced_rate` inference were wrong. P0 is
+re-scoped accordingly below.
+
+### Fix (re-scoped after the correction)
+
+1. **Apply the tier split to explicit `memo search`.** Recall already excludes
+   reference; `search` does not, which is why an ingested vault chunk outranks
+   the durable fact on the surface a human actually types into. Either exclude
+   reference by default with an opt-in scope argument, or rank the tiers
+   separately so they never compete on one incommensurable score.
+2. **Make dead-weight archival actually fire.** The machinery reported
+   `0 dead-weight archived` against 5,457 never-accessed candidates on two
+   separate live runs. Define the criterion explicitly (`access_count = 0` ∧
+   age > N ∧ not pinned), report candidates-matched alongside archived, and
+   fail loudly when a non-empty candidate set archives nothing.
+3. **Drop the cross-tier normalization sub-item** into P4, where the scale
+   problem belongs. It was only ever needed because the tiers share a ranking;
+   fix 1 removes that premise.
 
 ### Verification
 
-- The control query ranks the `fact` above the vault chunk.
-- `referenced_rate` measured over a comparable window rises from 0.011.
-- `memo eval bench` micro recall@5 does not regress below 0.746.
-- A `maintain` run reports a non-zero archived count, and `memo stats` shows
-  the never-accessed population shrinking.
+- The control query (`por que se deprecó synapse`) ranks the `fact` above the
+  vault chunk in `memo search`.
+- A `maintain` run reports a non-zero archived count against a non-empty
+  candidate set, and `memo stats` shows the never-accessed population shrinking.
+- `memo eval recall --labels eval/regression_labels.json` precision does not
+  drop and noise does not rise — this touches ranking, so the gate is load-bearing
+  here in a way it was not for P1.
+- **Not** `referenced_rate`: see the correction above.
 
 ### Explicitly out of scope
 
