@@ -121,99 +121,75 @@ ignores the freeze flag.
 
 ---
 
-## P0 — Reference dilution and dead weight that never gets archived
+## P0 — Explicit `memo search` ranks the direct answer below topical neighbours
 
-**Severity: high. Cost: medium. Highest impact across all three lenses.**
+**Severity: high. Cost: unknown until diagnosed. Rewritten 2026-08-05.**
 
-Nearly half the corpus is ingested reference material — Obsidian vault notes,
-WhatsApp exports, PDF chunks — and 78% of that tier has never been accessed
-once. It is not inert: it competes in the same score space as durable agent
-memory and wins.
+> This section replaces an earlier version built on corpus statistics rather
+> than measured behaviour. Three of its four causal claims did not survive
+> checking; the record of what was wrong is kept below, because the failure mode
+> is more useful than the conclusion was.
 
-Control query, run live:
+### What is actually measured
 
-```
-memo search "por que se deprecó synapse"
-
-  3.499  reference  "Dominios - Synapse, Memflow y Memo — 2. Synapse…"   ← vault chunk
-  0.564  fact       "synapse deprecado completo"                        ← correct answer
-```
-
-The ingested chunk outranks the durable fact by roughly 6×.
-
-Meanwhile the outcome loop reported `roi_score re-derived for 149 memories,
-0 dead-weight archived` — the archival machinery exists and fired against
-5,457 never-accessed candidates without archiving any of them.
-
-### Correction (measured 2026-08-05, before planning P0)
-
-Two claims in the paragraphs above are wrong. Both were written from corpus
-statistics without checking what recall actually does, and measuring closed the
-gap.
-
-**1. Reference does not dilute ambient recall — it is already excluded.**
-`MEMO_RECALL_EXCLUDE_REFERENCE` defaults to `True` and is effectively `True` on
-this machine; `recall_logic.py:2112` drops `REFERENCE_TYPES` from the candidate
-pool. Checking 1,000 lines of `grounding.log` against `meta`, the types recall
-actually injects are:
+Control query `por que se deprecó synapse`, run through `memo search`:
 
 ```
-389 note · 243 decision · 149 fact · 105 bug · 93 procedure
-8 preference · 4 failure_pattern · 4 feedback · 2 synthesis · 0 reference
+1.411  bug        Boost de título en synapse es plano
+1.395  note       Fix de MyPy en Synapse
+1.152  reference  Synapse — cerebro neutral operativo funcional § Fuentes
+0.461  note       Decisión y estado final de la deprecación de Synapse
+0.348  fact       synapse deprecado completo        <- the direct answer, rank 5
 ```
 
-Zero reference records. The 3.499-versus-0.564 inversion is real but happens in
-**explicit `memo search`**, which does not apply the exclusion — a CLI-surface
-problem, not an ambient-recall one.
+The record that answers the question ranks **fifth**, at a quarter of the top
+score. What outranks it is mostly *durable* material that merely shares the
+entity "synapse": a bug about title boosting, a mypy fix. This is a ranking
+problem on the explicit-search surface, and the reference chunk at rank 3 is a
+participant in it, not its cause.
 
-**2. `referenced_rate = 0.011` is not a failure signal.** It counts surfaced
-memories that later appear in `usage.log`, which is written only by
-`contextual.record_click` — reached from `memo get`, `memo contextual
-record-click`, and the matching MCP tool. Recall injects the memory *body*, so
-an agent has no reason to re-fetch by id; the metric measures a behavior the
-design makes unnecessary. It is also bounded differently on each side:
-`usage.log` is capped at 500 entries (244 today) while the denominator comes
-from 1,709 surfaced records. The honest usefulness signal is `grounded_rate`
-(0.489), which is outcome-based.
+Ambient recall is unaffected — see the correction above.
 
-**What survives.** The dead weight is real and so is the search inversion; only
-the ambient-recall framing and the `referenced_rate` inference were wrong. P0 is
-re-scoped accordingly below.
+### What is NOT the problem (each checked, each disproven)
 
-### Fix (re-scoped after the correction)
+| Claim in the first draft | Status |
+|---|---|
+| Reference dilutes ambient recall | **False.** `MEMO_RECALL_EXCLUDE_REFERENCE=True`; 1,000 grounding-log lines contain zero reference records. |
+| `referenced_rate=0.011` shows recall injects the wrong things | **False.** It counts explicit re-fetch via `record_click`, which recall makes unnecessary, across differently-bounded logs. |
+| Dead-weight archival is broken (0 of 5,457) | **False.** `dead_weight()` targets memories surfaced ≥8 times and never grounded (`MEMO_OUTCOME_DEAD_MIN_SURFACED=8`, enabled). Zero means no recall noise was found — a healthy result. The 5,457 never-accessed records are reference, which recall never surfaces, so they are not candidates by construction. |
 
-1. **Apply the tier split to explicit `memo search`.** Recall already excludes
-   reference; `search` does not, which is why an ingested vault chunk outranks
-   the durable fact on the surface a human actually types into. Either exclude
-   reference by default with an opt-in scope argument, or rank the tiers
-   separately so they never compete on one incommensurable score.
-2. **Make dead-weight archival actually fire.** The machinery reported
-   `0 dead-weight archived` against 5,457 never-accessed candidates on two
-   separate live runs. Define the criterion explicitly (`access_count = 0` ∧
-   age > N ∧ not pinned), report candidates-matched alongside archived, and
-   fail loudly when a non-empty candidate set archives nothing.
-3. **Drop the cross-tier normalization sub-item** into P4, where the scale
-   problem belongs. It was only ever needed because the tiers share a ranking;
-   fix 1 removes that premise.
+### What remains true
 
-### Verification
+- **The search ranking above.** Reproducible, on the surface a human types into.
+- **48% of the corpus (5,457 records) has never been accessed**, 78% of the
+  reference tier. This is a real *cost* — index size (memvec.db at 1.3 GB),
+  `maintain` wall clock, embedding and graph processing — with no demonstrated
+  harm to recall quality. Treat it as hygiene, not as a retrieval defect.
 
-- The control query (`por que se deprecó synapse`) ranks the `fact` above the
-  vault chunk in `memo search`.
-- A `maintain` run reports a non-zero archived count against a non-empty
-  candidate set, and `memo stats` shows the never-accessed population shrinking.
-- `memo eval recall --labels eval/regression_labels.json` precision does not
-  drop and noise does not rise — this touches ranking, so the gate is load-bearing
-  here in a way it was not for P1.
-- **Not** `referenced_rate`: see the correction above.
+### Next step: diagnose before designing
 
-### Explicitly out of scope
+Do not write a fix yet. The open question is why entity-overlap outranks
+answer-bearing content in `search` but apparently not in the recall hook, which
+uses a different path (`recall_logic._recall_logic` versus `Memory.search`).
+Establish that first:
 
-Deleting ingested content. The vault/WhatsApp corpus has value for `memo ask`
-and `memo chat`; the problem is that it defaults into ambient recall, not that
-it exists.
+1. Run the control query through both paths with score components exposed
+   (`memo search --explain` / `MEMO_RECALL_DEBUG=1`) and diff the contributing
+   terms.
+2. Check whether the durable records that outrank the answer carry a title-boost
+   or recency term that the answer lacks — note that one of them is literally a
+   memory titled "Boost de título en synapse es plano".
+3. Only then decide whether the fix is ranking, tiering, or both, and gate it on
+   `memo eval recall`, which is load-bearing for a ranking change in a way it was
+   not for P1.
 
----
+### Process note
+
+The first draft of this section measured *corpus composition* and inferred
+*system behaviour* from it. The measurements were right; the inferences were
+wrong three times out of four. Any future finding here states which of the two
+it is, and a causal claim about retrieval is checked against `grounding.log` or a
+live query before it is written down.
 
 ## P2 — Human-facing surfaces do not use the daemon
 
