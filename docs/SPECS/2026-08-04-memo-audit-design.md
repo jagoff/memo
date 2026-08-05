@@ -366,3 +366,78 @@ P6 is scoped. P4 should land before P0's cross-tier scoring rule is finalized.
 - No deletion of ingested reference content.
 - No refactor of the graph, dream, or federation subsystems; the audit found
   them populated and functioning.
+
+---
+
+## P0 diagnosis result (2026-08-05)
+
+The diagnosis step above was run. The mechanism is identified.
+
+### The cross-encoder gets it right; a downstream multiplier overrides it
+
+Scoring the five candidates of the control query directly against
+`MLXReranker.score`:
+
+| final rank | final score | cross-encoder |
+|---|--:|--:|
+| 1 · bug "Boost de título en synapse es plano" | 1.411 | **0.013** |
+| 2 · note "Fix de MyPy en Synapse" | 1.395 | 0.173 |
+| 3 · reference chunk | 1.152 | 0.281 |
+| 4 · note "Decisión y estado final de la deprecación" | 0.461 | **0.990** |
+| 5 · fact "synapse deprecado completo" | 0.348 | **0.719** |
+
+The reranker — the most expensive component in the pipeline — identifies both
+answer-bearing records (0.990, 0.719) and rejects the irrelevant one (0.013).
+The delivered order is close to its inverse.
+
+### Which post-rerank stage does it
+
+Stages after `rerank` are `entity_boost`, `verification_decay`,
+`retrieval_boost`. Measured on these candidates:
+
+- **`entity_boost` — no-op.** `extract_entities("por que se deprecó synapse")`
+  returns `[]`, so `_apply_entity_boost` returns early.
+- **`verification_decay` — uniform.** All five records are `unverified`, giving
+  the same ×0.8. Order-preserving by construction.
+- **`retrieval_boost` — the only stage that varies.** ×4.2 for four of the five,
+  ×3.0 for the fourth.
+
+`boost_for` (`retrieval_boost.py:126`) is a **multiplicative** curatorial boost
+**capped at 12×**, composed from filename overlap (up to ×4.0), title ≥50% match
+(×1.5), heading (×1.25) and tag match (×1.4). It is applied to a fused score
+bounded at 1.0 by `alpha * rerank + (1 - alpha) * rrf_bonus` (α = 0.7). A term
+that can reach 12× sitting downstream of a term bounded at 1.0 can reorder
+anything.
+
+### Why it misfires here
+
+memo derives titles and filenames from memory content, so "the title mentions
+synapse" is nearly universal among records about synapse. The boost therefore
+fires at essentially the same magnitude for the record the cross-encoder scored
+0.990 and the one it scored 0.013 — it encodes *entity mention*, not *answer
+relevance*, and it is the largest multiplicative term in the pipeline.
+
+The boost's own docstring states the intent: "a note whose metadata is the
+answer wins decisively over body-text-only matches". That intent is sound for an
+ingested vault of hand-named files, where a filename is a human curatorial act.
+It does not hold for auto-titled durable memories, where the filename is derived
+from the same text the body already matched — so the signal is double-counted
+rather than curatorial.
+
+### Fix direction (not yet designed)
+
+The candidates, in increasing order of invasiveness:
+
+1. **Bound the boost relative to the reranker** — cap the post-rerank multiplier
+   so it can reorder within a relevance band but not across one.
+2. **Make the boost curatorial again** — apply it only where the filename is a
+   human artefact (ingested vault files), not to memo-authored records whose
+   title is derived from their own body.
+3. **Move the boost upstream of the reranker**, into candidate generation, so the
+   cross-encoder has the last word on ordering.
+
+All three are ranking changes, so `memo eval recall --labels
+eval/regression_labels.json` is load-bearing and must be run before and after —
+and, unlike P1, a regression here is meaningful rather than corpus drift.
+
+Not started. This section records the diagnosis only.
