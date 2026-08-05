@@ -654,6 +654,46 @@ class OperationalStore:
                 )
             return len(targets)
 
+    def gc_conflicts_for_pair(
+        self,
+        memory_id_a: str,
+        memory_id_b: str,
+        *,
+        reason: str = "relation judged",
+    ) -> int:
+        """Auto-resolve the active conflict opened for exactly this pair.
+
+        Called once the canonical relation between the two memories is judged,
+        so a ``semantic_contradiction`` anomaly does not stay ``detected``
+        forever after the contradiction it reported has been settled. Endpoint
+        order is irrelevant — the ledger may judge either direction. Like
+        :meth:`gc_conflicts_for_memory` this is a system-level cleanup and does
+        not require human authority. Returns the count resolved.
+        """
+        pair = {str(memory_id_a).strip().casefold(), str(memory_id_b).strip().casefold()}
+        if len(pair) != 2 or "" in pair:
+            return 0
+        with authority_write_lock(self.state_dir / "operational-transactions"):
+            conflicts = self._read_snapshot()["conflicts"]
+            targets = [
+                cid
+                for cid, row in conflicts.items()
+                if row.get("lifecycle_state") not in {"resolved", "archived"}
+                and {m.casefold() for m in _conflict_member_ids(row)} == pair
+            ]
+            for cid in targets:
+                self._commit(
+                    "conflict.resolve",
+                    {
+                        "id": cid,
+                        "resolved_at": utc_now_iso(),
+                        "resolution": reason,
+                    },
+                    subject_uri=f"memo://conflict/{cid}",
+                    actor=ActorIdentity(actor_id="memo-gc", actor_kind="system"),
+                )
+            return len(targets)
+
     def record_outcome(
         self,
         *,
@@ -811,8 +851,36 @@ class OperationalStore:
             metadata=dict(metadata or {}),
         )
 
-    def state(self, *, project: str | None = None) -> dict[str, Any]:
+    def state(self, *, project: str | None = None, include_closed: bool = True) -> dict[str, Any]:
+        """The operational projection, optionally narrowed to what is still open.
+
+        ``include_closed=True`` (the default) returns the raw projection, which
+        internal consumers rebuild their own views from. User-facing surfaces
+        (the MCP tool, the CLI) pass ``False``: resolved conflicts, consumed
+        handoffs, and acknowledged attention items are settled history that
+        only grows, and shipping all of it made the payload exceed an MCP
+        client's token budget.
+        """
         state = self._read_snapshot()
+        if not include_closed:
+            state = {
+                **state,
+                "conflicts": {
+                    key: value
+                    for key, value in state["conflicts"].items()
+                    if value.get("lifecycle_state") not in {"resolved", "archived"}
+                },
+                "handoffs": {
+                    key: value
+                    for key, value in state["handoffs"].items()
+                    if not value.get("consumed_at")
+                },
+                "attention": {
+                    key: value
+                    for key, value in state["attention"].items()
+                    if not value.get("acknowledged_at")
+                },
+            }
         if not project:
             return state
         return {
