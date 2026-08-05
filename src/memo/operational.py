@@ -321,7 +321,11 @@ class OperationalStore:
                 data.get("schema") == MEMO_OPERATIONAL_SCHEMA
                 and data.get("journal_heads") == journal_heads
             ):
-                return data
+                # A snapshot written before a section existed is still current
+                # by schema and heads, so it is returned as-is. Backfill the
+                # missing sections or the writer that owns one KeyErrors on an
+                # install older than the feature.
+                return {**self._empty(), **data}
         except (FileNotFoundError, OSError, json.JSONDecodeError):
             pass
         return self.rebuild(events=events)
@@ -370,7 +374,12 @@ class OperationalStore:
                 event_id=event_id,
             )
             try:
-                state = json.loads(self.snapshot_path.read_text(encoding="utf-8"))
+                # Same backfill as _read_snapshot: a projection handler must
+                # never index a section an older snapshot predates.
+                state = {
+                    **self._empty(),
+                    **json.loads(self.snapshot_path.read_text(encoding="utf-8")),
+                }
             except (FileNotFoundError, OSError, json.JSONDecodeError):
                 state = {}
             current_heads = self._ledger.head_hashes()

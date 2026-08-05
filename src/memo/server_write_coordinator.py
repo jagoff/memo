@@ -106,10 +106,18 @@ class McpWriteCoordinator:
                         # message was already deemed safe to expose — unwrap it
                         # instead of discarding it. Anything else stays masked.
                         cause = e.__cause__
+                        # Name the failing exception type — a class name carries
+                        # no user data but turns an unactionable "failed safely"
+                        # into something a caller can report and a maintainer can
+                        # grep for. The message itself stays masked.
+                        kind = type(cause if cause is not None else e).__name__
                         job.future.set_exception(
                             cause
                             if isinstance(cause, MemoError)
-                            else StorageError("coordinated MCP write failed safely")
+                            else StorageError(
+                                f"coordinated MCP write failed safely ({kind}) — "
+                                "details in the memo-mcp server log"
+                            )
                         )
                 else:
                     self._completed += 1
