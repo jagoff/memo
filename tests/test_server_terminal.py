@@ -27,3 +27,16 @@ def test_every_mcp_profile_exposes_only_read_only_terminal_list(
     tool = asyncio.run(server.get_tool("memo_terminal_list"))
     assert tool is not None
     assert tool.fn() == {"terminals": [], "count": 0}
+
+
+def test_receiver_mutators_are_opt_in(monkeypatch, mem_with_stub) -> None:
+    monkeypatch.setenv("MEMO_TERMINAL_RECEIVER_ENABLED", "1")
+    monkeypatch.setenv("MEMO_MCP_PROFILE", "full")
+    server = build_server(memory=mem_with_stub)
+
+    names = {tool.name for tool in asyncio.run(server.list_tools())}
+
+    assert "memo_terminal_receiver_send" in names
+    assert "memo_terminal_receiver_enter" in names
+    assert "memo_terminal_send" not in names
+    assert "memo_terminal_enter" not in names

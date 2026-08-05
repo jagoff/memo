@@ -119,6 +119,11 @@ commands) and MCP (41 tools) surface, each fixed with a regression test.
 
 ### Added
 
+- An explicit opt-in receiver-bound terminal transport (`memo terminal
+  receiver ...` and matching MCP tools) now owns a nested PTY, authenticates
+  Unix-socket peers with a mode-0600 capability, revalidates the child identity
+  before every write, and deduplicates message IDs. Legacy exact-TTY mutators
+  remain disabled by default.
 - `memo events list --cursor` now exposes bounded, resumable event pages from
   the append-only JSONL journal, with an opaque cursor backed by a verified byte
   offset, while the no-cursor command preserves its legacy JSON list contract.
@@ -149,10 +154,12 @@ commands) and MCP (41 tools) surface, each fixed with a regression test.
 - `memo config validate` accepts the retired live-terminal shim variables in
   agent processes that were already running when the fail-closed upgrade was
   installed; fresh shims still remove those variables.
-- Live terminal input now fails closed: the CLI and MCP `send`/`enter`
+- Live terminal input now fails closed: the CLI and MCP legacy `send`/`enter`
   mutators and automatic shim registration are disabled, and legacy terminal
-  registrations are non-deliverable. Read-only diagnostics remain available
-  while a receiver-bound API with explicit destination authority is designed.
+  registrations are non-deliverable. Read-only diagnostics remain available;
+  the receiver-bound API is explicit opt-in only.
+- Unix socket creation now falls back to a short per-user temporary root when
+  the configured state path would exceed the platform AF_UNIX path limit.
 - Live terminal coordination now recognizes the native `Apple_Terminal` and
   `iTerm.app` `TERM_PROGRAM` values, rotates a registration id when a new
   process replaces an agent on the same TTY, and records target-validation

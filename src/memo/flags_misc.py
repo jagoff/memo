@@ -334,6 +334,14 @@ SPECS: tuple[FlagSpec, ...] = (
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(
+        "MEMO_TERMINAL_RECEIVER_ENABLED",
+        "bool",
+        False,
+        "terminal",
+        "Enable the receiver-bound PTY terminal transport. Requires an authenticated "
+        "per-session Unix socket; legacy TTY mutators remain disabled.",
+    ),
+    _spec(
         "MEMO_MCP_WRITE_QUEUE_SIZE",
         "int",
         32,

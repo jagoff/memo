@@ -137,6 +137,11 @@ GATES: dict[str, GateSpec] = dict(
             "materialized read-model lifecycle; activate through graph-config.md",
         ),
         _g(
+            "MEMO_TERMINAL_RECEIVER_ENABLED",
+            "manual",
+            "explicit local PTY receiver opt-in; not a retrieval experiment",
+        ),
+        _g(
             "MEMO_GRAPH_CODE_TRACE_ENABLED",
             "manual",
             "read-only traceability projection; activate through graph-config.md",
