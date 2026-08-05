@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import click
+from rich.markup import escape
 from rich.table import Table
 
 from memo.cli_common import console
@@ -177,7 +178,7 @@ def consolidate_apply(
     console.print(f"[dim]⊘ Skipped {skipped_count} (conflicts)[/dim]")
 
     for r in results[:5]:
-        console.print(f"  {r.get('summary', '')}")
+        console.print(f"  {escape(str(r.get('summary', '')))}")
 
     if len(results) > 5:
         console.print(f"[dim]...and {len(results) - 5} more[/dim]")

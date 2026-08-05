@@ -80,6 +80,21 @@ def test_save_receipt_renders_title_literally(qa_env) -> None:
     assert "[Context7]" in saved.output
 
 
+def test_digest_command_renders_nudge_titles_literally(qa_env, monkeypatch) -> None:
+    """`memo digest` prints memory-derived nudge titles through Rich."""
+    # cli_proactive imports these lazily inside the command body.
+    from memo.proactive import engine, surfaces
+
+    monkeypatch.setattr(surfaces, "render_digest", lambda _routed: MARKUP_TITLE)
+    monkeypatch.setattr(engine, "compute_routed", lambda *_a, **_k: object())
+
+    env = {**qa_env, "MEMO_PROACTIVE_ENABLED": "1"}
+    shown = CliRunner().invoke(cli, ["digest"], env=env)
+
+    assert shown.exit_code == 0, shown.output
+    assert "[b]negrita[/b]" in shown.output
+
+
 def test_as_of_list_renders_title_literally(qa_env) -> None:
     runner = CliRunner()
     _save(runner, qa_env)
