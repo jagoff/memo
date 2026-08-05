@@ -155,7 +155,7 @@ def _packaged_curated_labels() -> Path | None:
             asset = asset / part
         packaged = Path(str(asset))
         return packaged if packaged.is_file() else None
-    except Exception:
+    except (ModuleNotFoundError, OSError, TypeError, ValueError):
         return None
 
 
