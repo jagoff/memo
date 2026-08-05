@@ -68,9 +68,15 @@ def operational_group() -> None:
 
 @operational_group.command(name="state")
 @click.option("--project", default=None)
+@click.option(
+    "--include-closed",
+    is_flag=True,
+    default=False,
+    help="Also print settled history (resolved conflicts, consumed handoffs, acked attention).",
+)
 @_with_memory
-def operational_state(memory: Any, project: str | None) -> None:
-    _json(memory.operational.state(project=project))
+def operational_state(memory: Any, project: str | None, include_closed: bool) -> None:
+    _json(memory.operational.state(project=project, include_closed=include_closed))
 
 
 @operational_group.command(name="verify")

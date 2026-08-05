@@ -75,7 +75,7 @@ def _default_search_json_body_chars() -> int:
 
 @click.command()
 @click.argument("query")
-@click.option("--limit", default=10, type=int, show_default=True)
+@click.option("--limit", default=10, type=click.IntRange(1, 500), show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
 @click.option(
     "--mode",
@@ -196,9 +196,9 @@ def search(
         h_dict = h.to_dict()
         tbl.add_row(
             f"{h.score:.3f}" if h.score is not None else "—",
-            h.type,
-            h.title + _fact_badge(h_dict),
-            ", ".join(h.tags) or "—",
+            escape(h.type),
+            escape(h.title + _fact_badge(h_dict)),
+            escape(", ".join(h.tags) or "—"),
         )
     console.print(tbl)
     if explain and trace is not None:
@@ -289,8 +289,8 @@ def context_cmd(
         return
     console.print(
         Panel.fit(
-            payload["prompt"] or "[dim](no memory context)[/dim]",
-            title=f"context: {question[:60]}",
+            escape(payload["prompt"]) if payload["prompt"] else "[dim](no memory context)[/dim]",
+            title=f"context: {escape(question[:60])}",
             border_style="cyan",
         )
     )
@@ -299,7 +299,11 @@ def context_cmd(
 @click.command()
 @click.argument("question")
 @click.option(
-    "--k", default=5, type=int, show_default=True, help="Top-K memories to feed the LLM as context."
+    "--k",
+    default=5,
+    type=click.IntRange(1, 500),
+    show_default=True,
+    help="Top-K memories to feed the LLM as context.",
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option(
@@ -328,6 +332,9 @@ def ask(
     inline `[id]` citations using MLXChat 7B over the top-K hybrid hits.
     """
     import time
+
+    if not question.strip():
+        raise click.ClickException("`question` must be non-empty")
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
@@ -652,7 +659,7 @@ def chat_ask(
 
 @click.command(name="recall")
 @click.argument("query")
-@click.option("--limit", default=5, type=int, show_default=True)
+@click.option("--limit", default=5, type=click.IntRange(1, 500), show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
 @click.option("--json", "as_json", is_flag=True, help='Emit {"results": [...]} for callers.')
 @click.option(

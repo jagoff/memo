@@ -132,7 +132,7 @@ def history_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
         click.echo(json.dumps(events, ensure_ascii=False, indent=2, default=str))
         return
 
-    title_str = f"{r.title}" if r else resolved[:8]
+    title_str = escape(r.title) if r else resolved[:8]
     console.print(
         Panel.fit(
             f"[bold]{title_str}[/bold]  [dim]{resolved[:8]}[/dim]",
