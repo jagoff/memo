@@ -256,24 +256,37 @@ def _conflict_member_ids(row: dict[str, Any]) -> list[str]:
     return out
 
 
+_TOKEN_SPLIT_RE = re.compile(r"[^0-9a-z]+")
+_MIN_TOKEN_LEN = 3
+
+
+def _topic_tokens(text: str) -> set[str]:
+    """Significant whole-word tokens of a topic, case- and punctuation-folded."""
+    return {t for t in _TOKEN_SPLIT_RE.split(str(text).casefold()) if len(t) >= _MIN_TOKEN_LEN}
+
+
 def _conflict_matches_query(row: dict[str, Any], query_cf: str) -> bool:
     """Whether a write whose topic is ``query_cf`` is subject to ``row``.
 
     Id-scoped (semantic-contradiction) conflicts match ONLY when the query
     references one of their subject memory ids — never their prose ``summary``,
     so common words like "memo"/"contradiction"/"between" no longer freeze
-    unrelated writes. Topic-scoped (manually-opened) conflicts keep matching
-    on their ``topic`` (not the prose summary).
+    unrelated writes.
+
+    Topic-scoped (manually-opened) conflicts match only when the write's topic
+    contains EVERY significant token of the conflict topic, as whole words. A
+    substring or single-token overlap is not enough: a conflict opened on
+    ``test_conflict`` must not freeze "test coverage for the recall hook". A
+    topic with no significant token freezes nothing — it stays resolvable by id
+    through ``memo operational conflict resolve``.
     """
     member_ids = _conflict_member_ids(row)
     if member_ids:
         return any(mid.casefold() in query_cf for mid in member_ids)
-    topic_cf = str(row.get("topic", "")).casefold()
-    if not topic_cf:
+    topic_tokens = _topic_tokens(row.get("topic", ""))
+    if not topic_tokens:
         return False
-    if query_cf in topic_cf or topic_cf in query_cf:
-        return True
-    return any(token in topic_cf for token in query_cf.split() if len(token) >= 3)
+    return topic_tokens.issubset(_topic_tokens(query_cf))
 
 
 class OperationalStore:
@@ -308,7 +321,11 @@ class OperationalStore:
                 data.get("schema") == MEMO_OPERATIONAL_SCHEMA
                 and data.get("journal_heads") == journal_heads
             ):
-                return data
+                # A snapshot written before a section existed is still current
+                # by schema and heads, so it is returned as-is. Backfill the
+                # missing sections or the writer that owns one KeyErrors on an
+                # install older than the feature.
+                return {**self._empty(), **data}
         except (FileNotFoundError, OSError, json.JSONDecodeError):
             pass
         return self.rebuild(events=events)
@@ -357,7 +374,12 @@ class OperationalStore:
                 event_id=event_id,
             )
             try:
-                state = json.loads(self.snapshot_path.read_text(encoding="utf-8"))
+                # Same backfill as _read_snapshot: a projection handler must
+                # never index a section an older snapshot predates.
+                state = {
+                    **self._empty(),
+                    **json.loads(self.snapshot_path.read_text(encoding="utf-8")),
+                }
             except (FileNotFoundError, OSError, json.JSONDecodeError):
                 state = {}
             current_heads = self._ledger.head_hashes()
@@ -641,6 +663,46 @@ class OperationalStore:
                 )
             return len(targets)
 
+    def gc_conflicts_for_pair(
+        self,
+        memory_id_a: str,
+        memory_id_b: str,
+        *,
+        reason: str = "relation judged",
+    ) -> int:
+        """Auto-resolve the active conflict opened for exactly this pair.
+
+        Called once the canonical relation between the two memories is judged,
+        so a ``semantic_contradiction`` anomaly does not stay ``detected``
+        forever after the contradiction it reported has been settled. Endpoint
+        order is irrelevant — the ledger may judge either direction. Like
+        :meth:`gc_conflicts_for_memory` this is a system-level cleanup and does
+        not require human authority. Returns the count resolved.
+        """
+        pair = {str(memory_id_a).strip().casefold(), str(memory_id_b).strip().casefold()}
+        if len(pair) != 2 or "" in pair:
+            return 0
+        with authority_write_lock(self.state_dir / "operational-transactions"):
+            conflicts = self._read_snapshot()["conflicts"]
+            targets = [
+                cid
+                for cid, row in conflicts.items()
+                if row.get("lifecycle_state") not in {"resolved", "archived"}
+                and {m.casefold() for m in _conflict_member_ids(row)} == pair
+            ]
+            for cid in targets:
+                self._commit(
+                    "conflict.resolve",
+                    {
+                        "id": cid,
+                        "resolved_at": utc_now_iso(),
+                        "resolution": reason,
+                    },
+                    subject_uri=f"memo://conflict/{cid}",
+                    actor=ActorIdentity(actor_id="memo-gc", actor_kind="system"),
+                )
+            return len(targets)
+
     def record_outcome(
         self,
         *,
@@ -798,8 +860,36 @@ class OperationalStore:
             metadata=dict(metadata or {}),
         )
 
-    def state(self, *, project: str | None = None) -> dict[str, Any]:
+    def state(self, *, project: str | None = None, include_closed: bool = True) -> dict[str, Any]:
+        """The operational projection, optionally narrowed to what is still open.
+
+        ``include_closed=True`` (the default) returns the raw projection, which
+        internal consumers rebuild their own views from. User-facing surfaces
+        (the MCP tool, the CLI) pass ``False``: resolved conflicts, consumed
+        handoffs, and acknowledged attention items are settled history that
+        only grows, and shipping all of it made the payload exceed an MCP
+        client's token budget.
+        """
         state = self._read_snapshot()
+        if not include_closed:
+            state = {
+                **state,
+                "conflicts": {
+                    key: value
+                    for key, value in state["conflicts"].items()
+                    if value.get("lifecycle_state") not in {"resolved", "archived"}
+                },
+                "handoffs": {
+                    key: value
+                    for key, value in state["handoffs"].items()
+                    if not value.get("consumed_at")
+                },
+                "attention": {
+                    key: value
+                    for key, value in state["attention"].items()
+                    if not value.get("acknowledged_at")
+                },
+            }
         if not project:
             return state
         return {

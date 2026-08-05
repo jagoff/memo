@@ -103,6 +103,11 @@ def test_built_distributions_only_ship_release_allowlist(tmp_path: Path) -> None
         "PKG-INFO",
         "README.md",
         "commands",
+        # The curated regression labels the tuner's no-regression gate reads.
+        # They must reach the sdist too: a wheel built from the sdist resolves
+        # the force-include from these sources, and without them the gate
+        # silently fails open on the installed runtime.
+        "eval",
         "hooks",
         "plugins",
         "pyproject.toml",

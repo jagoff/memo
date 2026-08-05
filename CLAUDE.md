@@ -198,6 +198,14 @@ dominant source group), `MEMO_CHAT_ANSWER_MAX_TOKENS` (1200),
 checks pass/fail + p50/p95 latency — the chat-side counterpart to `memo eval
 recall` (see Retrieval-regression discipline below).
 
+**Latency is retrieval-dominated, and multi-query is the biggest term.**
+Measured 2026-08-05 against the live corpus (11.3k memories, 4B embedder,
+30B synthesiser): retrieval ~15-17s warm, ~70s on the service's first query
+(the chat process cold-loads the LLM the query rewrite needs). `memo chat ask`
+in a fresh process: 77s default, 31s with `MEMO_CHAT_MULTI_QUERY=false`. Turn
+it off when latency matters more than recall breadth; keep it on for the UI,
+where the SPA streams stages while retrieval runs.
+
 **Ops (launchd):** `memo ops install chat [--port 8765] [--dist <path>]` /
 `memo ops uninstall chat` / `memo ops status` (`src/memo/ops_launchd.py`)
 render and bootstrap a `com.memo.chat` LaunchAgent (`KeepAlive`, logs to
@@ -477,6 +485,10 @@ Before deciding or answering anything that prior work might already cover,
 consult memo FIRST:
 - Start with `memo_unified_briefing` (or `memo_search` / `memo_ask`) to
   pull durable facts, decisions, and preferences.
+- Already hold a memory id or a named entity and want what's connected to
+  it? Reach for `memo_graph` / `memo_related` (cheap graph traversal —
+  id/title only) before firing a fresh `memo_search`/`memo_ask` (full
+  retrieval) for the same thing.
 - Pass `source="<this-client>"` on the read tools so usage is attributed
   (e.g. `source="codex"`). A client that never appears in memo's consult log is
   flagged as a silent gap by `memo usefulness`.

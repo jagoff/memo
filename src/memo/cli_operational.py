@@ -68,9 +68,15 @@ def operational_group() -> None:
 
 @operational_group.command(name="state")
 @click.option("--project", default=None)
+@click.option(
+    "--include-closed",
+    is_flag=True,
+    default=False,
+    help="Also print settled history (resolved conflicts, consumed handoffs, acked attention).",
+)
 @_with_memory
-def operational_state(memory: Any, project: str | None) -> None:
-    _json(memory.operational.state(project=project))
+def operational_state(memory: Any, project: str | None, include_closed: bool) -> None:
+    _json(memory.operational.state(project=project, include_closed=include_closed))
 
 
 @operational_group.command(name="verify")
@@ -287,6 +293,29 @@ def conflict_open(
             )
         )
     )
+
+
+@conflict_group.command(name="list")
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    default=False,
+    help="Include resolved conflicts (default: only those freezing writes).",
+)
+@_with_memory
+def conflict_list(memory: Any, show_all: bool) -> None:
+    """List conflicts, newest first. Default shows only write-freezing ones."""
+    rows = list((memory.operational.state().get("conflicts") or {}).values())
+    if not show_all:
+        rows = [
+            row
+            for row in rows
+            if row.get("freeze_write")
+            and row.get("lifecycle_state") in {"detected", "acknowledged"}
+        ]
+    rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    _json(rows)
 
 
 @conflict_group.command(name="resolve")

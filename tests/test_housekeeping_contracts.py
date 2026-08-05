@@ -91,7 +91,10 @@ def test_vacuum_continues_after_one_record_fails_and_counts_successes(
             env=_env(tmp_path),
         )
 
-    assert result.exit_code == 0, result.output
+    # Failure isolation is the contract: every later row is still processed and
+    # the receipt is complete. Since the P1 audit the exit code reports that a
+    # row failed (see receipt["errors"] assertions below).
+    assert result.exit_code == 1, result.output
     receipt = json.loads(result.output)
     assert receipt["vacuumed"] == 1
     assert [
@@ -133,7 +136,9 @@ def test_vacuum_days_overflow_is_reported_without_aborting_command(tmp_path: Pat
             env=_env(tmp_path),
         )
 
-    assert result.exit_code == 0, result.output
+    # Reported without aborting: the command finishes and writes a full receipt.
+    # Invalid input is still a failure, so the exit code says so (P1 audit).
+    assert result.exit_code == 1, result.output
     receipt = json.loads(result.output)
     assert receipt["vacuumed"] == 0
     assert any(error.startswith("vacuum: OverflowError:") for error in receipt["errors"])

@@ -370,6 +370,24 @@ def _vacuum_soft_deleted(
     return vacuumed, len(ids), errors
 
 
+def _fold_synthesis_errors(receipt: dict[str, Any]) -> None:
+    """Promote per-cluster synthesis failures into the run-level error list.
+
+    A refused or failed synthesis save is a pass failure, not a quiet skip.
+    Called before the receipt is persisted so the stored run, the operator, and
+    the exit code all see the same thing.
+    """
+    for item in receipt["synthesized"]:
+        if item.get("error"):
+            receipt["errors"].append(f"synthesize: {item['error']}")
+
+
+def _fail_on_pass_errors(receipt: dict[str, Any], *, dry_run: bool) -> None:
+    """Exit non-zero when a pass failed. A dry run changed nothing, so it does not."""
+    if receipt["errors"] and not dry_run:
+        raise SystemExit(1)
+
+
 @click.group(name="maintain", invoke_without_command=True)
 @click.option("--dry-run", is_flag=True, help="Preview actions; change nothing.")
 @click.option(
@@ -735,6 +753,11 @@ def maintain_cmd(
             receipt["crush_cache_evicted"] = CrushCache(cfg.state_dir).evict_expired(
                 ttl_days=flag_crusher_cache_ttl_days()
             )
+    except FileNotFoundError:
+        # No cache directory yet (fresh install, or nothing was ever crushed):
+        # there is nothing to evict. Not a failure — recording it as one would
+        # make every first run of a new install report an error.
+        pass
     except Exception as exc:
         receipt["errors"].append(f"crush_cache: {type(exc).__name__}: {exc}")
 
@@ -807,6 +830,8 @@ def maintain_cmd(
         except Exception as exc:
             receipt["errors"].append(f"outcome: {type(exc).__name__}: {exc}")
 
+    _fold_synthesis_errors(receipt)
+
     # Persist receipt + timestamp (the daily guard reads the timestamp). Even
     # a dry-run stamps so a preview doesn't immediately re-trigger; the guard
     # cares only about "ran recently".
@@ -829,6 +854,7 @@ def maintain_cmd(
 
     if as_json:
         click.echo(json.dumps(receipt, ensure_ascii=False, indent=2))
+        _fail_on_pass_errors(receipt, dry_run=dry_run)
         return
 
     tag = "[dim](dry-run)[/dim] " if dry_run else ""
@@ -857,9 +883,9 @@ def maintain_cmd(
             f"  outcome loop: roi_score re-derived for {receipt['outcome_reconciled']} "
             f"memories, {len(receipt['dead_archived'])} dead-weight archived"
         )
-    if receipt["errors"]:
-        for e in receipt["errors"]:
-            console.print(f"  [yellow]warn:[/yellow] {e}")
+    for e in receipt["errors"]:
+        console.print(f"  [red]error:[/red] {e}")
+    _fail_on_pass_errors(receipt, dry_run=dry_run)
 
 
 @maintain_cmd.command(name="undo")

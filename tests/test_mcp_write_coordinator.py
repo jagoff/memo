@@ -107,6 +107,10 @@ async def test_unexpected_worker_exception_is_safe_typed_error():
     with pytest.raises(StorageError, match="failed safely") as exc:
         await coordinator.submit(boom)
     assert "secret internal detail" not in str(exc.value)
+    # The failing type is named so the error is actionable — a QA run hit
+    # "coordinated MCP write failed safely" with no way to tell a KeyError
+    # (a real bug) from a transient lock. The class name leaks no user data.
+    assert "RuntimeError" in str(exc.value)
     await coordinator.close()
 
 

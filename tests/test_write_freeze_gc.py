@@ -107,3 +107,56 @@ def test_write_policy_allows_prose_write_when_only_semantic_conflict_exists(tmp_
     )
     assert decision.allowed is True
     assert decision.reason == "allowed"
+
+
+def _open_topic_conflict(store: OperationalStore, *, topic: str, summary: str) -> str:
+    """A manually-opened, topic-scoped conflict — carries no subject memory ids."""
+    record = store.open_conflict(topic=topic, summary=summary, freeze_write=True)
+    store.state()  # materialize the projection
+    return record.id
+
+
+def test_topic_conflict_does_not_freeze_writes_sharing_one_word(tmp_path):
+    """Regression: abandoned QA conflicts froze every write mentioning test/mcp.
+
+    The topic branch matched when any >=3-char token of the *write* was a
+    substring of the conflict topic, so `test_conflict` swallowed "test
+    coverage ..." and `zzz_mcp_qa_probe_conflict` swallowed "mcp server ...".
+    Found in the live store on 2026-08-04 with 4 such conflicts open.
+    """
+    store = OperationalStore(tmp_path, device_id="device-a")
+    _open_topic_conflict(store, topic="test_conflict", summary="test conflict")
+    _open_topic_conflict(
+        store,
+        topic="zzz_mcp_qa_probe_conflict",
+        summary="Testing memo_conflict_open from MCP QA audit",
+    )
+
+    for topic in (
+        "test coverage for the recall hook",
+        "flaky test in CI",
+        "mcp server registration",
+        "add mcp tool for graph",
+    ):
+        assert store.active_conflicts(topic) == [], f"write wrongly frozen: {topic!r}"
+
+
+def test_topic_conflict_still_freezes_writes_about_its_topic(tmp_path):
+    store = OperationalStore(tmp_path, device_id="device-a")
+    _open_topic_conflict(store, topic="billing_provider", summary="stripe vs adyen")
+
+    for topic in (
+        "billing_provider",
+        "billing provider decision reversed",
+        "we are switching the billing provider to adyen",
+    ):
+        assert store.active_conflicts(topic), f"write should be frozen: {topic!r}"
+
+
+def test_topic_conflict_with_no_significant_tokens_never_freezes(tmp_path):
+    """A degenerate topic must not blanket-freeze; resolve it by id instead."""
+    store = OperationalStore(tmp_path, device_id="device-a")
+    _open_topic_conflict(store, topic="t", summary="t")
+
+    assert store.active_conflicts("anything at all") == []
+    assert store.active_conflicts("t") == []

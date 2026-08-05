@@ -60,6 +60,17 @@
     <string>1</string>
     <key>MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED</key>
     <string>1</string>
+    <!-- Dream v2 self-improvement passes (batch 2026-08-03): nightly HyDE A/B
+         (self-applying/self-reverting via the tuned overlay, gated on the
+         curated eval set), MinHash-blocked LLM entity-dedup (bounded 30
+         pairs/night), and grounded co-use edge-confidence curation
+         (never touches recall ranking, never deletes). -->
+    <key>MEMO_DREAM_HYDE_TUNE_ENABLED</key>
+    <string>1</string>
+    <key>MEMO_DREAM_ENTITY_CANON_ENABLED</key>
+    <string>1</string>
+    <key>MEMO_DREAM_EDGE_VERIFY_ENABLED</key>
+    <string>1</string>
     <!-- Contradiction/support signals: capture tool evidence, weigh mutability in
          contradiction scans, require N supporting memories before supersede, and
          lift confidence per corroborating source. -->

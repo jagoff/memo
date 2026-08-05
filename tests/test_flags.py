@@ -62,6 +62,30 @@ def test_graph_integration_flags_have_safe_defaults(tmp_path: Path) -> None:
     assert flags.flag_float("MEMO_GRAPH_MIN_ENTITY_IDF", env=env) == 0.5
 
 
+def test_evidence_graph_compact_flags_have_safe_defaults(tmp_path: Path) -> None:
+    env = _isolated_env(tmp_path)
+    assert flags.flag_bool("MEMO_EVIDENCE_GRAPH_COMPACT", env=env) is True
+    assert flags.flag_float("MEMO_EVIDENCE_GRAPH_COMPACT_MIN_IDF", env=env) == 0.5
+
+
+def test_evidence_graph_compact_vars_are_registered_not_unknown() -> None:
+    env = {
+        "MEMO_EVIDENCE_GRAPH_COMPACT": "1",
+        "MEMO_EVIDENCE_GRAPH_COMPACT_MIN_IDF": "0.7",
+    }
+    assert flags.unknown_memo_vars(env=env) == []
+    assert flags.validate(env=env) == []
+
+
+def test_context_graph_compact_flags_registered() -> None:
+    assert flags.flag_bool("MEMO_CONTEXT_GRAPH_COMPACT") is True
+    assert flags.flag_float("MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF") == 0.5
+    env = {"MEMO_CONTEXT_GRAPH_COMPACT": "0", "MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF": "0.7"}
+    assert flags.flag_bool("MEMO_CONTEXT_GRAPH_COMPACT", env=env) is False
+    assert flags.flag_float("MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF", env=env) == 0.7
+    assert flags.validate(env=env) == []
+
+
 def test_typed_coercion() -> None:
     env = {
         "MEMO_RECALL_TOP_K": "7",
@@ -203,9 +227,9 @@ def test_startup_banner_toggle_not_flagged_unknown() -> None:
 
 
 def test_chat_config_vars_not_flagged_unknown() -> None:
-    # chat/config.py's 9 MEMO_CHAT_* knobs are env-only (read directly, not
+    # chat/config.py's 11 MEMO_CHAT_* knobs are env-only (read directly, not
     # through this registry) but must not be reported as typos.
-    env = {"MEMO_CHAT_BASE_K": "5"}
+    env = {"MEMO_CHAT_BASE_K": "5", "MEMO_CHAT_GRAPH_COMPACT": "1"}
     assert flags.unknown_memo_vars(env=env) == []
     assert flags.validate(env=env) == []
 

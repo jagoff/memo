@@ -68,12 +68,21 @@ def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
             str | None,
             Field(description="Project tag to scope the state to; None returns every project."),
         ] = None,
+        include_closed: Annotated[
+            bool,
+            Field(
+                description="Also return settled history: resolved conflicts, consumed "
+                "handoffs, and acknowledged attention items. Off by default — that "
+                "history only grows and can exceed the response budget."
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Read current focus, handoffs, attention items, conflicts, and outcomes.
 
-        Read-only snapshot of the operational journal's current state.
+        Read-only snapshot of the operational journal's current state. Returns
+        only what is still open unless ``include_closed`` is set.
         """
-        return memory.operational.state(project=project)
+        return memory.operational.state(project=project, include_closed=include_closed)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_federation_preview(

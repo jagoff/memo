@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "4.8.1"
+version = "4.9.2"
 description = "Local-first semantic memory for AI agents — time-travel, contradiction radar, automatic synthesis. MLX (Apple Silicon) or CPU sentence-transformers (Linux) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -27,7 +27,7 @@ dependencies = [
     "click>=8.1.7",
     "rich>=13.7",
     "pydantic>=2.6",
-    "cryptography>=42.0",
+    "cryptography>=50.0",
     # Pinned to a tested range: the vec0 PARTITION KEY / metadata-column
     # filtering the store relies on is alpha API — cap below 0.2 to avoid
     # silent breakage on an upstream change. Tested against 0.1.9.
@@ -162,6 +162,7 @@ include = [
     "/.claude-plugin/marketplace.json",
     "/.claude-plugin/plugin.json",
     "/commands/memo.md",
+    "/eval/regression_labels.json",
     "/hooks/hooks.json",
     "/plugins/memo/.codex-plugin/plugin.json",
     "/plugins/memo/.mcp.json",
@@ -183,6 +184,9 @@ packages = ["src/memo"]
 ".claude-plugin/marketplace.json" = "memo/agent_assets/.claude-plugin/marketplace.json"
 ".claude-plugin/plugin.json" = "memo/agent_assets/.claude-plugin/plugin.json"
 "commands/memo.md" = "memo/agent_assets/commands/memo.md"
+# The tuner's curated no-regression gate reads this at runtime; without it in
+# the wheel the gate silently fails open on every installed runtime.
+"eval/regression_labels.json" = "memo/agent_assets/eval/regression_labels.json"
 "hooks/hooks.json" = "memo/agent_assets/hooks/hooks.json"
 "plugins/memo/.codex-plugin/plugin.json" = "memo/agent_assets/plugins/memo/.codex-plugin/plugin.json"
 "plugins/memo/.mcp.json" = "memo/agent_assets/plugins/memo/.mcp.json"
