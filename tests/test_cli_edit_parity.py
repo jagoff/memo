@@ -19,7 +19,14 @@ BODY = "First line.\n\nSecond line mentions Postgres 16.\n\nThird line."
 
 
 @pytest.fixture
-def qa_env(tmp_path):
+def qa_env(tmp_path, monkeypatch):
+    # `--append` / `--replace-old` change the body, so the update path re-embeds.
+    # Stub the embedder (and pin dims to match) or these fail on any runner
+    # without MLX — the Linux CI job among them.
+    def _stub_embed(self, inputs):
+        return [[float(len(str(text)) % 4 == index) for index in range(4)] for text in inputs]
+
+    monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
     return {
         "MEMO_DATA_DIR": str(tmp_path / "data"),
         "MEMO_STATE_DIR": str(tmp_path / "state"),
@@ -27,6 +34,8 @@ def qa_env(tmp_path):
         "MEMO_CONFIG_FILE": str(tmp_path / "memo-config.toml"),
         "MEMO_NONINTERACTIVE": "1",
         "MEMO_EMBEDDER_VIA_DAEMON": "0",
+        "MEMO_EMBEDDER_DIMS": "4",
+        "MEMO_RERANKER_ENABLED": "0",
     }
 
 
