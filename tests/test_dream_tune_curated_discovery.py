@@ -51,6 +51,15 @@ def test_repo_checkout_still_resolves_its_committed_labels(tmp_path, monkeypatch
     assert prompts, "the repo-committed eval/regression_labels.json must still be found in dev"
 
 
+def test_packaged_lookup_degrades_to_none_when_resources_fail(monkeypatch) -> None:
+    def boom(_anchor):
+        raise ModuleNotFoundError("no such package")
+
+    monkeypatch.setattr(dream_tune, "package_files", boom)
+
+    assert dream_tune._packaged_curated_labels() is None
+
+
 def test_curated_labels_ship_in_the_wheel() -> None:
     """The force-include must stay in pyproject: dropping it silently returns
     the gate to failing open."""

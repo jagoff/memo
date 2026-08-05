@@ -59,6 +59,43 @@ def test_gc_conflicts_for_pair_resolves_the_judged_pair(tmp_path) -> None:
     assert store.gc_conflicts_for_pair(MEM_A, MEM_B) == 0
 
 
+def test_gc_conflicts_for_pair_rejects_a_degenerate_pair(tmp_path) -> None:
+    store = OperationalStore(tmp_path, device_id="device-a")
+    _open_semantic_conflict(store)
+
+    # A self-pair or a blank endpoint identifies no conflict; closing anything
+    # on that basis would resolve records the caller never named.
+    assert store.gc_conflicts_for_pair(MEM_A, MEM_A) == 0
+    assert store.gc_conflicts_for_pair(MEM_A, "  ") == 0
+    assert len(store.active_conflicts(f"touch {MEM_A}")) == 1
+
+
+def test_mcp_state_tool_defaults_to_open_only(tmp_path) -> None:
+    from unittest.mock import MagicMock
+
+    from memo.server_operational import register
+
+    store = OperationalStore(tmp_path, device_id="device-a")
+    open_id = _open_semantic_conflict(store)
+    closed = store.open_conflict(topic="billing architecture", summary="two designs")
+    store.resolve_conflict(
+        closed.id,
+        resolution="picked design B",
+        actor=ActorIdentity(actor_id="fer", actor_kind="human"),
+    )
+
+    tools: dict[str, object] = {}
+    server = MagicMock()
+    server.tool = lambda **_kw: lambda fn: tools.setdefault(fn.__name__, fn)
+    memory = MagicMock()
+    memory.operational = store
+    register(server, memory)
+
+    state_tool = tools["memo_operational_state"]
+    assert set(state_tool()["conflicts"]) == {open_id}
+    assert set(state_tool(include_closed=True)["conflicts"]) == {open_id, closed.id}
+
+
 def test_gc_conflicts_for_pair_leaves_other_pairs_open(tmp_path) -> None:
     store = OperationalStore(tmp_path, device_id="device-a")
     _open_semantic_conflict(store)

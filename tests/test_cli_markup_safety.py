@@ -14,6 +14,7 @@ Every surface that renders a record's own text must escape it.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
@@ -102,6 +103,95 @@ def test_as_of_list_renders_title_literally(qa_env) -> None:
     listed = runner.invoke(cli, ["as-of", "list", "--date", "2099-01-01"], env=qa_env)
     assert listed.exit_code == 0, listed.output
     assert "[b]negrita[/b]" in listed.output
+
+
+def test_record_history_renders_title_literally(qa_env) -> None:
+    runner = CliRunner()
+    id_ = _save(runner, qa_env)
+
+    shown = runner.invoke(cli, ["record-history", id_], env=qa_env)
+    assert shown.exit_code == 0, shown.output
+    assert "[b]negrita[/b]" in shown.output
+
+
+def test_saved_query_results_render_literally(qa_env, monkeypatch) -> None:
+    """`memo query run` prints record titles and bodies."""
+    from unittest.mock import MagicMock
+
+    from memo import cli_query
+
+    row = SimpleNamespace(id="a" * 32, title=MARKUP_TITLE, body=MARKUP_BODY)
+    memory = MagicMock()
+    memory.query_composer.execute_query.return_value = SimpleNamespace(count=1, results=[row])
+    monkeypatch.setattr(cli_query, "_get_memory", lambda _cfg: memory)
+
+    shown = CliRunner().invoke(cli, ["query", "run", "saved-one"], env=qa_env)
+
+    assert shown.exit_code == 0, shown.output
+    assert "[b]negrita[/b]" in shown.output
+    assert "[#42]" in shown.output
+
+
+def test_collaborative_recommendations_render_entities_literally(qa_env, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from memo import cli_collaborative
+
+    rec = SimpleNamespace(
+        entity_a="Doc [Context7]",
+        relationship="[b]uses[/b]",
+        entity_b="array[index]",
+        from_user="fer[1]",
+        votes=3,
+        confidence=0.9,
+    )
+    memory = MagicMock()
+    memory.collaborative.get_recommended_connections.return_value = [rec]
+    monkeypatch.setattr(cli_collaborative, "_get_memory", lambda _cfg: memory)
+
+    shown = CliRunner().invoke(cli, ["collaborative", "recommend", "MLX"], env=qa_env)
+
+    assert shown.exit_code == 0, shown.output
+    assert "[b]uses[/b]" in shown.output
+    assert "array[index]" in shown.output
+    assert "fer[1]" in shown.output
+
+
+def test_consolidate_summaries_render_literally(qa_env, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from memo import cli_consolidate
+
+    memory = MagicMock()
+    memory.consolidator.consolidate_all.return_value = {
+        "results": [{"summary": MARKUP_BODY, "merged_id": None, "archived_ids": []}]
+    }
+    monkeypatch.setattr(cli_consolidate, "_get_memory", lambda _cfg: memory)
+
+    shown = CliRunner().invoke(cli, ["consolidate", "apply"], env=qa_env)
+
+    assert shown.exit_code == 0, shown.output
+    assert "[#42]" in shown.output
+    assert "array[index]" in shown.output
+
+
+def test_contradict_pair_excerpt_renders_body_literally(capsys) -> None:
+    """The triage walker prints both records' titles and bodies."""
+    from memo.cli_contradict import _display_pair_excerpt
+
+    record = SimpleNamespace(
+        id="a" * 32,
+        title=MARKUP_TITLE,
+        type="note",
+        updated="2026-08-05T00:00:00+00:00",
+        body=MARKUP_BODY,
+    )
+
+    _display_pair_excerpt(record, "OLDER")
+
+    out = capsys.readouterr().out
+    assert "[b]negrita[/b]" in out
+    assert "[#42]" in out
 
 
 def test_update_and_rename_receipts_render_title_literally(qa_env) -> None:
