@@ -9,6 +9,32 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.9.1] - 2026-08-04
+
+### Fixed
+
+- Topic-scoped conflicts no longer freeze unrelated writes. A manually-opened
+  conflict matched whenever any 3+ character token of the incoming write was a
+  *substring* of the conflict topic, so a conflict on `test_conflict` refused
+  every durable write whose topic contained the word "test". Matching now
+  requires whole-token containment of the conflict topic, and a topic with no
+  significant token freezes nothing while staying resolvable by id.
+- `memo maintain` reports pass failures instead of hiding them. A refused
+  synthesis save was logged at warning level and dropped while the command
+  printed a success banner and exited 0. The failure is now recorded on the
+  cluster result, folded into `receipt["errors"]` before the receipt is
+  persisted, and the run exits non-zero. A dry run still exits 0 — it changed
+  nothing.
+- A missing `crush_cache` directory is no longer recorded as a maintain error.
+  It is the normal state of a fresh install, and with the new exit code it would
+  have made every first run report failure.
+
+### Added
+
+- `memo operational conflict list [--all]` lists conflicts, newest first,
+  showing only write-freezing ones by default. `conflict resolve` previously
+  required an id that no CLI command could produce.
+
 ## [4.9.0] - 2026-08-04
 
 ### Added
