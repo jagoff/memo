@@ -29,6 +29,7 @@ saved baseline rolls back.
 from __future__ import annotations
 
 import json
+from importlib.resources import files as package_files
 from pathlib import Path
 from typing import Any
 
@@ -142,12 +143,29 @@ def save_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
 # --- labels ------------------------------------------------------------------
 
 
+def _packaged_curated_labels() -> Path | None:
+    """The curated set force-included into the wheel at
+    ``memo/agent_assets/eval/``. Resolved the same way ``cli_statusline``
+    resolves its bundled script — without it, an installed runtime (uv tool /
+    pipx / Homebrew, i.e. every non-dev install) finds no curated labels and
+    the tuner's no-regression gate fails open."""
+    try:
+        asset = package_files("memo")
+        for part in ("agent_assets", "eval", "regression_labels.json"):
+            asset = asset / part
+        packaged = Path(str(asset))
+        return packaged if packaged.is_file() else None
+    except Exception:
+        return None
+
+
 def _curated_raw(state_dir: Path) -> dict[str, Any]:
-    """Parsed curated regression-labels document — state_dir first (where the
-    daemon reaches), repo-committed file second (dev). {} when neither has
-    prompts."""
+    """Parsed curated regression-labels document — state_dir first (a user's
+    own set, where the daemon reaches), then the copy shipped in the wheel,
+    then the repo-committed file (dev). {} when none has prompts."""
     candidates = [
         Path(state_dir) / "eval" / "regression_labels.json",
+        *([p] if (p := _packaged_curated_labels()) else []),
         Path(__file__).resolve().parent.parent.parent / "eval" / "regression_labels.json",
     ]
     for cp in candidates:
