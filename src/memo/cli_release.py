@@ -137,10 +137,41 @@ _VERSION_TARGETS = (
 )
 
 
+def _is_memo_checkout(candidate: Path) -> bool:
+    """Whether ``candidate`` is a memo source checkout, not just any project."""
+    pyproject = candidate / "pyproject.toml"
+    if not pyproject.is_file() or not (candidate / "src" / "memo").is_dir():
+        return False
+    try:
+        return 'name = "mlx-memo"' in pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def _checkout_containing_cwd() -> Path | None:
+    """The memo checkout the caller is standing in, if any."""
+    try:
+        start = Path.cwd().resolve()
+    except OSError:
+        return None
+    for candidate in (start, *start.parents):
+        if _is_memo_checkout(candidate):
+            return candidate
+    return None
+
+
 def _resolve_repo() -> Path:
-    """Dev repo to operate on: MEMO_DEV_REPO if set, else the running checkout."""
+    """Dev repo to operate on: MEMO_DEV_REPO, else the checkout holding the cwd,
+    else the one this module was imported from.
+
+    The cwd step is what keeps a release cut from an isolated worktree — the
+    procedure CLAUDE.md prescribes — from rewriting the shared working tree the
+    module happens to be imported from.
+    """
     dev = flag_str("MEMO_DEV_REPO")
-    return Path(dev).expanduser() if dev else _REPO_ROOT
+    if dev:
+        return Path(dev).expanduser()
+    return _checkout_containing_cwd() or _REPO_ROOT
 
 
 def bump_version(current: str, level: str) -> str:
