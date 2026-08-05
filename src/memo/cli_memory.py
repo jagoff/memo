@@ -334,7 +334,7 @@ def save(
 
 
 @click.command(name="list")
-@click.option("--limit", default=20, type=int, show_default=True)
+@click.option("--limit", default=20, type=click.IntRange(1, 500), show_default=True)
 @click.option("--type", "type_", default=None)
 @click.option("--json", "as_json", is_flag=True)
 def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
@@ -434,6 +434,21 @@ def get(id_: str, as_json: bool) -> None:
     default=None,
     help="Replace body. Use '-' to read from stdin.",
 )
+@click.option(
+    "--append",
+    default=None,
+    help="Append a paragraph to the end of the body, leaving the rest untouched.",
+)
+@click.option(
+    "--replace-old",
+    default=None,
+    help="Exact text to replace in the body; must occur exactly once. Pair with --replace-new.",
+)
+@click.option(
+    "--replace-new",
+    default=None,
+    help="Replacement for --replace-old. Everything else stays byte-identical.",
+)
 @click.option("--json", "as_json", is_flag=True)
 def update(
     id_: str,
@@ -441,9 +456,25 @@ def update(
     type_: str | None,
     tags: tuple[str, ...],
     content: str | None,
+    append: str | None,
+    replace_old: str | None,
+    replace_new: str | None,
     as_json: bool,
 ) -> None:
-    """Patch fields on an existing memory. Re-embeds only if body changed."""
+    """Patch fields on an existing memory. Re-embeds only if body changed.
+
+    Three body-edit shapes, mirroring the `memo_update` MCP tool: `--content`
+    replaces the whole body, `--replace-old`/`--replace-new` is a surgical
+    exact-string edit, and `--append` adds a paragraph.
+    """
+
+    if (replace_old is None) != (replace_new is None):
+        raise click.UsageError("--replace-old and --replace-new must be passed together")
+    replace = (replace_old, replace_new) if replace_old is not None else None
+    if sum(1 for shape in (content, append, replace) if shape is not None) > 1:
+        raise click.UsageError(
+            "--content, --append and --replace-old/--replace-new are mutually exclusive"
+        )
 
     if content == "-":
         content = sys.stdin.read()
@@ -458,6 +489,8 @@ def update(
             type_=type_,
             tags=list(tags) if tags else None,
             content=content,
+            append=append,
+            replace=replace,
             actor=ActorIdentity(actor_id="memo-cli", actor_kind="human"),
         )
     )

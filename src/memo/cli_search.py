@@ -75,7 +75,7 @@ def _default_search_json_body_chars() -> int:
 
 @click.command()
 @click.argument("query")
-@click.option("--limit", default=10, type=int, show_default=True)
+@click.option("--limit", default=10, type=click.IntRange(1, 500), show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
 @click.option(
     "--mode",
@@ -299,7 +299,11 @@ def context_cmd(
 @click.command()
 @click.argument("question")
 @click.option(
-    "--k", default=5, type=int, show_default=True, help="Top-K memories to feed the LLM as context."
+    "--k",
+    default=5,
+    type=click.IntRange(1, 500),
+    show_default=True,
+    help="Top-K memories to feed the LLM as context.",
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option(
@@ -328,6 +332,9 @@ def ask(
     inline `[id]` citations using MLXChat 7B over the top-K hybrid hits.
     """
     import time
+
+    if not question.strip():
+        raise click.ClickException("`question` must be non-empty")
 
     cfg = Config.from_env()
     mem = _get_memory(cfg)
@@ -652,7 +659,7 @@ def chat_ask(
 
 @click.command(name="recall")
 @click.argument("query")
-@click.option("--limit", default=5, type=int, show_default=True)
+@click.option("--limit", default=5, type=click.IntRange(1, 500), show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
 @click.option("--json", "as_json", is_flag=True, help='Emit {"results": [...]} for callers.')
 @click.option(
