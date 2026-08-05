@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -320,10 +321,11 @@ def save(
     pending = "\n[yellow]index pending:[/yellow] run `memo reindex`" if rec.index_pending else ""
     console.print(
         Panel.fit(
-            f"[bold]{rec.title}[/bold]\n"
+            f"[bold]{escape(rec.title)}[/bold]\n"
             f"[dim]id:[/dim] {rec.id}\n"
-            f"[dim]path:[/dim] {rec.path}\n"
-            f"[dim]type:[/dim] {rec.type}  [dim]tags:[/dim] {', '.join(rec.tags) or '—'}"
+            f"[dim]path:[/dim] {escape(str(rec.path))}\n"
+            f"[dim]type:[/dim] {escape(rec.type)}  "
+            f"[dim]tags:[/dim] {escape(', '.join(rec.tags) or '—')}"
             f"{pending}",
             title=f"✓ {action}",
             border_style="green",
@@ -332,7 +334,7 @@ def save(
 
 
 @click.command(name="list")
-@click.option("--limit", default=20, type=int, show_default=True)
+@click.option("--limit", default=20, type=click.IntRange(1, 500), show_default=True)
 @click.option("--type", "type_", default=None)
 @click.option("--json", "as_json", is_flag=True)
 def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
@@ -352,7 +354,9 @@ def list_cmd(limit: int, type_: str | None, as_json: bool) -> None:
     tbl.add_column("title", overflow="fold")
     tbl.add_column("tags", overflow="fold")
     for r in items:
-        tbl.add_row(r.updated[:19], r.type, r.title, ", ".join(r.tags) or "—")
+        tbl.add_row(
+            r.updated[:19], escape(r.type), escape(r.title), escape(", ".join(r.tags) or "—")
+        )
     console.print(tbl)
 
 
@@ -401,13 +405,13 @@ def get(id_: str, as_json: bool) -> None:
         return
     console.print(
         Panel.fit(
-            f"[bold]{rec.title}[/bold]\n"
-            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
-            f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
+            f"[bold]{escape(rec.title)}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {escape(rec.type)}\n"
+            f"[dim]tags:[/dim] {escape(', '.join(rec.tags) or '—')}\n"
             f"[dim]created:[/dim] {rec.created}\n"
             f"[dim]updated:[/dim] {rec.updated}\n\n"
-            f"{rec.body}",
-            title=rec.title,
+            f"{escape(rec.body or '')}",
+            title=escape(rec.title),
             border_style="cyan",
         )
     )
@@ -430,6 +434,21 @@ def get(id_: str, as_json: bool) -> None:
     default=None,
     help="Replace body. Use '-' to read from stdin.",
 )
+@click.option(
+    "--append",
+    default=None,
+    help="Append a paragraph to the end of the body, leaving the rest untouched.",
+)
+@click.option(
+    "--replace-old",
+    default=None,
+    help="Exact text to replace in the body; must occur exactly once. Pair with --replace-new.",
+)
+@click.option(
+    "--replace-new",
+    default=None,
+    help="Replacement for --replace-old. Everything else stays byte-identical.",
+)
 @click.option("--json", "as_json", is_flag=True)
 def update(
     id_: str,
@@ -437,9 +456,25 @@ def update(
     type_: str | None,
     tags: tuple[str, ...],
     content: str | None,
+    append: str | None,
+    replace_old: str | None,
+    replace_new: str | None,
     as_json: bool,
 ) -> None:
-    """Patch fields on an existing memory. Re-embeds only if body changed."""
+    """Patch fields on an existing memory. Re-embeds only if body changed.
+
+    Three body-edit shapes, mirroring the `memo_update` MCP tool: `--content`
+    replaces the whole body, `--replace-old`/`--replace-new` is a surgical
+    exact-string edit, and `--append` adds a paragraph.
+    """
+
+    if (replace_old is None) != (replace_new is None):
+        raise click.UsageError("--replace-old and --replace-new must be passed together")
+    replace = (replace_old, replace_new) if replace_old is not None else None
+    if sum(1 for shape in (content, append, replace) if shape is not None) > 1:
+        raise click.UsageError(
+            "--content, --append and --replace-old/--replace-new are mutually exclusive"
+        )
 
     if content == "-":
         content = sys.stdin.read()
@@ -454,6 +489,8 @@ def update(
             type_=type_,
             tags=list(tags) if tags else None,
             content=content,
+            append=append,
+            replace=replace,
             actor=ActorIdentity(actor_id="memo-cli", actor_kind="human"),
         )
     )
@@ -465,9 +502,9 @@ def update(
         return
     console.print(
         Panel.fit(
-            f"[bold]{rec.title}[/bold]\n"
-            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
-            f"[dim]tags:[/dim] {', '.join(rec.tags) or '—'}\n"
+            f"[bold]{escape(rec.title)}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {escape(rec.type)}\n"
+            f"[dim]tags:[/dim] {escape(', '.join(rec.tags) or '—')}\n"
             f"[dim]updated:[/dim] {rec.updated}",
             title="✓ updated",
             border_style="yellow",
@@ -507,8 +544,8 @@ def rename(title: str, id_: str | None, as_json: bool) -> None:
         return
     console.print(
         Panel.fit(
-            f"[bold]{rec.title}[/bold]\n"
-            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {rec.type}\n"
+            f"[bold]{escape(rec.title)}[/bold]\n"
+            f"[dim]id:[/dim] {rec.id}  [dim]type:[/dim] {escape(rec.type)}\n"
             f"[dim]updated:[/dim] {rec.updated}",
             title="✓ renamed",
             border_style="yellow",

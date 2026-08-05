@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import struct
 from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
@@ -240,7 +241,13 @@ class _RepoStoreMixin(_StoreBase):
             ).fetchall()
             for row in rows:
                 try:
-                    emb = json.loads(row["embedding"])
+                    raw = row["embedding"]
+                    if isinstance(raw, (bytes, bytearray, memoryview)):
+                        if len(raw) != dims * 4:
+                            continue
+                        emb = list(struct.unpack(f"<{dims}f", bytes(raw)))
+                    else:
+                        emb = json.loads(raw)
                 except (ValueError, TypeError):
                     continue
                 if isinstance(emb, list) and len(emb) == dims:
@@ -273,10 +280,85 @@ class _RepoStoreMixin(_StoreBase):
                 "ON CONFLICT(model, dims, input_hash) DO UPDATE SET "
                 "embedding=excluded.embedding, created_at=excluded.created_at",
                 [
-                    (model, dims, input_hash, json.dumps(emb), created_at)
+                    (model, dims, input_hash, serialize_float32(emb), created_at)
                     for input_hash, emb in embeddings
                 ],
             )
+
+    def prune_repo_embedding_cache(
+        self,
+        *,
+        keep_models: set[tuple[str, int]],
+        older_than: str | None = None,
+        dry_run: bool = False,
+    ) -> int:
+        """Remove rebuildable cache rows for inactive model identities.
+
+        The cache is derived data, unlike Markdown or user feedback. Keeping
+        one identity per active model/dimension pair prevents model revisions
+        from silently accumulating hundreds of megabytes of JSON embeddings.
+        """
+        clauses: list[str] = []
+        params: list[Any] = []
+        if older_than:
+            clauses.append("created_at < ?")
+            params.append(older_than)
+        sql = "SELECT model, dims, input_hash FROM repo_embedding_cache"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        rows = self._conn.execute(sql, params).fetchall()
+        stale = [
+            (str(row["model"]), int(row["dims"]), str(row["input_hash"]))
+            for row in rows
+            if (str(row["model"]), int(row["dims"])) not in keep_models
+        ]
+        if dry_run or not stale:
+            return len(stale)
+        with self._tx() as cx:
+            cx.executemany(
+                "DELETE FROM repo_embedding_cache WHERE model = ? AND dims = ? AND input_hash = ?",
+                stale,
+            )
+        return len(stale)
+
+    def compact_repo_embedding_cache(self, *, dry_run: bool = False) -> int:
+        """Pack legacy JSON cache rows as float32 blobs in place.
+
+        SQLite's dynamic typing lets this migrate without a schema rewrite;
+        readers remain backward-compatible with both representations.
+        """
+        rows = self._conn.execute(
+            "SELECT model, dims, input_hash, embedding FROM repo_embedding_cache"
+        ).fetchall()
+        updates: list[tuple[bytes, str, int, str]] = []
+        for row in rows:
+            raw = row["embedding"]
+            if isinstance(raw, (bytes, bytearray, memoryview)):
+                continue
+            try:
+                emb = json.loads(raw)
+                dims = int(row["dims"])
+                if not isinstance(emb, list) or len(emb) != dims:
+                    continue
+                updates.append(
+                    (
+                        serialize_float32([float(value) for value in emb]),
+                        str(row["model"]),
+                        dims,
+                        str(row["input_hash"]),
+                    )
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+        if dry_run or not updates:
+            return len(updates)
+        with self._tx() as cx:
+            cx.executemany(
+                "UPDATE repo_embedding_cache SET embedding = ? "
+                "WHERE model = ? AND dims = ? AND input_hash = ?",
+                updates,
+            )
+        return len(updates)
 
     def upsert_repo_embeddings(
         self,

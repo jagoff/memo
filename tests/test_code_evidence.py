@@ -5,8 +5,10 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from memo import code_evidence
 from memo.code_evidence import codegraph_evidence, normalize_code_path
 from memo.code_impact import code_change_impact
+from memo.code_traceability import CodeReferenceResolver, codegraph_uri
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -94,6 +96,42 @@ def test_codegraph_evidence_detects_fresh_and_stale_source(tmp_path: Path) -> No
 
 def test_normalize_code_path_preserves_dot_directories() -> None:
     assert normalize_code_path("./.github/workflows/ci.yml") == ".github/workflows/ci.yml"
+
+
+def test_code_reference_resolver_reuses_snapshot_and_path_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo, db = _repo(tmp_path)
+    git_head_calls = 0
+    real_git_head = code_evidence._git_head
+
+    def counted_git_head(repo_root: Path) -> str | None:
+        nonlocal git_head_calls
+        git_head_calls += 1
+        return real_git_head(repo_root)
+
+    monkeypatch.setattr(code_evidence, "_git_head", counted_git_head)
+    resolver = CodeReferenceResolver(db_path=db, repo_root=repo, repo_id="test-repo")
+    payload = {
+        "code_refs": [
+            {
+                "uri": codegraph_uri("test-repo", "function:a"),
+                "file_path": "src/a.py",
+            },
+            {
+                "uri": codegraph_uri("test-repo", "function:b"),
+                "file_path": "src/b.py",
+            },
+        ]
+    }
+
+    first = resolver.resolve(payload)
+    second = resolver.resolve(payload)
+
+    assert git_head_calls == 1
+    assert [ref.code_evidence for ref in first] == [ref.code_evidence for ref in second]
+    assert all(ref.code_evidence["freshness"] == "current" for ref in first)
 
 
 def test_code_change_impact_traverses_one_hop(tmp_path: Path) -> None:

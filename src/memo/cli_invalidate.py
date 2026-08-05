@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from rich.markup import escape
 
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
@@ -119,7 +120,7 @@ def invalidate_cmd(
                 highlight=False,
             )
             for r in matched:
-                console.print(f"  [{r.id[:8]}] {r.title}", highlight=False)
+                console.print(f"  {escape(f'[{r.id[:8]}]')} {escape(r.title)}", highlight=False)
         return
 
     ids = [r.id for r in matched]

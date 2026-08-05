@@ -10,6 +10,7 @@ import json
 import sys
 
 import click
+from rich.markup import escape
 from rich.table import Table
 
 from memo.cli_common import _resolved, console
@@ -127,12 +128,18 @@ def entity(name: str, type_: str | None, as_json: bool) -> None:
         click.echo(json.dumps(ids, indent=2))
         return
     if not ids:
-        console.print(f"[dim]no memories mention {name!r}{f' ({type_})' if type_ else ''}[/dim]")
+        console.print(
+            f"[dim]no memories mention {escape(repr(name))}"
+            f"{f' ({escape(type_)})' if type_ else ''}[/dim]"
+        )
         return
-    console.print(f"[bold]{len(ids)}[/bold] memory(s) mention [cyan]{name}[/cyan]:")
+    console.print(f"[bold]{len(ids)}[/bold] memory(s) mention [cyan]{escape(name)}[/cyan]:")
     for mid in ids[:50]:
         rec = mem.store.get(mid)
         if rec:
-            console.print(f"  · [{mid[:8]}] {rec['title'][:60]} [dim]({rec['updated'][:10]})[/dim]")
+            console.print(
+                f"  · {escape(f'[{mid[:8]}]')} {escape(rec['title'][:60])} "
+                f"[dim]({escape(rec['updated'][:10])})[/dim]"
+            )
     if len(ids) > 50:
         console.print(f"  · …and {len(ids) - 50} more")

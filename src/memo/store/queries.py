@@ -1434,6 +1434,19 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             ).fetchone()
         return _row_to_dict(row) if row else None
 
+    def has_searchable_body(self, id_: str) -> bool:
+        """Return whether the FTS projection retains a non-empty body.
+
+        Vault re-ingest uses this alongside ``body_hash`` so an unchanged
+        source can heal a missing or legacy-null FTS projection instead of
+        incorrectly taking the idempotent fast path forever.
+        """
+        row = self._conn.execute(
+            "SELECT body FROM fts WHERE id = ? LIMIT 1",
+            (id_,),
+        ).fetchone()
+        return row is not None and isinstance(row["body"], str) and bool(row["body"].strip())
+
     def vault_ingest_rows(self, label: str) -> list[dict[str, Any]]:
         """Rows produced by `memo ingest` under a given vault `label`.
 

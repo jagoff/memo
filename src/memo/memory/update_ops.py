@@ -154,6 +154,10 @@ class _UpdateOpsMixin(_MemoryBase):
         # still matches. A concurrent edit therefore causes a bounded retry,
         # never a stale vector or a model call inside the authority lock.
         for _attempt in range(4):
+            # Captured before the commit: the assertion edge a renamed fact
+            # leaves behind still names the old title, and only the pre-update
+            # record knows it.
+            prepared_title = self._current_title(id_) if title is not None else None
             prepared = self._prepare_update_embedding(
                 id_,
                 title=title,
@@ -178,6 +182,8 @@ class _UpdateOpsMixin(_MemoryBase):
                         actor=actor,
                         _prepared_embedding=prepared,
                     )
+                if updated is not None:
+                    self._refresh_assertion_edge(updated, previous_title=prepared_title)
                 if updated is not None and prepared is not None:
                     # Chunk vectors are derived, potentially expensive model
                     # work. Keep them outside the authority lock; failures are
@@ -197,6 +203,48 @@ class _UpdateOpsMixin(_MemoryBase):
             except _RetryPreparedUpdate:
                 continue
         raise StorageError("update could not stabilize after concurrent edits")
+
+    def _current_title(self, id_: str) -> str | None:
+        with suppress(Exception):
+            record = self.get(id_)
+            if record is not None:
+                return str(record.title)
+        return None
+
+    def _refresh_assertion_edge(self, updated: MemoryRecord, *, previous_title: str | None) -> None:
+        """Close a renamed fact's stale ``memory asserts <title>`` edge.
+
+        A `fact` with no declared edges gets that coarse assertion at save
+        time. Only the save paths ever wrote it, so a rename left the graph and
+        the briefing asserting the old title forever. The old edge is
+        invalidated rather than deleted — the edges are bi-temporal, so "this
+        memory asserted X until now" stays queryable — and the current title is
+        upserted as the open assertion. Best-effort: a derived-graph failure
+        must never fail a committed update.
+        """
+        if previous_title is None or previous_title == updated.title:
+            return
+        if updated.type != "fact":
+            return
+        from memo.fact_extraction import FACT_ASSERTION_PREDICATE, upsert_declared_fact_edges
+
+        with suppress(Exception):
+            for edge in self.fact_edges.query(source_record_id=updated.id):
+                if (
+                    edge.get("predicate") == FACT_ASSERTION_PREDICATE
+                    and edge.get("object") == previous_title
+                    and not edge.get("invalid_at")
+                ):
+                    self.fact_edges.invalidate(str(edge["id"]))
+            upsert_declared_fact_edges(
+                self.fact_edges,
+                record_id=updated.id,
+                title=updated.title,
+                type_=updated.type,
+                created=updated.created,
+                updated=updated.updated,
+                extra=updated.extra,
+            )
 
     def _prepare_update_embedding(
         self,

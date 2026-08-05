@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from memo.errors import QueueFullError, StorageError
+from memo.errors import QueueFullError, StorageError, ValidationError
 from memo.flags import flag_int
 from memo.server import build_server
 from memo.server_write_coordinator import (
@@ -107,6 +107,10 @@ async def test_unexpected_worker_exception_is_safe_typed_error():
     with pytest.raises(StorageError, match="failed safely") as exc:
         await coordinator.submit(boom)
     assert "secret internal detail" not in str(exc.value)
+    # The failing type is named so the error is actionable — a QA run hit
+    # "coordinated MCP write failed safely" with no way to tell a KeyError
+    # (a real bug) from a transient lock. The class name leaks no user data.
+    assert "RuntimeError" in str(exc.value)
     await coordinator.close()
 
 
@@ -123,6 +127,28 @@ async def test_memo_error_propagates_unmasked():
 
     with pytest.raises(StorageError, match="database is locked") as exc:
         await coordinator.submit(locked)
+    assert "failed safely" not in str(exc.value)
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_memo_error_wrapped_by_tool_dispatch_still_unmasked():
+    # Production regression: FastMCP's call_tool wraps any exception a tool
+    # body raises (e.g. ValidationError) into its own ToolError with `from e`
+    # before the write-coordinator middleware's call_next(context) returns —
+    # so job.run() never actually raises a bare MemoError, only a wrapper
+    # whose __cause__ is one. The naive except-MemoError branch never fires
+    # in production; only the __cause__ unwrap in the generic branch does.
+    coordinator = McpWriteCoordinator(1)
+
+    async def wrapped_validation_failure():
+        try:
+            raise ValidationError("memory abc123 lacks outcome evidence for procedure")
+        except ValidationError as e:
+            raise RuntimeError("Error calling tool 'memo_procedure_promote'") from e
+
+    with pytest.raises(ValidationError, match="lacks outcome evidence") as exc:
+        await coordinator.submit(wrapped_validation_failure)
     assert "failed safely" not in str(exc.value)
     await coordinator.close()
 

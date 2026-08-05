@@ -18,16 +18,15 @@ def events_group() -> None:
 @click.option("--expected-epoch", type=int)
 def ingest_cmd(payload: str | None, expected_epoch: int | None) -> None:
     raw = payload if payload is not None else click.get_text_stream("stdin").read()
-    click.echo(
-        json.dumps(
-            ingest_event(
-                json.loads(raw),
-                state_dir=Config.from_env().state_dir,
-                expected_epoch=expected_epoch,
-            ),
-            sort_keys=True,
+    try:
+        result = ingest_event(
+            json.loads(raw),
+            state_dir=Config.from_env().state_dir,
+            expected_epoch=expected_epoch,
         )
-    )
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    click.echo(json.dumps(result, sort_keys=True))
 
 
 @events_group.command("list")

@@ -11,6 +11,7 @@ import sys
 from dataclasses import asdict
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -74,7 +75,7 @@ def _default_search_json_body_chars() -> int:
 
 @click.command()
 @click.argument("query")
-@click.option("--limit", default=10, type=int, show_default=True)
+@click.option("--limit", default=10, type=click.IntRange(1, 500), show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
 @click.option(
     "--mode",
@@ -195,9 +196,9 @@ def search(
         h_dict = h.to_dict()
         tbl.add_row(
             f"{h.score:.3f}" if h.score is not None else "—",
-            h.type,
-            h.title + _fact_badge(h_dict),
-            ", ".join(h.tags) or "—",
+            escape(h.type),
+            escape(h.title + _fact_badge(h_dict)),
+            escape(", ".join(h.tags) or "—"),
         )
     console.print(tbl)
     if explain and trace is not None:
@@ -288,8 +289,8 @@ def context_cmd(
         return
     console.print(
         Panel.fit(
-            payload["prompt"] or "[dim](no memory context)[/dim]",
-            title=f"context: {question[:60]}",
+            escape(payload["prompt"]) if payload["prompt"] else "[dim](no memory context)[/dim]",
+            title=f"context: {escape(question[:60])}",
             border_style="cyan",
         )
     )
@@ -298,7 +299,11 @@ def context_cmd(
 @click.command()
 @click.argument("question")
 @click.option(
-    "--k", default=5, type=int, show_default=True, help="Top-K memories to feed the LLM as context."
+    "--k",
+    default=5,
+    type=click.IntRange(1, 500),
+    show_default=True,
+    help="Top-K memories to feed the LLM as context.",
 )
 @click.option("--type", "type_", default=None, help="Restrict the retrieval to one record type.")
 @click.option(
@@ -328,6 +333,9 @@ def ask(
     """
     import time
 
+    if not question.strip():
+        raise click.ClickException("`question` must be non-empty")
+
     cfg = Config.from_env()
     mem = _get_memory(cfg)
     t0 = int(time.time() * 1000)
@@ -340,7 +348,7 @@ def ask(
         return
     console.print(
         Panel.fit(
-            out["answer"] or "[dim](no answer)[/dim]",
+            escape(out["answer"]) if out["answer"] else "[dim](no answer)[/dim]",
             title=f"❓ {question[:60]}",
             border_style="cyan",
         )
@@ -348,8 +356,9 @@ def ask(
     if out["sources"]:
         console.print("[dim]sources:[/dim]")
         for s in out["sources"]:
+            id_short = s["id_short"]
             console.print(
-                f"  [dim][{s['id_short']}][/dim] {s['title'][:60]}  "
+                f"  [dim]{escape(f'[{id_short}]')}[/dim] {escape(s['title'][:60])}  "
                 f"[dim](score {_format_source_score(s.get('score'))})[/dim]"
             )
 
@@ -632,7 +641,7 @@ def chat_ask(
         return
     console.print(
         Panel.fit(
-            envelope["answer"] or "[dim](no answer)[/dim]",
+            escape(envelope["answer"]) if envelope["answer"] else "[dim](no answer)[/dim]",
             title=f"❓ {question[:60]}",
             border_style="magenta",
         )
@@ -640,15 +649,17 @@ def chat_ask(
     if envelope["sources"]:
         console.print("[dim]sources:[/dim]")
         for s in envelope["sources"]:
+            id_short = s.get("id_short", "?")
             console.print(
-                f"  [dim][{s.get('id_short', '?')}][/dim] {(s.get('title', '') or '')[:60]}  "
+                f"  [dim]{escape(f'[{id_short}]')}[/dim] "
+                f"{escape((s.get('title', '') or '')[:60])}  "
                 f"[dim](score {_format_source_score(s.get('score'))})[/dim]"
             )
 
 
 @click.command(name="recall")
 @click.argument("query")
-@click.option("--limit", default=5, type=int, show_default=True)
+@click.option("--limit", default=5, type=click.IntRange(1, 500), show_default=True)
 @click.option("--type", "type_", default=None, help="Filter by record type.")
 @click.option("--json", "as_json", is_flag=True, help='Emit {"results": [...]} for callers.')
 @click.option(

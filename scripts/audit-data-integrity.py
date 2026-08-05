@@ -2,7 +2,7 @@
 
 For every active record in `meta`, verifies:
   - the path resolves to an existing .md file under the configured memory
-    directory or to the declared source of a `vault-ingest` reference,
+    directory or to the declared source of any `vault-ingest*` reference,
   - the on-disk body parses with frontmatter,
   - body_hash in store matches sha256[:16] of the on-disk body.
 
@@ -109,7 +109,8 @@ def main() -> int:
             parse_error.append((r["id"], rel, "extra_json is not an object"))
             continue
 
-        is_vault_ingest = extra.get("source") == "vault-ingest"
+        source = str(extra.get("source") or "")
+        is_vault_ingest = source == "vault-ingest" or source.startswith("vault-ingest-")
         if is_vault_ingest:
             source_value = extra.get("abs_path")
             parent_path = str(extra.get("parent_path") or rel_path)
@@ -119,7 +120,6 @@ def main() -> int:
             if (
                 not source_value
                 or not source_path.is_absolute()
-                or source_path.suffix.casefold() != ".md"
                 or parent_path != logical_path
                 or (vault_label and not logical_path.startswith(f"{vault_label}/"))
             ):

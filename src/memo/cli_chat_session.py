@@ -64,7 +64,53 @@ def _snapshot(session: dict) -> dict:
     """Return a backward-compatible session with an activity watermark."""
     out = dict(session)
     out["updated_at"] = session.get("updated_at", session.get("created_at"))
+    out.setdefault("source", "cli")
     return out
+
+
+def _iso_to_epoch(iso: str) -> float:
+    return time.mktime(time.strptime(iso, "%Y-%m-%dT%H:%M:%S"))
+
+
+def _http_sessions_root() -> Path:
+    return Config.from_env().state_dir / "chat" / "sessions"
+
+
+def _http_sessions() -> dict[str, dict]:
+    """Sessions created via `memo chat serve`'s HTTP/SSE API.
+
+    Those live in a separate per-session JSONL store (memo.chat.sessions.SessionStore,
+    rooted at state_dir/chat/sessions) that this CLI's own start/append/get/list never
+    wrote to and never read from — surfaced here so a session started through the chat
+    UI is visible to `memo chat-session get/list` too.
+    """
+    from memo.chat.sessions import SessionStore
+
+    store = SessionStore(_http_sessions_root())
+    out: dict[str, dict] = {}
+    for entry in store.list_sessions(limit=1000):
+        sid = entry["session_id"]
+        out[sid] = {
+            "session_id": sid,
+            "client": "memo-chat-http",
+            "source": "http",
+            "created_at": _iso_to_epoch(entry["first_ts"]),
+            "updated_at": _iso_to_epoch(entry["last_ts"]),
+            "turn_count": entry["turn_count"],
+            "label": entry["label"],
+        }
+    return out
+
+
+def _http_session_turns(session_id: str) -> list[dict] | None:
+    from memo.chat.sessions import SessionStore
+
+    store = SessionStore(_http_sessions_root())
+    try:
+        turns = store.get(session_id)
+    except ValueError:
+        return None
+    return turns or None
 
 
 @click.group(name="chat-session")
@@ -140,9 +186,20 @@ def append(session_id, question, answer, client, turn_id, role, as_json):
 def get(session_id, as_json):
     sid = _valid(session_id, "session_id")
     obj = _load()["sessions"].get(sid)
-    if obj is None:
-        raise click.ClickException("session not found")
-    obj = _snapshot(obj)
+    if obj is not None:
+        obj = _snapshot(obj)
+    else:
+        turns = _http_session_turns(sid)
+        if turns is None:
+            raise click.ClickException("session not found")
+        obj = {
+            "session_id": sid,
+            "client": "memo-chat-http",
+            "source": "http",
+            "created_at": turns[0]["ts"],
+            "updated_at": turns[-1]["ts"],
+            "turns": turns,
+        }
     click.echo(json.dumps(obj, ensure_ascii=False) if as_json else sid)
 
 
@@ -158,22 +215,20 @@ def get(session_id, as_json):
 )
 @click.option("--json", "as_json", is_flag=True)
 def list_sessions(limit, cursor, as_json):
-    sessions = _load()["sessions"]
+    sessions = {sid: _snapshot(row) for sid, row in _load()["sessions"].items()}
+    sessions.update(_http_sessions())
     if cursor is None:
-        rows = [
-            _snapshot(row)
-            for row in sorted(
-                sessions.values(),
-                key=lambda x: x.get("created_at", 0),
-                reverse=True,
-            )[:limit]
-        ]
+        rows = sorted(
+            sessions.values(),
+            key=lambda x: x.get("created_at", 0),
+            reverse=True,
+        )[:limit]
         payload = {"sessions": rows}
     else:
         session_ids = sorted(str(session_id) for session_id in sessions)
         start_at = bisect_right(session_ids, cursor)
         page_ids = session_ids[start_at : start_at + limit]
-        rows = [_snapshot(sessions[session_id]) for session_id in page_ids]
+        rows = [sessions[session_id] for session_id in page_ids]
         has_more = start_at + len(page_ids) < len(session_ids)
         payload = {
             "sessions": rows,

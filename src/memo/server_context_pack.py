@@ -67,7 +67,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         a compact summary. Use this when search hits need interpretation before
         answering. `source` attributes consult logging.
         """
-        from memo.flags import flag_bool
+        from memo.flags import flag_bool, flag_float
 
         if not flag_bool("MEMO_CONTEXT_PACK"):
             return {
@@ -85,6 +85,14 @@ def register(server: FastMCP, memory: Memory) -> None:
             read_through=False,
             quality_rerank=True,
         )
+        if flag_bool("MEMO_CONTEXT_GRAPH_COMPACT"):
+            from memo.context_compact import compact_hits_by_entity_overlap
+
+            hits = compact_hits_by_entity_overlap(
+                hits,
+                memory,
+                min_idf_overlap=flag_float("MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF") or 0.5,
+            )
         pack = build_context_pack(question, hits, snippet_chars=snippet_chars)
         log_consult(
             memory,

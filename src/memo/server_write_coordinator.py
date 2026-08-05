@@ -95,12 +95,29 @@ class McpWriteCoordinator:
                     self._failed += 1
                     if not job.future.done():
                         job.future.set_exception(exc)
-                except Exception:
+                except Exception as e:
                     self._failed += 1
                     _log.exception("coordinated MCP write failed")
                     if not job.future.done():
+                        # A tool body's MemoError reaches here re-wrapped (e.g. by
+                        # FastMCP's call_tool as ToolError) rather than as MemoError
+                        # itself, since call_next(context) already dispatched the
+                        # tool before the coordinator sees the exception. Its
+                        # message was already deemed safe to expose — unwrap it
+                        # instead of discarding it. Anything else stays masked.
+                        cause = e.__cause__
+                        # Name the failing exception type — a class name carries
+                        # no user data but turns an unactionable "failed safely"
+                        # into something a caller can report and a maintainer can
+                        # grep for. The message itself stays masked.
+                        kind = type(cause if cause is not None else e).__name__
                         job.future.set_exception(
-                            StorageError("coordinated MCP write failed safely")
+                            cause
+                            if isinstance(cause, MemoError)
+                            else StorageError(
+                                f"coordinated MCP write failed safely ({kind}) — "
+                                "details in the memo-mcp server log"
+                            )
                         )
                 else:
                     self._completed += 1

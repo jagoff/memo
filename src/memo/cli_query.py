@@ -10,6 +10,7 @@ import json
 from datetime import datetime
 
 import click
+from rich.markup import escape
 from rich.table import Table
 
 from memo.cli_common import console
@@ -185,8 +186,8 @@ def query_run(name: str, as_json: bool) -> None:
     console.print()
 
     for r in result.results[:10]:
-        console.print(f"  [cyan]{r.id[:8]}[/cyan] {r.title}")
-        console.print(f"    {r.body[:100]}")
+        console.print(f"  [cyan]{r.id[:8]}[/cyan] {escape(r.title)}")
+        console.print(f"    {escape(r.body[:100])}")
 
     if len(result.results) > 10:
         console.print(f"  [dim]...and {len(result.results) - 10} more[/dim]")

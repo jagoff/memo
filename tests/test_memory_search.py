@@ -35,6 +35,15 @@ def test_search_returns_matching(mem_with_stub: Memory):
     assert any(h.title == "A" for h in hits)
 
 
+def test_empty_search_does_not_load_embedder(mem_with_stub: Memory, monkeypatch):
+    def _unexpected_embed(_query: str) -> list[float]:
+        raise AssertionError("empty corpus must not load the embedder")
+
+    monkeypatch.setattr(mem_with_stub.embedder, "embed_query", _unexpected_embed)
+
+    assert mem_with_stub.search("anything", mode="hybrid") == []
+
+
 def test_contextual_retrieval_prepends_context_only_when_enabled(
     mem_with_stub: Memory, monkeypatch
 ):
@@ -459,6 +468,7 @@ def test_hybrid_search_skips_rerank_when_rrf_has_confident_winner(
         }
 
     monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(mem_with_stub.store, "count", lambda: 1)
     monkeypatch.setattr(
         mem_with_stub.store,
         "search",
@@ -515,6 +525,7 @@ def test_hybrid_search_still_reranks_ambiguous_rrf_results(
         return hits[:top_n]
 
     monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(mem_with_stub.store, "count", lambda: 1)
     monkeypatch.setattr(
         mem_with_stub.store,
         "search",
@@ -570,6 +581,7 @@ def test_hybrid_search_includes_exact_bm25_candidates_before_rerank(
         return hits[:top_n]
 
     monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])
+    monkeypatch.setattr(mem_with_stub.store, "count", lambda: 1)
     monkeypatch.setattr(
         mem_with_stub.store,
         "search",

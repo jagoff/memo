@@ -123,6 +123,12 @@ def chat_stream(
                 threshold=cfg.semantic_threshold,
                 factor=cfg.vote_boost,
             )
+        if cfg.graph_compact:
+            from memo.chat.graph_compact import compact_by_entity_overlap
+
+            sources = compact_by_entity_overlap(
+                sources, memory, min_idf_overlap=cfg.graph_compact_min_idf
+            )
     except Exception:
         yield {"type": "error", "message": "retrieval failed", "answer_partial": ""}
         return

@@ -9,6 +9,114 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.9.2] - 2026-08-05
+
+Nine defects found by running memo as an end user across the whole CLI (349
+commands) and MCP (41 tools) surface, each fixed with a regression test.
+
+### Fixed
+
+- Operational conflicts are closed when their relation is judged. The
+  contradiction scanner only ever emitted the `open` anomaly; nothing emitted
+  `resolved` once the pair was judged in the canonical relation ledger, so
+  conflicts accumulated forever and the SessionStart briefing listed settled
+  ones as open. `Memory.judge_relation` — the chokepoint every judge path goes
+  through — now closes the pair's conflict.
+- `memo_operational_state` and `memo operational state` return only what is
+  still open. They shipped the whole projection including resolved conflicts,
+  consumed handoffs and acknowledged attention items, which grows without
+  bound and could exceed an MCP client's token budget (91 KB on a real
+  corpus). Pass `include_closed` / `--include-closed` for the full history.
+- Memory content renders as data, not as Rich markup. A body containing
+  `[#42]`, `array[index]` or `[bold]` printed with those tokens swallowed or
+  applied as styling, and `memo context` dropped every citation id starting
+  with a letter — roughly a third of them. The markdown on disk was always
+  correct; only the rendered view was wrong.
+- `memo operational signal remember` works on installs whose snapshot predates
+  the `signals` section. Both snapshot readers returned the persisted document
+  verbatim while the schema string and journal heads matched, so the writer
+  raised `KeyError: 'signals'` — surfaced through MCP as the unactionable
+  "coordinated MCP write failed safely". Missing sections are now backfilled,
+  and the coordinator's mask names the failing exception type.
+- The nightly tuner's curated no-regression gate no longer fails open on an
+  installed runtime. The curated regression labels were resolved through path
+  arithmetic that only lands on a repo root from `src/memo/`, so no installed
+  runtime ever found them and the gate silently approved every candidate. The
+  labels now ship in the wheel and sdist.
+- `memo edit` offers the same edit shapes as the `memo_update` MCP tool:
+  `--append` and a surgical `--replace-old` / `--replace-new` pair, not just a
+  full-body `--content` replace.
+- `--limit` and `--k` reject out-of-range values (the 1..500 bound the MCP
+  tools already clamped to) instead of silently printing an empty table, and
+  `memo ask ""` fails with a clear message instead of an empty answer panel.
+- Renaming a `fact` stops it asserting its old title. The coarse
+  `memory asserts <title>` edge was only ever written by the save paths, so
+  the graph and the briefing kept the pre-rename title indefinitely. The stale
+  assertion is invalidated (not deleted — the edges are bi-temporal) and one
+  for the current title is opened.
+
+## [4.9.1] - 2026-08-04
+
+### Fixed
+
+- Topic-scoped conflicts no longer freeze unrelated writes. A manually-opened
+  conflict matched whenever any 3+ character token of the incoming write was a
+  *substring* of the conflict topic, so a conflict on `test_conflict` refused
+  every durable write whose topic contained the word "test". Matching now
+  requires whole-token containment of the conflict topic, and a topic with no
+  significant token freezes nothing while staying resolvable by id.
+- `memo maintain` reports pass failures instead of hiding them. A refused
+  synthesis save was logged at warning level and dropped while the command
+  printed a success banner and exited 0. The failure is now recorded on the
+  cluster result, folded into `receipt["errors"]` before the receipt is
+  persisted, and the run exits non-zero. A dry run still exits 0 — it changed
+  nothing.
+- A missing `crush_cache` directory is no longer recorded as a maintain error.
+  It is the normal state of a fresh install, and with the new exit code it would
+  have made every first run report failure.
+
+### Added
+
+- `memo operational conflict list [--all]` lists conflicts, newest first,
+  showing only write-freezing ones by default. `conflict resolve` previously
+  required an id that no CLI command could produce.
+
+## [4.9.0] - 2026-08-04
+
+### Added
+
+- Graph-aware source compaction for chat/ask: chat sources that share a rare,
+  IDF-weighted entity are collapsed into one representative source plus a
+  `related_ids` pointer, cutting synthesis-prompt token cost. IDF weighting
+  avoids the ubiquitous-entity landmine hit by a prior graph-injection
+  experiment (common entities no longer force unrelated sources together).
+  Gated by new default-off `MEMO_CHAT_GRAPH_COMPACT` /
+  `MEMO_CHAT_GRAPH_COMPACT_MIN_IDF` env vars. (#186)
+
+### Changed
+
+- Bumped `aiohttp` 3.14.1 -> 3.14.3 and `cryptography` 49.0.0 -> 50.0.0 to
+  patched versions (CVE fixes).
+
+## [4.8.1] - 2026-08-03
+
+### Fixed
+
+- The MCP write-coordinator no longer masks legitimate business-rule
+  validation errors (e.g. `memo_procedure_promote` rejecting a memory that
+  lacks sufficient outcome evidence) behind a generic "coordinated MCP write
+  failed safely" message. Root cause: FastMCP's own tool dispatch wraps any
+  exception a tool raises into its own `ToolError` (chained via `__cause__`)
+  before the coordinator's exception-type check ever sees it, so the
+  existing `except MemoError` branch could never match in production — only
+  the generic mask branch could. The coordinator's generic handler now
+  inspects `e.__cause__` and, when it is a `MemoError`, propagates that
+  original error and message instead of the opaque mask; truly
+  unknown/unexpected exceptions are still masked as before. Found via live
+  MCP tool-by-tool testing during a production-readiness audit.
+
+## [4.8.0] - 2026-08-02
+
 ### Added
 
 - An explicit opt-in receiver-bound terminal transport (`memo terminal
@@ -22,9 +130,27 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   `memo chat-session list --cursor` similarly supports stable
   session-id pagination so consumers can drain histories larger than 1,000
   records without replaying earlier pages.
+- MCP saves support deferred embedding over stdio, preserving fast writes while
+  keeping the markdown source of truth and later index convergence intact.
+- Read-only live-terminal inventory and receipt diagnostics are available over
+  CLI and MCP. Unsafe input delivery remains fail-closed and is not exposed.
 
 ### Fixed
 
+- The archived Memflow and Synapse agent-integration state now migrates fully
+  into memo, including exact, idempotent chat feedback signals, without leaving
+  a second runtime or database in service.
+- Runtime provenance, SQLite and audit resource cleanup, graph projection
+  teardown, bounded GPU-lock waits, and local Docker builds are hardened for
+  production and CI isolation.
+- Vault re-ingest now self-heals missing legacy FTS bodies even when the source
+  hash is unchanged, and the integrity auditor validates Markdown, PDF, image,
+  and audio references without misclassifying external media paths.
+- Tantivy uses short, cross-process writer leases and refreshes long-lived
+  readers per query, so MCP, CLI, and daemons can update one index without lock
+  starvation or stale search snapshots.
+- Chat HTTP/SSE boundaries, destructive session resets, rejection quotas, and
+  loopback enforcement are safe under concurrent requests.
 - `memo config validate` accepts the retired live-terminal shim variables in
   agent processes that were already running when the fail-closed upgrade was
   installed; fresh shims still remove those variables.
@@ -46,6 +172,21 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 - The fail-closed internal terminal bridge preserves safe transport diagnostics
   in receipts while redacting unexpected exception details; no delivery mutator
   is exposed through CLI or MCP.
+- `memo ask`, `memo diff`, `memo entity`, `memo invalidate` (preview), `memo
+  temporal timeline`, and `memo synthesize` no longer silently drop `[id]`
+  citations, memory ids, or titles from their plain-text output: Rich's
+  console markup parser was swallowing any bracketed substring it couldn't
+  resolve as a style tag, most visibly ids starting with a hex letter (`a`-`f`).
+  `--json` output was always correct.
+- `memo events ingest` returns a clean CLI error instead of an unhandled
+  traceback on invalid input (missing `event_id`, invalid `kind`, or a
+  duplicate `event_id` with a conflicting payload).
+- `memo chat-session get`/`list` now surface sessions created through `memo
+  chat serve`'s HTTP/SSE API, which previously lived in a separate,
+  unconnected per-session store invisible to the CLI.
+- `memo related`'s `via` attribution is now deterministic across repeated runs
+  of the same query; tied candidate scores no longer depend on set/dict
+  iteration order.
 
 ### Changed
 

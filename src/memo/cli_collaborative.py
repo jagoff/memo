@@ -7,6 +7,7 @@ root group in cli.py via `cli.add_command(collaborative_group)`.
 from __future__ import annotations
 
 import click
+from rich.markup import escape
 
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
@@ -84,8 +85,10 @@ def collaborative_recommend(entity: str, limit: int) -> None:
 
     console.print(f"[bold]Recommended connections for {entity}[/bold]")
     for r in recommendations:
-        console.print(f"  {r.entity_a} --{r.relationship}--> {r.entity_b}")
-        console.print(f"    From: {r.from_user}, votes: {r.votes}, confidence: {r.confidence:.2f}")
+        console.print(f"  {escape(r.entity_a)} --{escape(r.relationship)}--> {escape(r.entity_b)}")
+        console.print(
+            f"    From: {escape(r.from_user)}, votes: {r.votes}, confidence: {r.confidence:.2f}"
+        )
 
 
 @collaborative_group.command(name="share-insight")

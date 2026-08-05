@@ -77,6 +77,25 @@ def test_close_waits_for_merging_threads_and_is_idempotent() -> None:
 
 
 @requires_tantivy
+def test_long_lived_reader_does_not_block_other_writer_and_refreshes(tmp_path: Path) -> None:
+    """Separate MCP/CLI-style handles can alternate writes on one index."""
+    index_dir = tmp_path / "tantivy"
+    reader = TantivyFTSIndex.open_or_create(index_dir)
+    writer = TantivyFTSIndex.open_or_create(index_dir)
+    try:
+        writer.add_document("from-cli", "cross process freshness", "", "first commit")
+        writer.commit()
+        assert reader.search_bm25("freshness", 10)[0]["id"] == "from-cli"
+
+        reader.add_document("from-mcp", "second writer lease", "", "another commit")
+        reader.commit()
+        assert writer.search_bm25("lease", 10)[0]["id"] == "from-mcp"
+    finally:
+        reader.close()
+        writer.close()
+
+
+@requires_tantivy
 def test_add_and_search_basic(idx: TantivyFTSIndex) -> None:
     idx.add_document("id1", "Python testing guide", "pytest coverage", "How to write good tests")
     idx.commit()

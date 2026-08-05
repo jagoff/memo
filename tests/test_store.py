@@ -527,6 +527,155 @@ def test_repo_embedding_cache_is_scoped_by_model_and_dims(store: VecStore):
     assert store.get_repo_embedding_cache(model="model-a", dims=8, input_hashes=["hash1"]) == {}
 
 
+def test_get_repo_embedding_cache_reads_legacy_json_string_rows(store: VecStore):
+    store._conn.execute(
+        "INSERT INTO repo_embedding_cache (model, dims, input_hash, embedding, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("legacy-model", 4, "legacy-hash", "[1.0, 0.0, 0.0, 0.0]", "t"),
+    )
+    store._conn.commit()
+
+    hit = store.get_repo_embedding_cache(model="legacy-model", dims=4, input_hashes=["legacy-hash"])
+
+    assert hit == {"legacy-hash": _emb(1, 0, 0, 0)}
+
+
+def test_get_repo_embedding_cache_skips_corrupted_blob_length(store: VecStore):
+    store._conn.execute(
+        "INSERT INTO repo_embedding_cache (model, dims, input_hash, embedding, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("m", 4, "bad-blob", b"\x00\x01", "t"),  # too short for 4 float32s
+    )
+    store._conn.commit()
+
+    hit = store.get_repo_embedding_cache(model="m", dims=4, input_hashes=["bad-blob"])
+
+    assert hit == {}
+
+
+def test_get_repo_embedding_cache_skips_malformed_json(store: VecStore):
+    store._conn.execute(
+        "INSERT INTO repo_embedding_cache (model, dims, input_hash, embedding, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("m", 4, "bad-json", "{not valid json", "t"),
+    )
+    store._conn.commit()
+
+    hit = store.get_repo_embedding_cache(model="m", dims=4, input_hashes=["bad-json"])
+
+    assert hit == {}
+
+
+def test_prune_repo_embedding_cache_removes_stale_model_identities(store: VecStore):
+    store.upsert_repo_embedding_cache(
+        model="old-model", dims=4, embeddings=[("h1", _emb(1, 0, 0, 0))], created_at="t1"
+    )
+    store.upsert_repo_embedding_cache(
+        model="new-model", dims=4, embeddings=[("h2", _emb(0, 1, 0, 0))], created_at="t2"
+    )
+
+    pruned = store.prune_repo_embedding_cache(keep_models={("new-model", 4)})
+
+    assert pruned == 1
+    assert store.get_repo_embedding_cache(model="old-model", dims=4, input_hashes=["h1"]) == {}
+    assert store.get_repo_embedding_cache(model="new-model", dims=4, input_hashes=["h2"]) == {
+        "h2": _emb(0, 1, 0, 0)
+    }
+
+
+def test_prune_repo_embedding_cache_dry_run_reports_without_deleting(store: VecStore):
+    store.upsert_repo_embedding_cache(
+        model="old-model", dims=4, embeddings=[("h1", _emb(1, 0, 0, 0))], created_at="t1"
+    )
+
+    pruned = store.prune_repo_embedding_cache(keep_models=set(), dry_run=True)
+
+    assert pruned == 1
+    assert store.get_repo_embedding_cache(model="old-model", dims=4, input_hashes=["h1"]) == {
+        "h1": _emb(1, 0, 0, 0)
+    }
+
+
+def test_prune_repo_embedding_cache_older_than_filter(store: VecStore):
+    store.upsert_repo_embedding_cache(
+        model="m", dims=4, embeddings=[("old", _emb(1, 0, 0, 0))], created_at="2020-01-01T00:00:00Z"
+    )
+    store.upsert_repo_embedding_cache(
+        model="m", dims=4, embeddings=[("new", _emb(0, 1, 0, 0))], created_at="2030-01-01T00:00:00Z"
+    )
+
+    pruned = store.prune_repo_embedding_cache(keep_models=set(), older_than="2025-01-01T00:00:00Z")
+
+    assert pruned == 1
+    assert store.get_repo_embedding_cache(model="m", dims=4, input_hashes=["old"]) == {}
+    assert store.get_repo_embedding_cache(model="m", dims=4, input_hashes=["new"]) == {
+        "new": _emb(0, 1, 0, 0)
+    }
+
+
+def test_prune_repo_embedding_cache_no_stale_rows_is_a_noop(store: VecStore):
+    store.upsert_repo_embedding_cache(
+        model="m", dims=4, embeddings=[("h1", _emb(1, 0, 0, 0))], created_at="t"
+    )
+
+    pruned = store.prune_repo_embedding_cache(keep_models={("m", 4)})
+
+    assert pruned == 0
+
+
+def test_compact_repo_embedding_cache_packs_legacy_json_rows_as_blobs(store: VecStore):
+    store._conn.execute(
+        "INSERT INTO repo_embedding_cache (model, dims, input_hash, embedding, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("legacy-model", 4, "legacy-hash", "[1.0, 0.0, 0.0, 0.0]", "t"),
+    )
+    store._conn.commit()
+
+    packed = store.compact_repo_embedding_cache()
+
+    assert packed == 1
+    assert store.get_repo_embedding_cache(
+        model="legacy-model", dims=4, input_hashes=["legacy-hash"]
+    ) == {"legacy-hash": _emb(1, 0, 0, 0)}
+    # Already-packed (blob) rows are left alone on a second pass.
+    assert store.compact_repo_embedding_cache() == 0
+
+
+def test_compact_repo_embedding_cache_dry_run_reports_without_packing(store: VecStore):
+    store._conn.execute(
+        "INSERT INTO repo_embedding_cache (model, dims, input_hash, embedding, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("legacy-model", 4, "legacy-hash", "[1.0, 0.0, 0.0, 0.0]", "t"),
+    )
+    store._conn.commit()
+
+    packed = store.compact_repo_embedding_cache(dry_run=True)
+
+    assert packed == 1
+    raw = store._conn.execute(
+        "SELECT embedding FROM repo_embedding_cache WHERE input_hash = 'legacy-hash'"
+    ).fetchone()["embedding"]
+    assert isinstance(raw, str)  # still JSON text, not yet packed to a blob
+
+
+def test_compact_repo_embedding_cache_skips_dim_mismatched_and_malformed_rows(store: VecStore):
+    store._conn.execute(
+        "INSERT INTO repo_embedding_cache (model, dims, input_hash, embedding, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("m", 4, "wrong-dims", "[1.0, 0.0]", "t"),
+    )
+    store._conn.execute(
+        "INSERT INTO repo_embedding_cache (model, dims, input_hash, embedding, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("m", 4, "not-json", "{not valid json", "t"),
+    )
+    store._conn.commit()
+
+    packed = store.compact_repo_embedding_cache()
+
+    assert packed == 0
+
+
 @pytest.mark.concurrency
 def test_concurrent_writes_and_reads_do_not_collide(store: VecStore):
     """Regression: the FastMCP HTTP transport dispatches sync tool calls on a

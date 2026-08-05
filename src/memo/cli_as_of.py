@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -183,5 +184,5 @@ def as_of_list(as_of: str, type_: str | None, limit: int, as_json: bool) -> None
     tbl.add_column("title", overflow="fold")
     tbl.add_column("updated", width=12)
     for r in rows:
-        tbl.add_row(r.id[:8], r.type, r.title, (r.updated or "—")[:10])
+        tbl.add_row(r.id[:8], escape(r.type), escape(r.title), (r.updated or "—")[:10])
     console.print(tbl)

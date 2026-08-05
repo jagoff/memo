@@ -273,7 +273,11 @@ def test_maint_synthesize_dry_run_does_not_write_state(tmp_path: Path):
 
 
 def test_maint_synthesize_non_fatal_on_error(tmp_path: Path):
-    """If synthesize_cross_cluster raises, maintain logs a warning and continues."""
+    """If synthesize_cross_cluster raises, maintain finishes its remaining passes.
+
+    "Non-fatal" means the run is not aborted and the receipt is complete — not
+    that the failure is invisible. Since the P1 audit the exit code reports it.
+    """
     from memo.cli_maintain import _synthesis_state_path
 
     env = {
@@ -287,7 +291,8 @@ def test_maint_synthesize_non_fatal_on_error(tmp_path: Path):
     with patch("memo.memory.Memory.synthesize_cross_cluster", side_effect=RuntimeError("boom")):
         result = CliRunner().invoke(cli, ["maintain", "--json"], env=env)
 
-    assert result.exit_code == 0, result.output
+    # The pass failed, so maintain reports it in the exit code (P1 audit).
+    assert result.exit_code == 1, result.output
     receipt = json.loads(result.output)
     # Error should be recorded but not fatal.
     assert any("maint_synthesize" in e for e in receipt.get("errors", []))
@@ -541,7 +546,8 @@ def test_stale_archive_failure_is_not_recorded_as_archived(tmp_path: Path):
             env=env,
         )
 
-    assert result.exit_code == 0, result.output
+    # The pass failed, so maintain reports it in the exit code (P1 audit).
+    assert result.exit_code == 1, result.output
     receipt = json.loads(result.output)
     assert [e["id"] for e in receipt["archived_stale"]] == ["aaaa1111"]
     assert any("stale: archive failed for bbbb2222" in e for e in receipt["errors"])
@@ -597,7 +603,8 @@ def test_supersede_invalidate_failure_is_not_recorded_as_superseded(tmp_path: Pa
             env=env,
         )
 
-    assert result.exit_code == 0, result.output
+    # The pass failed, so maintain reports it in the exit code (P1 audit).
+    assert result.exit_code == 1, result.output
     receipt = json.loads(result.output)
     assert receipt["superseded"] == []
     assert any("supersede: invalidate failed for aaaa1111" in e for e in receipt["errors"])
@@ -720,3 +727,47 @@ def test_reopen_invalidated_frontmatter_failure_is_non_fatal(mem_with_stub, monk
     assert reopened == [loser.id] and missing == []
     # Index reopened despite the markdown mirror failing.
     assert mem_with_stub.get(loser.id).invalid_at is None
+
+
+def test_maintain_exits_nonzero_when_the_receipt_carries_errors(tmp_path):
+    """A failed pass must not hide under a success banner and exit 0."""
+    import unittest.mock
+
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    runner = CliRunner()
+
+    # enforce_forget_ttl is maintain's first pass; its except clause is the
+    # shortest path to a populated receipt["errors"].
+    with unittest.mock.patch(
+        "memo.lifecycle.LifecycleManager.enforce_forget_ttl",
+        side_effect=RuntimeError("boom"),
+    ):
+        result = runner.invoke(cli, ["maintain"], env=env)
+
+    assert result.exit_code != 0, result.output
+    assert "forget: RuntimeError: boom" in result.output
+
+
+def test_maintain_dry_run_reports_errors_without_failing(tmp_path):
+    """A preview surfaces the error but stays exit 0 — it changed nothing."""
+    import unittest.mock
+
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "data"),
+        "MEMO_STATE_DIR": str(tmp_path / "state"),
+    }
+    runner = CliRunner()
+
+    with unittest.mock.patch(
+        "memo.lifecycle.LifecycleManager.enforce_forget_ttl",
+        side_effect=RuntimeError("boom"),
+    ):
+        result = runner.invoke(cli, ["maintain", "--dry-run"], env=env)
+
+    assert result.exit_code == 0, result.output
+    assert "forget: RuntimeError: boom" in result.output

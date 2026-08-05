@@ -12,7 +12,9 @@ from memo.contracts import (
     TrustTier,
     normalize_provenance,
 )
+from memo.flags import flag_bool, flag_float
 from memo.memory._base import _MemoryBase
+from memo.memory.evidence_graph_compact import compact_by_entity_overlap
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 _STOPWORDS = frozenset(
@@ -135,11 +137,27 @@ def _validate_request(question: str, *, k: int, max_chars: int, min_coverage: fl
     return normalized
 
 
+def _absorbed_coverage_tokens(hits: list[Any], compacted: list[Any]) -> set[str]:
+    """Lexical tokens (title+body) of hits `compact_by_entity_overlap` removed,
+    so a collapsed representative's citation doesn't silently reduce measured
+    question coverage for content that was legitimately retrieved."""
+    survivors = {getattr(h, "id", None) for h in compacted}
+    tokens: set[str] = set()
+    for hit in hits:
+        if getattr(hit, "id", None) in survivors:
+            continue
+        body = str(hit.body or "").strip()
+        title = str(hit.title or "").strip()
+        tokens.update(_tokens(f"{title} {body}"))
+    return tokens
+
+
 def _build_items(
     hits: list[Any],
     *,
     question: str,
     max_chars: int,
+    coverage_credit_tokens: set[str] | None = None,
 ) -> tuple[list[EvidenceItem], float, set[str]]:
     remaining = max_chars
     items: list[EvidenceItem] = []
@@ -181,6 +199,7 @@ def _build_items(
                 provenance=normalize_provenance(extra),
             )
         )
+    covered.update(question_tokens & (coverage_credit_tokens or set()))
     coverage = len(covered) / max(1, len(question_tokens))
     return items, coverage, selected_ids
 
@@ -326,10 +345,21 @@ class _EvidenceOpsMixin(_MemoryBase):
         if not hits:
             return _insufficient_evidence_pack(question)
 
+        absorbed_tokens: set[str] = set()
+        if flag_bool("MEMO_EVIDENCE_GRAPH_COMPACT"):
+            compacted = compact_by_entity_overlap(
+                hits,
+                self,
+                min_idf_overlap=flag_float("MEMO_EVIDENCE_GRAPH_COMPACT_MIN_IDF") or 0.5,
+            )
+            absorbed_tokens = _absorbed_coverage_tokens(hits, compacted)
+            hits = compacted
+
         items, coverage, selected_ids = _build_items(
             hits,
             question=question,
             max_chars=max_chars,
+            coverage_credit_tokens=absorbed_tokens,
         )
         relations = (
             self.store.list_relations(

@@ -29,6 +29,7 @@ saved baseline rolls back.
 from __future__ import annotations
 
 import json
+from importlib.resources import files as package_files
 from pathlib import Path
 from typing import Any
 
@@ -142,12 +143,29 @@ def save_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
 # --- labels ------------------------------------------------------------------
 
 
+def _packaged_curated_labels() -> Path | None:
+    """The curated set force-included into the wheel at
+    ``memo/agent_assets/eval/``. Resolved the same way ``cli_statusline``
+    resolves its bundled script — without it, an installed runtime (uv tool /
+    pipx / Homebrew, i.e. every non-dev install) finds no curated labels and
+    the tuner's no-regression gate fails open."""
+    try:
+        asset = package_files("memo")
+        for part in ("agent_assets", "eval", "regression_labels.json"):
+            asset = asset / part
+        packaged = Path(str(asset))
+        return packaged if packaged.is_file() else None
+    except (ModuleNotFoundError, OSError, TypeError, ValueError):
+        return None
+
+
 def _curated_raw(state_dir: Path) -> dict[str, Any]:
-    """Parsed curated regression-labels document — state_dir first (where the
-    daemon reaches), repo-committed file second (dev). {} when neither has
-    prompts."""
+    """Parsed curated regression-labels document — state_dir first (a user's
+    own set, where the daemon reaches), then the copy shipped in the wheel,
+    then the repo-committed file (dev). {} when none has prompts."""
     candidates = [
         Path(state_dir) / "eval" / "regression_labels.json",
+        *([p] if (p := _packaged_curated_labels()) else []),
         Path(__file__).resolve().parent.parent.parent / "eval" / "regression_labels.json",
     ]
     for cp in candidates:
@@ -483,6 +501,33 @@ def run_tuning_pass(
             res["would_apply"] = {"knob": knob, "value": value_after}
             knob_results[knob]["verdict"] = "would_apply"
             return res
+
+        # Fase 4 — full six-condition graduation gate on the selected winner.
+        # Always COMPUTED and recorded (shadow evidence: what the strict gate
+        # would decide tonight); only ENFORCED when MEMO_DREAM_TUNE_STRICT_GATE_ENABLED
+        # is graduated on. Best-effort: a gate-computation failure never blocks
+        # the tuner's existing (already-gated) apply path.
+        try:
+            from memo import dream_metrics
+            from memo.flags import flag_bool
+
+            grad = dream_metrics.graduation_gate(
+                w_before,
+                w_after,
+                n_labels=int(res.get("n_labels", 0)),
+                latency_before=float(w_before.get("latency_ms_p50", 0.0)),
+                latency_after=float(w_after.get("latency_ms_p50", 0.0)),
+                experiment_recorded=True,  # record_pending below IS the experiment
+                rollback_exists=True,  # overlay + saved knob baseline are the rollback
+                **dream_metrics.tune_gate_thresholds(),
+            )
+            res["graduation_gate"] = grad
+            if flag_bool("MEMO_DREAM_TUNE_STRICT_GATE_ENABLED") and not grad["ok"]:
+                res["status"] = "gate_rejected"
+                knob_results[knob]["verdict"] = "gate_rejected"
+                return res
+        except Exception as exc:  # gate is advisory unless graduated; never fatal
+            res["graduation_gate_error"] = f"{type(exc).__name__}: {exc}"
 
         # Merge, don't clobber: preserve every param a prior pass set (float
         # knobs AND the retrieval pass's bool/str levers) so the tuners coexist.

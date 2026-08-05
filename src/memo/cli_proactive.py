@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import click
+from rich.markup import escape
 
 from memo.cli_common import console
 from memo.config import Config
@@ -107,4 +108,4 @@ def digest(dismiss_id: str | None, snooze_kind_: str | None, days: int) -> None:
                 _record_snooze_feedback(store, snooze_kind_, days, active, now)
 
         routed = compute_routed(store, now=now, day=day)
-    console.print(render_digest(routed))
+    console.print(escape(render_digest(routed)))

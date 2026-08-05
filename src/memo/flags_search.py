@@ -192,7 +192,35 @@ SPECS: tuple[FlagSpec, ...] = (
         False,
         "search",
         "Enable context-pack construction for memo ask and explicit context-pack tools. "
-        "Default off; ambient recall does not use context packs.",
+        "Default off; ambient recall does not use context packs. NOT graduated "
+        "2026-08-04 alongside MEMO_CONTEXT_GRAPH_COMPACT/MEMO_EVIDENCE_GRAPH_COMPACT: "
+        "flipping it also changes ask()'s internal prompt shape "
+        "(_build_ask_context's use_context_pack branch), which drops the "
+        "temporal fact_edges 'facts: ...' annotation from the LLM-visible "
+        "prompt (test_ask_surfaces_related_temporal_facts caught this) — the "
+        "structured data still reaches sources[], just not the synthesis "
+        "prompt. Needs its own fix + measurement before graduating.",
+    ),
+    _spec(
+        "MEMO_CONTEXT_GRAPH_COMPACT",
+        "bool",
+        True,
+        "search",
+        "Collapse memo_context_pack hits that share a rare (IDF-weighted) entity "
+        "with a higher-ranked hit before they occupy a bucket slot. Mirrors "
+        "MEMO_CHAT_GRAPH_COMPACT's algorithm via a thin adapter. Graduated "
+        "2026-08-04 after ad-hoc validation against the live index showed no "
+        "correctness regression (see memo decision 2830cb72).",
+    ),
+    _spec(
+        "MEMO_CONTEXT_GRAPH_COMPACT_MIN_IDF",
+        "float",
+        0.5,
+        "search",
+        "Minimum IDF-weighted entity overlap required to collapse two "
+        "memo_context_pack hits (matches MEMO_CHAT_GRAPH_COMPACT_MIN_IDF's "
+        "default). Conservative starting point.",
+        min_val=0.0,
     ),
     _spec(
         "MEMO_CONTEXT_SURFACE",

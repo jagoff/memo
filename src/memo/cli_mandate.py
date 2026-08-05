@@ -30,6 +30,10 @@ Before deciding or answering anything that prior work might already cover,
 consult memo FIRST:
 - Start with `memo_unified_briefing` (or `memo_search` / `memo_ask`) to
   pull durable facts, decisions, and preferences.
+- Already hold a memory id or a named entity and want what's connected to
+  it? Reach for `memo_graph` / `memo_related` (cheap graph traversal —
+  id/title only) before firing a fresh `memo_search`/`memo_ask` (full
+  retrieval) for the same thing.
 - Pass `source="<this-client>"` on the read tools so usage is attributed
   (e.g. `source="codex"`). A client that never appears in memo's consult log is
   flagged as a silent gap by `memo usefulness`.

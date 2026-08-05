@@ -384,6 +384,39 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
 
         return result
 
+    def embed_queries(self, queries: Sequence[str]) -> list[list[float]]:
+        """Batch variant of :meth:`embed_query`: one forward pass for many
+        queries, sharing the asymmetric-retrieval prefix and the LRU cache.
+
+        Preserves the query-only prefix invariant (the prefix is applied HERE,
+        never by callers) and the empty-string guard (→ zero vector). Cached
+        queries are served without a forward pass; only the misses are batched.
+        """
+        stripped = [(q or "").strip() for q in queries]
+        results: list[list[float] | None] = [None] * len(stripped)
+        miss_text: list[str] = []
+        miss_idx: list[int] = []
+        for i, q in enumerate(stripped):
+            if not q:
+                results[i] = [0.0] * self.expected_dims
+                continue
+            if self._query_cache is not None:
+                cached = self._query_cache.get(f"{self._model_identity()}:{self.expected_dims}:{q}")
+                if cached is not None:
+                    results[i] = cached
+                    continue
+            miss_idx.append(i)
+            miss_text.append(q)
+        if miss_text:
+            vecs = self.embed([_QUERY_INSTRUCTION_PREFIX + q for q in miss_text])
+            for j, i in enumerate(miss_idx):
+                results[i] = vecs[j]
+                if self._query_cache is not None:
+                    self._query_cache.put(
+                        f"{self._model_identity()}:{self.expected_dims}:{miss_text[j]}", vecs[j]
+                    )
+        return [r if r is not None else [0.0] * self.expected_dims for r in results]
+
     def unload(self) -> None:  # type: ignore[no-redef]
         """Drop the model + tokenizer + query cache; clear the MLX cache. Idempotent."""
         with self._load_lock:

@@ -10,6 +10,7 @@ import json
 from datetime import UTC
 
 import click
+from rich.markup import escape
 from rich.panel import Panel
 
 from memo.cli_common import _parse_as_of_date, console
@@ -70,17 +71,24 @@ def diff_cmd(from_date: str, to_date: str | None, as_json: bool) -> None:
     if d.added:
         console.print(f"\n[green]+ added ({len(d.added)})[/green]")
         for r in d.added[:20]:
-            console.print(f"  [green]+[/green] [{r.id[:8]}] {r.title}  [dim]({r.type})[/dim]")
+            console.print(
+                f"  [green]+[/green] {escape(f'[{r.id[:8]}]')} {escape(r.title)}  "
+                f"[dim]({escape(r.type)})[/dim]"
+            )
     if d.removed:
         console.print(f"\n[red]- removed ({len(d.removed)})[/red]")
         for r in d.removed[:20]:
-            console.print(f"  [red]-[/red] [{r.id[:8]}] {r.title}  [dim]({r.type})[/dim]")
+            console.print(
+                f"  [red]-[/red] {escape(f'[{r.id[:8]}]')} {escape(r.title)}  "
+                f"[dim]({escape(r.type)})[/dim]"
+            )
     if d.updated:
         console.print(f"\n[yellow]~ updated ({len(d.updated)})[/yellow]")
         for u in d.updated[:20]:
+            uid = u["id"]
             console.print(
-                f"  [yellow]~[/yellow] [{u['id'][:8]}] {u['title']}  "
-                f"[dim](fields: {', '.join(u['changed_fields'])})[/dim]",
+                f"  [yellow]~[/yellow] {escape(f'[{uid[:8]}]')} {escape(u['title'])}  "
+                f"[dim](fields: {escape(', '.join(u['changed_fields']))})[/dim]",
             )
 
 
@@ -124,7 +132,7 @@ def history_cmd(id_or_prefix: str, limit: int, as_json: bool) -> None:
         click.echo(json.dumps(events, ensure_ascii=False, indent=2, default=str))
         return
 
-    title_str = f"{r.title}" if r else resolved[:8]
+    title_str = escape(r.title) if r else resolved[:8]
     console.print(
         Panel.fit(
             f"[bold]{title_str}[/bold]  [dim]{resolved[:8]}[/dim]",

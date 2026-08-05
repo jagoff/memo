@@ -13,6 +13,7 @@ from memo.config import Config
 from memo.contracts import AnswerStatus
 from memo.errors import FederationError, MemoError, NotFoundError
 from memo.memory import Memory
+from memo.memory.record import MemoryRecord
 from memo.operation_ledger import LedgerIntegrityError, OperationLedger
 
 
@@ -121,6 +122,99 @@ def test_evidence_pack_scopes_relation_lookup_to_selected_memories(
     assert request["status"] == "judged"
     assert request["memory_ids"] == ["alpha-id", "beta-id"]
     assert pack.status is AnswerStatus.CONFLICTED
+
+
+def _graph_hit(hid: str, *, title: str, body: str, score: float) -> MemoryRecord:
+    return MemoryRecord(
+        id=hid,
+        path=f"{hid}.md",
+        title=title,
+        type="note",
+        tags=[],
+        created="2026-08-04T00:00:00",
+        updated="2026-08-04T00:00:00",
+        body=body,
+        score=score,
+    )
+
+
+class _RareEntityGraph:
+    def memory_entities(self, memory_id):
+        if memory_id in ("hit-a", "hit-b"):
+            return [{"name": "invoice-retry-policy", "type": "topic", "mention_count": 1}]
+        return []
+
+    def total_indexed_memories(self):
+        return 10
+
+    def entity_doc_freqs(self, names):
+        return {"invoice-retry-policy": 1.0} if "invoice-retry-policy" in names else {}
+
+
+def test_evidence_pack_graph_compact_noop_when_disabled(mem_with_stub, monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_EVIDENCE_GRAPH_COMPACT", "0")
+    hits = [
+        _graph_hit("hit-a", title="Retry policy", body="Standard retry policy.", score=1.0),
+        _graph_hit(
+            "hit-b", title="Backoff schedule", body="Exponential backoff schedule.", score=0.9
+        ),
+    ]
+    monkeypatch.setattr(mem_with_stub, "search", lambda *_a, **_kw: hits)
+    monkeypatch.setattr(mem_with_stub, "graph", _RareEntityGraph())
+
+    pack = mem_with_stub.evidence_pack("retry backoff policy")
+
+    assert {item.id for item in pack.items} == {"hit-a", "hit-b"}
+    assert all(not item.provenance.get("related_ids") for item in pack.items)
+
+
+def test_evidence_pack_graph_compact_collapses_and_cites_absorbed_hit(
+    mem_with_stub, monkeypatch
+) -> None:
+    monkeypatch.setenv("MEMO_EVIDENCE_GRAPH_COMPACT", "1")
+    hits = [
+        _graph_hit("hit-a", title="Retry policy", body="Standard retry policy.", score=1.0),
+        _graph_hit(
+            "hit-b", title="Backoff schedule", body="Exponential backoff schedule.", score=0.9
+        ),
+    ]
+    monkeypatch.setattr(mem_with_stub, "search", lambda *_a, **_kw: hits)
+    monkeypatch.setattr(mem_with_stub, "graph", _RareEntityGraph())
+
+    pack = mem_with_stub.evidence_pack("retry backoff policy")
+
+    assert len(pack.items) == 1
+    assert pack.items[0].id == "hit-a"
+    assert pack.items[0].provenance["related_ids"] == [("hit-b", "Backoff schedule")]
+
+
+def test_evidence_pack_graph_compact_credits_absorbed_coverage(mem_with_stub, monkeypatch) -> None:
+    # "backoff" appears only in hit-b's text. Without crediting hit-b's tokens
+    # after it's absorbed into hit-a, coverage drops from 1.0 to 0.75 and a
+    # min_coverage=0.8 gate would wrongly abstain.
+    monkeypatch.setenv("MEMO_EVIDENCE_GRAPH_COMPACT", "1")
+    hits = [
+        _graph_hit(
+            "hit-a",
+            title="Retry policy",
+            body="Standard retry policy for invoices.",
+            score=1.0,
+        ),
+        _graph_hit(
+            "hit-b",
+            title="Backoff schedule",
+            body="Exponential backoff schedule applies here.",
+            score=0.9,
+        ),
+    ]
+    monkeypatch.setattr(mem_with_stub, "search", lambda *_a, **_kw: hits)
+    monkeypatch.setattr(mem_with_stub, "graph", _RareEntityGraph())
+
+    pack = mem_with_stub.evidence_pack("retry backoff policy invoices", min_coverage=0.8)
+
+    assert len(pack.items) == 1
+    assert pack.coverage == 1.0
+    assert pack.status is AnswerStatus.ANSWERED
 
 
 def test_outcomes_promote_useful_memory_and_are_idempotent(mem_with_stub) -> None:

@@ -171,6 +171,32 @@ def test_synthesize_saves_medium_confidence_insight(mock_memory):
     assert ex.get("synthesis_confidence") == "medium"
 
 
+def test_synthesize_marks_result_staged_when_write_refused_parks_candidate(
+    mock_memory, monkeypatch
+):
+    """Inside a dream run with staging enabled, a WriteRefused on the synthesis
+    save parks the candidate (staged_save returns None) instead of losing it —
+    synthesize_cross_cluster must mark the result "staged" rather than "saved"."""
+    _force_close_embeddings(mock_memory)
+    mock_memory._chat = _SynthesisChat()
+
+    mock_memory.save(content="Prefer functional patterns in Python", type_="preference")
+    mock_memory.save(content="Memo codebase uses OOP mixins", type_="fact")
+    mock_memory.save(content="Confused by mixin hierarchy in memo", type_="note")
+
+    monkeypatch.setattr("memo.dream_staging.staged_save", lambda *a, **k: None)
+
+    results = mock_memory.synthesize_cross_cluster(
+        min_cluster_size=2,
+        min_confidence="medium",
+        dry_run=False,
+    )
+
+    candidates = [r for r in results if r.get("title")]
+    assert candidates, "expected at least one synthesis candidate"
+    assert all(r.get("staged") and not r.get("saved") for r in candidates)
+
+
 def test_synthesize_skips_null_title(mock_memory):
     _force_close_embeddings(mock_memory)
     mock_memory._chat = _NullSynthesisChat()
