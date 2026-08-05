@@ -27,7 +27,7 @@ brew install python@3.13
 Recommended path:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.2/install.sh | bash
 ```
 
 The installer uses `pipx`, downloads the default MLX models, runs
@@ -60,13 +60,13 @@ effective source and can be reviewed before any file is written.
 To explicitly track the latest PyPI release instead of the installer's pinned release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.1/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.2/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
 ```
 
 To skip client configuration entirely:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.1/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.2/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
 ```
 
 ## 3. Move Your Data

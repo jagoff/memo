@@ -9,6 +9,52 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.9.2] - 2026-08-05
+
+Nine defects found by running memo as an end user across the whole CLI (349
+commands) and MCP (41 tools) surface, each fixed with a regression test.
+
+### Fixed
+
+- Operational conflicts are closed when their relation is judged. The
+  contradiction scanner only ever emitted the `open` anomaly; nothing emitted
+  `resolved` once the pair was judged in the canonical relation ledger, so
+  conflicts accumulated forever and the SessionStart briefing listed settled
+  ones as open. `Memory.judge_relation` — the chokepoint every judge path goes
+  through — now closes the pair's conflict.
+- `memo_operational_state` and `memo operational state` return only what is
+  still open. They shipped the whole projection including resolved conflicts,
+  consumed handoffs and acknowledged attention items, which grows without
+  bound and could exceed an MCP client's token budget (91 KB on a real
+  corpus). Pass `include_closed` / `--include-closed` for the full history.
+- Memory content renders as data, not as Rich markup. A body containing
+  `[#42]`, `array[index]` or `[bold]` printed with those tokens swallowed or
+  applied as styling, and `memo context` dropped every citation id starting
+  with a letter — roughly a third of them. The markdown on disk was always
+  correct; only the rendered view was wrong.
+- `memo operational signal remember` works on installs whose snapshot predates
+  the `signals` section. Both snapshot readers returned the persisted document
+  verbatim while the schema string and journal heads matched, so the writer
+  raised `KeyError: 'signals'` — surfaced through MCP as the unactionable
+  "coordinated MCP write failed safely". Missing sections are now backfilled,
+  and the coordinator's mask names the failing exception type.
+- The nightly tuner's curated no-regression gate no longer fails open on an
+  installed runtime. The curated regression labels were resolved through path
+  arithmetic that only lands on a repo root from `src/memo/`, so no installed
+  runtime ever found them and the gate silently approved every candidate. The
+  labels now ship in the wheel and sdist.
+- `memo edit` offers the same edit shapes as the `memo_update` MCP tool:
+  `--append` and a surgical `--replace-old` / `--replace-new` pair, not just a
+  full-body `--content` replace.
+- `--limit` and `--k` reject out-of-range values (the 1..500 bound the MCP
+  tools already clamped to) instead of silently printing an empty table, and
+  `memo ask ""` fails with a clear message instead of an empty answer panel.
+- Renaming a `fact` stops it asserting its old title. The coarse
+  `memory asserts <title>` edge was only ever written by the save paths, so
+  the graph and the briefing kept the pre-rename title indefinitely. The stale
+  assertion is invalidated (not deleted — the edges are bi-temporal) and one
+  for the current title is opened.
+
 ## [4.9.1] - 2026-08-04
 
 ### Fixed
