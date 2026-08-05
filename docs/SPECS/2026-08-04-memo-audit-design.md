@@ -121,63 +121,75 @@ ignores the freeze flag.
 
 ---
 
-## P0 — Reference dilution and dead weight that never gets archived
+## P0 — Explicit `memo search` ranks the direct answer below topical neighbours
 
-**Severity: high. Cost: medium. Highest impact across all three lenses.**
+**Severity: high. Cost: unknown until diagnosed. Rewritten 2026-08-05.**
 
-Nearly half the corpus is ingested reference material — Obsidian vault notes,
-WhatsApp exports, PDF chunks — and 78% of that tier has never been accessed
-once. It is not inert: it competes in the same score space as durable agent
-memory and wins.
+> This section replaces an earlier version built on corpus statistics rather
+> than measured behaviour. Three of its four causal claims did not survive
+> checking; the record of what was wrong is kept below, because the failure mode
+> is more useful than the conclusion was.
 
-Control query, run live:
+### What is actually measured
+
+Control query `por que se deprecó synapse`, run through `memo search`:
 
 ```
-memo search "por que se deprecó synapse"
-
-  3.499  reference  "Dominios - Synapse, Memflow y Memo — 2. Synapse…"   ← vault chunk
-  0.564  fact       "synapse deprecado completo"                        ← correct answer
+1.411  bug        Boost de título en synapse es plano
+1.395  note       Fix de MyPy en Synapse
+1.152  reference  Synapse — cerebro neutral operativo funcional § Fuentes
+0.461  note       Decisión y estado final de la deprecación de Synapse
+0.348  fact       synapse deprecado completo        <- the direct answer, rank 5
 ```
 
-The ingested chunk outranks the durable fact by roughly 6×.
+The record that answers the question ranks **fifth**, at a quarter of the top
+score. What outranks it is mostly *durable* material that merely shares the
+entity "synapse": a bug about title boosting, a mypy fix. This is a ranking
+problem on the explicit-search surface, and the reference chunk at rank 3 is a
+participant in it, not its cause.
 
-Meanwhile the outcome loop reported `roi_score re-derived for 149 memories,
-0 dead-weight archived` — the archival machinery exists and fired against
-5,457 never-accessed candidates without archiving any of them.
+Ambient recall is unaffected — see the correction above.
 
-This is the most plausible single explanation for `referenced_rate = 0.011`:
-recall injects reference-tier text that reads as topically related, so it is
-never followed up on.
+### What is NOT the problem (each checked, each disproven)
 
-### Fix
+| Claim in the first draft | Status |
+|---|---|
+| Reference dilutes ambient recall | **False.** `MEMO_RECALL_EXCLUDE_REFERENCE=True`; 1,000 grounding-log lines contain zero reference records. |
+| `referenced_rate=0.011` shows recall injects the wrong things | **False.** It counts explicit re-fetch via `record_click`, which recall makes unnecessary, across differently-bounded logs. |
+| Dead-weight archival is broken (0 of 5,457) | **False.** `dead_weight()` targets memories surfaced ≥8 times and never grounded (`MEMO_OUTCOME_DEAD_MIN_SURFACED=8`, enabled). Zero means no recall noise was found — a healthy result. The 5,457 never-accessed records are reference, which recall never surfaces, so they are not candidates by construction. |
 
-1. **Separate the pools.** Reference-tier content gets its own namespace and
-   leaves the default recall/search candidate pool. Retrieving it becomes an
-   explicit opt-in (a flag, a scope argument, or a dedicated command) rather
-   than the default competing path.
-2. **Stop cross-tier score comparison.** Scores from different tiers are not
-   commensurable today; either normalize per tier or refuse to merge-rank them.
-   Only this sub-item depends on P4; pool separation and archival do not.
-3. **Make dead-weight archival actually fire.** Define the criterion
-   explicitly (`access_count = 0` ∧ age > N days ∧ not pinned), report how many
-   candidates matched and how many were archived, and fail loudly when the
-   count is zero against a non-empty candidate set.
+### What remains true
 
-### Verification
+- **The search ranking above.** Reproducible, on the surface a human types into.
+- **48% of the corpus (5,457 records) has never been accessed**, 78% of the
+  reference tier. This is a real *cost* — index size (memvec.db at 1.3 GB),
+  `maintain` wall clock, embedding and graph processing — with no demonstrated
+  harm to recall quality. Treat it as hygiene, not as a retrieval defect.
 
-- The control query ranks the `fact` above the vault chunk.
-- `referenced_rate` measured over a comparable window rises from 0.011.
-- `memo eval bench` micro recall@5 does not regress below 0.746.
-- A `maintain` run reports a non-zero archived count, and `memo stats` shows
-  the never-accessed population shrinking.
+### Next step: diagnose before designing
 
-### Explicitly out of scope
+Do not write a fix yet. The open question is why entity-overlap outranks
+answer-bearing content in `search` but apparently not in the recall hook, which
+uses a different path (`recall_logic._recall_logic` versus `Memory.search`).
+Establish that first:
 
-Deleting ingested content. The vault/WhatsApp corpus has value for `memo ask`
-and `memo chat`; the problem is that it defaults into ambient recall, not that
-it exists.
+1. Run the control query through both paths with score components exposed
+   (`memo search --explain` / `MEMO_RECALL_DEBUG=1`) and diff the contributing
+   terms.
+2. Check whether the durable records that outrank the answer carry a title-boost
+   or recency term that the answer lacks — note that one of them is literally a
+   memory titled "Boost de título en synapse es plano".
+3. Only then decide whether the fix is ranking, tiering, or both, and gate it on
+   `memo eval recall`, which is load-bearing for a ranking change in a way it was
+   not for P1.
 
----
+### Process note
+
+The first draft of this section measured *corpus composition* and inferred
+*system behaviour* from it. The measurements were right; the inferences were
+wrong three times out of four. Any future finding here states which of the two
+it is, and a causal claim about retrieval is checked against `grounding.log` or a
+live query before it is written down.
 
 ## P2 — Human-facing surfaces do not use the daemon
 
@@ -354,3 +366,78 @@ P6 is scoped. P4 should land before P0's cross-tier scoring rule is finalized.
 - No deletion of ingested reference content.
 - No refactor of the graph, dream, or federation subsystems; the audit found
   them populated and functioning.
+
+---
+
+## P0 diagnosis result (2026-08-05)
+
+The diagnosis step above was run. The mechanism is identified.
+
+### The cross-encoder gets it right; a downstream multiplier overrides it
+
+Scoring the five candidates of the control query directly against
+`MLXReranker.score`:
+
+| final rank | final score | cross-encoder |
+|---|--:|--:|
+| 1 · bug "Boost de título en synapse es plano" | 1.411 | **0.013** |
+| 2 · note "Fix de MyPy en Synapse" | 1.395 | 0.173 |
+| 3 · reference chunk | 1.152 | 0.281 |
+| 4 · note "Decisión y estado final de la deprecación" | 0.461 | **0.990** |
+| 5 · fact "synapse deprecado completo" | 0.348 | **0.719** |
+
+The reranker — the most expensive component in the pipeline — identifies both
+answer-bearing records (0.990, 0.719) and rejects the irrelevant one (0.013).
+The delivered order is close to its inverse.
+
+### Which post-rerank stage does it
+
+Stages after `rerank` are `entity_boost`, `verification_decay`,
+`retrieval_boost`. Measured on these candidates:
+
+- **`entity_boost` — no-op.** `extract_entities("por que se deprecó synapse")`
+  returns `[]`, so `_apply_entity_boost` returns early.
+- **`verification_decay` — uniform.** All five records are `unverified`, giving
+  the same ×0.8. Order-preserving by construction.
+- **`retrieval_boost` — the only stage that varies.** ×4.2 for four of the five,
+  ×3.0 for the fourth.
+
+`boost_for` (`retrieval_boost.py:126`) is a **multiplicative** curatorial boost
+**capped at 12×**, composed from filename overlap (up to ×4.0), title ≥50% match
+(×1.5), heading (×1.25) and tag match (×1.4). It is applied to a fused score
+bounded at 1.0 by `alpha * rerank + (1 - alpha) * rrf_bonus` (α = 0.7). A term
+that can reach 12× sitting downstream of a term bounded at 1.0 can reorder
+anything.
+
+### Why it misfires here
+
+memo derives titles and filenames from memory content, so "the title mentions
+synapse" is nearly universal among records about synapse. The boost therefore
+fires at essentially the same magnitude for the record the cross-encoder scored
+0.990 and the one it scored 0.013 — it encodes *entity mention*, not *answer
+relevance*, and it is the largest multiplicative term in the pipeline.
+
+The boost's own docstring states the intent: "a note whose metadata is the
+answer wins decisively over body-text-only matches". That intent is sound for an
+ingested vault of hand-named files, where a filename is a human curatorial act.
+It does not hold for auto-titled durable memories, where the filename is derived
+from the same text the body already matched — so the signal is double-counted
+rather than curatorial.
+
+### Fix direction (not yet designed)
+
+The candidates, in increasing order of invasiveness:
+
+1. **Bound the boost relative to the reranker** — cap the post-rerank multiplier
+   so it can reorder within a relevance band but not across one.
+2. **Make the boost curatorial again** — apply it only where the filename is a
+   human artefact (ingested vault files), not to memo-authored records whose
+   title is derived from their own body.
+3. **Move the boost upstream of the reranker**, into candidate generation, so the
+   cross-encoder has the last word on ordering.
+
+All three are ranking changes, so `memo eval recall --labels
+eval/regression_labels.json` is load-bearing and must be run before and after —
+and, unlike P1, a regression here is meaningful rather than corpus drift.
+
+Not started. This section records the diagnosis only.

@@ -157,7 +157,7 @@ class _RelationOpsMixin(_MemoryBase):
                 reason=reason or "relation judgment",
             )
         try:
-            return self.store.commit_relation_judgment(
+            judged = self.store.commit_relation_judgment(
                 relation_id=relation_id,
                 relation=relation,
                 reason=reason,
@@ -167,6 +167,16 @@ class _RelationOpsMixin(_MemoryBase):
                 model=model,
                 provenance=provenance,
             )
+            # The contradiction this pair reported is settled — close the
+            # operational conflict the scanner opened for it. Never let this
+            # cleanup fail an otherwise committed judgment.
+            with contextlib.suppress(Exception):
+                self.operational.gc_conflicts_for_pair(
+                    str(current["source_id"]),
+                    str(current["target_id"]),
+                    reason=f"relation judged: {relation}",
+                )
+            return judged
         except Exception:
             if validity_before is not None:
                 with contextlib.suppress(Exception):
