@@ -361,7 +361,7 @@ class _AskOpsMixin(_MemoryBase):
         type_: str | None,
         snippet_chars: int,
         include_repos: bool,
-        disable_reranker: bool = True,
+        disable_reranker: bool = False,
         intent_text: str | None = None,
         session_id: str | None = None,
         use_context_pack: bool = False,
@@ -376,9 +376,13 @@ class _AskOpsMixin(_MemoryBase):
         short-circuit without re-running search.
 
         Args:
-            disable_reranker: If True (default for chat), skip cross-encoder
-                reranking. RRF is sufficient for synthesis and reranker adds
-                ~150ms latency.
+            disable_reranker: If True, skip cross-encoder reranking for this
+                call. Defaults to False so the answer path ranks like every
+                other retrieval surface — "RRF is sufficient for synthesis"
+                held on a small corpus, but on a real one it buried answers
+                below the top-k fed to the LLM and `ask` refused questions it
+                had answers for. Callers that genuinely prefer latency over
+                ranking (the multi-round expansion below) still opt out.
         """
         if not question or not question.strip():
             return question, [], "", []
