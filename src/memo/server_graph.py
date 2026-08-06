@@ -51,7 +51,7 @@ def register(server: FastMCP, memory: Memory) -> None:
             max_neighbors: Maximum neighbors to return.
         """
         neighbors = memory.navigator.get_neighbors(entity, max_neighbors=max_neighbors)
-        return neighbors.__dict__
+        return neighbors.to_bounded_dict()
 
     @annotated_tool(server, **READ_ONLY)
     def memo_explore(

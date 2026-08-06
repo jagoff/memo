@@ -199,3 +199,41 @@ def test_judging_a_relation_closes_its_operational_conflict(mock_memory) -> None
     )
 
     assert mock_memory.operational.active_conflicts(f"touch {newer.id}") == []
+
+
+def test_mcp_state_tool_bounds_an_unbounded_open_backlog(tmp_path) -> None:
+    """Open conflicts awaiting human triage must not blow the response budget.
+
+    Detection outruns triage: the nightly scan opens a semantic-contradiction
+    conflict per pair, and pairs held back by the supersede support gate stay
+    ``detected`` indefinitely. On the live corpus that reached 37 open
+    conflicts (~10k tokens per call) and keeps climbing ~9/day, so the tool
+    returns the newest slice plus the true totals.
+    """
+    from unittest.mock import MagicMock
+
+    from memo.server_operational import register
+
+    store = OperationalStore(tmp_path, device_id="device-a")
+    for i in range(30):
+        _open_semantic_conflict(
+            store,
+            a=f"{i:032x}",
+            b=f"{i + 100:032x}",
+            anomaly_id=f"anomaly-bulk-{i:04d}",
+        )
+
+    tools: dict[str, object] = {}
+    server = MagicMock()
+    server.tool = lambda **_kw: lambda fn: tools.setdefault(fn.__name__, fn)
+    memory = MagicMock()
+    memory.operational = store
+    register(server, memory)
+
+    out = tools["memo_operational_state"](limit=10)
+
+    assert len(out["conflicts"]) == 10
+    assert out["counts"]["conflicts"] == 30
+    assert out["limit"] == 10
+    # The full set stays reachable through the store itself.
+    assert len(store.state()["conflicts"]) == 30
