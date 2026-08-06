@@ -39,6 +39,11 @@ from memo.tiers import REFERENCE_TYPES, SENSITIVE_TYPES
 # unbounded caller value cannot exhaust the shared DB or blow the latency budget.
 _MAX_SEARCH_LIMIT = 500
 
+# Pool slack for chunk→parent collapsing: a note's chunks can dominate the
+# window, so retrieve this many times `limit` and let the collapse refill the
+# result with the next distinct documents.
+_CHUNK_PARENT_POOL_FACTOR = 4
+
 if TYPE_CHECKING:
     from memo.store.hype_store import HypeStore
 
@@ -301,6 +306,12 @@ class _SearchOpsMixin(_MemoryBase):
             # the cross-encoder has more candidates to discriminate
             # between; the final `limit` is applied AFTER rerank.
             input_k = max(self.cfg.rerank_input_k, limit) if self.cfg.reranker_enabled else limit
+            # Chunk→parent collapsing removes hits by design (eight chunks of
+            # one note become one). Without slack in the pool the caller gets
+            # fewer results than it asked for, so widen it enough that the
+            # collapse can refill from the next distinct documents.
+            if flag_bool("MEMO_SEARCH_CHUNK_PARENT") and type_ not in REFERENCE_TYPES:
+                input_k = max(input_k, limit * _CHUNK_PARENT_POOL_FACTOR)
             k_each = max(input_k * 2, 20)
             try:
                 _query_for_embed = query
@@ -562,6 +573,17 @@ class _SearchOpsMixin(_MemoryBase):
             before = len(out)
             out = [r for r in out if not (r.extra or {}).get(IS_FORGOTTEN_KEY)]
             _add_trace("forget_filter", input_count=before, output_count=len(out))
+        # Chunk→parent mapping (MEMO_SEARCH_CHUNK_PARENT, default off) runs on
+        # the WIDE pool, before rerank and the trim to `limit`. Collapsing after
+        # the trim could only shrink the result: a long note whose eight chunks
+        # all rank well returned eight near-identical hits, and enabling the
+        # flag turned those eight into one instead of one plus the next seven
+        # distinct documents. Collapsing first also stops the reranker from
+        # spending its window on fragments of a single note.
+        if out and flag_bool("MEMO_SEARCH_CHUNK_PARENT") and type_ not in REFERENCE_TYPES:
+            before = len(out)
+            out = self._map_chunks_to_parents(out)
+            _add_trace("chunk_parent", input_count=before, output_count=len(out))
         # Source-level feedback (👍 / 👎) — applied AFTER RRF/vec retrieval
         # but BEFORE cross-encoder rerank so the reranker doesn't waste
         # cycles on hits the user already vetoed. Embeds the query once
@@ -745,14 +767,6 @@ class _SearchOpsMixin(_MemoryBase):
                 output_count=len(out),
                 floor=_ref_floor,
             )
-        # Chunk→parent mapping (K3): a winning reference CHUNK stands in for
-        # its parent note. Flag-gated default off; skipped when the caller
-        # explicitly asked for the reference tier (same rule as the floor
-        # above). See _map_chunks_to_parents.
-        if out and flag_bool("MEMO_SEARCH_CHUNK_PARENT") and type_ not in REFERENCE_TYPES:
-            before = len(out)
-            out = self._map_chunks_to_parents(out)
-            _add_trace("chunk_parent", input_count=before, output_count=len(out))
         out = self._apply_curated_graph_order(query, out, _add_trace)
         if _track_usage:
             self._record_access([r.id for r in out])
