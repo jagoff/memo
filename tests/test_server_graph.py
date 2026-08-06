@@ -366,3 +366,101 @@ def test_memo_graph_export_json_default_no_memories(tmp_cfg) -> None:
 
     tools["memo_graph_export"](format="json")
     mem.navigator.export_json.assert_called_once_with(include_memories=False)
+
+
+def test_memo_graph_export_dot_bounds_edges_and_reports_true_count(tmp_cfg) -> None:
+    """memo_graph_export trims DOT edge lines to max_edges and reports the true count."""
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+
+    mem.navigator.export_graphviz.return_value = "\n".join(
+        [
+            "graph memo_entities {",
+            "  rankdir=LR;",
+            "  node [shape=box, style=rounded];",
+            '  "alpha" -- "beta";',
+            '  "beta" -- "gamma";',
+            '  "gamma" -- "delta";',
+            "}",
+        ]
+    )
+
+    server, tools = _make_server_and_tools()
+    from memo.server_graph import register
+
+    register(server, mem)
+
+    result = tools["memo_graph_export"](format="dot", max_edges=2)
+
+    assert result["edge_count"] == 3
+    assert result["truncated"] is True
+    lines = result["content"].split("\n")
+    assert [line for line in lines if " -- " in line] == [
+        '  "alpha" -- "beta";',
+        '  "beta" -- "gamma";',
+    ]
+    # The header and the closing brace survive, so the trimmed DOT still parses.
+    assert lines[0] == "graph memo_entities {"
+    assert lines[-1] == "}"
+
+
+def test_memo_graph_export_json_bounds_edges_and_reports_true_counts(tmp_cfg) -> None:
+    """memo_graph_export trims JSON edges to max_edges and drops orphaned nodes."""
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+
+    mem.navigator.export_json.return_value = {
+        "nodes": [
+            {"id": "alpha", "label": "alpha"},
+            {"id": "beta", "label": "beta"},
+            {"id": "gamma", "label": "gamma"},
+        ],
+        "edges": [
+            {"source": "alpha", "target": "beta"},
+            {"source": "beta", "target": "gamma"},
+        ],
+    }
+
+    server, tools = _make_server_and_tools()
+    from memo.server_graph import register
+
+    register(server, mem)
+
+    result = tools["memo_graph_export"](format="json", max_edges=1)
+
+    assert result["node_count"] == 3
+    assert result["edge_count"] == 2
+    assert result["truncated"] is True
+    assert result["data"]["edges"] == [{"source": "alpha", "target": "beta"}]
+    # gamma has no retained edge, so keeping it would advertise an isolated node.
+    assert [n["id"] for n in result["data"]["nodes"]] == ["alpha", "beta"]
+
+
+def test_memo_graph_export_reports_counts_when_under_the_bound(tmp_cfg) -> None:
+    """A graph smaller than max_edges comes back whole, still carrying its sizes."""
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+
+    dot_content = 'graph memo_entities {\n  "alpha" -- "beta";\n}'
+    mem.navigator.export_graphviz.return_value = dot_content
+    json_data = {
+        "nodes": [{"id": "alpha"}, {"id": "beta"}],
+        "edges": [{"source": "alpha", "target": "beta"}],
+    }
+    mem.navigator.export_json.return_value = json_data
+
+    server, tools = _make_server_and_tools()
+    from memo.server_graph import register
+
+    register(server, mem)
+
+    dot_result = tools["memo_graph_export"](format="dot")
+    assert dot_result["content"] == dot_content
+    assert dot_result["edge_count"] == 1
+    assert dot_result["truncated"] is False
+
+    json_result = tools["memo_graph_export"](format="json")
+    assert json_result["data"] == json_data
+    assert json_result["node_count"] == 2
+    assert json_result["edge_count"] == 1
+    assert json_result["truncated"] is False

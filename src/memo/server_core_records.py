@@ -36,6 +36,21 @@ def _safe_mcp_extra(extra: dict[str, Any] | None) -> dict[str, Any]:
     return safe_extra
 
 
+def _bounded_lint(report: dict[str, list[dict[str, Any]]], *, limit: int) -> dict[str, Any]:
+    """Trim each lint category to `limit` findings and keep the true totals.
+
+    The full report grows with the corpus, not with what a caller can read: on
+    a 11k-memory index it serialized to 725k chars, `few_tags` alone 3,962
+    entries, so an unbounded return is truncated by the client and the backlog
+    size is lost with it. `counts` reports the real per-category size.
+    """
+    cap = max(0, limit)
+    bounded: dict[str, Any] = {cat: rows[:cap] for cat, rows in report.items()}
+    bounded["counts"] = {cat: len(rows) for cat, rows in report.items()}
+    bounded["limit"] = cap
+    return bounded
+
+
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **WRITE)
     def memo_save(
@@ -517,11 +532,21 @@ def register(server: Any, memory: Memory) -> None:
         return out
 
     @annotated_tool(server, **READ_ONLY)
-    def memo_lint() -> dict[str, list[dict[str, Any]]]:
+    def memo_lint(
+        limit: Annotated[
+            int,
+            Field(
+                description="Findings to return per category. True per-category "
+                "totals come back under `counts`."
+            ),
+        ] = 20,
+    ) -> dict[str, Any]:
         """Inspect the memory corpus for maintenance issues.
 
         Read-only. Returns grouped lint findings such as malformed metadata or
-        other records that may need cleanup. Use memo_update, memo_delete, or
-        vault edits separately to fix findings.
+        other records that may need cleanup, capped at ``limit`` per category —
+        the findings scale with the corpus and a whole report runs past any
+        client's response budget. Use memo_update, memo_delete, or vault edits
+        separately to fix findings.
         """
-        return memory.lint()
+        return _bounded_lint(memory.lint(), limit=limit)
