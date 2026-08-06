@@ -6,11 +6,33 @@ root group in cli.py via `cli.add_command(export_group)`.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+
+
+def _export_target(output_path: str) -> Path:
+    """Check the user-supplied destination before any export work starts.
+
+    Left to the writer, a missing parent surfaces as a FileNotFoundError
+    traceback from the atomic-write tempfile, and an existing directory only
+    fails at the final rename with IsADirectoryError, after the whole corpus has
+    been serialized. Refuse rather than create the tree: the usual cause is a
+    typo in a hand-typed path.
+    """
+    out_p = Path(output_path)
+    if out_p.is_dir():
+        raise click.ClickException(f"output path is a directory, not a file: {out_p}")
+    if not out_p.parent.is_dir():
+        raise click.ClickException(
+            f"output directory does not exist: {out_p.parent} "
+            f"(create it with: mkdir -p {out_p.parent})"
+        )
+    return out_p
 
 
 @click.group(name="export")
@@ -26,12 +48,11 @@ def export_json(output_path: str) -> None:
 
     Example: memo export json /path/to/export.json
     """
+    out_p = _export_target(output_path)
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    from pathlib import Path
-
-    result = mem.import_export.export_to(Path(output_path), "json")
+    result = mem.import_export.export_to(out_p, "json")
 
     console.print("[green]Export complete[/green]")
     console.print(f"Exported: {result.exported_count}")
@@ -49,12 +70,11 @@ def export_passport(output_path: str) -> None:
 
     Example: memo export passport /path/to/brain.passport
     """
+    out_p = _export_target(output_path)
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    from pathlib import Path
-
-    result = mem.import_export.export_to(Path(output_path), "passport")
+    result = mem.import_export.export_to(out_p, "passport")
 
     console.print("[green]Passport exported[/green]")
     console.print(f"Exported: {result.exported_count}")
@@ -68,12 +88,11 @@ def export_csv(output_path: str) -> None:
 
     Example: memo export csv /path/to/export.csv
     """
+    out_p = _export_target(output_path)
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    from pathlib import Path
-
-    result = mem.import_export.export_to(Path(output_path), "csv")
+    result = mem.import_export.export_to(out_p, "csv")
 
     console.print("[green]Export complete[/green]")
     console.print(f"Exported: {result.exported_count}")
@@ -87,12 +106,11 @@ def export_markdown_bundle(output_path: str) -> None:
 
     Example: memo export markdown-bundle /path/to/export.zip
     """
+    out_p = _export_target(output_path)
     cfg = Config.from_env()
     mem = _get_memory(cfg)
 
-    from pathlib import Path
-
-    result = mem.import_export.export_to(Path(output_path), "markdown_bundle")
+    result = mem.import_export.export_to(out_p, "markdown_bundle")
 
     console.print("[green]Export complete[/green]")
     console.print(f"Exported: {result.exported_count}")
