@@ -292,7 +292,7 @@
     "src/memo/memory/consolidate_ops.py::synthesize_cross_cluster": 21,
     "src/memo/memory/delete_ops.py::_delete_locked": 18,
     "src/memo/memory/evidence_graph_compact.py::compact_by_entity_overlap": 11,
-    "src/memo/memory/maintain_ops.py::_reindex_locked": 65,
+    "src/memo/memory/maintain_ops.py::_reindex_locked": 66,
     "src/memo/memory/maintain_ops.py::extract_entities": 13,
     "src/memo/memory/replay_ops.py::backend_native_replay_resolve": 15,
     "src/memo/memory/rerank_ops.py::_apply_source_feedback": 14,

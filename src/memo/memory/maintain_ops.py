@@ -255,6 +255,13 @@ class _MaintainOpsMixin(_MemoryBase):
             try:
                 source_text = md_path.read_text(encoding="utf-8")
                 post = frontmatter.loads(source_text)
+            except FileNotFoundError:
+                # The walk listed it; a GC, merge or delete removed it before
+                # the read. Expected under `memo watch`, which reindexes on
+                # every change — logging it as an error flooded watch.err.log.
+                _log.debug("reindex: skipping %s (removed during scan)", md_path.name)
+                skipped += 1
+                continue
             except Exception as exc:
                 if rebuild_rows is not None:
                     raise StorageError(
