@@ -45,6 +45,11 @@ from memo.util import safe_operation
 _log = logging.getLogger(__name__)
 _RUN_STAMP_RE = re.compile(r"\d{1,20}(?:-\d{1,20}-\d{1,30})?\Z")
 
+# Open contradiction pairs read per run. `list_open` widens this by 3x for its
+# underlying relation query, which the store clamps at 1000 rows — so 333 is
+# the largest page that sees every pending relation the store will return.
+_OPEN_PAIR_PAGE = 333
+
 
 def _state_path(cfg: Config):
     return cfg.state_dir / "maintain"
@@ -118,6 +123,19 @@ def _write_synthesis_last_run(cfg: Config, ts: str) -> None:
         p.write_text(json.dumps({"last_run": ts}, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:
         _log.warning("maintain: could not write synthesis_state.json: %s", exc)
+
+
+def _record_gone(mem: Any, memory_id: str) -> bool:
+    """True when a memory can no longer be read back.
+
+    `get()` returns None for a deleted row but RAISES when the row survives and
+    its markdown does not (a chunk whose `.md` was removed). Both mean the same
+    thing to a contradiction pair: there is nothing left to act on.
+    """
+    try:
+        return mem.get(memory_id) is None
+    except Exception:
+        return True
 
 
 def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
@@ -568,114 +586,207 @@ def maintain_cmd(
 
             _evo_conf = _flag_float("MEMO_EVOLUTION_CONFIDENCE")
             _evo_conf = 0.6 if _evo_conf is None else _evo_conf
-            for pair in mem.contradict_store.list_open(min_confidence=min_confidence):
-                rel = (pair.relationship or "").lower()
-                if "evolu" in rel:
+            # `list_open`'s default page is 50, read from a 150-row window of
+            # pending relations — with a few hundred open pairs the older ones
+            # are never visible, so they are never acted on no matter how many
+            # nights run. Ask for the widest window the store allows (it clamps
+            # the underlying query at 1000 rows).
+            for pair in mem.contradict_store.list_open(
+                min_confidence=min_confidence,
+                limit=_OPEN_PAIR_PAGE,
+            ):
+                try:
+                    # A pair can outlive its memories: `ops gc-memo-duplicates` and
+                    # other delete paths don't always orphan the relations they
+                    # leave behind. Acting on one fails the same way every run
+                    # (`invalidate failed for <id>`) and it comes back forever, so
+                    # drop the dead pair instead of retrying it nightly. A record
+                    # whose .md has gone missing raises rather than returning None
+                    # — that is just as dead, and letting it propagate aborts the
+                    # whole pass over one unreadable file.
                     if not dry_run:
-                        # Demote the superseded (older) side via its confidence
-                        # so the evolution verdict steers ranking (health-score
-                        # multiplier, default-on) instead of changing nothing.
-                        older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
-                        if _evo_conf < 1.0:
+                        dead = [
+                            mid
+                            for mid in (pair.memory_id_a, pair.memory_id_b)
+                            if mid and _record_gone(mem, mid)
+                        ]
+                        if dead:
                             try:
-                                mem.store.set_confidence_batch([(older, _evo_conf)])
-                            except Exception as _exc:
+                                for mid in dead:
+                                    mem.contradict_store.drop_for_memoria(mid)
+                                receipt.setdefault("dropped_orphan_pairs", []).append(pair.pair_id)
+                            except Exception as exc:
                                 receipt["errors"].append(
-                                    f"evolution_confidence: {type(_exc).__name__}: {_exc}"
+                                    f"orphan_pair: {type(exc).__name__}: {exc}"
                                 )
+                            continue
+                    rel = (pair.relationship or "").lower()
+                    if "evolu" in rel:
+                        if not dry_run:
+                            # Demote the superseded (older) side via its confidence
+                            # so the evolution verdict steers ranking (health-score
+                            # multiplier, default-on) instead of changing nothing.
+                            older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
+                            if _evo_conf < 1.0:
+                                try:
+                                    mem.store.set_confidence_batch([(older, _evo_conf)])
+                                except Exception as _exc:
+                                    receipt["errors"].append(
+                                        f"evolution_confidence: {type(_exc).__name__}: {_exc}"
+                                    )
+                            # A pair the ledger can't find stays open, so recording
+                            # it as evolved makes the receipt claim work that never
+                            # happened — and the same pair returns every run.
+                            if not mem.contradict_store.resolve(
+                                pair.pair_id,
+                                "evolved",
+                                note=f"auto: evolution, demoted older {older[:8]}",
+                            ):
+                                receipt["errors"].append(
+                                    f"evolution: pair {pair.pair_id} not settled (still open)"
+                                )
+                                continue
+                        receipt["evolved"].append(pair.pair_id)
+                        continue
+                    if "contrad" not in rel:
+                        continue  # consistent / unrelated — leave open
+                    older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
+                    if flag_bool("MEMO_CROSSREF_INDEX"):
+                        try:
+                            _refs = [b.source_id for b in mem.crossref.referencing_sources(older)]
+                        except Exception:
+                            _refs = []
+                        if _refs:
+                            receipt["cascade_warnings"].append(
+                                {"target": older, "action": "supersede", "referenced_by": _refs}
+                            )
+                    decision = supersede_decision(mem, older_id=older, newer_id=_newer)
+                    if decision.action == COMPETING:
+                        if not dry_run:
+                            mem.contradict_store.resolve(
+                                pair.pair_id,
+                                "competing",
+                                note=f"auto: competing — {decision.reason}",
+                            )
+                        receipt.setdefault("competing", []).append(pair.pair_id)
+                        continue
+                    if decision.action == HOLD_OPEN:
+                        receipt["flagged_for_review"].append(
+                            {
+                                "pair_id": pair.pair_id,
+                                "older": decision.dominated_id,
+                                "support_count": decision.support_dominated,
+                            }
+                        )
+                        continue
+                    assert decision.action == ARCHIVE
+                    target = decision.dominated_id
+                    action = "delete" if hard_delete else "invalidate"
+                    if not dry_run:
+                        # Negative-recall CAPTURE (dream-pass parity, _run_contradict):
+                        # derive the ⛔ anti-memory (Wrong = dominated, Right =
+                        # dominant) BEFORE the archive/delete so both records are
+                        # still resolvable. Gated + best-effort (never raises), so a
+                        # capture failure cannot abort the supersede.
+                        if flag_bool("MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED"):
+                            from memo import negative_capture
+
+                            _neg = negative_capture.capture_from_supersede(
+                                mem,
+                                superseded_id=decision.dominated_id,
+                                superseding_id=decision.dominant_id,
+                            )
+                            if _neg.get("captured_id"):
+                                receipt.setdefault("negative_captured", []).append(
+                                    _neg["captured_id"]
+                                )
+                            if _neg.get("error"):
+                                receipt["errors"].append(f"negative_capture: {_neg['error']}")
+                        if hard_delete:
+                            ok = mem.delete(target)
+                        else:
+                            # Invalidate-don't-delete (Zep-faithful): close the
+                            # loser's interval at the SUCCESSOR's valid_at (not
+                            # scan-time now()) and keep its .md + index row live.
+                            # COALESCE to the winner's created for legacy rows saved
+                            # before valid_at existed.
+                            winner = mem.get(decision.dominant_id)
+                            winner_valid_at = (
+                                (winner.valid_at or winner.created) if winner else None
+                            )
+                            ok = winner_valid_at is not None and mem.lifecycle.invalidate_in_place(
+                                loser_id=target,
+                                winner_id=decision.dominant_id,
+                                invalid_at=winner_valid_at,
+                            )
+                        if not ok:
+                            # Mutation failed (e.g. target vanished concurrently):
+                            # pair stays open — don't record it as superseded, or
+                            # `memo maintain undo` chases ids that were never moved.
+                            receipt["errors"].append(f"supersede: {action} failed for {target}")
+                            continue
                         mem.contradict_store.resolve(
                             pair.pair_id,
-                            "evolved",
-                            note=f"auto: evolution, demoted older {older[:8]}",
+                            "kept_newer",
+                            note=f"auto: {action}d {target} — {decision.reason}",
                         )
-                    receipt["evolved"].append(pair.pair_id)
-                    continue
-                if "contrad" not in rel:
-                    continue  # consistent / unrelated — leave open
-                older, _newer = _older_id(mem, pair.memory_id_a, pair.memory_id_b)
-                if flag_bool("MEMO_CROSSREF_INDEX"):
-                    try:
-                        _refs = [b.source_id for b in mem.crossref.referencing_sources(older)]
-                    except Exception:
-                        _refs = []
-                    if _refs:
-                        receipt["cascade_warnings"].append(
-                            {"target": older, "action": "supersede", "referenced_by": _refs}
-                        )
-                decision = supersede_decision(mem, older_id=older, newer_id=_newer)
-                if decision.action == COMPETING:
-                    if not dry_run:
-                        mem.contradict_store.resolve(
-                            pair.pair_id, "competing", note=f"auto: competing — {decision.reason}"
-                        )
-                    receipt.setdefault("competing", []).append(pair.pair_id)
-                    continue
-                if decision.action == HOLD_OPEN:
-                    receipt["flagged_for_review"].append(
+                    receipt["superseded"].append(
                         {
                             "pair_id": pair.pair_id,
-                            "older": decision.dominated_id,
-                            "support_count": decision.support_dominated,
+                            "older": target,
+                            "action": action,
+                            "confidence": pair.confidence,
                         }
                     )
+                except Exception as exc:
+                    # One unreadable record must not abandon every other
+                    # pair in the run: the pass used to abort on the first
+                    # pair whose .md had gone missing, leaving ~100
+                    # actionable pairs untouched every night.
+                    receipt["errors"].append(f"pair {pair.pair_id}: {type(exc).__name__}: {exc}")
                     continue
-                assert decision.action == ARCHIVE
-                target = decision.dominated_id
-                action = "delete" if hard_delete else "invalidate"
-                if not dry_run:
-                    # Negative-recall CAPTURE (dream-pass parity, _run_contradict):
-                    # derive the ⛔ anti-memory (Wrong = dominated, Right =
-                    # dominant) BEFORE the archive/delete so both records are
-                    # still resolvable. Gated + best-effort (never raises), so a
-                    # capture failure cannot abort the supersede.
-                    if flag_bool("MEMO_NEGATIVE_RECALL_CAPTURE_ENABLED"):
-                        from memo import negative_capture
-
-                        _neg = negative_capture.capture_from_supersede(
-                            mem,
-                            superseded_id=decision.dominated_id,
-                            superseding_id=decision.dominant_id,
-                        )
-                        if _neg.get("captured_id"):
-                            receipt.setdefault("negative_captured", []).append(_neg["captured_id"])
-                        if _neg.get("error"):
-                            receipt["errors"].append(f"negative_capture: {_neg['error']}")
-                    if hard_delete:
-                        ok = mem.delete(target)
-                    else:
-                        # Invalidate-don't-delete (Zep-faithful): close the
-                        # loser's interval at the SUCCESSOR's valid_at (not
-                        # scan-time now()) and keep its .md + index row live.
-                        # COALESCE to the winner's created for legacy rows saved
-                        # before valid_at existed.
-                        winner = mem.get(decision.dominant_id)
-                        winner_valid_at = (winner.valid_at or winner.created) if winner else None
-                        ok = winner_valid_at is not None and mem.lifecycle.invalidate_in_place(
-                            loser_id=target,
-                            winner_id=decision.dominant_id,
-                            invalid_at=winner_valid_at,
-                        )
-                    if not ok:
-                        # Mutation failed (e.g. target vanished concurrently):
-                        # pair stays open — don't record it as superseded, or
-                        # `memo maintain undo` chases ids that were never moved.
-                        receipt["errors"].append(f"supersede: {action} failed for {target}")
-                        continue
-                    mem.contradict_store.resolve(
-                        pair.pair_id,
-                        "kept_newer",
-                        note=f"auto: {action}d {target} — {decision.reason}",
-                    )
-                receipt["superseded"].append(
-                    {
-                        "pair_id": pair.pair_id,
-                        "older": target,
-                        "action": action,
-                        "confidence": pair.confidence,
-                    }
-                )
         except Exception as exc:
             receipt["errors"].append(f"contradict: {type(exc).__name__}: {exc}")
+
+        # A conflict opened on a chunk id outlives the chunk: a reindex
+        # replaces the id, nothing ever names it again, and the conflict
+        # stays `detected` forever in every operational snapshot. Sweep the
+        # unreachable ones here so detection can't outrun cleanup.
+        if not dry_run:
+            try:
+                swept = int(
+                    mem.operational.gc_conflicts_for_missing_memories(
+                        lambda mid: mem.get(mid) is not None
+                    )
+                )
+                if swept:
+                    receipt["conflicts_swept"] = swept
+            except Exception as exc:
+                receipt["errors"].append(f"conflict_gc: {type(exc).__name__}: {exc}")
+
+            # Backstop for the judgment-time close: `gc_conflicts_for_pair`
+            # matches on the exact id pair, so a conflict whose endpoints have
+            # drifted (a chunk re-split, an id rewritten by a merge) survives
+            # the judgment that settled it. If no pending pair is left for its
+            # endpoints, the contradiction it reported is over.
+            try:
+                settled = 0
+                conflicts = mem.operational.state(include_closed=False)["conflicts"]
+                for row in list(conflicts.values()):
+                    ids = list((row.get("metadata") or {}).get("memory_ids") or [])
+                    if len(ids) != 2:
+                        continue
+                    if mem.contradict_store.pairs_for_ids(ids, status="open"):
+                        continue
+                    settled += int(
+                        mem.operational.gc_conflicts_for_pair(
+                            ids[0], ids[1], reason="no open pair remains"
+                        )
+                    )
+                if settled:
+                    receipt["conflicts_settled"] = settled
+            except Exception as exc:
+                receipt["errors"].append(f"conflict_settle: {type(exc).__name__}: {exc}")
 
     # 2. Duplicates ----------------------------------------------------------
     if not skip_consolidate:

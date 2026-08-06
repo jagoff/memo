@@ -237,3 +237,31 @@ def test_mcp_state_tool_bounds_an_unbounded_open_backlog(tmp_path) -> None:
     assert out["limit"] == 10
     # The full set stays reachable through the store itself.
     assert len(store.state()["conflicts"]) == 30
+
+
+def test_gc_conflicts_for_vanished_memories_closes_unreachable_pairs(tmp_path) -> None:
+    """A conflict about a record that no longer exists can never be judged.
+
+    `gc_conflicts_for_memory` covers the explicit delete path, but the scanner
+    also opens conflicts on chunk ids, and a reindex replaces those. Nothing
+    ever names the old id again, so the conflict stays `detected` forever and
+    rides in every operational snapshot — 3 of the 37 open on the live corpus
+    were exactly this.
+    """
+    store = OperationalStore(tmp_path, device_id="device-a")
+    live = _open_semantic_conflict(store, a=MEM_A, b=MEM_B, anomaly_id="anomaly-live")
+    gone = _open_semantic_conflict(
+        store,
+        a=f"{MEM_C}_chunk_3",
+        b=MEM_B,
+        anomaly_id="anomaly-gone",
+    )
+
+    present = {MEM_A, MEM_B}
+    assert store.gc_conflicts_for_missing_memories(lambda mid: mid in present) == 1
+
+    open_now = set(store.state(include_closed=False)["conflicts"])
+    assert gone not in open_now
+    assert live in open_now
+    # Idempotent — a second sweep finds nothing left to close.
+    assert store.gc_conflicts_for_missing_memories(lambda mid: mid in present) == 0

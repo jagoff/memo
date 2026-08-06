@@ -547,20 +547,32 @@ class CanonicalContradictionAdapter:
         )
 
     def _row_for_pair_id(self, pair_id: int) -> dict[str, Any] | None:
-        return next(
-            (
-                row
-                for row in self._compatible_rows(self.memory.store.list_relations(limit=1000))
-                if _canonical_pair_id(row) == pair_id
-            ),
-            None,
-        )
+        # Search the pending window FIRST. `list_open` hands out pair ids from
+        # `status="pending"`, but `list_relations` orders by recency and caps
+        # the page, so on a corpus with a long judged history an unfiltered
+        # scan contains no pending rows at all — every `resolve()` of an open
+        # pair then silently returned False and the pair reappeared forever.
+        for rows in (
+            self.memory.store.list_relations(status="pending", limit=1000),
+            self.memory.store.list_relations(limit=1000),
+        ):
+            for row in self._compatible_rows(rows):
+                if _canonical_pair_id(row) == pair_id:
+                    return row
+        return None
 
     def resolve(self, pair_id: int, status: str, note: str | None = None) -> bool:
         if status not in VALID_STATUSES or status == "open":
             raise ValueError(f"invalid resolution status: {status!r}")
         row = self._row_for_pair_id(pair_id)
         if row is None:
+            # Callers treat a resolve as done and move on, so a quiet False
+            # here means the same pair comes back on the next run forever.
+            _log.warning(
+                "contradiction pair %s is not in the relation ledger — resolve(%s) did nothing",
+                pair_id,
+                status,
+            )
             return False
         relation = {
             "dismissed": "not_conflict",

@@ -618,11 +618,18 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                             mem.store.set_confidence_batch([(older, _evo_conf)])
                         except Exception as exc:
                             _log.warning("evolution_confidence failed: %s", exc)
-                    mem.contradict_store.resolve(
+                    # A pair the ledger cannot find stays open, so recording it
+                    # as evolved makes the receipt claim work that never happened
+                    # and the same pair returns on the next run.
+                    if not mem.contradict_store.resolve(
                         pair.pair_id,
                         "evolved",
                         note=f"dream: evolution, demoted older {older[:8]}",
-                    )
+                    ):
+                        result.setdefault("errors", []).append(
+                            f"evolution: pair {pair.pair_id} not settled (still open)"
+                        )
+                        continue
                 result["evolved"].append(pair.pair_id)
                 continue
 

@@ -1,6 +1,7 @@
 #!/bin/sh
 # memo nightly maintenance — one wake, one MLX load. Sequential:
-# codegraph sync → contradict scan → gc dupes → gc orphans → consolidate.
+# codegraph sync → contradict scan → contradict resolve → gc dupes →
+# gc orphans → consolidate.
 # Template: replace __MEMO_BIN__ (`command -v memo`) and __CODEGRAPH_BIN__
 # (`command -v codegraph`; delete that block if you don't use codegraph),
 # then install to ~/.local/share/memo/bin/memo-nightly.sh (chmod 755).
@@ -17,6 +18,16 @@ done || log "codegraph-sync FAILED (exit $?)"
 
 log "start contradict-scan"
 "__MEMO_BIN__" contradict scan --max-memories 500 --min-days-apart 3 --since "$(date -v-30d +%Y-%m-%d)" || log "contradict-scan FAILED (exit $?)"
+
+# The scan only DETECTS: it stores pairs and prints "run memo contradict
+# triage". Without this step nothing acts on them, so every night adds
+# contradictions nobody settles and the operational snapshot grows forever.
+# `--max-pairs 0` skips a second scan — this acts on what the pass above
+# just found. Archive-only and reversible (`memo maintain undo`); the
+# duplicate and staleness passes are left to the steps below.
+log "start contradict-resolve"
+"__MEMO_BIN__" maintain --max-pairs 0 --skip-consolidate --skip-stale --skip-synthesize \
+  || log "contradict-resolve FAILED (exit $?)"
 
 log "start gc-memo-duplicates"
 "__MEMO_BIN__" ops gc-memo-duplicates --json || log "gc-memo-duplicates FAILED (exit $?)"

@@ -200,6 +200,50 @@ def test_lint_clean_memoria_has_no_issues(mock_memory):
     assert rec.id not in flagged
 
 
+def _lint_tool(memory):
+    """Register the core-records tools against a stub server and hand back memo_lint."""
+    from memo.server_core_records import register
+
+    tools: dict = {}
+
+    class _Srv:
+        def tool(self, *a, **k):
+            def wrap(fn):
+                tools[fn.__name__] = fn
+                return fn
+
+            return wrap
+
+    register(_Srv(), memory)
+    return tools["memo_lint"]
+
+
+def test_memo_lint_tool_trims_categories_and_reports_true_counts(mock_memory):
+    """The whole lint report is far past a client's response budget (725k chars
+    on an 11k-memory corpus, few_tags alone 3,962 entries), so the tool returns
+    the first `limit` per category and the real totals under `counts`."""
+    for i in range(5):
+        mock_memory.save(content="short", title=f"Tiny {i}", tags=["only-one"])
+
+    out = _lint_tool(mock_memory)(limit=2)
+
+    assert len(out["few_tags"]) == 2
+    assert len(out["body_skinny"]) == 2
+    assert out["counts"]["few_tags"] == 5
+    assert out["counts"]["body_skinny"] == 5
+    assert out["counts"]["legacy_extra"] == 0
+    assert out["limit"] == 2
+
+
+def test_memo_lint_tool_keeps_categories_whole_under_the_limit(mock_memory):
+    rec = mock_memory.save(content="short", title="Tiny", tags=["only-one"])
+
+    out = _lint_tool(mock_memory)()
+
+    assert [e["id"] for e in out["few_tags"]] == [rec.id]
+    assert out["counts"]["few_tags"] == 1
+
+
 # -- Proactive synthesis (MEMO_MAINT_SYNTHESIZE) --------------------------------
 
 
