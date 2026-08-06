@@ -9,6 +9,36 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.9.3] - 2026-08-05
+
+Found by a live health sweep of the installed runtime, not by the test suite.
+
+### Fixed
+
+- **memo answered "I couldn't find an answer" to questions it had answers
+  for.** On the live corpus `memo search "cómo me conecto a la VPN de
+  avature"` put the procedure at rank 2 while `memo ask` refused outright.
+  Two independent causes on the answer path (`ask`, `chat ask`, and the
+  `memo_ask` / `memo_chat_ask` MCP tools): the path defaulted to
+  `disable_reranker=True` — "RRF is sufficient for synthesis" holds on a small
+  corpus, not a real one — and `load_bodies=False`, an I/O optimisation,
+  silently changed the ranking by handing the cross-encoder empty bodies, so
+  it scored titles alone and the same document fell from rank 2 to rank 21.
+- **Chunk→parent collapsing shrank results instead of refilling them.** A
+  query could return eight hits that were eight chunks of one note; enabling
+  `MEMO_SEARCH_CHUNK_PARENT` turned those eight into one rather than one plus
+  the next seven distinct documents. Collapsing now runs on the wide pool
+  before rerank and the trim. Still default-off.
+- **`memo watch` flooded its log.** A memory the nightly GC or a merge deleted
+  mid-scan was reported as `reindex: skipping <name> (parse error)` at warning
+  level on every reindex — 15 MB of it on this machine. That race now logs at
+  debug; real parse errors keep their warning and still abort a `--rebuild`.
+- **Release commands rewrote the wrong checkout.** `memo release bump` run
+  from an isolated worktree — the procedure that exists to keep releases out
+  of the shared working tree — resolved the repo from the imported module and
+  bumped the shared tree instead. Resolution order is now `MEMO_DEV_REPO` >
+  the checkout containing the cwd > the module's own checkout.
+
 ## [4.9.2] - 2026-08-05
 
 Nine defects found by running memo as an end user across the whole CLI (349
