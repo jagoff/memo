@@ -206,6 +206,7 @@ markers = [
     "db_contract: real SQLite/sqlite-vec behavioral contract.",
     "resource_hygiene: owns native resources and participates in the serial leak lane.",
     "concurrency: exercises threads, processes, sockets, locks, WAL, or interleavings.",
+    "conformance: corpus-scale surface conformance (payload size, wall-clock, reported totals) against a ~10k synthetic corpus; own CI lane, deselected from the default lanes.",
 ]
 
 [tool.mypy]

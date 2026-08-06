@@ -50,11 +50,15 @@ jobs:
         run: >-
           .venv/bin/python -m pytest -m "resource_hygiene" -n 0
           --timeout=120 --resource-hygiene
+      - name: Conformance (corpus-scale surfaces)
+        env:
+          MEMO_CONFORMANCE_CORPUS_N: "10000"
+        run: .venv/bin/python -m pytest -m "conformance" -n 0 --timeout=600
       - name: Tests (excluding slow real-MLX smoke)
         # -n auto: parallelize across cores. --timeout: kill hung MLX/socket
         # tests. --cov + fail_under (pyproject) gates coverage regressions.
         run: >-
-          .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120
+          .venv/bin/python -m pytest -m "not slow and not conformance" -n auto --timeout=120
           --cov=memo --cov-report=term-missing --cov-report=xml
       - name: Changed-lines coverage
         if: github.event_name == 'pull_request'
@@ -114,7 +118,7 @@ jobs:
       - name: Tests under MEMO_VEC_QUANTIZE=int8 (excluding slow + float32-only precision asserts)
         env:
           MEMO_VEC_QUANTIZE: int8
-        run: .venv/bin/python -m pytest -m "not slow and not float32_precision" -n auto --timeout=120
+        run: .venv/bin/python -m pytest -m "not slow and not float32_precision and not conformance" -n auto --timeout=120
 
   runtime-independence:
     # Memo's core must stay installable and executable without sibling repos,
