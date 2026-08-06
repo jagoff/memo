@@ -297,7 +297,7 @@
     "src/memo/memory/replay_ops.py::backend_native_replay_resolve": 15,
     "src/memo/memory/rerank_ops.py::_apply_source_feedback": 14,
     "src/memo/memory/search_ops.py::_fetch_fact_candidates": 11,
-    "src/memo/memory/search_ops.py::search": 60,
+    "src/memo/memory/search_ops.py::search": 61,
     "src/memo/memory/search_scoring_ops.py::_apply_contradict_penalty": 13,
     "src/memo/memory/update_ops.py::_update_locked": 32,
     "src/memo/memory/write_ops.py::_recover_topic_reservation_locked": 11,

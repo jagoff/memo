@@ -528,15 +528,22 @@ class _SearchOpsMixin(_MemoryBase):
         # re-resolved from disk only for the surviving `limit` records right
         # before return (see `_resolve_disk_bodies` below). The reranker only
         # needs text, so this is a pure latency win with no ranking change.
-        _bodies_from_fts = load_bodies and mode == "hybrid"
+        # `load_bodies=False` defers the per-candidate DISK read; it must not
+        # starve the scoring stages of text. It used to gate this batched FTS
+        # fetch too, so ask/chat handed the cross-encoder empty bodies and it
+        # ranked on titles alone — on the live corpus that pushed an answer
+        # from rank 2 to rank 21 and `memo ask` refused a question it had the
+        # answer for. Bodies are blanked again before return (below) so the
+        # lazy contract still holds for the caller.
+        _bodies_from_fts = mode == "hybrid"
         _fts_bodies: dict[str, str] = (
             self.store.get_fts_bodies([r["id"] for r in rows]) if _bodies_from_fts else {}
         )
         for r in rows:
-            if not load_bodies:
-                body = ""
-            elif _bodies_from_fts:
+            if _bodies_from_fts:
                 body = _fts_bodies.get(r["id"], "")
+            elif not load_bodies:
+                body = ""
             else:
                 body = self._read_body(r["path"])
             out.append(record_from_row(r, body=body))
@@ -764,11 +771,17 @@ class _SearchOpsMixin(_MemoryBase):
         if _bodies_from_fts and out:
             import dataclasses
 
-            resolved: list[MemoryRecord] = []
-            for r in out:
-                disk = self._read_body(r.path)
-                resolved.append(dataclasses.replace(r, body=disk) if disk else r)
-            out = resolved
+            if not load_bodies:
+                # The caller asked to defer body loading: the FTS text was for
+                # scoring only, so hand back unloaded records and let it resolve
+                # the canonical .md for whatever it keeps.
+                out = [dataclasses.replace(r, body="") for r in out]
+            else:
+                resolved: list[MemoryRecord] = []
+                for r in out:
+                    disk = self._read_body(r.path)
+                    resolved.append(dataclasses.replace(r, body=disk) if disk else r)
+                out = resolved
         # Judged relations are compact, derived annotations. Pending candidates
         # stay out of normal recall and are visible only in review surfaces.
         if out:
