@@ -17,6 +17,9 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
+# Newest records read to characterise the corpus (distributions, growth rate).
+_SAMPLE_LIMIT = 10_000
+
 
 def _ensure_output_parent(output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,6 +30,7 @@ class CorpusMetrics:
     """Metrics about the memory corpus."""
 
     total_memories: int
+    sample_size: int  # records the distributions below were computed from
     total_entities: int
     type_distribution: dict[str, int]
     tag_frequency: dict[str, int]
@@ -59,10 +63,13 @@ class AnalyticsEngine:
         Returns:
             CorpusMetrics with all computed metrics.
         """
-        # Get all memories
-        memories = self.memory.list(limit=10000)
+        # The newest slice — big enough to characterise the corpus, bounded so
+        # the command stays cheap. Distributions below describe this sample;
+        # the total comes from the store so it never reports the page size.
+        memories = self.memory.list(limit=_SAMPLE_LIMIT)
 
-        total_memories = len(memories)
+        sample_size = len(memories)
+        total_memories = self.memory.store.count()
 
         # Type distribution
         type_counter = Counter(m.type for m in memories)
@@ -85,23 +92,25 @@ class AnalyticsEngine:
         # Total entities
         total_entities = self.memory.graph.count_entities()
 
-        # Growth rate (memories per day)
+        # Growth rate (memories per day) over the window the sample spans —
+        # dividing the whole corpus by that window would inflate the rate.
         growth_rate = 0.0
-        if total_memories > 1:
+        if sample_size > 1:
             first_raw = memories[-1].updated
             last_raw = memories[0].updated
             if first_raw and last_raw:
                 first_date = datetime.fromisoformat(first_raw.replace("Z", "+00:00"))
                 last_date = datetime.fromisoformat(last_raw.replace("Z", "+00:00"))
                 days = max(1.0, (last_date - first_date).total_seconds() / 86400)
-                growth_rate = total_memories / days
+                growth_rate = sample_size / days
 
         # Average access count
         total_access = sum(self.memory.lifecycle.get_access_count(m.id) for m in memories)
-        average_access_count = total_access / total_memories if total_memories > 0 else 0.0
+        average_access_count = total_access / sample_size if sample_size > 0 else 0.0
 
         return CorpusMetrics(
             total_memories=total_memories,
+            sample_size=sample_size,
             total_entities=total_entities,
             type_distribution=type_distribution,
             tag_frequency=tag_frequency,
@@ -119,7 +128,7 @@ class AnalyticsEngine:
         Returns:
             GrowthData with dates and counts.
         """
-        memories = self.memory.list(limit=10000)
+        memories = self.memory.list(limit=_SAMPLE_LIMIT)
 
         # Group by date
         date_counts: Counter[str] = Counter()

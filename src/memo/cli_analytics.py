@@ -47,6 +47,11 @@ def analytics_summary(as_json: bool) -> None:
     console.print(f"Growth Rate: {metrics.growth_rate:.2f} memories/day")
     console.print(f"Average Access Count: {metrics.average_access_count:.2f}")
     console.print()
+    if metrics.sample_size < metrics.total_memories:
+        console.print(
+            f"[dim]rates and distributions below sample the newest "
+            f"{metrics.sample_size} of {metrics.total_memories}[/dim]"
+        )
     console.print("[bold]Type Distribution[/bold]")
     for t, c in metrics.type_distribution.items():
         console.print(f"  {t}: {c}")
