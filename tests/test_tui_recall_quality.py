@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from rich.console import Console
 from rich.panel import Panel
 
+import memo.tui.dashboard.panels as tui_panels
 from memo.dashboard_panels import (
     _grounding_citation_stats,
+    _panel_corpus,
     _panel_recall_quality,
     _panel_recall_trend,
     _panel_utility,
@@ -282,6 +285,37 @@ def test_non_numeric_prec_entries_are_ignored(tmp_path: Path) -> None:
     assert "(1 runs)" in out
 
 
+def _corpus_memory(rows: list[dict], total: int) -> SimpleNamespace:
+    # The row cache is module-level and keyed on id(memory), so a recycled id
+    # would serve a previous fake's rows within the 10s TTL.
+    tui_panels._corpus_cache.set(None)
+    store = SimpleNamespace(list_recent=lambda limit: rows[:limit], count=lambda: total)
+    return SimpleNamespace(store=store)
+
+
+def test_corpus_panel_reports_store_total_not_page_size() -> None:
+    """The counters are built from a bounded page of the newest records;
+    rendering their sum showed the page size (10000) as the corpus total."""
+    rows = [{"type": "note", "tags": ["project:memo"]} for _ in range(10_000)]
+
+    out = _render(_panel_corpus(_corpus_memory(rows, 12_619)))
+
+    assert "12619 memories" in out
+    assert "10000 memories" not in out
+    # The window the type breakdown was computed from has to be visible, or
+    # the breakdown reads as if it described all 12619.
+    assert "newest 10000" in out
+
+
+def test_corpus_panel_omits_window_note_when_page_covers_corpus() -> None:
+    rows = [{"type": "note", "tags": ["project:memo"]} for _ in range(3)]
+
+    out = _render(_panel_corpus(_corpus_memory(rows, 3)))
+
+    assert "3 memories" in out
+    assert "newest" not in out
+
+
 def test_render_layout_includes_recall_quality_panel(tmp_path: Path) -> None:
     """The panel is wired into the live `memo tui` layout."""
     from memo.dashboard_tui import render
@@ -293,6 +327,9 @@ def test_render_layout_includes_recall_quality_panel(tmp_path: Path) -> None:
     class _StubStore:
         def list_recent(self, limit: int = 0) -> list[dict]:
             return []
+
+        def count(self) -> int:
+            return 0
 
     class _StubCfg:
         memory_dir = tmp_path / "memories"

@@ -184,11 +184,18 @@ def links_reindex() -> None:
     # share the main DB file under single_db, where unlinking would nuke it).
     mem.crossref.reset()
 
-    # Re-index all memories
-    all_records = mem.list(limit=10000)
+    # The reset wipes every edge, so the rebuild has to cover the whole corpus:
+    # a capped `mem.list()` left every memory past the cap without crossrefs and
+    # reported the cap as if it were the corpus. Walk ids and fetch one record at
+    # a time so a large corpus is never held in memory at once.
+    scanned = 0
     indexed = 0
 
-    for rec in all_records:
+    for id_ in mem.store.all_ids():
+        rec = mem.get(id_)
+        if rec is None:
+            continue  # all_ids() includes soft-deleted rows, get() does not
+        scanned += 1
         body = rec.body or ""
         if body:
             # index_source (delete-then-insert, incl. typed `- rel [[target]]`
@@ -197,4 +204,6 @@ def links_reindex() -> None:
             mem.crossref.index_source(rec.id, body)
             indexed += 1
 
-    console.print(f"[green]Reindexed {indexed} memories[/green]")
+    console.print(f"[green]Reindexed {indexed} of {scanned} memories[/green]")
+    if scanned > indexed:
+        console.print(f"[dim]{scanned - indexed} skipped (no body)[/dim]")
