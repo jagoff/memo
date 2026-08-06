@@ -56,6 +56,29 @@ _BATCH_TIMEOUT_S = 120.0
 _CONTROL_TIMEOUT_S = 5.0
 _state_dir_lock = threading.Lock()
 _cached_state_dir: Path | None = None
+# The daemon-unreachable notice is advice ("start the daemon"), not an event:
+# identical every time and only actionable once. Emitting it per batch buried
+# a backfill's real output under hundreds of copies of the same four lines.
+_fallback_notice_lock = threading.Lock()
+_fallback_notified: set[str] = set()
+
+
+def _should_notify_fallback(socket_path: Path) -> bool:
+    """Whether this process has yet to advise about ``socket_path``."""
+    key = str(socket_path)
+    with _fallback_notice_lock:
+        if key in _fallback_notified:
+            return False
+        _fallback_notified.add(key)
+        return True
+
+
+def _reset_fallback_notices() -> None:
+    """Test seam: forget which sockets have already been advised about."""
+    with _fallback_notice_lock:
+        _fallback_notified.clear()
+
+
 _inproc_lock = threading.Lock()
 _inproc_embedder: Any | None = None
 
@@ -218,13 +241,14 @@ def embed_query(
             "embed_query: daemon unreachable and MEMO_STRICT=1 disables in-process fallback. "
             "Start the daemon with 'memo recall-daemon start' or set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1"
         )
-    _log.warning(
-        "embedder_client: daemon unreachable at %s, falling back to in-process "
-        "(first call will be slow ~2s due to cold MLX load). "
-        "To start the daemon: 'memo recall-daemon start'. "
-        "To require daemon and fail fast: set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1",
-        resolved / "recall.sock",
-    )
+    if _should_notify_fallback(resolved / "recall.sock"):
+        _log.warning(
+            "embedder_client: daemon unreachable at %s, falling back to in-process "
+            "(first call will be slow ~2s due to cold MLX load). "
+            "To start the daemon: 'memo recall-daemon start'. "
+            "To require daemon and fail fast: set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1",
+            resolved / "recall.sock",
+        )
     return _inproc().embed_query(text)
 
 
@@ -278,14 +302,15 @@ def embed(
             "embed: daemon unreachable and MEMO_STRICT=1 disables in-process fallback. "
             "Start the daemon with 'memo recall-daemon start' or set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1"
         )
-    _log.warning(
-        "embedder_client: daemon unreachable at %s, falling back to in-process "
-        "(batch of %d items, first call will be slow ~2s due to cold MLX load). "
-        "To start the daemon: 'memo recall-daemon start'. "
-        "To require daemon and fail fast: set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1",
-        resolved / "recall.sock",
-        len(items),
-    )
+    if _should_notify_fallback(resolved / "recall.sock"):
+        _log.warning(
+            "embedder_client: daemon unreachable at %s, falling back to in-process "
+            "(batch of %d items, first call will be slow ~2s due to cold MLX load). "
+            "To start the daemon: 'memo recall-daemon start'. "
+            "To require daemon and fail fast: set MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON=1",
+            resolved / "recall.sock",
+            len(items),
+        )
     return _inproc().embed(items)
 
 
