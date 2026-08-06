@@ -52,9 +52,11 @@ import logging
 import math
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from memo.errors import RerankBudgetExceeded
 from memo.mlx_gpu import gpu_guard, suppress_swig_deprecation_warnings
 from memo.model_pins import model_spec, resolve_model_snapshot
 
@@ -236,6 +238,8 @@ class MLXReranker:
         hits: list[MemoryRecord],
         top_n: int | None = None,
         body_chars: int = 1200,
+        budget_s: float = 0.0,
+        clock: Callable[[], float] | None = None,
     ) -> list[MemoryRecord]:
         """Score every hit against `query`, return them re-ordered by
         descending `P(yes)`. Each returned `MemoryRecord` has its
@@ -253,15 +257,31 @@ class MLXReranker:
                 covers the title + lead paragraphs which carry the
                 bulk of retrieval signal; the tail is rarely
                 discriminative for ranking decisions.
+            budget_s: Wall-clock budget covering the model load and the
+                scoring loop. Scoring is per-pair sequential, so a
+                contended GPU stretches it without bound; past the
+                budget this raises `RerankBudgetExceeded` so the caller
+                falls back to the order it passed in. 0 disables it.
+            clock: Time source, for tests.
 
         Returns: new list, never mutates input.
+
+        Raises:
+            RerankBudgetExceeded: `budget_s` elapsed mid-rerank.
         """
         if not hits:
             return []
+        now = clock or time.monotonic
+        deadline = now() + budget_s if budget_s > 0 else None
         self._ensure_loaded()
 
         scored: list[tuple[float, MemoryRecord]] = []
         for h in hits:
+            if deadline is not None and now() >= deadline:
+                raise RerankBudgetExceeded(
+                    f"rerank budget of {budget_s:.1f}s elapsed after "
+                    f"{len(scored)}/{len(hits)} candidates"
+                )
             # Compose like the embedder: title carries dense signal,
             # body carries detail. Reranker reads the whole thing.
             body = (h.body or "")[:body_chars]

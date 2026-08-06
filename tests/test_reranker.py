@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from memo.config import Config
+from memo.errors import RerankBudgetExceeded
 from memo.memory import Memory, MemoryRecord
 from memo.reranker import MLXReranker
 
@@ -357,3 +358,63 @@ def test_head_slice_matches_full_forward_ranking(real_reranker: MLXReranker):
     for k in (3, 5):
         assert set(rank_new[:k]) == set(rank_ref[:k])
     assert max(abs(a - b) for a, b in zip(ref, new, strict=True)) < 0.05
+
+
+def test_rerank_abandons_the_scoring_loop_when_the_budget_elapses(monkeypatch):
+    """A slow cross-encoder must degrade to RRF order, not run unbounded.
+
+    The reranker scores pairs sequentially, so under GPU contention that loop
+    is what turned a 6s `memo search` into minutes (measured: 9.3s baseline,
+    25.9s with a background `memo maintain`, past 300s when maintain and the
+    test suite overlapped). Past the budget the loop stops and the caller
+    falls back to the hybrid RRF order it came in with.
+    """
+    rr = MLXReranker.__new__(MLXReranker)
+    rr._model = object()
+    rr._tokenizer = None
+    rr._yes_id = 0
+    rr._no_id = 1
+    rr.task = "test"
+    rr.max_seq_len = 4096
+
+    clock = {"now": 0.0}
+    scored: list[str] = []
+
+    def _slow_score(self, query, doc):
+        clock["now"] += 5.0  # each pair burns 5s of the budget
+        scored.append(doc.split("\n")[0])
+        return 0.5
+
+    monkeypatch.setattr(MLXReranker, "score", _slow_score)
+    monkeypatch.setattr(MLXReranker, "_ensure_loaded", lambda self: None)
+
+    hits = [_rec(str(i), f"t{i}") for i in range(10)]
+
+    with pytest.raises(RerankBudgetExceeded):
+        rr.rerank("q", hits, budget_s=12.0, clock=lambda: clock["now"])
+
+    # Stopped early instead of walking all ten pairs.
+    assert len(scored) < len(hits)
+
+
+def test_rerank_without_a_budget_scores_every_pair(monkeypatch):
+    rr = MLXReranker.__new__(MLXReranker)
+    rr._model = object()
+    rr._tokenizer = None
+    rr._yes_id = 0
+    rr._no_id = 1
+    rr.task = "test"
+    rr.max_seq_len = 4096
+
+    seen: list[str] = []
+
+    def _score(self, query, doc):
+        seen.append(doc)
+        return 0.5
+
+    monkeypatch.setattr(MLXReranker, "score", _score)
+    monkeypatch.setattr(MLXReranker, "_ensure_loaded", lambda self: None)
+
+    hits = [_rec(str(i), f"t{i}") for i in range(5)]
+    assert len(rr.rerank("q", hits, budget_s=0.0)) == 5
+    assert len(seen) == 5
