@@ -139,5 +139,12 @@ jobs:
           tests/test_operational_memory.py
           tests/test_definitive_memory.py
           tests/test_definitive_gate.py
+      # The floor catches a REGRESSION in journal append cost (an fsync per
+      # event, an O(n) re-verify), not the speed of the runner we happened to
+      # get. At 250 it measured the latter: two unrelated PRs failed here in
+      # one evening at 93.6 and 108 eps on contended shared runners, and both
+      # passed on re-run with no code change. A healthy runner clears 250+;
+      # the regressions worth catching are order-of-magnitude, so 60 keeps the
+      # signal (2.4x the library's own 25 eps default) without the false reds.
       - name: Gate causal-journal throughput
-        run: .venv/bin/memo definitive benchmark --events 1000 --minimum-eps 250
+        run: .venv/bin/memo definitive benchmark --events 1000 --minimum-eps 60
