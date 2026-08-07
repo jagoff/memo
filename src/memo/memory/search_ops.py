@@ -341,7 +341,6 @@ class _SearchOpsMixin(_MemoryBase):
                 _query_for_embed = query
                 # HyDE: generate hypothetical answer doc, embed that instead of raw query
                 _hyde_enabled = flag_bool("MEMO_HYDE_ENABLED")
-                _embed_affordable = _deadline.afford(COST_EMBED_MS)
                 # Rung two: query expansion. HyDE is an LLM generation layered ON
                 # TOP of the embed it feeds, so affording it means affording both
                 # — generating a hypothetical document and then having no budget
@@ -362,12 +361,24 @@ class _SearchOpsMixin(_MemoryBase):
                         _log.info("HyDE doc generated: %s", _hyde_doc[:100])
                     else:
                         _log.warning("HyDE returned empty doc, falling back to original query")
-                if not _embed_affordable:
-                    # Rung four: the vec leg's embed. BM25-only is the fallback
-                    # the `except` below already reaches for when the embedder is
-                    # unavailable — the difference is that this one is a decision,
-                    # not an accident, and says so via `_degraded`. An MLX embed
-                    # that cannot finish inside the budget is the 300s hang.
+                # Rung four: the vec leg's embed. BM25-only is the fallback the
+                # `except` below already reaches for when the embedder is
+                # unavailable — the difference is that this one is a decision,
+                # not an accident, and says so via `_degraded`. An MLX embed
+                # that cannot finish inside the budget is the 300s hang.
+                #
+                # The check is taken HERE, at the decision, and never hoisted
+                # above the HyDE branch. `_generate_hyde_document` is an
+                # un-timeboxed `chat.chat()` (the ChatBackend protocol in
+                # llm.py takes no deadline), so it can burn arbitrary
+                # wall-clock. A snapshot taken before it would be guaranteed
+                # True on this branch — rung two only lets HyDE run when
+                # `afford(COST_EXPANSION_MS + COST_EMBED_MS)` held, which
+                # implies `afford(COST_EMBED_MS)` — making rung four
+                # unreachable exactly when the budget was actually spent. Same
+                # discipline as `_rerank`, which re-derives `budget_s` from a
+                # fresh `remaining_ms()` after the reranker's cold load.
+                if not _deadline.afford(COST_EMBED_MS):
                     vec_hits = []
                     _add_trace("embed_skip", mode="hybrid", reason="budget")
                     _shed("embed_skipped_bm25_only")

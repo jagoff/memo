@@ -16,6 +16,7 @@ Two failure modes this file exists to catch:
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -228,6 +229,59 @@ def test_expansion_is_shed_before_the_embed_it_feeds(mem, monkeypatch: pytest.Mo
     assert degraded == ["expansion_skipped"]
     assert hyde == [], "the HyDE LLM call ran despite an unaffordable expansion"
     assert embeds, "shedding the expansion must NOT shed the embed it feeds"
+
+
+def test_a_slow_expansion_sheds_the_embed_it_was_about_to_feed(
+    mem, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The embed's affordability must be re-checked AFTER HyDE, never snapshotted
+    before it.
+
+    `_generate_hyde_document` is an un-timeboxed `chat.chat()` — the
+    `ChatBackend` protocol takes no deadline — so it can burn arbitrary
+    wall-clock. A snapshot taken before it would be structurally guaranteed
+    True on this branch (rung two only lets HyDE run when
+    `afford(EXPANSION + EMBED)` held, which implies `afford(EMBED)`), making
+    rung four unreachable exactly when the budget was actually spent: the
+    300s-hang scenario, straight past the guard meant to stop it.
+
+    Every other test here stubs HyDE as instantaneous, so no real time passes
+    between a snapshot and its use — the one condition under which that bug is
+    invisible. This test burns real wall-clock inside HyDE on purpose.
+
+    The `COST_*` constants are scaled down to keep the test sub-second. The
+    real 1500/2000 pair would force a >1.5s sleep (the gap between
+    `EXPANSION + EMBED` and `EMBED` alone is exactly what must elapse), which
+    belongs behind the `slow` marker and therefore outside the default gate.
+    The structure under test — where the check is taken — is what the scaling
+    preserves; the constants are documented estimates anyway.
+    """
+    monkeypatch.setenv("MEMO_HYDE_ENABLED", "1")
+    monkeypatch.setattr("memo.memory.search_ops.COST_EXPANSION_MS", 200.0)
+    monkeypatch.setattr("memo.memory.search_ops.COST_EMBED_MS", 500.0)
+
+    slow_hyde: list[str] = []
+
+    def _slow(self: Any, query: str) -> str:
+        slow_hyde.append(query)
+        time.sleep(0.6)
+        return f"hypothetical answer for {query}"
+
+    monkeypatch.setattr(type(mem), "_generate_hyde_document", _slow)
+    embeds = _count_embed_queries(monkeypatch, mem)
+
+    # 1000ms: affords HyDE-plus-embed (700) at entry, so rung two lets HyDE
+    # run; the 600ms HyDE call then leaves ~400ms, which no longer affords the
+    # embed (500).
+    degraded: list[str] = []
+    hits = mem.search("ladder budget marker", mode="hybrid", _budget_ms=1000, _degraded=degraded)
+
+    assert slow_hyde, "HyDE must have run, or this proves nothing about the gap after it"
+    assert degraded == ["embed_skipped_bm25_only"], (
+        "the embed was not re-checked after HyDE spent the budget"
+    )
+    assert embeds == [], "the embedder ran on a budget HyDE had already spent"
+    assert hits, "the shed must still fall back to BM25, not to nothing"
 
 
 def test_expansion_is_not_reported_when_hyde_is_off(mem, monkeypatch: pytest.MonkeyPatch) -> None:
