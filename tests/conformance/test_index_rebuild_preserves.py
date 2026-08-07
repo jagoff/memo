@@ -20,13 +20,16 @@ from __future__ import annotations
 import hashlib
 import math
 import shutil
+from collections.abc import Iterator
+from pathlib import Path
 
 import frontmatter
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 
 from memo.cli import cli
 from memo.config import Config
+from memo.crossref import CrossReferenceIndex
 from memo.embedder import MLXEmbedder
 from memo.embedder_select import active_embedder_identity
 from memo.embedder_st import STEmbedder
@@ -39,20 +42,71 @@ from .conftest import DIMS, _env, seeded_id
 pytestmark = pytest.mark.conformance
 
 
-def test_links_reindex_covers_the_whole_corpus(big_corpus, corpus_size) -> None:
-    """`links reindex` doesn't touch `VecStore`'s meta/vec rows at all -- it
-    only resets and replays `mem.crossref` (a separate sqlite file) -- so
-    the defect this guards is not "a memory's row went missing", it's "the
-    rebuild silently walked fewer memories than the corpus holds and
-    reported the smaller number as the truth". `mem.list(limit=10000)`
-    (the old code) can only ever report `min(corpus_size, 10000)` scanned
-    and indexed; the fix reports the real corpus. Assert the CLI's own
-    accounting, the same way commit ce740769's unit test does at small
-    scale (`test_links_reindex_covers_corpus_past_the_old_10k_cap`) -- this
-    is that same assertion proven against a real store and real markdown at
-    a scale past the cap, not a `_FakeMemory` stand-in.
+# -- links reindex: covers the whole corpus, and undoes its own mutation ----
+#
+# `links reindex` resets and replays `mem.crossref` -- a real write to
+# `crossref.db`, a sqlite sidecar file under `big_corpus.state_dir` shared
+# with tests this plan hasn't written yet (the same concern `graph_seeded`
+# in test_output_paths.py handles for `graph.db`). Here the mutation IS the
+# command under test rather than a separate setup step, so the undo lives in
+# a fixture that performs the CLI call itself and restores the sidecar
+# file's bytes (main db + WAL + SHM, whichever exist) on every exit path --
+# snapshot-and-restore rather than a row-level undo, since `links reindex`
+# decides internally what to delete/insert and there is no smaller unit to
+# reverse from the outside.
+
+
+def _crossref_sidecars(crossref_db: Path) -> tuple[Path, Path, Path]:
+    return (
+        crossref_db,
+        crossref_db.with_name(crossref_db.name + "-wal"),
+        crossref_db.with_name(crossref_db.name + "-shm"),
+    )
+
+
+def _snapshot_sidecars(crossref_db: Path) -> dict[Path, bytes]:
+    return {p: p.read_bytes() for p in _crossref_sidecars(crossref_db) if p.exists()}
+
+
+def _restore_sidecars(crossref_db: Path, snapshot: dict[Path, bytes]) -> None:
+    for p in _crossref_sidecars(crossref_db):
+        p.unlink(missing_ok=True)
+    for p, data in snapshot.items():
+        p.write_bytes(data)
+
+
+@pytest.fixture
+def links_reindex_result(big_corpus) -> Iterator[Result]:
+    """Runs `memo links reindex --yes` against the shared `big_corpus`, then
+    restores `crossref.db` (+ its WAL/SHM companions) to exactly the bytes
+    they held before the call, on every exit path including an exception.
+    `test_links_reindex_fixture_restores_crossref_on_teardown` below proves
+    the restoration directly, the same way
+    `test_graph_seeded_reverts_its_write_on_teardown` proves it for
+    `graph_seeded`.
     """
-    result = CliRunner().invoke(cli, ["links", "reindex", "--yes"], env=_env(big_corpus))
+    crossref_db = big_corpus.crossref_db
+    snapshot = _snapshot_sidecars(crossref_db)
+    try:
+        yield CliRunner().invoke(cli, ["links", "reindex", "--yes"], env=_env(big_corpus))
+    finally:
+        _restore_sidecars(crossref_db, snapshot)
+
+
+def test_links_reindex_covers_the_whole_corpus(links_reindex_result, corpus_size) -> None:
+    """`links reindex` doesn't touch `VecStore`'s meta/vec rows at all -- it
+    only resets and replays `mem.crossref` -- so the defect this guards is
+    not "a memory's row went missing", it's "the rebuild silently walked
+    fewer memories than the corpus holds and reported the smaller number as
+    the truth". `mem.list(limit=10000)` (the old code) can only ever report
+    `min(corpus_size, 10000)` scanned and indexed; the fix reports the real
+    corpus. Assert the CLI's own accounting, the same way commit
+    ce740769's unit test does at small scale
+    (`test_links_reindex_covers_corpus_past_the_old_10k_cap`) -- this is
+    that same assertion proven against a real store and real markdown at a
+    scale past the cap, not a `_FakeMemory` stand-in.
+    """
+    result = links_reindex_result
     assert result.exit_code == 0, result.output
 
     expected = f"Reindexed {corpus_size} of {corpus_size} memories"
@@ -60,6 +114,54 @@ def test_links_reindex_covers_the_whole_corpus(big_corpus, corpus_size) -> None:
         f"expected the rebuild to walk and index the whole {corpus_size}-memory "
         f"corpus, not a capped page -- got:\n{result.output}"
     )
+
+
+def test_links_reindex_fixture_restores_crossref_on_teardown(tmp_path) -> None:
+    """`links_reindex_result` mutates a session-scoped `crossref.db` shared
+    with tests this plan hasn't written yet -- a happy-path run of the
+    covering test above never proves the mutation is undone, since it only
+    runs *during* the fixture's lifetime. Drive the fixture generator
+    directly against a throwaway `Config`, the same technique
+    `test_graph_seeded_reverts_its_write_on_teardown` (test_output_paths.py)
+    uses for `graph_seeded`. Seeds a REAL backlink row before driving the
+    fixture, so the assertion is "the row comes back", not just "a file
+    happens to exist".
+    """
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        vault_path=tmp_path / "vault",
+        state_dir=tmp_path / "state",
+        reranker_enabled=False,
+    )
+    cfg.memory_dir.mkdir(parents=True, exist_ok=True)
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+
+    seed_index = CrossReferenceIndex(cfg.crossref_db)
+    try:
+        seed_index.index_source("preexisting-source", "see [[preexisting-target]]")
+    finally:
+        seed_index.close()
+    before = _snapshot_sidecars(cfg.crossref_db)
+    assert before, "seeding didn't create crossref.db -- nothing to prove restoration against"
+
+    gen = links_reindex_result.__wrapped__(cfg)
+    result = next(gen)  # run the CLI call through the yield
+    assert result.exit_code == 0, result.output
+    # `reset()` really did mutate the file -- if this held, the restoration
+    # proof below would be vacuous (nothing to restore from).
+    assert _snapshot_sidecars(cfg.crossref_db) != before
+
+    with pytest.raises(StopIteration):
+        next(gen)  # advance past the yield -- runs the fixture's `finally`
+
+    assert _snapshot_sidecars(cfg.crossref_db) == before
+    restored = CrossReferenceIndex(cfg.crossref_db)
+    try:
+        assert [w.target for w in restored.get_outlinks("preexisting-source")] == [
+            "preexisting-target"
+        ], "the pre-existing backlink row did not survive the fixture's teardown"
+    finally:
+        restored.close()
 
 
 # -- reindex --rebuild: no MLX, and the user-signal tables must survive -----
