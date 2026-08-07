@@ -1182,6 +1182,31 @@ def _explain_finalize(
             entry["rank"] = rank
 
 
+def _apply_graph_compact(
+    relevant: list[Any],
+    nudge: list[Any],
+    *,
+    mem: Any,
+) -> tuple[list[Any], list[Any]]:
+    """Graph-cluster recall compaction (MEMO_RECALL_GRAPH_COMPACT, default off).
+
+    Demotes top-K hits that sit in the same projection cluster as a
+    higher-ranked hit into the one-line related nudge, freeing the token
+    budget from near-duplicate bodies. No-op (byte-identical render) unless
+    the flag is on and the projection is available; best-effort, never raises.
+    """
+    if not flag_bool("MEMO_RECALL_GRAPH_COMPACT") or len(relevant) < 2:
+        return relevant, nudge
+    try:
+        relevant, graph_related = _graph_compact_clusters(relevant, mem=mem)
+    except Exception as exc:
+        _logger.debug("graph recall compaction failed: %s", exc)
+        return relevant, nudge
+    if graph_related:
+        nudge = [*graph_related, *nudge]
+    return relevant, nudge
+
+
 def _graph_compact_clusters(
     relevant: list[Any],
     *,
@@ -1201,6 +1226,8 @@ def _graph_compact_clusters(
     """
     if not relevant or len(relevant) < 2:
         return relevant, []
+    import sqlite3 as _sqlite3
+
     try:
         proj = getattr(getattr(mem, "graph", None), "projection", None)
         if proj is None:
@@ -1212,15 +1239,13 @@ def _graph_compact_clusters(
         if not active:
             return relevant, []
         ids = [h.id for h in relevant]
-        import json as _json
-
         rows = conn.execute(
             "SELECT memory_id, uri FROM graph_projection_memberships "
             "WHERE version = ? AND memory_id IN (SELECT value FROM json_each(?)) "
             "ORDER BY memory_id",
-            (active, _json.dumps(ids)),
+            (active, json.dumps(ids)),
         ).fetchall()
-    except Exception:
+    except (_sqlite3.Error, ValueError, TypeError, KeyError):
         return relevant, []
     if not rows:
         return relevant, []
@@ -1944,20 +1969,7 @@ def _recall_logic(
     if qualifying and len(qualifying) < len(pre_filter):
         kept = {h.id for h in qualifying}
         omitted.extend(h for h in pre_filter if h.id not in kept)
-
-    # Graph-cluster compaction (MEMO_RECALL_GRAPH_COMPACT, default off): demote
-    # top-K hits that sit in the same projection cluster as a higher-ranked hit
-    # into the one-line related nudge, freeing the token budget from
-    # near-duplicate bodies. No-op (byte-identical render) unless the flag is on
-    # and the projection is available; best-effort, never raises.
-    if flag_bool("MEMO_RECALL_GRAPH_COMPACT") and len(relevant) > 1:
-        try:
-            relevant, _graph_related = _graph_compact_clusters(relevant, mem=mem)
-            if _graph_related:
-                nudge = [*_graph_related, *nudge]
-        except Exception:
-            _logger.debug("graph recall compaction failed", exc_info=True)
-
+    relevant, nudge = _apply_graph_compact(relevant, nudge, mem=mem)
     if not relevant:
         # Search ran, nothing qualified. An ⛔ anti-memory can still fire on its
         # own, so surface the AVOID block alone when one matched.

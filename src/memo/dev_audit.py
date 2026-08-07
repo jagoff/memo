@@ -66,6 +66,11 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     # budget. (_code_ref_status now delegates to code_intel.ref_status, which
     # catches concrete sqlite errors itself — no broad except left there.)
     ("recall_logic.py", "_code_ref_lines", 1),
+    # Graph-cluster recall compaction (MEMO_RECALL_GRAPH_COMPACT): optional
+    # token-budget work on the hook hot path. Any projection/store failure
+    # degrades to the uncompacted relevant/nudge lists and must never break
+    # the recall payload or blow the 5s hook budget.
+    ("recall_logic.py", "_apply_graph_compact", 1),
     ("cli_recall_hook.py", "recall_hook", 1),
     ("cli_recall_hook.py", "recall_hook._bail", 1),
     ("cli_recall_hook.py", "recall_hook", 2),

@@ -962,3 +962,58 @@ def test_graph_compact_noop_on_missing_projection(tmp_path, monkeypatch) -> None
     kept, related = _graph_compact_clusters(hits, mem=mem)
     assert len(kept) == 2
     assert related == []
+
+
+@pytest.mark.parametrize(
+    ("enabled", "expected_kept", "expected_related"),
+    [
+        (False, ["aaaa1111", "bbbb2222", "cccc3333"], []),
+        (True, ["aaaa1111", "cccc3333"], ["bbbb2222"]),
+    ],
+)
+def test_apply_graph_compact_respects_flag_and_preserves_record_lists(
+    monkeypatch,
+    enabled: bool,
+    expected_kept: list[str],
+    expected_related: list[str],
+) -> None:
+    import memo.recall_logic as recall_logic
+
+    hits = [
+        _rec("aaaa1111", "Main decision", 0.90),
+        _rec("bbbb2222", "Sibling decision", 0.85),
+        _rec("cccc3333", "Unrelated note", 0.80),
+    ]
+    mem = _stub_mem(
+        {
+            "aaaa1111": ["mem://entity/alpha"],
+            "bbbb2222": ["mem://entity/alpha"],
+            "cccc3333": ["mem://entity/beta"],
+        }
+    )
+    monkeypatch.setattr(recall_logic, "flag_bool", lambda _: enabled)
+
+    kept, related = recall_logic._apply_graph_compact(hits, [], mem=mem)
+
+    assert [hit.id for hit in kept] == expected_kept
+    assert [hit.id for hit in related] == expected_related
+
+
+def test_apply_graph_compact_is_noop_when_projection_raises(monkeypatch) -> None:
+    import memo.recall_logic as recall_logic
+
+    class BrokenProjection:
+        _conn = object()
+
+        @staticmethod
+        def _state(_conn, _key: str) -> None:
+            raise RuntimeError("projection unavailable")
+
+    hits = [_rec("aaaa1111", "A", 0.90), _rec("bbbb2222", "B", 0.85)]
+    mem = SimpleNamespace(graph=SimpleNamespace(projection=BrokenProjection()))
+    monkeypatch.setattr(recall_logic, "flag_bool", lambda _: True)
+
+    kept, related = recall_logic._apply_graph_compact(hits, [], mem=mem)
+
+    assert kept == hits
+    assert related == []
