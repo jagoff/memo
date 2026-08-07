@@ -491,6 +491,63 @@ def test_check_gate_legacy_baseline_without_k_is_unaffected_by_k():
     assert eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1}, k=5).passed
 
 
+def test_check_gate_blames_code_when_the_corpus_did_not_move() -> None:
+    rows = _rows((0.5, 0.1))
+
+    res = eval_recall.check_gate(
+        rows,
+        {"precision_at_k": 0.6, "noise_at_k": 0.1, "corpus_fingerprint": "corpus-123"},
+        corpus_fingerprint="corpus-123",
+    )
+
+    assert not res.passed
+    assert res.corpus_changed is False
+    assert "code" in res.message
+    assert "precision@k" in res.message
+
+
+def test_check_gate_flags_a_drop_as_confounded_when_the_corpus_moved() -> None:
+    rows = _rows((0.5, 0.1))
+
+    res = eval_recall.check_gate(
+        rows,
+        {"precision_at_k": 0.6, "noise_at_k": 0.1, "corpus_fingerprint": "corpus-123"},
+        corpus_fingerprint="corpus-456",
+    )
+
+    assert not res.passed
+    assert res.corpus_changed is True
+    assert "confounded" in res.message
+    assert "--against" in res.message
+
+
+def test_check_gate_is_non_enforcing_for_a_baseline_without_a_corpus_fingerprint() -> None:
+    rows = _rows((0.5, 0.1))
+
+    res = eval_recall.check_gate(
+        rows,
+        {"precision_at_k": 0.6, "noise_at_k": 0.1},
+        corpus_fingerprint="corpus-456",
+    )
+
+    assert not res.passed
+    assert res.corpus_changed is False
+    assert "confounded" not in res.message
+
+
+def test_check_gate_passing_run_reports_no_corpus_change() -> None:
+    rows = _rows((0.8, 0.0))
+
+    res = eval_recall.check_gate(
+        rows,
+        {"precision_at_k": 0.6, "noise_at_k": 0.1, "corpus_fingerprint": "corpus-123"},
+        corpus_fingerprint="corpus-456",
+    )
+
+    assert res.passed
+    assert res.corpus_changed is True
+
+
 # --- end-to-end (isolated, stubbed embedder) --------------------------------
 
 

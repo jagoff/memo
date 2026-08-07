@@ -1159,6 +1159,7 @@ class GateResult:
     noise_at_k: float
     baseline_precision: float
     baseline_noise: float
+    corpus_changed: bool = False
 
 
 def gate_metrics(rows: list[Row]) -> dict[str, Any]:
@@ -1238,6 +1239,7 @@ def check_gate(
     tol: float = 1e-9,
     labels_fingerprint: str | None = None,
     k: int | None = None,
+    corpus_fingerprint: str = "",
 ) -> GateResult:
     """Compare the current run against a saved baseline — on the SAME config.
 
@@ -1277,6 +1279,11 @@ def check_gate(
     b_leak = float(baseline.get("avoid_leak_at_k", 1.0))
     baseline_config = str(baseline.get("config") or "")
     current_best = best_row(rows)
+
+    baseline_corpus = str(baseline.get("corpus_fingerprint") or "")
+    corpus_changed = bool(
+        baseline_corpus and corpus_fingerprint and baseline_corpus != corpus_fingerprint
+    )
 
     # --- identity guards (fail fast, before any metric comparison) ---
     baseline_fingerprint = str(baseline.get("labels_fingerprint") or "")
@@ -1343,8 +1350,33 @@ def check_gate(
             parts.append(f"avoid@k {gated.avoid_at_k:.3f} < baseline {b_avoid:.3f}")
         if not leak_ok:
             parts.append(f"avoid_leak@k {gated.avoid_leak_at_k:.3f} > baseline {b_leak:.3f}")
-        message = f"FAIL [{config_note}] — " + "; ".join(parts)
-    return GateResult(passed, message, gated.precision_at_k, gated.noise_at_k, bp, bn)
+        if corpus_changed:
+            attribution = (
+                f"FAIL [confounded · {config_note}] — "
+                + "; ".join(parts)
+                + f". The corpus also changed since the baseline "
+                f"({baseline_corpus} -> {corpus_fingerprint}), so this drop is not "
+                "attributable to the diff. Isolate the code delta with "
+                "`memo eval recall --against origin/master`; refresh the baseline "
+                "with --update-baseline only once the drift is confirmed expected."
+            )
+        else:
+            attribution = (
+                f"FAIL [code · {config_note}] — "
+                + "; ".join(parts)
+                + ". The corpus is unchanged since the baseline, so this drop is "
+                "attributable to the diff."
+            )
+        message = attribution
+    return GateResult(
+        passed,
+        message,
+        gated.precision_at_k,
+        gated.noise_at_k,
+        bp,
+        bn,
+        corpus_changed,
+    )
 
 
 def fingerprint_corpus(mem: Any) -> str:
