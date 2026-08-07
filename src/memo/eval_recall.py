@@ -1232,6 +1232,40 @@ def baseline_payload(
     }
 
 
+def _gate_failure_message(
+    parts: list[str],
+    *,
+    config_note: str,
+    corpus_changed: bool,
+    baseline_corpus: str,
+    corpus_fingerprint: str,
+) -> str:
+    """Word a gate failure as code-attributable or corpus-confounded.
+
+    The two wordings are the whole point of this feature — a confounded
+    failure must point at a two-run comparison instead of at
+    --update-baseline. Kept out of ``check_gate`` itself purely to keep that
+    function's branching under its complexity budget; this helper carries no
+    behavior of its own beyond picking which sentence to return.
+    """
+    if corpus_changed:
+        return (
+            f"FAIL [confounded · {config_note}] — "
+            + "; ".join(parts)
+            + f". The corpus also changed since the baseline "
+            f"({baseline_corpus} -> {corpus_fingerprint}), so this drop is not "
+            "attributable to the diff. Isolate the code delta with "
+            "`memo eval recall --against origin/master`; refresh the baseline "
+            "with --update-baseline only once the drift is confirmed expected."
+        )
+    return (
+        f"FAIL [code · {config_note}] — "
+        + "; ".join(parts)
+        + ". The corpus is unchanged since the baseline, so this drop is "
+        "attributable to the diff."
+    )
+
+
 def check_gate(
     rows: list[Row],
     baseline: dict[str, Any],
@@ -1350,24 +1384,13 @@ def check_gate(
             parts.append(f"avoid@k {gated.avoid_at_k:.3f} < baseline {b_avoid:.3f}")
         if not leak_ok:
             parts.append(f"avoid_leak@k {gated.avoid_leak_at_k:.3f} > baseline {b_leak:.3f}")
-        if corpus_changed:
-            attribution = (
-                f"FAIL [confounded · {config_note}] — "
-                + "; ".join(parts)
-                + f". The corpus also changed since the baseline "
-                f"({baseline_corpus} -> {corpus_fingerprint}), so this drop is not "
-                "attributable to the diff. Isolate the code delta with "
-                "`memo eval recall --against origin/master`; refresh the baseline "
-                "with --update-baseline only once the drift is confirmed expected."
-            )
-        else:
-            attribution = (
-                f"FAIL [code · {config_note}] — "
-                + "; ".join(parts)
-                + ". The corpus is unchanged since the baseline, so this drop is "
-                "attributable to the diff."
-            )
-        message = attribution
+        message = _gate_failure_message(
+            parts,
+            config_note=config_note,
+            corpus_changed=corpus_changed,
+            baseline_corpus=baseline_corpus,
+            corpus_fingerprint=corpus_fingerprint,
+        )
     return GateResult(
         passed,
         message,
