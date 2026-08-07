@@ -298,6 +298,38 @@ def eval_relations_cmd(labels_path: Path, gate: bool, as_json: bool) -> None:
         raise click.exceptions.Exit(1)
 
 
+def _run_gate(
+    rows: list[Any],
+    cfg: Config,
+    *,
+    labels_fingerprint: str,
+    k: int,
+    corpus_fingerprint: str,
+) -> eval_recall.GateResult:
+    """Load the machine-local baseline and check `rows` against it.
+
+    `corpus_fingerprint` is what lets the result distinguish a code regression
+    from corpus drift; see `eval_recall.check_gate`.
+    """
+    bp = _baseline_path(cfg)
+    if not bp.exists():
+        raise click.ClickException(
+            f"no gate baseline at {bp} — seed it once with "
+            "`memo eval recall --labels <set> --update-baseline`"
+        )
+    try:
+        baseline = json.loads(bp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"unreadable baseline {bp}: {exc}") from exc
+    return eval_recall.check_gate(
+        rows,
+        baseline,
+        labels_fingerprint=labels_fingerprint,
+        k=k,
+        corpus_fingerprint=corpus_fingerprint,
+    )
+
+
 @eval_group.command(name="recall")
 @click.option("--k", type=int, default=3, help="Top-K to score (default: 3).")
 @click.option(
@@ -499,21 +531,12 @@ def eval_recall_cmd(
         return
 
     if gate:
-        bp = _baseline_path(cfg)
-        if not bp.exists():
-            raise click.ClickException(
-                f"no gate baseline at {bp} — seed it once with "
-                "`memo eval recall --labels <set> --update-baseline`"
-            )
-        try:
-            baseline = json.loads(bp.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise click.ClickException(f"unreadable baseline {bp}: {exc}") from exc
-        result = eval_recall.check_gate(
+        result = _run_gate(
             rows,
-            baseline,
+            cfg,
             labels_fingerprint=labels.fingerprint(),
             k=k,
+            corpus_fingerprint=corpus_fp,
         )
         if as_json:
             click.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))

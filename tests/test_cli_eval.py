@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -5,6 +6,13 @@ from click.testing import CliRunner
 
 from memo import eval_recall
 from memo.cli_eval import eval_group
+
+# `eval_recall` uses `from __future__ import annotations`, so dataclasses
+# reports field types as strings ("str", "float") — not as the types
+# themselves. Comparing against `str` alone would silently match nothing.
+_ROW_TEMPLATE = {
+    f.name: ("" if f.type in (str, "str") else 0.0) for f in dataclasses.fields(eval_recall.Row)
+}
 
 
 def test_eval_memory_json_and_text(tmp_path, monkeypatch):
@@ -201,3 +209,48 @@ def test_save_cache_keeps_entries_it_cannot_date(tmp_path):
     on_disk = json.loads(cli_eval._cache_path(cfg).read_text(encoding="utf-8"))
 
     assert set(on_disk) == {"weird"}
+
+
+def test_run_gate_passes_the_live_corpus_fingerprint_to_check_gate(tmp_path, monkeypatch) -> None:
+    import json as _json
+
+    from memo import cli_eval, eval_recall
+
+    baseline_dir = tmp_path / "eval"
+    baseline_dir.mkdir(parents=True)
+    (baseline_dir / "recall_baseline.json").write_text(
+        _json.dumps(
+            {
+                "precision_at_k": 0.6,
+                "noise_at_k": 0.1,
+                "corpus_fingerprint": "corpus-OLD",
+                "config": "A",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Cfg:
+        state_dir = tmp_path
+
+    captured: dict[str, object] = {}
+    real_check_gate = eval_recall.check_gate
+
+    def _spy(rows, baseline, **kwargs):
+        captured.update(kwargs)
+        return real_check_gate(rows, baseline, **kwargs)
+
+    monkeypatch.setattr(eval_recall, "check_gate", _spy)
+
+    rows = [
+        eval_recall.Row(
+            **{**_ROW_TEMPLATE, "config": "A", "precision_at_k": 0.5, "noise_at_k": 0.1}
+        )
+    ]
+    result = cli_eval._run_gate(
+        rows, _Cfg(), labels_fingerprint="labels-1", k=5, corpus_fingerprint="corpus-NEW"
+    )
+
+    assert captured["corpus_fingerprint"] == "corpus-NEW"
+    assert result.corpus_changed is True
+    assert not result.passed
