@@ -186,12 +186,12 @@ def search(
     log_cli_consult(cfg, verb="search", query=query, hits=hit_dicts, t0_ms=t0, source=source)
     if degraded:
         # Human-readable note on stderr only, so it never contaminates piped
-        # or --json stdout. An unaffected search (degraded empty) writes
-        # nothing here and its JSON stays byte-identical to before.
+        # or --json stdout. `--json` stays a bare array unconditionally (the
+        # top-level type must not depend on a runtime condition the caller
+        # cannot predict) -- stderr is the only degradation channel for now.
         click.secho(f"degraded: {', '.join(degraded)} (search budget)", dim=True, err=True)
     if as_json:
-        body = {"hits": hit_dicts, "degraded": degraded} if degraded else hit_dicts
-        click.echo(json.dumps(body, ensure_ascii=False, indent=2))
+        click.echo(json.dumps(hit_dicts, ensure_ascii=False, indent=2))
         return
     if not hits:
         console.print("[dim]no results[/dim]")

@@ -3,12 +3,17 @@ it dropped. The assertion is on the decision and the report, not on a race.
 
 `Memory.search`'s shed ladder itself is covered exhaustively by
 `tests/test_search_degradation.py` (each rung, in isolation, against a
-3-memory store). This module proves the two surfaces built on top of it --
-the CLI (`memo search --json`) and, by construction, the MCP tool
-(`memo_search`, which shares the same `Memory.search(..., _degraded=...)`
-call) -- actually forward `_degraded` to a human/client instead of quietly
-absorbing it, and does so against the ~10k-memory corpus these defects were
-found at, not a toy fixture.
+3-memory store). This module proves the CLI surface built on top of it --
+`memo search` -- actually forwards `_degraded` to a human instead of quietly
+absorbing it, against the ~10k-memory corpus these defects were found at, not
+a toy fixture. The MCP surface (`memo_search`) gets its own coverage in
+`tests/test_server_core_search.py` since it is an independently-written merge
+expression in a different file.
+
+`--json` stays a bare hit array UNCONDITIONALLY, whether or not anything was
+shed -- the top-level JSON type must never depend on a runtime condition an
+automated caller cannot predict. Degradation is reported on stderr only
+(`degraded: <stages> (search budget)`), never folded into stdout.
 
 `Memory.search(..., _track_usage=True)` (the default) writes to the shared
 `access`/`meta.roi_score` rows of whatever store it runs against -- `touch()`
@@ -116,7 +121,14 @@ def test_a_tight_budget_degrades_and_reports(big_corpus) -> None:
         mem.close()
 
 
-def test_cli_reports_degradation_in_json(big_corpus) -> None:
+def test_cli_reports_degradation_on_stderr_only(big_corpus) -> None:
+    """`--json` stays a bare array UNCONDITIONALLY -- the top-level JSON type
+    must never depend on a runtime condition the caller cannot predict (a
+    script doing `json.loads(out)[0]` today must keep working under
+    contention, not break exactly when it is least watched). Degradation is
+    reported on stderr only; a `--json` consumer is no worse off than before
+    this feature existed (no signal), and stderr carries the signal for
+    anyone who wants it."""
     snapshot = _snapshot_db(big_corpus.db_path)
     try:
         result = CliRunner().invoke(
@@ -126,26 +138,22 @@ def test_cli_reports_degradation_in_json(big_corpus) -> None:
         )
         assert result.exit_code == 0, result.output
         # `result.output` mixes stdout+stderr in call order (Click >= 8.2) --
-        # the human-readable note is written to stderr precisely so it never
-        # contaminates piped/--json stdout, so the JSON must be parsed from
-        # `result.stdout` alone, not `result.output`.
+        # parse `result.stdout` alone, never `.output`, so a stderr note can
+        # never be mistaken for stdout contamination.
         payload = json.loads(result.stdout)
-        assert isinstance(payload, dict) and "degraded" in payload, (
-            f"a 1ms budget shed at least one stage but the CLI's JSON output "
-            f"never reported it: {result.stdout!r}"
+        assert isinstance(payload, list), (
+            f"--json must stay a bare hit array even when a stage was shed, got: {payload!r}"
         )
-        assert payload["degraded"], "degraded key present but empty"
-        assert "degraded: " in result.stderr, (
-            "the human-readable note must land on stderr for a piped/--json call"
+        assert "degraded: embed_skipped_bm25_only" in result.stderr, (
+            f"a 1ms budget shed a stage but the CLI never reported it on stderr: {result.stderr!r}"
         )
     finally:
         _restore_db(big_corpus.db_path, snapshot)
 
 
-def test_cli_reports_no_degraded_key_on_a_healthy_search(big_corpus) -> None:
+def test_cli_reports_no_degraded_note_on_a_healthy_search(big_corpus) -> None:
     """Converse of the above: an unaffected search's --json output must stay
-    byte-identical to today's bare hit array -- no `degraded` key, and no
-    stderr note."""
+    byte-identical to today's bare hit array, and stderr must stay silent."""
     snapshot = _snapshot_db(big_corpus.db_path)
     try:
         result = CliRunner().invoke(
