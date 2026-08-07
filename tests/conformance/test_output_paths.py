@@ -20,7 +20,8 @@ this module uses to keep the vacuous-pass trap out of these assertions.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import sqlite3
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -60,21 +61,11 @@ def _key_file(tmp_path: Path) -> Path:
     return path
 
 
-@pytest.fixture(scope="module")
-def graph_seeded(big_corpus) -> None:
-    """`graph mindmap` renders `mem.navigator.export_json()`, which is built
-    from the entity graph -- populated by `Memory.save()`'s extraction pass, a
-    path `big_corpus` never runs (it upserts straight into `VecStore`). Left
-    empty, the graph is empty and `graph mindmap` prints "Graph is empty" and
-    returns *before* ever reaching the output-path logic under test, which
-    would make that row of the table pass vacuously. `record_extraction` is
-    the same storage primitive the extraction pass writes through, and it
-    needs no MLX.
-    """
-    store = GraphStore(big_corpus.graph_db)
+def _seed_graph_entities(graph_db: Path, *, memory_id: str) -> None:
+    store = GraphStore(graph_db)
     try:
         store.record_extraction(
-            memory_id=seeded_id(0),
+            memory_id=memory_id,
             memory_date=_CREATED,
             entities=[
                 {"name": _ENTITY_A, "type": "concept"},
@@ -84,6 +75,59 @@ def graph_seeded(big_corpus) -> None:
         )
     finally:
         store.close()
+
+
+def _delete_seeded_graph_rows(graph_db: Path, *, memory_id: str) -> None:
+    """Undo exactly what `_seed_graph_entities` wrote.
+
+    Not `GraphStore.drop_for_memoria` -- it zeroes `mention_count` on the
+    touched entities but leaves their rows in `entities`, which is still a
+    residue a payload-size assertion over `export_json()`/`top_entities()`
+    would see. Delete by the exact memory_id/name+type this fixture wrote,
+    so a shared `graph.db` comes back byte-for-byte to how it looked before
+    this fixture ran.
+    """
+    if not graph_db.exists():
+        return
+    conn = sqlite3.connect(str(graph_db))
+    try:
+        with conn:
+            conn.execute("DELETE FROM entity_memory WHERE memory_id = ?", (memory_id,))
+            conn.execute(
+                "DELETE FROM entities WHERE name IN (?, ?) AND type = 'concept'",
+                (_ENTITY_A, _ENTITY_B),
+            )
+    finally:
+        conn.close()
+
+
+@pytest.fixture(scope="module")
+def graph_seeded(big_corpus) -> Iterator[None]:
+    """`graph mindmap` renders `mem.navigator.export_json()`, which is built
+    from the entity graph -- populated by `Memory.save()`'s extraction pass, a
+    path `big_corpus` never runs (it upserts straight into `VecStore`). Left
+    empty, the graph is empty and `graph mindmap` prints "Graph is empty" and
+    returns *before* ever reaching the output-path logic under test, which
+    would make that row of the table pass vacuously. `record_extraction` is
+    the same storage primitive the extraction pass writes through, and it
+    needs no MLX.
+
+    `big_corpus.graph_db` is session-scoped and shared with modules this plan
+    hasn't written yet (the MCP response-budget plan asserts `memo_graph` /
+    `memo_graph_export` payload sizes against this same corpus) -- a residual
+    entity/edge here would perturb that baseline in an unrelated task, days
+    from this file. The `finally` runs the delete on every exit path,
+    including a setup failure, even though `record_extraction` is already
+    atomic (one transaction, rolled back whole on error) and so leaves
+    nothing to undo in that case -- belt and suspenders, same reasoning as
+    `big_corpus`'s own `mp.undo()` on its setup-failure path.
+    """
+    memory_id = seeded_id(0)
+    try:
+        _seed_graph_entities(big_corpus.graph_db, memory_id=memory_id)
+        yield
+    finally:
+        _delete_seeded_graph_rows(big_corpus.graph_db, memory_id=memory_id)
 
 
 def _mindmap_argv(dest: Path, tmp_path: Path) -> list[str]:
@@ -178,3 +222,43 @@ def test_missing_parent_gives_a_clean_error(
         )
     else:
         assert "Traceback" not in result.output
+
+
+def test_graph_seeded_reverts_its_write_on_teardown(tmp_path) -> None:
+    """`graph_seeded` mutates a session-scoped `graph.db` shared with tests
+    this plan hasn't written yet -- a happy-path run of the parametrized
+    tests above never proves the mutation is undone, since they only run
+    *during* the fixture's lifetime. Drive the fixture generator directly
+    (the same technique `test_fixture_cleanup.py` uses for `big_corpus`)
+    against a throwaway `Config`, so this proves teardown without touching --
+    or depending on -- the real session-scoped `big_corpus`.
+    """
+    from memo.config import Config
+
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        vault_path=tmp_path / "vault",
+        state_dir=tmp_path / "state",
+        reranker_enabled=False,
+    )
+    memory_id = seeded_id(0)
+
+    gen = graph_seeded.__wrapped__(cfg)
+    next(gen)  # run setup through the yield
+
+    store = GraphStore(cfg.graph_db)
+    try:
+        assert store.top_entities(limit=10), "fixture setup did not write any entities"
+        assert store.entity_memories(_ENTITY_A) == [memory_id]
+    finally:
+        store.close()
+
+    with pytest.raises(StopIteration):
+        next(gen)  # advance past the yield -- runs the fixture's `finally`
+
+    store = GraphStore(cfg.graph_db)
+    try:
+        assert store.top_entities(limit=10) == [], "seeded entities survived teardown"
+        assert store.entity_memories(_ENTITY_A) == [], "seeded edge survived teardown"
+    finally:
+        store.close()
