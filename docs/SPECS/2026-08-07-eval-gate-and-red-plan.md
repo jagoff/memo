@@ -428,10 +428,16 @@ import dataclasses
 
 from memo import eval_recall
 
+# `eval_recall` uses `from __future__ import annotations`, so dataclasses
+# reports field types as strings ("str", "float") — not as the types
+# themselves. Comparing against `str` alone would silently match nothing.
 _ROW_TEMPLATE = {
-    f.name: ("" if f.type is str else 0.0) for f in dataclasses.fields(eval_recall.Row)
+    f.name: ("" if f.type in (str, "str") else 0.0)
+    for f in dataclasses.fields(eval_recall.Row)
 }
 ```
+
+`Row` has 20 fields, of which exactly one (`config`) is `str`; the rest are floats. Verify that still holds when you run it — if a later field breaks the assumption, the template is where it shows up.
 
 - [ ] **Step 2: Run it to verify it fails**
 
