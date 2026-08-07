@@ -243,6 +243,21 @@ SPECS: tuple[FlagSpec, ...] = (
         "Skip recall when the prompt starts with '/'. A slash command WITH substantive args still recalls on the arg text (see MEMO_RECALL_SLASH_MIN_ARG_CHARS); set to 0 to recall on every slash prompt unmodified.",
     ),
     _spec(
+        "MEMO_RECALL_HOOK_BUDGET_MS",
+        "int",
+        10000,
+        "recall",
+        "Wall-clock cap on the recall-hook's in-process fallback (SIGALRM). Past it the hook yields an empty recall and logs 'hook budget exceeded' instead of blocking the prompt; measured worst case before the cap was 126s against a ~5s budget. Delivered between bytecodes, so it bounds waits that pass through the interpreter but cannot preempt a single blocking C call such as a held sqlite lock (that one is busy_timeout's job). 0 disables the cap.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_RECALL_SKIP_MACHINE_PROMPTS",
+        "bool",
+        True,
+        "recall",
+        "Skip recall when the prompt is a harness envelope rather than a human turn (<task-notification>, <system-reminder>, command output, interrupted-request markers). Measured at 40% of hook fires on a live install, each paying a full embed + search for a machine-to-machine message. Matched on the opening marker only, so prose mentioning one still recalls; set to 0 to recall on every prompt.",
+    ),
+    _spec(
         "MEMO_RECALL_SLASH_MIN_ARG_CHARS",
         "int",
         8,

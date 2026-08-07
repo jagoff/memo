@@ -355,12 +355,17 @@ def graph_trace(memory_id: str | None, code: str | None, limit: int, as_json: bo
         console.print(f"[yellow]trace unavailable[/yellow]: {result.get('reason')}")
         return
     console.print(f"[bold]projection[/bold] {str(result.get('projection_version') or '')[:8]}")
-    for ref in result.get("code_refs") or []:
+    code_refs = result.get("code_refs") or []
+    memories = result.get("memories") or []
+    if not code_refs and not memories:
+        console.print(f"[dim]no recorded evidence links for {memory_id or code}[/dim]")
+        return
+    for ref in code_refs:
         console.print(
             f"  [cyan]{ref.get('qualified_name') or ref.get('label')}[/cyan] "
             f"[dim]{ref.get('uri')} ({ref.get('relation')})[/dim]"
         )
-    for record in result.get("memories") or []:
+    for record in memories:
         console.print(
             f"  [dim]{str(record.get('id') or '')[:8]}[/dim] "
             f"{record.get('title') or ''} ({record.get('relation')})"
@@ -395,7 +400,10 @@ def graph_discover(
         click.echo(json.dumps(result, indent=2, ensure_ascii=False))
         return
     if not result["available"]:
-        console.print(f"[yellow]discovery unavailable[/yellow]: {result.get('reason')}")
+        reason = str(result.get("reason") or "")
+        console.print(f"[yellow]discovery unavailable[/yellow]: {reason}")
+        if reason == "disabled":
+            console.print("[dim]enable with `memo config set graph.discovery_enabled true`[/dim]")
         return
     console.print(
         f"[bold]{len(result.get('communities') or [])} communities[/bold] / "

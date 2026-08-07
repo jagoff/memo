@@ -32,6 +32,7 @@ def _make_server_and_tools():
 def _stub_corpus_metrics() -> CorpusMetrics:
     return CorpusMetrics(
         total_memories=42,
+        sample_size=42,
         total_entities=10,
         type_distribution={"fact": 20, "decision": 22},
         tag_frequency={"python": 5, "memo": 3},
@@ -105,6 +106,7 @@ def test_memo_analytics_summary_returns_full_dict_envelope(tmp_cfg) -> None:
 
     expected_keys = {
         "total_memories",
+        "sample_size",
         "total_entities",
         "type_distribution",
         "tag_frequency",

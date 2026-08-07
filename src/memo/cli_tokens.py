@@ -22,6 +22,11 @@ from memo.config import Config
 
 _BLOCKS = "▏▎▍▌▋▊▉█"
 
+# Turns needed in BOTH cohorts before the measured net reads as evidence rather
+# than as noise. Neither cohort is assigned — a user does not run sessions with
+# recall off on purpose — so a handful of ungrounded turns can swing the sign.
+_MIN_COHORT_TURNS = 30
+
 
 def _fmt_tokens(tokens: float) -> str:
     tokens = int(tokens)
@@ -55,7 +60,7 @@ def _header_panel(s: dict) -> Panel:
         t = Text(justify="center")
         t.append(f"{label}\n", style="dim")
         t.append(f"{_fmt_tokens(bucket['tokens'])}\n", style=f"bold {color}")
-        t.append("tokens saved\n", style="dim")
+        t.append("tokens saved (est.)\n", style="dim")
         used = f"{bucket['grounded']} used"
         consults = int(bucket.get("consults", 0))
         if consults:
@@ -70,8 +75,10 @@ def _header_panel(s: dict) -> Panel:
     )
     return Panel(
         grid,
-        title="[bold]memo · tokens saved[/bold]",
-        subtitle="[dim]memo-only savings (memories the answer actually used)[/dim]",
+        title="[bold]memo · tokens saved (estimated)[/bold]",
+        subtitle=(
+            "[dim]per-grounded-recall estimate — the measured net is in the panel above[/dim]"
+        ),
         border_style="bright_blue",
         padding=(1, 2),
     )
@@ -165,17 +172,41 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
     if measured["sessions"]:
         p = measured["proxy"]
         delta = p["delta"]
+        net = p["net_tok_per_turn"]
+        have_both = (
+            p["grounded_tool_tok_per_turn"] is not None
+            and p["ungrounded_tool_tok_per_turn"] is not None
+        )
         proxy_line = (
             f"tool-spend grounded {p['grounded_tool_tok_per_turn']} vs "
             f"ungrounded {p['ungrounded_tool_tok_per_turn']} tok/turn"
             + (f"  (Δ {delta:+.0f})" if delta is not None else "")
-            if p["grounded_tool_tok_per_turn"] is not None
-            and p["ungrounded_tool_tok_per_turn"] is not None
+            + f"  -{p['injected_tok_per_turn']:g} injected"
+            if have_both
             else "proxy: no grounded+ungrounded sessions to compare yet"
         )
+        # The net line leads because it is the only measured answer to "does
+        # memo save tokens" — tool-spend delta alone ignores the context memo
+        # injects to earn it. Negative means memo cost more than it saved; that
+        # is a real result and it is reported as one.
+        if net is None:
+            net_line = "[dim]net: needs grounded and ungrounded sessions to compare[/dim]"
+        else:
+            colour = "green" if net > 0 else "red"
+            verb = "saved" if net > 0 else "cost"
+            # Both cohorts are observational, not assigned: a thin one means the
+            # sign is not yet evidence. Say so rather than let the number stand
+            # unqualified.
+            thin = min(p["grounded_turns"], p["ungrounded_turns"]) < _MIN_COHORT_TURNS
+            net_line = (
+                f"[bold {colour}]{abs(net):,.0f} tok/turn {verb}[/bold {colour}] net of injection "
+                f"[dim](n={p['grounded_turns']} grounded / {p['ungrounded_turns']} ungrounded "
+                f"turns{' · provisional, thin cohort' if thin else ''})[/dim]"
+            )
         console.print(
             Panel(
                 Text.from_markup(
+                    f"{net_line}\n"
                     f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok answer · "
                     f"[bold]{_fmt_tokens(measured['tool_tok'])}[/bold] tok tool-loops · "
                     f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok injected "

@@ -192,8 +192,14 @@ def _panel_corpus(memory: Any) -> Group:
         for t in r.get("tags") or []:
             if t.startswith("project:"):
                 projects.add(t)
-    total = sum(types_counter.values())
+    # The counters above describe the bounded page of newest records, not the
+    # corpus: summing them rendered the page size (a flat 10000) as the total
+    # once the corpus outgrew one page. Read the total from the store, and say
+    # which window the breakdown came from when the page did not cover it.
+    total = memory.store.count()
     types_line = " · ".join(f"{n} {t}" for t, n in types_counter.most_common(4)) or "—"
+    if len(rows) < total:
+        types_line += f"  (newest {len(rows)})"
     body = Text.assemble(
         (str(total), "bold"),
         (" memories · ", "dim"),

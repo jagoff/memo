@@ -237,3 +237,35 @@ def test_feedback_boost_cap_flag_takes_effect(mem_with_stub: Memory, monkeypatch
     monkeypatch.setenv("MEMO_FEEDBACK_BOOST_CAP", "0.01")
     out = mem_with_stub._apply_source_feedback(hits, emb)
     assert out[0].score == pytest.approx(0.51, abs=1e-4)
+
+
+def test_compact_feedback_vectors_snapshots_inside_its_write_transaction(mem_with_stub: Memory):
+    """The rebuild reads the rows it is about to DROP. Reading before the write
+    transaction opens loses any vote another process committed in between — the
+    recall daemon and the nightly job share this DB file, so the window is real
+    and the loss is silent (the vote row survives; only its embedding vanishes).
+    """
+    import inspect
+
+    src = inspect.getsource(type(mem_with_stub.store).compact_feedback_vectors)
+    body = src[src.index("if dry_run") :]
+    select_at = body.index("SELECT feedback_id, source_id, query_emb")
+    tx_at = body.index("with self._tx()")
+
+    assert tx_at < select_at, "the snapshot SELECT must run inside the write transaction"
+
+
+def test_compact_feedback_vectors_rebuild_uses_the_shared_ddl(mem_with_stub: Memory):
+    """A second copy of the DDL here would silently restore vec0's default
+    chunk allocation on every install that ran the compaction."""
+    from memo.store.schema import FEEDBACK_VEC_CHUNK_SIZE
+
+    rec = mem_with_stub.save(content="alpha body", title="Alpha")
+    mem_with_stub.feedback_record(rec.id, query_text="alpha", rating="up")
+
+    mem_with_stub.store.compact_feedback_vectors()
+
+    ddl = mem_with_stub.store._conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'source_feedback_vec'"
+    ).fetchone()["sql"]
+    assert f"chunk_size={FEEDBACK_VEC_CHUNK_SIZE}" in ddl

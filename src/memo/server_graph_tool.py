@@ -43,6 +43,24 @@ def _with_code_evidence(
     return payload
 
 
+def _bounded_impact(result: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    """Trim the symbol walk to what a tool result can carry.
+
+    `code_change_impact` caps its traversal at 1000 symbols — a bound sized for
+    the graph walk, not for a response: a 13-file working tree yielded 376 rows
+    (~100k chars), past the client's token cap. `impacted_paths` already gives
+    the blast radius, so the rows (nearest-first) are cut to `limit` and the
+    true size kept in `symbol_count`.
+    """
+    symbols = result.get("symbols")
+    if not isinstance(symbols, list) or len(symbols) <= limit:
+        return result
+    bounded = dict(result)
+    bounded["symbols"] = symbols[: max(0, limit)]
+    bounded["symbol_count"] = len(symbols)
+    return bounded
+
+
 def _memory_navigation_result(
     memory: Memory,
     verb: str,
@@ -75,7 +93,7 @@ def _memory_navigation_result(
                 focus,
                 max_neighbors=limit,
                 use_codegraph=use_codegraph,
-            ).__dict__,
+            ).to_bounded_dict(),
         }
         return _with_code_evidence(payload, include_code=include_code)
     if verb == "explore":
@@ -122,7 +140,10 @@ def _code_navigation_result(
             return {"error": "impact requires cwd"}
         return {
             "verb": "impact",
-            "result": memory.code_change_impact(cwd, depth=depth, limit=limit),
+            "result": _bounded_impact(
+                memory.code_change_impact(cwd, depth=depth, limit=limit),
+                limit=limit,
+            ),
         }
     if verb == "architecture":
         if not cwd:

@@ -91,6 +91,14 @@ class FederationError(MemoError, RuntimeError):
     """A signed federation bundle failed ACL or integrity validation."""
 
 
+class RerankBudgetExceeded(MemoError, RuntimeError):
+    """Cross-encoder reranking ran past its wall-clock budget.
+
+    Not a failure of the model — a signal to fall back to the hybrid RRF
+    order rather than let a contended GPU stretch one search into minutes.
+    """
+
+
 class ConfigConflictError(MemoError, RuntimeError):
     """A persisted setting changed after the configuration session opened."""
 

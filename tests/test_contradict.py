@@ -6,6 +6,8 @@ so they run anywhere — no Apple Silicon needed.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from memo.config import Config
@@ -555,3 +557,64 @@ def test_emit_anomaly_writes_native_ledger_event(tmp_path):
     assert payload["state"] == "detected"
     assert payload["relationship"] == "contradiction"
     assert payload["confidence"] == 0.91
+
+
+class _WindowedRelationStore:
+    """A relation store whose unfiltered window hides older pending rows.
+
+    Mirrors the live shape: `list_relations` orders by recency and clamps to
+    1000 rows, so on a corpus with a long judged history the newest unfiltered
+    page contains no pending relations at all.
+    """
+
+    def __init__(self, pending: list[dict], judged: list[dict]) -> None:
+        self._pending = pending
+        self._judged = judged
+
+    def list_relations(self, *, status=None, memory_ids=None, limit=100):
+        rows = self._pending if status == "pending" else self._judged
+        return list(rows[:limit])
+
+
+def _pending_relation(rid: str, a: str, b: str) -> dict:
+    return {
+        "id": rid,
+        "source_id": a,
+        "target_id": b,
+        "relation": "related",
+        "judgment_status": "pending",
+        "confidence": 0.95,
+        "reason": "evolution",
+        "created_at": "2026-08-01T00:00:00Z",
+        "provenance": {"generator": "contradiction_scanner"},
+    }
+
+
+def test_resolve_finds_a_pending_pair_the_unfiltered_window_omits(monkeypatch):
+    """`resolve` must settle the pairs `list_open` hands out.
+
+    Regression: `list_open` queries `status="pending"` while `_row_for_pair_id`
+    scanned the newest 1000 relations of *any* status. On a corpus with
+    thousands of judged relations the pending rows fell outside that window, so
+    `resolve()` returned False and the caller recorded the pair as settled
+    anyway — the same 50 pairs came back every night, forever.
+    """
+    from memo.contradict import CanonicalContradictionAdapter
+
+    pending = [_pending_relation("rel-00000000000000a1", "mem-a", "mem-b")]
+    judged = [
+        {
+            **_pending_relation(f"rel-00000000000000f{i}", f"x{i}", f"y{i}"),
+            "judgment_status": "judged",
+        }
+        for i in range(5)
+    ]
+
+    memory = SimpleNamespace(store=_WindowedRelationStore(pending, judged))
+    store = CanonicalContradictionAdapter.__new__(CanonicalContradictionAdapter)
+    store.memory = memory
+
+    opened = store.list_open(min_confidence=0.9)
+    assert len(opened) == 1
+
+    assert store._row_for_pair_id(opened[0].pair_id) is not None

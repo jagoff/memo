@@ -178,6 +178,18 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=0.0,
     ),
     _spec(
+        "MEMO_RERANK_BUDGET_S",
+        "float",
+        20.0,
+        "search",
+        "Wall-clock budget for cross-encoder reranking, covering the model load and "
+        "the per-pair scoring loop. When it elapses, reranking is abandoned and the "
+        "hybrid RRF order is returned instead — the same fallback an MLX failure "
+        "takes. The reranker scores pairs sequentially, so under GPU contention that "
+        "loop is what turns a 6s search into minutes. 0 disables the budget.",
+        min_val=0.0,
+    ),
+    _spec(
         "MEMO_QUALITY_RERANK",
         "bool",
         False,

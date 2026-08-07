@@ -199,3 +199,69 @@ def test_judging_a_relation_closes_its_operational_conflict(mock_memory) -> None
     )
 
     assert mock_memory.operational.active_conflicts(f"touch {newer.id}") == []
+
+
+def test_mcp_state_tool_bounds_an_unbounded_open_backlog(tmp_path) -> None:
+    """Open conflicts awaiting human triage must not blow the response budget.
+
+    Detection outruns triage: the nightly scan opens a semantic-contradiction
+    conflict per pair, and pairs held back by the supersede support gate stay
+    ``detected`` indefinitely. On the live corpus that reached 37 open
+    conflicts (~10k tokens per call) and keeps climbing ~9/day, so the tool
+    returns the newest slice plus the true totals.
+    """
+    from unittest.mock import MagicMock
+
+    from memo.server_operational import register
+
+    store = OperationalStore(tmp_path, device_id="device-a")
+    for i in range(30):
+        _open_semantic_conflict(
+            store,
+            a=f"{i:032x}",
+            b=f"{i + 100:032x}",
+            anomaly_id=f"anomaly-bulk-{i:04d}",
+        )
+
+    tools: dict[str, object] = {}
+    server = MagicMock()
+    server.tool = lambda **_kw: lambda fn: tools.setdefault(fn.__name__, fn)
+    memory = MagicMock()
+    memory.operational = store
+    register(server, memory)
+
+    out = tools["memo_operational_state"](limit=10)
+
+    assert len(out["conflicts"]) == 10
+    assert out["counts"]["conflicts"] == 30
+    assert out["limit"] == 10
+    # The full set stays reachable through the store itself.
+    assert len(store.state()["conflicts"]) == 30
+
+
+def test_gc_conflicts_for_vanished_memories_closes_unreachable_pairs(tmp_path) -> None:
+    """A conflict about a record that no longer exists can never be judged.
+
+    `gc_conflicts_for_memory` covers the explicit delete path, but the scanner
+    also opens conflicts on chunk ids, and a reindex replaces those. Nothing
+    ever names the old id again, so the conflict stays `detected` forever and
+    rides in every operational snapshot — 3 of the 37 open on the live corpus
+    were exactly this.
+    """
+    store = OperationalStore(tmp_path, device_id="device-a")
+    live = _open_semantic_conflict(store, a=MEM_A, b=MEM_B, anomaly_id="anomaly-live")
+    gone = _open_semantic_conflict(
+        store,
+        a=f"{MEM_C}_chunk_3",
+        b=MEM_B,
+        anomaly_id="anomaly-gone",
+    )
+
+    present = {MEM_A, MEM_B}
+    assert store.gc_conflicts_for_missing_memories(lambda mid: mid in present) == 1
+
+    open_now = set(store.state(include_closed=False)["conflicts"])
+    assert gone not in open_now
+    assert live in open_now
+    # Idempotent — a second sweep finds nothing left to close.
+    assert store.gc_conflicts_for_missing_memories(lambda mid: mid in present) == 0

@@ -48,8 +48,18 @@ def atomic_write_text(
     durable.
     """
     destination = Path(destination)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.parent.is_symlink() or destination.is_symlink():
+    parent = destination.parent
+    if parent.is_symlink():
+        # A symlinked *directory* is ordinary platform layout, not an attack —
+        # macOS ships /tmp as a link to /private/tmp, so refusing it rejected
+        # every user-chosen `-o /tmp/...` output path. Follow it once to the
+        # real directory and keep the mkstemp+replace pair inside that path.
+        parent = parent.resolve()
+        if not parent.is_dir():
+            raise ValueError(f"unsafe atomic-write destination: {destination}")
+        destination = parent / destination.name
+    parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_symlink():
         raise ValueError(f"unsafe atomic-write destination: {destination}")
 
     descriptor, temporary_name = tempfile.mkstemp(

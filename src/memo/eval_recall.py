@@ -202,14 +202,14 @@ DEFAULT_LABELS = LabelSet(
 )
 
 
-def load_labels(path: Path) -> LabelSet:
-    """Parse a label-set JSON file. Raises ValueError on a malformed file."""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"could not read label set {path}: {exc}") from exc
+def labels_from_document(raw: Any, source: str = "<document>") -> LabelSet:
+    """Build a LabelSet from an already-parsed label-set document. Raises
+    ValueError on a malformed one. Split out of ``load_labels`` so a caller
+    that resolved the document some other way (the dream passes reuse the
+    tuner's multi-candidate curated lookup) parses it identically instead of
+    re-deriving the shape."""
     if not isinstance(raw, dict) or not isinstance(raw.get("prompts"), list):
-        raise ValueError(f"label set {path} must be an object with a `prompts` list")
+        raise ValueError(f"label set {source} must be an object with a `prompts` list")
     prompts: list[Prompt] = []
     for p in raw["prompts"]:
         if isinstance(p, str):
@@ -217,7 +217,7 @@ def load_labels(path: Path) -> LabelSet:
         elif isinstance(p, dict) and (p.get("text") or p.get("prompt")):
             prompts.append(_label_from_dict(p))
     if not prompts:
-        raise ValueError(f"label set {path} has no usable prompts")
+        raise ValueError(f"label set {source} has no usable prompts")
     return LabelSet(
         prompts=prompts,
         relevant_terms={str(t).lower() for t in (raw.get("relevant_terms") or [])},
@@ -225,6 +225,15 @@ def load_labels(path: Path) -> LabelSet:
         noise_path_fragments=tuple(str(f) for f in (raw.get("noise_path_fragments") or [])),
         session_context=str(raw.get("session_context") or ""),
     )
+
+
+def load_labels(path: Path) -> LabelSet:
+    """Parse a label-set JSON file. Raises ValueError on a malformed file."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"could not read label set {path}: {exc}") from exc
+    return labels_from_document(raw, str(path))
 
 
 # --- Configs to compare ------------------------------------------------------

@@ -115,6 +115,7 @@ def test_corpus_metrics_dataclass():
     """Test CorpusMetrics dataclass structure."""
     metrics = CorpusMetrics(
         total_memories=100,
+        sample_size=100,
         total_entities=50,
         type_distribution={"note": 80, "decision": 20},
         tag_frequency={"test": 10},
@@ -134,3 +135,24 @@ def test_growth_data_dataclass():
     )
     assert len(growth.dates) == 2
     assert growth.counts[0] == 5
+
+
+def test_corpus_metrics_total_is_the_corpus_not_the_page(
+    analytics_engine, mock_memory, monkeypatch
+):
+    """`total_memories` must count the corpus, never the sampled page.
+
+    Regression: metrics sampled `list(limit=10000)` and reported `len(sample)`
+    as the total, so a corpus past that cap displayed a flat "9999" total and a
+    growth rate derived from it.
+    """
+    for i in range(3):
+        mock_memory.save(content=f"body {i}", title=f"T{i}", tags=["t"])
+
+    # Corpus larger than whatever page the sampler reads.
+    monkeypatch.setattr(mock_memory.store, "count", lambda: 11_373)
+
+    metrics = analytics_engine.compute_corpus_metrics()
+
+    assert metrics.total_memories == 11_373
+    assert metrics.sample_size == 3

@@ -663,6 +663,43 @@ class OperationalStore:
                 )
             return len(targets)
 
+    def gc_conflicts_for_missing_memories(
+        self,
+        exists: Callable[[str], bool],
+        *,
+        reason: str = "subject memory no longer in the corpus",
+    ) -> int:
+        """Auto-resolve active conflicts naming a memory that is gone.
+
+        :meth:`gc_conflicts_for_memory` covers the explicit delete path, but a
+        conflict can also be opened on a chunk id that a later reindex
+        replaces. Nothing ever names that id again, so the conflict can never
+        be judged and stays ``detected`` forever, riding in every operational
+        snapshot. Sweeping them is system-level cleanup like its siblings and
+        needs no human authority. Returns the count resolved.
+        """
+        with authority_write_lock(self.state_dir / "operational-transactions"):
+            conflicts = self._read_snapshot()["conflicts"]
+            targets = []
+            for cid, row in conflicts.items():
+                if row.get("lifecycle_state") in {"resolved", "archived"}:
+                    continue
+                members = [m for m in _conflict_member_ids(row) if m]
+                if members and not all(exists(m) for m in members):
+                    targets.append(cid)
+            for cid in targets:
+                self._commit(
+                    "conflict.resolve",
+                    {
+                        "id": cid,
+                        "resolved_at": utc_now_iso(),
+                        "resolution": reason,
+                    },
+                    subject_uri=f"memo://conflict/{cid}",
+                    actor=ActorIdentity(actor_id="memo-gc", actor_kind="system"),
+                )
+            return len(targets)
+
     def gc_conflicts_for_pair(
         self,
         memory_id_a: str,

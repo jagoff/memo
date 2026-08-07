@@ -184,3 +184,62 @@ def test_memo_graph_unknown_verb_returns_error(mock_memory):
 def test_memo_graph_path_requires_endpoints(mock_memory):
     out = _call(mock_memory, verb="path", a="alpha")
     assert "error" in out
+
+
+def _seed_hub(mem, *, bridges: int) -> None:
+    """Seed one hub entity joined to a neighbour by ``bridges`` memories."""
+    for i in range(bridges):
+        mem.graph.record_extraction(
+            memory_id=f"hub{i}",
+            memory_date="2026-01-01",
+            entities=[
+                {"name": "Hub", "type": "technology"},
+                {"name": "Spoke", "type": "technology"},
+            ],
+            extracted_at="2026-01-01T00:00:00Z",
+        )
+    mem.graph.rebuild_edges()
+
+
+def test_memo_graph_neighbors_bounds_bridge_ids(mock_memory):
+    """`limit` must bound the payload, not just the neighbour count.
+
+    Regression: on the live corpus `verb="neighbors", limit=4` returned every
+    bridging memory id for every neighbour (~15k tokens), even though the tool
+    is documented as the cheap id/title-only traversal.
+    """
+    _seed_hub(mock_memory, bridges=40)
+
+    out = _call(mock_memory, verb="neighbors", entity="hub", limit=4)
+
+    bridges = out["result"]["neighbor_memories"]["spoke"]
+    assert len(bridges) <= 5, f"payload unbounded: {len(bridges)} ids"
+    # The true count is preserved so the caller still sees link strength.
+    assert out["result"]["neighbor_memory_counts"]["spoke"] == 40
+
+
+def test_memo_graph_impact_bounds_the_symbol_walk(mock_memory, monkeypatch):
+    """The traversal cap is not a response budget.
+
+    Regression: `code_change_impact` bounds its walk at 1000 symbols, so a
+    13-file working tree produced 376 symbol rows (~100k chars) and the tool
+    result blew past the MCP client's token cap entirely — with `limit=3`.
+    """
+    monkeypatch.setattr(
+        mock_memory,
+        "code_change_impact",
+        lambda cwd, **kw: {
+            "available": True,
+            "changed_files": ["a.py"],
+            "symbols": [{"stable_symbol_id": f"s{i}", "distance": i} for i in range(376)],
+            "impacted_paths": ["a.py"],
+            "memories": [],
+        },
+    )
+
+    out = _call(mock_memory, verb="impact", cwd="/repo", limit=3)
+
+    assert len(out["result"]["symbols"]) == 3
+    assert out["result"]["symbol_count"] == 376
+    # Nearest-first ordering is preserved, so the kept rows are the relevant ones.
+    assert [s["distance"] for s in out["result"]["symbols"]] == [0, 1, 2]

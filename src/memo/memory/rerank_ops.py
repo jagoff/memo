@@ -12,6 +12,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
+from memo.errors import RerankBudgetExceeded
 from memo.flags import flag_float
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
@@ -377,7 +378,10 @@ class _RerankOpsMixin(_MemoryBase):
 
         Lazy-loads the reranker on first call. Failures are absorbed:
         if MLX runs into a Metal hiccup mid-rerank we fall back to the
-        original RRF order so search never goes dark on the user.
+        original RRF order so search never goes dark on the user. The
+        same fallback bounds latency: scoring is per-pair sequential, so
+        `MEMO_RERANK_BUDGET_S` caps how long a contended GPU may stretch
+        it before the RRF order is served instead.
         """
         reranker = self._ensure_reranker()
 
@@ -388,8 +392,19 @@ class _RerankOpsMixin(_MemoryBase):
         n = len(hits)
         rrf_pos: dict[str, int] = {h.id: i for i, h in enumerate(hits)}
 
+        budget = flag_float("MEMO_RERANK_BUDGET_S")
         try:
-            reranked = reranker.rerank(query, hits, top_n=None)
+            reranked = reranker.rerank(
+                query,
+                hits,
+                top_n=None,
+                budget_s=20.0 if budget is None else budget,
+            )
+        except RerankBudgetExceeded as exc:
+            # Expected under load, not a malfunction — log at info and
+            # serve the fusion order the candidates already carry.
+            _log.info("rerank budget elapsed (%s); serving RRF order", exc)
+            return hits[:top_n]
         except Exception as exc:
             _log.error(
                 "reranker failed (model=%s, revision=%s): %s",

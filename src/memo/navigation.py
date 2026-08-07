@@ -35,6 +35,9 @@ from memo.flags import flag_bool
 
 _log = logging.getLogger(__name__)
 
+# Exemplar bridging-memory ids kept per neighbour when serialising for MCP.
+MAX_BRIDGE_IDS = 5
+
 
 @dataclass(frozen=True)
 class EntityPath:
@@ -55,6 +58,23 @@ class EntityNeighbors:
     direct_neighbors: list[str]  # Entities directly connected
     neighbor_memories: dict[str, list[str]]  # entity -> memory IDs that connect
     degree: int
+
+    def to_bounded_dict(self, *, max_bridge_ids: int = MAX_BRIDGE_IDS) -> dict[str, Any]:
+        """JSON payload that keeps link strength without dumping every id.
+
+        On a hub entity `neighbor_memories` holds hundreds of bridging ids per
+        neighbour, so serialising it whole makes the "cheap" graph traversal
+        cost more than a search. Callers get a few exemplar ids plus the true
+        per-neighbour counts instead.
+        """
+        cap = max(0, max_bridge_ids)
+        return {
+            "entity": self.entity,
+            "direct_neighbors": list(self.direct_neighbors),
+            "neighbor_memories": {n: ids[:cap] for n, ids in self.neighbor_memories.items()},
+            "neighbor_memory_counts": {n: len(ids) for n, ids in self.neighbor_memories.items()},
+            "degree": self.degree,
+        }
 
 
 @dataclass(frozen=True)

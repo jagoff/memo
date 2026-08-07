@@ -418,27 +418,28 @@ def _run_eval_recall(cfg: Config, mem: Memory, *, k: int = 5, max_labels: int = 
     empty run never pollutes the trend) and returns the receipt fragment.
     Raises on failure (the cli_dream caller records it in receipt["errors"]).
     """
+    from memo.dream_tune import curated_labels_document
     from memo.eval_recall import Cfg as EvalCfg
     from memo.eval_recall import (
         LabelSet,
         Prompt,
         evaluate,
         gate_metrics,
-        load_labels,
+        labels_from_document,
         merge_label_prompts,
     )
     from memo.flags import flag_float
 
+    # Same multi-candidate lookup the tuner's gate uses (state_dir, then the
+    # wheel's agent_assets copy, then the dev checkout). This pass used to carry
+    # its own copy that omitted the packaged path, so on every installed runtime
+    # the receipt reported `0 curated` and prec@K was measured on harvested
+    # labels alone.
     curated = None
-    for cp in (
-        cfg.state_dir / "eval" / "regression_labels.json",
-        Path(__file__).resolve().parent.parent.parent / "eval" / "regression_labels.json",
-    ):
-        try:
-            curated = load_labels(cp)
-            break
-        except ValueError:
-            continue
+    try:
+        curated = labels_from_document(curated_labels_document(cfg.state_dir))
+    except ValueError:
+        curated = None
 
     harvested_raw: list[dict] = []
     try:
@@ -618,11 +619,18 @@ def _run_contradict(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
                             mem.store.set_confidence_batch([(older, _evo_conf)])
                         except Exception as exc:
                             _log.warning("evolution_confidence failed: %s", exc)
-                    mem.contradict_store.resolve(
+                    # A pair the ledger cannot find stays open, so recording it
+                    # as evolved makes the receipt claim work that never happened
+                    # and the same pair returns on the next run.
+                    if not mem.contradict_store.resolve(
                         pair.pair_id,
                         "evolved",
                         note=f"dream: evolution, demoted older {older[:8]}",
-                    )
+                    ):
+                        result.setdefault("errors", []).append(
+                            f"evolution: pair {pair.pair_id} not settled (still open)"
+                        )
+                        continue
                 result["evolved"].append(pair.pair_id)
                 continue
 
@@ -969,18 +977,20 @@ def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]
 
         curated = _curated_label_set(mem.cfg.state_dir)
         if curated is None:
-            # Vacuous pass — same convention as dream_tune.curated_gate: no
-            # curated set to regress against, so the raise is not blocked.
+            # Fails closed — same convention as dream_tune.curated_gate. The
+            # curated set ships in the wheel, so its absence means a damaged
+            # install, and raising the floor unverified is what the gate exists
+            # to stop.
             result["floor_calibration"]["gate"] = "no_curated_labels"
-        else:
-            before = measure(mem, curated, k=k, floor=current)
-            after = measure(mem, curated, k=k, floor=floor)
-            gate_ok = not _regressed(after, before)
-            result["floor_calibration"]["gate"] = "ok" if gate_ok else "curated_rejected"
-            result["floor_calibration"]["before"] = before
-            result["floor_calibration"]["after"] = after
-            if not gate_ok:
-                return result
+            return result
+        before = measure(mem, curated, k=k, floor=current)
+        after = measure(mem, curated, k=k, floor=floor)
+        gate_ok = not _regressed(after, before)
+        result["floor_calibration"]["gate"] = "ok" if gate_ok else "curated_rejected"
+        result["floor_calibration"]["before"] = before
+        result["floor_calibration"]["after"] = after
+        if not gate_ok:
+            return result
 
         if not dry_run:
             from memo import dream_tune_online
@@ -1000,18 +1010,17 @@ def _run_floor_calibration(mem: Memory, dry_run: bool = False) -> dict[str, Any]
             # Register the write with the online proof loop (same as the min_sim
             # tuner) so a live-grounding regression it causes is auto-reverted —
             # otherwise the applied floor is never verified and never rolled back.
-            # Only when curated measurements exist; a no-labels write is
-            # inherently unprovable so there is nothing to record.
-            if curated is not None:
-                dream_tune_online.record_pending(
-                    mem.cfg.state_dir,
-                    knob="MEMO_RECALL_MIN_SIM",
-                    value_before=current,
-                    value_after=floor,
-                    offline_before=before,
-                    offline_after=after,
-                    version_before=version_before,
-                )
+            # The gate above returns early without a curated set, so the offline
+            # measurements backing this record always exist.
+            dream_tune_online.record_pending(
+                mem.cfg.state_dir,
+                knob="MEMO_RECALL_MIN_SIM",
+                value_before=current,
+                value_after=floor,
+                offline_before=before,
+                offline_after=after,
+                version_before=version_before,
+            )
         result["floor_calibration"]["applied"] = not dry_run
     except Exception as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"

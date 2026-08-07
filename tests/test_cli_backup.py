@@ -168,6 +168,31 @@ def test_portable_backup_archive_is_private(monkeypatch, tmp_path: Path) -> None
     assert stat.S_IMODE(archive.stat().st_mode) == 0o600
 
 
+def test_portable_backup_missing_output_parent_is_a_clean_error(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        reranker_enabled=False,
+    )
+    cfg.ensure_dirs()
+    monkeypatch.setattr(
+        cli_backup.Config,
+        "from_env",
+        classmethod(lambda _cls: cfg),
+    )
+    missing_parent = tmp_path / "Backups"
+    archive = missing_parent / "memo.zip"
+
+    with pytest.raises(click.ClickException, match="output directory does not exist"):
+        cli_backup._portable_backup(str(archive))
+
+    # A typo in --out must not silently materialize the tree it names.
+    assert not missing_parent.exists()
+
+
 def test_portable_backup_removes_partial_archive_on_failure(monkeypatch, tmp_path: Path) -> None:
     cfg = Config(
         data_dir=tmp_path / "data",

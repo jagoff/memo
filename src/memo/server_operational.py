@@ -9,6 +9,43 @@ from pydantic import Field
 
 from memo.server_annotations import READ_ONLY, WRITE, WRITE_IDEMPOTENT, annotated_tool
 
+# Section -> the field its items are ordered by when the snapshot is trimmed.
+_STATE_SECTION_ORDER = {
+    "conflicts": "created_at",
+    "handoffs": "created_at",
+    "attention": "created_at",
+    "outcomes": "recorded_at",
+    "signals": "created_at",
+}
+
+
+def _bounded_state(state: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    """Trim each id-keyed section to its newest `limit` entries.
+
+    `focus` is one row per project and stays whole; the growing sections are
+    trimmed with their true sizes reported under `counts`, so a caller can see
+    a backlog exists without paying to read all of it.
+    """
+    bounded = dict(state)
+    counts: dict[str, int] = {}
+    cap = max(0, limit)
+    for section, order_key in _STATE_SECTION_ORDER.items():
+        items = state.get(section)
+        if not isinstance(items, dict):
+            continue
+        counts[section] = len(items)
+        if len(items) <= cap:
+            continue
+        newest = sorted(
+            items.items(),
+            key=lambda kv: str((kv[1] or {}).get(order_key) or ""),
+            reverse=True,
+        )[:cap]
+        bounded[section] = dict(newest)
+    bounded["counts"] = counts
+    bounded["limit"] = cap
+    return bounded
+
 
 def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
     @annotated_tool(server, **READ_ONLY)
@@ -76,13 +113,26 @@ def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
                 "history only grows and can exceed the response budget."
             ),
         ] = False,
+        limit: Annotated[
+            int,
+            Field(
+                description="Newest items to return per section (conflicts, handoffs, "
+                "attention, outcomes, signals). True totals come back under `counts`."
+            ),
+        ] = 20,
     ) -> dict[str, Any]:
         """Read current focus, handoffs, attention items, conflicts, and outcomes.
 
         Read-only snapshot of the operational journal's current state. Returns
-        only what is still open unless ``include_closed`` is set.
+        only what is still open unless ``include_closed`` is set, and only the
+        newest ``limit`` entries per section — open items awaiting human triage
+        accumulate faster than they settle, so an unbounded snapshot eventually
+        costs more context than the memories it describes.
         """
-        return memory.operational.state(project=project, include_closed=include_closed)
+        return _bounded_state(
+            memory.operational.state(project=project, include_closed=include_closed),
+            limit=limit,
+        )
 
     @annotated_tool(server, **READ_ONLY)
     def memo_federation_preview(

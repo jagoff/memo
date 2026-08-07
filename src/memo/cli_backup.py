@@ -53,6 +53,15 @@ def _portable_backup(out_path: str | None) -> None:
     out_p = Path(out).resolve()
     if out_p.exists():
         raise click.ClickException(f"backup file already exists: {out_p}")
+    # A --out under a directory that does not exist would otherwise surface as a
+    # FileNotFoundError traceback from touch(). Refuse instead of creating the
+    # tree: the usual cause is a typo, and a backup written to a mistyped path is
+    # a backup nobody finds again.
+    if not out_p.parent.is_dir():
+        raise click.ClickException(
+            f"output directory does not exist: {out_p.parent} "
+            f"(create it with: mkdir -p {out_p.parent})"
+        )
     # Reserve the archive privately before zipfile opens it. The default 0666
     # creation mode would expose the full corpus/index to other local users
     # under a common 022 umask while the backup is being written.

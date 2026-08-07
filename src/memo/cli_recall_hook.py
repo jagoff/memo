@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sqlite3
 import sys
 import time
@@ -73,6 +74,84 @@ _TRIVIAL_WORDS: frozenset[str] = frozenset(
 # Claude Code's hook kill. 4s leaves headroom under the 12s kill for the bm25
 # downgrade that `_rank` falls to when a capped embed fails.
 _FALLBACK_EMBED_TIMEOUT_S = 4.0
+
+
+# Whether THIS module armed ITIMER_REAL, and what handler it displaced. The
+# timer is process-global, so the disarm must be able to tell "ours" from "the
+# host's" — see _disarm_deadline.
+_deadline_armed = False
+_prev_alarm_handler: Any = None
+
+
+def _admit_prompt(prompt: str, bail: Callable[[str], None]) -> str:
+    """The text recall should run on, or `bail` (which exits) for a machine turn.
+
+    Called ahead of the MEMO_RECALL_DISABLE short-circuit on purpose: both arms
+    of the ablation must exclude the same turns, or the two cohorts `memo
+    tokens` compares stop being the same population and the net-savings number
+    means nothing. A turn that mixed plumbing with a real question comes back as
+    the question alone.
+    """
+    if not flag_bool("MEMO_RECALL_SKIP_MACHINE_PROMPTS"):
+        return prompt
+    from memo.recall_admission import admit
+
+    admitted, why = admit(prompt)
+    if admitted is not None:
+        return admitted
+    bail(f"machine prompt ({why})")
+    raise SystemExit(0)  # `bail` already exits; explicit so the type is `str`
+
+
+def _arm_deadline(started_at: float, bail: Callable[[str], None]) -> None:
+    """Arm the fallback's wall-clock cap, if this platform and config want one.
+
+    Every stage of the fallback has its own guard (a 4s embed cap, a bm25
+    downgrade), yet the measured subprocess path still reached p95 9.5s and a
+    126.7s worst case over 1500 live fires. This is the outer bound.
+
+    Delivered between bytecodes, so it bounds waits that pass through the
+    interpreter but cannot preempt a single blocking C call — a sqlite lock held
+    while `memo maintain` writes is exactly that case, and `busy_timeout` is its
+    lever, not this. The cap is the outer bound, not the whole answer.
+    """
+    _hb = flag_int("MEMO_RECALL_HOOK_BUDGET_MS")
+    budget_s = (10000 if _hb is None else _hb) / 1000.0
+    if budget_s <= 0 or not hasattr(signal, "SIGALRM"):
+        return
+
+    def _on_deadline(_signum: int, _frame: Any) -> None:
+        # Disarm before doing anything: `bail` writes a log line, and a second
+        # alarm landing inside that write would re-enter here.
+        _disarm_deadline()
+        bail(f"hook budget exceeded ({budget_s:g}s)")
+
+    global _deadline_armed, _prev_alarm_handler
+    with contextlib.suppress(ValueError, OSError):
+        # ValueError: not the main thread (no signal delivery available).
+        _prev_alarm_handler = signal.signal(signal.SIGALRM, _on_deadline)
+        signal.setitimer(signal.ITIMER_REAL, max(0.1, budget_s - (time.time() - started_at)))
+        _deadline_armed = True
+
+
+def _disarm_deadline() -> None:
+    """Cancel the recall-hook's wall-clock alarm, and only ever that one.
+
+    ITIMER_REAL is process-global and shared. The hook normally owns its own
+    process, but when it runs inside a host that also uses SIGALRM — pytest's
+    `--timeout`, for one — clearing the timer unconditionally would cancel the
+    host's alarm instead of ours. So this is a no-op unless `_arm_deadline`
+    actually armed something. Idempotent, and never raises: a non-main thread
+    has no timer to cancel and must not fail the caller.
+    """
+    global _deadline_armed
+    if not _deadline_armed or not hasattr(signal, "SIGALRM"):
+        return
+    _deadline_armed = False
+    with contextlib.suppress(ValueError, OSError):
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        if _prev_alarm_handler is not None:
+            signal.signal(signal.SIGALRM, _prev_alarm_handler)
 
 
 def apply_session_mode(knobs: RankKnobs, session_mode: str) -> RankKnobs:
@@ -147,6 +226,12 @@ def recall_hook() -> None:
     mem: Any | None = None
 
     def _close_memory() -> None:
+        # Every exit path calls this, so it is where the wall-clock deadline is
+        # disarmed. An armed itimer outlives the hook when the hook is invoked
+        # in-process rather than as its own short-lived process (tests, any
+        # embedding host): the alarm then fires later, inside unrelated code,
+        # and the handler's sys.exit unwinds whatever happened to be running.
+        _disarm_deadline()
         if mem is not None:
             with contextlib.suppress(Exception):
                 mem.close()
@@ -183,6 +268,10 @@ def recall_hook() -> None:
 
     prompt = (payload.get("prompt") or "").strip()
     _sid = (payload.get("session_id") or "").strip() or None
+
+    # Ahead of the MEMO_RECALL_DISABLE short-circuit on purpose — see
+    # _admit_prompt. Exits the process on a machine turn.
+    prompt = _admit_prompt(prompt, _bail)
 
     if flag_bool("MEMO_RECALL_DISABLE"):
         # Ablation cohort: recall is OFF for this turn. Stamp it (via="disabled",
@@ -346,6 +435,8 @@ def recall_hook() -> None:
             )
         except Exception as exc:
             _log.debug("daemon-error recall-log write failed: %s", exc)
+
+    _arm_deadline(_t0, _bail)
 
     payload_cwd = payload.get("cwd")
 
