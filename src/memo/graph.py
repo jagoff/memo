@@ -951,7 +951,15 @@ class GraphStore:
                 "VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(memory_id, file_path, symbol_name, relation_type) DO UPDATE SET "
                 "qualified_name = excluded.qualified_name, confidence = excluded.confidence, linked_at = excluded.linked_at",
-                (memory_id, file_path, symbol_name, qualified_name, relation_type, float(confidence), now),
+                (
+                    memory_id,
+                    file_path,
+                    symbol_name,
+                    qualified_name,
+                    relation_type,
+                    float(confidence),
+                    now,
+                ),
             )
 
     def get_ast_links_for_memory(self, memory_id: str) -> list[dict[str, Any]]:

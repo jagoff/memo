@@ -89,6 +89,7 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
 # imported when the command is first resolved.
 _LAZY: dict[str, tuple[str, str, str]] = {}
 
+
 def _reg(name: str, module: str, symbol: str, alias: str | None = None) -> None:
     _LAZY[name] = (module, symbol, alias or name)
 
@@ -98,9 +99,20 @@ def _register_lazy_commands() -> None:
     if _LAZY:
         return
     # ─ core memories ──────────────────────────────────────────────────────
-    for sym in ("delete", "fix", "get", "history", "lint",
-                "provenance", "reindex", "rename", "restore", "save",
-                "undo", "update"):
+    for sym in (
+        "delete",
+        "fix",
+        "get",
+        "history",
+        "lint",
+        "provenance",
+        "reindex",
+        "rename",
+        "restore",
+        "save",
+        "undo",
+        "update",
+    ):
         _reg(sym, "memo.cli_memory", sym)
     _reg("ocr-image", "memo.cli_memory", "ocr_image")
     _reg("edit", "memo.cli_memory", "update")
@@ -282,19 +294,66 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Recall & Hooks",
-        ["recall", "recall-hook", "briefing", "continuity", "prewarm", "capture-tick", "capture-stop"],
+        [
+            "recall",
+            "recall-hook",
+            "briefing",
+            "continuity",
+            "prewarm",
+            "capture-tick",
+            "capture-stop",
+        ],
     ),
     (
         "Session & History",
-        ["history", "as-of", "diff", "record-history", "session", "resume", "reflect", "mine-history", "episodes"],
+        [
+            "history",
+            "as-of",
+            "diff",
+            "record-history",
+            "session",
+            "resume",
+            "reflect",
+            "mine-history",
+            "episodes",
+        ],
     ),
     (
         "Maintenance",
-        ["reindex", "maintain", "dream", "consolidate", "synthesize", "dedupe", "cross-dedup", "retier", "contradict", "coordinate", "terminal", "invalidate", "temporal", "compress-context"],
+        [
+            "reindex",
+            "maintain",
+            "dream",
+            "consolidate",
+            "synthesize",
+            "dedupe",
+            "cross-dedup",
+            "retier",
+            "contradict",
+            "coordinate",
+            "terminal",
+            "invalidate",
+            "temporal",
+            "compress-context",
+        ],
     ),
     (
         "Analysis & Quality",
-        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "tokens", "token-savings", "usefulness", "gaps", "outcome", "profile"],
+        [
+            "health",
+            "stats",
+            "doctor",
+            "lint",
+            "analytics",
+            "eval",
+            "roi",
+            "tokens",
+            "token-savings",
+            "usefulness",
+            "gaps",
+            "outcome",
+            "profile",
+        ],
     ),
     (
         "Knowledge Graph",
@@ -314,7 +373,24 @@ _COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
     ),
     (
         "Setup & Config",
-        ["init", "config", "install-mcp", "install-watcher", "uninstall-watcher", "install-slash", "install-statusline", "install-recall-hook", "install-shell-wrapper", "install-shims", "startup-banner", "migrate", "migrate-vault", "update", "watch", "release"],
+        [
+            "init",
+            "config",
+            "install-mcp",
+            "install-watcher",
+            "uninstall-watcher",
+            "install-slash",
+            "install-statusline",
+            "install-recall-hook",
+            "install-shell-wrapper",
+            "install-shims",
+            "startup-banner",
+            "migrate",
+            "migrate-vault",
+            "update",
+            "watch",
+            "release",
+        ],
     ),
     (
         "Daemons",

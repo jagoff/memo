@@ -4,8 +4,12 @@ from memo.recall_logic import _dedup_tokens, detect_topic_shift, dynamic_stream_
 
 
 def test_detect_topic_shift() -> None:
-    toks1 = _dedup_tokens("how to configure postgresql database parameters for production deployment")
-    toks2 = _dedup_tokens("how to configure postgresql database parameters and connection pool settings")
+    toks1 = _dedup_tokens(
+        "how to configure postgresql database parameters for production deployment"
+    )
+    toks2 = _dedup_tokens(
+        "how to configure postgresql database parameters and connection pool settings"
+    )
     toks3 = _dedup_tokens("frontend react components css styling theme design system UI elements")
 
     # Similar prompts (sharing many key words) -> no shift at sensitivity 0.65

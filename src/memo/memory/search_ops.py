@@ -11,6 +11,7 @@ import contextlib
 import dataclasses
 import math
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -210,6 +211,7 @@ class _SearchOpsMixin(_MemoryBase):
                 when search is only a derived processing step rather than a
                 user-visible retrieval.
         """
+
         def _add_trace(stage: str, **data: Any) -> None:
             if _trace is not None:
                 _trace.append({"stage": stage, **data})
@@ -298,32 +300,217 @@ class _SearchOpsMixin(_MemoryBase):
         # every stage runs in this exact order — identical behaviour to the
         # historical inline chain.
         stages: list[SearchStage] = [
-            SearchStage("materialize", lambda out: self._stage_materialize(out, ctx), skippable=False),
+            SearchStage(
+                "materialize", lambda out: self._stage_materialize(out, ctx), skippable=False
+            ),
             SearchStage("fact_surface", lambda out: self._stage_fact_surface(out, ctx)),
-            SearchStage("forget_filter", lambda out: self._stage_forget_filter(out, ctx), skippable=False),
+            SearchStage(
+                "forget_filter", lambda out: self._stage_forget_filter(out, ctx), skippable=False
+            ),
             SearchStage("chunk_parent", lambda out: self._stage_chunk_parent(out, ctx)),
             SearchStage("feedback", lambda out: self._stage_feedback(out, ctx)),
-            SearchStage("rerank_gate", lambda out: self._stage_rerank_gate(out, ctx), skippable=False),
+            SearchStage(
+                "rerank_gate", lambda out: self._stage_rerank_gate(out, ctx), skippable=False
+            ),
             SearchStage("health_pre_rerank", lambda out: self._stage_health_pre_rerank(out, ctx)),
             SearchStage("rerank", lambda out: self._stage_rerank(out, ctx)),
             SearchStage("recency_decay", lambda out: self._stage_recency_decay(out, ctx)),
             SearchStage("cache_read_through", lambda out: self._stage_cache_read_through(out, ctx)),
             SearchStage("entity_boost", lambda out: self._stage_entity_boost(out, ctx)),
-            SearchStage("contradiction_penalty", lambda out: self._stage_contradict_penalty(out, ctx)),
+            SearchStage(
+                "contradiction_penalty", lambda out: self._stage_contradict_penalty(out, ctx)
+            ),
             SearchStage("verification_decay", lambda out: self._stage_verification_decay(out, ctx)),
             SearchStage("retrieval_boost", lambda out: self._stage_retrieval_boost(out, ctx)),
             SearchStage("health", lambda out: self._stage_health_post(out, ctx)),
             SearchStage("quality_rerank", lambda out: self._stage_quality_rerank(out, ctx)),
             SearchStage("co_recall_boost", lambda out: self._stage_co_recall_boost(out, ctx)),
             SearchStage("reference_floor", lambda out: self._stage_reference_floor(out, ctx)),
-            SearchStage("curated_graph_order", lambda out: self._stage_curated_graph_order(out, ctx)),
-            SearchStage("record_usage", lambda out: self._stage_record_usage(out, ctx), skippable=False),
-            SearchStage("resolve_disk_bodies", lambda out: self._stage_resolve_disk_bodies(out, ctx), skippable=False),
+            SearchStage(
+                "curated_graph_order", lambda out: self._stage_curated_graph_order(out, ctx)
+            ),
+            SearchStage(
+                "record_usage", lambda out: self._stage_record_usage(out, ctx), skippable=False
+            ),
+            SearchStage(
+                "resolve_disk_bodies",
+                lambda out: self._stage_resolve_disk_bodies(out, ctx),
+                skippable=False,
+            ),
             SearchStage("annotate_relations", lambda out: self._stage_annotate_relations(out, ctx)),
         ]
         out = run_search_stages(stages, rows, budget=SearchBudget(budget_ms), trace=_add_trace)
         _add_trace("final", output_count=len(out), limit=limit)
         return cast("list[MemoryRecord]", out)
+
+    def _build_hybrid_legs(
+        self,
+        query: str,
+        *,
+        input_k: int,
+        limit: int,
+        type_: str | None,
+        exclude_types: set[str] | None,
+        exclude_tags: set[str] | None,
+        date_from: str | None,
+        date_to: str | None,
+        as_of: str | None,
+        trace: TraceFn | None,
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[float] | None,
+        int,
+    ]:
+        """Run the hybrid candidate legs (vec embed/search, bm25, exact, facts).
+
+        With ``MEMO_SEARCH_PARALLEL`` (default on) the keyword and fact legs are
+        submitted to a small thread pool BEFORE the vec leg embeds the query, so
+        their SQLite reads overlap the MLX forward pass instead of stacking
+        after it. With the flag off the historical sequential order is kept
+        byte-identical (vec → bm25 → exact → facts). The ``input_k`` thread-
+        safety note: the adaptive-pool resize only widens ``input_k`` (which
+        later widens the fuse limit below); each BM25 leg already waits with
+        ``k_each = max(input_k * 2, 20)``, so a later widening never shrinks the
+        fetched candidate pool — the fuse over-fetches safely.
+
+        Returns ``(vec_hits, bm_hits, exact_hits, fact_hits, emb, resized_input_k)``.
+        ``emb`` is None when the vec leg was skipped/failed; callers then fall
+        back to the lexical pool only.
+        """
+        emb: list[float] | None = None
+        k_each = max(input_k * 2, 20)
+        fact_enabled = flag_bool("MEMO_FACT_RETRIEVAL_ENABLED")
+        parallel = flag_bool("MEMO_SEARCH_PARALLEL")
+
+        def _run_bm25_future() -> list[dict[str, Any]]:
+            hits = self.store.search_bm25(
+                query,
+                limit=k_each,
+                type_=type_,
+                exclude_types=exclude_types,
+                as_of=as_of,
+            )
+            return cast("list[dict[str, Any]]", hits)
+
+        def _run_exact_future() -> list[dict[str, Any]]:
+            hits = self.store.search_bm25(
+                query,
+                limit=k_each,
+                type_=type_,
+                exclude_types=exclude_types,
+                field_boost="exact",
+                as_of=as_of,
+            )
+            return cast("list[dict[str, Any]]", hits)
+
+        def _run_facts() -> list[dict[str, Any]]:
+            return self._fetch_fact_candidates(
+                query,
+                limit=k_each,
+                type_=type_,
+                exclude_types=exclude_types,
+                exclude_tags=exclude_tags,
+                as_of=as_of,
+            )
+
+        def _vec_leg() -> tuple[list[dict[str, Any]], list[float] | None]:
+            """Embed the query and fetch vec candidates (+ hype fold)."""
+            try:
+                _query_for_embed = query
+                _hyde_enabled = flag_bool("MEMO_HYDE_ENABLED")
+                if _hyde_enabled:
+                    _log.debug("HyDE enabled, generating hypothetical doc")
+                    _hyde_doc = self._generate_hyde_document(query)
+                    if _hyde_doc:
+                        _query_for_embed = _hyde_doc
+                        emit(
+                            trace,
+                            "hyde",
+                            original_query=query,
+                            hyde_doc=_hyde_doc[:100] + "…",
+                        )
+                        _log.info("HyDE doc generated: %s", _hyde_doc[:100])
+                    else:
+                        _log.warning("HyDE returned empty doc, falling back to original query")
+                emb_local = self.embedder.embed_query(_query_for_embed)
+                vec_local = self.store.search(
+                    emb_local,
+                    limit=k_each,
+                    type_=type_,
+                    exclude_types=exclude_types,
+                    date_from=date_from,
+                    date_to=date_to,
+                    exclude_tags=exclude_tags,
+                    as_of=as_of,
+                )
+                if flag_bool("MEMO_HYPE_ENABLED"):
+                    before = len(vec_local)
+                    vec_local = self._hype_fold_candidates(
+                        vec_local,
+                        emb_local,
+                        k_each,
+                        type_=type_,
+                        exclude_types=exclude_types,
+                        exclude_tags=exclude_tags,
+                        as_of=as_of,
+                    )
+                    variant = self._hype_variant_mismatch_warning()
+                    emit(
+                        trace,
+                        "hype_fold",
+                        mode="hybrid",
+                        input_count=before,
+                        output_count=len(vec_local),
+                        **({"warning": variant} if variant else {}),
+                    )
+                return vec_local, emb_local
+            except Exception as exc:
+                _log.warning(
+                    "embedder unavailable, vec leg disabled in hybrid mode: %s",
+                    exc,
+                    exc_info=True,
+                )
+                return [], None
+
+        if parallel:
+            # Submit the lexical/fact legs first so they overlap the embed.
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                bm_future = pool.submit(_run_bm25_future)
+                exact_future = pool.submit(_run_exact_future)
+                fact_future = pool.submit(_run_facts) if fact_enabled else None
+                vec_hits, emb = _vec_leg()
+                bm_hits = bm_future.result()
+                exact_hits = exact_future.result()
+                fact_hits = fact_future.result() if fact_future is not None else []
+        else:
+            vec_hits, emb = _vec_leg()
+            bm_hits = _run_bm25_future()
+            exact_hits = _run_exact_future()
+            fact_hits = _run_facts()
+
+        # Adaptive rerank pool (identical logic to the historical inline block) —
+        # resizes ``input_k`` for the fusion. The BM25 legs were fetched with the
+        # original k_each; a widened ``input_k`` only means "consider more",
+        # which the already-fetched pool already satisfied (k_each = 2* input_k).
+        if self.cfg.reranker_enabled and flag_bool("MEMO_RERANK_ADAPTIVE_POOL") and vec_hits:
+            _STDDEV_HIGH = 0.15
+            _STDDEV_LOW = 0.05
+            _POOL_MULT = 1.5
+            _POOL_CAP = 200
+            scores = [h.get("score") or 0.0 for h in vec_hits]
+            if len(scores) > 1:
+                mean = sum(scores) / len(scores)
+                var = sum((s - mean) ** 2 for s in scores) / len(scores)
+                stddev = math.sqrt(var)
+                if stddev > _STDDEV_HIGH:
+                    input_k = min(int(input_k * _POOL_MULT), _POOL_CAP)
+                elif stddev < _STDDEV_LOW:
+                    input_k = max(limit + 5, 15)
+        return vec_hits, bm_hits, exact_hits, fact_hits, emb, input_k
+
     def _build_candidate_pool(
         self,
         query: str,
@@ -353,8 +540,12 @@ class _SearchOpsMixin(_MemoryBase):
             rows = self.store.search_bm25(
                 query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
-            emit(trace, 
-                "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
+            emit(
+                trace,
+                "candidate_generation",
+                mode=mode,
+                bm25_count=len(rows),
+                output_count=len(rows),
             )
         elif mode == "exact":
             # Precise keyword lookup: strict AND (no OR loosening) with an
@@ -368,15 +559,23 @@ class _SearchOpsMixin(_MemoryBase):
                 field_boost="exact",
                 as_of=as_of,
             )
-            emit(trace, 
-                "candidate_generation", mode=mode, bm25_count=len(rows), output_count=len(rows)
+            emit(
+                trace,
+                "candidate_generation",
+                mode=mode,
+                bm25_count=len(rows),
+                output_count=len(rows),
             )
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
                 query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
-            emit(trace, 
-                "candidate_generation", mode=mode, fuzzy_count=len(rows), output_count=len(rows)
+            emit(
+                trace,
+                "candidate_generation",
+                mode=mode,
+                fuzzy_count=len(rows),
+                output_count=len(rows),
             )
         elif mode == "vec":
             # Asymmetric retrieval: queries are embedded WITH the
@@ -394,8 +593,12 @@ class _SearchOpsMixin(_MemoryBase):
                 exclude_tags=exclude_tags,
                 as_of=as_of,
             )
-            emit(trace, 
-                "candidate_generation", mode=mode, vec_count=len(rows), output_count=len(rows)
+            emit(
+                trace,
+                "candidate_generation",
+                mode=mode,
+                vec_count=len(rows),
+                output_count=len(rows),
             )
             # HyPE fold: match the query against the nightly question-space
             # index and max-fold the results into the doc candidates (raises
@@ -408,7 +611,8 @@ class _SearchOpsMixin(_MemoryBase):
                     rows, emb, limit, type_=type_, exclude_types=exclude_types, as_of=as_of
                 )
                 variant_warning = self._hype_variant_mismatch_warning()
-                emit(trace, 
+                emit(
+                    trace,
                     "hype_fold",
                     input_count=before_hype,
                     output_count=len(rows),
@@ -428,102 +632,24 @@ class _SearchOpsMixin(_MemoryBase):
             # collapse can refill from the next distinct documents.
             if flag_bool("MEMO_SEARCH_CHUNK_PARENT") and type_ not in REFERENCE_TYPES:
                 input_k = max(input_k, limit * _CHUNK_PARENT_POOL_FACTOR)
-            k_each = max(input_k * 2, 20)
-            try:
-                _query_for_embed = query
-                # HyDE: generate hypothetical answer doc, embed that instead of raw query
-                _hyde_enabled = flag_bool("MEMO_HYDE_ENABLED")
-                if _hyde_enabled:
-                    _log.debug("HyDE enabled, generating hypothetical doc")
-                    _hyde_doc = self._generate_hyde_document(query)
-                    if _hyde_doc:
-                        _query_for_embed = _hyde_doc
-                        emit(trace, "hyde", original_query=query, hyde_doc=_hyde_doc[:100] + "…")
-                        _log.info("HyDE doc generated: %s", _hyde_doc[:100])
-                    else:
-                        _log.warning("HyDE returned empty doc, falling back to original query")
-                emb = self.embedder.embed_query(_query_for_embed)
-                vec_hits = self.store.search(
-                    emb,
-                    limit=k_each,
-                    type_=type_,
-                    exclude_types=exclude_types,
-                    date_from=date_from,
-                    date_to=date_to,
-                    exclude_tags=exclude_tags,
-                    as_of=as_of,
-                )
-                if flag_bool("MEMO_HYPE_ENABLED"):
-                    before_hype = len(vec_hits)
-                    vec_hits = self._hype_fold_candidates(
-                        vec_hits,
-                        emb,
-                        k_each,
-                        type_=type_,
-                        exclude_types=exclude_types,
-                        exclude_tags=exclude_tags,
-                        as_of=as_of,
-                    )
-                    variant_warning = self._hype_variant_mismatch_warning()
-                    emit(trace, 
-                        "hype_fold",
-                        mode="hybrid",
-                        input_count=before_hype,
-                        output_count=len(vec_hits),
-                        **({"warning": variant_warning} if variant_warning else {}),
-                    )
-            except Exception as exc:
-                _log.warning(
-                    "embedder unavailable, vec leg disabled in hybrid mode: %s",
-                    exc,
-                    exc_info=True,
-                )
-                vec_hits = []
-            # Adaptive rerank pool: resize input_k based on the score spread of
-            # vec candidates.  High variance → results are diverse, widen the pool
-            # so the reranker can pick the best from a richer set.  Low variance
-            # → tight cluster, shrink to avoid wasted cross-encoder calls.
-            # Thresholds and multiplier are intentionally hardcoded (not flags) to
-            # avoid flag proliferation; the outer MEMO_RERANK_ADAPTIVE_POOL gate
-            # keeps the eval baseline stable when disabled.
-            if self.cfg.reranker_enabled and flag_bool("MEMO_RERANK_ADAPTIVE_POOL") and vec_hits:
-                _STDDEV_HIGH = 0.15  # above this → high diversity
-                _STDDEV_LOW = 0.05  # below this → tight cluster
-                _POOL_MULT = 1.5
-                _POOL_CAP = 200
-                scores = [h.get("score") or 0.0 for h in vec_hits]
-                if len(scores) > 1:
-                    _mean = sum(scores) / len(scores)
-                    _var = sum((s - _mean) ** 2 for s in scores) / len(scores)
-                    _stddev = math.sqrt(_var)
-                    if _stddev > _STDDEV_HIGH:
-                        input_k = min(int(input_k * _POOL_MULT), _POOL_CAP)
-                    elif _stddev < _STDDEV_LOW:
-                        input_k = max(limit + 5, 15)
-                    # else: medium diversity → keep input_k unchanged
-            bm_hits = self.store.search_bm25(
-                query, limit=k_each, type_=type_, exclude_types=exclude_types, as_of=as_of
-            )
-            exact_hits = self.store.search_bm25(
+            (
+                vec_hits,
+                bm_hits,
+                exact_hits,
+                fact_hits,
+                emb,
+                input_k,
+            ) = self._build_hybrid_legs(
                 query,
-                limit=k_each,
+                input_k=input_k,
+                limit=limit,
                 type_=type_,
                 exclude_types=exclude_types,
-                field_boost="exact",
+                exclude_tags=exclude_tags,
+                date_from=date_from,
+                date_to=date_to,
                 as_of=as_of,
-            )
-
-            fact_hits = (
-                self._fetch_fact_candidates(
-                    query,
-                    limit=k_each,
-                    type_=type_,
-                    exclude_types=exclude_types,
-                    exclude_tags=exclude_tags,
-                    as_of=as_of,
-                )
-                if flag_bool("MEMO_FACT_RETRIEVAL_ENABLED")
-                else []
+                trace=trace,
             )
 
             # Fuse all sources. RRF supports multiple ranked lists. `k` is
@@ -613,14 +739,16 @@ class _SearchOpsMixin(_MemoryBase):
                     if str(row.get("id")) in lexical_ids
                     or vec_scores.get(str(row.get("id")), 0.0) >= min_vec_score
                 ]
-                emit(trace, 
+                emit(
+                    trace,
                     "abstention",
                     input_count=before_abstention,
                     output_count=len(rows),
                     dropped_count=before_abstention - len(rows),
                     min_vec_score=min_vec_score,
                 )
-            emit(trace, 
+            emit(
+                trace,
                 "candidate_generation",
                 mode="hybrid",
                 vec_count=len(vec_hits),
@@ -633,9 +761,7 @@ class _SearchOpsMixin(_MemoryBase):
             )
         return rows, emb
 
-    def _stage_materialize(
-        self, rows: list[dict[str, Any]], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_materialize(self, rows: list[dict[str, Any]], ctx: SearchCtx) -> list[MemoryRecord]:
         """Turn raw dict candidates into MemoryRecord with body text.
 
         Hybrid mode feeds the pool from the FTS index in ONE batched query
@@ -655,21 +781,23 @@ class _SearchOpsMixin(_MemoryBase):
             else:
                 body = self._read_body(r["path"])
             out.append(record_from_row(r, body=body))
-        emit(ctx.trace, "materialize", input_count=len(rows), output_count=len(out), load_bodies=ctx.load_bodies)
+        emit(
+            ctx.trace,
+            "materialize",
+            input_count=len(rows),
+            output_count=len(out),
+            load_bodies=ctx.load_bodies,
+        )
         return out
 
-    def _stage_fact_surface(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_fact_surface(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         if out and flag_bool("MEMO_FACT_SURFACE_ENABLED"):
             before = len(out)
             out = self._attach_related_fact_edges(ctx.query, out)
             emit(ctx.trace, "fact_surface", input_count=before, output_count=len(out))
         return out
 
-    def _stage_forget_filter(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_forget_filter(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Drop soft-forgotten memories (forget_after TTL elapsed, see
         lifecycle.py) before feedback/rerank so they never reach the
         consumer — recall, ask, chat all route through here. Reversible
@@ -682,9 +810,7 @@ class _SearchOpsMixin(_MemoryBase):
             emit(ctx.trace, "forget_filter", input_count=before, output_count=len(out))
         return out
 
-    def _stage_chunk_parent(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_chunk_parent(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Chunk→parent mapping (MEMO_SEARCH_CHUNK_PARENT, default off) runs on
         the WIDE pool, before rerank and the trim to `limit`. Collapsing after
         the trim could only shrink the result: a long note whose eight chunks
@@ -698,9 +824,7 @@ class _SearchOpsMixin(_MemoryBase):
             emit(ctx.trace, "chunk_parent", input_count=before, output_count=len(out))
         return out
 
-    def _stage_feedback(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_feedback(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Source-level feedback (👍 / 👎) — applied AFTER RRF/vec
         retrieval but BEFORE cross-encoder rerank so the reranker doesn't
         waste cycles on hits the user already vetoed. Reuses the vec/hybrid
@@ -731,9 +855,7 @@ class _SearchOpsMixin(_MemoryBase):
             )
         return out
 
-    def _stage_rerank_gate(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_rerank_gate(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Compute whether the cross-encoder rerank will run this search.
 
         Mirrors the historical `_reranker_will_run` computation: hybrid mode
@@ -764,9 +886,7 @@ class _SearchOpsMixin(_MemoryBase):
             emit(ctx.trace, "health_pre_rerank", input_count=before, output_count=len(out))
         return out
 
-    def _stage_rerank(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_rerank(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Cross-encoder rerank on hybrid mode only (skipped for vec/bm25 and
         when disable_reranker=True). Includes the skip-confident-RRF decision
         that can clamp the pool back to `limit` without running the reranker."""
@@ -804,9 +924,7 @@ class _SearchOpsMixin(_MemoryBase):
             out = out[: ctx.limit]
         return out
 
-    def _stage_recency_decay(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_recency_decay(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Blend a freshness bonus into the score so older memories don't
         crowd out recent ones. MEMO_SEARCH_DECAY_HALFLIFE (days) sets the
         halflife explicitly; if unset, the consumer paths (recall/ask/chat)
@@ -843,9 +961,7 @@ class _SearchOpsMixin(_MemoryBase):
             emit(ctx.trace, "cache_read_through", input_count=before, output_count=len(out))
         return out
 
-    def _stage_entity_boost(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_entity_boost(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Entity-aware score boost: if query mentions known entities (persons,
         technologies, projects), boost chunks whose extra["entities"] overlaps.
         Gated by MEMO_ENTITY_RETRIEVAL_ENABLED. Best-effort: any failure is
@@ -883,18 +999,14 @@ class _SearchOpsMixin(_MemoryBase):
             emit(ctx.trace, "verification_decay", input_count=before, output_count=len(out))
         return out
 
-    def _stage_retrieval_boost(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_retrieval_boost(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         if out and flag_bool("MEMO_RETRIEVAL_BOOST"):
             before = len(out)
             out = self._apply_retrieval_boost(ctx.query, out)
             emit(ctx.trace, "retrieval_boost", input_count=before, output_count=len(out))
         return out
 
-    def _stage_health_post(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_health_post(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Post-pipeline health pass — skipped when the pre-rerank stage
         already applied health scores this search."""
         if out and not flag_bool("MEMO_HEALTH_SCORES_DISABLED") and not ctx.health_applied:
@@ -903,18 +1015,14 @@ class _SearchOpsMixin(_MemoryBase):
             emit(ctx.trace, "health", input_count=before, output_count=len(out))
         return out
 
-    def _stage_quality_rerank(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_quality_rerank(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         if out and ctx.quality_rerank and flag_bool("MEMO_QUALITY_RERANK"):
             before = len(out)
             out = self._apply_quality_rerank(out)
             emit(ctx.trace, "quality_rerank", input_count=before, output_count=len(out))
         return out
 
-    def _stage_co_recall_boost(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_co_recall_boost(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Co-recall ranking boost: surface memories relationally associated
         with the top hit. Read side of MEMO_GRAPH_CO_RECALL; cheap (one graph
         query), behind the same flag so default behaviour is unchanged."""
@@ -924,9 +1032,7 @@ class _SearchOpsMixin(_MemoryBase):
             emit(ctx.trace, "co_recall_boost", input_count=before, output_count=len(out))
         return out
 
-    def _stage_reference_floor(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_reference_floor(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Reference-tier noise floor: in EXPLICIT retrieval (search/ask/chat)
         bulk vault chunks compete with durable memories — the recall hook
         SQL-excludes them (MEMO_RECALL_EXCLUDE_REFERENCE) but the explicit
@@ -955,9 +1061,7 @@ class _SearchOpsMixin(_MemoryBase):
     ) -> list[MemoryRecord]:
         return self._apply_curated_graph_order(ctx.query, out, ctx.trace)
 
-    def _stage_record_usage(
-        self, out: list[MemoryRecord], ctx: SearchCtx
-    ) -> list[MemoryRecord]:
+    def _stage_record_usage(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Record access + co-recall graph edges (side effects of a
         user-visible retrieval). Not skippable: drops would silently stop
         usage tracking."""
@@ -1004,6 +1108,7 @@ class _SearchOpsMixin(_MemoryBase):
         if out:
             out = self.annotate_relations(out)
         return out
+
     def _apply_curated_graph_order(
         self,
         query: str,

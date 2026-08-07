@@ -20,9 +20,27 @@ from memo.cli_common import console
 
 # (display_name, module, start_fn, stop_fn, status_fn)
 _DAEMONS: tuple[tuple[str, str, str, str, str], ...] = (
-    ("recall", "memo.cli_recall_daemon", "recall_daemon_start", "recall_daemon_stop", "recall_daemon_status"),
-    ("ingest", "memo.cli_ingest_daemon", "ingest_daemon_start", "ingest_daemon_stop", "ingest_daemon_status"),
-    ("maint", "memo.cli_maint_daemon", "maint_daemon_start", "maint_daemon_stop", "maint_daemon_status"),
+    (
+        "recall",
+        "memo.cli_recall_daemon",
+        "recall_daemon_start",
+        "recall_daemon_stop",
+        "recall_daemon_status",
+    ),
+    (
+        "ingest",
+        "memo.cli_ingest_daemon",
+        "ingest_daemon_start",
+        "ingest_daemon_stop",
+        "ingest_daemon_status",
+    ),
+    (
+        "maint",
+        "memo.cli_maint_daemon",
+        "maint_daemon_start",
+        "maint_daemon_stop",
+        "maint_daemon_status",
+    ),
     ("idle", "memo.cli_idle_daemon", "idle_daemon_start", "idle_daemon_stop", "idle_daemon_status"),
 )
 

@@ -128,7 +128,16 @@ def test_recall_logic_emits_directive_only_on_first_turn(monkeypatch, tmp_path) 
     hit = _rec("once0001", "One fact", 0.90)
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -162,7 +171,16 @@ def test_recall_logic_caps_total_context_and_logs_exact_cost(monkeypatch, tmp_pa
     object.__setattr__(hit, "body", "substantial context " * 200)
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -360,7 +378,16 @@ def test_fallback_scoring_does_not_mutate_shared_hits(monkeypatch, tmp_path) -> 
         # 2-dim stub vectors (the guard reads mem.cfg.embedder_dims).
         cfg = SimpleNamespace(embedder_dims=2)
 
-        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return candidates
 
         def _read_body(self, path):
@@ -404,7 +431,16 @@ def test_project_tag_failure_is_logged_not_silent(monkeypatch, tmp_path, caplog)
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [_rec("ok000001", "Surfaced", 0.9)]
 
     with caplog.at_level("DEBUG", logger=rl._logger.name):
@@ -705,7 +741,16 @@ class _OneHitStubMemory:
     def __init__(self, hit: MemoryRecord) -> None:
         self._hit = hit
 
-    def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
+    def search(
+        self,
+        query,
+        limit,
+        mode,
+        recency=False,
+        budget_ms=None,
+        exclude_types=None,
+        exclude_tags=None,
+    ):
         return [self._hit]
 
 
@@ -791,7 +836,16 @@ def test_cold_embedder_with_broken_micro_falls_back_to_bm25(monkeypatch, tmp_pat
     class StubMemory:
         embedder = SimpleNamespace(is_warm=False)  # main embedder cold
 
-        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [hit]
 
     class _BrokenMicro:

@@ -14,8 +14,18 @@ def test_state_compiler() -> None:
         compiler = StateCompiler(wm)
 
         memories = [
-            {"id": "mem_1001", "title": "Use Redis for caching", "body": "Fast in-memory cache", "type": "architecture"},
-            {"id": "mem_1002", "title": "Postgres main DB", "body": "ACID compliant", "type": "config"},
+            {
+                "id": "mem_1001",
+                "title": "Use Redis for caching",
+                "body": "Fast in-memory cache",
+                "type": "architecture",
+            },
+            {
+                "id": "mem_1002",
+                "title": "Postgres main DB",
+                "body": "ACID compliant",
+                "type": "config",
+            },
         ]
 
         count = compiler.compile_from_memories(memories)

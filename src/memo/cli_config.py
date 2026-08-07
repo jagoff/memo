@@ -144,15 +144,17 @@ def config_flags_audit(as_json: bool) -> None:
             decl += len(spec_re.findall(txt))
         if total - decl <= 0:
             dead.append(name)
-        default_on = bool(spec.default) if isinstance(spec.default, (bool, int)) else spec.default not in (None, "", 0, "0", False)
+        default_on = (
+            bool(spec.default)
+            if isinstance(spec.default, (bool, int))
+            else spec.default not in (None, "", 0, "0", False)
+        )
         if not default_on and name not in active_vals:
             dark.append(name)
 
     groups = sorted({spec.group for spec in _flags.REGISTRY.values()})
     stable_groups = {"recall", "search", "ingest", "store", "behavior", "capture", "graph"}
-    experimental = [
-        n for n, spec in _flags.REGISTRY.items() if spec.group not in stable_groups
-    ]
+    experimental = [n for n, spec in _flags.REGISTRY.items() if spec.group not in stable_groups]
 
     summary: dict[str, Any] = {
         "total": len(_flags.REGISTRY),
@@ -177,7 +179,9 @@ def config_flags_audit(as_json: bool) -> None:
     experimental_joined: str = ", ".join(summary["experimental_sample"]) or "none"
     console.print(f"  groups:            {groups_joined}")
     console.print(f"  [red]dead (no reader)[/red]: {len(summary['dead'])} — {dead_joined}")
-    console.print(f"  [yellow]dark (off, never active)[/yellow]: {summary['dark_count']} — {dark_joined}")
+    console.print(
+        f"  [yellow]dark (off, never active)[/yellow]: {summary['dark_count']} — {dark_joined}"
+    )
     console.print(
         f"  [magenta]experimental group[/magenta]: {summary['experimental_count']} — {experimental_joined}"
     )

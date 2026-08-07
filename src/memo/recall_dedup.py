@@ -17,7 +17,6 @@ def _dedup_tokens(text: str) -> set[str]:
     return {t for t in re.findall(r"\w+", (text or "").lower()) if len(t) > 2}
 
 
-
 def collapse_near_dups(relevant: list[Any], *, threshold: float) -> list[Any]:
     """Drop hits whose title+body token-Jaccard with a kept, higher-scored hit
     exceeds ``threshold``. Lexical only — safe for the 5s recall hook (no MLX)."""
@@ -44,11 +43,9 @@ _CODE_REFS_PER_MEMORY_CAP = 2  # max '↳ code' lines per rendered memory
 _CODE_REFS_PER_RENDER_CAP = 4  # max '↳ code' lines per render (token budget wins)
 
 
-
 def _mmr_token_set(hit: Any) -> frozenset[str]:
     text = f"{getattr(hit, 'title', '') or ''} {getattr(hit, 'body', '') or ''}"
     return frozenset(text.lower().split())
-
 
 
 def _apply_mmr(
@@ -98,12 +95,10 @@ def _apply_mmr(
     return [hits[i] for i in selected]
 
 
-
 def _dedup_key(hit: Any) -> str:
     title = " ".join((getattr(hit, "title", "") or "").lower().split())
     body = " ".join((getattr(hit, "body", "") or "").lower().split())[:120]
     return f"{title}|{body}"
-
 
 
 def _deduplicate_synthesis(hits: list[Any]) -> list[Any]:
@@ -123,7 +118,6 @@ def _deduplicate_synthesis(hits: list[Any]) -> list[Any]:
     return [h for h in hits if h.id not in covered_ids]
 
 
-
 def dedup_hits(hits: list[Any]) -> list[Any]:
     seen_ids: set[str] = set()
     seen_keys: set[str] = set()
@@ -138,5 +132,3 @@ def dedup_hits(hits: list[Any]) -> list[Any]:
         seen_keys.add(key)
         out.append(h)
     return out
-
-

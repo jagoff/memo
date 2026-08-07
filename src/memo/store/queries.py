@@ -59,9 +59,7 @@ _META_INSERT_COLUMNS: tuple[str, ...] = (
 )
 # Columns written on INSERT and PRESERVED on conflict (set-once semantics —
 # `created`, the validity interval). Everything else in the catalog updates.
-_META_PRESERVED_ON_CONFLICT: frozenset[str] = frozenset(
-    {"created", "valid_at", "invalid_at"}
-)
+_META_PRESERVED_ON_CONFLICT: frozenset[str] = frozenset({"created", "valid_at", "invalid_at"})
 
 
 def _meta_write_sql(columns: tuple[str, ...]) -> tuple[str, str]:
@@ -117,7 +115,9 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
             )
         if not self._has_identity_cols:
             return tuple(
-                c for c in columns if c not in ("namespace", "normalized_title", "normalized_content_hash")
+                c
+                for c in columns
+                if c not in ("namespace", "normalized_title", "normalized_content_hash")
             )
         return columns
 

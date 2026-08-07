@@ -103,7 +103,16 @@ def test_embed_batch_chunks_and_releases_lock_between_chunks(monkeypatch) -> Non
 
 def test_recall_logic_defers_log_until_thunk_called(monkeypatch, tmp_path) -> None:
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [_rec("aaaaaaaa", "Surfaced", 0.91)]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -135,7 +144,16 @@ def test_recall_logic_defers_log_until_thunk_called(monkeypatch, tmp_path) -> No
 
 def test_recall_logic_no_hits_returns_none_thunk(monkeypatch, tmp_path) -> None:
     class EmptyMemory:
-        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return []
 
     monkeypatch.setenv("MEMO_RECALL_EXPAND_CONTEXT", "0")

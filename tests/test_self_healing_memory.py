@@ -7,9 +7,7 @@ from memo.outcome import self_heal_execution_failures
 
 def test_self_heal_execution_failures() -> None:
     mem = MagicMock()
-    mem.store.get_health_batch.return_value = {
-        "mem_fail_1": {"confidence": 0.9}
-    }
+    mem.store.get_health_batch.return_value = {"mem_fail_1": {"confidence": 0.9}}
 
     res = self_heal_execution_failures(mem, ["mem_fail_1"])
     assert res["healed"] == 1

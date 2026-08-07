@@ -30,6 +30,7 @@ _RUN_STAMP_RE = re.compile(r"\d{1,20}(?:-\d{1,20}-\d{1,30})?\Z")
 def _state_path(cfg: Config):
     return cfg.state_dir / "maintain"
 
+
 def _prepare_quality_compact_receipt_paths(cfg: Config) -> tuple[Path, Path, str]:
     """Fail closed if apply-mode receipt persistence cannot be set up."""
 
@@ -44,6 +45,7 @@ def _prepare_quality_compact_receipt_paths(cfg: Config) -> tuple[Path, Path, str
     except OSError as exc:
         raise ValidationError(f"quality compaction receipt setup failed: {exc}") from exc
     return d, runs_dir, run_stamp
+
 
 def _persist_quality_compact_receipt(
     d: Path,
@@ -72,6 +74,7 @@ def _persist_quality_compact_receipt(
             run_path.unlink(missing_ok=True)
         raise
 
+
 def _synthesis_state_path(cfg: Config) -> Path:
     return cfg.state_dir / "synthesis_state.json"
 
@@ -81,12 +84,12 @@ def _synthesis_state_path(cfg: Config) -> Path:
     log_level=logging.DEBUG,
     error_message="maintain: could not read synthesis_state.json",
 )
-
 def _read_synthesis_last_run(cfg: Config) -> str | None:
     """Return the ISO timestamp of the last synthesis run, or None."""
     p = _synthesis_state_path(cfg)
     data = json.loads(p.read_text(encoding="utf-8"))
     return data.get("last_run") or None
+
 
 def _write_synthesis_last_run(cfg: Config, ts: str) -> None:
     """Persist the synthesis run timestamp to state_dir/synthesis_state.json."""
@@ -97,6 +100,7 @@ def _write_synthesis_last_run(cfg: Config, ts: str) -> None:
     except Exception as exc:
         _log.warning("maintain: could not write synthesis_state.json: %s", exc)
 
+
 def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     """Return (older_id, newer_id) by `updated` timestamp; falls back to the
     pair order (a, b) when a record or timestamp is missing."""
@@ -106,6 +110,7 @@ def _older_id(mem: Any, id_a: str, id_b: str) -> tuple[str, str]:
     if ua and ub:
         return (id_a, id_b) if ua <= ub else (id_b, id_a)
     return id_a, id_b
+
 
 def _undo_targets(receipt: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
     """(archived_ids, soft_forgotten_ids, invalidated_ids) recorded in a receipt.
@@ -138,6 +143,7 @@ def _undo_targets(receipt: dict[str, Any]) -> tuple[list[str], list[str], list[s
             forgotten.append(f["id"])
     return archived, forgotten, invalidated
 
+
 def _quality_compact_rollback_ids(receipt: dict[str, Any]) -> list[str]:
     """Conservatively include every attempted archive when rolling back apply."""
 
@@ -154,12 +160,14 @@ def _quality_compact_rollback_ids(receipt: dict[str, Any]) -> list[str]:
             rollback_ids.append(source_id)
     return rollback_ids
 
+
 def _rollback_quality_compaction(mem: Any, receipt: dict[str, Any]) -> tuple[list[str], list[str]]:
     rollback_ids = _quality_compact_rollback_ids(receipt)
     restored, missing = _restore_archived(mem, rollback_ids, dry_run=False)
     indexed, index_failed = _restore_quality_compact_indexes(mem, restored)
     missing_all = sorted(set(missing) | set(index_failed))
     return indexed, missing_all
+
 
 def _restore_quality_compact_indexes(
     mem: Any,
@@ -235,6 +243,7 @@ def _restore_quality_compact_indexes(
             continue
         indexed.append(memory_id)
     return indexed, failed
+
 
 def _restore_archived(mem: Any, ids: list[str], *, dry_run: bool) -> tuple[list[str], list[str]]:
     """Move receipt-listed .md files back out of inactive/ (matched by
