@@ -18,6 +18,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
+from memo import web_build
 from memo.cli import cli
 
 pytestmark = pytest.mark.conformance
@@ -44,3 +45,15 @@ def test_stats_reports_the_real_total(big_corpus, corpus_size) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["corpus"]["total"] == corpus_size
+
+
+def test_dashboard_corpus_pillar_reports_the_real_total(big_corpus, corpus_size) -> None:
+    # include_projection=False skips the vector-read + PCA step (expensive,
+    # irrelevant to the total) -- the same cheap path the live-refresh
+    # endpoint uses. Call collect_data() directly: it's the single function
+    # that gathers everything `memo dashboard` renders, so this covers the
+    # real data path without standing up an HTTP server.
+    data = web_build.collect_data(big_corpus, include_projection=False)
+    corpus_pillar = next((p for p in data["pillars"] if p["label"] == "Corpus"), None)
+    assert corpus_pillar is not None, data["pillars"]
+    assert corpus_pillar["summary"] == f"{corpus_size:,} memories"
