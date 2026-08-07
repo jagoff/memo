@@ -428,6 +428,25 @@ def test_check_gate_pins_to_baseline_config_and_catches_masked_regression():
     assert "cfgB" in res.message  # current winner surfaced too
 
 
+def test_baseline_payload_records_the_corpus_it_was_measured_on() -> None:
+    rows = _rows((0.6, 0.1))
+
+    payload = eval_recall.baseline_payload(
+        rows,
+        k=5,
+        labels_fingerprint="labels-abc",
+        corpus_fingerprint="corpus-123",
+    )
+
+    assert payload["corpus_fingerprint"] == "corpus-123"
+    assert payload["labels_fingerprint"] == "labels-abc"
+    assert payload["k"] == 5
+    # The existing metric contract is unchanged.
+    assert payload["precision_at_k"] == 0.6
+    assert payload["noise_at_k"] == 0.1
+    assert "config" in payload
+
+
 def test_check_gate_fails_loudly_when_pinned_config_absent_from_run():
     # F1: the baseline pins a config this run did not evaluate — comparing a
     # different config would be apples-to-oranges, so fail loudly.

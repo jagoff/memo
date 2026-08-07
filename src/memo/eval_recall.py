@@ -1209,6 +1209,28 @@ def full_gate_metrics(rows: list[Row]) -> dict[str, Any]:
     return {"config": best_row(rows).config, **gate_metrics(rows), **avoid_gate_metrics(rows)}
 
 
+def baseline_payload(
+    rows: list[Row],
+    *,
+    k: int,
+    labels_fingerprint: str,
+    corpus_fingerprint: str,
+) -> dict[str, Any]:
+    """The exact dict ``--update-baseline`` persists.
+
+    Adds ``corpus_fingerprint`` to ``full_gate_metrics`` so :func:`check_gate`
+    can tell a code regression from corpus drift. Without it, a drop in
+    precision@K is unattributable and the only available remedy is reseeding
+    the baseline, which discards the signal it was meant to carry.
+    """
+    return {
+        **full_gate_metrics(rows),
+        "k": k,
+        "labels_fingerprint": labels_fingerprint,
+        "corpus_fingerprint": corpus_fingerprint,
+    }
+
+
 def check_gate(
     rows: list[Row],
     baseline: dict[str, Any],

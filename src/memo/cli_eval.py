@@ -483,7 +483,12 @@ def eval_recall_cmd(
         # check_gate can enforce the ⛔ coverage/leakage floors — bare
         # gate_metrics wrote neither, leaving those checks vacuously true forever.
         metrics = eval_recall.full_gate_metrics(rows)
-        payload = {**metrics, "k": k, "labels_fingerprint": labels.fingerprint()}
+        payload = eval_recall.baseline_payload(
+            rows,
+            k=k,
+            labels_fingerprint=labels.fingerprint(),
+            corpus_fingerprint=corpus_fp,
+        )
         bp = _baseline_path(cfg)
         _atomic_write_json(bp, payload)
         console.print(
