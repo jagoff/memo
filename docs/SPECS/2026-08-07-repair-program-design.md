@@ -194,9 +194,20 @@ the store with no diff to blame. A gate that cannot separate the two cannot
 approve a ranking change.
 
 1. Reseed the baseline from a clean worktree at `master`.
-2. Version the baseline and its date in the repository so drift is
-   attributable to a point in time.
-3. Report `Δcode` and `Δcorpus` as separate quantities.
+2. Record the corpus fingerprint the baseline was measured on, inside the
+   baseline itself, so a later failure can state whether the corpus moved.
+3. Report `Δcode` and `Δcorpus` as separate quantities: a same-corpus,
+   two-revision comparison (`--against <ref>`) is the check a ranking change
+   has to clear; the saved-baseline gate keeps guarding pushes but now names
+   which of the two deltas it is looking at.
+
+> An earlier draft of this section said "version the baseline in the
+> repository". That is not available: the baseline is deliberately
+> machine-local (`cli_eval.py:38` — "the gate runs against THIS machine's live
+> index, so the baseline can't be a committed repo file"), and committing one
+> machine's numbers would make the gate meaningless everywhere else. Recording
+> the corpus fingerprint plus the two-revision comparison reaches the same
+> goal — attribution — without contradicting that constraint.
 
 **Verify**
 
