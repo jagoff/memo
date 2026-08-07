@@ -673,18 +673,21 @@ def test_deadline_is_disarmed_before_the_hook_returns(tmp_path: Path, monkeypatc
     assert calls[-1][1] == 0, f"the last itimer call must disarm, got {calls[-1][1]}"
 
 
-def test_no_alarm_survives_a_bailing_hook(tmp_path: Path, monkeypatch) -> None:
-    """The machine-prompt gate bails before the deadline is armed, so nothing
-    should be left pending — and `_disarm_deadline` must tolerate being called
-    when no timer was ever set."""
-    import signal as _signal
+def test_a_bailing_hook_leaves_the_hosts_alarm_alone(tmp_path: Path, monkeypatch) -> None:
+    """The machine-prompt gate bails before the deadline is armed, so the hook
+    must not touch ITIMER_REAL at all.
 
+    The timer is process-global. Whenever the hook runs inside a host that also
+    uses SIGALRM — pytest's own `--timeout` does — an unconditional disarm on the
+    way out would cancel the host's alarm rather than ours, which is how this
+    test first failed in CI (it read a 119.99s pytest-timeout alarm) while
+    passing locally without the flag.
+    """
     calls = _capture_itimer(monkeypatch)
 
     _invoke_hook(_TASK_NOTIFICATION, _trivial_env(tmp_path))
 
-    assert all(secs == 0 for _which, secs in calls), calls
-    assert _signal.getitimer(_signal.ITIMER_REAL)[0] == 0
+    assert calls == [], f"a hook that armed nothing must clear nothing, got {calls}"
 
 
 # ---------------------------------------------------------------------------

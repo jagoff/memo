@@ -76,6 +76,13 @@ _TRIVIAL_WORDS: frozenset[str] = frozenset(
 _FALLBACK_EMBED_TIMEOUT_S = 4.0
 
 
+# Whether THIS module armed ITIMER_REAL, and what handler it displaced. The
+# timer is process-global, so the disarm must be able to tell "ours" from "the
+# host's" — see _disarm_deadline.
+_deadline_armed = False
+_prev_alarm_handler: Any = None
+
+
 def _admit_prompt(prompt: str, bail: Callable[[str], None]) -> str:
     """The text recall should run on, or `bail` (which exits) for a machine turn.
 
@@ -119,19 +126,32 @@ def _arm_deadline(started_at: float, bail: Callable[[str], None]) -> None:
         _disarm_deadline()
         bail(f"hook budget exceeded ({budget_s:g}s)")
 
+    global _deadline_armed, _prev_alarm_handler
     with contextlib.suppress(ValueError, OSError):
         # ValueError: not the main thread (no signal delivery available).
-        signal.signal(signal.SIGALRM, _on_deadline)
+        _prev_alarm_handler = signal.signal(signal.SIGALRM, _on_deadline)
         signal.setitimer(signal.ITIMER_REAL, max(0.1, budget_s - (time.time() - started_at)))
+        _deadline_armed = True
 
 
 def _disarm_deadline() -> None:
-    """Cancel any armed recall-hook wall-clock alarm. Idempotent, never raises
-    (a non-main thread has no timer to cancel and must not fail the caller)."""
-    if not hasattr(signal, "SIGALRM"):
+    """Cancel the recall-hook's wall-clock alarm, and only ever that one.
+
+    ITIMER_REAL is process-global and shared. The hook normally owns its own
+    process, but when it runs inside a host that also uses SIGALRM — pytest's
+    `--timeout`, for one — clearing the timer unconditionally would cancel the
+    host's alarm instead of ours. So this is a no-op unless `_arm_deadline`
+    actually armed something. Idempotent, and never raises: a non-main thread
+    has no timer to cancel and must not fail the caller.
+    """
+    global _deadline_armed
+    if not _deadline_armed or not hasattr(signal, "SIGALRM"):
         return
+    _deadline_armed = False
     with contextlib.suppress(ValueError, OSError):
         signal.setitimer(signal.ITIMER_REAL, 0)
+        if _prev_alarm_handler is not None:
+            signal.signal(signal.SIGALRM, _prev_alarm_handler)
 
 
 def apply_session_mode(knobs: RankKnobs, session_mode: str) -> RankKnobs:
