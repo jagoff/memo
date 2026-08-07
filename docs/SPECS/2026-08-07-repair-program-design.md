@@ -47,9 +47,22 @@ Do not destabilize these.
 | Flag wiring | 515 declared, 512 referenced outside `flags*.py` |
 
 The flag-wiring number matters: the P5 finding in the previous audit was
-sometimes read as "498 flags are dead code". They are not. Three are dead
-(listed in Phase 5); the rest are consumed. The problem is that they are
-unexercised, not unreferenced.
+sometimes read as "498 flags are dead code". They are not. The problem is that
+they are unexercised, not unreferenced.
+
+> **Correction (2026-08-07, after execution).** An earlier version of this
+> section named three flags — `MEMO_CRUSHER_CACHE_TTL_DAYS`,
+> `MEMO_CRUSHER_ROWS_KEEP_RATIO`, `MEMO_STATUSLINE_ACTIVITY` — as declared and
+> never read. All three are alive. The first two are read through getter
+> functions called from `capture_core.py` and `cli_maintain.py`; the third is
+> read by a bash script rather than by Python, and its flag spec exists so
+> `memo config validate` can document it. The measurement that produced the
+> claim was a regex for the literal flag name outside `flags*.py`, which sees
+> neither an indirect getter nor a non-Python consumer. **Zero flags are dead.**
+> The lesson generalizes past flags: a static sweep of this codebase over-reports
+> death, because registries, getters, decorators and non-Python callers are all
+> invisible to it. A later sweep during the same work produced ~90 "zero inbound
+> reference" candidates of which ~85 were false positives.
 
 ---
 
@@ -291,9 +304,10 @@ Independent of Phase 2; they touch transport and scoring respectively.
 ### Phase 5 — Reduction
 
 1. Classify all 212 bool flags as **core-tuned**, **advanced**, or
-   **internal**. Delete the three that are declared and never read:
-   `MEMO_CRUSHER_CACHE_TTL_DAYS`, `MEMO_CRUSHER_ROWS_KEEP_RATIO`,
-   `MEMO_STATUSLINE_ACTIVITY`.
+   **internal**. There are no dead flags to delete — see the correction above;
+   the three previously named as dead are all live. Any future "this flag is
+   unused" claim must be checked against indirect getters and non-Python
+   consumers before it is acted on.
 2. Give each of the 31 default-off search/recall features one verdict: **flip**
    (the gate shows a gain), **delete** (no gain and no user), or **freeze** as
    an internal test seam. Phase 0 is what makes "the gate shows a gain"
