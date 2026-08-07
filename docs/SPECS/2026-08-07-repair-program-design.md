@@ -379,3 +379,79 @@ downstream.
 - No deletion of ingested `reference` content.
 - No change to the recall hook's 5s budget or its SQL exclusion of the
   reference tier — both are working and load-bearing.
+
+## Phase 0 verification (2026-08-07)
+
+Task 6 of the eval-gate-and-red-plan (`fix/eval-gate-attribution`, HEAD
+`696ff8a4`) ran the full six-step acceptance check end to end against the live
+corpus on `fer`'s machine. Full transcript: `.superpowers/sdd/2026-08-07-eval-gate-and-red-plan/task-6-report.md`.
+Summary of the four outcomes:
+
+**1. Baseline reseed + `corpus_fingerprint`.** Step 1, run exactly as specified
+(`git worktree add --detach /tmp/memo-baseline origin/master`, then
+`--update-baseline` from that clean checkout) succeeded and produced a
+baseline (`config 'H synth/0.05' · prec@5 0.697 / noise@5 0.0`), but that
+baseline **lacked** `corpus_fingerprint`. Root cause: real GitHub `master`
+(HEAD `4f3a48ac`, confirmed via `gh api repos/jagoff/memo/commits/master`) is
+exactly the merge-base with `fix/eval-gate-attribution` — none of Tasks 2–5
+have merged to master yet, including commit `c6d2225c` ("baseline records the
+corpus fingerprint it was measured on"), which is what writes that key.
+`master` also lacks `src/memo/__main__.py` (added by this branch), so the
+brief's literal `python -m memo` invocation fails there (`python -m memo.cli`
+is required). **This is a plan-sequencing gap, not a branch bug**: the
+corpus-fingerprint capability under test does not exist on trunk yet, so a
+gate reseeded from real `master` today cannot get corpus-aware attribution.
+To produce the acceptance evidence Steps 2–5 actually need, the baseline was
+re-seeded a second time from this worktree's own clean, fully-committed HEAD
+(`git status` clean, zero uncommitted changes) instead of `origin/master`.
+This is justified because `git diff origin/master...HEAD --stat` touches only
+`cli_eval.py` / `eval_recall.py` / `eval_against.py` / `__main__.py` / tests —
+**zero** changes to retrieval-ranking code (`search_ops.py` etc.) — so the
+precision/noise numbers are identical either way (verified: both reseeds
+produced `prec@5 0.697 / noise@5 0.0` for the same winning config). That
+re-seed produced `corpus_fingerprint: "10586:1786144374"`, satisfying outcome
+1 for the corrected baseline.
+
+**2. Determinism.** Two consecutive `--gate --no-cache` runs at the corrected
+baseline both printed `✓ recall gate: PASS — prec@k 0.697 >= 0.697, noise@k
+0.000 <= 0.000` and exited 0. Identical verdict both times — **PASS**.
+
+**3. Deliberate regression, code attribution.** `MEMO_RETRIEVAL_BOOST=0 ...
+--gate --no-cache` correctly failed the gate (precision@k dropped to 0.200,
+exit 1) in both attempts made — but was tagged **`[confounded]`**, not
+`[code]`, both times: `corpus_fingerprint` moved between the baseline capture
+and the gate run (`10586:1786144374 → 10594:1786144740` on the first attempt;
+`10594:1786144805 → 10594:1786144830` on an immediate back-to-back retry with
+a freshly reseeded baseline, same record count, mtime still moved). Root
+cause traced to `eval_recall.fingerprint_corpus`, which fingerprints as
+`record_count:db_file_mtime`: `memo/eval_recall.py`'s `_search_for_eval`
+calls `mem.search()` without `_track_usage=False`, so every eval search
+writes an access-log row via `_record_access`/`store.touch()`
+(`search_ops.py:1069`, default `_track_usage=True`) — the eval harness's own
+hundreds of reads per run touch the same `memvec.db` file the fingerprint
+hashes, and (on this multi-session, actively-used machine, `com.memo.*`
+daemons plus concurrent Claude Code sessions sharing the same `data_dir`) nothing
+guarantees no other read/write lands in the gap between two eval invocations.
+Confirmed the DB is stable at true rest (mtime unchanged over 5s with no eval
+running), so the drift is activity-driven, not filesystem noise. **This did
+not reproduce the specified acceptance evidence** (`[code]`-tagged failure)
+on this machine — recorded as a finding, not forced: the corpus-fingerprint
+mechanism as implemented cannot currently distinguish "code regression on an
+unchanged corpus" from "eval's own read-path activity" once any real
+gap exists between baseline and gate run. Per instructions, source was not
+modified to make this pass.
+
+**4. `--against HEAD` no-op agreement.** `--profile pre-push --against HEAD`
+returned `✓ vs HEAD: PASS — prec@k 0.697 vs ref 0.697, noise@k 0.000 vs ref
+0.000 (same corpus, both runs uncached)` — numbers identical on both sides,
+confirming `--no-cache` reaches both sides of the comparison and the shared
+`recall.json` cache did not leak between them. **PASS**.
+
+**Surprise worth carrying into Phase 2 planning:** outcome 3's `[code]` vs
+`[confounded]` distinction is not reliably reachable on a live, concurrently-used
+corpus with the current `count:mtime` fingerprint, because the eval harness's
+own retrieval calls mutate the same access-tracking rows the fingerprint's
+mtime depends on. Before Phase 2 relies on this gate to attribute regressions,
+either (a) `_search_for_eval` should pass `_track_usage=False`, or (b) the
+fingerprint should hash something read-path writes don't touch (e.g. a
+content-only checksum of `meta`/`vec`/`fts`, excluding `access`/`memory_health`).
