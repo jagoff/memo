@@ -30,26 +30,13 @@ from click.testing import CliRunner
 from memo.cli import cli
 from memo.graph import GraphStore
 
-from .conftest import seeded_id
+from .conftest import _env, seeded_id
 
 pytestmark = pytest.mark.conformance
 
 _CREATED = "2026-01-01T00:00:00+00:00"
 _ENTITY_A = "conformance-mindmap-alpha"
 _ENTITY_B = "conformance-mindmap-beta"
-
-
-def _env(cfg) -> dict[str, str]:
-    return {
-        "MEMO_NONINTERACTIVE": "1",
-        "MEMO_DATA_DIR": str(cfg.data_dir),
-        "MEMO_STATE_DIR": str(cfg.state_dir),
-        "MEMO_EMBEDDER_DIMS": "64",
-        # None of these surfaces search or rerank, but Config.from_env()
-        # defaults reranker_enabled=True on Apple Silicon unless told
-        # otherwise -- keep the lane MLX-free regardless of that default.
-        "MEMO_RERANKER_ENABLED": "false",
-    }
 
 
 def _key_file(tmp_path: Path) -> Path:

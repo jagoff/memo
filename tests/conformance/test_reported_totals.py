@@ -21,16 +21,9 @@ from click.testing import CliRunner
 from memo import web_build
 from memo.cli import cli
 
+from .conftest import _env
+
 pytestmark = pytest.mark.conformance
-
-
-def _env(cfg) -> dict[str, str]:
-    return {
-        "MEMO_NONINTERACTIVE": "1",
-        "MEMO_DATA_DIR": str(cfg.data_dir),
-        "MEMO_STATE_DIR": str(cfg.state_dir),
-        "MEMO_EMBEDDER_DIMS": "64",
-    }
 
 
 def test_analytics_summary_reports_the_real_total(big_corpus, corpus_size) -> None:

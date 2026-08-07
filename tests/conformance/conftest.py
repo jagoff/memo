@@ -49,6 +49,27 @@ def _vector(topic: int, i: int) -> list[float]:
     return [v / norm for v in out]
 
 
+def _env(cfg) -> dict[str, str]:
+    """Env for a CliRunner invocation against a conformance corpus config.
+
+    Shared by every conformance module that drives the CLI against
+    `big_corpus` (or a config built the same way) -- was duplicated
+    per-module until this one, see test_output_paths.py / test_reported_totals.py.
+
+    MEMO_RERANKER_ENABLED=false because Config.from_env() defaults
+    reranker_enabled=True on Apple Silicon unless told otherwise -- none of
+    these surfaces search or rerank, but this keeps the lane MLX-free
+    regardless of that default.
+    """
+    return {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(cfg.data_dir),
+        "MEMO_STATE_DIR": str(cfg.state_dir),
+        "MEMO_EMBEDDER_DIMS": str(DIMS),
+        "MEMO_RERANKER_ENABLED": "false",
+    }
+
+
 @pytest.fixture(scope="session")
 def corpus_size() -> int:
     return int(os.environ.get("MEMO_CONFORMANCE_CORPUS_N", "10000"))
