@@ -576,6 +576,88 @@ def test_evaluate_returns_one_row_per_config_in_range(mock_memory):
     assert eval_recall.recommend(rows)
 
 
+# --- Task 5 round 4: eval must not write access rows / move the fingerprint -
+# `_search_for_eval` used to call `mem.search()` without `_track_usage=False`,
+# so every eval search wrote an access-log row: the same access_count signal
+# `memo usefulness` / `dead_weight()` read to decide what's noise, AND —
+# because that write moved memvec.db's mtime, which fingerprint_corpus used to
+# hash — the eval harness moved its own corpus fingerprint just by running,
+# making `corpus_changed` true on essentially every gate run.
+
+
+def test_evaluate_does_not_inflate_access_count(mock_memory):
+    rec = mock_memory.save(
+        content="synapse memflow memo stack architecture", title="Stack", tags=["stack"]
+    )
+    labels = LabelSet(
+        prompts=[Prompt("how is the stack architected", relevant=True)],
+        relevant_terms={"synapse", "stack", "memo"},
+    )
+
+    eval_recall.evaluate(mock_memory, k=3, labels=labels)
+
+    assert mock_memory.store.get_access(rec.id)["access_count"] == 0
+
+    # Contrast: a real (non-eval) search against the same memory DOES bump
+    # it — proving the assertion above isn't vacuously true because nothing
+    # ever matched during the sweep.
+    mock_memory.search("how is the stack architected")
+    assert mock_memory.store.get_access(rec.id)["access_count"] >= 1
+
+
+def test_fingerprint_corpus_is_stable_across_an_eval_sweep(mock_memory):
+    mock_memory.save(content="synapse memflow memo stack architecture", title="Stack")
+    labels = LabelSet(
+        prompts=[Prompt("how is the stack architected", relevant=True)],
+        relevant_terms={"synapse", "stack", "memo"},
+    )
+
+    before = eval_recall.fingerprint_corpus(mock_memory)
+    eval_recall.evaluate(mock_memory, k=3, labels=labels)
+    after = eval_recall.fingerprint_corpus(mock_memory)
+
+    assert before == after
+
+
+def test_fingerprint_corpus_is_stable_across_a_bare_access_write(mock_memory):
+    # Isolates the exact claim, independent of the eval harness: an
+    # access-log write — from ANY reader sharing the DB (recall daemon, memo
+    # watch, chat server), not just eval — must not move the fingerprint.
+    rec = mock_memory.save(content="a fact that gets read a lot", title="Fact")
+    before = eval_recall.fingerprint_corpus(mock_memory)
+
+    mock_memory.store.touch([rec.id])
+
+    assert eval_recall.fingerprint_corpus(mock_memory) == before
+
+
+def test_fingerprint_corpus_moves_on_a_save(mock_memory):
+    mock_memory.save(content="first note", title="First")
+    before = eval_recall.fingerprint_corpus(mock_memory)
+
+    mock_memory.save(content="second note", title="Second")
+
+    assert eval_recall.fingerprint_corpus(mock_memory) != before
+
+
+def test_fingerprint_corpus_moves_on_an_edit(mock_memory):
+    rec = mock_memory.save(content="original content", title="Orig")
+    before = eval_recall.fingerprint_corpus(mock_memory)
+
+    mock_memory.update(rec.id, content="edited content, materially different")
+
+    assert eval_recall.fingerprint_corpus(mock_memory) != before
+
+
+def test_fingerprint_corpus_moves_on_a_delete(mock_memory):
+    rec = mock_memory.save(content="doomed note", title="Doomed")
+    before = eval_recall.fingerprint_corpus(mock_memory)
+
+    mock_memory.delete(rec.id)
+
+    assert eval_recall.fingerprint_corpus(mock_memory) != before
+
+
 # --- CLI layer (no MLX: bad --labels fails before Memory is built) ----------
 
 

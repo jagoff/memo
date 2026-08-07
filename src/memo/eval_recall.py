@@ -595,6 +595,16 @@ def _search_for_eval(
         # take the kwarg are left untouched.
         if "disable_reranker" in sig.parameters or has_var_kw:
             kwargs["disable_reranker"] = True
+        # An eval sweep is not a user-visible retrieval: without this, every
+        # search hit writes an access-log row (search_ops.py's
+        # `_record_access`), which both (a) inflates `access_count` on
+        # whichever memories the eval surfaces — the same signal `memo
+        # usefulness` / `dead_weight()` read to decide what's noise — and (b)
+        # moves memvec.db's mtime, which used to feed `fingerprint_corpus`
+        # and made a read-only eval sweep look like a corpus change on every
+        # single run.
+        if "_track_usage" in sig.parameters or has_var_kw:
+            kwargs["_track_usage"] = False
     return search(query, **kwargs)
 
 
@@ -1403,16 +1413,42 @@ def check_gate(
 
 
 def fingerprint_corpus(mem: Any) -> str:
-    """Cheap corpus identity for cache keying: record count + db mtime."""
+    """Cheap corpus identity for cache keying: live record count + the
+    latest content edit (MAX(meta.updated) over live rows).
+
+    NOT db file mtime (the prior implementation): `access_count` /
+    `last_accessed` (from search's usage tracking) and `roi_score` live in
+    separate `access` / `memory_health` tables that this query never reads,
+    but writing them still bumps memvec.db's mtime — so *any* reader that
+    touches the file (a search, the recall daemon, `memo watch`, the chat
+    server) moved this fingerprint despite the corpus itself being
+    unchanged. An eval sweep alone runs ~300 searches, which made
+    `corpus_changed` true on essentially every gate run — see
+    `_search_for_eval`'s `_track_usage=False`, which is the OTHER half of
+    this fix (it stops the writes; this stops trusting a signal that isn't
+    corpus content in the first place, since anything else sharing the DB
+    can still write those same tables mid-gate).
+
+    `count()` is already soft-delete aware (excludes `deleted_at` rows), so
+    a delete moves it. `MAX(updated)` (scoped to the same live rows) moves on
+    an add or an in-place edit that doesn't change the count. Neither moves
+    on a read.
+    """
     try:
         count = mem.store.count()
     except Exception:
         count = -1
     try:
-        mtime = int(Path(mem.cfg.db_path).stat().st_mtime)
+        conn = mem.store._conn
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(meta)").fetchall()}
+        where = " WHERE deleted_at IS NULL" if "deleted_at" in cols else ""
+        row = conn.execute(
+            f"SELECT COALESCE(MAX(updated), '') FROM meta{where}"  # noqa: S608
+        ).fetchone()
+        max_updated = str(row[0]) if row else ""
     except Exception:
-        mtime = 0
-    return f"{count}:{mtime}"
+        max_updated = ""
+    return f"{count}:{max_updated}"
 
 
 # --- Auto-harvest labels from the grounding log ------------------------------
