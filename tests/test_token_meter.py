@@ -182,6 +182,68 @@ def test_summarize_proxy_grounded_vs_ungrounded(tmp_path):
     )  # ungrounded − grounded (positive ⇒ memo correlates with less tool spend)
 
 
+def test_summarize_net_subtracts_the_injected_context_it_paid_for(tmp_path):
+    """`delta` counts only the tool-loop side of the trade. The injected recall
+    block is a real cost on every turn memo fires, so the headline number has to
+    be net of it — on the live corpus `delta` was negative and the estimated
+    savings panel beside it still read 1.79M.
+
+    Here: 2 turns total, 100 injected chars each = 200 chars = 50 tokens over 2
+    turns = 25 tok/turn of context bought. Net = 450 − 25 = 425.
+    """
+    from memo.dashboard_logs import context_cost_log_path, grounding_log_path
+
+    state = tmp_path / "state"
+    state.mkdir()
+    tg = _transcript(tmp_path, "G", [(50, 20)])
+    tu = _transcript(tmp_path, "U", [(500, 20)])
+    _write_jsonl(
+        context_cost_log_path(state),
+        [
+            {"kind": "recall", "session_id": "G", "turn": 1, "chars": 100},
+            {"kind": "recall", "session_id": "U", "turn": 1, "chars": 100},
+        ],
+    )
+    _write_jsonl(
+        grounding_log_path(state),
+        [{"session_id": "G", "turn": 1, "recall_id": "x", "used_score": 0.9}],
+    )
+    tm.roll(state, "G", tg)
+    tm.roll(state, "U", tu)
+
+    p = tm.summarize(state)["proxy"]
+
+    assert p["injected_tok_per_turn"] == 25.0
+    assert p["net_tok_per_turn"] == 425.0
+    # n is part of the claim: a delta over two sessions is not evidence.
+    assert p["grounded_turns"] == 1
+    assert p["ungrounded_turns"] == 1
+
+
+def test_summarize_net_is_none_without_both_cohorts(tmp_path):
+    """No ungrounded sessions to compare against ⇒ no net claim, rather than a
+    net computed against a missing baseline."""
+    from memo.dashboard_logs import context_cost_log_path, grounding_log_path
+
+    state = tmp_path / "state"
+    state.mkdir()
+    tg = _transcript(tmp_path, "G", [(50, 20)])
+    _write_jsonl(
+        context_cost_log_path(state),
+        [{"kind": "recall", "session_id": "G", "turn": 1, "chars": 100}],
+    )
+    _write_jsonl(
+        grounding_log_path(state),
+        [{"session_id": "G", "turn": 1, "recall_id": "x", "used_score": 0.9}],
+    )
+    tm.roll(state, "G", tg)
+
+    p = tm.summarize(state)["proxy"]
+
+    assert p["delta"] is None
+    assert p["net_tok_per_turn"] is None
+
+
 # ---------------------------------------------------------------------------
 # Task-4: additive measured panel in `memo tokens`
 # ---------------------------------------------------------------------------

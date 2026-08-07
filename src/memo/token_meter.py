@@ -359,17 +359,36 @@ def summarize(state_dir: Path) -> dict:
     g_rate = _rate(grounded_ss)
     u_rate = _rate(ungrounded_ss)
     delta = round(u_rate - g_rate, 2) if (g_rate is not None and u_rate is not None) else None
+
+    # `delta` is only the tool-loop half of the trade. Injecting a recall block
+    # costs tokens on every turn memo fires, whether or not the answer used it,
+    # so a savings claim that omits it is not a savings claim. Net is what the
+    # user actually keeps.
+    injected_tokens = (injected_chars + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+    measured_turns = sum(int(r.get("n_turns", 0)) for r in rows)
+    injected_per_turn = round(injected_tokens / measured_turns, 2) if measured_turns else None
+    net_per_turn = (
+        round(delta - injected_per_turn, 2)
+        if (delta is not None and injected_per_turn is not None)
+        else None
+    )
+    grounded_turns = sum(int(r.get("n_turns", 0)) for r in grounded_ss)
+    ungrounded_turns = sum(int(r.get("n_turns", 0)) for r in ungrounded_ss)
     return {
         "schema": LEDGER_SCHEMA,
         "sessions": len(rows),
         "answer_tok": answer,
         "tool_tok": tool,
-        "injected_tokens": (injected_chars + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN,
+        "injected_tokens": injected_tokens,
         "grounded": grounded,
         "proxy": {
             "grounded_tool_tok_per_turn": g_rate,
             "ungrounded_tool_tok_per_turn": u_rate,
             "delta": delta,
+            "injected_tok_per_turn": injected_per_turn,
+            "net_tok_per_turn": net_per_turn,
+            "grounded_turns": grounded_turns,
+            "ungrounded_turns": ungrounded_turns,
         },
         "ledger_path": str(ledger_path(state_dir)),
     }

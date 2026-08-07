@@ -164,3 +164,40 @@ def test_expand_labels_cmd_refuses_out_equals_labels(tmp_cfg, tmp_path) -> None:
     )
     assert result.exit_code != 0
     assert "must differ" in result.output
+
+
+def test_save_cache_drops_entries_past_their_ttl(tmp_path):
+    """The TTL was only ever enforced on read, so every nightly A/B appended a
+    key that never left. The file reached 211 MB on a live install — bigger than
+    the index it measures. An entry past the TTL can never be served (the reader
+    rejects it), so keeping it is pure waste."""
+    import time
+
+    from memo import cli_eval
+
+    cfg = SimpleNamespace(state_dir=tmp_path)
+    now = time.time()
+    cli_eval._save_cache(
+        cfg,
+        {
+            "fresh": {"ts": now, "rows": [1]},
+            "expired": {"ts": now - cli_eval._CACHE_TTL_S - 1, "rows": [2]},
+        },
+    )
+
+    on_disk = json.loads(cli_eval._cache_path(cfg).read_text(encoding="utf-8"))
+
+    assert set(on_disk) == {"fresh"}
+
+
+def test_save_cache_keeps_entries_it_cannot_date(tmp_path):
+    """A malformed entry is not evidence of staleness — dropping it silently
+    would turn an unrelated write bug into cache loss."""
+    from memo import cli_eval
+
+    cfg = SimpleNamespace(state_dir=tmp_path)
+    cli_eval._save_cache(cfg, {"weird": "not-a-dict"})
+
+    on_disk = json.loads(cli_eval._cache_path(cfg).read_text(encoding="utf-8"))
+
+    assert set(on_disk) == {"weird"}

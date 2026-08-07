@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sqlite3
 import sys
 import time
@@ -73,6 +74,15 @@ _TRIVIAL_WORDS: frozenset[str] = frozenset(
 # Claude Code's hook kill. 4s leaves headroom under the 12s kill for the bm25
 # downgrade that `_rank` falls to when a capped embed fails.
 _FALLBACK_EMBED_TIMEOUT_S = 4.0
+
+
+def _disarm_deadline() -> None:
+    """Cancel any armed recall-hook wall-clock alarm. Idempotent, never raises
+    (a non-main thread has no timer to cancel and must not fail the caller)."""
+    if not hasattr(signal, "SIGALRM"):
+        return
+    with contextlib.suppress(ValueError, OSError):
+        signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 def apply_session_mode(knobs: RankKnobs, session_mode: str) -> RankKnobs:
@@ -147,6 +157,12 @@ def recall_hook() -> None:
     mem: Any | None = None
 
     def _close_memory() -> None:
+        # Every exit path calls this, so it is where the wall-clock deadline is
+        # disarmed. An armed itimer outlives the hook when the hook is invoked
+        # in-process rather than as its own short-lived process (tests, any
+        # embedding host): the alarm then fires later, inside unrelated code,
+        # and the handler's sys.exit unwinds whatever happened to be running.
+        _disarm_deadline()
         if mem is not None:
             with contextlib.suppress(Exception):
                 mem.close()
@@ -183,6 +199,22 @@ def recall_hook() -> None:
 
     prompt = (payload.get("prompt") or "").strip()
     _sid = (payload.get("session_id") or "").strip() or None
+
+    if flag_bool("MEMO_RECALL_SKIP_MACHINE_PROMPTS"):
+        # Ahead of the MEMO_RECALL_DISABLE short-circuit on purpose. Both arms of
+        # the ablation must exclude the same turns: if the disabled arm stamped
+        # harness envelopes while the enabled arm dropped them, the two cohorts
+        # `memo tokens` compares would no longer be the same population, and the
+        # net-savings number is only meaningful if they are.
+        from memo.recall_admission import admit
+
+        _admitted, _why = admit(prompt)
+        if _admitted is None:
+            _bail(f"machine prompt ({_why})")
+            return
+        # A turn that mixed plumbing with a real question recalls on the
+        # question, not on the plumbing that surrounded it.
+        prompt = _admitted
 
     if flag_bool("MEMO_RECALL_DISABLE"):
         # Ablation cohort: recall is OFF for this turn. Stamp it (via="disabled",
@@ -346,6 +378,31 @@ def recall_hook() -> None:
             )
         except Exception as exc:
             _log.debug("daemon-error recall-log write failed: %s", exc)
+
+    # Wall-clock cap on the in-process fallback. Every stage below has its own
+    # guard (a 4s embed cap, a bm25 downgrade), yet the measured subprocess path
+    # still reached p95 9.5s and a 126.7s worst case over 1500 live fires.
+    #
+    # What this does and does not cover: Python runs a signal handler between
+    # bytecodes, so the alarm ends waits that pass through the interpreter
+    # (stage after stage accumulating, a sleep, a socket read) but CANNOT
+    # preempt a single blocking C call — a sqlite lock held while `memo
+    # maintain` writes is exactly that case, and `busy_timeout` is its lever,
+    # not this. The cap is the outer bound, not the whole answer.
+    _hb = flag_int("MEMO_RECALL_HOOK_BUDGET_MS")
+    _budget_s = (10000 if _hb is None else _hb) / 1000.0
+    if _budget_s > 0 and hasattr(signal, "SIGALRM"):
+
+        def _on_deadline(_signum: int, _frame: Any) -> None:
+            # Disarm before doing anything: _bail writes a log line, and a
+            # second alarm landing inside that write would re-enter here.
+            _disarm_deadline()
+            _bail(f"hook budget exceeded ({_budget_s:g}s)")
+
+        with contextlib.suppress(ValueError, OSError):
+            # ValueError: not the main thread (no signal delivery available).
+            signal.signal(signal.SIGALRM, _on_deadline)
+            signal.setitimer(signal.ITIMER_REAL, max(0.1, _budget_s - (time.time() - _t0)))
 
     payload_cwd = payload.get("cwd")
 

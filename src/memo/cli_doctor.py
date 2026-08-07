@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
+from pathlib import Path
+from typing import Any
 
 import click
 
@@ -545,7 +548,92 @@ def doctor(
                 )
         except Exception:  # noqa: S110
             pass
+        with contextlib.suppress(Exception):
+            _report_derived_storage(cfg)
+        with contextlib.suppress(Exception):
+            _report_dark_flags(cfg)
     except Exception:  # noqa: S110
         pass
 
     sys.exit(0 if ok else 1)
+
+
+def _report_dark_flags(cfg: Any) -> None:
+    """Count the shipped-but-never-enabled feature flags.
+
+    Every one is code that ships, is tested, and never runs — and some cost
+    real resources while off (HyPE held 110 MB of vectors for a pass that had
+    not run in months). `dream_flags` already models a cull deadline, but the
+    sweep that applies it lives inside a pass that is itself default-off, so
+    nothing surfaced the backlog. Deleting a flag stays a human decision; being
+    unable to see how many there are should not be one.
+    """
+    from memo.dream_flags import status_rows
+
+    rows = status_rows(cfg)
+    dark = [r for r in rows if r["status"] not in ("graduated", "human_graduated")]
+    if not dark:
+        console.print("[green]✓[/green] dark flags: none")
+        return
+    overdue = [r for r in dark if r["days_left"] == 0]
+    suffix = f", {len(overdue)} past the cull deadline" if overdue else ""
+    console.print(
+        f"[dim]•[/dim] dark flags: {len(dark)} shipped but never enabled{suffix} "
+        "[dim](`memo dream graduate-flags --status`)[/dim]"
+    )
+
+
+# Bytes of state per stored memory above which derived storage is out of
+# proportion to the corpus. A 6.4k-memory install measured 2.3 GB — ~370 KB per
+# memory against ~3.5 KB of actual vector — because the compaction passes that
+# reclaim it had never run. Roughly 10x a healthy install, so it flags a real
+# leak without firing on a small corpus whose fixed overhead dominates.
+_STATE_BYTES_PER_MEMORY_WARN = 120_000
+_STATE_BYTES_FLOOR = 200 * 1024 * 1024
+
+
+def _report_derived_storage(cfg: Any) -> None:
+    """Warn when derived storage has outgrown the corpus it derives from.
+
+    Markdown is the source of truth and everything under state_dir is
+    rebuildable, so bloat here is silent by construction: nothing fails, search
+    keeps working, and the only symptom is disk. This surfaces it.
+    """
+    state_dir = Path(cfg.state_dir)
+    total = 0
+    for p in state_dir.rglob("*"):
+        # A nightly job or the recall daemon may unlink a file mid-walk; one
+        # vanished temp file must not cost the whole report.
+        with contextlib.suppress(OSError):
+            if p.is_file():
+                total += p.stat().st_size
+    if total < _STATE_BYTES_FLOOR:
+        return
+    from memo.cli_common import get_memory
+
+    n_memories = int(get_memory(cfg).store.count() or 0)
+    if n_memories <= 0:
+        return
+    per_memory = total / n_memories
+    if per_memory < _STATE_BYTES_PER_MEMORY_WARN:
+        console.print(
+            f"[green]✓[/green] derived storage: {_human_bytes(total)} for {n_memories} memories"
+        )
+        return
+    console.print(
+        f"[yellow]![/yellow] derived storage: {_human_bytes(total)} for {n_memories} memories "
+        f"({_human_bytes(per_memory)}/memory) "
+        "[dim]— MEMO_DREAM_VECTOR_HYGIENE_ENABLED=1 packs the rebuildable caches and "
+        "vacuums whichever DBs have outgrown their data[/dim]"
+    )
+
+
+def _human_bytes(n: float) -> str:
+    """Human-readable size. Divides in float: truncating at each step compounds,
+    so an integer division chain reports 1.9GB as 1.0GB."""
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{size:.1f}GB"

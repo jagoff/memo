@@ -566,6 +566,58 @@ def test_get_repo_embedding_cache_skips_malformed_json(store: VecStore):
     assert hit == {}
 
 
+def test_feedback_vec_pins_a_small_chunk_size(store: VecStore):
+    """vec0 reserves a whole chunk per PARTITION. Feedback is a few votes per
+    source, so the default 1024-row chunk cost 1024*dims*4 bytes for each
+    distinct source_id — measured at 220 MB for 24 votes on a live install."""
+    from memo.store.schema import FEEDBACK_VEC_CHUNK_SIZE
+
+    ddl = store._conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name = 'source_feedback_vec'"
+    ).fetchone()["sql"]
+
+    assert f"chunk_size={FEEDBACK_VEC_CHUNK_SIZE}" in ddl
+    assert "PARTITION KEY" in ddl, (
+        "the partition key is a correctness property, not an optimizer hint"
+    )
+
+
+def test_legacy_feedback_vec_is_rebuilt_on_open_preserving_votes(tmp_path: Path):
+    """The compaction pass that fixes this lives behind a default-off nightly
+    flag, so the rebuild has to happen when the store is opened — otherwise an
+    install that never turns the flag on carries the old allocation forever."""
+    from sqlite_vec import serialize_float32
+
+    db = tmp_path / "legacy.db"
+    store = VecStore(db, dims=4)
+    store._conn.execute("DROP TABLE source_feedback_vec")
+    store._conn.execute(
+        "CREATE VIRTUAL TABLE source_feedback_vec USING vec0("
+        "feedback_id TEXT PRIMARY KEY, source_id TEXT PARTITION KEY, "
+        "query_emb FLOAT[4] distance_metric=cosine)"
+    )
+    store._conn.execute(
+        "INSERT INTO source_feedback_vec (feedback_id, source_id, query_emb) VALUES (?, ?, ?)",
+        ("fb1", "src1", serialize_float32(_emb(1, 0, 0, 0))),
+    )
+    store._conn.commit()
+    store.close()
+
+    reopened = VecStore(db, dims=4)
+    try:
+        ddl = reopened._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'source_feedback_vec'"
+        ).fetchone()["sql"]
+        surviving = reopened._conn.execute(
+            "SELECT feedback_id, source_id FROM source_feedback_vec"
+        ).fetchall()
+    finally:
+        reopened.close()
+
+    assert "chunk_size=" in ddl
+    assert [(r["feedback_id"], r["source_id"]) for r in surviving] == [("fb1", "src1")]
+
+
 def test_prune_repo_embedding_cache_removes_stale_model_identities(store: VecStore):
     store.upsert_repo_embedding_cache(
         model="old-model", dims=4, embeddings=[("h1", _emb(1, 0, 0, 0))], created_at="t1"

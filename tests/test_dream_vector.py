@@ -98,3 +98,105 @@ def test_store_exception_is_captured_in_receipt_not_raised():
 
     assert result["status"] == "error"
     assert result["error"] == "RuntimeError: boom"
+
+
+# --- VACUUM sweep -------------------------------------------------------------
+
+
+def _make_db(path, *, rows: int, delete: bool) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, blob BLOB)")
+    conn.executemany("INSERT INTO t (blob) VALUES (?)", [(b"x" * 4000,) for _ in range(rows)])
+    if delete:
+        conn.execute("DELETE FROM t WHERE id > 20")
+    conn.commit()
+    conn.close()
+
+
+def test_reclaimable_ignores_a_tidy_database(tmp_path):
+    """Compaction returns pages to sqlite's freelist, not to the filesystem, so
+    the freelist ratio is the signal for whether VACUUM earns its lock."""
+    from memo.dream_vector import _reclaimable
+
+    db = tmp_path / "tidy.db"
+    _make_db(db, rows=20000, delete=False)
+
+    assert _reclaimable(db) == 0
+
+
+def test_reclaimable_reports_a_bloated_database(tmp_path):
+    from memo.dream_vector import _reclaimable
+
+    db = tmp_path / "bloated.db"
+    _make_db(db, rows=20000, delete=True)
+
+    assert _reclaimable(db) > 0
+
+
+def test_vacuum_sweep_shrinks_bloated_sidecars_and_leaves_tidy_ones(tmp_path):
+    """`graph.db` measured 52% free (73 MB) while the pass only ever vacuumed
+    `memvec.db` — the largest single reclaim on a mature install was missed."""
+    from types import SimpleNamespace
+
+    from memo.dream_vector import _vacuum_bloated_sidecars
+
+    bloated = tmp_path / "graph.db"
+    tidy = tmp_path / "tidy.db"
+    _make_db(bloated, rows=20000, delete=True)
+    _make_db(tidy, rows=20000, delete=False)
+    before = bloated.stat().st_size
+
+    reclaimed = _vacuum_bloated_sidecars(SimpleNamespace(state_dir=tmp_path))
+
+    assert set(reclaimed) == {"graph.db"}
+    assert bloated.stat().st_size < before
+
+
+def test_vacuum_sweep_on_a_missing_state_dir_is_a_noop(tmp_path):
+    from types import SimpleNamespace
+
+    from memo.dream_vector import _vacuum_bloated_sidecars
+
+    assert _vacuum_bloated_sidecars(SimpleNamespace(state_dir=tmp_path / "nope")) == {}
+
+
+def test_vacuum_sweep_skips_a_file_that_is_not_a_database(tmp_path):
+    """A stray file must not fail the pass."""
+    from types import SimpleNamespace
+
+    from memo.dream_vector import _vacuum_bloated_sidecars
+
+    (tmp_path / "junk.db").write_text("not sqlite", encoding="utf-8")
+
+    assert _vacuum_bloated_sidecars(SimpleNamespace(state_dir=tmp_path)) == {}
+
+
+def test_vacuum_sweep_truncates_the_wal_even_when_the_db_is_tidy(tmp_path):
+    """Measured on a live install: `memvec.db-wal` held 257 MB against a 235 MB
+    database. Only the main store was ever checkpointed, and nothing truncated,
+    so a tidy database still cost twice its size on disk."""
+    import sqlite3
+    from types import SimpleNamespace
+
+    from memo.dream_vector import _vacuum_bloated_sidecars
+
+    db = tmp_path / "walheavy.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, blob BLOB)")
+    conn.executemany("INSERT INTO t (blob) VALUES (?)", [(b"x" * 4000,) for _ in range(5000)])
+    conn.commit()
+    wal = tmp_path / "walheavy.db-wal"
+    assert wal.stat().st_size > 0, "fixture must leave a populated WAL"
+    before = wal.stat().st_size
+
+    reclaimed = _vacuum_bloated_sidecars(SimpleNamespace(state_dir=tmp_path))
+    conn.close()
+
+    # With no other connection holding the snapshot, sqlite removes the -wal
+    # outright rather than truncating it in place.
+    after = wal.stat().st_size if wal.exists() else 0
+    assert after < before
+    assert reclaimed.get("walheavy.db", 0) > 0

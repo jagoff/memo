@@ -159,10 +159,16 @@ def _packaged_curated_labels() -> Path | None:
         return None
 
 
-def _curated_raw(state_dir: Path) -> dict[str, Any]:
+def curated_labels_document(state_dir: Path) -> dict[str, Any]:
     """Parsed curated regression-labels document — state_dir first (a user's
     own set, where the daemon reaches), then the copy shipped in the wheel,
-    then the repo-committed file (dev). {} when none has prompts."""
+    then the repo-committed file (dev). {} when none has prompts.
+
+    Public because the nightly eval pass (``cli_dream_passes._run_eval_recall``)
+    must resolve the curated set exactly the way the tuner's gate does; it used
+    to carry its own two-candidate copy that missed the packaged wheel path, so
+    every installed runtime reported ``0 curated`` and measured prec@K on
+    harvested labels alone."""
     candidates = [
         Path(state_dir) / "eval" / "regression_labels.json",
         *([p] if (p := _packaged_curated_labels()) else []),
@@ -183,7 +189,7 @@ def _curated_raw(state_dir: Path) -> dict[str, Any]:
 
 def _curated_prompts(state_dir: Path) -> list[dict[str, Any]]:
     """Curated regression prompts — [] when no curated document is present."""
-    return list(_curated_raw(state_dir).get("prompts") or [])
+    return list(curated_labels_document(state_dir).get("prompts") or [])
 
 
 def build_labels(
@@ -212,7 +218,7 @@ def build_labels(
     ]
     # Same noise pass-through as _curated_label_set — without it the tuner's
     # noise@K objective is a vacuous 0.0 (see the curated-gate fix).
-    raw = _curated_raw(cfg.state_dir) if curated else {}
+    raw = curated_labels_document(cfg.state_dir) if curated else {}
     return LabelSet(
         prompts=prompts,
         noise_tags={str(t).lower() for t in (raw.get("noise_tags") or [])},
@@ -661,7 +667,7 @@ def _curated_label_set(state_dir: Path) -> LabelSet | None:
     ]
     if not prompts:
         return None
-    raw = _curated_raw(state_dir)
+    raw = curated_labels_document(state_dir)
     return LabelSet(
         prompts=prompts,
         noise_tags={str(t).lower() for t in (raw.get("noise_tags") or [])},
@@ -683,10 +689,14 @@ def curated_gate(
 
     Measures candidate vs current on the CURATED set only: a change that helps
     the mined labels but drops precision (or raises noise) on the curated
-    regression set is rejected. Vacuously passes when no curated set exists."""
+    regression set is rejected.
+
+    Fails CLOSED when no curated set exists. The set ships in the wheel, so its
+    absence means the install is damaged rather than un-curated — and an
+    unverifiable apply is exactly what this gate exists to stop."""
     curated = _curated_label_set(state_dir)
     if curated is None:
-        return {"ok": True, "reason": "no_curated_labels"}
+        return {"ok": False, "reason": "no_curated_labels"}
     cur_before = measure_rank_knob(mem, curated, k=k, floor=floor, knob=knob, value=value_before)
     cur_after = measure_rank_knob(mem, curated, k=k, floor=floor, knob=knob, value=value_after)
     return {"ok": not _regressed(cur_after, cur_before), "before": cur_before, "after": cur_after}
@@ -701,12 +711,13 @@ def curated_gate_min_sim(
     floor_after: float,
 ) -> dict[str, Any]:
     """Curated-labels no-regression gate for the min_sim candidate — same
-    contract as :func:`curated_gate`, but the knob under test IS the floor.
-    Without this, a floor that wins on mined labels could bury a curated
-    must-surface memory and still be applied."""
+    contract as :func:`curated_gate` (including failing closed without a curated
+    set), but the knob under test IS the floor. Without this, a floor that wins
+    on mined labels could bury a curated must-surface memory and still be
+    applied."""
     curated = _curated_label_set(state_dir)
     if curated is None:
-        return {"ok": True, "reason": "no_curated_labels"}
+        return {"ok": False, "reason": "no_curated_labels"}
     cur_before = measure(mem, curated, k=k, floor=floor_before)
     cur_after = measure(mem, curated, k=k, floor=floor_after)
     return {"ok": not _regressed(cur_after, cur_before), "before": cur_before, "after": cur_after}
