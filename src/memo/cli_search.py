@@ -150,6 +150,7 @@ def search(
     disable_reranker = use_rerank is False
     t0 = int(time.time() * 1000)
     trace = None
+    degraded: list[str] = []
     if explain:
         from memo.search_explain import build_search_explanations
 
@@ -161,6 +162,7 @@ def search(
             disable_reranker=disable_reranker,
             quality_rerank=True,
             as_of=as_of,
+            _degraded=degraded,
         )
         hits = envelope["hits"]
         trace = envelope.get("trace") or []
@@ -174,6 +176,7 @@ def search(
             disable_reranker=disable_reranker,
             quality_rerank=True,
             as_of=as_of,
+            _degraded=degraded,
         )
         explanations = {}
     hit_dicts = _compact_hit_dicts([h.to_dict() for h in hits], body_chars)
@@ -181,8 +184,14 @@ def search(
         for hit in hit_dicts:
             hit["explain"] = explanations.get(str(hit.get("id") or ""), {})
     log_cli_consult(cfg, verb="search", query=query, hits=hit_dicts, t0_ms=t0, source=source)
+    if degraded:
+        # Human-readable note on stderr only, so it never contaminates piped
+        # or --json stdout. An unaffected search (degraded empty) writes
+        # nothing here and its JSON stays byte-identical to before.
+        click.secho(f"degraded: {', '.join(degraded)} (search budget)", dim=True, err=True)
     if as_json:
-        click.echo(json.dumps(hit_dicts, ensure_ascii=False, indent=2))
+        body = {"hits": hit_dicts, "degraded": degraded} if degraded else hit_dicts
+        click.echo(json.dumps(body, ensure_ascii=False, indent=2))
         return
     if not hits:
         console.print("[dim]no results[/dim]")
