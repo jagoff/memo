@@ -52,10 +52,38 @@ def _bounded_lint(report: dict[str, list[dict[str, Any]]], *, limit: int) -> dic
     return bounded
 
 
+def _bounded_proposal(proposal: Any, *, member_cap: int) -> Any:
+    """Bound a merge proposal's two id lists, keeping the real totals.
+
+    `memory_ids` is the FULL membership of the cluster the proposal covers and
+    `archived_ids` is that same set minus the surviving memory -- neither is
+    capped by `max_clusters`, so both track the corpus directly. Measured on
+    the conformance corpus: 100 ids per proposal at N=2000 and 500 at N=10001,
+    which is what carried the tool from 14.6k tokens to 74k and would have
+    carried it past 200k at 10k memories.
+
+    The `shown`/`total`/`truncated` metadata is name-prefixed rather than
+    splatted bare (as `bounded_list`'s callers elsewhere do) because a
+    proposal bounds TWO lists: one bare splat would silently overwrite the
+    other's totals.
+    """
+    if not isinstance(proposal, dict):
+        return proposal
+    bounded = dict(proposal)
+    for field in ("memory_ids", "archived_ids"):
+        ids = proposal.get(field)
+        if not isinstance(ids, list):
+            continue
+        kept, meta = bounded_list(ids, cap=member_cap)
+        bounded[field] = kept
+        bounded.update({f"{field}_{k}": v for k, v in meta.items()})
+    return bounded
+
+
 def _bounded_consolidate(
     out: dict[str, Any], *, cluster_limit: int, member_limit: int
 ) -> dict[str, Any]:
-    """Bound two independent dimensions of `consolidate_all`'s output.
+    """Bound every dimension of `consolidate_all`'s output that tracks the corpus.
 
     1. Each cluster's `members` list -- a near-duplicate cluster's true size
        tracks the corpus, not `max_clusters`: on a 10k-memory conformance
@@ -67,11 +95,22 @@ def _bounded_consolidate(
        concatenates both, so the true count can run to 2x `max_clusters`
        despite the docstring's "maximum clusters to process" promise; this
        makes the return actually honour that cap.
+    3. The `proposals` list and, inside each proposal, the `memory_ids` /
+       `archived_ids` lists -- the same two defects one level down. The list
+       is the same 2x-`max_clusters` concatenation; the id lists are pure
+       corpus scale (see `_bounded_proposal`). Bounding (1) and (2) alone left
+       this dimension unbounded, which is why the tool still measured 74,155
+       tokens at N=2000 after the first pass at this helper.
+
+    `results` is deliberately not bounded: it is populated only when
+    `auto_apply=True`, and this MCP tool always calls `consolidate_all` with
+    `auto_apply=False`, so it is always empty on this path.
     """
     clusters = out.get("clusters")
     if not isinstance(clusters, list):
         return out
     member_cap = max(0, member_limit)
+    cluster_cap = max(0, cluster_limit)
     trimmed = []
     for cluster in clusters:
         members = cluster.get("members") if isinstance(cluster, dict) else None
@@ -83,12 +122,18 @@ def _bounded_consolidate(
     def _by_size_desc(cluster: Any) -> int:
         return -int(cluster.get("size") or 0) if isinstance(cluster, dict) else 0
 
-    kept_clusters, cluster_meta = bounded_list(
-        trimmed, cap=max(0, cluster_limit), key=_by_size_desc
-    )
+    kept_clusters, cluster_meta = bounded_list(trimmed, cap=cluster_cap, key=_by_size_desc)
     result = dict(out)
     result["clusters"] = kept_clusters
     result.update(cluster_meta)
+
+    proposals = out.get("proposals")
+    if isinstance(proposals, list):
+        kept_proposals, proposal_meta = bounded_list(
+            [_bounded_proposal(p, member_cap=member_cap) for p in proposals], cap=cluster_cap
+        )
+        result["proposals"] = kept_proposals
+        result.update({f"proposals_{k}": v for k, v in proposal_meta.items()})
     return result
 
 
@@ -539,16 +584,23 @@ def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
     async def memo_consolidate(
         threshold: float = 0.85,
-        max_clusters: int = 20,
+        max_clusters: Annotated[
+            int,
+            Field(
+                description="Clusters to process and return. Each one costs a "
+                "member list plus a merge proposal, so this is the dominant term "
+                "in the response size."
+            ),
+        ] = 10,
         type: str | None = None,
         member_limit: Annotated[
             int,
             Field(
-                description="Maximum members returned per cluster. A cluster's true "
+                description="Sample members returned per cluster. A cluster's true "
                 "size always comes back in `total`; `truncated` says whether any "
                 "members were dropped."
             ),
-        ] = 20,
+        ] = 2,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Detect near-duplicate clusters and propose merges.
@@ -562,11 +614,24 @@ def register(server: Any, memory: Memory) -> None:
         is bounded separately by `member_limit` -- same-topic memories
         cluster by design, so one cluster can hold most of the corpus.
 
+        Both defaults are derived from MEMO_MCP_RESPONSE_BUDGET_TOKENS rather
+        than picked for round numbers: a returned member carries a 600-char
+        `body_preview`, so the response costs roughly
+        `max_clusters * member_limit * 850` chars and the previous 20 x 20
+        spent ~47k tokens against a 10k cap -- 20 clusters cannot be returned
+        with any useful member detail at all. 10 x 2 measures 3,978 tokens on
+        the conformance corpus and ~9,039 projected for a corpus whose bodies
+        actually reach the 600-char preview cap. Two sample members are what
+        it takes to SEE a duplicate; `total` still reports the cluster's real
+        size, and `memo_get` fetches any member by id. Raise either argument
+        to see more and accept a larger response (the budget middleware
+        refuses one that overruns rather than silently truncating it).
+
         Args:
             threshold: Cosine similarity threshold (default 0.85).
-            max_clusters: Maximum clusters to process (default 20).
+            max_clusters: Maximum clusters to process (default 10).
             type: Optional filter by memory type.
-            member_limit: Maximum members returned per cluster (default 20).
+            member_limit: Sample members returned per cluster (default 2).
         """
         from memo.server_common import run_synth
 

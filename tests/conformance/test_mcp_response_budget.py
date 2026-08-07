@@ -24,7 +24,10 @@ bypasses the replaced methods and reaches for a real model load.
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import itertools
+import json
 import math
 import shutil
 import subprocess
@@ -240,6 +243,55 @@ def _snapshot(root: Path) -> dict[str, tuple[int, int]]:
     }
 
 
+# How many records the memo_import_* family is fed. The exports it reads are
+# still taken from the WHOLE corpus -- only the slice handed back to import is
+# a constant, and here is why that costs the gate nothing:
+#
+#   An import returns `ImportResult.__dict__` == {imported_count, skipped_count,
+#   errors}. Two ints plus a list populated once per FAILED record -- and the
+#   input is memo's own export of a valid corpus, so `errors` is empty at 200
+#   records and equally empty at 10,001. The response is O(1) in the input by
+#   construction; feeding it the whole corpus buys no payload signal.
+#
+# It cost 258s of the gate's 272s tool loop at N=2000 (95%), scaling linearly
+# (worse -- each imported record is a fresh save against a growing store), which
+# is what put the CI lane's 10,001-record run past its 600s per-test timeout.
+#
+# 200 is not the smallest number that works, it is the smallest that keeps the
+# check meaningful: the realistic way an import response turns unbounded is
+# echoing the records it imported, and 200 records (~300 chars each ≈ 15k
+# tokens) blows the 10k cap, so that regression still fails here. A response
+# that echoed only bare ids would need ~1,100 records to trip; raise this
+# constant if an import result ever grows a per-record field.
+_IMPORT_SAMPLE_RECORDS = 200
+
+
+def _sample_export(src: Path, dst: Path, fmt: str, *, records: int) -> Path:
+    """Write the first `records` records of an export to `dst`.
+
+    Format-aware rather than a line slice: CSV bodies may carry embedded
+    newlines, and the passport carries a `count` header that has to keep
+    agreeing with its `memories` list or the importer rejects the file.
+    """
+    if fmt == "csv":
+        with src.open(newline="", encoding="utf-8") as fh:
+            rows = list(itertools.islice(csv.reader(fh), records + 1))  # + header
+        with dst.open("w", newline="", encoding="utf-8") as fh:
+            csv.writer(fh).writerows(rows)
+        return dst
+
+    payload = json.loads(src.read_text(encoding="utf-8"))
+    if isinstance(payload, list):  # json export: a bare list of records
+        payload = payload[:records]
+    elif isinstance(payload, dict):  # passport: header + "memories"
+        memories = payload.get("memories")
+        if isinstance(memories, list):
+            kept = memories[:records]
+            payload = {**payload, "memories": kept, "count": len(kept)}
+    dst.write_text(json.dumps(payload), encoding="utf-8")
+    return dst
+
+
 def _make_local_repo(root: Path, name: str) -> Path:
     """A tiny local git repo -- `git clone <local-path>` needs no network, so
     the memo_repo_* family can be exercised against a REAL indexed repo
@@ -307,6 +359,20 @@ async def test_every_tool_result_fits_its_cap(
     # memo_cache_evict) short-circuits before reaching ctx.session anyway
     # when there is nothing to confirm.
     monkeypatch.setenv("MEMO_ELICIT_CONFIRM", "false")
+    # Undo a leak from earlier in the LANE, not a preference of this test.
+    # `memo reindex --rebuild` does `os.environ.setdefault(
+    # "MEMO_SKIP_MODEL_VERSION_CHECK", "1")` (cli_memory.py) -- harmless in a
+    # CLI process that then exits, permanent for the pytest process once
+    # test_index_rebuild_preserves.py invokes it through CliRunner. That flag
+    # makes `_validate_vec_quant` (store/schema.py) SKIP adopting the on-disk
+    # vec precision, which matters here because the corpus fixture builds its
+    # index with `VecStore(...)`'s own default (int8) while `Memory` reads
+    # MEMO_VEC_QUANTIZE, pinned to "off" by tests/conftest.py. Without the
+    # adoption, the first tool that writes a vector binds float32 into an int8
+    # column: `sqlite3.OperationalError: ... expected to be of type int8`.
+    # Reproduced on this commit's parent, so it predates the budget work; the
+    # containment belongs at the leaking test, which is not this one's to edit.
+    monkeypatch.delenv("MEMO_SKIP_MODEL_VERSION_CHECK", raising=False)
 
     # -- Copy, not the shared fixture -- write tools run for real, honestly,
     # and there is nothing to restore on big_corpus afterward (proven below).
@@ -359,24 +425,29 @@ async def test_every_tool_result_fits_its_cap(
         # Export first, then feed the exported files back into import's ARGS
         # -- a real payload instead of a hand-guessed schema (memo_import_
         # passport rejects anything without "schema": "memo.passport.v1").
-        await server.call_tool(
-            "memo_export_csv", args_by_name["memo_export_csv"], run_middleware=False
-        )
-        await server.call_tool(
-            "memo_export_json", args_by_name["memo_export_json"], run_middleware=False
-        )
-        await server.call_tool(
-            "memo_export_passport", args_by_name["memo_export_passport"], run_middleware=False
-        )
-        args_by_name["memo_import_csv"]["input_path"] = args_by_name["memo_export_csv"][
-            "output_path"
-        ]
-        args_by_name["memo_import_json"]["input_path"] = args_by_name["memo_export_json"][
-            "output_path"
-        ]
-        args_by_name["memo_import_passport"]["input_path"] = args_by_name["memo_export_passport"][
-            "output_path"
-        ]
+        #
+        # Import reads a SAMPLE of each export (see _IMPORT_SAMPLE_RECORDS),
+        # written to its own directory: the enumeration loop below re-runs
+        # every memo_export_* for real against the whole corpus and would
+        # otherwise overwrite the file its memo_import_* sibling is about to
+        # read (export sorts before import alphabetically).
+        import_dir = tmp_path / "import"
+        import_dir.mkdir()
+        for fmt, export_tool, import_tool in (
+            ("csv", "memo_export_csv", "memo_import_csv"),
+            ("json", "memo_export_json", "memo_import_json"),
+            ("passport", "memo_export_passport", "memo_import_passport"),
+        ):
+            await server.call_tool(export_tool, args_by_name[export_tool], run_middleware=False)
+            exported = Path(str(args_by_name[export_tool]["output_path"]))
+            args_by_name[import_tool]["input_path"] = str(
+                _sample_export(
+                    exported,
+                    import_dir / exported.name,
+                    fmt,
+                    records=_IMPORT_SAMPLE_RECORDS,
+                )
+            )
 
         backup_res = await server.call_tool("memo_backup_create", {}, run_middleware=False)
         backup_sc = backup_res.structured_content
