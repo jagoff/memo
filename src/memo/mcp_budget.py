@@ -20,13 +20,13 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from memo.flags import flag_int
+from memo.flags import REGISTRY, flag_int
 
-# Keep in sync with the MEMO_MCP_RESPONSE_BUDGET_TOKENS default in
-# flags_misc.py -- two literals rather than one import to avoid a
-# flags_misc -> mcp_budget -> flags import cycle (flags.py aggregates
-# flags_misc.SPECS).
-DEFAULT_CAP_TOKENS = 10000
+# Derived from the registry, not a second hard-coded literal: flags.py builds
+# REGISTRY from flags_misc.SPECS (and never imports mcp_budget back), so this
+# import direction carries no cycle. `.default` types as `Any` on FlagSpec;
+# narrowed explicitly rather than trusting a loose inference.
+DEFAULT_CAP_TOKENS: int = int(REGISTRY["MEMO_MCP_RESPONSE_BUDGET_TOKENS"].default)
 
 # Per-tool overrides. Every entry carries the reason it is not the default.
 CAPS: dict[str, int] = {}

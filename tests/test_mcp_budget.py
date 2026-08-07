@@ -5,12 +5,20 @@ The middleware itself is covered in test 2; these are the pure pieces."""
 from __future__ import annotations
 
 from memo import mcp_budget
+from memo.flags import REGISTRY
 
 
 def test_est_tokens_matches_the_house_estimator() -> None:
     assert mcp_budget.est_tokens("") == 0
     assert mcp_budget.est_tokens("abcd") == 1
     assert mcp_budget.est_tokens("a" * 4000) == 1000
+
+
+def test_default_cap_tokens_matches_the_registered_flag_default() -> None:
+    # DEFAULT_CAP_TOKENS is derived from REGISTRY, not a second hard-coded
+    # literal -- this pins that relationship so a future re-hardcoding drifts
+    # loudly (a failing test) instead of silently.
+    assert REGISTRY["MEMO_MCP_RESPONSE_BUDGET_TOKENS"].default == mcp_budget.DEFAULT_CAP_TOKENS
 
 
 def test_bounded_list_passes_a_short_list_through_untouched() -> None:
