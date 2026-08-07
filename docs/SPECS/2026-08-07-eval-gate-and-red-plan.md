@@ -1017,3 +1017,160 @@ Phases 2–5 of `2026-08-07-repair-program-design.md` get their own plans:
 - **Phase 3 (latency)** — independent; can be planned and executed in parallel with Phase 2.
 - **Phase 4 (instrumentation)** — independent of both.
 - **Phase 5 (reduction)** — must be last; its central question is answered by the harness this plan repairs.
+
+---
+
+### Task 7: Unify the two broad-exception gates
+
+**Added mid-execution.** Task 1 surfaced that memo enforces broad `except Exception` through two independent gates that do not know about each other, so one justified new catch requires two edits in two files — and commit `a2706251` made exactly that mistake, passing one gate and failing the other.
+
+| Gate | Mechanism | Coverage |
+|---|---|---|
+| `tests/test_dev_audit.py` | Every site classified in `BROAD_EXCEPTION_ALLOWED` by `(relpath, scope, ordinal)` with a source comment | 4 files |
+| `scripts/quality_gate.py` | Per-file integer budget in `eval/quality_baseline.json` | all files |
+
+For the four files gate 1 guards, it is strictly stronger: every site must be individually justified. The integer budget for those files is therefore redundant bookkeeping whose only effect is to make a correct change fail CI. The merge makes gate 1 the single source of truth where it applies, and leaves the integer ratchet to cover everything it does not.
+
+`scripts/quality_gate.py` already imports `memo.dev_audit` and already skips sites listed in `BROAD_EXCEPTION_RATCHET_EXEMPTIONS` (`collect_broad_exceptions`, the `allowed` local). This task extends that existing exclusion rather than inventing a mechanism.
+
+**Files:**
+- Modify: `src/memo/dev_audit.py` — add `BROAD_EXCEPTION_TARGET_FILES`
+- Modify: `scripts/quality_gate.py` — `collect_broad_exceptions`
+- Modify: `tests/test_dev_audit.py` — import the target set instead of defining it
+- Modify: `eval/quality_baseline.json` — regenerate (tightens)
+- Modify: `docs/engineering/exception-policy.md` — document which gate owns what
+- Test: `tests/test_dev_audit.py`, `tests/test_quality_gate.py` (create if absent)
+
+**Interfaces:**
+- Consumes: `BROAD_EXCEPTION_ALLOWED`, `BROAD_EXCEPTION_RATCHET_EXEMPTIONS`, `find_broad_exception_sites` (all exist).
+- Produces: `dev_audit.BROAD_EXCEPTION_TARGET_FILES: frozenset[str]` — the relpaths gate 1 guards.
+
+- [ ] **Step 1: Write the failing invariant test**
+
+Add to `tests/test_dev_audit.py`:
+
+```python
+def test_files_under_lexical_classification_carry_no_numeric_budget() -> None:
+    """The two gates must not both bill the same site.
+
+    For a file whose every broad catch is classified in
+    BROAD_EXCEPTION_ALLOWED, the numeric ratchet must count zero — otherwise
+    classifying a new fail-open site correctly (gate 1) still fails CI on the
+    per-file budget (gate 2), which is what happened on commit a2706251.
+    """
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from quality_gate import collect_broad_exceptions
+
+    from memo.dev_audit import BROAD_EXCEPTION_TARGET_FILES
+
+    counts = collect_broad_exceptions(ROOT)
+
+    for relpath in BROAD_EXCEPTION_TARGET_FILES:
+        assert counts.get(f"src/memo/{relpath}", 0) == 0, (
+            f"{relpath} is lexically classified but still carries a numeric budget"
+        )
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `uv run --no-sync pytest tests/test_dev_audit.py -k numeric_budget -v`
+Expected: FAIL — either on the missing `BROAD_EXCEPTION_TARGET_FILES` import, or on a non-zero count.
+
+- [ ] **Step 3: Promote the target set into `dev_audit`**
+
+In `src/memo/dev_audit.py`, above `BROAD_EXCEPTION_ALLOWED`:
+
+```python
+# The files whose broad catches are classified individually (see
+# BROAD_EXCEPTION_ALLOWED). For these, lexical classification is the gate;
+# scripts/quality_gate.py's per-file integer budget deliberately counts zero,
+# so classifying a new fail-open site is ONE edit, not two.
+BROAD_EXCEPTION_TARGET_FILES: frozenset[str] = frozenset(
+    {
+        "recall_logic.py",
+        "memory/write_ops.py",
+        "cli_recall_hook.py",
+        "store/queries.py",
+    }
+)
+```
+
+In `tests/test_dev_audit.py`, replace the inline `target_files = {...}` literal in `test_broad_exception_policy_targets_are_classified` with `BROAD_EXCEPTION_TARGET_FILES`, imported alongside the existing `dev_audit` imports. Do not change what that test asserts.
+
+- [ ] **Step 4: Make the numeric gate skip classified sites**
+
+In `scripts/quality_gate.py`, extend the existing exclusion in `collect_broad_exceptions`. Import `BROAD_EXCEPTION_ALLOWED` alongside the current `BROAD_EXCEPTION_RATCHET_EXEMPTIONS` import, and change the `allowed` default to the union:
+
+```python
+    allowed = (
+        BROAD_EXCEPTION_RATCHET_EXEMPTIONS | BROAD_EXCEPTION_ALLOWED
+        if exemptions is None
+        else exemptions
+    )
+```
+
+Update the docstring to say the count excludes every audited site — both the ratchet exemptions and the lexically classified ones — so the integer budget covers only files no stricter gate guards yet.
+
+- [ ] **Step 5: Run the test to verify it passes**
+
+Run: `uv run --no-sync pytest tests/test_dev_audit.py -v`
+Expected: all pass, including the new invariant and the two pre-existing policy tests.
+
+- [ ] **Step 6: Regenerate the baseline and confirm it tightened**
+
+```bash
+uv run --no-sync python scripts/quality_gate.py --update
+git diff eval/quality_baseline.json
+```
+
+Expected: only the four target files change, and every one of them moves DOWNWARD (to 0 or removed). If any number in the diff goes up, stop and report it — this task must not loosen a budget.
+
+Then confirm the gate is green: `uv run --no-sync python scripts/quality_gate.py`
+
+- [ ] **Step 7: Document the split**
+
+In `docs/engineering/exception-policy.md`, under "Broad Exception Policy", add:
+
+```markdown
+### Which gate owns which file
+
+Two gates enforce this policy and they do not overlap:
+
+- `tests/test_dev_audit.py` owns the files in
+  `dev_audit.BROAD_EXCEPTION_TARGET_FILES`. Every broad catch there is
+  classified individually in `BROAD_EXCEPTION_ALLOWED`, with a comment stating
+  its fail-open contract. Adding a justified catch is one edit: the
+  classification.
+- `scripts/quality_gate.py` owns everything else, as a per-file integer budget
+  in `eval/quality_baseline.json`. It skips every site the first gate already
+  audits, so a classified site is never billed twice.
+
+Moving a file into `BROAD_EXCEPTION_TARGET_FILES` means classifying all of its
+existing sites and regenerating the baseline; the file's integer budget then
+drops to zero by construction.
+```
+
+- [ ] **Step 8: Full verification and commit**
+
+Run: `uv run --no-sync pytest tests/test_dev_audit.py tests/test_recall_hooks.py -q && uv run --no-sync python scripts/quality_gate.py && uv run --no-sync ruff check src/ tests/ scripts/ && uv run --no-sync ruff format --check src/ tests/ scripts/ && uv run --no-sync mypy src/memo`
+Expected: all green.
+
+```bash
+git add src/memo/dev_audit.py scripts/quality_gate.py tests/test_dev_audit.py eval/quality_baseline.json docs/engineering/exception-policy.md
+git commit -m "fix(quality): stop billing one broad catch to two gates
+
+memo enforced broad except Exception through two gates that did not know about
+each other: a lexical classification test over four files, and a per-file
+integer budget over all files. A correctly classified fail-open catch in one of
+those four files still failed the integer budget, which is how a2706251 passed
+one gate and turned CI red on the other.
+
+The integer budget now skips every site the classification gate already audits,
+so those four files count zero by construction and classifying a catch is one
+edit instead of two. The target-file set moves out of the test and into
+dev_audit, where both gates can read it."
+```
+
+**Merge note:** PR #211 carries a `recall_logic.py: 18 -> 19` bump to `eval/quality_baseline.json`. Once this task lands, that entry becomes 0 and the two changes will conflict in that file. Resolve in favour of this task's value (0) — the bump exists only to satisfy the double-billing this task removes.
