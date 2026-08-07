@@ -660,7 +660,12 @@ class _SearchOpsMixin(_MemoryBase):
                 )
         if _reranker_will_run:
             before = len(out)
-            out = self._rerank(query, out, top_n=limit)
+            # TODO(Task 3): _deadline/_degraded are placeholders -- Task 3
+            # threads a real per-search Deadline and a shared degraded-stage
+            # list through search() and replaces these with the real ones.
+            _deadline = None
+            _degraded = None
+            out = self._rerank(query, out, top_n=limit, deadline=_deadline, degraded=_degraded)
             _add_trace("rerank", input_count=before, output_count=len(out))
         else:
             # No reranker ran (disabled per-call — e.g. ask/chat pass
