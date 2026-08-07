@@ -85,6 +85,62 @@ def test_broad_exception_ratchet_exemptions_are_exact_and_present() -> None:
     assert found >= BROAD_EXCEPTION_RATCHET_EXEMPTIONS
 
 
+def test_every_classified_file_is_under_lexical_enforcement() -> None:
+    """An allowlist entry outside the target set would escape BOTH gates.
+
+    scripts/quality_gate.py excludes classified sites from the integer budget,
+    but tests/test_dev_audit.py only checks files in
+    BROAD_EXCEPTION_TARGET_FILES. An entry naming a file outside that set would
+    therefore be billed by neither gate.
+    """
+    classified_files = {relpath for relpath, _scope, _ordinal in BROAD_EXCEPTION_ALLOWED}
+    assert classified_files <= BROAD_EXCEPTION_TARGET_FILES
+
+
+def test_ratchet_exemptions_outside_target_files_stay_ratchet_protected() -> None:
+    """BROAD_EXCEPTION_RATCHET_EXEMPTIONS does not reopen the ALLOWED seam.
+
+    Three of its four entries (briefing.py, constitution.py, repo_eval.py) name
+    files outside BROAD_EXCEPTION_TARGET_FILES, unlike BROAD_EXCEPTION_ALLOWED
+    (see test_every_classified_file_is_under_lexical_enforcement above) — that
+    is by design: ratchet exemptions cover isolated fail-open sites anywhere,
+    not just the four lexically-audited targets.
+
+    This is safe for two independent reasons this test pins:
+
+    1. scripts/quality_gate.py's per-file budget is a general, unrestricted
+       scan — it is not limited to target files the way the lexical test is.
+       Recomputing counts with only BROAD_EXCEPTION_ALLOWED excluded (i.e. as
+       if the ratchet exemption did not exist) shows each site would resolve
+       to nonzero debt, so the exemption is a precise, singular carve-out, not
+       a silent whole-file exclusion — removing it (without also touching the
+       source) makes the site billed again immediately.
+    2. Unlike BROAD_EXCEPTION_ALLOWED, which has no size/membership pin,
+       BROAD_EXCEPTION_RATCHET_EXEMPTIONS is pinned to an exact literal by
+       test_broad_exception_ratchet_exemptions_are_exact_and_present, so a new
+       entry cannot be added silently — it requires a matching, reviewed
+       change to that literal.
+    """
+    gate = _quality_gate()
+    non_target_exemptions = {
+        (relpath, scope, ordinal)
+        for relpath, scope, ordinal in BROAD_EXCEPTION_RATCHET_EXEMPTIONS
+        if relpath not in BROAD_EXCEPTION_TARGET_FILES
+    }
+    assert non_target_exemptions, "expected at least one non-target ratchet exemption"
+
+    counts_without_ratchet_carveout = gate.collect_broad_exceptions(
+        ROOT, exemptions=BROAD_EXCEPTION_ALLOWED
+    )
+    for relpath, _scope, _ordinal in non_target_exemptions:
+        key = f"src/memo/{relpath}"
+        assert counts_without_ratchet_carveout.get(key, 0) > 0, (
+            f"{relpath}'s ratchet-exempted site carries zero numeric budget even "
+            "without its own exemption entry — it is not a target file, so it "
+            "would escape both gates"
+        )
+
+
 def test_exception_policy_doc_exists() -> None:
     policy = ROOT / "docs" / "engineering" / "exception-policy.md"
     text = policy.read_text(encoding="utf-8")
