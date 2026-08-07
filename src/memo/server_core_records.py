@@ -6,6 +6,7 @@ from fastmcp import Context
 from pydantic import Field
 
 from memo.errors import IdentityConflictError
+from memo.mcp_budget import bounded_list
 from memo.memory import AmbiguousIdError, Memory
 from memo.server_annotations import (
     DESTRUCTIVE,
@@ -49,6 +50,46 @@ def _bounded_lint(report: dict[str, list[dict[str, Any]]], *, limit: int) -> dic
     bounded["counts"] = {cat: len(rows) for cat, rows in report.items()}
     bounded["limit"] = cap
     return bounded
+
+
+def _bounded_consolidate(
+    out: dict[str, Any], *, cluster_limit: int, member_limit: int
+) -> dict[str, Any]:
+    """Bound two independent dimensions of `consolidate_all`'s output.
+
+    1. Each cluster's `members` list -- a near-duplicate cluster's true size
+       tracks the corpus, not `max_clusters`: on a 10k-memory conformance
+       corpus (same-topic memories cluster by design) a single cluster held
+       every memory in its topic, each member carrying a 600-char body
+       preview.
+    2. The `clusters` list itself -- `consolidate_all` runs a fast lane
+       (cosine >= auto_threshold) and a normal pass (cosine >= threshold) and
+       concatenates both, so the true count can run to 2x `max_clusters`
+       despite the docstring's "maximum clusters to process" promise; this
+       makes the return actually honour that cap.
+    """
+    clusters = out.get("clusters")
+    if not isinstance(clusters, list):
+        return out
+    member_cap = max(0, member_limit)
+    trimmed = []
+    for cluster in clusters:
+        members = cluster.get("members") if isinstance(cluster, dict) else None
+        if isinstance(members, list) and len(members) > member_cap:
+            kept, meta = bounded_list(members, cap=member_cap)
+            cluster = {**cluster, "members": kept, **meta}
+        trimmed.append(cluster)
+
+    def _by_size_desc(cluster: Any) -> int:
+        return -int(cluster.get("size") or 0) if isinstance(cluster, dict) else 0
+
+    kept_clusters, cluster_meta = bounded_list(
+        trimmed, cap=max(0, cluster_limit), key=_by_size_desc
+    )
+    result = dict(out)
+    result["clusters"] = kept_clusters
+    result.update(cluster_meta)
+    return result
 
 
 def register(server: Any, memory: Memory) -> None:
@@ -500,6 +541,14 @@ def register(server: Any, memory: Memory) -> None:
         threshold: float = 0.85,
         max_clusters: int = 20,
         type: str | None = None,
+        member_limit: Annotated[
+            int,
+            Field(
+                description="Maximum members returned per cluster. A cluster's true "
+                "size always comes back in `total`; `truncated` says whether any "
+                "members were dropped."
+            ),
+        ] = 20,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Detect near-duplicate clusters and propose merges.
@@ -508,12 +557,16 @@ def register(server: Any, memory: Memory) -> None:
         Uses the AdvancedConsolidator under the hood (same as
         ``memo_consolidate_list_archived``). With client sampling enabled,
         merge synthesis runs on the calling model up to
-        MEMO_SAMPLING_MAX_CALLS (see `synthesizer` field).
+        MEMO_SAMPLING_MAX_CALLS (see `synthesizer` field). `max_clusters`
+        bounds how many clusters come back; a single cluster's member list
+        is bounded separately by `member_limit` -- same-topic memories
+        cluster by design, so one cluster can hold most of the corpus.
 
         Args:
             threshold: Cosine similarity threshold (default 0.85).
             max_clusters: Maximum clusters to process (default 20).
             type: Optional filter by memory type.
+            member_limit: Maximum members returned per cluster (default 20).
         """
         from memo.server_common import run_synth
 
@@ -528,6 +581,7 @@ def register(server: Any, memory: Memory) -> None:
                 dry_run=True,
             ),
         )
+        out = _bounded_consolidate(out, cluster_limit=max_clusters, member_limit=member_limit)
         out["synthesizer"] = synthesizer
         return out
 

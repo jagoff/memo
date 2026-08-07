@@ -208,7 +208,11 @@ def test_memo_explore_delegates_to_explore_entity(tmp_cfg) -> None:
 
 
 def test_memo_graph_communities_returns_list_of_dicts(tmp_cfg) -> None:
-    """memo_graph_communities converts each Community to a dict."""
+    """memo_graph_communities converts each Community to a dict, bounded --
+    see mcp_budget.bounded_list: `communities` holds the kept, largest-first
+    page and `shown`/`total`/`truncated` report the real size (2026-08-06
+    conformance gate: unbounded, a 10k-memory corpus returned 2,278
+    communities via detect_communities, 132.7k tokens)."""
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
 
@@ -228,18 +232,24 @@ def test_memo_graph_communities_returns_list_of_dicts(tmp_cfg) -> None:
     result = tools["memo_graph_communities"](min_size=2)
 
     mem.navigator.detect_communities.assert_called_once_with(min_size=2)
-    assert isinstance(result, list)
-    assert len(result) == 2
-    assert result[0]["id"] == 0
-    assert result[0]["entities"] == ["alpha", "beta"]
-    assert result[0]["size"] == 2
-    assert result[0]["representative_entity"] == "alpha"
-    assert result[1]["id"] == 1
-    assert result[1]["size"] == 3
+    assert result["shown"] == 2
+    assert result["total"] == 2
+    assert result["truncated"] is False
+    communities = result["communities"]
+    assert len(communities) == 2
+    # Largest first (key=lambda c: -c.size): the 3-entity community sorts
+    # before the 2-entity one, regardless of input order.
+    assert communities[0]["id"] == 1
+    assert communities[0]["entities"] == ["gamma", "delta", "epsilon"]
+    assert communities[0]["size"] == 3
+    assert communities[0]["representative_entity"] == "gamma"
+    assert communities[1]["id"] == 0
+    assert communities[1]["size"] == 2
 
 
 def test_memo_graph_communities_empty_graph(tmp_cfg) -> None:
-    """memo_graph_communities returns an empty list when no communities detected."""
+    """memo_graph_communities returns an empty communities list when no
+    communities are detected."""
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
 
@@ -251,7 +261,7 @@ def test_memo_graph_communities_empty_graph(tmp_cfg) -> None:
     register(server, mem)
 
     result = tools["memo_graph_communities"]()
-    assert result == []
+    assert result == {"communities": [], "shown": 0, "total": 0, "truncated": False}
 
 
 def test_memo_graph_centrality_sorted_by_degree(tmp_cfg) -> None:
