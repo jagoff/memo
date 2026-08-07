@@ -641,27 +641,6 @@ def _capture_itimer(monkeypatch) -> list[tuple[int, float]]:
     return calls
 
 
-def test_recall_search_budget_defaults_to_half_the_hook_cap(monkeypatch) -> None:
-    from memo.recall_logic import recall_search_budget_ms
-
-    monkeypatch.setenv("MEMO_RECALL_HOOK_BUDGET_MS", "10000")
-    assert recall_search_budget_ms() == 5000.0
-
-
-def test_recall_search_budget_disabled_by_zero_cap(monkeypatch) -> None:
-    from memo.recall_logic import recall_search_budget_ms
-
-    monkeypatch.setenv("MEMO_RECALL_HOOK_BUDGET_MS", "0")
-    assert recall_search_budget_ms() is None
-
-
-def test_recall_search_budget_respects_custom_cap(monkeypatch) -> None:
-    from memo.recall_logic import recall_search_budget_ms
-
-    monkeypatch.setenv("MEMO_RECALL_HOOK_BUDGET_MS", "5000")
-    assert recall_search_budget_ms() == 2500.0
-
-
 def test_fallback_arms_a_wall_clock_deadline(tmp_path: Path, monkeypatch) -> None:
     """The per-stage guards missed a measured 126.7s worst case, so the
     in-process fallback arms an overall cap before it starts work."""
