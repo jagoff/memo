@@ -876,3 +876,89 @@ def test_cold_embedder_with_broken_micro_falls_back_to_bm25(monkeypatch, tmp_pat
     )
     context = json.loads(result)["hookSpecificOutput"]["additionalContext"]
     assert "Micro fallback fact" in context  # bm25 path served the hit
+
+
+# ---------------------------------------------------------------------------
+# Graph-cluster recall compaction (MEMO_RECALL_GRAPH_COMPACT)
+# ---------------------------------------------------------------------------
+
+
+class _StubProjection:
+    def __init__(self, memberships: dict[str, list[str]]) -> None:
+        self._memberships = memberships
+        self._active = "v1"
+
+    def _state(self, conn, key: str) -> str | None:
+        return self._active if key == "active_version" else None
+
+    @property
+    def _conn(self):
+        class _Conn:
+            def __init__(self, memberships: dict[str, list[str]]) -> None:
+                self._memberships = memberships
+
+            def execute(self, sql: str, params):
+                import json as _json
+
+                ids = _json.loads(params[1])
+                rows = []
+                for mid, uris in self._memberships.items():
+                    if mid in ids:
+                        for u in uris:
+                            rows.append({"memory_id": mid, "uri": u})
+                rows.sort(key=lambda r: r["memory_id"])
+                return _FakeRows(rows)
+
+        return _Conn(self._memberships)
+
+
+class _FakeRows:
+    def __init__(self, rows: list[dict[str, str]]) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list[dict[str, str]]:
+        return self._rows
+
+
+def _stub_mem(memberships: dict[str, list[str]]) -> SimpleNamespace:
+    return SimpleNamespace(graph=SimpleNamespace(projection=_StubProjection(memberships)))
+
+
+def test_graph_compact_demotes_same_cluster_hits_to_related(tmp_path, monkeypatch) -> None:
+    from memo.recall_logic import _graph_compact_clusters
+
+    hits = [
+        _rec("aaaa1111", "Main decision", 0.90),
+        _rec("bbbb2222", "Sibling decision", 0.85),  # shares entity with aaaa
+        _rec("cccc3333", "Unrelated note", 0.80),
+    ]
+    mem = _stub_mem(
+        {
+            "aaaa1111": ["mem://entity/alpha"],
+            "bbbb2222": ["mem://entity/alpha"],
+            "cccc3333": ["mem://entity/beta"],
+        }
+    )
+    kept, related = _graph_compact_clusters(hits, mem=mem)
+    assert [h.id for h in kept] == ["aaaa1111", "cccc3333"]
+    assert [h.id for h in related] == ["bbbb2222"]
+
+
+def test_graph_compact_noop_without_memberships(tmp_path, monkeypatch) -> None:
+    from memo.recall_logic import _graph_compact_clusters
+
+    hits = [_rec("aaaa1111", "A", 0.90), _rec("bbbb2222", "B", 0.85)]
+    mem = _stub_mem({"aaaa1111": ["mem://entity/alpha"], "bbbb2222": ["mem://entity/beta"]})
+    kept, related = _graph_compact_clusters(hits, mem=mem)
+    assert len(kept) == 2
+    assert related == []
+
+
+def test_graph_compact_noop_on_missing_projection(tmp_path, monkeypatch) -> None:
+    from memo.recall_logic import _graph_compact_clusters
+
+    hits = [_rec("aaaa1111", "A", 0.90), _rec("bbbb2222", "B", 0.85)]
+    mem = SimpleNamespace(graph=None)
+    kept, related = _graph_compact_clusters(hits, mem=mem)
+    assert len(kept) == 2
+    assert related == []

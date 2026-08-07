@@ -1182,6 +1182,64 @@ def _explain_finalize(
             entry["rank"] = rank
 
 
+def _graph_compact_clusters(
+    relevant: list[Any],
+    *,
+    mem: Any,
+) -> tuple[list[Any], list[Any]]:
+    """Graph-cluster recall compaction (MEMO_RECALL_GRAPH_COMPACT, default off).
+
+    Moves lower-ranked top-K hits that share a projection entity with a
+    higher-ranked hit out of the full per-hit block and into the one-line
+    related nudge, so the token budget is spent on diversity instead of
+    near-duplicate graph-cluster bodies.
+
+    One bounded SQL read over ``graph_projection_memberships`` filtered to the
+    top-K ids (never the full projection); degrades to a no-op (identity) on any
+    error, missing projection, or unavailable graph. When off or failing, recall
+    rendering is byte-identical to the historical output.
+    """
+    if not relevant or len(relevant) < 2:
+        return relevant, []
+    try:
+        proj = getattr(getattr(mem, "graph", None), "projection", None)
+        if proj is None:
+            return relevant, []
+        conn = getattr(proj, "_conn", None)
+        if conn is None:
+            return relevant, []
+        active = proj._state(conn, "active_version")
+        if not active:
+            return relevant, []
+        ids = [h.id for h in relevant]
+        import json as _json
+
+        rows = conn.execute(
+            "SELECT memory_id, uri FROM graph_projection_memberships "
+            "WHERE version = ? AND memory_id IN (SELECT value FROM json_each(?)) "
+            "ORDER BY memory_id",
+            (active, _json.dumps(ids)),
+        ).fetchall()
+    except Exception:
+        return relevant, []
+    if not rows:
+        return relevant, []
+    by_mem: dict[str, set[str]] = {}
+    for r in rows:
+        by_mem.setdefault(str(r["memory_id"]), set()).add(str(r["uri"]))
+    kept: list[Any] = []
+    related: list[Any] = []
+    seen_uris: set[str] = set()
+    for h in relevant:
+        uris = by_mem.get(h.id, set())
+        if uris and uris & seen_uris:
+            related.append(h)
+            continue
+        kept.append(h)
+        seen_uris |= uris
+    return kept, related
+
+
 def rank_hits(
     hits: list[Any],
     knobs: RankKnobs,
@@ -1886,6 +1944,20 @@ def _recall_logic(
     if qualifying and len(qualifying) < len(pre_filter):
         kept = {h.id for h in qualifying}
         omitted.extend(h for h in pre_filter if h.id not in kept)
+
+    # Graph-cluster compaction (MEMO_RECALL_GRAPH_COMPACT, default off): demote
+    # top-K hits that sit in the same projection cluster as a higher-ranked hit
+    # into the one-line related nudge, freeing the token budget from
+    # near-duplicate bodies. No-op (byte-identical render) unless the flag is on
+    # and the projection is available; best-effort, never raises.
+    if flag_bool("MEMO_RECALL_GRAPH_COMPACT") and len(relevant) > 1:
+        try:
+            relevant, _graph_related = _graph_compact_clusters(relevant, mem=mem)
+            if _graph_related:
+                nudge = [*_graph_related, *nudge]
+        except Exception:
+            _logger.debug("graph recall compaction failed", exc_info=True)
+
     if not relevant:
         # Search ran, nothing qualified. An ⛔ anti-memory can still fire on its
         # own, so surface the AVOID block alone when one matched.
