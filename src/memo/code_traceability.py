@@ -317,6 +317,30 @@ class CodeReferenceResolver:
         return tuple(resolved)
 
 
+def sync_ast_graph_links(
+    graph_store: Any,
+    memory_id: str,
+    extra: dict[str, Any] | None,
+) -> int:
+    """Sync resolved AST code references into the GraphStore code_ast_relations table."""
+    if graph_store is None or not memory_id or not extra:
+        return 0
+    refs = resolve_code_references(extra)
+    count = 0
+    for ref in refs:
+        if ref.file_path and ref.label:
+            graph_store.upsert_code_ast_link(
+                memory_id=memory_id,
+                file_path=ref.file_path,
+                symbol_name=ref.label,
+                qualified_name=ref.qualified_name or ref.label,
+                relation_type=ref.relation or "refers_to",
+                confidence=ref.confidence,
+            )
+            count += 1
+    return count
+
+
 __all__ = [
     "CodeReference",
     "CodeReferenceResolver",
@@ -324,4 +348,5 @@ __all__ = [
     "codegraph_uri",
     "parse_codegraph_uri",
     "resolve_code_references",
+    "sync_ast_graph_links",
 ]

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from memo.memory import Memory
-from memo.server_annotations import READ_ONLY
+from memo.server_annotations import READ_ONLY, WRITE_IDEMPOTENT
 
 __all__ = [
     "Param",
@@ -190,6 +190,48 @@ def _handle_version(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _handle_event_bus_publish(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
+    """Publish one `agent` event to the shared local event journal (multi-agent
+    sync). Agent-id is this memory's own; the event lands in `memo events list`
+    and is visible to other local agents via memo_event_poll."""
+    from memo.agent_event_bus import AgentEventBus
+
+    bus = AgentEventBus(memory.cfg.state_dir, agent_id="mcp")
+    event = bus.publish(args["event_type"], args.get("data") or {})
+    return {
+        "published": True,
+        "event": {
+            "event_type": event.event_type,
+            "agent_id": event.agent_id,
+            "data": event.data,
+            "timestamp": event.timestamp,
+        },
+    }
+
+
+def _handle_event_poll(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
+    """Read `agent` events written by OTHER local agents since last poll.
+
+    Idempotent: each event id is delivered once per session and excluded from
+    later polls. Empty list means no new cross-agent activity."""
+    from memo.agent_event_bus import AgentEventBus
+
+    bus = AgentEventBus(memory.cfg.state_dir, agent_id="mcp")
+    events = bus.poll_new_events()
+    return {
+        "events": [
+            {
+                "event_type": e.event_type,
+                "agent_id": e.agent_id,
+                "data": e.data,
+                "timestamp": e.timestamp,
+            }
+            for e in events
+        ],
+        "count": len(events),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tool registry
 # ---------------------------------------------------------------------------
@@ -221,6 +263,39 @@ _TOOL_SPECS: tuple[ToolSpec, ...] = (
         ),
         params=(),
         handler=_handle_version,
+        annotations=READ_ONLY,
+    ),
+    ToolSpec(
+        name="memo_event_bus_publish",
+        description=(
+            "Publish a local multi-agent event to memo's shared event journal. "
+            "Other agents (or their own memo_event_poll calls) can read it, and "
+            "it appears in `memo events list`. Use for cross-agent coordination "
+            "signals (e.g. 'refreshed the shared index', 'completed migration'). "
+            "Gated by MEMO_EVENT_BUS_ENABLED (default on)."
+        ),
+        params=(
+            Param("event_type", "string", description="Event type, e.g. 'sync.completed'"),
+            Param(
+                "data",
+                "object",
+                default=None,
+                nullable=True,
+                description="Optional structured payload for the event",
+            ),
+        ),
+        handler=_handle_event_bus_publish,
+        annotations=WRITE_IDEMPOTENT,
+    ),
+    ToolSpec(
+        name="memo_event_poll",
+        description=(
+            "Read `agent` events published by OTHER local agents since the last "
+            "poll in this process. Idempotent — each event is delivered once. "
+            "Empty list means no new cross-agent activity."
+        ),
+        params=(),
+        handler=_handle_event_poll,
         annotations=READ_ONLY,
     ),
 )

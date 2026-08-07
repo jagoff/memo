@@ -457,6 +457,17 @@ SPECS: tuple[FlagSpec, ...] = (
         "MEMO_CONTRADICT_PENALTY. Default off = legacy silent demote.",
     ),
     _spec(
+        "MEMO_SEARCH_PARALLEL",
+        "bool",
+        True,
+        "search",
+        "Hybrid search: run the BM25, exact-BM25, and fact-edge candidate legs in a "
+        "thread pool concurrently with the query embedding (vec leg). The MLX embed "
+        "forward pass is serialized by the process-wide GPU lock, but SQLite reads run "
+        "on separate thread-local connections, so the legs overlap instead of stacking. "
+        "Off (0) preserves the historical sequential execution order exactly.",
+    ),
+    _spec(
         "MEMO_VEC_QUANTIZE",
         "str",
         "int8",

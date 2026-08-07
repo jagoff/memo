@@ -33,7 +33,9 @@ class _StubMem:
 
     lifecycle = _StubLifecycle()
 
-    def search(self, query, limit, mode="vec", exclude_types=None, exclude_tags=None):
+    def search(
+        self, query, limit, mode="vec", budget_ms=None, exclude_types=None, exclude_tags=None
+    ):
         return [_Hit("aaaa1111", 0.9), _Hit("bbbb2222", 0.5)]
 
 
@@ -406,7 +408,9 @@ def test_dream_run_eval_errors_land_in_receipt(tmp_path, monkeypatch):
     monkeypatch.setattr("memo.eval_recall.harvest_labels", _boom)
 
     class _BrokenSearchMem(_StubMem):
-        def search(self, query, limit, mode="vec", exclude_types=None, exclude_tags=None):
+        def search(
+            self, query, limit, mode="vec", budget_ms=None, exclude_types=None, exclude_tags=None
+        ):
             raise RuntimeError("index locked")
 
     monkeypatch.setattr("memo.cli_dream._get_memory", lambda cfg: _BrokenSearchMem())

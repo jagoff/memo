@@ -17,6 +17,18 @@ from memo.negative_recall import (
     risky_context,
 )
 
+# Dedup / collapse / MMR primitives live in their own leaf module (hot-path
+# hygiene); re-exported here so existing importers (recall_server,
+# cli_recall_hook, tests) keep working unchanged.
+from memo.recall_dedup import (
+    _apply_mmr,
+    _dedup_key,  # noqa: F401 — re-exported via recall_logic for recall_server/tests
+    _dedup_tokens,
+    _deduplicate_synthesis,
+    collapse_near_dups,
+    dedup_hits,
+)
+
 _logger = logging.getLogger(__name__)
 
 RECALL_HEADER = "<memo-recall readonly>\n## Memory"
@@ -152,6 +164,51 @@ def adaptive_token_budget(token_budget: int, prompt_length: int) -> int:
     return token_budget
 
 
+def detect_topic_shift(
+    current_tokens: set[str],
+    previous_tokens: set[str],
+    sensitivity: float = 0.35,
+) -> bool:
+    """Detect if conversation shifted topics significantly between turns using token Jaccard distance."""
+    if not current_tokens or not previous_tokens:
+        return False
+    intersection = current_tokens & previous_tokens
+    union = current_tokens | previous_tokens
+    if not union:
+        return False
+    jaccard_sim = len(intersection) / len(union)
+    return (1.0 - jaccard_sim) >= sensitivity
+
+
+def dynamic_stream_token_budget(
+    token_budget: int,
+    prompt: str,
+    turn: int | None = None,
+    prev_prompt: str | None = None,
+) -> int:
+    """Dynamic continuous context streaming: scale budget based on topic shifts & turn depth."""
+    if token_budget <= 0:
+        return token_budget
+    base = adaptive_token_budget(token_budget, len(prompt))
+    if not flag_bool("MEMO_RECALL_DYNAMIC_STREAM"):
+        return base
+    if turn is None or turn <= 1 or not prev_prompt:
+        return base
+
+    curr_toks = _dedup_tokens(prompt)
+    prev_toks = _dedup_tokens(prev_prompt)
+    sens = flag_float("MEMO_RECALL_TOPIC_SHIFT_SENSITIVITY") or 0.35
+
+    shifted = detect_topic_shift(curr_toks, prev_toks, sensitivity=sens)
+    if shifted:
+        # Topic shift detected: expand token budget to surface fresh context for the new topic
+        return int(min(base * 1.4, 1200))
+    elif turn > 5:
+        # Stable topic deep in session: decay token budget to save tokens
+        return max(150, int(base * 0.7))
+    return base
+
+
 def maybe_inject_verbosity_steering(system_prompt: str, level: int) -> str:
     """Append idempotent verbosity steering block to system prompt.
 
@@ -183,33 +240,6 @@ def maybe_inject_verbosity_steering(system_prompt: str, level: int) -> str:
     steering_block = f"\n{SENTINEL_START}{level}\n{steering_text}\n{SENTINEL_END}"
 
     return system_prompt + steering_block
-
-
-def _dedup_tokens(text: str) -> set[str]:
-    import re
-
-    return {t for t in re.findall(r"\w+", (text or "").lower()) if len(t) > 2}
-
-
-def collapse_near_dups(relevant: list[Any], *, threshold: float) -> list[Any]:
-    """Drop hits whose title+body token-Jaccard with a kept, higher-scored hit
-    exceeds ``threshold``. Lexical only — safe for the 5s recall hook (no MLX)."""
-    kept: list[Any] = []
-    kept_sets: list[set[str]] = []
-    for h in sorted(relevant, key=lambda x: x.score or 0.0, reverse=True):
-        toks = _dedup_tokens(f"{h.title} {h.body or ''}")
-        dup = False
-        for ks in kept_sets:
-            union = toks | ks
-            if union and len(toks & ks) / len(union) >= threshold:
-                dup = True
-                break
-        if not dup:
-            kept.append(h)
-            kept_sets.append(toks)
-    # preserve the caller's original ordering among survivors
-    survivors = {id(h) for h in kept}
-    return [h for h in relevant if id(h) in survivors]
 
 
 # ── Verified code citations (MEMO_RECALL_CODE_REFS_ENABLED, default OFF) ─────
@@ -620,11 +650,24 @@ def render_by_format(
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
 ) -> str:
-    """The compact/balanced/full render switch, shared by both recall paths.
+    """The compact/balanced/full render switch, shared by both recall paths."""
+    world_proj = ""
+    if state_dir is not None and flag_bool("MEMO_WORLD_MODEL_ENABLED"):
+        try:
+            from pathlib import Path
 
-    Any unknown ``fmt`` falls through to the full renderer (historical
-    behavior of the subprocess path's ``else`` branch)."""
+            from memo.kernel.projector import ZeroSearchProjector
+            from memo.kernel.world_model import WorldModel
+
+            wm = WorldModel(Path(state_dir))
+            world_proj = ZeroSearchProjector(wm).project_context() + "\n"
+        except Exception:
+            world_proj = ""
+
     if fmt == "compact":
+        # Compact is a strict token-economy contract: one line per hit, header
+        # first — the world projection would break its shape (and the format-
+        # parity tests). Only the expanded renderers carry the kernel section.
         return render_recall_compact(
             relevant,
             token_budget=token_budget,
@@ -632,8 +675,8 @@ def render_by_format(
             state_dir=state_dir,
         )
     if fmt == "balanced":
-        return render_recall_balanced(relevant, token_budget=token_budget, turn=turn)
-    return render_recall_context(
+        return world_proj + render_recall_balanced(relevant, token_budget=token_budget, turn=turn)
+    return world_proj + render_recall_context(
         relevant,
         nudge,
         turn=turn,
@@ -921,58 +964,6 @@ def _proximity_ref_matches(ref: Any, changed: set[str], hood: set[str], db_repo_
     return bool(path in changed or (label and label in hood) or (qualified and qualified in hood))
 
 
-def _mmr_token_set(hit: Any) -> frozenset[str]:
-    text = f"{getattr(hit, 'title', '') or ''} {getattr(hit, 'body', '') or ''}"
-    return frozenset(text.lower().split())
-
-
-def _apply_mmr(
-    hits: list[Any],
-    lam: float,
-    explain: dict[str, dict[str, Any]] | None = None,
-) -> list[Any]:
-    """Maximal-marginal-relevance re-ORDERING of the final gated pool.
-
-    Greedy selection: score' = lam*relevance - (1-lam)*max_sim_to_already_
-    selected, where relevance is the (boosted) hit score and similarity is
-    token-set Jaccard over title+body — doc-doc vectors are not available
-    here, and Jaccard needs no embed calls, no store round-trips: O(K^2)
-    over the candidate pool only, hook-budget safe. Hit scores are NOT
-    mutated — only the order changes. The first pick is always the
-    max-relevance hit, so skip-below floors on the top hit are unaffected."""
-    if len(hits) <= 1:
-        return list(hits)
-    tokens = [_mmr_token_set(h) for h in hits]
-
-    def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
-        if not a or not b:
-            return 0.0
-        return len(a & b) / len(a | b)
-
-    remaining = list(range(len(hits)))
-    selected: list[int] = []
-    while remaining:
-        best_i = remaining[0]
-        best_score = float("-inf")
-        best_pen = 0.0
-        for i in remaining:
-            rel = hits[i].score or 0.0
-            pen = max((_jaccard(tokens[i], tokens[j]) for j in selected), default=0.0)
-            score = lam * rel - (1.0 - lam) * pen
-            if score > best_score:
-                best_i, best_score, best_pen = i, score, pen
-        remaining.remove(best_i)
-        selected.append(best_i)
-        if explain is not None:
-            entry = explain.get(getattr(hits[best_i], "id", ""))
-            if entry is not None:
-                entry["mmr"] = {
-                    "mmr_score": round(best_score, 6),
-                    "max_sim_to_selected": round(best_pen, 6),
-                }
-    return [hits[i] for i in selected]
-
-
 def _session_context(mem: Any, exclude_types: set[str] | None, *, max_titles: int = 5) -> str:
     try:
         rows = mem.store.list_recent(limit=max_titles * 2, exclude_types=exclude_types)
@@ -983,45 +974,6 @@ def _session_context(mem: Any, exclude_types: set[str] | None, *, max_titles: in
         if flag_bool("MEMO_RECALL_DEBUG"):
             print(f"# recall-daemon: session_context failed: {exc}", file=sys.stderr)
         return ""
-
-
-def _dedup_key(hit: Any) -> str:
-    title = " ".join((getattr(hit, "title", "") or "").lower().split())
-    body = " ".join((getattr(hit, "body", "") or "").lower().split())[:120]
-    return f"{title}|{body}"
-
-
-def _deduplicate_synthesis(hits: list[Any]) -> list[Any]:
-    """Remove source memories that are already covered by a synthesis hit.
-
-    A synthesis hit has extra.synthesis_sources = [id1, id2, ...].
-    If a synthesis hit appears alongside its source memories, the sources
-    are redundant — remove them.
-    """
-    covered_ids: set[str] = set()
-    for h in hits:
-        if getattr(h, "type", "") == "synthesis":
-            sources = (getattr(h, "extra", None) or {}).get("synthesis_sources") or []
-            covered_ids.update(sources)
-    if not covered_ids:
-        return list(hits)
-    return [h for h in hits if h.id not in covered_ids]
-
-
-def dedup_hits(hits: list[Any]) -> list[Any]:
-    seen_ids: set[str] = set()
-    seen_keys: set[str] = set()
-    out: list[Any] = []
-    for h in hits:
-        hid = getattr(h, "id", None)
-        key = _dedup_key(h)
-        if hid in seen_ids or key in seen_keys:
-            continue
-        if hid is not None:
-            seen_ids.add(hid)
-        seen_keys.add(key)
-        out.append(h)
-    return out
 
 
 @dataclass(frozen=True)
@@ -1048,6 +1000,25 @@ class RankKnobs:
     # the code-proximity stage's git diff + .codegraph discovery. None keeps
     # process-cwd behavior (the direct CLI path, where they coincide).
     cwd: str | None = None
+
+
+def recall_search_budget_ms() -> float | None:
+    """Half of the recall hook's wall-clock cap → `Memory.search(budget_ms=)`.
+
+    The post-candidate search pipeline (see `memory/search_pipeline.py`) can
+    drop skippable stages (rerank, graph ordering, entity boost, …) when its
+    wall-clock budget is exhausted. The hook's outer SIGALRM cap is
+    `MEMO_RECALL_HOOK_BUDGET_MS` (default 10 s); spending the full cap on the
+    search would leave no margin for render/JSON, so this passes half of it.
+
+    Returns None when the cap is disabled (0) — the historical no-budget
+    behaviour — so `search()` runs every stage unconditionally.
+    """
+    _hb = flag_int("MEMO_RECALL_HOOK_BUDGET_MS")
+    budget_ms = 10000 if _hb is None else _hb
+    if budget_ms <= 0:
+        return None
+    return budget_ms / 2.0
 
 
 def knobs_from_flags(
@@ -1755,6 +1726,7 @@ def _recall_logic(
                             limit=search_k,
                             mode=mode,
                             recency=True,
+                            budget_ms=recall_search_budget_ms(),
                             exclude_types=exclude_types,
                             exclude_tags=exclude_tags,
                         ),
@@ -1769,6 +1741,7 @@ def _recall_logic(
                 limit=search_k,
                 mode=mode,
                 recency=True,
+                budget_ms=recall_search_budget_ms(),
                 exclude_types=exclude_types,
                 exclude_tags=exclude_tags,
             )
@@ -1802,6 +1775,7 @@ def _recall_logic(
                     limit=search_k,
                     mode=mode,
                     recency=True,
+                    budget_ms=recall_search_budget_ms(),
                     exclude_types=exclude_types,
                     exclude_tags=exclude_tags,
                 )

@@ -23,7 +23,7 @@ class _Hit:
 
 
 class _StubMem:
-    def search(self, query, limit, mode="vec"):
+    def search(self, query, limit, mode="vec", budget_ms=None):
         return [_Hit("aaaa1111", 0.9), _Hit("bbbb2222", 0.5)]
 
 

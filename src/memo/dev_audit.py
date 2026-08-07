@@ -137,6 +137,10 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("recall_logic.py", "make_vec_cosine._cos", 1),
     ("recall_logic.py", "make_vec_cosine._cos", 2),
     ("recall_logic.py", "fetch_recency_band", 1),
+    # World-model projection is optional hook-hot-path enrichment: any
+    # kernel/state/projection failure degrades to no kernel section and must
+    # never break the recall payload or blow the 5s hook budget.
+    ("recall_logic.py", "render_by_format", 1),
     # Hook hot path: a corrupt/unreadable telemetry log must not block recall;
     # failure keeps the configured per-turn token budget unchanged.
     ("recall_logic.py", "_session_scaled_token_budget", 1),

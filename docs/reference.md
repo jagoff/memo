@@ -44,7 +44,7 @@ agent-memory projects. For the complete live flag registry, run
   wording of past local transcript turns through a private, lexical-only FTS5
   index that never enters ambient recall.
 - **Fewer tokens, not more.** Recall injects the relevant answer on a bounded
-  budget, and the default MCP surface exposes 41 tools instead of the full 162.
+  budget, and the default MCP surface exposes 41 tools instead of the full 164.
 
 ---
 
@@ -253,7 +253,7 @@ a 41-tool surface (`ask`, `context`, `get`, `graph`, `offload`, `rename`, `save`
 notifications, and Memo-native evidence, operational-continuity, and
 outcome-learning helpers, plus registered-terminal status) so
 administrative schemas don't consume model context — set
-`MEMO_MCP_PROFILE=core`/`slim` (58 tools) or `full`/`default` (162 tools) only
+`MEMO_MCP_PROFILE=core`/`slim` (58 tools) or `full`/`default` (164 tools) only
 for clients that genuinely need the larger administrative surface.
 
 ### Claude Code
@@ -435,7 +435,7 @@ The live MCP server is profile-gated by `MEMO_MCP_PROFILE`:
 |---|---:|---:|---|
 | `agent` (default) | 41 | ~4.1k | Essential memory, evidence, continuity, lifecycle, terminal status, and outcome-learning surface. |
 | `core` / `slim` | 58 | ~5.3k | Agent tools plus CRUD, embeddings, history, sessions, and lint. |
-| `full` / `default` | 162 | ~18.1k | Every advanced domain module and diagnostic tool. |
+| `full` / `default` | 164 | ~18.1k | Every advanced domain module and diagnostic tool. |
 
 Mutating MCP calls pass through a bounded process-local FIFO by default
 (`MEMO_MCP_WRITE_QUEUE_SIZE=32`); read-only calls bypass it. The
@@ -1376,7 +1376,7 @@ read-only, `$EDITOR`, and backup restore paths.
 ### Token economy
 
 The default MCP profile exposes 41 tools (~4.1k schema tokens), compared with
-162 tools (~18.1k) on the full profile. The bundled Claude Code recall hook also
+164 tools (~18.1k) on the full profile. The bundled Claude Code recall hook also
 pins `MEMO_RECALL_TOP_K=1` and `MEMO_RECALL_TOKEN_BUDGET=160`; the general
 runtime default remains 600 tokens for clients that do not use that hook.
 

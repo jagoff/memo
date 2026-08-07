@@ -361,7 +361,9 @@ class _Hit:
 
 
 class _StubMem:
-    def search(self, query, limit, mode="vec", exclude_types=None, exclude_tags=None):
+    def search(
+        self, query, limit, mode="vec", budget_ms=None, exclude_types=None, exclude_tags=None
+    ):
         return [_Hit("aaaa1111", 0.9)]
 
 

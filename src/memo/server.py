@@ -286,7 +286,7 @@ def _build_server(
     # Stable and advanced domain tool modules register their @server.tool()
     # closures here. Presence on the MCP surface does not by itself mean a
     # feature is part of memo's stable core contract; see experimental_index.md.
-    # Skip when MEMO_MCP_SLIM=1 — reduces 162 tools to the 58-tool core surface
+    # Skip when MEMO_MCP_SLIM=1 — reduces 164 tools to the 58-tool core surface
     # for local/constrained LLMs where tool-definition tokens are expensive.
     from memo.surface import mcp_include_advanced_tools
 

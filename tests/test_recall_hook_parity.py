@@ -118,6 +118,7 @@ class _StubMemory:
         limit: int = 5,
         mode: str = "bm25",
         recency: bool = False,
+        budget_ms: float | None = None,
         exclude_types: object = None,
         exclude_tags: object = None,
     ) -> list[MemoryRecord]:
@@ -258,7 +259,14 @@ def test_subprocess_applies_gap_trim_to_top1(
 
     class _GapStub(_StubMemory):
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             return [strong, weak]
 
@@ -285,7 +293,14 @@ def test_subprocess_backfills_below_old_topk_slice(
 
     class _BackfillStub(_StubMemory):
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             return [high, gated, backfill]
 
@@ -313,7 +328,14 @@ def test_no_hits_bail_reports_knobs_min_sim(
 
     class _EmptyStub(_StubMemory):
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             return []
 
@@ -368,7 +390,14 @@ def test_subprocess_excludes_uncertain_quarantine_by_default(
 
     class _RecordingStub(_StubMemory):
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             seen["exclude_tags"] = exclude_tags
             return _make_pool()
@@ -388,7 +417,14 @@ def test_subprocess_uncertain_exclusion_flag_off(
 
     class _RecordingStub(_StubMemory):
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             seen["exclude_tags"] = exclude_tags
             return _make_pool()

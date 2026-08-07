@@ -254,7 +254,14 @@ def test_daemon_busy_marker_falls_through_to_subprocess(
             pass
 
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             return [hit]
 
@@ -303,7 +310,14 @@ def test_vec_embed_failure_downgrades_to_bm25_in_subprocess(
             pass
 
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             modes.append(mode)
             if mode in ("vec", "hybrid"):
@@ -356,7 +370,14 @@ def test_vec_subprocess_search_merges_recency_band(
             pass
 
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             assert mode == "vec"
             return [hit]
@@ -471,7 +492,14 @@ def test_unmatched_term_gate_suppresses_entire_subprocess_injection(
             pass
 
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             return [hit]
 
@@ -534,7 +562,14 @@ def test_corrupt_prewarm_signal_downgrades_to_bm25(
             pass
 
         def search(
-            self, query, limit=5, mode="bm25", recency=False, exclude_types=None, exclude_tags=None
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
         ):
             seen["mode"] = mode
             return []

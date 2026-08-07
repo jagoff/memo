@@ -127,6 +127,21 @@ CREATE TABLE IF NOT EXISTS graph_projection_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS code_ast_relations (
+    memory_id      TEXT NOT NULL,
+    file_path      TEXT NOT NULL,
+    symbol_name    TEXT NOT NULL,
+    qualified_name TEXT NOT NULL,
+    relation_type  TEXT NOT NULL DEFAULT 'refers_to',
+    confidence     REAL NOT NULL DEFAULT 1.0,
+    linked_at      TEXT NOT NULL,
+    PRIMARY KEY (memory_id, file_path, symbol_name, relation_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_car_memory ON code_ast_relations(memory_id);
+CREATE INDEX IF NOT EXISTS idx_car_symbol ON code_ast_relations(symbol_name);
+CREATE INDEX IF NOT EXISTS idx_car_file ON code_ast_relations(file_path);
 """
 
 
@@ -914,6 +929,64 @@ class GraphStore:
             other = r["id_b"] if r["id_a"] == anchor_id else r["id_a"]
             counts[other] = int(r["count"])
         return counts
+
+    def upsert_code_ast_link(
+        self,
+        *,
+        memory_id: str,
+        file_path: str,
+        symbol_name: str,
+        qualified_name: str = "",
+        relation_type: str = "refers_to",
+        confidence: float = 1.0,
+    ) -> None:
+        """Link a Markdown memory to an AST symbol in code."""
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).isoformat()
+        with self._tx() as cx:
+            cx.execute(
+                "INSERT INTO code_ast_relations "
+                "(memory_id, file_path, symbol_name, qualified_name, relation_type, confidence, linked_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(memory_id, file_path, symbol_name, relation_type) DO UPDATE SET "
+                "qualified_name = excluded.qualified_name, confidence = excluded.confidence, linked_at = excluded.linked_at",
+                (
+                    memory_id,
+                    file_path,
+                    symbol_name,
+                    qualified_name,
+                    relation_type,
+                    float(confidence),
+                    now,
+                ),
+            )
+
+    def get_ast_links_for_memory(self, memory_id: str) -> list[dict[str, Any]]:
+        """Return all code AST symbol relations linked to a given memory."""
+        rows = self._conn.execute(
+            "SELECT memory_id, file_path, symbol_name, qualified_name, relation_type, confidence, linked_at "
+            "FROM code_ast_relations WHERE memory_id = ?",
+            (memory_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_memories_for_ast_symbol(
+        self, symbol_name: str, file_path: str | None = None
+    ) -> list[str]:
+        """Return all memory IDs referencing a given code symbol (and optionally file_path)."""
+        if file_path:
+            rows = self._conn.execute(
+                "SELECT DISTINCT memory_id FROM code_ast_relations "
+                "WHERE symbol_name = ? AND file_path = ?",
+                (symbol_name, file_path),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT DISTINCT memory_id FROM code_ast_relations WHERE symbol_name = ?",
+                (symbol_name,),
+            ).fetchall()
+        return [str(r["memory_id"]) for r in rows]
 
     def close(self) -> None:
         with suppress(BaseException):

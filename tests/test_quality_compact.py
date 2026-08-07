@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -216,8 +217,8 @@ def test_quality_compact_receipt_paths_are_unique_within_same_second(
     )
     ns_values = iter([111, 222])
 
-    monkeypatch.setattr(cli_maintain.time, "time", lambda: 123.0)
-    monkeypatch.setattr(cli_maintain.time, "time_ns", lambda: next(ns_values))
+    monkeypatch.setattr(time, "time", lambda: 123.0)
+    monkeypatch.setattr(time, "time_ns", lambda: next(ns_values))
 
     first = cli_maintain._prepare_quality_compact_receipt_paths(cfg)[2]
     second = cli_maintain._prepare_quality_compact_receipt_paths(cfg)[2]
@@ -240,7 +241,7 @@ def test_quality_compact_apply_receipt_publish_is_atomic(tmp_path: Path, monkeyp
             raise OSError("simulated last replace failure")
         real_replace(src, dst)
 
-    monkeypatch.setattr(cli_maintain.os, "replace", boom)
+    monkeypatch.setattr(os, "replace", boom)
 
     def fail_if_embedded(*_args, **_kwargs):
         raise AssertionError("rollback restoration must not require an embedding model")
@@ -312,7 +313,7 @@ def test_quality_compact_apply_rolls_back_attempted_archive_ids(
         real_replace(src, dst)
 
     monkeypatch.setattr(LifecycleManager, "archive_memory", partial_move_then_raise)
-    monkeypatch.setattr(cli_maintain.os, "replace", boom)
+    monkeypatch.setattr(os, "replace", boom)
 
     result = CliRunner().invoke(
         cli,

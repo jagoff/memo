@@ -737,6 +737,56 @@ SPECS: tuple[FlagSpec, ...] = (
         "high-risk contexts (release/delete/deploy/refactor/migrate) via a pure "
         "O(len(prompt)) keyword scan — never re-embeds. OFF by default.",
     ),
+    # ── Gamechanger Flags ─────────────────────────────────────────────────────
+    _spec(
+        "MEMO_RECALL_DYNAMIC_STREAM",
+        "bool",
+        True,
+        "recall",
+        "Enable dynamic continuous context streaming and adaptive token window scaling across multi-turn sessions.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_RECALL_TOPIC_SHIFT_SENSITIVITY",
+        "float",
+        0.35,
+        "recall",
+        "Sensitivity threshold for topic shift detection in continuous sessions (0.1 to 0.9).",
+        min_val=0.1,
+        max_val=0.9,
+    ),
+    _spec(
+        "MEMO_RECALL_PREFETCH_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Enable speculative in-memory vector pre-fetching in recall daemon for <10ms latency.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_EVENT_BUS_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Enable local multi-agent lockless event bus (IPC/WAL) for real-time cross-agent state sync.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_SELF_HEALING_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Auto-recalibrate memory confidence & dispute stale memories on execution/test failures.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_WORLD_MODEL_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Enable Active Latent Kernel & World-Model zero-search cognitive context projection.",
+        opt_out=True,
+    ),
 )
 
 
