@@ -1,3 +1,5 @@
+Status: shipped in #128 (release: v4.5.0 — elicitation confirm, dispute-aware ask, MCP ambient recall, merged 2026-07-29). `src/memo/server_prompts.py` (briefing/recall prompts, commit 691e132d), the enriched `_SERVER_INSTRUCTIONS` text in `src/memo/server.py` (verbatim match to the spec), and the `--with-mandate` install-mcp hint (`cli_install_mcp.py:345`) are all present.
+
 # MCP ambient-recall parity — design
 
 **Date:** 2026-07-28

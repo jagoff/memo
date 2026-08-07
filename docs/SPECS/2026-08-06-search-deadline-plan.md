@@ -1,3 +1,5 @@
+Status: partially shipped — this plan's own deliverable (`src/memo/search_deadline.py`, `MEMO_SEARCH_BUDGET_MS`) is absent from master; grep confirms no matches. #209 only reused the pre-existing `MEMO_RERANK_BUDGET_S` → RRF fallback, one input to this plan, not the deadline primitive itself. A complete implementation matching this plan (`search_deadline.py`, `test_search_deadline.py`, `test_search_deadline_rerank.py`) exists on local branch `feat/conformance-budget-deadline-admission` (commits 8fb136f3, d72caffb, 1f440ccb, 12556cef, 00cf7935), not yet opened as a PR.
+
 # Search Deadline Degradation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

@@ -1,3 +1,5 @@
+Status: shipped in #149 (feat: native memo chat (synapse chat rescue), merged 2026-08-01). PR body explicitly cites this plan file alongside the design doc; 15 tasks landed with TDD + per-task review. Known backlog: eval-chat gate 13/22 green, parked per spec decision #7.
+
 # Memo Chat (rescate synapse) — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

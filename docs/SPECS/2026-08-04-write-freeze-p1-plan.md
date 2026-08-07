@@ -1,3 +1,5 @@
+Status: shipped in #192 (fix(operational): unfreeze production writes and make maintain report pass failures, merged 2026-08-04). PR body: "First item of the whole-product audit... Plan: docs/SPECS/2026-08-04-write-freeze-p1-plan.md." `operational.py` topic-scoped conflict matching, `cli_operational.py` `conflict list`, and `maintain`/`consolidate_ops.py` failure surfacing all confirmed in the PR diff. (Note: the plan's own checkboxes were left unchecked despite the work landing — checkbox state in this repo's plan docs is not reliable evidence of completion.)
+
 # P1 — Unfreeze production writes Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

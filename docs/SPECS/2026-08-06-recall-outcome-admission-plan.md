@@ -1,3 +1,5 @@
+Status: partially shipped — 0 of this plan's own tasks landed on master; `src/memo/recall_utility.py` (Task 1's deliverable) does not exist anywhere, on master or any branch found. Only the adjacent, separately-tracked prerequisite it depends on conceptually (`src/memo/recall_admission.py`) shipped, in #209 — that module is not part of this plan's task list.
+
 # Recall Admission by Outcome Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

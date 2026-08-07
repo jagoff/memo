@@ -1,3 +1,5 @@
+Status: shipped in #122 (feat: dispute-aware ask (MEMO_ASK_DISPUTES) — contradiction-blindness closed, merged 2026-07-28). `MEMO_ASK_DISPUTES` wired into `src/memo/memory/ask_ops.py` and `src/memo/memory/ask_disputes.py`.
+
 # Dispute-aware ask — design
 
 **Date:** 2026-07-28

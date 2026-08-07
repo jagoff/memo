@@ -1,3 +1,5 @@
+Status: shipped in #136 (feat: adopt synapse daemons natively (big-bang synapse deprecation), merged 2026-07-31). Same evidence as the paired design doc: CHANGELOG [4.6.0] 2026-07-31, com.memo.* launchd fleet live, trinity repos archived per CLAUDE.md.
+
 # Synapse Deprecation (Big Bang) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
