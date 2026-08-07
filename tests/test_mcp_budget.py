@@ -142,16 +142,51 @@ async def test_middleware_replaces_an_over_cap_result(monkeypatch) -> None:
 
     out = await mw.on_call_tool(_Ctx(), _call_next)
     # A bare dict is not a legal `on_call_tool` return -- FastMCP requires a
-    # `ToolResult` (fastmcp.tools.base.ToolResult). `is_error=True` routes
-    # `to_mcp_result()` through the CallToolResult path, which bypasses the
-    # original tool's output_schema validation (the substitute payload has
-    # nothing to do with that schema) -- the same reasoning FastMCP's own
-    # ResponseLimitingMiddleware documents for setting `meta`.
-    assert out.is_error is True
+    # `ToolResult` (fastmcp.tools.base.ToolResult). is_error MUST stay False:
+    # every other refusal on this MCP surface (server_graph_tool.py,
+    # server_core_records.py, server_multimodal.py, server_sync.py, ...)
+    # returns a plain {"error": ...} dict as a NORMAL successful call: a
+    # caller inspects `result["error"]`, it never raises. `meta={}` (not
+    # is_error) is what bypasses the original tool's output_schema
+    # validation here -- ToolResult.to_mcp_result()'s gate is `self.meta is
+    # not None or self.is_error`, and FastMCP's own ResponseLimitingMiddleware
+    # sets `meta={}` for this exact reason, leaving is_error at its default.
+    assert out.is_error is False
     assert out.structured_content["error"] == "response_budget_exceeded"
     assert out.structured_content["tool"] == "memo_graph"
     assert out.structured_content["tokens"] == 1000
     assert out.structured_content["cap"] == 10
+
+
+@pytest.mark.asyncio
+async def test_over_cap_result_reaches_a_real_client_as_a_normal_return(
+    monkeypatch,
+) -> None:
+    # Regression proof at the actual client boundary, not just the ToolResult
+    # fields: FastMCP's Client.call_tool() defaults raise_on_error=True and
+    # raises ToolError whenever isError is set on the wire result. If the
+    # substitute ever regresses back to is_error=True, this call raises and
+    # the test fails loudly -- inspecting `.is_error` alone would not catch
+    # a regression that only breaks the client-visible contract.
+    monkeypatch.setenv("MEMO_MCP_RESPONSE_BUDGET_TOKENS", "10")
+    from fastmcp import Client, FastMCP
+
+    server = FastMCP("budget-test")
+
+    @server.tool()
+    def oversized() -> dict:
+        return {"payload": "x" * 4000}
+
+    mw = mcp_budget.make_response_budget_middleware()
+    assert mw is not None
+    server.add_middleware(mw)
+
+    async with Client(server) as client:
+        result = await client.call_tool("oversized", {})  # raise_on_error=True (default)
+
+    assert result.is_error is False
+    assert result.structured_content["error"] == "response_budget_exceeded"
+    assert result.structured_content["tool"] == "oversized"
 
 
 @pytest.mark.asyncio

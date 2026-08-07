@@ -150,11 +150,17 @@ def make_response_budget_middleware() -> Any:
             if tokens <= cap:
                 return result
             payload = budget_exceeded_payload(name, tokens, cap)
-            # is_error=True routes ToolResult.to_mcp_result() through the
-            # CallToolResult path, bypassing the original tool's
-            # output_schema validation -- the substitute payload's shape has
-            # nothing to do with that schema. Same rationale FastMCP's own
-            # ResponseLimitingMiddleware documents for setting `meta`.
-            return ToolResult(structured_content=payload, is_error=True)
+            # meta={} (not is_error=True): every other refusal on this MCP
+            # surface (server_graph_tool.py, server_core_records.py,
+            # server_multimodal.py, server_sync.py, ...) returns a plain
+            # {"error": ...} dict as a NORMAL successful call -- is_error
+            # would make FastMCP's Client.call_tool() (raise_on_error=True by
+            # default) raise ToolError instead, indistinguishable from a
+            # crash, breaking that convention for this one payload. `meta`
+            # is what actually buys the output_schema bypass:
+            # ToolResult.to_mcp_result()'s gate is `self.meta is not None or
+            # self.is_error`, and FastMCP's own ResponseLimitingMiddleware
+            # sets `meta={}` (not is_error) for this exact reason.
+            return ToolResult(structured_content=payload, meta={})
 
     return _ResponseBudgetMiddleware()
