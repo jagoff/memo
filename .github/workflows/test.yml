@@ -52,7 +52,7 @@ jobs:
           --timeout=120 --resource-hygiene
       - name: Conformance (corpus-scale surfaces)
         env:
-          MEMO_CONFORMANCE_CORPUS_N: "10000"
+          MEMO_CONFORMANCE_CORPUS_N: "10001"
         run: .venv/bin/python -m pytest -m "conformance" -n 0 --timeout=600
       - name: Tests (excluding slow real-MLX smoke)
         # -n auto: parallelize across cores. --timeout: kill hung MLX/socket

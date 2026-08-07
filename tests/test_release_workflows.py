@@ -188,7 +188,7 @@ def test_publish_jobs_run_full_qa_on_the_exact_tagged_sha() -> None:
     assert "ruff check src/ tests/ scripts/" in quality
     assert "mypy src/memo" in quality
     assert "scripts/quality_gate.py" in quality
-    assert 'pytest -m "not slow"' in quality
+    assert 'pytest -m "not slow and not conformance"' in quality
     assert "--cov=memo" in quality
     assert quality.count("uses: ./.github/workflows/linux-cpu-smoke.yml") == 1
     assert quality.count("uses: ./.github/workflows/macos-smoke.yml") == 1
