@@ -21,6 +21,23 @@ CLI/MCP callers get a clear message.
 The destructive write paths must not silently swallow failures unless a rollback,
 receipt, or explicit recovery path is present.
 
+### Which gate owns which file
+
+Two gates enforce this policy and they do not overlap:
+
+- `tests/test_dev_audit.py` owns the files in
+  `dev_audit.BROAD_EXCEPTION_TARGET_FILES`. Every broad catch there is
+  classified individually in `BROAD_EXCEPTION_ALLOWED`, with a comment stating
+  its fail-open contract. Adding a justified catch is one edit: the
+  classification.
+- `scripts/quality_gate.py` owns everything else, as a per-file integer budget
+  in `eval/quality_baseline.json`. It skips every site the first gate already
+  audits, so a classified site is never billed twice.
+
+Moving a file into `BROAD_EXCEPTION_TARGET_FILES` means classifying all of its
+existing sites and regenerating the baseline; the file's integer budget then
+drops to zero by construction.
+
 ## Raw `MEMO_*` Env Reads
 
 Normal behavioral flags must use `memo.flags`.
