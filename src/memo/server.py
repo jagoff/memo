@@ -275,6 +275,19 @@ def _build_server(
         lifespan=lifespan,
     )
 
+    # Response budget FIRST. FastMCP's `_run_middleware` walks
+    # `self.middleware` via `reversed()`, so the middleware registered FIRST
+    # ends up OUTERMOST -- last to see/transform a tool's result on the way
+    # back out, i.e. what the caller actually receives. Registering it last
+    # would make it INNERMOST instead, measuring the tool's raw result
+    # before the trace/write-coordinator middleware get their turn. See
+    # `mcp_budget.make_response_budget_middleware` for the verified trace.
+    from memo.mcp_budget import make_response_budget_middleware
+
+    _budget_mw = make_response_budget_middleware()
+    if _budget_mw is not None:
+        server.add_middleware(_budget_mw)
+
     # Stitch Memo's trace header into the per-request context variable.
     _trace_mw = _make_trace_middleware()
     if _trace_mw is not None:

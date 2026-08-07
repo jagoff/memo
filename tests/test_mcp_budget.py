@@ -1,8 +1,9 @@
-"""The budget module: estimator, opt-in trimming, and the error payload.
-
-The middleware itself is covered in test 2; these are the pure pieces."""
+"""The budget module: estimator, opt-in trimming, the error payload, and the
+enforcement middleware."""
 
 from __future__ import annotations
+
+import pytest
 
 from memo import mcp_budget
 from memo.flags import REGISTRY
@@ -75,3 +76,95 @@ def test_budget_exceeded_payload_names_the_tool_and_both_numbers() -> None:
     assert payload["tokens"] == 27500
     assert payload["cap"] == 10000
     assert "limit=" in payload["hint"]
+
+
+class _Block:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _Result:
+    def __init__(self, text: str) -> None:
+        self.content = [_Block(text)]
+
+
+def test_result_text_reads_content_blocks() -> None:
+    assert mcp_budget.result_text(_Result("hello")) == "hello"
+
+
+def test_result_text_falls_back_to_str() -> None:
+    assert mcp_budget.result_text(1234) == "1234"
+
+
+def test_result_text_never_raises_on_a_hostile_shape() -> None:
+    # A shape where reading .content raises mid-projection must still
+    # produce *something* -- a budget layer that can throw converts a
+    # working tool into a broken one.
+    class _Hostile:
+        @property
+        def content(self):
+            raise RuntimeError("boom")
+
+        def __str__(self) -> str:
+            return "hostile-str"
+
+    assert mcp_budget.result_text(_Hostile()) == "hostile-str"
+
+
+@pytest.mark.asyncio
+async def test_middleware_passes_a_small_result_through(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_MCP_RESPONSE_BUDGET_TOKENS", "1000")
+    mw = mcp_budget.make_response_budget_middleware()
+    assert mw is not None
+
+    small = _Result("ok")
+
+    class _Ctx:
+        message = type("M", (), {"name": "memo_search"})()
+
+    async def _call_next(_ctx):
+        return small
+
+    assert await mw.on_call_tool(_Ctx(), _call_next) is small
+
+
+@pytest.mark.asyncio
+async def test_middleware_replaces_an_over_cap_result(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_MCP_RESPONSE_BUDGET_TOKENS", "10")
+    mw = mcp_budget.make_response_budget_middleware()
+    assert mw is not None
+
+    class _Ctx:
+        message = type("M", (), {"name": "memo_graph"})()
+
+    async def _call_next(_ctx):
+        return _Result("x" * 4000)
+
+    out = await mw.on_call_tool(_Ctx(), _call_next)
+    # A bare dict is not a legal `on_call_tool` return -- FastMCP requires a
+    # `ToolResult` (fastmcp.tools.base.ToolResult). `is_error=True` routes
+    # `to_mcp_result()` through the CallToolResult path, which bypasses the
+    # original tool's output_schema validation (the substitute payload has
+    # nothing to do with that schema) -- the same reasoning FastMCP's own
+    # ResponseLimitingMiddleware documents for setting `meta`.
+    assert out.is_error is True
+    assert out.structured_content["error"] == "response_budget_exceeded"
+    assert out.structured_content["tool"] == "memo_graph"
+    assert out.structured_content["tokens"] == 1000
+    assert out.structured_content["cap"] == 10
+
+
+@pytest.mark.asyncio
+async def test_zero_cap_disables_enforcement(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_MCP_RESPONSE_BUDGET_TOKENS", "0")
+    mw = mcp_budget.make_response_budget_middleware()
+    assert mw is not None
+    huge = _Result("x" * 40000)
+
+    class _Ctx:
+        message = type("M", (), {"name": "memo_graph"})()
+
+    async def _call_next(_ctx):
+        return huge
+
+    assert await mw.on_call_tool(_Ctx(), _call_next) is huge

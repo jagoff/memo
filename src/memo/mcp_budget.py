@@ -86,3 +86,75 @@ def budget_exceeded_payload(tool: str, tokens: int, cap: int, hint: str = "") ->
         "cap": cap,
         "hint": hint or "narrow the request (pass a smaller limit=) or use a summarising verb",
     }
+
+
+def result_text(result: Any) -> str:
+    """Textual projection of a tool result, for measurement only.
+
+    Handles the FastMCP shapes (content blocks, structured content) and
+    falls back to `str`. This runs on every tool call, so it must never
+    raise -- a budget layer that can throw converts a working tool into a
+    broken one. Every branch is guarded, including the final fallback.
+    """
+    try:
+        blocks = getattr(result, "content", None)
+        if isinstance(blocks, list):
+            parts = [str(getattr(b, "text", "") or "") for b in blocks]
+            if any(parts):
+                return "".join(parts)
+        structured = getattr(result, "structured_content", None)
+        if structured is not None:
+            return str(structured)
+        return str(result)
+    except Exception:
+        try:
+            return str(result)
+        except Exception:
+            return ""
+
+
+def make_response_budget_middleware() -> Any:
+    """Substitute an over-cap tool result with a structured error.
+
+    Returns None when FastMCP middleware is unavailable, matching
+    `_make_trace_middleware` (`server.py`) so `build_server` can skip wiring
+    it without failing.
+
+    `on_call_tool` must return a `fastmcp.tools.base.ToolResult` -- FastMCP's
+    own `Middleware.on_call_tool` is typed to return one, and every built-in
+    middleware (e.g. `ResponseLimitingMiddleware`) does the same. A bare dict
+    is not a legal return here.
+
+    Ordering (see `server.py`): FastMCP's `_run_middleware` walks
+    `self.middleware` via `reversed()`, so the FIRST middleware registered
+    via `add_middleware` ends up OUTERMOST -- the last to see/transform the
+    result on the way back out, i.e. what the caller actually receives. The
+    LAST middleware registered is INNERMOST and sees the tool's raw result
+    first. This middleware measures the byte count the caller gets, so it
+    must be registered before every other middleware, not after.
+    """
+    try:
+        from fastmcp.server.middleware import Middleware
+        from fastmcp.tools.base import ToolResult
+    except ImportError:  # pragma: no cover - supported FastMCP provides it
+        return None
+
+    class _ResponseBudgetMiddleware(Middleware):
+        async def on_call_tool(self, context: Any, call_next: Any) -> Any:
+            result = await call_next(context)
+            name = str(getattr(context.message, "name", "") or "")
+            cap = cap_for(name)
+            if cap <= 0:
+                return result
+            tokens = est_tokens(result_text(result))
+            if tokens <= cap:
+                return result
+            payload = budget_exceeded_payload(name, tokens, cap)
+            # is_error=True routes ToolResult.to_mcp_result() through the
+            # CallToolResult path, bypassing the original tool's
+            # output_schema validation -- the substitute payload's shape has
+            # nothing to do with that schema. Same rationale FastMCP's own
+            # ResponseLimitingMiddleware documents for setting `meta`.
+            return ToolResult(structured_content=payload, is_error=True)
+
+    return _ResponseBudgetMiddleware()
