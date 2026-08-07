@@ -67,12 +67,14 @@ def _env(cfg) -> dict[str, str]:
         "MEMO_STATE_DIR": str(cfg.state_dir),
         "MEMO_EMBEDDER_DIMS": str(DIMS),
         "MEMO_RERANKER_ENABLED": "false",
+        "MEMO_MEMORIES_IN_VAULT": "0",
+        "MEMO_VAULT_PATH": str(cfg.vault_path),
     }
 
 
 @pytest.fixture(scope="session")
 def corpus_size() -> int:
-    return int(os.environ.get("MEMO_CONFORMANCE_CORPUS_N", "10000"))
+    return int(os.environ.get("MEMO_CONFORMANCE_CORPUS_N", "10001"))
 
 
 @pytest.fixture(scope="session")
@@ -90,6 +92,8 @@ def big_corpus(tmp_path_factory, corpus_size: int) -> Iterator[Config]:
         mp.setenv("MEMO_STATE_DIR", str(state))
         mp.setenv("MEMO_AUTO_PROJECT_TAG", "0")
         mp.setenv("MEMO_STORE_BY_PROJECT", "0")
+        mp.setenv("MEMO_MEMORIES_IN_VAULT", "0")
+        mp.setenv("MEMO_VAULT_PATH", str(vault))
 
         cfg = Config(data_dir=data, vault_path=vault, state_dir=state, reranker_enabled=False)
         cfg.memory_dir.mkdir(parents=True, exist_ok=True)

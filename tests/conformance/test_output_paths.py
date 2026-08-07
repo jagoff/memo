@@ -72,7 +72,12 @@ def _delete_seeded_graph_rows(graph_db: Path, *, memory_id: str) -> None:
     residue a payload-size assertion over `export_json()`/`top_entities()`
     would see. Delete by the exact memory_id/name+type this fixture wrote,
     so a shared `graph.db` comes back byte-for-byte to how it looked before
-    this fixture ran.
+    this fixture ran. `record_extraction` also calls `_mark_projection_dirty`
+    (graph.py:355), which inserts a `('dirty', '1')` row into
+    `graph_projection_state` (graph.py:126) -- `graph_projection.py:545`
+    reads that key, and a leftover row here would perturb the MCP
+    graph-export payload-size baseline this same `graph.db` is shared with,
+    so clear it too.
     """
     if not graph_db.exists():
         return
@@ -84,6 +89,24 @@ def _delete_seeded_graph_rows(graph_db: Path, *, memory_id: str) -> None:
                 "DELETE FROM entities WHERE name IN (?, ?) AND type = 'concept'",
                 (_ENTITY_A, _ENTITY_B),
             )
+            conn.execute("DELETE FROM graph_projection_state WHERE key = 'dirty'")
+    finally:
+        conn.close()
+
+
+def _projection_dirty_row(graph_db: Path) -> str | None:
+    """The raw `graph_projection_state` 'dirty' value, or None if absent --
+    used to prove `_delete_seeded_graph_rows` actually clears the row
+    `_mark_projection_dirty` (graph.py:355) inserts, not just the derived
+    `GraphStore.projection_dirty()` reading (which returns True on a bare
+    missing row too, so it can't tell "never written" from "written then
+    left behind")."""
+    conn = sqlite3.connect(str(graph_db))
+    try:
+        row = conn.execute(
+            "SELECT value FROM graph_projection_state WHERE key = 'dirty'"
+        ).fetchone()
+        return None if row is None else str(row[0])
     finally:
         conn.close()
 
@@ -183,12 +206,14 @@ def test_symlinked_parent_is_accepted(big_corpus, graph_seeded, tmp_path, label,
     result = CliRunner().invoke(cli, argv_for(dest, tmp_path), env=_env(big_corpus))
 
     _assert_clean_and_on_topic(result, label)
-    if result.exit_code == 0:
-        # The write must actually land -- through the symlink and into the
-        # real directory it points at -- not merely "not crash".
-        assert (real / "out.dat").is_file(), (
-            f"{label} exited 0 but never wrote through the symlinked parent:\n{result.output}"
-        )
+    assert result.exit_code == 0, (
+        f"{label} did not accept a symlinked parent directory cleanly:\n{result.output}"
+    )
+    # The write must actually land -- through the symlink and into the real
+    # directory it points at -- not merely "not crash".
+    assert (real / "out.dat").is_file(), (
+        f"{label} exited 0 but never wrote through the symlinked parent:\n{result.output}"
+    )
 
 
 @pytest.mark.parametrize("label,argv_for", OUTPUT_SURFACES)
@@ -239,6 +264,10 @@ def test_graph_seeded_reverts_its_write_on_teardown(tmp_path) -> None:
         assert store.entity_memories(_ENTITY_A) == [memory_id]
     finally:
         store.close()
+    assert _projection_dirty_row(cfg.graph_db) == "1", (
+        "fixture setup did not mark the projection dirty -- the row this "
+        "test proves teardown clears was never written in the first place"
+    )
 
     with pytest.raises(StopIteration):
         next(gen)  # advance past the yield -- runs the fixture's `finally`
@@ -249,3 +278,8 @@ def test_graph_seeded_reverts_its_write_on_teardown(tmp_path) -> None:
         assert store.entity_memories(_ENTITY_A) == [], "seeded edge survived teardown"
     finally:
         store.close()
+    assert _projection_dirty_row(cfg.graph_db) is None, (
+        "graph_seeded's dirty-projection row survived teardown -- it would "
+        "perturb the MCP graph-export payload-size baseline this graph.db "
+        "is shared with"
+    )

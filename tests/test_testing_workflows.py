@@ -52,6 +52,7 @@ def test_pr_workflow_enforces_resource_and_diff_coverage_gates() -> None:
         "Type check (mypy)",
         "Progressive quality budget",
         "Resource hygiene (serial ownership gate)",
+        "Conformance (corpus-scale surfaces)",
         "Tests (excluding slow real-MLX smoke)",
         "Changed-lines coverage",
     ]
@@ -63,6 +64,9 @@ def test_pr_workflow_enforces_resource_and_diff_coverage_gates() -> None:
     assert steps["Resource hygiene (serial ownership gate)"]["run"] == (
         '.venv/bin/python -m pytest -m "resource_hygiene" -n 0 --timeout=120 --resource-hygiene'
     )
+    conformance = steps["Conformance (corpus-scale surfaces)"]
+    assert conformance["env"] == {"MEMO_CONFORMANCE_CORPUS_N": "10001"}
+    assert conformance["run"] == ('.venv/bin/python -m pytest -m "conformance" -n 0 --timeout=600')
     assert steps["Tests (excluding slow real-MLX smoke)"]["run"] == (
         '.venv/bin/python -m pytest -m "not slow and not conformance" -n auto --timeout=120 '
         "--cov=memo --cov-report=term-missing --cov-report=xml"
