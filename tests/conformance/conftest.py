@@ -57,60 +57,68 @@ def corpus_size() -> int:
 @pytest.fixture(scope="session")
 def big_corpus(tmp_path_factory, corpus_size: int) -> Iterator[Config]:
     mp = pytest.MonkeyPatch()
-    root = tmp_path_factory.mktemp("conformance")
-    data, vault, state = root / "data", root / "vault", root / "state"
-    for d in (data, vault, state):
-        d.mkdir()
-
-    mp.setenv("MEMO_EMBEDDER_DIMS", str(DIMS))
-    mp.setenv("MEMO_NONINTERACTIVE", "1")
-    mp.setenv("MEMO_DATA_DIR", str(data))
-    mp.setenv("MEMO_STATE_DIR", str(state))
-    mp.setenv("MEMO_AUTO_PROJECT_TAG", "0")
-    mp.setenv("MEMO_STORE_BY_PROJECT", "0")
-
-    cfg = Config(data_dir=data, vault_path=vault, state_dir=state, reranker_enabled=False)
-    cfg.memory_dir.mkdir(parents=True, exist_ok=True)
-
-    store = VecStore(cfg.db_path, dims=DIMS)
     try:
-        for i in range(corpus_size):
-            topic = i % TOPICS
-            mid = seeded_id(i)
-            title = f"Conformance memory {i} about {_TOPIC_NAMES[topic]}"
-            body = (
-                f"Synthetic conformance record {i}. Subject: {_TOPIC_NAMES[topic]}. "
-                f"This body exists so body-length gates and BM25 have real text to "
-                f"work with rather than a stub token."
-            )
-            rel = f"{mid}.md"
-            post = frontmatter.Post(
-                body,
-                id=mid,
-                title=title,
-                type="note",
-                tags=[_TOPIC_NAMES[topic], "conformance"],
-                created=_CREATED,
-                updated=_CREATED,
-                valid_at=_CREATED,
-            )
-            post["extra"] = {}
-            post["verification_state"] = "unverified"
-            (cfg.memory_dir / rel).write_text(frontmatter.dumps(post), encoding="utf-8")
-            store.upsert(
-                id_=mid,
-                path=rel,
-                title=title,
-                type_="note",
-                tags=[_TOPIC_NAMES[topic], "conformance"],
-                created=_CREATED,
-                updated=_CREATED,
-                body_hash=hashlib.sha256(body.encode()).hexdigest(),
-                embedding=_vector(topic, i),
-                body_text=body,
-            )
-    finally:
-        store.close()
+        root = tmp_path_factory.mktemp("conformance")
+        data, vault, state = root / "data", root / "vault", root / "state"
+        for d in (data, vault, state):
+            d.mkdir()
+
+        mp.setenv("MEMO_EMBEDDER_DIMS", str(DIMS))
+        mp.setenv("MEMO_NONINTERACTIVE", "1")
+        mp.setenv("MEMO_DATA_DIR", str(data))
+        mp.setenv("MEMO_STATE_DIR", str(state))
+        mp.setenv("MEMO_AUTO_PROJECT_TAG", "0")
+        mp.setenv("MEMO_STORE_BY_PROJECT", "0")
+
+        cfg = Config(data_dir=data, vault_path=vault, state_dir=state, reranker_enabled=False)
+        cfg.memory_dir.mkdir(parents=True, exist_ok=True)
+
+        store = VecStore(cfg.db_path, dims=DIMS)
+        try:
+            for i in range(corpus_size):
+                topic = i % TOPICS
+                mid = seeded_id(i)
+                title = f"Conformance memory {i} about {_TOPIC_NAMES[topic]}"
+                body = (
+                    f"Synthetic conformance record {i}. Subject: {_TOPIC_NAMES[topic]}. "
+                    f"This body exists so body-length gates and BM25 have real text to "
+                    f"work with rather than a stub token."
+                )
+                rel = f"{mid}.md"
+                post = frontmatter.Post(
+                    body,
+                    id=mid,
+                    title=title,
+                    type="note",
+                    tags=[_TOPIC_NAMES[topic], "conformance"],
+                    created=_CREATED,
+                    updated=_CREATED,
+                    valid_at=_CREATED,
+                )
+                post["extra"] = {}
+                post["verification_state"] = "unverified"
+                (cfg.memory_dir / rel).write_text(frontmatter.dumps(post), encoding="utf-8")
+                store.upsert(
+                    id_=mid,
+                    path=rel,
+                    title=title,
+                    type_="note",
+                    tags=[_TOPIC_NAMES[topic], "conformance"],
+                    created=_CREATED,
+                    updated=_CREATED,
+                    body_hash=hashlib.sha256(body.encode()).hexdigest(),
+                    embedding=_vector(topic, i),
+                    body_text=body,
+                )
+        finally:
+            store.close()
+    except BaseException:
+        # Setup failed before the yield -- the generator never resumes, so
+        # this is the only chance to revert the monkeypatched env. Without
+        # it, MEMO_EMBEDDER_DIMS/MEMO_DATA_DIR/etc. leak into the rest of
+        # the pytest session for every test after this one.
+        mp.undo()
+        raise
 
     yield cfg
     mp.undo()
