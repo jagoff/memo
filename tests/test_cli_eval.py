@@ -254,3 +254,86 @@ def test_run_gate_passes_the_live_corpus_fingerprint_to_check_gate(tmp_path, mon
     assert captured["corpus_fingerprint"] == "corpus-NEW"
     assert result.corpus_changed is True
     assert not result.passed
+
+
+def test_against_ref_forces_no_cache_on_the_current_side(tmp_path, monkeypatch) -> None:
+    """C1 regression: `memo eval recall --against <ref>` must not let the
+    CURRENT side read or write the shared eval cache. The reviewer reproduced
+    a false PASS by pre-seeding the cache: with the working tree at 0.10
+    precision and the ref at 0.99, a cached (stale) entry made the current
+    side report 0.99 too, and `evaluate` never ran. `force = True` alone does
+    not fix this — it only suppresses the cache READ; the WRITE would still
+    poison the shared cache. Only `no_cache = True` suppresses both."""
+    from memo import cli_eval, eval_against, eval_recall
+
+    labels = SimpleNamespace(
+        prompts=[SimpleNamespace(text="q")],
+        fingerprint=lambda: "labels-fp",
+    )
+    fresh_row = eval_recall.Row(
+        config="A", precision_at_k=0.10, noise_at_k=0.0, avoid_at_k=1.0, avoid_leak_at_k=0.0
+    )
+    evaluate_calls: list[int] = []
+
+    def _evaluate(mem, *, k, labels, configs, progress=None):
+        evaluate_calls.append(1)
+        return [fresh_row]
+
+    class _AlwaysStaleCache(dict):
+        """A cache that would serve a poisoned entry for ANY key — standing
+        in for a real pre-seeded cache.json without needing to reproduce the
+        exact corpus+labels+configs+k cache key."""
+
+        def get(self, key, default=None):
+            return {
+                "ts": 0.0,
+                "k": 3,
+                "rows": [{**fresh_row.__dict__, "precision_at_k": 0.99}],
+            }
+
+    save_calls: list[dict] = []
+
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: object())
+    monkeypatch.setattr(eval_recall, "load_labels", lambda path: labels)
+    monkeypatch.setattr(eval_recall, "fingerprint_corpus", lambda mem: "corpus-fp")
+    monkeypatch.setattr(eval_recall, "evaluate", _evaluate)
+    monkeypatch.setattr(cli_eval, "_load_cache", lambda cfg: _AlwaysStaleCache())
+    monkeypatch.setattr(cli_eval, "_save_cache", lambda cfg, cache: save_calls.append(cache))
+    monkeypatch.setattr(eval_against, "resolve_repo_root", lambda start: tmp_path)
+    monkeypatch.setattr(
+        eval_against,
+        "run_against",
+        lambda ref, *, repo_root, argv: eval_against.AgainstRun(
+            rows=[
+                {
+                    "config": "A",
+                    "precision_at_k": 0.99,
+                    "noise_at_k": 0.0,
+                    "avoid_at_k": 1.0,
+                    "avoid_leak_at_k": 0.0,
+                }
+            ],
+            labels_fingerprint="labels-fp",
+        ),
+    )
+
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text("{}")
+
+    result = CliRunner().invoke(
+        eval_group,
+        ["recall", "--labels", str(labels_path), "--against", "origin/master"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+            "MEMO_STATE_DIR": str(tmp_path / "state"),
+        },
+    )
+
+    # If the poisoned cache were served, the current side would report 0.99
+    # (the ref's own number) and evaluate() would never run — the false PASS
+    # the reviewer reproduced.
+    assert evaluate_calls, "the current side must re-run fresh, not read the stale cache"
+    assert not save_calls, "the current side must not write its numbers into the shared cache"
+    assert result.exit_code == 1, result.output
+    assert "0.100" in result.output

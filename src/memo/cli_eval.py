@@ -330,12 +330,59 @@ def _run_gate(
     )
 
 
+def _resolve_cache_flags(
+    *,
+    gate: bool,
+    update_baseline: bool,
+    graph_ab: bool,
+    against_ref: str | None,
+    force: bool,
+    no_cache: bool,
+) -> tuple[bool, bool]:
+    """Fresh numbers are mandatory for anything that renders a verdict.
+
+    `--gate`/`--update-baseline`/`--graph-ab` need FORCE (skip the cache
+    read; a plain run may still write it). `--against` needs the stronger
+    NO_CACHE (skip the read AND the write) — `force` alone would still let
+    the current side's experimental numbers poison the shared cache that
+    every other worktree on this machine reads from.
+    """
+    if gate or update_baseline or graph_ab:
+        force = True
+    if against_ref:
+        no_cache = True
+    return force, no_cache
+
+
+def _validate_against_flags(against_ref: str | None, quick: bool, max_prompts: int | None) -> None:
+    """--against requires both sides to score the same prompt set.
+
+    --quick and --max-prompts each change how many prompts the CURRENT side
+    runs; silently propagating them into the ref side's argv (or worse,
+    letting them apply to only one side) would make the two runs' numbers
+    incomparable without any error. Reject instead of guessing.
+    """
+    if not against_ref:
+        return
+    if quick or max_prompts is not None:
+        bad = "--quick" if quick else "--max-prompts"
+        raise click.ClickException(
+            f"{bad} cannot be combined with --against — both sides of the "
+            "comparison must evaluate the same prompt set, or the delta "
+            "silently stops meaning anything."
+        )
+
+
 @eval_group.command(name="recall")
 @click.option("--k", type=int, default=3, help="Top-K to score (default: 3).")
 @click.option(
     "--labels",
     "labels_path",
-    type=click.Path(exists=True, dir_okay=False),
+    # resolve_path=True: --against forwards this path verbatim into a
+    # subprocess whose cwd is a *different* worktree — a relative path would
+    # resolve against the wrong directory and silently score the two sides
+    # against different label sets.
+    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
     help="JSON label set (schema memo.eval_recall.labels.v1). "
     "Defaults to the built-in example — supply your own corpus "
     "for meaningful numbers.",
@@ -417,10 +464,17 @@ def eval_recall_cmd(
       memo eval recall --labels eval/regression_labels.json --update-baseline
       memo eval recall --labels eval/regression_labels.json --gate
     """
+    _validate_against_flags(against_ref, quick, max_prompts)
+
     cfg = Config.from_env()
-    # The gate compares fresh numbers — never trust a stale cache for a pass/fail.
-    if gate or update_baseline or graph_ab:
-        force = True
+    force, no_cache = _resolve_cache_flags(
+        gate=gate,
+        update_baseline=update_baseline,
+        graph_ab=graph_ab,
+        against_ref=against_ref,
+        force=force,
+        no_cache=no_cache,
+    )
 
     if labels_path:
         try:
@@ -522,12 +576,20 @@ def eval_recall_cmd(
     if against_ref:
         from memo import eval_against
 
-        repo_root = Path(__file__).resolve().parents[2]
+        # Resolved via git, not by counting `__file__` parents — parent-count
+        # assumes a source checkout and returns nonsense under the installed
+        # uv tool. Also works unchanged from a linked worktree.
+        repo_root = eval_against.resolve_repo_root(Path(__file__).resolve().parent)
         ref_argv = eval_against.build_eval_argv(
             labels_path=labels_path, k=k, profile=profile, configs=tuple(config_names)
         )
-        ref_rows = eval_against.run_against(against_ref, repo_root=repo_root, argv=ref_argv)
-        against_result = eval_against.compare_rows([r.__dict__ for r in rows], ref_rows)
+        ref_run = eval_against.run_against(against_ref, repo_root=repo_root, argv=ref_argv)
+        against_result = eval_against.compare_rows(
+            [r.__dict__ for r in rows],
+            ref_run.rows,
+            current_labels_fingerprint=labels.fingerprint(),
+            ref_labels_fingerprint=ref_run.labels_fingerprint,
+        )
         if as_json:
             click.echo(json.dumps(against_result.__dict__, ensure_ascii=False, indent=2))
         else:

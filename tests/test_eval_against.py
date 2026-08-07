@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from memo import eval_against
@@ -79,30 +80,106 @@ def test_compare_rows_fails_loudly_when_the_ref_run_produced_nothing() -> None:
     assert "no rows" in result.message
 
 
-def test_run_against_puts_the_worktree_src_first_on_pythonpath(tmp_path, monkeypatch) -> None:
+# --- m1: negative-recall ⛔ floors -------------------------------------------
+# `--update-baseline` once shipped bare `gate_metrics`, dropping avoid_at_k /
+# avoid_leak_at_k to "vacuously true forever". `compare_rows` must not repeat
+# that mistake now that it carries the same two fields.
+
+
+def test_compare_rows_fails_when_the_diff_drops_avoid_coverage() -> None:
+    current = [{**_row("A", 0.70, 0.10), "avoid_at_k": 0.50}]
+    ref = [{**_row("A", 0.70, 0.10), "avoid_at_k": 0.90}]
+
+    result = eval_against.compare_rows(current, ref)
+
+    assert not result.passed
+    assert "avoid@k" in result.message
+
+
+def test_compare_rows_fails_when_the_diff_raises_avoid_leak() -> None:
+    current = [{**_row("A", 0.70, 0.10), "avoid_leak_at_k": 0.30}]
+    ref = [{**_row("A", 0.70, 0.10), "avoid_leak_at_k": 0.0}]
+
+    result = eval_against.compare_rows(current, ref)
+
+    assert not result.passed
+    assert "avoid_leak@k" in result.message
+
+
+# --- C2: label-set identity guard --------------------------------------------
+# A relative --labels path resolves inside the ref worktree's cwd, not the
+# caller's — silently scoring the two sides against different label sets. The
+# fingerprint check catches that (and any other cause of a label-set mismatch)
+# regardless of how it happened.
+
+
+def test_compare_rows_refuses_when_label_sets_differ() -> None:
+    result = eval_against.compare_rows(
+        [_row("A", 0.70, 0.10)],
+        [_row("A", 0.70, 0.10)],
+        current_labels_fingerprint="fp-current",
+        ref_labels_fingerprint="fp-ref",
+    )
+
+    assert not result.passed
+    assert "label sets differ" in result.message
+
+
+def test_compare_rows_allows_matching_label_sets() -> None:
+    result = eval_against.compare_rows(
+        [_row("A", 0.70, 0.10)],
+        [_row("A", 0.70, 0.10)],
+        current_labels_fingerprint="fp-same",
+        ref_labels_fingerprint="fp-same",
+    )
+
+    assert result.passed
+
+
+def test_compare_rows_skips_the_fingerprint_check_when_unknown() -> None:
+    # Existing callers (and the tests above) that don't have a fingerprint to
+    # give must be unaffected — this is what keeps compare_rows callable with
+    # only `current`/`ref`.
+    result = eval_against.compare_rows([_row("A", 0.70, 0.10)], [_row("A", 0.70, 0.10)])
+
+    assert result.passed
+
+
+def test_run_against_prepends_the_worktree_src_onto_pythonpath(tmp_path, monkeypatch) -> None:
+    # I3: PYTHONPATH must be non-empty in the environment BEFORE run_against
+    # is called, and the assertion must pin the FULL resulting string — under
+    # `uv run pytest` the ambient PYTHONPATH is empty, so `.startswith(wt_src)`
+    # can't distinguish prepend from append; an append-bugged implementation
+    # would pass it verbatim.
+    monkeypatch.setenv("PYTHONPATH", "/opt/installed")
     seen: dict[str, object] = {}
 
     def _fake_runner(argv: list[str], env: dict[str, str], cwd: Path) -> str:
         seen["argv"] = argv
         seen["env"] = env
         seen["cwd"] = cwd
-        return '{"rows": [{"config": "A", "precision_at_k": 0.7, "noise_at_k": 0.1}]}'
+        return (
+            '{"rows": [{"config": "A", "precision_at_k": 0.7, "noise_at_k": 0.1}], '
+            '"labels_fingerprint": "fp-abc"}'
+        )
 
     monkeypatch.setattr(eval_against, "_add_worktree", lambda ref, root, dest: dest)
     monkeypatch.setattr(eval_against, "_remove_worktree", lambda root, dest: None)
     monkeypatch.setattr(eval_against, "_worktree_dest", lambda root: tmp_path / "wt")
 
-    rows = eval_against.run_against(
+    result = eval_against.run_against(
         "origin/master",
         repo_root=tmp_path,
         argv=["eval", "recall", "--json", "--no-cache"],
         runner=_fake_runner,
     )
 
-    assert rows == [{"config": "A", "precision_at_k": 0.7, "noise_at_k": 0.1}]
+    assert result.rows == [{"config": "A", "precision_at_k": 0.7, "noise_at_k": 0.1}]
+    assert result.labels_fingerprint == "fp-abc"
     env = seen["env"]
     assert isinstance(env, dict)
-    assert env["PYTHONPATH"].startswith(str(tmp_path / "wt" / "src"))
+    wt_src = str(tmp_path / "wt" / "src")
+    assert env["PYTHONPATH"] == f"{wt_src}{os.pathsep}/opt/installed"
     argv = seen["argv"]
     assert isinstance(argv, list)
     assert argv[1:3] == ["-m", "memo"]
