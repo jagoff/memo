@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 from memo import eval_against
 
 
@@ -145,6 +147,153 @@ def test_compare_rows_skips_the_fingerprint_check_when_unknown() -> None:
     assert result.passed
 
 
+def test_compare_rows_refuses_when_the_ref_fingerprint_is_missing() -> None:
+    # LOW-4: the CLI always supplies a current-side fingerprint. Once it has,
+    # a MISSING ref fingerprint must fail closed (not silently skip the
+    # guard) — an absent value means "we don't know if it's the same label
+    # set", which is exactly what this guard exists to catch.
+    result = eval_against.compare_rows(
+        [_row("A", 0.70, 0.10)],
+        [_row("A", 0.70, 0.10)],
+        current_labels_fingerprint="fp-current",
+        ref_labels_fingerprint="",
+    )
+
+    assert not result.passed
+    assert "did not report" in result.message
+    assert "differ" not in result.message  # distinct wording from a mismatch
+
+
+def test_compare_rows_populates_avoid_and_leak_fields_in_the_result() -> None:
+    # Deferred-2: m1's floors can fail a comparison on avoid@k/avoid_leak@k,
+    # but the machine-readable AgainstResult carried no fields to explain
+    # that failure with — only precision/noise.
+    current = [{**_row("A", 0.70, 0.10), "avoid_at_k": 0.50, "avoid_leak_at_k": 0.20}]
+    ref = [{**_row("A", 0.70, 0.10), "avoid_at_k": 0.90, "avoid_leak_at_k": 0.05}]
+
+    result = eval_against.compare_rows(current, ref)
+
+    assert not result.passed
+    assert result.current_avoid == 0.50
+    assert result.ref_avoid == 0.90
+    assert result.current_leak == 0.20
+    assert result.ref_leak == 0.05
+
+
+def test_compare_rows_uses_check_gates_permissive_default_for_a_missing_ref_leak() -> None:
+    # Deferred-3: check_gate defaults a MISSING baseline avoid_leak_at_k to
+    # 1.0 (permissive — any leak rate clears it), not 0.0. The old
+    # `.get(key) or 0.0` would make a missing ref value maximally STRICT
+    # instead — pin the aligned convention so this stays a decision, not an
+    # accident.
+    current = [{**_row("A", 0.70, 0.10), "avoid_leak_at_k": 0.40}]
+    ref = [
+        {
+            "config": "A",
+            "precision_at_k": 0.70,
+            "noise_at_k": 0.10,
+            "avoid_at_k": 1.0,
+            # avoid_leak_at_k deliberately absent.
+        }
+    ]
+
+    result = eval_against.compare_rows(current, ref)
+
+    assert result.passed
+    assert result.ref_leak == 1.0
+
+
+def test_remove_worktree_falls_back_to_rmtree_when_git_does_not_know_it(
+    tmp_path, monkeypatch
+) -> None:
+    # LOW-1: when `_add_worktree` fails on a bad ref, `dest` is just the empty
+    # directory `_worktree_dest`'s tempfile.mkdtemp() created — git never
+    # registered it as a worktree, so `git worktree remove` on it ALSO fails.
+    # Without a filesystem-level fallback, that leaks one directory per
+    # typo'd ref.
+    leaked = tmp_path / "leaked-wt"
+    leaked.mkdir()
+
+    def _fail(args, *, cwd):
+        raise eval_against.AgainstError("git worktree remove ... failed: fatal: not a working tree")
+
+    monkeypatch.setattr(eval_against, "_run_git", _fail)
+
+    eval_against._remove_worktree(tmp_path, leaked)
+
+    assert not leaked.exists()
+
+
+def test_run_against_cleans_up_even_when_add_worktree_fails(tmp_path, monkeypatch) -> None:
+    # LOW-1: _add_worktree used to run OUTSIDE the try/finally, so a failure
+    # there (e.g. a typo'd ref) skipped _remove_worktree entirely.
+    calls: list[str] = []
+
+    monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", lambda ref, root: True)
+    monkeypatch.setattr(eval_against, "_worktree_dest", lambda: tmp_path / "wt")
+
+    def _fail_add(ref, root, dest):
+        calls.append("add")
+        raise eval_against.AgainstError("git worktree add ... failed: fatal: invalid reference")
+
+    def _record_remove(root, dest):
+        calls.append("remove")
+
+    monkeypatch.setattr(eval_against, "_add_worktree", _fail_add)
+    monkeypatch.setattr(eval_against, "_remove_worktree", _record_remove)
+
+    with pytest.raises(eval_against.AgainstError):
+        eval_against.run_against(
+            "typo-ref",
+            repo_root=tmp_path,
+            argv=["eval", "recall"],
+            runner=lambda argv, env, cwd: "{}",
+        )
+
+    assert calls == ["add", "remove"]
+
+
+def test_run_against_refuses_a_ref_that_predates_the_entrypoint(tmp_path, monkeypatch) -> None:
+    # Deferred-1: src/memo/__main__.py doesn't exist at origin/master until
+    # this branch merges — PYTHONPATH=<wt>/src python -m memo has no fallback,
+    # so any older ref fails deep inside the subprocess with an opaque error.
+    # A pre-flight `git cat-file -e` check should catch it before that.
+    monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", lambda ref, root: False)
+    monkeypatch.setattr(eval_against, "_first_commit_with_main_entrypoint", lambda root: "abc1234")
+
+    with pytest.raises(eval_against.AgainstError, match="abc1234"):
+        eval_against.run_against(
+            "origin/master",
+            repo_root=tmp_path,
+            argv=["eval", "recall", "--json", "--no-cache"],
+            runner=lambda argv, env, cwd: "{}",
+        )
+
+
+def test_run_against_raises_a_clear_error_on_invalid_json_output(tmp_path, monkeypatch) -> None:
+    # MEDIUM-2: a polluted-stdout parse failure must not surface as a raw
+    # traceback indistinguishable from a genuine ranking regression.
+    monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", lambda ref, root: True)
+    monkeypatch.setattr(eval_against, "_add_worktree", lambda ref, root, dest: dest)
+    monkeypatch.setattr(eval_against, "_remove_worktree", lambda root, dest: None)
+    monkeypatch.setattr(eval_against, "_worktree_dest", lambda: tmp_path / "wt")
+
+    garbage = "warning: some deprecation notice\n" + "not json at all"
+
+    with pytest.raises(eval_against.AgainstError) as excinfo:
+        eval_against.run_against(
+            "origin/master",
+            repo_root=tmp_path,
+            argv=["eval", "recall", "--json", "--no-cache"],
+            runner=lambda argv, env, cwd: garbage,
+        )
+
+    # The message quotes the excerpt via repr() (so control characters like
+    # the embedded newline stay legible on one line) — assert against the
+    # same repr, not the raw string.
+    assert repr(garbage[:200]) in str(excinfo.value)
+
+
 def test_run_against_prepends_the_worktree_src_onto_pythonpath(tmp_path, monkeypatch) -> None:
     # I3: PYTHONPATH must be non-empty in the environment BEFORE run_against
     # is called, and the assertion must pin the FULL resulting string — under
@@ -163,9 +312,10 @@ def test_run_against_prepends_the_worktree_src_onto_pythonpath(tmp_path, monkeyp
             '"labels_fingerprint": "fp-abc"}'
         )
 
+    monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", lambda ref, root: True)
     monkeypatch.setattr(eval_against, "_add_worktree", lambda ref, root, dest: dest)
     monkeypatch.setattr(eval_against, "_remove_worktree", lambda root, dest: None)
-    monkeypatch.setattr(eval_against, "_worktree_dest", lambda root: tmp_path / "wt")
+    monkeypatch.setattr(eval_against, "_worktree_dest", lambda: tmp_path / "wt")
 
     result = eval_against.run_against(
         "origin/master",

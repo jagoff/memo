@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
@@ -27,6 +27,9 @@ from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.cli_eval_bench import bench_group
 from memo.config import Config
+
+if TYPE_CHECKING:
+    from memo.eval_against import AgainstResult
 
 _CACHE_TTL_S = 24 * 3600
 
@@ -354,13 +357,17 @@ def _resolve_cache_flags(
     return force, no_cache
 
 
-def _validate_against_flags(against_ref: str | None, quick: bool, max_prompts: int | None) -> None:
-    """--against requires both sides to score the same prompt set.
-
-    --quick and --max-prompts each change how many prompts the CURRENT side
-    runs; silently propagating them into the ref side's argv (or worse,
-    letting them apply to only one side) would make the two runs' numbers
-    incomparable without any error. Reject instead of guessing.
+def _validate_against_flags(
+    against_ref: str | None,
+    quick: bool,
+    max_prompts: int | None,
+    gate: bool,
+    update_baseline: bool,
+) -> None:
+    """--against requires both sides to score the same prompt set, and it
+    exits via `sys.exit` before --gate's or --update-baseline's own logic
+    ever runs — combined with either, it silently no-ops the flag the user
+    actually asked for (no baseline written, no gate check performed).
     """
     if not against_ref:
         return
@@ -371,6 +378,51 @@ def _validate_against_flags(against_ref: str | None, quick: bool, max_prompts: i
             "comparison must evaluate the same prompt set, or the delta "
             "silently stops meaning anything."
         )
+    if gate or update_baseline:
+        bad = "--gate" if gate else "--update-baseline"
+        raise click.ClickException(
+            f"{bad} cannot be combined with --against — --against prints its "
+            f"own comparison and exits before {bad}'s effect would run, so "
+            f"{bad} would silently do nothing."
+        )
+
+
+def _run_against(
+    against_ref: str,
+    *,
+    rows: list[Any],
+    labels_path: str | None,
+    k: int,
+    profile: str | None,
+    config_names: tuple[str, ...],
+    labels_fingerprint: str,
+) -> AgainstResult:
+    """Run the ref side and compare it against `rows` (the current side).
+
+    `resolve_repo_root`/`run_against` can raise `eval_against.AgainstError`
+    for a bad ref, a missing git repo, or a polluted/non-JSON subprocess
+    payload (see m3). Translated here into `click.ClickException` so the
+    failure reads as a controlled CLI error instead of a raw traceback —
+    otherwise `exit=1` from a broken pipeline is indistinguishable from a
+    genuine ranking regression, which undercuts the point of surfacing the
+    real reason at all.
+    """
+    from memo import eval_against
+
+    try:
+        repo_root = eval_against.resolve_repo_root(Path(__file__).resolve().parent)
+        ref_argv = eval_against.build_eval_argv(
+            labels_path=labels_path, k=k, profile=profile, configs=config_names
+        )
+        ref_run = eval_against.run_against(against_ref, repo_root=repo_root, argv=ref_argv)
+    except eval_against.AgainstError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return eval_against.compare_rows(
+        [r.__dict__ for r in rows],
+        ref_run.rows,
+        current_labels_fingerprint=labels_fingerprint,
+        ref_labels_fingerprint=ref_run.labels_fingerprint,
+    )
 
 
 @eval_group.command(name="recall")
@@ -464,7 +516,7 @@ def eval_recall_cmd(
       memo eval recall --labels eval/regression_labels.json --update-baseline
       memo eval recall --labels eval/regression_labels.json --gate
     """
-    _validate_against_flags(against_ref, quick, max_prompts)
+    _validate_against_flags(against_ref, quick, max_prompts, gate, update_baseline)
 
     cfg = Config.from_env()
     force, no_cache = _resolve_cache_flags(
@@ -574,21 +626,14 @@ def eval_recall_cmd(
         }
 
     if against_ref:
-        from memo import eval_against
-
-        # Resolved via git, not by counting `__file__` parents — parent-count
-        # assumes a source checkout and returns nonsense under the installed
-        # uv tool. Also works unchanged from a linked worktree.
-        repo_root = eval_against.resolve_repo_root(Path(__file__).resolve().parent)
-        ref_argv = eval_against.build_eval_argv(
-            labels_path=labels_path, k=k, profile=profile, configs=tuple(config_names)
-        )
-        ref_run = eval_against.run_against(against_ref, repo_root=repo_root, argv=ref_argv)
-        against_result = eval_against.compare_rows(
-            [r.__dict__ for r in rows],
-            ref_run.rows,
-            current_labels_fingerprint=labels.fingerprint(),
-            ref_labels_fingerprint=ref_run.labels_fingerprint,
+        against_result = _run_against(
+            against_ref,
+            rows=rows,
+            labels_path=labels_path,
+            k=k,
+            profile=profile,
+            config_names=tuple(config_names),
+            labels_fingerprint=labels.fingerprint(),
         )
         if as_json:
             click.echo(json.dumps(against_result.__dict__, ensure_ascii=False, indent=2))
