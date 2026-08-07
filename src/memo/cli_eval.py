@@ -384,6 +384,14 @@ def _run_gate(
     is_flag=True,
     help="Save the current best precision@K / noise@K as the gate baseline.",
 )
+@click.option(
+    "--against",
+    "against_ref",
+    default=None,
+    help="Compare this worktree's code against a git ref on the SAME live corpus. "
+    "Both runs are uncached, so the corpus term cancels and the delta is the diff. "
+    "This — not --gate — is the check a ranking change has to clear.",
+)
 def eval_recall_cmd(
     k: int,
     labels_path: str | None,
@@ -399,6 +407,7 @@ def eval_recall_cmd(
     graph_ab: bool,
     gate: bool,
     update_baseline: bool,
+    against_ref: str | None,
 ) -> None:
     """Precision@K / noise@K per retrieval config over labeled prompts.
 
@@ -509,6 +518,23 @@ def eval_recall_cmd(
             "comparison": comparison,
             "summary": eval_recall.graph_ab_summary(comparison),
         }
+
+    if against_ref:
+        from memo import eval_against
+
+        repo_root = Path(__file__).resolve().parents[2]
+        ref_argv = eval_against.build_eval_argv(
+            labels_path=labels_path, k=k, profile=profile, configs=tuple(config_names)
+        )
+        ref_rows = eval_against.run_against(against_ref, repo_root=repo_root, argv=ref_argv)
+        against_result = eval_against.compare_rows([r.__dict__ for r in rows], ref_rows)
+        if as_json:
+            click.echo(json.dumps(against_result.__dict__, ensure_ascii=False, indent=2))
+        else:
+            color = "green" if against_result.passed else "red"
+            mark = "✓" if against_result.passed else "✗"
+            console.print(f"[{color}]{mark}[/{color}] vs {against_ref}: {against_result.message}")
+        sys.exit(0 if against_result.passed else 1)
 
     if update_baseline:
         # Persist the FULL metrics (precision/noise ∪ avoid@k / avoid_leak@k) so
