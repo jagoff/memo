@@ -31,6 +31,12 @@ from memo.memory.record import (
     record_from_row,
 )
 from memo.perf import timer
+from memo.search_deadline import (
+    COST_EMBED_MS,
+    COST_EXPANSION_MS,
+    COST_GRAPH_SIGNAL_MS,
+    Deadline,
+)
 from memo.store.bm25_queries import _normalize_as_of
 from memo.tiers import REFERENCE_TYPES, SENSITIVE_TYPES
 
@@ -157,6 +163,8 @@ class _SearchOpsMixin(_MemoryBase):
         as_of: str | None = None,
         _track_usage: bool = True,
         _trace: list[dict[str, Any]] | None = None,
+        _budget_ms: int | None = None,
+        _degraded: list[str] | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
 
@@ -200,11 +208,27 @@ class _SearchOpsMixin(_MemoryBase):
             _track_usage: Internal callers may disable access/co-recall writes
                 when search is only a derived processing step rather than a
                 user-visible retrieval.
+            _degraded: Out-parameter, same shape as `_trace`. Pass a list and
+                every stage shed to stay inside the wall-clock budget appends
+                its name to it. Degrade and say so — a search that quietly
+                dropped its reranker looks identical to one that ran it.
+            _budget_ms: Override for MEMO_SEARCH_BUDGET_MS. 0 = no deadline.
         """
 
         def _add_trace(stage: str, **data: Any) -> None:
             if _trace is not None:
                 _trace.append({"stage": stage, **data})
+
+        def _shed(stage: str) -> None:
+            """Record one rung of the shed ladder. Only ever called for a stage
+            that WOULD have run — a stage held back by its own flag, or absent
+            from this mode, must never be reported as budget-degraded."""
+            if _degraded is not None:
+                _degraded.append(stage)
+
+        # Rung zero: the clock every rung below consults. Started before any
+        # stage so the budget covers the whole search, not the tail of it.
+        _deadline = Deadline.start(_budget_ms)
 
         if not query or not query.strip():
             _add_trace("candidate_generation", mode=mode, output_count=0)
@@ -317,6 +341,18 @@ class _SearchOpsMixin(_MemoryBase):
                 _query_for_embed = query
                 # HyDE: generate hypothetical answer doc, embed that instead of raw query
                 _hyde_enabled = flag_bool("MEMO_HYDE_ENABLED")
+                _embed_affordable = _deadline.afford(COST_EMBED_MS)
+                # Rung two: query expansion. HyDE is an LLM generation layered ON
+                # TOP of the embed it feeds, so affording it means affording both
+                # — generating a hypothetical document and then having no budget
+                # left to embed it is the worst of both. Hence the summed cost,
+                # which also makes this rung shed strictly before rung four:
+                # under pressure the search loses the enrichment first and the
+                # semantic leg only after that.
+                if _hyde_enabled and not _deadline.afford(COST_EXPANSION_MS + COST_EMBED_MS):
+                    _hyde_enabled = False
+                    _add_trace("hyde_skip", reason="budget")
+                    _shed("expansion_skipped")
                 if _hyde_enabled:
                     _log.debug("HyDE enabled, generating hypothetical doc")
                     _hyde_doc = self._generate_hyde_document(query)
@@ -326,36 +362,46 @@ class _SearchOpsMixin(_MemoryBase):
                         _log.info("HyDE doc generated: %s", _hyde_doc[:100])
                     else:
                         _log.warning("HyDE returned empty doc, falling back to original query")
-                emb = self.embedder.embed_query(_query_for_embed)
-                vec_hits = self.store.search(
-                    emb,
-                    limit=k_each,
-                    type_=type_,
-                    exclude_types=exclude_types,
-                    date_from=date_from,
-                    date_to=date_to,
-                    exclude_tags=exclude_tags,
-                    as_of=as_of,
-                )
-                if flag_bool("MEMO_HYPE_ENABLED"):
-                    before_hype = len(vec_hits)
-                    vec_hits = self._hype_fold_candidates(
-                        vec_hits,
+                if not _embed_affordable:
+                    # Rung four: the vec leg's embed. BM25-only is the fallback
+                    # the `except` below already reaches for when the embedder is
+                    # unavailable — the difference is that this one is a decision,
+                    # not an accident, and says so via `_degraded`. An MLX embed
+                    # that cannot finish inside the budget is the 300s hang.
+                    vec_hits = []
+                    _add_trace("embed_skip", mode="hybrid", reason="budget")
+                    _shed("embed_skipped_bm25_only")
+                else:
+                    emb = self.embedder.embed_query(_query_for_embed)
+                    vec_hits = self.store.search(
                         emb,
-                        k_each,
+                        limit=k_each,
                         type_=type_,
                         exclude_types=exclude_types,
+                        date_from=date_from,
+                        date_to=date_to,
                         exclude_tags=exclude_tags,
                         as_of=as_of,
                     )
-                    variant_warning = self._hype_variant_mismatch_warning()
-                    _add_trace(
-                        "hype_fold",
-                        mode="hybrid",
-                        input_count=before_hype,
-                        output_count=len(vec_hits),
-                        **({"warning": variant_warning} if variant_warning else {}),
-                    )
+                    if flag_bool("MEMO_HYPE_ENABLED"):
+                        before_hype = len(vec_hits)
+                        vec_hits = self._hype_fold_candidates(
+                            vec_hits,
+                            emb,
+                            k_each,
+                            type_=type_,
+                            exclude_types=exclude_types,
+                            exclude_tags=exclude_tags,
+                            as_of=as_of,
+                        )
+                        variant_warning = self._hype_variant_mismatch_warning()
+                        _add_trace(
+                            "hype_fold",
+                            mode="hybrid",
+                            input_count=before_hype,
+                            output_count=len(vec_hits),
+                            **({"warning": variant_warning} if variant_warning else {}),
+                        )
             except Exception as exc:
                 _log.warning(
                     "embedder unavailable, vec leg disabled in hybrid mode: %s",
@@ -660,11 +706,9 @@ class _SearchOpsMixin(_MemoryBase):
                 )
         if _reranker_will_run:
             before = len(out)
-            # TODO(Task 3): _deadline/_degraded are placeholders -- Task 3
-            # threads a real per-search Deadline and a shared degraded-stage
-            # list through search() and replaces these with the real ones.
-            _deadline = None
-            _degraded = None
+            # Rung one: the most expensive stage, and the only one reached here
+            # — `_reranker_will_run` already proved the reranker was going to
+            # run, so a skip inside `_rerank` is always a budget decision.
             out = self._rerank(query, out, top_n=limit, deadline=_deadline, degraded=_degraded)
             _add_trace("rerank", input_count=before, output_count=len(out))
         else:
@@ -772,7 +816,9 @@ class _SearchOpsMixin(_MemoryBase):
                 output_count=len(out),
                 floor=_ref_floor,
             )
-        out = self._apply_curated_graph_order(query, out, _add_trace)
+        out = self._apply_curated_graph_order(
+            query, out, _add_trace, deadline=_deadline, degraded=_degraded
+        )
         if _track_usage:
             self._record_access([r.id for r in out])
         # Co-recall graph edges: record which memories surface together.
@@ -813,12 +859,26 @@ class _SearchOpsMixin(_MemoryBase):
         query: str,
         out: list[MemoryRecord],
         trace: Any,
+        *,
+        deadline: Deadline | None = None,
+        degraded: list[str] | None = None,
     ) -> list[MemoryRecord]:
-        """Apply one identity-safe graph ordering pass without changing scores."""
+        """Apply one identity-safe graph ordering pass without changing scores.
+
+        `deadline`, when given, is rung three of the shed ladder: the budget
+        check sits AFTER both enable gates, so a stage held back by its own
+        flag is never reported as budget-degraded. Skipping costs the ordering
+        pass only — the fused order the records already carry is served.
+        """
         if not out or not flag_bool("MEMO_GRAPH_SIGNAL_ENABLED"):
             return out
         if not flag_bool("MEMO_GRAPH_PROJECTION_ENABLED"):
             trace("graph_signal", enabled=True, touched_count=0, skipped="projection_disabled")
+            return out
+        if deadline is not None and not deadline.afford(COST_GRAPH_SIGNAL_MS):
+            trace("graph_signal", enabled=True, touched_count=0, skipped="budget")
+            if degraded is not None:
+                degraded.append("graph_signal_skipped")
             return out
         try:
             from memo.graph_reason import build_graph_reason
