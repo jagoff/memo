@@ -133,7 +133,7 @@
     "src/memo/quality.py": 1,
     "src/memo/quality_compact.py": 1,
     "src/memo/recall_assoc.py": 4,
-    "src/memo/recall_logic.py": 18,
+    "src/memo/recall_logic.py": 19,
     "src/memo/recall_metrics.py": 4,
     "src/memo/recall_socket.py": 4,
     "src/memo/repo_index.py": 1,
