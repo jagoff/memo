@@ -48,7 +48,15 @@ class AgainstResult:
     current_avoid: float = 0.0
     ref_avoid: float = 0.0
     current_leak: float = 0.0
-    ref_leak: float = 0.0
+    # 1.0, not 0.0: mirrors check_gate's permissive "unknown leak" default.
+    # avoid_leak_at_k is a CEILING (lower is better), so "we don't know"
+    # should read as "no evidence of leakage assumed", i.e. the permissive
+    # end — the same reasoning `compare_rows` already applies when the ref's
+    # OWN avoid_leak_at_k is genuinely missing (`.get("avoid_leak_at_k",
+    # 1.0)`). The other three placeholders are floors/deltas where 0.0
+    # already means "unknown"; only the leak ceiling needs the opposite
+    # value to stay consistent with that same convention.
+    ref_leak: float = 1.0
 
 
 @dataclass
@@ -96,6 +104,20 @@ def build_eval_argv(
 
 def _by_config(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {str(r.get("config") or ""): r for r in rows}
+
+
+def _as_float(value: Any, key: str) -> float:
+    """`float(value)`, but a malformed ref/current payload value (a string,
+    a list, ...) raises `AgainstError` naming the offending key instead of a
+    raw `ValueError`/`TypeError` deep inside a comparison — the same class of
+    bug MEDIUM-2 fixed for the git/subprocess/JSON layers, one level up. A
+    differently-shaped ref payload (an older `memo eval recall`, a schema
+    change) should fail with a controlled error, not a traceback.
+    """
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise AgainstError(f"non-numeric {key!r} in eval payload: {value!r}") from exc
 
 
 def _label_fingerprint_guard(current_fp: str, ref_fp: str) -> str | None:
@@ -195,7 +217,7 @@ def compare_rows(
             False, "FAIL — the current run produced no rows", "", 0.0, 0.0, 0.0, 0.0
         )
 
-    ref_best = max(ref, key=lambda r: float(r.get("precision_at_k") or 0.0))
+    ref_best = max(ref, key=lambda r: _as_float(r.get("precision_at_k") or 0.0, "precision_at_k"))
     config = str(ref_best.get("config") or "")
     cur = _by_config(current).get(config)
     if cur is None:
@@ -205,28 +227,28 @@ def compare_rows(
             f"FAIL — config {config!r} was not evaluated in the current run (ran: {ran})",
             config,
             0.0,
-            float(ref_best.get("precision_at_k") or 0.0),
+            _as_float(ref_best.get("precision_at_k") or 0.0, "precision_at_k"),
             0.0,
-            float(ref_best.get("noise_at_k") or 0.0),
+            _as_float(ref_best.get("noise_at_k") or 0.0, "noise_at_k"),
             0.0,
-            float(ref_best.get("avoid_at_k", 0.0)),
+            _as_float(ref_best.get("avoid_at_k", 0.0), "avoid_at_k"),
             0.0,
-            float(ref_best.get("avoid_leak_at_k", 1.0)),
+            _as_float(ref_best.get("avoid_leak_at_k", 1.0), "avoid_leak_at_k"),
         )
 
-    cp = float(cur.get("precision_at_k") or 0.0)
-    rp = float(ref_best.get("precision_at_k") or 0.0)
-    cn = float(cur.get("noise_at_k") or 0.0)
-    rn = float(ref_best.get("noise_at_k") or 0.0)
-    ca = float(cur.get("avoid_at_k") or 0.0)
+    cp = _as_float(cur.get("precision_at_k") or 0.0, "precision_at_k")
+    rp = _as_float(ref_best.get("precision_at_k") or 0.0, "precision_at_k")
+    cn = _as_float(cur.get("noise_at_k") or 0.0, "noise_at_k")
+    rn = _as_float(ref_best.get("noise_at_k") or 0.0, "noise_at_k")
+    ca = _as_float(cur.get("avoid_at_k") or 0.0, "avoid_at_k")
     # `.get(key, default)`, not `.get(key) or default`: mirrors check_gate's
     # non-enforcing defaults for a MISSING ref value (0.0 coverage floor, 1.0
     # leak ceiling — see the docstring). `or` would misfire if the ref value
     # were legitimately 0.0 (a real, present avoid_leak_at_k of 0.0 is not
     # "missing", but `0.0 or 1.0` evaluates to 1.0 regardless).
-    ra = float(ref_best.get("avoid_at_k", 0.0))
-    cl = float(cur.get("avoid_leak_at_k") or 0.0)
-    rl = float(ref_best.get("avoid_leak_at_k", 1.0))
+    ra = _as_float(ref_best.get("avoid_at_k", 0.0), "avoid_at_k")
+    cl = _as_float(cur.get("avoid_leak_at_k") or 0.0, "avoid_leak_at_k")
+    rl = _as_float(ref_best.get("avoid_leak_at_k", 1.0), "avoid_leak_at_k")
 
     parts = _diff_parts(cp=cp, rp=rp, cn=cn, rn=rn, ca=ca, ra=ra, cl=cl, rl=rl, tol=tol)
     if parts:
@@ -269,14 +291,37 @@ def resolve_repo_root(start: Path) -> Path:
     return Path(_run_git(["rev-parse", "--show-toplevel"], cwd=start))
 
 
+def _ref_exists(ref: str, repo_root: Path) -> bool:
+    """Whether `ref` resolves to a real commit, checked with `git rev-parse
+    --verify -q <ref>^{commit}`.
+
+    Run BEFORE `_ref_has_main_entrypoint`: `git cat-file -e <ref>:path` exits
+    nonzero identically for "ref exists but lacks that path" and "ref does
+    not exist at all", so without this check first, a typo'd ref (the common
+    case for a flag people invoke with hand-typed refs) gets misdiagnosed as
+    "predates the entrypoint" and told to check out a commit that has nothing
+    to do with the actual problem.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "-q", f"{ref}^{{commit}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
 def _ref_has_main_entrypoint(ref: str, repo_root: Path) -> bool:
     """Whether `src/memo/__main__.py` exists at `ref`, checked with `git
     cat-file -e` — cheap (no checkout) way to pre-flight before paying for a
     full `git worktree add`.
 
-    A missing path is an ordinary negative result (an old ref), not a
-    failure — handled with a plain exit-code check rather than `_run_git`,
-    which treats every nonzero exit as exceptional.
+    Only meaningful once `_ref_exists` has already confirmed `ref` resolves —
+    see that function's docstring for why a missing path and a missing ref
+    are otherwise indistinguishable here. A missing path (on a REF THAT
+    EXISTS) is an ordinary negative result (an old ref), not a failure —
+    handled with a plain exit-code check rather than `_run_git`, which treats
+    every nonzero exit as exceptional.
     """
     result = subprocess.run(
         ["git", "cat-file", "-e", f"{ref}:{_MAIN_ENTRYPOINT_PATH}"],
@@ -291,9 +336,16 @@ def _first_commit_with_main_entrypoint(repo_root: Path) -> str:
     """The earliest commit in this checkout's history that added
     `src/memo/__main__.py` — named in the error `run_against` raises for a
     ref that predates it, so the user has something concrete to check out or
-    rebase onto instead of just "doesn't work"."""
+    rebase onto instead of just "doesn't work".
+
+    No `--follow`: this file has never been renamed, and `--follow` would
+    make the returned SHA best-effort (naming a commit for whatever the path
+    used to be called) rather than exact if it ever is. `--diff-filter=A`
+    already restricts to the (single) commit that added `_MAIN_ENTRYPOINT_PATH`
+    under its current name.
+    """
     out = _run_git(
-        ["log", "--diff-filter=A", "--format=%H", "--follow", "--", _MAIN_ENTRYPOINT_PATH],
+        ["log", "--diff-filter=A", "--format=%H", "--", _MAIN_ENTRYPOINT_PATH],
         cwd=repo_root,
     )
     lines = [ln for ln in out.splitlines() if ln.strip()]
@@ -316,21 +368,28 @@ def _add_worktree(ref: str, repo_root: Path, dest: Path) -> Path:
     return dest
 
 
-def _remove_worktree(repo_root: Path, dest: Path) -> None:
-    # Best-effort: this runs in a `finally`, so raising here would replace a
-    # real failure from the runner (or from `_add_worktree`, now that it runs
-    # inside the same try) with a cleanup failure instead of masking it —
-    # still surface the reason (m3) rather than swallowing it outright.
+def _remove_worktree(repo_root: Path, dest: Path, *, added: bool) -> None:
+    """Best-effort cleanup — this runs in a `finally`, so raising here would
+    replace a real failure from the runner (or from `_add_worktree`) with a
+    cleanup failure instead of masking it.
+
+    `added` is False when `_add_worktree` itself failed: `dest` was never
+    registered as a worktree, so `git worktree remove` on it would just fail
+    with a "not a working tree" error every single time — worth a warning
+    when unexpected (see the `added=True` branch below), but pure noise here,
+    since the caller already knows exactly why. Skip straight to removing the
+    directory.
+    """
+    if not added:
+        shutil.rmtree(dest, ignore_errors=True)
+        return
     try:
         _run_git(["worktree", "remove", "--force", str(dest)], cwd=repo_root)
     except AgainstError as exc:
+        # Surface the reason (m3) rather than swallowing it outright — this
+        # branch means git itself failed to remove a worktree it DID
+        # register, which is genuinely unexpected.
         print(f"warning: {exc}", file=sys.stderr)
-        # `git worktree remove` only works on a path git actually registered
-        # as a worktree. When `_add_worktree` itself failed (a bad ref), it
-        # never got that far — `dest` is just the empty directory
-        # `_worktree_dest`'s `tempfile.mkdtemp()` created, which git has no
-        # record of and will therefore never clean up. Remove it directly so
-        # a typo'd ref doesn't leak a scratch dir per invocation.
         shutil.rmtree(dest, ignore_errors=True)
 
 
@@ -361,6 +420,11 @@ def run_against(
     """
     import os
 
+    if not _ref_exists(ref, repo_root):
+        raise AgainstError(
+            f"unknown ref {ref!r} — git can't resolve it to a commit. Check "
+            "for a typo (a misspelled branch, remote, or tag name)."
+        )
     if not _ref_has_main_entrypoint(ref, repo_root):
         first_sha = _first_commit_with_main_entrypoint(repo_root)
         raise AgainstError(
@@ -372,15 +436,17 @@ def run_against(
 
     run = runner or _default_runner
     dest = _worktree_dest()
+    added = False
     try:
         _add_worktree(ref, repo_root, dest)
+        added = True
         env = dict(os.environ)
         existing = env.get("PYTHONPATH", "")
         wt_src = str(dest / "src")
         env["PYTHONPATH"] = f"{wt_src}{os.pathsep}{existing}" if existing else wt_src
         raw = run([sys.executable, "-m", "memo", *argv], env, dest)
     finally:
-        _remove_worktree(repo_root, dest)
+        _remove_worktree(repo_root, dest, added=added)
 
     try:
         payload = json.loads(raw)

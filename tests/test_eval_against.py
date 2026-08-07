@@ -203,14 +203,53 @@ def test_compare_rows_uses_check_gates_permissive_default_for_a_missing_ref_leak
     assert result.ref_leak == 1.0
 
 
-def test_remove_worktree_falls_back_to_rmtree_when_git_does_not_know_it(
+def test_compare_rows_raises_a_clear_error_on_a_malformed_ref_value() -> None:
+    # Round-3 item 2: a differently-shaped ref payload (an older `memo eval
+    # recall`, a schema change) must not surface as a raw ValueError deep
+    # inside a comparison — the same class of bug MEDIUM-2 fixed one level up
+    # (git/subprocess/JSON), applied here to the payload's own values.
+    current = [_row("A", 0.70, 0.10)]
+    ref = [{**_row("A", 0.70, 0.10), "precision_at_k": "not-a-number"}]
+
+    with pytest.raises(eval_against.AgainstError, match="precision_at_k"):
+        eval_against.compare_rows(current, ref)
+
+
+def test_compare_rows_ref_leak_placeholder_is_consistent_across_early_returns() -> None:
+    # Round-3 item 3: the guard/no-rows early returns used to leave
+    # ref_leak=0.0 while the "config not evaluated" branch used 1.0 for the
+    # same "we don't have a real ref value" situation. Both now use 1.0 (the
+    # permissive default for a leak CEILING — see AgainstResult's docstring).
+    guard_result = eval_against.compare_rows(
+        [_row("A", 0.70, 0.10)],
+        [_row("A", 0.70, 0.10)],
+        current_labels_fingerprint="fp-current",
+        ref_labels_fingerprint="",
+    )
+    no_ref_result = eval_against.compare_rows([_row("A", 0.70, 0.10)], [])
+    no_current_result = eval_against.compare_rows([], [_row("A", 0.70, 0.10)])
+    # avoid_leak_at_k deliberately absent, so the branch's own `.get(...,
+    # 1.0)` default is what's under test here — not a real measured value.
+    ref_missing_leak = [
+        {"config": "A", "precision_at_k": 0.70, "noise_at_k": 0.10, "avoid_at_k": 1.0}
+    ]
+    config_not_evaluated_result = eval_against.compare_rows(
+        [_row("B", 0.90, 0.05)], ref_missing_leak
+    )
+
+    assert guard_result.ref_leak == 1.0
+    assert no_ref_result.ref_leak == 1.0
+    assert no_current_result.ref_leak == 1.0
+    assert config_not_evaluated_result.ref_leak == 1.0
+
+
+def test_remove_worktree_falls_back_to_rmtree_when_git_fails_despite_being_added(
     tmp_path, monkeypatch
 ) -> None:
-    # LOW-1: when `_add_worktree` fails on a bad ref, `dest` is just the empty
-    # directory `_worktree_dest`'s tempfile.mkdtemp() created — git never
-    # registered it as a worktree, so `git worktree remove` on it ALSO fails.
-    # Without a filesystem-level fallback, that leaks one directory per
-    # typo'd ref.
+    # LOW-1: if bookkeeping says the worktree WAS added but `git worktree
+    # remove` still fails for some other reason, still fall back to rmtree —
+    # and it's fine (expected, even) to warn in that case, since it's
+    # genuinely unexpected.
     leaked = tmp_path / "leaked-wt"
     leaked.mkdir()
 
@@ -219,9 +258,32 @@ def test_remove_worktree_falls_back_to_rmtree_when_git_does_not_know_it(
 
     monkeypatch.setattr(eval_against, "_run_git", _fail)
 
-    eval_against._remove_worktree(tmp_path, leaked)
+    eval_against._remove_worktree(tmp_path, leaked, added=True)
 
     assert not leaked.exists()
+
+
+def test_remove_worktree_skips_git_and_the_warning_when_never_added(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    # Round-3 item 1: when `_add_worktree` itself failed, `dest` was never
+    # registered as a worktree — calling `git worktree remove` on it (and
+    # printing its failure as a warning) is pure noise; the caller already
+    # knows exactly why. Skip straight to removing the directory, and don't
+    # shell out to git at all.
+    leaked = tmp_path / "never-added"
+    leaked.mkdir()
+
+    def _fail(args, *, cwd):
+        raise AssertionError("git must not be invoked when the worktree was never added")
+
+    monkeypatch.setattr(eval_against, "_run_git", _fail)
+
+    eval_against._remove_worktree(tmp_path, leaked, added=False)
+
+    assert not leaked.exists()
+    captured = capsys.readouterr()
+    assert captured.err == ""
 
 
 def test_run_against_cleans_up_even_when_add_worktree_fails(tmp_path, monkeypatch) -> None:
@@ -229,6 +291,7 @@ def test_run_against_cleans_up_even_when_add_worktree_fails(tmp_path, monkeypatc
     # there (e.g. a typo'd ref) skipped _remove_worktree entirely.
     calls: list[str] = []
 
+    monkeypatch.setattr(eval_against, "_ref_exists", lambda ref, root: True)
     monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", lambda ref, root: True)
     monkeypatch.setattr(eval_against, "_worktree_dest", lambda: tmp_path / "wt")
 
@@ -236,8 +299,9 @@ def test_run_against_cleans_up_even_when_add_worktree_fails(tmp_path, monkeypatc
         calls.append("add")
         raise eval_against.AgainstError("git worktree add ... failed: fatal: invalid reference")
 
-    def _record_remove(root, dest):
+    def _record_remove(root, dest, *, added):
         calls.append("remove")
+        assert added is False, "add failed, so added must be False by the time remove runs"
 
     monkeypatch.setattr(eval_against, "_add_worktree", _fail_add)
     monkeypatch.setattr(eval_against, "_remove_worktree", _record_remove)
@@ -253,11 +317,37 @@ def test_run_against_cleans_up_even_when_add_worktree_fails(tmp_path, monkeypatc
     assert calls == ["add", "remove"]
 
 
+def test_run_against_raises_a_distinct_error_for_an_unknown_ref(tmp_path, monkeypatch) -> None:
+    # MEDIUM (round 3): `git cat-file -e <ref>:path` fails identically for
+    # "ref exists but lacks the path" and "ref does not exist" — without
+    # checking existence FIRST, a typo'd ref (the common case for a
+    # hand-typed --against value) was misdiagnosed as "predates the
+    # entrypoint" and told to check out an unrelated commit.
+    monkeypatch.setattr(eval_against, "_ref_exists", lambda ref, root: False)
+
+    def _entrypoint_check_must_not_run(ref, root):
+        raise AssertionError("the entrypoint check must not run for an unknown ref")
+
+    monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", _entrypoint_check_must_not_run)
+
+    with pytest.raises(eval_against.AgainstError, match="unknown ref") as excinfo:
+        eval_against.run_against(
+            "orgin/mstr",
+            repo_root=tmp_path,
+            argv=["eval", "recall", "--json", "--no-cache"],
+            runner=lambda argv, env, cwd: "{}",
+        )
+
+    # Distinct from the "predates the entrypoint" wording.
+    assert "predates" not in str(excinfo.value)
+
+
 def test_run_against_refuses_a_ref_that_predates_the_entrypoint(tmp_path, monkeypatch) -> None:
     # Deferred-1: src/memo/__main__.py doesn't exist at origin/master until
     # this branch merges — PYTHONPATH=<wt>/src python -m memo has no fallback,
     # so any older ref fails deep inside the subprocess with an opaque error.
     # A pre-flight `git cat-file -e` check should catch it before that.
+    monkeypatch.setattr(eval_against, "_ref_exists", lambda ref, root: True)
     monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", lambda ref, root: False)
     monkeypatch.setattr(eval_against, "_first_commit_with_main_entrypoint", lambda root: "abc1234")
 
@@ -273,9 +363,10 @@ def test_run_against_refuses_a_ref_that_predates_the_entrypoint(tmp_path, monkey
 def test_run_against_raises_a_clear_error_on_invalid_json_output(tmp_path, monkeypatch) -> None:
     # MEDIUM-2: a polluted-stdout parse failure must not surface as a raw
     # traceback indistinguishable from a genuine ranking regression.
+    monkeypatch.setattr(eval_against, "_ref_exists", lambda ref, root: True)
     monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", lambda ref, root: True)
     monkeypatch.setattr(eval_against, "_add_worktree", lambda ref, root, dest: dest)
-    monkeypatch.setattr(eval_against, "_remove_worktree", lambda root, dest: None)
+    monkeypatch.setattr(eval_against, "_remove_worktree", lambda root, dest, *, added: None)
     monkeypatch.setattr(eval_against, "_worktree_dest", lambda: tmp_path / "wt")
 
     garbage = "warning: some deprecation notice\n" + "not json at all"
@@ -312,9 +403,10 @@ def test_run_against_prepends_the_worktree_src_onto_pythonpath(tmp_path, monkeyp
             '"labels_fingerprint": "fp-abc"}'
         )
 
+    monkeypatch.setattr(eval_against, "_ref_exists", lambda ref, root: True)
     monkeypatch.setattr(eval_against, "_ref_has_main_entrypoint", lambda ref, root: True)
     monkeypatch.setattr(eval_against, "_add_worktree", lambda ref, root, dest: dest)
-    monkeypatch.setattr(eval_against, "_remove_worktree", lambda root, dest: None)
+    monkeypatch.setattr(eval_against, "_remove_worktree", lambda root, dest, *, added: None)
     monkeypatch.setattr(eval_against, "_worktree_dest", lambda: tmp_path / "wt")
 
     result = eval_against.run_against(
