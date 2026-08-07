@@ -96,6 +96,27 @@ def test_result_text_falls_back_to_str() -> None:
     assert mcp_budget.result_text(1234) == "1234"
 
 
+def test_result_text_sums_content_and_structured_content() -> None:
+    """`ToolResult.to_mcp_result()` (fastmcp 3.4.5) puts BOTH fields on the
+    wire -- `CallToolResult(content=..., structuredContent=...)`, or the
+    `(content, structured_content)` tuple -- and for a dict-returning tool
+    that is the same JSON twice. Measuring `content` alone, as this did
+    originally, reported roughly half of what the caller pays for
+    (`memo_list` on the 10k corpus: 4,586 content + 4,868 structured), so
+    the effective ceiling was ~2x the configured cap."""
+    from fastmcp.tools.base import ToolResult
+
+    result = ToolResult(structured_content={"hits": ["x" * 400]})
+    assert result.content and result.structured_content is not None
+    content_only = "".join(str(getattr(b, "text", "") or "") for b in result.content)
+
+    text = mcp_budget.result_text(result)
+
+    assert text.startswith(content_only)
+    assert text.endswith(str(result.structured_content))
+    assert len(text) > len(content_only)
+
+
 def test_result_text_never_raises_on_a_hostile_shape() -> None:
     # A shape where reading .content raises mid-projection must still
     # produce *something* -- a budget layer that can throw converts a

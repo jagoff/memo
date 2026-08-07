@@ -226,3 +226,28 @@ def test_memo_entity_empty_result(tmp_cfg) -> None:
     mem.graph.entity_memories.assert_called_once_with("nonexistent_entity", type_=None)
     assert result == []
     assert isinstance(result, list)
+
+
+def test_memo_entity_caps_a_hub_entitys_id_list(tmp_cfg) -> None:
+    """`graph.entity_memories` has no LIMIT, so a hub entity's id list tracks
+    the corpus: the conformance gate measured 12,429 tokens for one entity with
+    700 mentions, over the 10,000-token MCP response cap. memo_entity trims to
+    `limit` at the MCP boundary; the library call still asks for everything."""
+    from memo.memory import Memory
+    from memo.server_entities import register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.graph = MagicMock()
+    ids = [f"{n:032x}" for n in range(700)]
+    mem.graph.entity_memories.return_value = ids
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    default = tools["memo_entity"](name="hub")
+    assert default == ids[:200]
+
+    assert tools["memo_entity"](name="hub", limit=3) == ids[:3]
+    # A non-positive limit floors to 0 rather than slicing from the end.
+    assert tools["memo_entity"](name="hub", limit=-5) == []

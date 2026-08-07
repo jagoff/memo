@@ -11,8 +11,11 @@ invoking WRITE tools (memo_save, memo_update, memo_delete, memo_forget,
 memo_supersede, memo_offload, ...) honestly -- skipping them would gut the
 gate, since a write tool's response can be just as unbounded as a read
 tool's -- and the copy makes that safe: `big_corpus` is never opened for
-write by this module, so there is nothing to restore afterward (proven
-below by a byte-for-byte snapshot of its data/state dirs before and after).
+write by this module, so there is nothing to restore afterward. That is
+checked below by `_snapshot`, which compares (size, mtime_ns) per file --
+not content hashes: it catches any add, remove, or write, because a write
+touches mtime, but it would not catch a same-size rewrite inside one mtime
+tick. The check runs on every exit path, including a raising tool loop.
 
 No MLX: `MLXEmbedder.embed`/`STEmbedder.embed` and `MLXChat.chat` are replaced
 outright (not primed via `repo_embedding_cache` -- there is no persistent
@@ -20,6 +23,13 @@ cache for QUERY-time embeddings, only the in-process LRU in `cache.py`, so
 priming does not apply here the way it does for the rebuild test). A tripwire
 on `_ensure_loaded` catches the belt-and-suspenders case where something
 bypasses the replaced methods and reaches for a real model load.
+
+The entity graph is seeded explicitly (`_seed_entity_graph`, into the COPY):
+`big_corpus` writes straight through `VecStore.upsert` and never runs
+`Memory.save()`'s extraction pass, so `graph.db` starts empty and the whole
+graph family returned 4-71 tokens regardless of corpus size -- structurally
+corpus-independent, i.e. a vacuous pass. See that helper for the shape and
+the measured before/after.
 """
 
 from __future__ import annotations
@@ -160,7 +170,11 @@ ARGS: dict[str, dict[str, object]] = {
     "memo_repo_index": {"url": "__SET_BELOW__"},
     "memo_repo_search": {"query": _TOPIC_A},
     "memo_repo_status": {"repo": "__SET_BELOW__"},
-    "memo_rerank": {"query": _TOPIC_A, "hits": []},
+    # hits= is replaced below with a REAL memo_search page. An empty list
+    # guarantees an empty result, which is the one shape this gate must never
+    # measure: memo_rerank's response is O(hits), so `hits: []` would pass
+    # vacuously no matter how large a real page got.
+    "memo_rerank": {"query": _TOPIC_A, "hits": "__SEEDED__"},
     "memo_save": {"content": f"Conformance probe save about {_TOPIC_A}."},
     "memo_save_text": {"text": f"Conformance probe save text about {_TOPIC_A}."},
     "memo_search": {"query": _TOPIC_A},
@@ -310,6 +324,77 @@ def _make_local_repo(root: Path, name: str) -> Path:
     return src
 
 
+# -- Entity-graph seed ------------------------------------------------------
+#
+# `big_corpus` upserts straight into `VecStore` and never runs `Memory.save()`'s
+# extraction pass, so `graph.db` is EMPTY and the graph family measured 4-71
+# tokens across all thirteen of its tools -- structurally corpus-independent,
+# i.e. a vacuous pass. These constants restore the two dimensions that actually
+# scale. Measured 2026-08-07 at N=10,001 against the 10,000-token cap
+# (unbounded figures come from the navigator directly, doubled for the
+# content + structured_content the wire carries twice):
+#
+#   hub -- one entity (`_TOPIC_A`, which is what the graph tools' ARGS ask for)
+#          mentioned by _HUB_MEMORIES memories and sharing them with
+#          _HUB_NEIGHBOURS others. Unbounded, `get_neighbors` dumps every
+#          bridging memory id under every neighbour: 17,378 tokens at the
+#          default limit=8, 45,116 at limit=50. Bounded (5 exemplar ids per
+#          neighbour, true counts alongside) memo_graph_neighbors is 6,519.
+#          The same hub drives memo_entity: 12,429 tokens unbounded -- an
+#          OVER-CAP finding this seed produced, now bounded to 3,554.
+#   islands -- _ISLANDS disjoint _ISLAND_SIZE-entity clusters, so
+#          `detect_communities` returns 301 communities rather than 0:
+#          32,004 tokens unbounded, 2,818 bounded at the default limit=20.
+#
+# Sizes are chosen to put those fields over the cap unbounded; a smaller seed
+# passes without proving anything. Written into the tmp_path COPY, never into
+# `big_corpus` -- so unlike test_output_paths.py's `graph_seeded` there is
+# nothing to tear down, and the snapshot check at the end of the test proves it.
+_HUB_MEMORIES = 700
+_HUB_NEIGHBOURS = 120
+_HUB_ENTITIES_PER_MEMORY = 6
+_ISLANDS = 300
+_ISLAND_SIZE = 4
+# Offset past the ids the destructive tools target (seeded_id(20..28)).
+_GRAPH_SEED_ID_OFFSET = 100
+
+
+def _seed_entity_graph(graph_db: Path) -> None:
+    """Populate `graph.db` through the same primitive extraction writes to."""
+    from memo.graph import GraphStore
+
+    store = GraphStore(graph_db)
+    try:
+        mid = _GRAPH_SEED_ID_OFFSET
+        for i in range(_HUB_MEMORIES):
+            spokes = [
+                f"conformance-entity-{(i * 7 + k) % _HUB_NEIGHBOURS:03d}"
+                for k in range(_HUB_ENTITIES_PER_MEMORY)
+            ]
+            store.record_extraction(
+                memory_id=seeded_id(mid),
+                memory_date=_CREATED,
+                extracted_at=_CREATED,
+                entities=[
+                    {"name": name, "type": "concept"} for name in (_TOPIC_A, _TOPIC_B, *spokes)
+                ],
+            )
+            mid += 1
+        for island in range(_ISLANDS):
+            store.record_extraction(
+                memory_id=seeded_id(mid),
+                memory_date=_CREATED,
+                extracted_at=_CREATED,
+                entities=[
+                    {"name": f"conformance-island-{island:03d}-{n}", "type": "concept"}
+                    for n in range(_ISLAND_SIZE)
+                ],
+            )
+            mid += 1
+    finally:
+        store.close()
+
+
 @pytest.mark.asyncio
 async def test_every_tool_result_fits_its_cap(
     big_corpus: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -387,6 +472,9 @@ async def test_every_tool_result_fits_its_cap(
         reranker_enabled=False,
         embedder_dims=DIMS,
     )
+    # Into the COPY (`cfg.graph_db` is `state_copy/graph.db`), so the graph
+    # family measures a real payload instead of an empty-graph stub.
+    _seed_entity_graph(cfg.graph_db)
 
     # memo_export_*/memo_import_* are the LLM/agent's only file-path surface,
     # deliberately restricted to Path.cwd() plus a few real user dirs
@@ -465,6 +553,19 @@ async def test_every_tool_result_fits_its_cap(
         )
         args_by_name["memo_query_run"]["name"] = "conformance-seed-query"
 
+        # memo_rerank reorders hits the CALLER already holds, so the honest
+        # input is a real memo_search page off this corpus. Seeded here rather
+        # than chained in the loop because memo_rerank sorts BEFORE memo_search
+        # alphabetically. The assert keeps the entry from silently decaying
+        # back into the empty-input vacuous pass it replaces.
+        search_res = await server.call_tool(
+            "memo_search", dict(args_by_name["memo_search"]), run_middleware=False
+        )
+        search_sc = search_res.structured_content
+        search_hits = search_sc.get("hits") if isinstance(search_sc, dict) else None
+        assert search_hits, "memo_search returned no hits to feed memo_rerank"
+        args_by_name["memo_rerank"]["hits"] = search_hits
+
         # memo_procedure_promote requires real outcome evidence
         # (successes>=2, utility>=0.75 -- memory/outcome_feedback_ops.py) or
         # it raises rather than degrading to a small "not found".
@@ -529,12 +630,17 @@ async def test_every_tool_result_fits_its_cap(
         assert not over, "tools over budget:\n" + "\n".join(over)
     finally:
         memory.close()
-
-    assert _snapshot(big_corpus.data_dir) == before_data, (
-        "the shared big_corpus data dir changed -- this module must run "
-        "only against the tmp_path copy"
-    )
-    assert _snapshot(big_corpus.state_dir) == before_state, (
-        "the shared big_corpus state dir changed -- this module must run "
-        "only against the tmp_path copy"
-    )
+        # Inside the `finally`, not after it: a tool that raises must not be
+        # able to skip the integrity check. A module that mutated the shared
+        # corpus and THEN failed for an unrelated reason is exactly the case
+        # worth catching, and it was the case the check could not see while
+        # it sat outside. Raising here does not erase the in-flight failure --
+        # Python keeps it as `__context__` and pytest prints both.
+        assert _snapshot(big_corpus.data_dir) == before_data, (
+            "the shared big_corpus data dir changed -- this module must run "
+            "only against the tmp_path copy"
+        )
+        assert _snapshot(big_corpus.state_dir) == before_state, (
+            "the shared big_corpus state dir changed -- this module must run "
+            "only against the tmp_path copy"
+        )

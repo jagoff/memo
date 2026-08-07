@@ -91,21 +91,30 @@ def budget_exceeded_payload(tool: str, tokens: int, cap: int, hint: str = "") ->
 def result_text(result: Any) -> str:
     """Textual projection of a tool result, for measurement only.
 
-    Handles the FastMCP shapes (content blocks, structured content) and
-    falls back to `str`. This runs on every tool call, so it must never
-    raise -- a budget layer that can throw converts a working tool into a
-    broken one. Every branch is guarded, including the final fallback.
+    Content blocks AND structured content, concatenated -- because
+    `ToolResult.to_mcp_result()` (fastmcp 3.4.5) puts BOTH on the wire:
+    `CallToolResult(content=..., structuredContent=...)` when `meta`/
+    `is_error` is set, and the `(content, structured_content)` tuple
+    otherwise. For a dict-returning tool that is the same JSON twice --
+    measured on the 10k conformance corpus, `memo_list` is 4,586 content
+    tokens PLUS 4,868 structured tokens. Measuring only `content`, as this
+    did originally, reported roughly half of what the caller actually pays
+    for, so the effective ceiling was ~2x the configured cap.
+
+    This runs on every tool call, so it must never raise -- a budget layer
+    that can throw converts a working tool into a broken one. Every branch
+    is guarded, including the final fallback.
     """
     try:
+        parts: list[str] = []
         blocks = getattr(result, "content", None)
         if isinstance(blocks, list):
-            parts = [str(getattr(b, "text", "") or "") for b in blocks]
-            if any(parts):
-                return "".join(parts)
+            parts.extend(str(getattr(b, "text", "") or "") for b in blocks)
         structured = getattr(result, "structured_content", None)
         if structured is not None:
-            return str(structured)
-        return str(result)
+            parts.append(str(structured))
+        joined = "".join(parts)
+        return joined if joined else str(result)
     except Exception:
         try:
             return str(result)
@@ -130,8 +139,14 @@ def make_response_budget_middleware() -> Any:
     via `add_middleware` ends up OUTERMOST -- the last to see/transform the
     result on the way back out, i.e. what the caller actually receives. The
     LAST middleware registered is INNERMOST and sees the tool's raw result
-    first. This middleware measures the byte count the caller gets, so it
+    first. This middleware is meant to size what the caller receives, so it
     must be registered before every other middleware, not after.
+
+    "Size" is an estimate, not a byte count: `est_tokens` is the 4-chars-per-
+    token house rule over `result_text`, which sums the two fields
+    `to_mcp_result()` serialises (content + structured content). It tracks
+    the wire payload closely enough to gate on; it is not the JSON-RPC
+    frame's exact length.
     """
     try:
         from fastmcp.server.middleware import Middleware

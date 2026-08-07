@@ -16,11 +16,16 @@ from memo.mcp_budget import bounded_list
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
 
-# Per-community entity cap. Measured 2026-08-06 on a 10k-memory conformance
-# corpus: `detect_communities` (codegraph merge on) returned 2,278
-# communities, largest holding 155 entities -- the community COUNT dominates
-# the payload, but one hub community can still carry a long entity list on
-# its own, so both dimensions are bounded.
+# Per-community entity cap. Measured 2026-08-06 against the developer's LIVE
+# install (~11.3k memories with the codegraph layer merged in), NOT the
+# synthetic conformance corpus -- pytest cannot reach `.codegraph/codegraph.db`
+# and the conformance fixture seeds no code layer at all: `detect_communities`
+# returned 2,278 communities, the largest holding 155 entities. The community
+# COUNT dominated that payload, but one hub community can carry a long entity
+# list on its own, so both dimensions are bounded. The conformance gate
+# (`tests/conformance/test_mcp_response_budget.py`) seeds its own entity graph
+# and holds the resulting payload under the cap; it does not reproduce these
+# live numbers.
 _MAX_COMMUNITY_ENTITIES = 50
 
 
@@ -141,28 +146,37 @@ def register(server: FastMCP, memory: Memory) -> None:
         limit: Annotated[
             int,
             Field(
-                description="Maximum communities to return, largest first. The true "
-                "count always comes back in `total`; `truncated` says whether any "
-                "were dropped."
+                description="Maximum communities to return, largest first. A full "
+                "page (exactly `limit` items) means more may exist — raise `limit` "
+                "or `min_size` to see past it."
             ),
         ] = 20,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Detect communities (connected components) in the entity graph.
 
         Uses connected components to find clusters of related entities.
         Useful for discovering thematic clusters in the knowledge graph.
-        Bounded: with the codegraph layer merged in, the graph can carry
-        thousands of communities and a hub community can carry hundreds of
-        entities, so both the community list and each community's entity
-        list are capped and the true sizes are reported alongside.
+
+        Bounded on both dimensions that scale with the corpus: the list is
+        capped at `limit` (largest first) and each community's `entities` at
+        50. `size` is always the community's TRUE entity count, so
+        `size > len(entities)` means the entity list was trimmed and
+        `entities_truncated` says so outright.
+
+        The return stays a LIST — memo's tool surface is a public contract
+        (PyPI, MCP registries, the Claude store), and wrapping it in an
+        object to carry a community COUNT would break every caller doing
+        `for c in result` and change the generated output schema. The count
+        of communities beyond the page is therefore not reported; a full
+        page is the signal, per the `limit` field description.
 
         Args:
             min_size: Minimum community size to include.
             limit: Maximum communities to return, largest first.
         """
         communities = memory.navigator.detect_communities(min_size=min_size)
-        kept, meta = bounded_list(communities, cap=max(0, limit), key=lambda c: -c.size)
-        bounded = []
+        kept, _ = bounded_list(communities, cap=max(0, limit), key=lambda c: -c.size)
+        bounded: list[dict[str, Any]] = []
         for c in kept:
             entities, entity_meta = bounded_list(c.entities, cap=_MAX_COMMUNITY_ENTITIES)
             bounded.append(
@@ -171,10 +185,10 @@ def register(server: FastMCP, memory: Memory) -> None:
                     "representative_entity": c.representative_entity,
                     "size": c.size,
                     "entities": entities,
-                    **entity_meta,
+                    "entities_truncated": entity_meta["truncated"],
                 }
             )
-        return {"communities": bounded, **meta}
+        return bounded
 
     @annotated_tool(server, **READ_ONLY)
     def memo_graph_trace(
