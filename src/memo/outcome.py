@@ -557,3 +557,29 @@ def detect_gaps(
     ]
     out.sort(key=lambda c: (c["count"], c["last_seen"] or ""), reverse=True)
     return out
+
+
+def self_heal_execution_failures(
+    memory: Any,
+    failed_memory_ids: list[str],
+    *,
+    reason: str = "execution_failure",
+) -> dict[str, Any]:
+    """Auto-heal pass: lower confidence on memories linked to a failed CLI/test execution."""
+    from memo.flags import flag_bool
+
+    if not flag_bool("MEMO_SELF_HEALING_ENABLED") or not failed_memory_ids:
+        return {"healed": 0, "penalized": 0}
+
+    penalized = 0
+    for mid in failed_memory_ids:
+        try:
+            health = memory.store.get_health_batch([mid])
+            curr_conf = float((health.get(mid) or {}).get("confidence", 1.0))
+            new_conf = max(0.1, curr_conf - 0.35)
+            memory.store.set_confidence_batch([(mid, new_conf)])
+            penalized += 1
+        except Exception as exc:
+            _log.debug("self_heal_execution_failures error for %s: %s", mid, exc)
+
+    return {"healed": len(failed_memory_ids), "penalized": penalized}

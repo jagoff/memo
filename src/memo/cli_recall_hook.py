@@ -25,6 +25,7 @@ from memo.recall_logic import (
     RankKnobs,
     adaptive_token_budget,
     maybe_inject_verbosity_steering,
+    recall_search_budget_ms,
     session_budget_scale,
 )
 
@@ -582,6 +583,7 @@ def recall_hook() -> None:
                 limit=search_k,
                 mode=_mode,
                 recency=True,
+                budget_ms=recall_search_budget_ms(),
                 exclude_types=exclude_types,
                 exclude_tags=exclude_tags,
             )

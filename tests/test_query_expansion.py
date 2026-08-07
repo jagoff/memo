@@ -57,6 +57,7 @@ class _ExpandMemory:
         limit: int,
         mode: str,
         recency: bool = False,
+        budget_ms: float | None = None,
         exclude_types: set[str] | None = None,
         exclude_tags: set[str] | None = None,
     ) -> list[MemoryRecord]:

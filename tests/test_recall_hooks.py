@@ -53,6 +53,7 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -101,6 +102,7 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -126,7 +128,7 @@ def test_recall_logic_emits_directive_only_on_first_turn(monkeypatch, tmp_path) 
     hit = _rec("once0001", "One fact", 0.90)
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -160,7 +162,7 @@ def test_recall_logic_caps_total_context_and_logs_exact_cost(monkeypatch, tmp_pa
     object.__setattr__(hit, "body", "substantial context " * 200)
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -206,6 +208,7 @@ def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -258,6 +261,7 @@ def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -286,6 +290,7 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -355,7 +360,7 @@ def test_fallback_scoring_does_not_mutate_shared_hits(monkeypatch, tmp_path) -> 
         # 2-dim stub vectors (the guard reads mem.cfg.embedder_dims).
         cfg = SimpleNamespace(embedder_dims=2)
 
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
             return candidates
 
         def _read_body(self, path):
@@ -399,7 +404,7 @@ def test_project_tag_failure_is_logged_not_silent(monkeypatch, tmp_path, caplog)
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
             return [_rec("ok000001", "Surfaced", 0.9)]
 
     with caplog.at_level("DEBUG", logger=rl._logger.name):
@@ -636,6 +641,27 @@ def _capture_itimer(monkeypatch) -> list[tuple[int, float]]:
     return calls
 
 
+def test_recall_search_budget_defaults_to_half_the_hook_cap(monkeypatch) -> None:
+    from memo.recall_logic import recall_search_budget_ms
+
+    monkeypatch.setenv("MEMO_RECALL_HOOK_BUDGET_MS", "10000")
+    assert recall_search_budget_ms() == 5000.0
+
+
+def test_recall_search_budget_disabled_by_zero_cap(monkeypatch) -> None:
+    from memo.recall_logic import recall_search_budget_ms
+
+    monkeypatch.setenv("MEMO_RECALL_HOOK_BUDGET_MS", "0")
+    assert recall_search_budget_ms() is None
+
+
+def test_recall_search_budget_respects_custom_cap(monkeypatch) -> None:
+    from memo.recall_logic import recall_search_budget_ms
+
+    monkeypatch.setenv("MEMO_RECALL_HOOK_BUDGET_MS", "5000")
+    assert recall_search_budget_ms() == 2500.0
+
+
 def test_fallback_arms_a_wall_clock_deadline(tmp_path: Path, monkeypatch) -> None:
     """The per-stage guards missed a measured 126.7s worst case, so the
     in-process fallback arms an overall cap before it starts work."""
@@ -700,7 +726,7 @@ class _OneHitStubMemory:
     def __init__(self, hit: MemoryRecord) -> None:
         self._hit = hit
 
-    def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+    def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
         return [self._hit]
 
 
@@ -786,7 +812,7 @@ def test_cold_embedder_with_broken_micro_falls_back_to_bm25(monkeypatch, tmp_pat
     class StubMemory:
         embedder = SimpleNamespace(is_warm=False)  # main embedder cold
 
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(self, query, limit, mode, recency=False, budget_ms=None, exclude_types=None, exclude_tags=None):
             return [hit]
 
     class _BrokenMicro:

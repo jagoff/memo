@@ -20,7 +20,7 @@ _MMR = "MEMO_RECALL_MMR_LAMBDA"
 
 
 class _StubMem:
-    def search(self, query, limit, mode="vec", exclude_types=None, exclude_tags=None):
+    def search(self, query, limit, mode="vec", budget_ms=None, exclude_types=None, exclude_tags=None):
         return []
 
 

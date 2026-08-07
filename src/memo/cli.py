@@ -19,532 +19,37 @@ Output style:
 Most command groups have been extracted into `cli_*.py` modules
 (`cli_memory`, `cli_repo`, `cli_session`, `cli_graph`, `cli_diag`, …);
 this file wires them together and hosts the remaining inline commands.
+
+Command modules are loaded LAZILY: importing this module costs ~40 ms
+instead of ~220 ms because the heavy `cli_*.py` imports (which pull in
+numpy, pydantic, the full `Memory` facade) are deferred until a specific
+command is actually resolved. `SurfaceGroup.get_command` imports the
+one module that registers the requested command; `list_commands` /
+`format_commands` materialize everything so `memo --help` still shows
+the full surface.
 """
 
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import click
 
-from memo.cli_analytics import analytics_group
-from memo.cli_as_of import as_of_group
-from memo.cli_backend_native import backend_native_group
-from memo.cli_backup import backup_group
-from memo.cli_banner import codex_badge_cmd, startup_banner_cmd
-from memo.cli_briefing import briefing
-from memo.cli_capture import capture_stop, capture_tick, episodes_group, resume
-from memo.cli_chat import chat_group
-from memo.cli_chat_session import chat_session_group
-from memo.cli_chronicle import chronicle_cmd
-from memo.cli_code_facts import code_facts_cmd
-from memo.cli_code_intel import code_health_cmd, code_nudge_cmd
-from memo.cli_collaborative import collaborative_group
 from memo.cli_common import console
-from memo.cli_compress_context import compress_context_cmd
-from memo.cli_confidence import confidence_group
-from memo.cli_config import config_group
-from memo.cli_consolidate import consolidate_group
-from memo.cli_contextual import contextual_group
-from memo.cli_contradict import contradict_group
-from memo.cli_coordinate import coordinate_group
-from memo.cli_dashboard import dashboard_cmd
-from memo.cli_debug_recall import debug_recall_cmd
-from memo.cli_dedupe import dedupe_cmd
-from memo.cli_definitive import definitive_group
-from memo.cli_diag import (
-    _recall_daemon_health,  # noqa: F401 — re-exported for test: tests/test_logs_and_doctor.py imports from memo.cli
-)
-from memo.cli_doctor import doctor
-from memo.cli_dream import dream_cmd
-from memo.cli_drift import drift as drift_cmd
-from memo.cli_embed_daemon import embed_daemon_group
-from memo.cli_entities import entities, entity, extract_entities
-from memo.cli_eval import eval_group
-from memo.cli_events import events_group
-from memo.cli_export import export_group
-from memo.cli_federation import federation_group
-from memo.cli_feedback import feedback_group
-from memo.cli_graduation import graduation_group
-from memo.cli_graph import graph_group
-from memo.cli_guard import guard_group
-from memo.cli_health import health as health_cmd
-from memo.cli_history import diff_cmd, history_cmd
-from memo.cli_hooks import install_recall_hook
-from memo.cli_http import http_api
-from memo.cli_hype import hype_group
-from memo.cli_idle_daemon import idle_daemon_group
-from memo.cli_import import import_group
-from memo.cli_ingest import ingest
-from memo.cli_ingest_daemon import ingest_daemon_group
-from memo.cli_install_mcp import install_mcp
-from memo.cli_interject import ask_group, interject_group
-from memo.cli_invalidate import invalidate_cmd
-from memo.cli_journey import journey_check
-from memo.cli_links import links_group
-from memo.cli_maint_daemon import maint_daemon_group
-from memo.cli_maintain import maintain_cmd
-from memo.cli_mandate import mandate as mandate_cmd
-from memo.cli_memory import (
-    delete,
-    fix,
-    get,
-    history,
-    lint,
-    list_cmd,
-    ocr_image,
-    provenance,
-    reindex,
-    rename,
-    restore,
-    save,
-    undo,
-    update,
-)
-from memo.cli_onboard import onboard
-from memo.cli_operational import evidence_cmd, migrate_independence_cmd, operational_group
-from memo.cli_ops import ops_group
-from memo.cli_outcome import gaps as gaps_cmd
-from memo.cli_outcome import outcome as outcome_cmd
-from memo.cli_proactive import digest
-from memo.cli_profile import profile_group
-from memo.cli_query import query_group
-from memo.cli_recall_daemon import recall_daemon_group
-from memo.cli_recall_hook import recall_hook
-from memo.cli_related import related
-from memo.cli_release import release_group
-from memo.cli_repo import repo_group
-from memo.cli_retier import retier_cmd
-from memo.cli_retrieve import retrieve_cmd
-from memo.cli_review import review_group
-from memo.cli_roi import roi as roi_cmd
-from memo.cli_runtime import (
-    init_cmd,
-    install_shell_wrapper,
-    install_slash,
-    install_watcher,
-    mcp_command,
-    migrate_vault,
-    prewarm,
-    self_update,
-    sleep_cycle,
-    uninstall_watcher_cmd,
-    watch,
-)
-from memo.cli_search import (
-    ask,
-    chat_ask,
-    context_cmd,
-    context_pack_cmd,
-    embed_cmd,
-    recall,
-    rerank_cmd,
-    search,
-)
-from memo.cli_secret import secret as secret_group
-from memo.cli_session import continuity_cmd, session_group
-from memo.cli_setup import setup_cmd
-from memo.cli_stats import stats
-from memo.cli_statusline import install_statusline
-from memo.cli_sync import sync_group
-from memo.cli_synthesize import synthesize_cmd
-from memo.cli_temporal import temporal_group
-from memo.cli_terminal import terminal_group
-from memo.cli_token_gate import token_gate_cmd
-from memo.cli_token_savings import token_savings_cmd
-from memo.cli_tokens import tokens_cmd
-from memo.cli_transcripts import mine_git, mine_history, reflect
-from memo.cli_tui import hook_log, logs, tui
-from memo.cli_usefulness import usefulness as usefulness_cmd
-from memo.cli_verbatim import verbatim_group
-from memo.cli_version import version_group
-from memo.cli_viz import map_cmd
-from memo.runtime.shims import install_shims_cmd
+
+# Legacy re-export: some diagnostics/tests import this symbol from memo.cli.
+from memo.cli_diag import _recall_daemon_health  # noqa: F401 imported for tests
 
 # Imported at module scope (not lazily) so tests can `patch("memo.cli.run_picker", ...)`.
 # `run_picker` itself defers the heavy `questionary` import until called.
 from memo.setup import run_picker
 
-_COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
-    (
-        "Core",
-        [
-            "save",
-            "search",
-            "ask",
-            "context",
-            "context-pack",
-            "get",
-            "edit",
-            "rename",
-            "delete",
-            "list",
-        ],
-    ),
-    (
-        "Recall & Hooks",
-        [
-            "recall",
-            "recall-hook",
-            "briefing",
-            "continuity",
-            "prewarm",
-            "capture-tick",
-            "capture-stop",
-        ],
-    ),
-    (
-        "Session & History",
-        [
-            "history",
-            "as-of",
-            "diff",
-            "record-history",
-            "session",
-            "resume",
-            "reflect",
-            "mine-history",
-            "episodes",
-        ],
-    ),
-    (
-        "Maintenance",
-        [
-            "reindex",
-            "maintain",
-            "dream",
-            "consolidate",
-            "synthesize",
-            "dedupe",
-            "cross-dedup",
-            "retier",
-            "contradict",
-            "coordinate",
-            "terminal",
-            "invalidate",
-            "temporal",
-            "compress-context",
-        ],
-    ),
-    (
-        "Analysis & Quality",
-        [
-            "health",
-            "stats",
-            "doctor",
-            "lint",
-            "analytics",
-            "eval",
-            "roi",
-            "tokens",
-            "token-savings",
-            "usefulness",
-            "gaps",
-            "outcome",
-            "profile",
-        ],
-    ),
-    (
-        "Knowledge Graph",
-        ["graph", "entities", "entity", "extract-entities", "links", "version", "related"],
-    ),
-    (
-        "Advanced Search",
-        ["embed", "rerank", "contextual", "chat", "chat-ask", "repo"],
-    ),
-    (
-        "Import / Export / Sync",
-        ["import", "export", "backup", "restore", "sync", "ingest"],
-    ),
-    (
-        "Visualization",
-        ["tui", "dashboard", "map", "logs", "hook-log"],
-    ),
-    (
-        "Setup & Config",
-        [
-            "init",
-            "config",
-            "install-mcp",
-            "install-watcher",
-            "uninstall-watcher",
-            "install-slash",
-            "install-statusline",
-            "install-recall-hook",
-            "install-shell-wrapper",
-            "install-shims",
-            "startup-banner",
-            "migrate",
-            "migrate-vault",
-            "update",
-            "watch",
-            "release",
-        ],
-    ),
-    (
-        "Daemons",
-        ["recall-daemon", "ingest-daemon", "maint-daemon", "embed-daemon", "idle-daemon"],
-    ),
-    (
-        "Other",
-        [
-            "backend-native",
-            "collaborative",
-            "feedback",
-            "query",
-            "mandate",
-            "sleep-cycle",
-            "ocr-image",
-            "provenance",
-            "mcp-command",
-            "secret",
-        ],
-    ),
-]
-
-# Flat set of all commands with an assigned section (for "Other" overflow).
-_SECTIONED: set[str] = {cmd for _, cmds in _COMMAND_SECTIONS for cmd in cmds}
-
-
-class SurfaceGroup(click.Group):
-    """Root Click group that filters commands by the configured surface profile."""
-
-    def list_commands(self, ctx: click.Context) -> list[str]:
-        from memo.surface import cli_command_visible
-
-        return [name for name in super().list_commands(ctx) if cli_command_visible(name)]
-
-    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
-        from memo.surface import cli_command_visible
-
-        if not cli_command_visible(cmd_name):
-            return None
-        return super().get_command(ctx, cmd_name)
-
-    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        from memo.surface import cli_command_visible
-
-        visible = {
-            name
-            for name in self.list_commands(ctx)
-            if not getattr(self.get_command(ctx, name), "hidden", False)
-        }
-
-        # Collect commands per section, then an overflow "Other" bucket.
-        overflow: list[str] = [
-            cmd for cmd in sorted(visible) if cmd not in _SECTIONED and cli_command_visible(cmd)
-        ]
-
-        sections = list(_COMMAND_SECTIONS)
-        if overflow:
-            # Merge overflow into the last "Other" section or append it.
-            other_idx = next((i for i, (title, _) in enumerate(sections) if title == "Other"), None)
-            if other_idx is not None:
-                title, existing = sections[other_idx]
-                sections[other_idx] = (title, existing + overflow)
-            else:
-                sections.append(("Other", overflow))
-
-        for section_title, cmd_names in sections:
-            cmds_in_section = [
-                (name, self.get_command(ctx, name)) for name in cmd_names if name in visible
-            ]
-            cmds_in_section = [(n, c) for n, c in cmds_in_section if c is not None]
-            if not cmds_in_section:
-                continue
-
-            rows: list[tuple[str, str]] = []
-            for name, cmd in cmds_in_section:
-                if cmd is None:
-                    continue
-                short_help = cmd.get_short_help_str(limit=formatter.width)
-                rows.append((name, short_help))
-
-            with formatter.section(section_title):
-                formatter.write_dl(rows)
-
-
-@click.group(cls=SurfaceGroup)
-@click.version_option(package_name="mlx-memo")
-@click.pass_context
-def cli(ctx: click.Context) -> None:
-    """memo — local MLX memory.
-
-    Stable core: save/search/ask CRUD, EvidencePack, operational continuity,
-    outcome learning, signed federation, briefing/recall-hook, reindex/doctor,
-    and history/as-of flows. Many other commands are advanced or experimental.
-    """
-    _first_run_gate(ctx)
-
-
-# Command groups extracted from this module live in cli_*.py and register here.
-cli.add_command(graduation_group)
-cli.add_command(confidence_group)
-cli.add_command(graph_group)
-cli.add_command(guard_group)
-cli.add_command(hype_group)
-cli.add_command(interject_group)
-cli.add_command(ask_group)
-cli.add_command(related)
-cli.add_command(eval_group)
-cli.add_command(journey_check)
-cli.add_command(debug_recall_cmd)
-cli.add_command(dream_cmd)
-cli.add_command(chronicle_cmd)
-cli.add_command(code_facts_cmd)
-cli.add_command(code_nudge_cmd)
-cli.add_command(code_health_cmd)
-cli.add_command(maintain_cmd)
-cli.add_command(invalidate_cmd)
-cli.add_command(synthesize_cmd)
-cli.add_command(retier_cmd)
-cli.add_command(usefulness_cmd)
-cli.add_command(verbatim_group)
-cli.add_command(roi_cmd)
-cli.add_command(gaps_cmd)
-cli.add_command(outcome_cmd)
-cli.add_command(digest)
-cli.add_command(mandate_cmd)
-cli.add_command(drift_cmd)
-cli.add_command(map_cmd)
-cli.add_command(tui)
-cli.add_command(hook_log)
-cli.add_command(logs)
-cli.add_command(mine_history)
-cli.add_command(mine_git)
-cli.add_command(ingest)
-cli.add_command(capture_stop)
-cli.add_command(capture_tick)
-cli.add_command(reflect)
-cli.add_command(resume)
-cli.add_command(episodes_group)
-cli.add_command(events_group)
-cli.add_command(diff_cmd)
-cli.add_command(history_cmd)
-cli.add_command(briefing)
-cli.add_command(init_cmd)
-cli.add_command(stats)
-cli.add_command(token_gate_cmd)
-cli.add_command(token_savings_cmd)
-cli.add_command(tokens_cmd)
-cli.add_command(doctor)
-cli.add_command(migrate_vault)
-cli.add_command(migrate_vault, name="migrate")  # alias
-cli.add_command(mcp_command)
-cli.add_command(install_slash)
-cli.add_command(install_mcp)
-cli.add_command(setup_cmd)
-cli.add_command(install_statusline)
-cli.add_command(install_recall_hook)
-cli.add_command(self_update)  # primary name: "update"
-# Back-compat: keep the old `memo upgrade` / `memo self-update` names working
-# (now hidden) so any auto-update path or muscle memory still resolves. Same
-# callback as the primary `update` command.
-_upgrade_alias = click.Command(
-    "upgrade",
-    callback=self_update.callback,
-    params=self_update.params,
-    help=self_update.help,
-    hidden=True,
-)
-cli.add_command(_upgrade_alias)
-_self_update_alias = click.Command(
-    "self-update",
-    callback=self_update.callback,
-    params=self_update.params,
-    help=self_update.help,
-    hidden=True,
-)
-cli.add_command(_self_update_alias)
-cli.add_command(watch)
-cli.add_command(install_watcher)
-cli.add_command(uninstall_watcher_cmd)
-cli.add_command(sleep_cycle)
-cli.add_command(prewarm)
-cli.add_command(recall_hook)
-cli.add_command(install_shell_wrapper)
-cli.add_command(config_group)
-cli.add_command(save)
-cli.add_command(search)
-cli.add_command(recall)
-cli.add_command(ask)
-cli.add_command(context_cmd)
-cli.add_command(context_pack_cmd)
-cli.add_command(embed_cmd)
-cli.add_command(chat_ask)
-cli.add_command(chat_group)
-cli.add_command(chat_session_group)
-cli.add_command(rerank_cmd)
-cli.add_command(list_cmd)
-cli.add_command(get)
-cli.add_command(update)
-cli.add_command(rename)
-cli.add_command(reindex)
-cli.add_command(delete)
-cli.add_command(undo)
-cli.add_command(fix)
-cli.add_command(history)
-cli.add_command(retrieve_cmd)
-cli.add_command(ocr_image)
-cli.add_command(provenance)
-cli.add_command(extract_entities)
-cli.add_command(entities)
-cli.add_command(entity)
-cli.add_command(lint)
-cli.add_command(restore)
-cli.add_command(profile_group)
-cli.add_command(backend_native_group)
-cli.add_command(evidence_cmd)
-cli.add_command(definitive_group)
-cli.add_command(federation_group)
-cli.add_command(migrate_independence_cmd)
-cli.add_command(operational_group)
-cli.add_command(feedback_group)
-cli.add_command(repo_group)
-cli.add_command(recall_daemon_group)
-cli.add_command(idle_daemon_group)
-cli.add_command(ingest_daemon_group)
-cli.add_command(maint_daemon_group)
-cli.add_command(embed_daemon_group)
-cli.add_command(as_of_group)
-cli.add_command(session_group)
-cli.add_command(secret_group)
-cli.add_command(continuity_cmd)
-cli.add_command(temporal_group)
-cli.add_command(consolidate_group)
-cli.add_command(health_cmd)
-cli.add_command(dashboard_cmd)
-cli.add_command(compress_context_cmd)
-cli.add_command(dedupe_cmd)
-cli.add_command(ops_group)
-cli.add_command(contextual_group)
-cli.add_command(links_group)
-cli.add_command(version_group)
-cli.add_command(release_group)
-cli.add_command(review_group)
-cli.add_command(query_group)
-cli.add_command(backup_group)
-cli.add_command(sync_group)
-cli.add_command(analytics_group)
-cli.add_command(import_group)
-cli.add_command(export_group)
-cli.add_command(collaborative_group)
-cli.add_command(contradict_group)
-cli.add_command(coordinate_group)
-cli.add_command(terminal_group)
-cli.add_command(http_api)
-cli.add_command(startup_banner_cmd)
-cli.add_command(codex_badge_cmd)
-cli.add_command(install_shims_cmd)
-cli.add_command(onboard)
-
-
 # Subcommands that must NEVER trigger the first-run picker — either
 # because they're part of setup/diagnostics, they don't need storage,
 # or they run from non-interactive hooks (the TTY check + the
-# `MEMO_NONINTERACTIVE=1` env var in `hooks.json` handle the latter,
-# but listing the names here is a belt-and-suspenders defence in case
-# something invokes them from an interactive shell while debugging).
+# `MEMO_NONINTERACTIVE=1` env var in `hooks.json` handle the latter).
+# Listed here as a belt-and-suspenders defence for interactive shells.
 _FIRST_RUN_GATE_SKIP_COMMANDS = {
     "init",
     "config",
@@ -577,15 +82,349 @@ _FIRST_RUN_GATE_SKIP_COMMANDS = {
 }
 
 
-def _first_run_gate(ctx: click.Context) -> None:
-    """If the user hasn't configured `memo` yet, run the picker first.
+# ---------------------------------------------------------------------------
+# Lazy command registry
+# ---------------------------------------------------------------------------
+# Each command name -> (module, symbol, registered_name). Modules are only
+# imported when the command is first resolved.
+_LAZY: dict[str, tuple[str, str, str]] = {}
 
-    Resolution: skip when invoked from hooks (MEMO_NONINTERACTIVE=1 or
-    non-TTY), when an env var already configures `data_dir`, when a
-    Markdown or legacy config already exists, or when the legacy `MEMO_VAULT_PATH`
-    pair is set (back-compat path). Also skip for setup/diagnostic
-    subcommands so the user can always recover via `memo doctor`.
+def _reg(name: str, module: str, symbol: str, alias: str | None = None) -> None:
+    _LAZY[name] = (module, symbol, alias or name)
+
+
+def _register_lazy_commands() -> None:
+    """Populate the lazy map once (idempotent)."""
+    if _LAZY:
+        return
+    # ─ core memories ──────────────────────────────────────────────────────
+    for sym in ("delete", "fix", "get", "history", "lint",
+                "provenance", "reindex", "rename", "restore", "save",
+                "undo", "update"):
+        _reg(sym, "memo.cli_memory", sym)
+    _reg("ocr-image", "memo.cli_memory", "ocr_image")
+    _reg("edit", "memo.cli_memory", "update")
+    _reg("list", "memo.cli_memory", "list_cmd")
+    # ─ runtime / install ──────────────────────────────────────────────────
+    for sym, name in (
+        ("init_cmd", "init"),
+        ("install_shell_wrapper", "install-shell-wrapper"),
+        ("install_slash", "install-slash"),
+        ("install_watcher", "install-watcher"),
+        ("mcp_command", "mcp-command"),
+        ("migrate_vault", "migrate-vault"),
+        ("prewarm", "prewarm"),
+        ("self_update", "update"),
+        ("sleep_cycle", "sleep-cycle"),
+        ("uninstall_watcher_cmd", "uninstall-watcher"),
+        ("watch", "watch"),
+    ):
+        _reg(name, "memo.cli_runtime", sym)
+    _reg("migrate", "memo.cli_runtime", "migrate_vault", alias="migrate")
+    _reg("upgrade", "memo.cli_runtime", "self_update", alias="upgrade")
+    _reg("self-update", "memo.cli_runtime", "self_update", alias="self-update")
+    # ─ search / ask ───────────────────────────────────────────────────────
+    _reg("ask", "memo.cli_search", "ask")
+    _reg("chat-ask", "memo.cli_search", "chat_ask", alias="chat-ask")
+    _reg("context", "memo.cli_search", "context_cmd", alias="context")
+    _reg("context-pack", "memo.cli_search", "context_pack_cmd", alias="context-pack")
+    _reg("embed", "memo.cli_search", "embed_cmd", alias="embed")
+    _reg("recall", "memo.cli_search", "recall")
+    _reg("rerank", "memo.cli_search", "rerank_cmd", alias="rerank")
+    _reg("search", "memo.cli_search", "search")
+    # ─ groups as their exported symbols ───────────────────────────────────
+    for name, module, symbol in [
+        ("graduation", "memo.cli_graduation", "graduation_group"),
+        ("confidence", "memo.cli_confidence", "confidence_group"),
+        ("graph", "memo.cli_graph", "graph_group"),
+        ("guard", "memo.cli_guard", "guard_group"),
+        ("hype", "memo.cli_hype", "hype_group"),
+        ("interject", "memo.cli_interject", "interject_group"),
+        ("ask-gaps", "memo.cli_interject", "ask_group"),
+        ("related", "memo.cli_related", "related"),
+        ("eval", "memo.cli_eval", "eval_group"),
+        ("journey-check", "memo.cli_journey", "journey_check"),
+        ("debug-recall", "memo.cli_debug_recall", "debug_recall_cmd"),
+        ("dream", "memo.cli_dream", "dream_cmd"),
+        ("chronicle", "memo.cli_chronicle", "chronicle_cmd"),
+        ("code-facts", "memo.cli_code_facts", "code_facts_cmd"),
+        ("code-nudge", "memo.cli_code_intel", "code_nudge_cmd"),
+        ("code-health", "memo.cli_code_intel", "code_health_cmd"),
+        ("maintain", "memo.cli_maintain", "maintain_cmd"),
+        ("invalidate", "memo.cli_invalidate", "invalidate_cmd"),
+        ("synthesize", "memo.cli_synthesize", "synthesize_cmd"),
+        ("retier", "memo.cli_retier", "retier_cmd"),
+        ("usefulness", "memo.cli_usefulness", "usefulness"),
+        ("verbatim", "memo.cli_verbatim", "verbatim_group"),
+        ("roi", "memo.cli_roi", "roi"),
+        ("gaps", "memo.cli_outcome", "gaps"),
+        ("outcome", "memo.cli_outcome", "outcome"),
+        ("digest", "memo.cli_proactive", "digest"),
+        ("mandate", "memo.cli_mandate", "mandate"),
+        ("drift", "memo.cli_drift", "drift"),
+        ("map", "memo.cli_viz", "map_cmd"),
+        ("tui", "memo.cli_tui", "tui"),
+        ("hook-log", "memo.cli_tui", "hook_log"),
+        ("logs", "memo.cli_tui", "logs"),
+        ("mine-history", "memo.cli_transcripts", "mine_history"),
+        ("mine-git", "memo.cli_transcripts", "mine_git"),
+        ("ingest", "memo.cli_ingest", "ingest"),
+        ("capture-stop", "memo.cli_capture", "capture_stop"),
+        ("capture-tick", "memo.cli_capture", "capture_tick"),
+        ("reflect", "memo.cli_transcripts", "reflect"),
+        ("resume", "memo.cli_capture", "resume"),
+        ("episodes", "memo.cli_capture", "episodes_group"),
+        ("events", "memo.cli_events", "events_group"),
+        ("diff", "memo.cli_history", "diff_cmd"),
+        ("record-history", "memo.cli_history", "history_cmd"),
+        ("briefing", "memo.cli_briefing", "briefing"),
+        ("stats", "memo.cli_stats", "stats"),
+        ("token-gate", "memo.cli_token_gate", "token_gate_cmd"),
+        ("token-savings", "memo.cli_token_savings", "token_savings_cmd"),
+        ("tokens", "memo.cli_tokens", "tokens_cmd"),
+        ("doctor", "memo.cli_doctor", "doctor"),
+        ("install-recall-hook", "memo.cli_hooks", "install_recall_hook"),
+        ("install-statusline", "memo.cli_statusline", "install_statusline"),
+        ("setup", "memo.cli_setup", "setup_cmd"),
+        ("install-mcp", "memo.cli_install_mcp", "install_mcp"),
+        ("recall-hook", "memo.cli_recall_hook", "recall_hook"),
+        ("config", "memo.cli_config", "config_group"),
+        ("chat", "memo.cli_chat", "chat_group"),
+        ("chat-session", "memo.cli_chat_session", "chat_session_group"),
+        ("retrieve", "memo.cli_retrieve", "retrieve_cmd"),
+        ("extract-entities", "memo.cli_entities", "extract_entities"),
+        ("entities", "memo.cli_entities", "entities"),
+        ("entity", "memo.cli_entities", "entity"),
+        ("profile", "memo.cli_profile", "profile_group"),
+        ("backend-native", "memo.cli_backend_native", "backend_native_group"),
+        ("evidence", "memo.cli_operational", "evidence_cmd"),
+        ("definitive", "memo.cli_definitive", "definitive_group"),
+        ("federation", "memo.cli_federation", "federation_group"),
+        ("migrate-independence", "memo.cli_operational", "migrate_independence_cmd"),
+        ("operational", "memo.cli_operational", "operational_group"),
+        ("feedback", "memo.cli_feedback", "feedback_group"),
+        ("repo", "memo.cli_repo", "repo_group"),
+        ("recall-daemon", "memo.cli_recall_daemon", "recall_daemon_group"),
+        ("idle-daemon", "memo.cli_idle_daemon", "idle_daemon_group"),
+        ("ingest-daemon", "memo.cli_ingest_daemon", "ingest_daemon_group"),
+        ("maint-daemon", "memo.cli_maint_daemon", "maint_daemon_group"),
+        ("embed-daemon", "memo.cli_embed_daemon", "embed_daemon_group"),
+        ("as-of", "memo.cli_as_of", "as_of_group"),
+        ("session", "memo.cli_session", "session_group"),
+        ("secret", "memo.cli_secret", "secret"),
+        ("continuity", "memo.cli_session", "continuity_cmd"),
+        ("temporal", "memo.cli_temporal", "temporal_group"),
+        ("consolidate", "memo.cli_consolidate", "consolidate_group"),
+        ("health", "memo.cli_health", "health"),
+        ("dashboard", "memo.cli_dashboard", "dashboard_cmd"),
+        ("compress-context", "memo.cli_compress_context", "compress_context_cmd"),
+        ("daemons", "memo.cli_daemons", "daemons_group"),
+        ("dedupe", "memo.cli_dedupe", "dedupe_cmd"),
+        ("cross-dedup", "memo.cli_dedupe", "dedupe_cmd"),
+        ("ops", "memo.cli_ops", "ops_group"),
+        ("contextual", "memo.cli_contextual", "contextual_group"),
+        ("links", "memo.cli_links", "links_group"),
+        ("version", "memo.cli_version", "version_group"),
+        ("release", "memo.cli_release", "release_group"),
+        ("review", "memo.cli_review", "review_group"),
+        ("query", "memo.cli_query", "query_group"),
+        ("backup", "memo.cli_backup", "backup_group"),
+        ("sync", "memo.cli_sync", "sync_group"),
+        ("terminal", "memo.cli_terminal", "terminal_group"),
+        ("http-api", "memo.cli_http", "http_api"),
+        ("analytics", "memo.cli_analytics", "analytics_group"),
+        ("import", "memo.cli_import", "import_group"),
+        ("export", "memo.cli_export", "export_group"),
+        ("collaborative", "memo.cli_collaborative", "collaborative_group"),
+        ("contradict", "memo.cli_contradict", "contradict_group"),
+        ("coordinate", "memo.cli_coordinate", "coordinate_group"),
+        ("startup-banner", "memo.cli_banner", "startup_banner_cmd"),
+        ("codex-badge", "memo.cli_banner", "codex_badge_cmd"),
+        ("install-shims", "memo.runtime.shims", "install_shims_cmd"),
+        ("onboard", "memo.cli_onboard", "onboard"),
+    ]:
+        name, module, symbol = name, module, symbol
+        _reg(name, module, symbol)
+
+
+_register_lazy_commands()
+
+
+_LOADED_MODULES: set[str] = set()
+
+
+def _import_symbol(module: str, symbol: str) -> Any:
+    """Import `module` (exactly once across the lazy map) and return its
+    `symbol` — the Click command/group object registered for a command name."""
+    import importlib
+
+    if module not in _LOADED_MODULES:
+        _LOADED_MODULES.add(module)
+        importlib.import_module(module)
+    return getattr(importlib.import_module(module), symbol, None)
+
+
+_COMMAND_SECTIONS: list[tuple[str, list[str]]] = [
+    (
+        "Core",
+        [
+            "save",
+            "search",
+            "ask",
+            "context",
+            "context-pack",
+            "get",
+            "edit",
+            "rename",
+            "delete",
+            "list",
+        ],
+    ),
+    (
+        "Recall & Hooks",
+        ["recall", "recall-hook", "briefing", "continuity", "prewarm", "capture-tick", "capture-stop"],
+    ),
+    (
+        "Session & History",
+        ["history", "as-of", "diff", "record-history", "session", "resume", "reflect", "mine-history", "episodes"],
+    ),
+    (
+        "Maintenance",
+        ["reindex", "maintain", "dream", "consolidate", "synthesize", "dedupe", "cross-dedup", "retier", "contradict", "coordinate", "terminal", "invalidate", "temporal", "compress-context"],
+    ),
+    (
+        "Analysis & Quality",
+        ["health", "stats", "doctor", "lint", "analytics", "eval", "roi", "tokens", "token-savings", "usefulness", "gaps", "outcome", "profile"],
+    ),
+    (
+        "Knowledge Graph",
+        ["graph", "entities", "entity", "extract-entities", "links", "version", "related"],
+    ),
+    (
+        "Advanced Search",
+        ["embed", "rerank", "contextual", "chat", "chat-ask", "repo"],
+    ),
+    (
+        "Import / Export / Sync",
+        ["import", "export", "backup", "restore", "sync", "ingest"],
+    ),
+    (
+        "Visualization",
+        ["tui", "dashboard", "map", "logs", "hook-log"],
+    ),
+    (
+        "Setup & Config",
+        ["init", "config", "install-mcp", "install-watcher", "uninstall-watcher", "install-slash", "install-statusline", "install-recall-hook", "install-shell-wrapper", "install-shims", "startup-banner", "migrate", "migrate-vault", "update", "watch", "release"],
+    ),
+    (
+        "Daemons",
+        ["recall-daemon", "ingest-daemon", "maint-daemon", "embed-daemon", "idle-daemon"],
+    ),
+]
+_SECTIONED: set[str] = {cmd for _, cmds in _COMMAND_SECTIONS for cmd in cmds}
+
+
+class SurfaceGroup(click.Group):
+    """Root Click group: lazy command resolution + surface-profile filtering."""
+
+    def list_commands(self, ctx: click.Context) -> list[str]:
+        from memo.surface import cli_command_visible
+
+        names = set(super().list_commands(ctx)) | set(_LAZY.keys())
+        return [name for name in sorted(names) if cli_command_visible(name)]
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        from memo.surface import cli_command_visible
+
+        if not cli_command_visible(cmd_name):
+            return None
+        if cmd_name not in self.commands and cmd_name in _LAZY:
+            module, symbol, alias = _LAZY[cmd_name]
+            cmd = _import_symbol(module, symbol)
+            if cmd is not None:
+                self.add_command(cmd, name=alias or cmd_name)
+        return super().get_command(ctx, cmd_name)
+
+    def resolve_command(
+        self, ctx: click.Context, args: list[str]
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        # A lazy command's name is not yet in `self.commands`, so Click's
+        # parse_args cannot discover it. Pre-resolve: if the first non-option
+        # token names a lazy command, materialize it before Click resolves.
+        for arg in args:
+            if arg.startswith("-"):
+                continue
+            if arg in _LAZY and arg not in self.commands:
+                self.get_command(ctx, arg)
+            break
+        return super().resolve_command(ctx, args)
+
+    def load_all(self, ctx: click.Context | None = None) -> None:
+        """Import + register every lazy command (for help walkers / tests)."""
+        for name in _LAZY:
+            module, symbol, alias = _LAZY[name]
+            cmd = _import_symbol(module, symbol)
+            if cmd is not None and name not in self.commands:
+                self.add_command(cmd, name=alias or name)
+
+    def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
+        from memo.surface import cli_command_visible
+
+        visible = {
+            name
+            for name in self.list_commands(ctx)
+            if not getattr(self.get_command(ctx, name), "hidden", False)
+        }
+        overflow: list[str] = [
+            cmd for cmd in sorted(visible) if cmd not in _SECTIONED and cli_command_visible(cmd)
+        ]
+        sections = list(_COMMAND_SECTIONS)
+        if overflow:
+            other_idx = next((i for i, (title, _) in enumerate(sections) if title == "Other"), None)
+            if other_idx is not None:
+                title, existing = sections[other_idx]
+                sections[other_idx] = (title, existing + overflow)
+            else:
+                sections.append(("Other", overflow))
+
+        for section_title, cmd_names in sections:
+            cmds_in_section = [
+                (name, self.get_command(ctx, name)) for name in cmd_names if name in visible
+            ]
+            cmds_in_section = [(n, c) for n, c in cmds_in_section if c is not None]
+            if not cmds_in_section:
+                continue
+            rows: list[tuple[str, str]] = []
+            for name, cmd in cmds_in_section:
+                if cmd is None:
+                    continue
+                rows.append((name, cmd.get_short_help_str(limit=formatter.width)))
+            with formatter.section(section_title):
+                formatter.write_dl(rows)
+
+
+@click.group(cls=SurfaceGroup)
+@click.version_option(package_name="mlx-memo")
+@click.pass_context
+def cli(ctx: click.Context) -> None:
+    """memo — local MLX memory.
+
+    Stable core: save/search/ask CRUD, EvidencePack, operational continuity,
+    outcome learning, signed federation, briefing/recall-hook, reindex/doctor,
+    and history/as-of flows. Many other commands are advanced or experimental.
     """
+    _first_run_gate(ctx)
+
+
+def _load_all_commands() -> None:
+    """Import + register every lazy command onto the root group.
+
+    Used by help/boot paths and tests that walk `cli.commands` directly.
+    """
+    cli.load_all()
+
+
+def _first_run_gate(ctx: click.Context) -> None:
     import sys as _sys
 
     from memo.flags import flag_bool
@@ -594,15 +433,12 @@ def _first_run_gate(ctx: click.Context) -> None:
         return
     if flag_bool("MEMO_NONINTERACTIVE"):
         return
-    # Both stdin and stdout must be a TTY for the picker to make sense.
     if not (_sys.stdin.isatty() and _sys.stdout.isatty()):
         return
     if "MEMO_DATA_DIR" in os.environ:
         return
     if "MEMO_VAULT_PATH" in os.environ and "MEMO_MEMORY_SUBDIR" in os.environ:
         return
-    # Re-resolve config locations at gate-firing time (env may have
-    # changed between import and invocation, e.g. in tests).
     from memo.config_md import config_dir as _markdown_config_dir
     from memo.config_md import index_path as _markdown_index_path
     from memo.setup.config_io import _resolve_config_path
@@ -615,12 +451,8 @@ def _first_run_gate(ctx: click.Context) -> None:
 
 
 def _run_picker_and_save() -> None:
-    """Drive the interactive picker → persist Markdown config → return.
+    from memo.config_md import write_default_config
 
-    Caller is expected to be the first-run gate (or `memo init`). Picker
-    aborts (Ctrl-C / ESC) raise `click.exceptions.Exit(130)` so the
-    surrounding CLI invocation halts cleanly.
-    """
     console.print(
         "[bold]memo first-run setup[/bold] — pick where memories should live.\n",
     )
@@ -632,8 +464,6 @@ def _run_picker_and_save() -> None:
             "or run `memo init` to configure.",
         )
         raise click.exceptions.Exit(130) from None
-    from memo.config_md import write_default_config
-
     written = write_default_config(
         data_dir=result.data_dir,
         vault_path=result.vault_path,
@@ -653,8 +483,6 @@ def _run_picker_and_save() -> None:
 
 
 def main() -> None:
-    # Present memo's own domain errors (e.g. "LLM features require MLX" on the
-    # CPU backend) as a clean message instead of an uncaught traceback.
     from memo.errors import MemoError
 
     try:

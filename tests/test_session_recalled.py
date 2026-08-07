@@ -137,6 +137,7 @@ def test_subprocess_path_dedup_short_ref_on_second_turn(tmp_cfg, monkeypatch) ->
             limit=5,
             mode="bm25",
             recency=False,
+            budget_ms=None,
             exclude_types=None,
             exclude_tags=None,
         ):
