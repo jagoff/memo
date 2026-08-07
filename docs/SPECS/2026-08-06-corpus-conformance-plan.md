@@ -192,8 +192,7 @@ def _vector(topic: int, i: int) -> list[float]:
     centroid = hashlib.sha256(f"topic-{topic}".encode()).digest()
     jitter = hashlib.sha256(f"item-{i}".encode()).digest()
     out = [
-        (centroid[d % len(centroid)] - 128) / 128.0
-        + (jitter[d % len(jitter)] - 128) / 2048.0
+        (centroid[d % len(centroid)] - 128) / 128.0 + (jitter[d % len(jitter)] - 128) / 2048.0
         for d in range(DIMS)
     ]
     norm = math.sqrt(sum(v * v for v in out)) or 1.0
@@ -327,9 +326,7 @@ def _env(cfg) -> dict[str, str]:
 
 
 def test_analytics_summary_reports_the_real_total(big_corpus, corpus_size) -> None:
-    result = CliRunner().invoke(
-        cli, ["analytics", "summary", "--json"], env=_env(big_corpus)
-    )
+    result = CliRunner().invoke(cli, ["analytics", "summary", "--json"], env=_env(big_corpus))
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["total"] == corpus_size
@@ -420,7 +417,7 @@ def test_symlinked_parent_is_accepted(big_corpus, tmp_path, argv, flag) -> None:
     link = tmp_path / "link"
     link.symlink_to(real)
     dest = link / "out.dat"
-    args = [*argv, *( [flag, str(dest)] if flag else [str(dest)] )]
+    args = [*argv, *([flag, str(dest)] if flag else [str(dest)])]
 
     result = CliRunner().invoke(cli, args, env=_env(big_corpus))
 
@@ -432,7 +429,7 @@ def test_symlinked_parent_is_accepted(big_corpus, tmp_path, argv, flag) -> None:
 @pytest.mark.parametrize("argv,flag", OUTPUT_SURFACES)
 def test_missing_parent_gives_a_clean_error(big_corpus, tmp_path, argv, flag) -> None:
     dest = tmp_path / "does" / "not" / "exist" / "out.dat"
-    args = [*argv, *( [flag, str(dest)] if flag else [str(dest)] )]
+    args = [*argv, *([flag, str(dest)] if flag else [str(dest)])]
 
     result = CliRunner().invoke(cli, args, env=_env(big_corpus))
 
