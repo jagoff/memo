@@ -1,3 +1,5 @@
+Status: partially shipped — this plan's own deliverable (`src/memo/mcp_budget.py`) is absent from master; the underlying problem (unbounded MCP payloads) was instead closed via five individual per-surface fixes in #209, not the systemic middleware this plan builds. A complete implementation of this exact plan exists on local branch `feat/conformance-budget-deadline-admission`, not yet opened as a PR.
+
 # MCP Response Budget Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
