@@ -55,6 +55,11 @@ def _checkout_version(pkg_init: Path) -> str | None:
     ``None`` whenever ``pkg_init`` is not the ``<repo>/src/memo/__init__.py`` of
     an mlx-memo checkout — which is every installed distribution, and also any
     unrelated project that happens to vendor a ``src/memo/``.
+
+    Identity is decided on the *parsed* ``[project] name``: the literal string
+    ``name = "mlx-memo"`` can appear anywhere in a foreign pyproject (a vendoring
+    manifest, a ``[tool.uv.sources]`` pin, a comment) without that file declaring
+    this distribution.
     """
     if pkg_init.parent.parent.name != "src":
         return None
@@ -62,15 +67,16 @@ def _checkout_version(pkg_init: Path) -> str | None:
         text = (pkg_init.parents[2] / "pyproject.toml").read_text(encoding="utf-8")
     except OSError:
         return None
-    if 'name = "mlx-memo"' not in text:
-        return None
     import tomllib
 
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError:
         return None
-    declared = data.get("project", {}).get("version")
+    project = data.get("project")
+    if not isinstance(project, dict) or project.get("name") != "mlx-memo":
+        return None
+    declared = project.get("version")
     return declared if isinstance(declared, str) else None
 
 

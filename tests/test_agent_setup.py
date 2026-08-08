@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import subprocess
-from importlib.metadata import version
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
+from memo import __version__
 from memo import cli_setup as cli_setup_module
 from memo.cli_setup import setup_cmd
 from memo.config import Config
@@ -234,7 +234,7 @@ def test_agent_doctor_verifies_runtime_profile_protocol_and_isolated_smoke(
         if args[:4] == ["codex", "mcp", "get", "memo"]:
             stdout = f"command: {runtime}\nenv: MEMO_MCP_PROFILE=core\n"
         elif "--version" in args:
-            stdout = f"memo, version {version('mlx-memo')}\n"
+            stdout = f"memo, version {__version__}\n"
         elif "save" in args:
             stdout = '{"id":"smoke-id"}'
         elif "search" in args:
@@ -455,7 +455,7 @@ def test_isolated_runtime_smoke_reports_command_failure(monkeypatch, tmp_path: P
     )
 
     smoke_ok, version_ok, detail = registry._isolated_runtime_smoke(
-        runtime, expected_version=version("mlx-memo")
+        runtime, expected_version=__version__
     )
 
     assert smoke_ok is False

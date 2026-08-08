@@ -1,7 +1,7 @@
 """`memo startup-banner` — prints [Memo ver] status at agent launch.
 
 Called by agent shims (installed via `memo install-shims`). Must stay
-fast and MLX-free: only git + importlib.metadata, no embedding.
+fast and MLX-free: only git + `memo.__version__`, no embedding.
 
 For opencode the printed banner is wiped by its TUI, so we also stamp the
 live memo version into opencode's `username` — the only config-controlled
@@ -23,12 +23,7 @@ import click
 @click.option("--agent", default="", help="Agent name shown in header (e.g. codex).")
 def startup_banner_cmd(agent: str) -> None:
     """Print memo status banner to stderr. Called by agent shims on startup."""
-    import importlib.metadata
-
-    try:
-        version = importlib.metadata.version("mlx-memo")
-    except Exception:
-        version = "?"
+    from memo import __version__ as version
 
     sync_str = _fast_sync_state()
     update_tag = _pending_update_tag()

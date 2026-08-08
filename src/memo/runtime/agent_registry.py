@@ -593,12 +593,11 @@ def verify_agent(
         and memo_cli.parent == runtime.parent
     )
 
-    try:
-        from importlib.metadata import version
-
-        runtime_version = version("mlx-memo")
-    except Exception:  # pragma: no cover - editable/uninstalled source tree
-        runtime_version = "unknown"
+    # The version this process *is* — `memo doctor` prints it, and the smoke
+    # probe asserts the isolated `memo` binary reports the same one. Reading
+    # distribution metadata here would make `memo doctor` disagree with
+    # `memo --version` in the very checkout being verified.
+    from memo import __version__ as runtime_version
 
     config_ok, config_runtime, profile_current, config_detail = _probe_agent_configuration(
         adapter=adapter,

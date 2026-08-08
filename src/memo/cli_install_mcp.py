@@ -366,12 +366,7 @@ def _seed_install_memory() -> None:
         stamp = cfg.state_dir / ".install_seed.json"
         if stamp.exists():
             return
-        try:
-            from importlib.metadata import version as _pkg_version
-
-            ver = _pkg_version("mlx-memo")
-        except Exception:
-            ver = "unknown"
+        from memo import __version__ as ver
         from memo.memory import Memory
 
         cfg.state_dir.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import importlib.metadata
 import os
 from pathlib import Path
 
@@ -39,11 +38,9 @@ def emit_codex_notify(title: str, body: str = "") -> bool:
 
 
 def memo_version_badge() -> str:
-    try:
-        version = importlib.metadata.version("mlx-memo")
-    except Exception:
-        version = "?"
-    return f"[Memo {version}]"
+    from memo import __version__
+
+    return f"[Memo {__version__}]"
 
 
 def emit_memo_badge() -> bool:

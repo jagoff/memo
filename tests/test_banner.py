@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import importlib.metadata
 import json
 import os
 import pty
@@ -12,6 +11,7 @@ import subprocess
 
 from click.testing import CliRunner
 
+import memo
 from memo.cli import cli
 from memo.runtime.shims import install_path_snippet, install_shims
 
@@ -267,11 +267,7 @@ def test_codex_badge_uses_memo_notify_protocol(tmp_cfg, tmp_path, monkeypatch) -
     tty = tmp_path / "tty"
     tty.touch()
     monkeypatch.setenv("MEMO_AGENT_TTY", str(tty))
-    monkeypatch.setattr(
-        importlib.metadata,
-        "version",
-        lambda name: "9.8.7" if name == "mlx-memo" else "0",
-    )
+    monkeypatch.setattr(memo, "__version__", "9.8.7")
 
     result = CliRunner().invoke(
         cli,
