@@ -98,45 +98,26 @@ def big_corpus(tmp_path_factory, corpus_size: int) -> Iterator[Config]:
         cfg = Config(data_dir=data, vault_path=vault, state_dir=state, reranker_enabled=False)
         cfg.memory_dir.mkdir(parents=True, exist_ok=True)
 
-        store = VecStore(cfg.db_path, dims=DIMS)
+        # Seed with the Tantivy dual-write off. `VecStore.upsert` takes an
+        # exclusive Tantivy writer lease and commits ONE document per call
+        # (`store/queries.py` upsert -> `TantivyFTSIndex.commit`), measured at
+        # ~85ms/doc on this corpus -- ~17 minutes of silent setup at
+        # corpus_size=10001, which is what "tests/conformance hangs" was. It is
+        # not a deadlock: the rate stays flat, there is just no output. CI never
+        # paid it because `tantivy` is a darwin/arm64-only extra (pyproject
+        # `[tantivy]`) and the Linux runner installs dev/cpu/http only.
+        seed_mp = pytest.MonkeyPatch()
+        seed_mp.setenv("MEMO_TANTIVY_ENABLED", "0")
         try:
-            for i in range(corpus_size):
-                topic = i % TOPICS
-                mid = seeded_id(i)
-                title = f"Conformance memory {i} about {_TOPIC_NAMES[topic]}"
-                body = (
-                    f"Synthetic conformance record {i}. Subject: {_TOPIC_NAMES[topic]}. "
-                    f"This body exists so body-length gates and BM25 have real text to "
-                    f"work with rather than a stub token."
-                )
-                rel = f"{mid}.md"
-                post = frontmatter.Post(
-                    body,
-                    id=mid,
-                    title=title,
-                    type="note",
-                    tags=[_TOPIC_NAMES[topic], "conformance"],
-                    created=_CREATED,
-                    updated=_CREATED,
-                    valid_at=_CREATED,
-                )
-                post["extra"] = {}
-                post["verification_state"] = "unverified"
-                (cfg.memory_dir / rel).write_text(frontmatter.dumps(post), encoding="utf-8")
-                store.upsert(
-                    id_=mid,
-                    path=rel,
-                    title=title,
-                    type_="note",
-                    tags=[_TOPIC_NAMES[topic], "conformance"],
-                    created=_CREATED,
-                    updated=_CREATED,
-                    body_hash=hashlib.sha256(body.encode()).hexdigest(),
-                    embedding=_vector(topic, i),
-                    body_text=body,
-                )
+            _seed(cfg, corpus_size)
         finally:
-            store.close()
+            seed_mp.undo()
+
+        # Reopening under the ambient config runs `_maybe_rebuild_tantivy`,
+        # which bulk-builds the whole index from FTS5 in ONE commit (0.41s for
+        # 10001 docs) -- so BM25 conformance still runs against the backend this
+        # machine actually dispatches to. No-op when tantivy is absent/disabled.
+        VecStore(cfg.db_path, dims=DIMS).close()
     except BaseException:
         # Setup failed before the yield -- the generator never resumes, so
         # this is the only chance to revert the monkeypatched env. Without
@@ -147,3 +128,46 @@ def big_corpus(tmp_path_factory, corpus_size: int) -> Iterator[Config]:
 
     yield cfg
     mp.undo()
+
+
+def _seed(cfg: Config, corpus_size: int) -> None:
+    """Write `corpus_size` markdown records and index them into `cfg.db_path`."""
+    store = VecStore(cfg.db_path, dims=DIMS)
+    try:
+        for i in range(corpus_size):
+            topic = i % TOPICS
+            mid = seeded_id(i)
+            title = f"Conformance memory {i} about {_TOPIC_NAMES[topic]}"
+            body = (
+                f"Synthetic conformance record {i}. Subject: {_TOPIC_NAMES[topic]}. "
+                f"This body exists so body-length gates and BM25 have real text to "
+                f"work with rather than a stub token."
+            )
+            rel = f"{mid}.md"
+            post = frontmatter.Post(
+                body,
+                id=mid,
+                title=title,
+                type="note",
+                tags=[_TOPIC_NAMES[topic], "conformance"],
+                created=_CREATED,
+                updated=_CREATED,
+                valid_at=_CREATED,
+            )
+            post["extra"] = {}
+            post["verification_state"] = "unverified"
+            (cfg.memory_dir / rel).write_text(frontmatter.dumps(post), encoding="utf-8")
+            store.upsert(
+                id_=mid,
+                path=rel,
+                title=title,
+                type_="note",
+                tags=[_TOPIC_NAMES[topic], "conformance"],
+                created=_CREATED,
+                updated=_CREATED,
+                body_hash=hashlib.sha256(body.encode()).hexdigest(),
+                embedding=_vector(topic, i),
+                body_text=body,
+            )
+    finally:
+        store.close()
