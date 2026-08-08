@@ -430,7 +430,7 @@ async def test_every_tool_result_fits_its_cap(
     monkeypatch.setattr(STEmbedder, "_ensure_loaded", _no_live_model)
     monkeypatch.setattr(MLXChat, "chat", _stub_chat)
 
-    # -- Full MCP surface (162 tools), not the 41-tool "agent" default profile
+    # -- Full MCP surface (164 tools), not the 41-tool "agent" default profile
     # mcp_profile() falls back to -- the two originally-measured defects
     # (memo_graph_export, memo_lint's advanced siblings) live in the
     # advanced-only tool set gated behind "full"/"default".

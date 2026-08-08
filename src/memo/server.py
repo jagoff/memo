@@ -128,15 +128,11 @@ _SERVER_INSTRUCTIONS = (
 async def _health_route_handler(request):  # type: ignore[no-untyped-def]
     """Lightweight HTTP liveness probe without touching Memory."""
 
-    import importlib.metadata
-
     from starlette.responses import JSONResponse
 
-    try:
-        version = importlib.metadata.version("mlx-memo")
-    except Exception:
-        version = "unknown"
-    return JSONResponse({"ok": True, "version": version})
+    from memo import __version__
+
+    return JSONResponse({"ok": True, "version": __version__})
 
 
 def _chat_event_stream(

@@ -175,7 +175,7 @@ def test_token_cost_recognizes_agent() -> None:
 
     count, cost, reduced = mcp_profile_token_cost("agent")
     assert count == "41"
-    assert cost == "~4.1k"
+    assert cost == "~9.4k"
     assert reduced is True
 
 
@@ -185,7 +185,7 @@ def test_token_cost_core_and_slim_are_reduced() -> None:
     for profile in ("core", "slim"):
         count, cost, reduced = mcp_profile_token_cost(profile)
         assert count == "58"
-        assert cost == "~5.3k"
+        assert cost == "~12.9k"
         assert reduced is True
 
 
@@ -195,7 +195,7 @@ def test_token_cost_full_is_not_reduced() -> None:
     for profile in ("full", "default"):
         count, cost, reduced = mcp_profile_token_cost(profile)
         assert count == "164"
-        assert cost == "~18.1k"
+        assert cost == "~30.4k"
         assert reduced is False
 
 
@@ -206,7 +206,7 @@ def test_token_cost_active_default_resolves_to_agent(monkeypatch) -> None:
 
     count, cost, reduced = mcp_profile_token_cost()
     assert count == "41"
-    assert cost == "~4.1k"
+    assert cost == "~9.4k"
     assert reduced is True
 
 
@@ -235,3 +235,73 @@ def test_token_cost_count_matches_real_server(tmp_path, monkeypatch, profile) ->
 
     count_label, _cost, _reduced = mcp_profile_token_cost(profile)
     assert len(tools) == int(count_label)
+
+
+def _measure_wire_tokens(tmp_path, monkeypatch, profile: str) -> tuple[int, int]:
+    """Measure the real `tools/list` payload for `profile`.
+
+    Returns ``(tool_count, estimated_tokens)``. The payload is what a client
+    actually pays for on every connection — ``name`` + ``description`` +
+    ``inputSchema`` per tool, serialized as compact JSON — sized with memo's
+    own chars/4 estimator so the advisory label speaks the same units as the
+    rest of memo's token accounting.
+    """
+    import json
+
+    from memo.eval_tokens import count_tokens
+
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        vault_path=tmp_path / "vault",
+        embedder_dims=4,
+    )
+    monkeypatch.setenv("MEMO_MCP_PROFILE", profile)
+    monkeypatch.delenv("MEMO_MCP_SLIM", raising=False)
+    mem = Memory(cfg)
+    try:
+        tools = asyncio.run(build_server(memory=mem).list_tools())
+    finally:
+        mem.close()
+
+    payload = []
+    for tool in tools:
+        mcp_tool = tool.to_mcp_tool()
+        payload.append(
+            {
+                "name": mcp_tool.name,
+                "description": mcp_tool.description or "",
+                "inputSchema": mcp_tool.inputSchema,
+            }
+        )
+    wire = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return len(tools), count_tokens(wire)
+
+
+# The label is an advisory rounded to 0.1k, so it must not red on byte-level
+# churn in one tool description — but it must red on the ~2x understatement
+# that let "~18.1k" survive against a 30k surface.
+_LABEL_TOLERANCE = 0.05
+
+
+@pytest.mark.parametrize("profile", ["agent", "core", "full"])
+def test_token_cost_label_matches_measured_wire_payload(tmp_path, monkeypatch, profile) -> None:
+    """`_PROFILE_TOKEN_COST` is hand-maintained; this is what re-derives it.
+
+    Run this test to get the current number: on a mismatch the failure message
+    carries the exact label to paste in. Keep `docs/`, `README.md`, and the
+    `install-mcp`/`doctor` advisories in step with it — they quote the same
+    figures.
+    """
+    from memo.surface import mcp_profile_token_cost
+
+    count, measured = _measure_wire_tokens(tmp_path, monkeypatch, profile)
+    count_label, cost_label, _reduced = mcp_profile_token_cost(profile)
+
+    assert count == int(count_label)
+
+    claimed = float(cost_label.removeprefix("~").removesuffix("k")) * 1000
+    assert abs(claimed - measured) <= _LABEL_TOLERANCE * measured, (
+        f"{profile} profile advertises {cost_label} but its {count} tool schemas "
+        f"measure {measured} tokens — update the label to ~{measured / 1000:.1f}k"
+    )

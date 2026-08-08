@@ -9,8 +9,8 @@
 - Vector store: `sqlite-vec` (single file, no daemon, no Qdrant).
 - Storage of record: markdown files under `MEMO_DATA_DIR`, or under
   `<vault>/<SYSTEM_DIR>/AI/memory/` when `MEMO_MEMORIES_IN_VAULT=1`.
-- MCP server: `fastmcp`, profile-gated from the 30-tool `agent`
-  surface through the 158-tool `full` surface.
+- MCP server: `fastmcp`, profile-gated from the 41-tool `agent`
+  surface through the 164-tool `full` surface.
 
 Public API:
 
@@ -23,6 +23,7 @@ Public API:
 """
 
 import os
+from pathlib import Path
 
 # Silence HuggingFace hub progress/download bars globally, before any model
 # load. Otherwise embedder/llm/reranker loads, prewarm, and daemon startups
@@ -39,17 +40,61 @@ from memo.config import Config  # noqa: E402
 from memo.memory import Memory, MemoryRecord  # noqa: E402
 
 # Single source of truth lives in pyproject.toml `[project] version`.
-# Resolve at import time from the installed distribution metadata so
-# `memo.__version__` always matches `pip show mlx-memo`. Falls back to
-# a sentinel when running from an uninstalled checkout.
-try:
-    from importlib.metadata import PackageNotFoundError
-    from importlib.metadata import version as _version
+#
+# Distribution metadata is only a *snapshot* of that. For an editable install
+# the snapshot goes stale the instant the version is bumped — nothing rewrites
+# `.dist-info` until someone reinstalls — so trusting it makes freshly bumped
+# source report the previous release (this is how 4.9.3's code reported 4.9.2).
+# A source checkout is therefore authoritative for its own version; an
+# installed wheel has no pyproject above it and falls through to the metadata.
 
-    __version__ = _version("mlx-memo")
-except PackageNotFoundError:  # pragma: no cover — editable install w/o metadata
-    __version__ = "0.0.0+unknown"
-except Exception:  # pragma: no cover — defensive
-    __version__ = "0.0.0+unknown"
+
+def _checkout_version(pkg_init: Path) -> str | None:
+    """Version declared by the mlx-memo checkout that owns ``pkg_init``.
+
+    ``None`` whenever ``pkg_init`` is not the ``<repo>/src/memo/__init__.py`` of
+    an mlx-memo checkout — which is every installed distribution, and also any
+    unrelated project that happens to vendor a ``src/memo/``.
+
+    Identity is decided on the *parsed* ``[project] name``: the literal string
+    ``name = "mlx-memo"`` can appear anywhere in a foreign pyproject (a vendoring
+    manifest, a ``[tool.uv.sources]`` pin, a comment) without that file declaring
+    this distribution.
+    """
+    if pkg_init.parent.parent.name != "src":
+        return None
+    try:
+        text = (pkg_init.parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    import tomllib
+
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    project = data.get("project")
+    if not isinstance(project, dict) or project.get("name") != "mlx-memo":
+        return None
+    declared = project.get("version")
+    return declared if isinstance(declared, str) else None
+
+
+def _resolve_version() -> str:
+    checkout = _checkout_version(Path(__file__).resolve())
+    if checkout is not None:
+        return checkout
+    try:
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as _version
+
+        return _version("mlx-memo")
+    except PackageNotFoundError:  # pragma: no cover — checkout w/o metadata
+        return "0.0.0+unknown"
+    except Exception:  # pragma: no cover — defensive
+        return "0.0.0+unknown"
+
+
+__version__ = _resolve_version()
 
 __all__ = ["Config", "Memory", "MemoryRecord", "__version__"]

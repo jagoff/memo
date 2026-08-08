@@ -26,13 +26,14 @@ _EXPORT_PAGE_SIZE = 10_000
 
 
 def _generator_string() -> str:
-    """``memo/<version>`` for the passport header, or ``memo`` if unknown."""
-    from importlib.metadata import PackageNotFoundError, version
+    """``memo/<version>`` for the passport header.
 
-    try:
-        return f"memo/{version('mlx-memo')}"
-    except PackageNotFoundError:
-        return "memo"
+    Provenance of the code that wrote the file, so it reads the same single
+    source as ``memo --version``.
+    """
+    from memo import __version__
+
+    return f"memo/{__version__}"
 
 
 @contextmanager

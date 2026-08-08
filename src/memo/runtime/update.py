@@ -344,7 +344,12 @@ def self_update(stray: str | None, check: bool, to_tag: str | None) -> None:
     # renamed memory-edit command instead of silently self-updating.
     if stray is not None:
         raise click.ClickException(f"did you mean `memo edit {stray}`?")
-    current_version = importlib.metadata.version("mlx-memo")
+    # Same source the background auto-updater compares against
+    # (`runtime/autoupdate.py` uses `memo.__version__`); reading distribution
+    # metadata here instead would let the two paths disagree about what
+    # "current" is.
+    from memo import __version__ as current_version
+
     console.print(f"[dim]current version:[/dim] {current_version}")
 
     # An editable/dev install (project .venv) can't be updated by this command —
