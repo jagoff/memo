@@ -1,3 +1,5 @@
+Status: abandoned — deliberately closed as no-build in #124 (docs: close MCP gap #4 (resource subscriptions) as investigated/not-planned, merged 2026-07-29). Decision recorded in the doc itself: no target client consumes it, the installed FastMCP/mcp SDK hardcodes `subscribe=False`, and the real invalidation cost is cross-process.
+
 # MCP resource subscriptions / list_changed — investigated, NOT planned
 
 **Date:** 2026-07-28

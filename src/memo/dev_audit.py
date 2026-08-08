@@ -52,6 +52,20 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
 }
 
 
+# The files whose broad catches are classified individually (see
+# BROAD_EXCEPTION_ALLOWED). For these, lexical classification is the gate;
+# scripts/quality_gate.py's per-file integer budget deliberately counts zero,
+# so classifying a new fail-open site is ONE edit, not two.
+BROAD_EXCEPTION_TARGET_FILES: frozenset[str] = frozenset(
+    {
+        "recall_logic.py",
+        "memory/write_ops.py",
+        "cli_recall_hook.py",
+        "store/queries.py",
+    }
+)
+
+
 # First sprint only classifies high-risk target files. These stable lexical
 # identifiers are a baseline inventory, not blanket approval for future sites.
 BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
@@ -66,6 +80,11 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     # budget. (_code_ref_status now delegates to code_intel.ref_status, which
     # catches concrete sqlite errors itself — no broad except left there.)
     ("recall_logic.py", "_code_ref_lines", 1),
+    # Graph-cluster recall compaction (MEMO_RECALL_GRAPH_COMPACT): optional
+    # token-budget work on the hook hot path. Any projection/store failure
+    # degrades to the uncompacted relevant/nudge lists and must never break
+    # the recall payload or blow the 5s hook budget.
+    ("recall_logic.py", "_apply_graph_compact", 1),
     ("cli_recall_hook.py", "recall_hook", 1),
     ("cli_recall_hook.py", "recall_hook._bail", 1),
     ("cli_recall_hook.py", "recall_hook", 2),

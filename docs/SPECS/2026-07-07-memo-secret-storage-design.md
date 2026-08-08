@@ -1,3 +1,5 @@
+Status: partially shipped — CLI storage (save/get/list/forget/export, AES-256-GCM, audit log to grounding.log) shipped in #16, but as the in-file amendment says: explicit opt-in only, random local master key instead of device-derived. Automatic regex+LLM secret detection and the `memo_get_secret`/`memo_list_secrets` MCP interface from the original design were never built (no matches in src/memo/server*.py).
+
 # Memo Secret Storage System — Design Spec
 
 > Security amendment (2026-07-14): the implementation intentionally does not

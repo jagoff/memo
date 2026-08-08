@@ -97,26 +97,6 @@ class ActorIdentity:
 
 
 @dataclass(frozen=True)
-class TraceContext:
-    trace_id: str = ""
-    actor: ActorIdentity = field(default_factory=ActorIdentity)
-    route_reason: str = ""
-    policy_version: str = "memo.write_policy.v1"
-    idempotency_key: str = ""
-
-    def to_provenance(self) -> dict[str, Any]:
-        return {
-            "trace_id": self.trace_id,
-            "actor_id": self.actor.actor_id,
-            "actor_signature": self.actor.signature,
-            "source_client": self.actor.source_client,
-            "route_reason": self.route_reason,
-            "policy_version": self.policy_version,
-            "idempotency_key": self.idempotency_key,
-        }
-
-
-@dataclass(frozen=True)
 class EvidenceItem:
     id: str
     uri: str
@@ -260,12 +240,6 @@ def normalize_provenance(
     return {key: value for key, value in out.items() if value not in (None, "", [], {})}
 
 
-def provenance_extra(provenance: dict[str, Any] | None) -> dict[str, Any]:
-    """Encode provenance in the one canonical ``extra`` representation."""
-    clean = normalize_provenance({"provenance": provenance or {}})
-    return {"provenance": clean} if clean else {}
-
-
 __all__ = [
     "LEGACY_PROVENANCE_KEYS",
     "MEMO_BACKEND_SCHEMA",
@@ -279,11 +253,9 @@ __all__ = [
     "EvidenceItem",
     "EvidencePack",
     "MemoEvent",
-    "TraceContext",
     "TrustTier",
     "Visibility",
     "WriteReceipt",
     "new_event_id",
     "normalize_provenance",
-    "provenance_extra",
 ]

@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -5,6 +6,13 @@ from click.testing import CliRunner
 
 from memo import eval_recall
 from memo.cli_eval import eval_group
+
+# `eval_recall` uses `from __future__ import annotations`, so dataclasses
+# reports field types as strings ("str", "float") — not as the types
+# themselves. Comparing against `str` alone would silently match nothing.
+_ROW_TEMPLATE = {
+    f.name: ("" if f.type in (str, "str") else 0.0) for f in dataclasses.fields(eval_recall.Row)
+}
 
 
 def test_eval_memory_json_and_text(tmp_path, monkeypatch):
@@ -201,3 +209,339 @@ def test_save_cache_keeps_entries_it_cannot_date(tmp_path):
     on_disk = json.loads(cli_eval._cache_path(cfg).read_text(encoding="utf-8"))
 
     assert set(on_disk) == {"weird"}
+
+
+def test_run_gate_passes_the_live_corpus_fingerprint_to_check_gate(tmp_path, monkeypatch) -> None:
+    import json as _json
+
+    from memo import cli_eval, eval_recall
+
+    baseline_dir = tmp_path / "eval"
+    baseline_dir.mkdir(parents=True)
+    (baseline_dir / "recall_baseline.json").write_text(
+        _json.dumps(
+            {
+                "precision_at_k": 0.6,
+                "noise_at_k": 0.1,
+                "corpus_fingerprint": "corpus-OLD",
+                "config": "A",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _Cfg:
+        state_dir = tmp_path
+
+    captured: dict[str, object] = {}
+    real_check_gate = eval_recall.check_gate
+
+    def _spy(rows, baseline, **kwargs):
+        captured.update(kwargs)
+        return real_check_gate(rows, baseline, **kwargs)
+
+    monkeypatch.setattr(eval_recall, "check_gate", _spy)
+
+    rows = [
+        eval_recall.Row(
+            **{**_ROW_TEMPLATE, "config": "A", "precision_at_k": 0.5, "noise_at_k": 0.1}
+        )
+    ]
+    result = cli_eval._run_gate(
+        rows, _Cfg(), labels_fingerprint="labels-1", k=5, corpus_fingerprint="corpus-NEW"
+    )
+
+    assert captured["corpus_fingerprint"] == "corpus-NEW"
+    assert result.corpus_changed is True
+    assert not result.passed
+
+
+def test_against_ref_forces_no_cache_on_the_current_side(tmp_path, monkeypatch) -> None:
+    """C1 regression: `memo eval recall --against <ref>` must not let the
+    CURRENT side read or write the shared eval cache. The reviewer reproduced
+    a false PASS by pre-seeding the cache: with the working tree at 0.10
+    precision and the ref at 0.99, a cached (stale) entry made the current
+    side report 0.99 too, and `evaluate` never ran. `force = True` alone does
+    not fix this — it only suppresses the cache READ; the WRITE would still
+    poison the shared cache. Only `no_cache = True` suppresses both.
+
+    HIGH-1 note: the entry this poisons the cache with must be FRESH (`ts`
+    within the TTL) — a `ts` of 0.0 is ~55 years old, so the TTL check at
+    `if entry and (time.time() - entry.get("ts", 0)) < _CACHE_TTL_S` rejects
+    it whether or not the cache READ was actually suppressed, and
+    `evaluate_calls` can never be empty either way. See the idiom already
+    used above at `test_save_cache_drops_entries_past_their_ttl`
+    (`"fresh": {"ts": now, ...}`)."""
+    import time
+
+    from memo import cli_eval, eval_against, eval_recall
+
+    labels = SimpleNamespace(
+        prompts=[SimpleNamespace(text="q")],
+        fingerprint=lambda: "labels-fp",
+    )
+    fresh_row = eval_recall.Row(
+        config="A", precision_at_k=0.10, noise_at_k=0.0, avoid_at_k=1.0, avoid_leak_at_k=0.0
+    )
+    evaluate_calls: list[int] = []
+
+    def _evaluate(mem, *, k, labels, configs, progress=None):
+        evaluate_calls.append(1)
+        return [fresh_row]
+
+    class _AlwaysFreshPoisonedCache(dict):
+        """A cache that would serve a FRESH (within-TTL) poisoned entry for
+        ANY key — standing in for a real pre-seeded cache.json without
+        needing to reproduce the exact corpus+labels+configs+k cache key."""
+
+        def get(self, key, default=None):
+            return {
+                "ts": time.time(),
+                "k": 3,
+                "rows": [{**fresh_row.__dict__, "precision_at_k": 0.99}],
+            }
+
+    save_calls: list[dict] = []
+
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: object())
+    monkeypatch.setattr(eval_recall, "load_labels", lambda path: labels)
+    monkeypatch.setattr(eval_recall, "fingerprint_corpus", lambda mem: "corpus-fp")
+    monkeypatch.setattr(eval_recall, "evaluate", _evaluate)
+    monkeypatch.setattr(cli_eval, "_load_cache", lambda cfg: _AlwaysFreshPoisonedCache())
+    monkeypatch.setattr(cli_eval, "_save_cache", lambda cfg, cache: save_calls.append(cache))
+    monkeypatch.setattr(eval_against, "resolve_repo_root", lambda start: tmp_path)
+    monkeypatch.setattr(
+        eval_against,
+        "run_against",
+        lambda ref, *, repo_root, argv: eval_against.AgainstRun(
+            rows=[
+                {
+                    "config": "A",
+                    "precision_at_k": 0.99,
+                    "noise_at_k": 0.0,
+                    "avoid_at_k": 1.0,
+                    "avoid_leak_at_k": 0.0,
+                }
+            ],
+            labels_fingerprint="labels-fp",
+        ),
+    )
+
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text("{}")
+
+    result = CliRunner().invoke(
+        eval_group,
+        ["recall", "--labels", str(labels_path), "--against", "origin/master"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+            "MEMO_STATE_DIR": str(tmp_path / "state"),
+        },
+    )
+
+    # If the poisoned cache were served, the current side would report 0.99
+    # (the ref's own number) and evaluate() would never run — the false PASS
+    # the reviewer reproduced.
+    assert evaluate_calls, "the current side must re-run fresh, not read the stale cache"
+    assert not save_calls, "the current side must not write its numbers into the shared cache"
+    assert result.exit_code == 1, result.output
+    assert "0.100" in result.output
+
+
+# --- MEDIUM-1 / LOW-2: --against's flag-combination guard --------------------
+# `_validate_against_flags` runs before Config.from_env() and before any
+# eval/memory work, so these can invoke bare — no labels file, no monkeypatch.
+
+
+# A clean `click.ClickException` still shows up as `result.exception ==
+# SystemExit(1)` under CliRunner (Click's own main() catches it, prints the
+# message, and calls sys.exit — CliRunner records THAT SystemExit). An
+# uncaught raw exception instead leaves the real exception type there
+# (confirmed empirically: RuntimeError -> `result.exception` is the
+# RuntimeError itself, not a SystemExit). `isinstance(..., SystemExit)` is
+# therefore the actual discriminator, not `is None`.
+
+
+def test_against_rejects_quick() -> None:
+    result = CliRunner().invoke(eval_group, ["recall", "--against", "origin/master", "--quick"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "--quick" in result.output
+    assert "--against" in result.output
+
+
+def test_against_rejects_max_prompts() -> None:
+    result = CliRunner().invoke(
+        eval_group, ["recall", "--against", "origin/master", "--max-prompts", "5"]
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "--max-prompts" in result.output
+
+
+def test_against_rejects_quick_and_max_prompts_together() -> None:
+    result = CliRunner().invoke(
+        eval_group,
+        ["recall", "--against", "origin/master", "--quick", "--max-prompts", "5"],
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+    # --quick is checked first; naming it is enough to prove the guard fired
+    # (the exact combination isn't the point — either flag alone is invalid).
+    assert "--quick" in result.output
+
+
+def test_against_rejects_gate() -> None:
+    result = CliRunner().invoke(eval_group, ["recall", "--against", "origin/master", "--gate"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "--gate" in result.output
+    assert "--against" in result.output
+
+
+def test_against_rejects_update_baseline() -> None:
+    result = CliRunner().invoke(
+        eval_group, ["recall", "--against", "origin/master", "--update-baseline"]
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "--update-baseline" in result.output
+
+
+def test_against_rejects_graph_ab() -> None:
+    # Round-5: --graph-ab runs unconditionally BEFORE the `if against_ref:`
+    # branch, so uncaught it burns two full eval sweeps against the live
+    # corpus and builds graph_ab_payload — then _run_against calls sys.exit()
+    # before the table is ever printed. Same silent-waste class as
+    # --quick/--max-prompts/--gate/--update-baseline.
+    result = CliRunner().invoke(eval_group, ["recall", "--against", "origin/master", "--graph-ab"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "--graph-ab" in result.output
+    assert "--against" in result.output
+
+
+# --- MEDIUM-2: eval_against failures reach the CLI as clean errors -----------
+
+
+def test_against_translates_an_against_error_into_a_clean_cli_failure(
+    tmp_path, monkeypatch
+) -> None:
+    """MEDIUM-2: git/subprocess/JSON failures inside eval_against must not
+    surface as raw Python tracebacks — an `exit=1` from a broken pipeline
+    would otherwise be indistinguishable from a genuine ranking regression,
+    which undercuts the whole point of m3 surfacing the real reason."""
+    from memo import eval_against, eval_recall
+
+    labels = SimpleNamespace(prompts=[SimpleNamespace(text="q")], fingerprint=lambda: "labels-fp")
+
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: object())
+    monkeypatch.setattr(eval_recall, "load_labels", lambda path: labels)
+    monkeypatch.setattr(eval_recall, "fingerprint_corpus", lambda mem: "corpus-fp")
+    monkeypatch.setattr(
+        eval_recall,
+        "evaluate",
+        lambda mem, *, k, labels, configs, progress=None: [
+            eval_recall.Row(config="A", precision_at_k=1.0, noise_at_k=0.0)
+        ],
+    )
+
+    def _boom(start):
+        raise eval_against.AgainstError(
+            "git rev-parse --show-toplevel failed: fatal: not a git repository"
+        )
+
+    monkeypatch.setattr(eval_against, "resolve_repo_root", _boom)
+
+    labels_path = tmp_path / "labels.json"
+    labels_path.write_text("{}")
+
+    result = CliRunner().invoke(
+        eval_group,
+        ["recall", "--labels", str(labels_path), "--against", "origin/master"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+            "MEMO_STATE_DIR": str(tmp_path / "state"),
+        },
+    )
+
+    assert result.exit_code == 1
+    # click.ClickException is handled internally by Click's own main() (it
+    # prints the message and calls sys.exit), so a CLEAN failure shows up as
+    # `result.exception == SystemExit(1)`. An uncaught AgainstError
+    # propagating past cli_eval.py would instead leave the AgainstError
+    # itself here — that's the raw-traceback failure mode MEDIUM-2 is about.
+    assert isinstance(result.exception, SystemExit), (
+        f"expected a clean ClickException exit, got: {result.exception!r}"
+    )
+    assert "not a git repository" in result.output
+
+
+def _access_snapshot(mem) -> tuple:
+    row = mem.store._conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(access_count), 0), MAX(last_accessed) FROM access"
+    ).fetchone()
+    return tuple(row)
+
+
+def test_eval_chat_cmd_does_not_inflate_access_count(mem_with_stub, tmp_cfg, monkeypatch):
+    """`memo eval chat` replays `chat_stream` (the same retrieval orchestrator
+    the live chat server uses) against the live index as a regression gate;
+    without `_track_usage=False` threaded through, every turn would write
+    access-log rows (search_ops.py's `_stage_record_usage`) for whatever it
+    surfaces — the same signal `memo usefulness` / `dead_weight()` read to
+    decide what's noise. The real chat server (chat/http.py) doesn't pass
+    this, so genuine chat turns still track usage."""
+    monkeypatch.setenv("MEMO_CHAT_MULTI_QUERY", "0")
+    mem = mem_with_stub
+
+    class _FakeChatBackend:
+        def chat_stream(self, model, messages, options=None):
+            yield "the runbook says redeploy the lambda"
+
+    mem._chat = _FakeChatBackend()
+    rec = mem.save(
+        content="deploy runbook for the lambda pipeline, step by step",
+        title="Deploy runbook",
+        auto_project=False,
+    )
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: mem)
+
+    corpus_path = tmp_cfg.state_dir / "chat_corpus.json"
+    corpus_path.write_text(
+        json.dumps(
+            {
+                "schema": "synapse.eval_chat.query.v1",
+                "queries": [{"id": "q1", "question": "deploy runbook lambda", "checks": {}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    before = _access_snapshot(mem)
+    result = CliRunner().invoke(
+        eval_group,
+        ["chat", "--corpus", str(corpus_path)],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        },
+    )
+    assert result.exit_code == 0, result.output
+    assert _access_snapshot(mem) == before
+
+    # Contrast: a real (non-eval) search against the same memory DOES bump
+    # it — proving the assertion above isn't vacuously true because the gate
+    # never actually surfaced a candidate.
+    hits = mem.search("deploy runbook lambda")
+    assert any(h.id == rec.id for h in hits)
+    assert _access_snapshot(mem) != before

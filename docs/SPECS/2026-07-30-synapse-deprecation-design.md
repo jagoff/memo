@@ -1,3 +1,5 @@
+Status: shipped in #136 (feat: adopt synapse daemons natively (big-bang synapse deprecation), merged 2026-07-31). CHANGELOG [4.6.0] confirms: "Synapse/memflow daemons adopted natively: the `com.memo.*` launchd fleet ... replaces the deprecated trinity stack." synapse/memflow repos subsequently archived.
+
 # Deprecación big bang de synapse
 
 **Fecha:** 2026-07-30

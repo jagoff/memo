@@ -97,3 +97,66 @@ def test_tokens_cmd_drives_real_search_closure_with_limit_kwarg(tmp_path, monkey
     assert r.exit_code == 0, r.output
     baseline = tmp_path / "state" / "eval" / "token_baseline.json"
     assert baseline.exists()
+
+
+def _access_snapshot(mem) -> tuple[int, int, str | None]:
+    row = mem.store._conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(access_count), 0), MAX(last_accessed) FROM access"
+    ).fetchone()
+    return tuple(row)
+
+
+def test_tokens_cmd_does_not_inflate_access_count(tmp_cfg, mem_with_stub, monkeypatch):
+    """`memo eval tokens` runs the P1 recall-output levers against the live
+    index (`_search` closure -> `mem.search`); without `_track_usage=False`
+    threaded through, every search hit writes an access-log row
+    (search_ops.py's `_stage_record_usage`), inflating access_count on
+    whatever memory the eval surfaces — the same signal `memo usefulness` /
+    `dead_weight()` read to decide what's noise.
+    """
+    mem = mem_with_stub
+    rec = mem.save(
+        content="deploy runbook for the lambda pipeline, step by step",
+        title="Deploy runbook",
+        auto_project=False,
+    )
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: mem)
+
+    labels_path = tmp_cfg.state_dir / "labels.json"
+    labels_path.write_text(
+        json.dumps(
+            {
+                "schema": "memo.eval_recall.labels.v1",
+                "prompts": [{"text": "deploy runbook lambda", "relevant": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    corpus_path = tmp_cfg.state_dir / "corpus.json"
+    corpus_path.write_text(
+        json.dumps({"schema": "memo.token_corpus.v1", "cases": []}), encoding="utf-8"
+    )
+
+    before = _access_snapshot(mem)
+    r = CliRunner().invoke(
+        cli,
+        [
+            "eval",
+            "tokens",
+            "--labels",
+            str(labels_path),
+            "--corpus",
+            str(corpus_path),
+            "--update-baseline",
+        ],
+        env=_env(tmp_cfg.data_dir.parent),
+    )
+    assert r.exit_code == 0, r.output
+    assert _access_snapshot(mem) == before
+
+    # Contrast: a real (non-eval) search against the same memory DOES bump
+    # it — proving the assertion above isn't vacuously true because the
+    # gate never actually matched a candidate.
+    hits = mem.search("deploy runbook lambda")
+    assert any(h.id == rec.id for h in hits)
+    assert _access_snapshot(mem) != before

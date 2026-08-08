@@ -1,3 +1,5 @@
+Status: partially shipped — none of this plan's own deliverables (`tests/conformance/` harness, 10k-memory fixture, `conformance` pytest marker) exist on master; grep confirms `tests/conformance/` is absent. Several of the underlying defects the harness was meant to catch (raw-traceback output paths, `memo links reindex` silent data loss) were fixed ad hoc, without the formal harness, in #209. A complete implementation matching this plan (`tests/conformance/conftest.py` + 6 test modules) exists on local branch `feat/conformance-budget-deadline-admission`, which has no open PR as of 2026-08-07.
+
 # Corpus-Scale Conformance Harness Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

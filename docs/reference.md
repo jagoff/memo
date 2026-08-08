@@ -1165,7 +1165,7 @@ plaintext disclosure operations.
 | ingest-daemon | `memo ingest-daemon start` | Serialized repo/batch indexing with dedupe and failure ledger. |
 | maint-daemon | `memo maint-daemon start` | Background cleanup and synthesis. |
 
-### All 142 top-level CLI commands
+### All 144 top-level CLI commands
 
 <details>
 <summary>Complete command inventory</summary>
@@ -1179,8 +1179,8 @@ plaintext disclosure operations.
 `chat-session` `resume` `reflect` `mine-history` `episodes` `chronicle`
 
 **Maintenance:** `reindex` `maintain` `review` `dream` `consolidate`
-`synthesize` `dedupe` `retier` `contradict` `invalidate` `temporal`
-`compress-context`
+`synthesize` `dedupe` `cross-dedup` `retier` `contradict` `coordinate`
+`terminal` `invalidate` `temporal` `compress-context` `ops`
 
 **Analysis & Quality:** `health` `stats` `doctor` `journey-check` `lint`
 `drift` `analytics` `eval` `roi` `tokens` `token-savings` `usefulness` `gaps`
@@ -1203,8 +1203,8 @@ plaintext disclosure operations.
 `migrate` `migrate-vault` `migrate-independence` `update` `upgrade`
 `self-update` `watch` `release` `onboard`
 
-**Daemons:** `recall-daemon` `ingest-daemon` `maint-daemon` `embed-daemon`
-`idle-daemon`
+**Daemons:** `daemons` `recall-daemon` `ingest-daemon` `maint-daemon`
+`embed-daemon` `idle-daemon`
 
 **Other:** `backend-native` `collaborative` `events` `feedback` `query` `mandate`
 `drift` `sleep-cycle` `operational` `ocr-image` `provenance` `secret`

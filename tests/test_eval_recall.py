@@ -428,6 +428,25 @@ def test_check_gate_pins_to_baseline_config_and_catches_masked_regression():
     assert "cfgB" in res.message  # current winner surfaced too
 
 
+def test_baseline_payload_records_the_corpus_it_was_measured_on() -> None:
+    rows = _rows((0.6, 0.1))
+
+    payload = eval_recall.baseline_payload(
+        rows,
+        k=5,
+        labels_fingerprint="labels-abc",
+        corpus_fingerprint="corpus-123",
+    )
+
+    assert payload["corpus_fingerprint"] == "corpus-123"
+    assert payload["labels_fingerprint"] == "labels-abc"
+    assert payload["k"] == 5
+    # The existing metric contract is unchanged.
+    assert payload["precision_at_k"] == 0.6
+    assert payload["noise_at_k"] == 0.1
+    assert "config" in payload
+
+
 def test_check_gate_fails_loudly_when_pinned_config_absent_from_run():
     # F1: the baseline pins a config this run did not evaluate — comparing a
     # different config would be apples-to-oranges, so fail loudly.
@@ -472,6 +491,63 @@ def test_check_gate_legacy_baseline_without_k_is_unaffected_by_k():
     assert eval_recall.check_gate(rows, {"precision_at_k": 0.6, "noise_at_k": 0.1}, k=5).passed
 
 
+def test_check_gate_blames_code_when_the_corpus_did_not_move() -> None:
+    rows = _rows((0.5, 0.1))
+
+    res = eval_recall.check_gate(
+        rows,
+        {"precision_at_k": 0.6, "noise_at_k": 0.1, "corpus_fingerprint": "corpus-123"},
+        corpus_fingerprint="corpus-123",
+    )
+
+    assert not res.passed
+    assert res.corpus_changed is False
+    assert "code" in res.message
+    assert "precision@k" in res.message
+
+
+def test_check_gate_flags_a_drop_as_confounded_when_the_corpus_moved() -> None:
+    rows = _rows((0.5, 0.1))
+
+    res = eval_recall.check_gate(
+        rows,
+        {"precision_at_k": 0.6, "noise_at_k": 0.1, "corpus_fingerprint": "corpus-123"},
+        corpus_fingerprint="corpus-456",
+    )
+
+    assert not res.passed
+    assert res.corpus_changed is True
+    assert "confounded" in res.message
+    assert "--against" in res.message
+
+
+def test_check_gate_is_non_enforcing_for_a_baseline_without_a_corpus_fingerprint() -> None:
+    rows = _rows((0.5, 0.1))
+
+    res = eval_recall.check_gate(
+        rows,
+        {"precision_at_k": 0.6, "noise_at_k": 0.1},
+        corpus_fingerprint="corpus-456",
+    )
+
+    assert not res.passed
+    assert res.corpus_changed is False
+    assert "confounded" not in res.message
+
+
+def test_check_gate_passing_run_reports_no_corpus_change() -> None:
+    rows = _rows((0.8, 0.0))
+
+    res = eval_recall.check_gate(
+        rows,
+        {"precision_at_k": 0.6, "noise_at_k": 0.1, "corpus_fingerprint": "corpus-123"},
+        corpus_fingerprint="corpus-456",
+    )
+
+    assert res.passed
+    assert res.corpus_changed is True
+
+
 # --- end-to-end (isolated, stubbed embedder) --------------------------------
 
 
@@ -498,6 +574,88 @@ def test_evaluate_returns_one_row_per_config_in_range(mock_memory):
         assert len(r.detail) == 2  # one entry per prompt
     # recommendation is a non-empty string referencing a known config or baseline
     assert eval_recall.recommend(rows)
+
+
+# --- Task 5 round 4: eval must not write access rows / move the fingerprint -
+# `_search_for_eval` used to call `mem.search()` without `_track_usage=False`,
+# so every eval search wrote an access-log row: the same access_count signal
+# `memo usefulness` / `dead_weight()` read to decide what's noise, AND —
+# because that write moved memvec.db's mtime, which fingerprint_corpus used to
+# hash — the eval harness moved its own corpus fingerprint just by running,
+# making `corpus_changed` true on essentially every gate run.
+
+
+def test_evaluate_does_not_inflate_access_count(mock_memory):
+    rec = mock_memory.save(
+        content="synapse memflow memo stack architecture", title="Stack", tags=["stack"]
+    )
+    labels = LabelSet(
+        prompts=[Prompt("how is the stack architected", relevant=True)],
+        relevant_terms={"synapse", "stack", "memo"},
+    )
+
+    eval_recall.evaluate(mock_memory, k=3, labels=labels)
+
+    assert mock_memory.store.get_access(rec.id)["access_count"] == 0
+
+    # Contrast: a real (non-eval) search against the same memory DOES bump
+    # it — proving the assertion above isn't vacuously true because nothing
+    # ever matched during the sweep.
+    mock_memory.search("how is the stack architected")
+    assert mock_memory.store.get_access(rec.id)["access_count"] >= 1
+
+
+def test_fingerprint_corpus_is_stable_across_an_eval_sweep(mock_memory):
+    mock_memory.save(content="synapse memflow memo stack architecture", title="Stack")
+    labels = LabelSet(
+        prompts=[Prompt("how is the stack architected", relevant=True)],
+        relevant_terms={"synapse", "stack", "memo"},
+    )
+
+    before = eval_recall.fingerprint_corpus(mock_memory)
+    eval_recall.evaluate(mock_memory, k=3, labels=labels)
+    after = eval_recall.fingerprint_corpus(mock_memory)
+
+    assert before == after
+
+
+def test_fingerprint_corpus_is_stable_across_a_bare_access_write(mock_memory):
+    # Isolates the exact claim, independent of the eval harness: an
+    # access-log write — from ANY reader sharing the DB (recall daemon, memo
+    # watch, chat server), not just eval — must not move the fingerprint.
+    rec = mock_memory.save(content="a fact that gets read a lot", title="Fact")
+    before = eval_recall.fingerprint_corpus(mock_memory)
+
+    mock_memory.store.touch([rec.id])
+
+    assert eval_recall.fingerprint_corpus(mock_memory) == before
+
+
+def test_fingerprint_corpus_moves_on_a_save(mock_memory):
+    mock_memory.save(content="first note", title="First")
+    before = eval_recall.fingerprint_corpus(mock_memory)
+
+    mock_memory.save(content="second note", title="Second")
+
+    assert eval_recall.fingerprint_corpus(mock_memory) != before
+
+
+def test_fingerprint_corpus_moves_on_an_edit(mock_memory):
+    rec = mock_memory.save(content="original content", title="Orig")
+    before = eval_recall.fingerprint_corpus(mock_memory)
+
+    mock_memory.update(rec.id, content="edited content, materially different")
+
+    assert eval_recall.fingerprint_corpus(mock_memory) != before
+
+
+def test_fingerprint_corpus_moves_on_a_delete(mock_memory):
+    rec = mock_memory.save(content="doomed note", title="Doomed")
+    before = eval_recall.fingerprint_corpus(mock_memory)
+
+    mock_memory.delete(rec.id)
+
+    assert eval_recall.fingerprint_corpus(mock_memory) != before
 
 
 # --- CLI layer (no MLX: bad --labels fails before Memory is built) ----------
