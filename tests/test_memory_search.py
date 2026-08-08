@@ -520,7 +520,7 @@ def test_hybrid_search_still_reranks_ambiguous_rrf_results(
             "score": 1.0,
         }
 
-    def _rerank(_query, hits, *, top_n):
+    def _rerank(_query, hits, *, top_n, deadline=None, degraded=None):
         calls["rerank"] += 1
         return hits[:top_n]
 
@@ -577,7 +577,7 @@ def test_hybrid_search_includes_exact_bm25_candidates_before_rerank(
             return [_row("exact", "Exact metadata hit")]
         return [_row("keyword", "Keyword hit")]
 
-    def _rerank(_query, hits, *, top_n):
+    def _rerank(_query, hits, *, top_n, deadline=None, degraded=None):
         return hits[:top_n]
 
     monkeypatch.setattr(mem_with_stub.embedder, "embed_query", lambda _q: [1.0, 0.0, 0.0, 0.0])

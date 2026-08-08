@@ -12,8 +12,21 @@ from typing import Annotated, Any
 from fastmcp import FastMCP
 from pydantic import Field
 
+from memo.mcp_budget import bounded_list
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
+
+# Per-community entity cap. Measured 2026-08-06 against the developer's LIVE
+# install (~11.3k memories with the codegraph layer merged in), NOT the
+# synthetic conformance corpus -- pytest cannot reach `.codegraph/codegraph.db`
+# and the conformance fixture seeds no code layer at all: `detect_communities`
+# returned 2,278 communities, the largest holding 155 entities. The community
+# COUNT dominated that payload, but one hub community can carry a long entity
+# list on its own, so both dimensions are bounded. The conformance gate
+# (`tests/conformance/test_mcp_response_budget.py`) seeds its own entity graph
+# and holds the resulting payload under the cap; it does not reproduce these
+# live numbers.
+_MAX_COMMUNITY_ENTITIES = 50
 
 
 def _bounded_dot(dot: str, *, max_edges: int) -> dict[str, Any]:
@@ -130,17 +143,52 @@ def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
     def memo_graph_communities(
         min_size: int = 2,
+        limit: Annotated[
+            int,
+            Field(
+                description="Maximum communities to return, largest first. A full "
+                "page (exactly `limit` items) means more may exist — raise `limit` "
+                "or `min_size` to see past it."
+            ),
+        ] = 20,
     ) -> list[dict[str, Any]]:
         """Detect communities (connected components) in the entity graph.
 
         Uses connected components to find clusters of related entities.
         Useful for discovering thematic clusters in the knowledge graph.
 
+        Bounded on both dimensions that scale with the corpus: the list is
+        capped at `limit` (largest first) and each community's `entities` at
+        50. `size` is always the community's TRUE entity count, so
+        `size > len(entities)` means the entity list was trimmed and
+        `entities_truncated` says so outright.
+
+        The return stays a LIST — memo's tool surface is a public contract
+        (PyPI, MCP registries, the Claude store), and wrapping it in an
+        object to carry a community COUNT would break every caller doing
+        `for c in result` and change the generated output schema. The count
+        of communities beyond the page is therefore not reported; a full
+        page is the signal, per the `limit` field description.
+
         Args:
             min_size: Minimum community size to include.
+            limit: Maximum communities to return, largest first.
         """
         communities = memory.navigator.detect_communities(min_size=min_size)
-        return [c.__dict__ for c in communities]
+        kept, _ = bounded_list(communities, cap=max(0, limit), key=lambda c: -c.size)
+        bounded: list[dict[str, Any]] = []
+        for c in kept:
+            entities, entity_meta = bounded_list(c.entities, cap=_MAX_COMMUNITY_ENTITIES)
+            bounded.append(
+                {
+                    "id": c.id,
+                    "representative_entity": c.representative_entity,
+                    "size": c.size,
+                    "entities": entities,
+                    "entities_truncated": entity_meta["truncated"],
+                }
+            )
+        return bounded
 
     @annotated_tool(server, **READ_ONLY)
     def memo_graph_trace(

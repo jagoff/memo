@@ -63,7 +63,7 @@ def test_health_scores_applied_before_reranker(tmp_path, monkeypatch):
             call_order.append("health")
             return orig_health(results)
 
-        def spy_rerank(query, results, top_n=5):
+        def spy_rerank(query, results, top_n=5, deadline=None, degraded=None):
             call_order.append("rerank")
             return results
 
@@ -104,7 +104,7 @@ def test_health_scores_not_applied_twice_when_reranker_runs(tmp_path, monkeypatc
             return orig_health(results)
 
         mem._apply_health_scores = counting_health
-        mem._rerank = lambda query, results, top_n=5: results
+        mem._rerank = lambda query, results, top_n=5, deadline=None, degraded=None: results
 
         mem.save(content="double health test", title="Double Health Check")
         mem.search("double health", mode="hybrid")

@@ -31,6 +31,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from memo.search_deadline import Deadline
+
 StageFn = Callable[[list[Any]], list[Any]]
 TraceFn = Callable[..., None]
 
@@ -71,6 +73,13 @@ class SearchCtx:
     #: and survivors need their canonical disk bodies re-resolved.
     bodies_from_fts: bool = False
     trace: TraceFn | None = None
+    #: Whole-search wall-clock budget (see `memo.search_deadline.Deadline`).
+    #: None means unlimited — stages that consult it (rerank, curated graph
+    #: order) run unconditionally, matching pre-deadline behaviour.
+    deadline: Deadline | None = None
+    #: Out-parameter, same shape as `trace`. A stage a budget-aware caller
+    #: shed to stay inside `deadline` appends its name here.
+    degraded: list[str] | None = None
 
 
 def emit(trace: TraceFn | None, stage: str, **data: Any) -> None:

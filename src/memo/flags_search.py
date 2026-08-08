@@ -484,4 +484,19 @@ SPECS: tuple[FlagSpec, ...] = (
         "dream_flags.GATES. Eval-gate before flipping.",
         choices=("off", "int8"),
     ),
+    _spec(
+        "MEMO_SEARCH_BUDGET_MS",
+        "int",
+        30000,
+        "search",
+        "Wall-clock budget for one search. Stages shed work in cost order "
+        "(rerank, then query expansion, then graph signal, then the embed "
+        "itself falls back to BM25) and every shed stage is reported to the "
+        "caller -- degrade and say so, never stretch silently. Measured "
+        "2026-08-06: search went 9.3s idle -> 25.9s under maintain -> >300s "
+        "under maintain + full suite, with no timeout and no fallback. 30000 "
+        "is above the worst healthy case so it cannot fire on a healthy "
+        "install. 0 = no deadline.",
+        min_val=0,
+    ),
 )

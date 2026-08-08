@@ -54,7 +54,7 @@ def text_reranker(corpus, monkeypatch):
     memory, _ = corpus
     seen: list[list] = []
 
-    def rerank_on_body(query: str, hits, *, top_n: int):
+    def rerank_on_body(query: str, hits, *, top_n: int, deadline=None, degraded=None):
         seen.append(list(hits))
         ordered = sorted(hits, key=lambda hit: "vpn" not in (hit.body or "").lower())
         return ordered[:top_n]

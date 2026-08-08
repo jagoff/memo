@@ -240,16 +240,35 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_temporal_timeline(
         entity: str,
         entity_type: str | None = None,
+        limit: Annotated[
+            int,
+            Field(
+                description="Maximum events to return (floored to 0). The most "
+                "RECENT `limit` events are kept, still in chronological order. "
+                "`event_count` is always the true total and `truncated` says "
+                "whether any were dropped; `first_seen`/`last_seen` span the "
+                "whole timeline either way."
+            ),
+        ] = 30,
     ) -> dict[str, Any] | None:
-        """Build a chronological timeline of all memories mentioning an entity.
+        """Build a chronological timeline of memories mentioning an entity.
 
         Returns a timeline with events ordered by date, including first/last
         seen timestamps. Useful for tracking evolution of decisions or
         opinions over time.
 
+        Bounded: `build_entity_timeline` emits ONE event per mention, each
+        carrying a 200-char snippet, so a hub entity's timeline tracks the
+        corpus rather than the request. The conformance gate measured 110,326
+        tokens for an entity with 700 mentions, against a 10,000-token MCP
+        response cap. The library and CLI paths still build the whole
+        timeline; only the MCP surface, the one with a token budget, is
+        trimmed — and the trim is reported, never silent.
+
         Args:
             entity: The entity name to analyze.
             entity_type: Optional entity type filter from graph.
+            limit: Maximum events to return, most recent kept.
         """
         timeline = memory.temporal.build_entity_timeline(
             entity_name=entity,
@@ -257,12 +276,20 @@ def register(server: FastMCP, memory: Memory) -> None:
         )
         if timeline is None:
             return None
+        events = [e.__dict__ for e in timeline.events]
+        cap = max(0, limit)
+        # `events` is already sorted ascending by date, so the tail is the
+        # newest slice. Spelled out rather than `events[-cap:]` because that
+        # returns the WHOLE list when cap is 0.
+        kept = events[len(events) - cap :] if cap else []
         return {
             "entity_name": timeline.entity_name,
             "entity_type": timeline.entity_type,
             "first_seen": timeline.first_seen,
             "last_seen": timeline.last_seen,
-            "events": [e.__dict__ for e in timeline.events],
+            "events": kept,
+            "event_count": len(events),
+            "truncated": len(kept) < len(events),
         }
 
     @annotated_tool(server, **READ_ONLY)

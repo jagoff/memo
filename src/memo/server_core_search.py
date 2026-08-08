@@ -216,6 +216,7 @@ def register(server: Any, memory: Memory) -> None:
         out: list[dict[str, Any]] = []
         trace: list[dict[str, Any]] = []
         explanations: dict[str, dict[str, Any]] = {}
+        degraded: list[str] = []
         # File-scoped search (search_by_file) takes no date filters and computes
         # no explain trace. Say so explicitly instead of silently dropping the
         # parameters — the caller must not present unfiltered hits as filtered.
@@ -245,6 +246,7 @@ def register(server: Any, memory: Memory) -> None:
                 date_from=date_from,
                 date_to=date_to,
                 quality_rerank=True,
+                _degraded=degraded,
             )
             records = envelope["hits"]
             trace = envelope.get("trace") or []
@@ -268,6 +270,7 @@ def register(server: Any, memory: Memory) -> None:
                     date_from=date_from,
                     date_to=date_to,
                     quality_rerank=True,
+                    _degraded=degraded,
                 )
             )
         for r in records:
@@ -296,6 +299,7 @@ def register(server: Any, memory: Memory) -> None:
             "notification": notification,
             **({"note": " ".join(notes)} if notes else {}),
             **({"trace": trace} if explain else {}),
+            **({"degraded": degraded} if degraded else {}),
         }
 
     @annotated_tool(server, **READ_ONLY)
