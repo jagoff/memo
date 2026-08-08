@@ -168,6 +168,12 @@ def recall_search_fn(mem: Any, *, k: int) -> SearchFn:
     exclude_tags = uncertain_exclusion()
 
     def _search(text: str) -> list[Any]:
+        # `memo eval ab` is not a user-visible retrieval: without this, every
+        # search hit writes an access-log row (search_ops.py's
+        # `_stage_record_usage`), inflating `access_count` on whichever
+        # memories the eval surfaces — the same signal `memo usefulness` /
+        # `dead_weight()` read to decide what's noise. See eval_recall.py's
+        # `_search_for_eval` for the same fix on the sibling gate.
         hits = list(
             mem.search(
                 text,
@@ -176,6 +182,7 @@ def recall_search_fn(mem: Any, *, k: int) -> SearchFn:
                 disable_reranker=True,
                 exclude_types=exclude_types,
                 exclude_tags=exclude_tags,
+                _track_usage=False,
             )
         )
         band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
