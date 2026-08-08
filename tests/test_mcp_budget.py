@@ -53,6 +53,101 @@ def test_bounded_list_cap_zero_keeps_nothing_but_reports_the_total() -> None:
     assert meta == {"shown": 0, "total": 3, "truncated": True}
 
 
+def test_wire_tokens_counts_the_payload_twice() -> None:
+    """`result_text` sums content AND structured content, so a tool sizing its
+    own result must too -- counting once lets it hand back 2x its cap."""
+    payload = {"blob": "x" * 4000}
+    once = mcp_budget.est_tokens(mcp_budget.json.dumps(payload, separators=(",", ":")))
+
+    assert mcp_budget.wire_tokens(payload) > 1.9 * once
+
+
+def test_wire_tokens_stays_within_the_slack_of_result_text() -> None:
+    """The estimator must track what the middleware actually measures.
+
+    `fit_to_budget` fits against `wire_tokens`; the middleware refuses against
+    `est_tokens(result_text(...))` on a real fastmcp `ToolResult`. Any gap
+    between them is headroom that `_WIRE_SLACK_TOKENS` has to cover, so pin it
+    here on both real shapes: a dict-returning tool (`memo_graph_export`,
+    where the two agree exactly) and a LIST-returning one
+    (`memo_graph_communities`, where the tool sizes the bare list but fastmcp
+    ships `{"result": [...]}` -- a wrapper the tool cannot see, measured at
+    +5 tokens).
+
+    `structured_content=` is passed by keyword deliberately: `ToolResult`'s
+    FIRST positional parameter is `content`, so `ToolResult(payload)` leaves
+    structured content unset and `result_text` then measures half the wire.
+    That mistake makes this assertion pass for free.
+    """
+    from fastmcp.tools.base import ToolResult
+
+    dot_lines = "\n".join(f'  "entity{n:05d}" -- "other{n:05d}";' for n in range(500))
+    communities = [{"id": n, "entities": [f"entity{n:05d}"] * 12} for n in range(20)]
+    for sized, shipped in (
+        ({"format": "dot", "content": dot_lines}, {"format": "dot", "content": dot_lines}),
+        (communities, {"result": communities}),
+    ):
+        estimated = mcp_budget.wire_tokens(sized)
+        result = ToolResult(structured_content=shipped)
+        assert result.structured_content is not None, "structured content must be set"
+        actual = mcp_budget.est_tokens(mcp_budget.result_text(result))
+        assert actual - estimated < mcp_budget._WIRE_SLACK_TOKENS, (
+            f"result_text exceeds wire_tokens by {actual - estimated} tokens, "
+            f"more than the {mcp_budget._WIRE_SLACK_TOKENS}-token slack covers"
+        )
+
+
+def test_fit_to_budget_passes_a_small_payload_through_whole() -> None:
+    items = ["a", "b", "c"]
+    kept, payload = mcp_budget.fit_to_budget(items, cap=10_000, render=lambda i: {"x": list(i)})
+
+    assert kept == items
+    assert payload == {"x": ["a", "b", "c"]}
+
+
+def test_fit_to_budget_drops_items_until_the_rendered_payload_fits() -> None:
+    """The bound is the SIZE, so a long item costs more of the budget than a
+    short one -- which is the whole reason `bounded_list`'s count cap could not
+    hold `memo_graph_export` (an edge line is two symbol names)."""
+    items = ["y" * 400] * 100
+
+    kept, payload = mcp_budget.fit_to_budget(items, cap=1_000, render=lambda i: {"x": list(i)})
+
+    assert 0 < len(kept) < len(items)
+    assert mcp_budget.wire_tokens(payload) <= 1_000
+    # One more item would not have fitted: the fit is the LONGEST prefix.
+    over = {"x": items[: len(kept) + 1]}
+    assert mcp_budget.wire_tokens(over) > 1_000 - mcp_budget._WIRE_SLACK_TOKENS
+
+
+def test_fit_to_budget_cap_zero_renders_everything() -> None:
+    items = ["z" * 4000] * 50
+    kept, payload = mcp_budget.fit_to_budget(items, cap=0, render=lambda i: {"x": list(i)})
+
+    assert kept == items
+    assert len(payload["x"]) == 50
+
+
+def test_fit_to_budget_returns_the_empty_render_when_nothing_fits() -> None:
+    """A non-elastic part bigger than the cap cannot be fixed by dropping
+    items; the tool still gets a payload rather than an exception."""
+    fixed = "q" * 100_000
+    kept, payload = mcp_budget.fit_to_budget(
+        ["a", "b"], cap=100, render=lambda i: {"fixed": fixed, "x": list(i)}
+    )
+
+    assert kept == []
+    assert payload["x"] == []
+
+
+def test_memo_embed_query_is_exempt_from_the_budget() -> None:
+    """A 2560-dim vector is ~21.9k tokens and has exactly one plausible size:
+    nothing the caller passes or the corpus holds can grow it, and a truncated
+    vector is not a vector. Its caller-scaled sibling is NOT exempt."""
+    assert mcp_budget.cap_for("memo_embed_query") == 0
+    assert mcp_budget.cap_for("memo_embed_batch") == mcp_budget.DEFAULT_CAP_TOKENS
+
+
 def test_cap_for_prefers_the_per_tool_override(monkeypatch) -> None:
     monkeypatch.setitem(mcp_budget.CAPS, "memo_export_json", 500_000)
     assert mcp_budget.cap_for("memo_export_json") == 500_000
