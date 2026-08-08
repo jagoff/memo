@@ -1,3 +1,5 @@
+Status: shipped in #32 (feat: MCP client-sampling synthesis + save-time chunk emission + v3.6.0 metadata fix, merged 2026-07-16). `src/memo/sampling.py`, `SamplingChat`, `sampling_scope`/`current_sampler` and `MEMO_SAMPLING_SYNTH_ENABLED` all present as designed (commits 0dd5f6a1, 7727b0b9).
+
 # MCP client-sampling for synthesis tools — design
 
 **Date:** 2026-07-15

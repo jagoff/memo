@@ -13,6 +13,8 @@ grounding, and answer surfaces.
 
 from __future__ import annotations
 
+import contextlib
+import inspect
 import json
 import re
 import sys
@@ -752,7 +754,10 @@ def eval_chat_cmd(corpus: Path, only: str | None) -> None:
     rows = []
     for query in queries:
         t0 = time.monotonic()
-        events = list(chat_stream(mem, str(query.get("question") or "")))
+        # Regression gate, not a user-visible chat turn: don't let it inflate
+        # access_count on the live corpus it queries (see chat_stream's
+        # `_track_usage` docstring).
+        events = list(chat_stream(mem, str(query.get("question") or ""), _track_usage=False))
         done = next((e for e in reversed(events) if e.get("type") in {"done", "error"}), {})
         rows.append(apply_checks(query, done, int((time.monotonic() - t0) * 1000)))
 
@@ -829,7 +834,23 @@ def eval_tokens_cmd(
     mem = _get_memory(cfg)
 
     def _search(text: str) -> list:
-        return list(mem.search(text, limit=k))
+        # `memo eval tokens` is not a user-visible retrieval: without this,
+        # every search hit writes an access-log row (search_ops.py's
+        # `_stage_record_usage`), inflating `access_count` on whichever
+        # memories the eval surfaces — the same signal `memo usefulness` /
+        # `dead_weight()` read to decide what's noise. Signature-introspected
+        # like eval_recall.py's `_search_for_eval` so a test stub whose
+        # `search()` doesn't take the kwarg (real Memory.search's keyword-only
+        # shape, no **kwargs) is left untouched.
+        search_kwargs: dict[str, Any] = {"limit": k}
+        with contextlib.suppress(TypeError, ValueError):
+            sig = inspect.signature(mem.search)
+            has_var_kw = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            if "_track_usage" in sig.parameters or has_var_kw:
+                search_kwargs["_track_usage"] = False
+        return list(mem.search(text, **search_kwargs))
 
     def _crush(content: str) -> tuple[str, str | None]:
         from memo.capture_core import maybe_crush_json_capture

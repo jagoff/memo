@@ -561,6 +561,20 @@ SPECS: tuple[FlagSpec, ...] = (
         "+0.333, 0 noise), provably never-negative on the regression corpus (Δ0.0).",
     ),
     _spec(
+        "MEMO_RECALL_GRAPH_COMPACT",
+        "bool",
+        False,
+        "recall",
+        "Compact recall injection by memory-graph closeness: when several top-K hits "
+        "sit in the same semantic community / graph cluster (shared entities in the "
+        "projection graph), render the strongest one in full and collapse the rest to "
+        "a one-line '↳ related: [id] title · …' sibling line — spending the token "
+        "budget on diversity instead of near-duplicate bodies. Read-only graph "
+        "reads (projection model, already warm for graph_signal) bounded to the top-K "
+        "hit set; sub-ppm on the 5s hook budget. Default OFF — eval-gated; with this "
+        "unset, recall rendering is byte-identical to the historical output.",
+    ),
+    _spec(
         "MEMO_RECALL_SESSION_TOKEN_BUDGET",
         "int",
         0,

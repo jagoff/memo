@@ -1,3 +1,5 @@
+Status: partially shipped — the adjacent prerequisite this design references as already "in flight" (`src/memo/recall_admission.py`, filtering harness-envelope prompts out of retrieval) shipped in #209. This design's own proposal — `src/memo/recall_utility.py`, a utility-based demote multiplier inside `rank_hits`, `MEMO_RECALL_UTILITY_ENABLED` — was never implemented; grep finds no `recall_utility` anywhere on master or on any local/remote branch.
+
 # Recall admission by outcome — design
 
 **Date:** 2026-08-06

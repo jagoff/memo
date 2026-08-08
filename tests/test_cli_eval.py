@@ -483,3 +483,65 @@ def test_against_translates_an_against_error_into_a_clean_cli_failure(
         f"expected a clean ClickException exit, got: {result.exception!r}"
     )
     assert "not a git repository" in result.output
+
+
+def _access_snapshot(mem) -> tuple:
+    row = mem.store._conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(access_count), 0), MAX(last_accessed) FROM access"
+    ).fetchone()
+    return tuple(row)
+
+
+def test_eval_chat_cmd_does_not_inflate_access_count(mem_with_stub, tmp_cfg, monkeypatch):
+    """`memo eval chat` replays `chat_stream` (the same retrieval orchestrator
+    the live chat server uses) against the live index as a regression gate;
+    without `_track_usage=False` threaded through, every turn would write
+    access-log rows (search_ops.py's `_stage_record_usage`) for whatever it
+    surfaces — the same signal `memo usefulness` / `dead_weight()` read to
+    decide what's noise. The real chat server (chat/http.py) doesn't pass
+    this, so genuine chat turns still track usage."""
+    monkeypatch.setenv("MEMO_CHAT_MULTI_QUERY", "0")
+    mem = mem_with_stub
+
+    class _FakeChatBackend:
+        def chat_stream(self, model, messages, options=None):
+            yield "the runbook says redeploy the lambda"
+
+    mem._chat = _FakeChatBackend()
+    rec = mem.save(
+        content="deploy runbook for the lambda pipeline, step by step",
+        title="Deploy runbook",
+        auto_project=False,
+    )
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: mem)
+
+    corpus_path = tmp_cfg.state_dir / "chat_corpus.json"
+    corpus_path.write_text(
+        json.dumps(
+            {
+                "schema": "synapse.eval_chat.query.v1",
+                "queries": [{"id": "q1", "question": "deploy runbook lambda", "checks": {}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    before = _access_snapshot(mem)
+    result = CliRunner().invoke(
+        eval_group,
+        ["chat", "--corpus", str(corpus_path)],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+        },
+    )
+    assert result.exit_code == 0, result.output
+    assert _access_snapshot(mem) == before
+
+    # Contrast: a real (non-eval) search against the same memory DOES bump
+    # it — proving the assertion above isn't vacuously true because the gate
+    # never actually surfaced a candidate.
+    hits = mem.search("deploy runbook lambda")
+    assert any(h.id == rec.id for h in hits)
+    assert _access_snapshot(mem) != before
