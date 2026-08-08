@@ -291,6 +291,7 @@ def test_hook_subprocess_hits_are_post_session_dedup(
             limit: int = 5,
             mode: str = "bm25",
             recency: bool = False,
+            budget_ms=None,
             exclude_types: object = None,
             exclude_tags: object = None,
         ) -> list[MemoryRecord]:

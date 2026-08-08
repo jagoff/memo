@@ -7,6 +7,7 @@ from typing import Any
 
 from ..sqlite_compat import import_sqlite_vec
 from ._base import _StoreBase
+from .schema import feedback_vec_ddl
 
 serialize_float32 = import_sqlite_vec().serialize_float32
 
@@ -18,23 +19,35 @@ class _FeedbackMixin(_StoreBase):
         """Rebuild the derived feedback vec0 table without re-embedding.
 
         vec0 allocates storage in chunks; repeated vote replacement can leave
-        a tiny live table backed by a very large vector-chunk footprint. The
-        Markdown/user-signal rows remain authoritative and are copied before
-        the virtual table is recreated.
+        a tiny live table backed by a very large vector-chunk footprint, and a
+        table created before `FEEDBACK_VEC_CHUNK_SIZE` holds a full 1024-row
+        chunk per source. The Markdown/user-signal rows remain authoritative and
+        are copied before the virtual table is recreated.
         """
-        rows = self._conn.execute(
-            "SELECT feedback_id, source_id, query_emb FROM source_feedback_vec"
-        ).fetchall()
-        result: dict[str, int | bool] = {"before": len(rows), "after": len(rows), "rebuilt": False}
-        if dry_run or not rows:
-            return result
-        with self._tx() as cx:
-            cx.execute("DROP TABLE source_feedback_vec")
-            cx.execute(
-                f"CREATE VIRTUAL TABLE source_feedback_vec USING vec0("
-                f"feedback_id TEXT PRIMARY KEY, source_id TEXT PARTITION KEY, "
-                f"query_emb FLOAT[{self.dims}] distance_metric=cosine)"
+        if dry_run:
+            n = int(
+                self._conn.execute("SELECT COUNT(*) AS n FROM source_feedback_vec").fetchone()["n"]
             )
+            return {"before": n, "after": n, "rebuilt": False}
+        with self._tx() as cx:
+            # Snapshot INSIDE the write transaction. Reading first and dropping
+            # afterwards loses any vote another process committed in between —
+            # the recall daemon and the nightly job share this file, and the
+            # DROP would take the new row with it. Same reason
+            # `_validate_vec_schema` holds one BEGIN IMMEDIATE across its own
+            # snapshot + rebuild.
+            rows = cx.execute(
+                "SELECT feedback_id, source_id, query_emb FROM source_feedback_vec"
+            ).fetchall()
+            result: dict[str, int | bool] = {
+                "before": len(rows),
+                "after": len(rows),
+                "rebuilt": False,
+            }
+            if not rows:
+                return result
+            cx.execute("DROP TABLE source_feedback_vec")
+            cx.execute(feedback_vec_ddl(self.dims))
             cx.executemany(
                 "INSERT INTO source_feedback_vec (feedback_id, source_id, query_emb) "
                 "VALUES (?, ?, ?)",

@@ -342,6 +342,36 @@ _BM25_ES_STOPWORDS: frozenset[str] = frozenset(
 )
 
 
+# vec0 preallocates one full chunk per PARTITION as soon as that partition gets
+# its first row, so the default 1024-row chunk costs 1024 * dims * 4 bytes per
+# distinct source_id. Measured on a live install: 24 feedback votes spread over
+# 22 sources occupied 220 MB — ten times the whole memory index. Feedback is a
+# handful of votes per source, so a small chunk sizes the allocation to the data
+# (the same 22 partitions fit in 1.8 MB) while keeping the partition key, which
+# is there for correctness: a global kNN filtered afterwards can silently drop a
+# source's matches that fell outside the global top-k.
+#
+# Measured against the default at 22 partitions (dims=256, identical query set):
+# top-5 results are identical at 5, 50 and 500 votes per source, so this is an
+# allocation choice, not an index one. Latency is lower up to ~50 votes/source
+# and 0.09 ms higher at 500 — a scale the live corpus (24 votes over 22 sources)
+# is nowhere near, and even there the file stays half the size.
+FEEDBACK_VEC_CHUNK_SIZE = 8
+
+
+def feedback_vec_ddl(dims: int, *, if_not_exists: bool = False) -> str:
+    """DDL for `source_feedback_vec`. Single source of truth — the compaction
+    pass recreates this table, and a drifted copy there would silently restore
+    the default chunk allocation on every install that ran it."""
+    exists = "IF NOT EXISTS " if if_not_exists else ""
+    return (
+        f"CREATE VIRTUAL TABLE {exists}source_feedback_vec USING vec0("
+        f"feedback_id TEXT PRIMARY KEY, source_id TEXT PARTITION KEY, "
+        f"query_emb FLOAT[{dims}] distance_metric=cosine, "
+        f"chunk_size={FEEDBACK_VEC_CHUNK_SIZE})"
+    )
+
+
 class _SchemaMixin(_StoreBase):
     def _init_schema(self) -> None:
         # Most CLI commands are reads. If the schema already exists, avoid
@@ -689,7 +719,8 @@ class _SchemaMixin(_StoreBase):
         - `repo_vec.repo_id` and `source_feedback_vec.source_id` are PARTITION
           KEYS so repo-scoped / per-source searches run an exact pre-filtered
           kNN — the global-kNN-then-filter shape could silently drop matches
-          that fell outside the global top-k.
+          that fell outside the global top-k. See `feedback_vec_ddl` for why
+          the feedback table also pins a chunk size.
         """
         conn.execute(
             f"CREATE VIRTUAL TABLE IF NOT EXISTS vec USING vec0("
@@ -701,11 +732,7 @@ class _SchemaMixin(_StoreBase):
             f"id TEXT PRIMARY KEY, repo_id TEXT PARTITION KEY, "
             f"embedding FLOAT[{self.dims}] distance_metric=cosine)"
         )
-        conn.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS source_feedback_vec USING vec0("
-            f"feedback_id TEXT PRIMARY KEY, source_id TEXT PARTITION KEY, "
-            f"query_emb FLOAT[{self.dims}] distance_metric=cosine)"
-        )
+        conn.execute(feedback_vec_ddl(self.dims, if_not_exists=True))
 
     # vec0 round-trips the raw float32 blob on `SELECT embedding`, so a stale
     # table can be migrated in place by copying vectors into a fresh table with
@@ -785,6 +812,46 @@ class _SchemaMixin(_StoreBase):
                         payload,
                     )
             _log.info("migrated `%s`: %d vectors preserved", table, len(payload))
+        self._migrate_feedback_vec_chunk_size()
+
+    def _migrate_feedback_vec_chunk_size(self) -> None:
+        """Rebuild a `source_feedback_vec` created before FEEDBACK_VEC_CHUNK_SIZE.
+
+        Those tables hold a full 1024-row chunk per source_id: 24 votes across
+        22 sources measured 220 MB. The compaction pass recreates the table with
+        the current DDL, but it lives behind a default-off nightly flag, so an
+        install that never enables it would carry the old allocation forever.
+        Vectors are copied as stored — no re-embed.
+        """
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'source_feedback_vec'"
+        ).fetchone()
+        if not row or not row["sql"] or "chunk_size=" in str(row["sql"]):
+            return
+        _log.warning(
+            "rebuilding `source_feedback_vec` with chunk_size=%d — the default "
+            "allocation reserves a full chunk per source; copying vectors in "
+            "place, no re-embed",
+            FEEDBACK_VEC_CHUNK_SIZE,
+        )
+        with self._tx() as cx:
+            rows = cx.execute(
+                "SELECT feedback_id, source_id, query_emb FROM source_feedback_vec"
+            ).fetchall()
+            payload = [
+                (r["feedback_id"], r["source_id"], r["query_emb"])
+                for r in rows
+                if r["query_emb"] is not None
+            ]
+            cx.execute("DROP TABLE source_feedback_vec")
+            cx.execute(feedback_vec_ddl(self.dims))
+            if payload:
+                cx.executemany(
+                    "INSERT INTO source_feedback_vec (feedback_id, source_id, query_emb) "
+                    "VALUES (?, ?, ?)",
+                    payload,
+                )
+        _log.info("rebuilt `source_feedback_vec`: %d vectors preserved", len(payload))
 
     def _validate_vec_dims(self) -> None:
         import os

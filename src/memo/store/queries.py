@@ -33,6 +33,52 @@ META_SELECT_COLUMNS = (
     "namespace, normalized_title, normalized_content_hash"
 )
 
+# Single source of truth for the `meta` INSERT/UPDATE surface (write path).
+# The historical code kept three hand-written SQL variants (legacy / pattern /
+# identity); the only real difference is which identity columns exist in the
+# current store generation. The upsert builders below derive both the column
+# list and the ON CONFLICT update set from this catalog + the columns detected
+# by the store, so a new meta column is added in ONE place.
+_META_INSERT_COLUMNS: tuple[str, ...] = (
+    "id",
+    "path",
+    "title",
+    "type",
+    "tags",
+    "created",
+    "updated",
+    "body_hash",
+    "extra_json",
+    "topic_key",
+    "normalized_hash",
+    "namespace",
+    "normalized_title",
+    "normalized_content_hash",
+    "valid_at",
+    "invalid_at",
+)
+# Columns written on INSERT and PRESERVED on conflict (set-once semantics —
+# `created`, the validity interval). Everything else in the catalog updates.
+_META_PRESERVED_ON_CONFLICT: frozenset[str] = frozenset({"created", "valid_at", "invalid_at"})
+
+
+def _meta_write_sql(columns: tuple[str, ...]) -> tuple[str, str]:
+    """Build (insert_sql, on_conflict_sql) from a column catalog.
+
+    `columns` is the subset of `_META_INSERT_COLUMNS` present in the current
+    store generation (determined once at store init). The update set excludes
+    `id` (the conflict key) and `_META_PRESERVED_ON_CONFLICT`.
+    """
+    update_cols = [c for c in columns if c not in ("id", *_META_PRESERVED_ON_CONFLICT)]
+    placeholders = ", ".join("?" for _ in columns)
+    insert = (
+        f"INSERT INTO meta ({', '.join(columns)}) "
+        f"VALUES ({placeholders}) "
+        f"ON CONFLICT(id) DO UPDATE SET "
+        f"{', '.join(f'{c}=excluded.{c}' for c in update_cols)}, deleted_at=NULL"
+    )
+    return insert, ", ".join(update_cols)
+
 
 def _parse_filter_ts(value: str | None) -> datetime | None:
     if not value:
@@ -48,6 +94,32 @@ def _parse_filter_ts(value: str | None) -> datetime | None:
 
 class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
     # -- public CRUD --------------------------------------------------------
+
+    def _meta_insert_columns(self) -> tuple[str, ...]:
+        """Catalog columns present in this store generation (see
+        `_META_INSERT_COLUMNS`). Legacy stores keep working: identity columns
+        that do not exist in `meta` are dropped from the INSERT surface."""
+        columns = _META_INSERT_COLUMNS
+        if not self._has_identity_cols and not self._has_pattern_cols:
+            return tuple(
+                c
+                for c in columns
+                if c
+                not in (
+                    "topic_key",
+                    "normalized_hash",
+                    "namespace",
+                    "normalized_title",
+                    "normalized_content_hash",
+                )
+            )
+        if not self._has_identity_cols:
+            return tuple(
+                c
+                for c in columns
+                if c not in ("namespace", "normalized_title", "normalized_content_hash")
+            )
+        return columns
 
     def _validate_embedding(self, id_: str, embedding: list[float]) -> None:
         """Validate one vector before any transaction mutates index rows."""
@@ -148,84 +220,29 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                 normalized_content_hash=normalized_content_hash,
             )
         )
-        if self._has_identity_cols:
-            cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, "
-                "body_hash, extra_json, topic_key, normalized_hash, namespace, "
-                "normalized_title, normalized_content_hash, valid_at, invalid_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(id) DO UPDATE SET "
-                "path=excluded.path, title=excluded.title, type=excluded.type, "
-                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, "
-                "normalized_hash=excluded.normalized_hash, namespace=excluded.namespace, "
-                "normalized_title=excluded.normalized_title, "
-                "normalized_content_hash=excluded.normalized_content_hash",
-                (
-                    id_,
-                    path,
-                    title,
-                    type_,
-                    json.dumps(tags),
-                    created,
-                    updated,
-                    body_hash,
-                    json.dumps(extra, default=str) if extra is not None else None,
-                    topic_key,
-                    normalized_hash,
-                    namespace,
-                    normalized_title,
-                    normalized_content_hash,
-                    valid_at,
-                    invalid_at,
-                ),
-            )
-        elif self._has_pattern_cols:
-            cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash, valid_at, invalid_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(id) DO UPDATE SET "
-                "path=excluded.path, title=excluded.title, type=excluded.type, "
-                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash",
-                (
-                    id_,
-                    path,
-                    title,
-                    type_,
-                    json.dumps(tags),
-                    created,
-                    updated,
-                    body_hash,
-                    json.dumps(extra, default=str) if extra is not None else None,
-                    topic_key,
-                    normalized_hash,
-                    valid_at,
-                    invalid_at,
-                ),
-            )
-        else:
-            cx.execute(
-                "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, valid_at, invalid_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(id) DO UPDATE SET "
-                "path=excluded.path, title=excluded.title, type=excluded.type, "
-                "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                "deleted_at=NULL, extra_json=excluded.extra_json",
-                (
-                    id_,
-                    path,
-                    title,
-                    type_,
-                    json.dumps(tags),
-                    created,
-                    updated,
-                    body_hash,
-                    json.dumps(extra, default=str) if extra is not None else None,
-                    valid_at,
-                    invalid_at,
-                ),
-            )
+        # Which catalog columns exist in this store generation? The set-once
+        # harmony is preserved by _META_PRESERVED_ON_CONFLICT.
+        columns = self._meta_insert_columns()
+        insert_sql, _ = _meta_write_sql(columns)
+        values = {
+            "id": id_,
+            "path": path,
+            "title": title,
+            "type": type_,
+            "tags": json.dumps(tags),
+            "created": created,
+            "updated": updated,
+            "body_hash": body_hash,
+            "extra_json": json.dumps(extra, default=str) if extra is not None else None,
+            "topic_key": topic_key,
+            "normalized_hash": normalized_hash,
+            "namespace": namespace,
+            "normalized_title": normalized_title,
+            "normalized_content_hash": normalized_content_hash,
+            "valid_at": valid_at,
+            "invalid_at": invalid_at,
+        }
+        cx.execute(insert_sql, tuple(values[c] for c in columns))
         cx.execute("DELETE FROM vec WHERE id = ?", (id_,))
         cx.execute(
             f"INSERT INTO vec (id, embedding, type) VALUES (?, {self._vec_bind_new()}, ?)",
@@ -735,84 +752,27 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
         # Lock spans sqlite commit + tantivy write — see upsert().
         with self._tantivy_write_lock:
             with self._tx() as cx:
-                if self._has_identity_cols:
-                    cx.execute(
-                        "INSERT INTO meta (id, path, title, type, tags, created, updated, "
-                        "body_hash, extra_json, topic_key, normalized_hash, namespace, "
-                        "normalized_title, normalized_content_hash, valid_at, invalid_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                        "ON CONFLICT(id) DO UPDATE SET "
-                        "path=excluded.path, title=excluded.title, type=excluded.type, "
-                        "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                        "deleted_at=NULL, extra_json=excluded.extra_json, "
-                        "topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash, "
-                        "namespace=excluded.namespace, normalized_title=excluded.normalized_title, "
-                        "normalized_content_hash=excluded.normalized_content_hash",
-                        (
-                            id_,
-                            path,
-                            title,
-                            type_,
-                            json.dumps(tags),
-                            created,
-                            updated,
-                            body_hash,
-                            json.dumps(extra, default=str) if extra is not None else None,
-                            topic_key,
-                            normalized_hash,
-                            namespace,
-                            normalized_title,
-                            normalized_content_hash,
-                            valid_at,
-                            invalid_at,
-                        ),
-                    )
-                elif self._has_pattern_cols:
-                    cx.execute(
-                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, topic_key, normalized_hash, valid_at, invalid_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                        "ON CONFLICT(id) DO UPDATE SET "
-                        "path=excluded.path, title=excluded.title, type=excluded.type, "
-                        "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                        "deleted_at=NULL, extra_json=excluded.extra_json, topic_key=excluded.topic_key, normalized_hash=excluded.normalized_hash",
-                        (
-                            id_,
-                            path,
-                            title,
-                            type_,
-                            json.dumps(tags),
-                            created,
-                            updated,
-                            body_hash,
-                            json.dumps(extra, default=str) if extra is not None else None,
-                            topic_key,
-                            normalized_hash,
-                            valid_at,
-                            invalid_at,
-                        ),
-                    )
-                else:
-                    cx.execute(
-                        "INSERT INTO meta (id, path, title, type, tags, created, updated, body_hash, extra_json, valid_at, invalid_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                        "ON CONFLICT(id) DO UPDATE SET "
-                        "path=excluded.path, title=excluded.title, type=excluded.type, "
-                        "tags=excluded.tags, updated=excluded.updated, body_hash=excluded.body_hash, "
-                        "deleted_at=NULL, extra_json=excluded.extra_json",
-                        (
-                            id_,
-                            path,
-                            title,
-                            type_,
-                            json.dumps(tags),
-                            created,
-                            updated,
-                            body_hash,
-                            json.dumps(extra, default=str) if extra is not None else None,
-                            valid_at,
-                            invalid_at,
-                        ),
-                    )
+                columns = tuple(self._meta_insert_columns())
+                insert_sql, _ = _meta_write_sql(columns)
+                values = {
+                    "id": id_,
+                    "path": path,
+                    "title": title,
+                    "type": type_,
+                    "tags": json.dumps(tags),
+                    "created": created,
+                    "updated": updated,
+                    "body_hash": body_hash,
+                    "extra_json": json.dumps(extra, default=str) if extra is not None else None,
+                    "topic_key": topic_key,
+                    "normalized_hash": normalized_hash,
+                    "namespace": namespace,
+                    "normalized_title": normalized_title,
+                    "normalized_content_hash": normalized_content_hash,
+                    "valid_at": valid_at,
+                    "invalid_at": invalid_at,
+                }
+                cx.execute(insert_sql, tuple(values[c] for c in columns))
                 cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
                 cx.execute(
                     "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",

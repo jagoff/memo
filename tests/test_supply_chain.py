@@ -7,8 +7,10 @@ from pathlib import Path
 
 import yaml
 
-from memo.cli import cli
+from memo.cli import _load_all_commands, cli
 from memo.surface import mcp_profile_token_cost
+
+_load_all_commands()  # the root group resolves lazily; materialize for inventory
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"

@@ -23,7 +23,7 @@ class _Hit:
 
 
 class _StubMem:
-    def search(self, query, limit, mode="vec"):
+    def search(self, query, limit, mode="vec", budget_ms=None):
         return [_Hit("aaaa1111", 0.9), _Hit("bbbb2222", 0.5)]
 
 
@@ -304,12 +304,15 @@ def test_curated_gate_rejects_regressing_candidate(tmp_path, monkeypatch):
     assert dream_tune_online.read_pending(tmp_path) is None
 
 
-def test_curated_gate_vacuous_without_curated_labels(tmp_path, monkeypatch):
+def test_curated_gate_fails_closed_without_curated_labels(tmp_path, monkeypatch):
+    """The curated set ships in the wheel, so no curated labels means a damaged
+    install rather than an un-curated one. An unverifiable apply is exactly what
+    this gate exists to stop, so it rejects instead of passing vacuously."""
     monkeypatch.setattr(dt, "_curated_prompts", lambda sd: [])
     gate = dt.curated_gate(
         _StubMem(), tmp_path, k=5, floor=0.5, knob=_MMR, value_before=0.0, value_after=0.5
     )
-    assert gate["ok"] is True
+    assert gate["ok"] is False
     assert gate["reason"] == "no_curated_labels"
 
 

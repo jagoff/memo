@@ -116,16 +116,32 @@ class _RecallHandler(socketserver.StreamRequestHandler):
         return self._write_response(result, debug=debug)
 
     def _embed_query(self, req: dict[str, Any]) -> str:
-        text = str(req.get("text") or "")
-        if not text.strip():
+        text = str(req.get("text") or "").strip()
+        if not text:
             return json.dumps({"error": "embed_query: empty text"})
-        vec = self.server._mem.embedder.embed_query(text)
+
+        from memo.flags import flag_bool
+
+        prefetch_enabled = flag_bool("MEMO_RECALL_PREFETCH_ENABLED")
+        cache = getattr(self.server, "_speculative_cache", {})
+
+        if prefetch_enabled and text in cache:
+            vec = cache[text]
+        else:
+            vec = self.server._mem.embedder.embed_query(text)
+            if prefetch_enabled:
+                # Maintain LRU size cap of 256 entries
+                if len(cache) >= 256:
+                    cache.pop(next(iter(cache)))
+                cache[text] = vec
+
         return json.dumps(
             {
                 "vector": vec,
                 "dim": len(vec),
                 "dims": len(vec),
                 "model": _embedder_model_identity(self.server._mem, self.server._cfg),
+                "speculative_hit": prefetch_enabled and text in cache,
             },
             ensure_ascii=False,
         )
@@ -528,6 +544,7 @@ class _RecallServer(socketserver.ThreadingUnixStreamServer):
         self._warm_event = threading.Event()
         self._warm_event.set()
 
+        self._speculative_cache: dict[str, list[float]] = {}
         self._micro_embedder = None
         micro_model = flag_str("MEMO_MICRO_EMBEDDER_MODEL")
         if micro_model:

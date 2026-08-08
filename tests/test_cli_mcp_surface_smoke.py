@@ -16,10 +16,14 @@ import pytest
 from click import Command, Group
 from click.testing import CliRunner
 
-from memo.cli import cli
+from memo.cli import _load_all_commands, cli
 from memo.config import Config
 from memo.memory import Memory
 from memo.server import build_server
+
+# The root group resolves commands lazily (see cli.py SurfaceGroup); materialize
+# the full surface once so the help-walk below covers every command path.
+_load_all_commands()
 
 
 def _walk_cli_commands(cmd: Command, path: tuple[str, ...] = ()) -> Iterator[tuple[str, ...]]:
@@ -127,7 +131,7 @@ def test_mcp_full_profile_registers_every_decorated_server_tool(
     registered = _mcp_tool_names(tmp_path, monkeypatch, "full")
 
     assert expected <= registered
-    assert len(registered) == 162
+    assert len(registered) == 164
 
 
 @pytest.mark.parametrize(
@@ -135,7 +139,7 @@ def test_mcp_full_profile_registers_every_decorated_server_tool(
     [
         ("agent", 41),
         ("core", 58),
-        ("full", 162),
+        ("full", 164),
     ],
 )
 def test_mcp_profile_tool_counts(

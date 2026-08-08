@@ -95,7 +95,7 @@ Expected: `ModuleNotFoundError: No module named 'memo.search_deadline'`.
 
 Append to the `SPECS` tuple in `src/memo/flags_search.py`:
 
-```python
+```text
     _spec(
         "MEMO_SEARCH_BUDGET_MS",
         "int",
@@ -281,7 +281,7 @@ Expected: `TypeError: _rerank() got an unexpected keyword argument 'deadline'`.
 
 In `src/memo/memory/rerank_ops.py`, change the signature at line 363:
 
-```python
+```text
     def _rerank(
         self,
         query: str,
@@ -297,7 +297,7 @@ Add `from memo.search_deadline import COST_RERANK_MS, Deadline` to the imports.
 
 At the top of the body, before `self._ensure_reranker()`:
 
-```python
+```text
         # Rung one of the shed ladder. Skipping costs one slightly worse
         # ordering; starting a cross-encoder pass that cannot finish costs the
         # hang. The RRF order the candidates already carry is the fallback --
@@ -310,7 +310,7 @@ At the top of the body, before `self._ensure_reranker()`:
 
 At line 395, cap the reranker's own budget by what is left:
 
-```python
+```text
         budget = flag_float("MEMO_RERANK_BUDGET_S")
         budget_s = 20.0 if budget is None else budget
         if deadline is not None and not deadline.unlimited:
@@ -323,13 +323,13 @@ and pass `budget_s=budget_s` to `reranker.rerank(...)`.
 
 In `src/memo/memory/search_ops.py`, change line 663 from
 
-```python
+```text
             out = self._rerank(query, out, top_n=limit)
 ```
 
 to
 
-```python
+```text
             out = self._rerank(query, out, top_n=limit, deadline=_deadline, degraded=_degraded)
 ```
 
@@ -432,7 +432,7 @@ Expected: `TypeError: search() got an unexpected keyword argument '_budget_ms'`.
 
 In `src/memo/memory/search_ops.py`, add two parameters after `_trace` (line 159):
 
-```python
+```text
         _budget_ms: int | None = None,
         _degraded: list[str] | None = None,
 ```
@@ -449,7 +449,7 @@ Document them in the docstring's `Args:` block alongside `load_bodies`:
 
 At the top of the body, before any expensive work:
 
-```python
+```text
         _deadline = Deadline.start(_budget_ms)
 ```
 
@@ -457,7 +457,7 @@ with `from memo.search_deadline import (COST_EMBED_MS, COST_EXPANSION_MS, COST_G
 
 Then guard each optional stage. The rerank rung is already done in Task 2. For the remaining rungs, wrap the existing stage conditions:
 
-```python
+```text
         # Rung two: query expansion / HyDE / multi-query.
         if <existing expansion condition> and _deadline.afford(COST_EXPANSION_MS):
             ...
@@ -581,14 +581,14 @@ Expected: the CLI test fails — no `degraded` key.
 
 In `src/memo/cli_search.py`, in the `search` command body, pass an out-parameter and surface it:
 
-```python
+```text
     degraded: list[str] = []
     hits = mem.search(query, ..., _degraded=degraded)
 ```
 
 For `--json`, add `"degraded": degraded` to the emitted object. For the human path, after the results, when `degraded` is non-empty:
 
-```python
+```text
         click.secho(
             f"degraded: {', '.join(degraded)} (search budget)", dim=True, err=True
         )

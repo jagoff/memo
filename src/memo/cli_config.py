@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.table import Table
@@ -90,6 +91,104 @@ def config_flags(group_filter: str | None, active: bool, as_json: bool) -> None:
         )
     console.print(table)
     console.print(f"[dim]{len(rows)} flag(s); {len(active_vals)} active in env[/dim]")
+
+
+@config_group.command(name="flags-audit")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def config_flags_audit(as_json: bool) -> None:
+    """Audit the flag registry for retirement candidates.
+
+    Three signals drive flag retirement:
+
+    - **dead**: declared but never read anywhere in production source —
+      setting it does nothing (the CI `test_no_dead_flags` guard is the
+      mechanical enforcer; this command also reports the borderline cases
+      that only a test reads).
+    - **dark**: shipped with a non-default (usually off) default and never
+      seen active in the environment — the flag may never have been turned
+      on by anyone.
+    - **experimental**: flags whose spec `group` is not one of the stable
+      subsystems (recall/search/ingest/store/behavior/capture/graph).
+
+    Pair with `memo config flags --group <g>` for the full spec view.
+    """
+    import re as _re
+    from pathlib import Path
+
+    from memo import flags as _flags
+
+    src_root = Path(_flags.__file__).resolve().parent
+    active_vals = _flags.active_flags()
+    consumer_suffixes = {".py", ".sh", ".bash", ".plist", ".json", ".template"}
+    texts: list[str] = []
+    for p in src_root.rglob("*"):
+        if p.is_file() and p.suffix in consumer_suffixes:
+            texts.append(p.read_text(encoding="utf-8", errors="ignore"))
+    # Repo-root consumer dirs (installed statusline / hooks / launchd assets).
+    repo_root = src_root.parents[1]
+    for sub in ("statusline", "hooks", "launchd", "scripts"):
+        d = repo_root / sub
+        if d.is_dir():
+            for p in d.rglob("*"):
+                if p.is_file() and p.suffix in consumer_suffixes:
+                    texts.append(p.read_text(encoding="utf-8", errors="ignore"))
+
+    dead: list[str] = []
+    dark: list[str] = []
+    for name, spec in _flags.REGISTRY.items():
+        total = 0
+        decl = 0
+        spec_re = _re.compile(r'_spec\(\s*"' + _re.escape(name) + r'"')
+        for txt in texts:
+            total += txt.count(name)
+            decl += len(spec_re.findall(txt))
+        if total - decl <= 0:
+            dead.append(name)
+        default_on = (
+            bool(spec.default)
+            if isinstance(spec.default, (bool, int))
+            else spec.default not in (None, "", 0, "0", False)
+        )
+        if not default_on and name not in active_vals:
+            dark.append(name)
+
+    groups = sorted({spec.group for spec in _flags.REGISTRY.values()})
+    stable_groups = {"recall", "search", "ingest", "store", "behavior", "capture", "graph"}
+    experimental = [n for n, spec in _flags.REGISTRY.items() if spec.group not in stable_groups]
+
+    summary: dict[str, Any] = {
+        "total": len(_flags.REGISTRY),
+        "dead": dead,
+        "dark_count": len(dark),
+        "dark_sample": dark[:15],
+        "experimental_count": len(experimental),
+        "experimental_sample": experimental[:15],
+        "groups": groups,
+        "active_in_env": len(active_vals),
+    }
+    if as_json:
+        click.echo(json.dumps(summary, indent=2, default=str))
+        return
+
+    console.print("[bold]flag retirement audit[/bold]")
+    console.print(f"  total registered:  [cyan]{summary['total']}[/cyan]")
+    console.print(f"  active in env:     [green]{summary['active_in_env']}[/green]")
+    groups_joined: str = ", ".join(str(g) for g in summary["groups"])
+    dead_joined: str = ", ".join(summary["dead"][:10]) or "none"
+    dark_joined: str = ", ".join(summary["dark_sample"]) or "none"
+    experimental_joined: str = ", ".join(summary["experimental_sample"]) or "none"
+    console.print(f"  groups:            {groups_joined}")
+    console.print(f"  [red]dead (no reader)[/red]: {len(summary['dead'])} — {dead_joined}")
+    console.print(
+        f"  [yellow]dark (off, never active)[/yellow]: {summary['dark_count']} — {dark_joined}"
+    )
+    console.print(
+        f"  [magenta]experimental group[/magenta]: {summary['experimental_count']} — {experimental_joined}"
+    )
+    console.print(
+        "[dim]retire dead flags by deleting their `_spec(...)`; dark flags via "
+        "`memo dream graduate-flags`.[/dim]"
+    )
 
 
 @config_group.command(name="validate")

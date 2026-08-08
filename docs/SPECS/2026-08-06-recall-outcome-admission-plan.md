@@ -82,9 +82,7 @@ def test_compute_writes_a_payload_and_survives_an_empty_ledger(tmp_cfg) -> None:
     out = recall_utility.compute(tmp_cfg)
     assert out["schema"] == recall_utility.SCHEMA
     assert out["memories"] == {}
-    on_disk = json.loads(
-        (tmp_cfg.state_dir / "recall_utility.json").read_text(encoding="utf-8")
-    )
+    on_disk = json.loads((tmp_cfg.state_dir / "recall_utility.json").read_text(encoding="utf-8"))
     assert on_disk["schema"] == recall_utility.SCHEMA
 
 
@@ -433,7 +431,11 @@ def test_an_unobserved_memory_is_untouched() -> None:
 
 
 def test_marginal_floor_moves_a_weak_hit_out_of_the_prefix() -> None:
-    hits = [_Hit(id="a" * 32, score=1.0), _Hit(id="b" * 32, score=0.9), _Hit(id="c" * 32, score=0.2)]
+    hits = [
+        _Hit(id="a" * 32, score=1.0),
+        _Hit(id="b" * 32, score=0.9),
+        _Hit(id="c" * 32, score=0.2),
+    ]
     ranked = rank_hits(hits, _knobs(marginal_floor=0.6))
     assert [h.id for h in ranked[:2]] == ["a" * 32, "b" * 32]
     assert ranked[2].id == "c" * 32, "the weak hit must be demoted, never dropped"
@@ -479,7 +481,7 @@ The `_Hit` stub may need more attributes than `id`/`score`/`body` depending on w
 
 Append to the `SPECS` tuple in `src/memo/flags_recall.py`:
 
-```python
+```text
     _spec(
         "MEMO_RECALL_UTILITY_ENABLED",
         "bool",
@@ -532,7 +534,7 @@ Append to the `SPECS` tuple in `src/memo/flags_recall.py`:
 
 Add the five fields to `RankKnobs` (after `cwd`, line 1050):
 
-```python
+```text
     # Outcome admission (all inert at these defaults). `utility` maps an 8-char
     # id prefix to its smoothed grounded-rate; `utility_prior` is the corpus
     # mean, so an absent id yields a multiplier of exactly 1.0.
@@ -545,7 +547,7 @@ Add the five fields to `RankKnobs` (after `cwd`, line 1050):
 
 In `knobs_from_flags`, resolve them from the flags, loading the prior only when enabled:
 
-```python
+```text
     utility_map: dict[str, float] | None = None
     utility_prior = 0.5
     utility_strength = 0.0
@@ -565,7 +567,7 @@ Use whatever `Config`/`state_dir` accessor `knobs_from_flags` already has in sco
 
 After the altitude/code-proximity boosts and **before** the `min_sim` gate, add the multiplier:
 
-```python
+```text
     if knobs.utility_strength > 0.0 and knobs.utility:
         from memo.recall_utility import multiplier as _utility_multiplier
 
@@ -580,7 +582,7 @@ After the altitude/code-proximity boosts and **before** the `min_sim` gate, add 
 
 After the gate and the final ordering, add the floor and the exploration slot, in that order:
 
-```python
+```text
     k = knobs.top_k
     if knobs.marginal_floor > 0.0 and len(ordered) > 1 and k >= 1:
         top = ordered[0].score
@@ -662,7 +664,7 @@ Expected: both fail — `KeyError` here, and `test_dream_flags.py`'s completenes
 
 In `src/memo/dream_flags.py`, add to the `GATES` construction, beside the other `recall` entries (line 105-108):
 
-```python
+```text
         _g(
             "MEMO_RECALL_UTILITY_ENABLED",
             "recall",

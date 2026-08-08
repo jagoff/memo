@@ -65,6 +65,24 @@ def _load_cache(cfg: Config) -> dict:
 
 
 def _save_cache(cfg: Config, cache: dict) -> None:
+    # Drop entries the reader can no longer use. The TTL was only ever checked
+    # on read, so every nightly A/B appended a key that stayed forever: this
+    # file reached 211 MB on a live install — larger than the memory index it
+    # was measuring.
+    now = time.time()
+
+    def _is_live(entry: object) -> bool:
+        if not isinstance(entry, dict):
+            return True  # cannot date it; not evidence of staleness
+        try:
+            ts = float(entry.get("ts") or 0)
+        except (TypeError, ValueError):
+            # A malformed timestamp must not abort a save that just cost a full
+            # retrieval run — keep the entry and let the reader reject it.
+            return True
+        return (now - ts) < _CACHE_TTL_S
+
+    cache = {key: entry for key, entry in cache.items() if _is_live(entry)}
     p = _cache_path(cfg)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")

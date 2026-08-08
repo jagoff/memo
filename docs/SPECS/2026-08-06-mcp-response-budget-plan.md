@@ -112,7 +112,7 @@ Expected: `ModuleNotFoundError: No module named 'memo.mcp_budget'`.
 
 Append to the `SPECS` tuple in `src/memo/flags_misc.py`, before the closing `)`:
 
-```python
+```text
     _spec(
         "MEMO_MCP_RESPONSE_BUDGET_TOKENS",
         "int",
@@ -198,9 +198,7 @@ def bounded_list(
     return kept, {"shown": len(kept), "total": len(items), "truncated": len(kept) < len(items)}
 
 
-def budget_exceeded_payload(
-    tool: str, tokens: int, cap: int, hint: str = ""
-) -> dict[str, Any]:
+def budget_exceeded_payload(tool: str, tokens: int, cap: int, hint: str = "") -> dict[str, Any]:
     """The substitute response. Small, structured, and actionable."""
     return {
         "error": "response_budget_exceeded",
@@ -380,7 +378,7 @@ Expected: all pass.
 
 In `src/memo/server.py`, immediately after the write-coordinator middleware block (which ends at line 284 with `server.add_middleware(_write_mw)`), add:
 
-```python
+```text
     # Response budget LAST so it measures what the caller actually receives,
     # after every other middleware has had its turn.
     from memo.mcp_budget import make_response_budget_middleware

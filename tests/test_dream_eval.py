@@ -12,6 +12,7 @@ import re
 
 from click.testing import CliRunner
 
+from memo import dream_tune
 from memo.cli_dream import dream_cmd
 from memo.cli_dream_passes import _run_eval_recall, _run_harvest_labels
 
@@ -32,7 +33,9 @@ class _StubMem:
 
     lifecycle = _StubLifecycle()
 
-    def search(self, query, limit, mode="vec", exclude_types=None, exclude_tags=None):
+    def search(
+        self, query, limit, mode="vec", budget_ms=None, exclude_types=None, exclude_tags=None
+    ):
         return [_Hit("aaaa1111", 0.9), _Hit("bbbb2222", 0.5)]
 
 
@@ -40,10 +43,6 @@ def _write_curated(state_dir, prompts):
     p = state_dir / "eval" / "regression_labels.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"prompts": prompts}), encoding="utf-8")
-
-
-def _raise_value_error(*a, **k):
-    raise ValueError("no curated labels in this test")
 
 
 # --- _run_harvest_labels ------------------------------------------------------
@@ -285,9 +284,35 @@ def test_eval_recall_dedup_does_not_waste_room(tmp_cfg):
     assert frag["prec_at_k"] > 0
 
 
+def test_eval_recall_uses_the_packaged_curated_set(tmp_cfg, tmp_path, monkeypatch):
+    """Installed-runtime shape: nothing in state_dir, no repo checkout above the
+    module — only the copy force-included into the wheel. The nightly receipt
+    must still count curated labels.
+
+    Before the fix this pass carried its own two-candidate lookup that omitted
+    the packaged path, so `memo dream status` reported `0 curated` every night
+    and prec@K (0.027 on the live corpus) was measured on harvested labels
+    alone, while the tuner's gate — which does resolve the packaged copy — saw a
+    different label set than the number published beside it.
+    """
+    packaged = tmp_path / "wheel" / "regression_labels.json"
+    packaged.parent.mkdir(parents=True)
+    packaged.write_text(
+        json.dumps({"prompts": [{"text": "packaged curated probe", "expect_ids": ["aaaa1111"]}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dream_tune, "_packaged_curated_labels", lambda: packaged)
+    # Kill the dev-checkout fallback so only the packaged copy can answer.
+    monkeypatch.setattr(dream_tune, "__file__", str(tmp_path / "nowhere" / "dream_tune.py"))
+
+    frag = _run_eval_recall(tmp_cfg, _StubMem(), k=3, max_labels=200)
+
+    assert frag["curated"] == 1
+
+
 def test_eval_recall_no_labels_skips_history(tmp_cfg, monkeypatch):
-    # No curated (loader raises for both candidate paths) + no harvested file.
-    monkeypatch.setattr("memo.eval_recall.load_labels", _raise_value_error)
+    # No curated (the shared lookup finds no document) + no harvested file.
+    monkeypatch.setattr(dream_tune, "curated_labels_document", lambda _sd: {})
     frag = _run_eval_recall(tmp_cfg, _StubMem(), k=5, max_labels=200)
     assert frag["labels_total"] == 0
     assert frag["prec_at_k"] == 0.0
@@ -383,7 +408,9 @@ def test_dream_run_eval_errors_land_in_receipt(tmp_path, monkeypatch):
     monkeypatch.setattr("memo.eval_recall.harvest_labels", _boom)
 
     class _BrokenSearchMem(_StubMem):
-        def search(self, query, limit, mode="vec", exclude_types=None, exclude_tags=None):
+        def search(
+            self, query, limit, mode="vec", budget_ms=None, exclude_types=None, exclude_tags=None
+        ):
             raise RuntimeError("index locked")
 
     monkeypatch.setattr("memo.cli_dream._get_memory", lambda cfg: _BrokenSearchMem())

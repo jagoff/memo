@@ -70,13 +70,45 @@ def _flag_stub(min_sim=0.0):
     return _stub
 
 
-def test_run_floor_calibration_applies_and_raises_min_sim(mock_memory, monkeypatch):
-    """Flag on, no curated labels (vacuous pass), floor above the pinned-low
-    current min_sim -> overlay is written and only ever raises."""
+def _seed_probes(mem):
     for i in range(6):
-        mock_memory.save(
-            content=f"probe body {i}", title=f"probe title {i} alpha beta gamma", type="note"
-        )
+        mem.save(content=f"probe body {i}", title=f"probe title {i} alpha beta gamma", type="note")
+
+
+def test_run_floor_calibration_applies_and_raises_min_sim(mock_memory, monkeypatch):
+    """Flag on, curated gate passes, floor above the pinned-low current min_sim
+    -> overlay is written and only ever raises."""
+    _seed_probes(mock_memory)
+
+    monkeypatch.setattr("memo.flags.flag_bool", _flag_stub())
+    monkeypatch.setattr(
+        "memo.flags.flag_float", lambda name, **kw: 0.0 if name == "MEMO_RECALL_MIN_SIM" else None
+    )
+    monkeypatch.setattr("memo.dream_tune._curated_label_set", lambda state_dir: object())
+    monkeypatch.setattr(
+        "memo.dream_tune.measure",
+        lambda *a, **kw: {"precision_at_k": 1.0, "noise_at_k": 0.0},
+    )
+
+    result = _run_floor_calibration(mock_memory, dry_run=False)
+
+    frag = result["floor_calibration"]
+    assert frag["gate"] == "ok"
+    assert frag["proposed"] is not None
+    assert frag["applied"] is True
+
+    from memo.tuned_overlay import read_overlay
+
+    overlay = read_overlay(mock_memory.cfg.state_dir)
+    assert overlay["MEMO_RECALL_MIN_SIM"] == frag["proposed"]
+    assert overlay["MEMO_RECALL_MIN_SIM"] > 0.0
+
+
+def test_run_floor_calibration_without_curated_labels_does_not_apply(mock_memory, monkeypatch):
+    """Fails closed. The curated set ships in the wheel, so its absence means a
+    damaged install — raising the recall floor unverified would silently bury
+    memories with nothing able to prove or revert it."""
+    _seed_probes(mock_memory)
 
     monkeypatch.setattr("memo.flags.flag_bool", _flag_stub())
     monkeypatch.setattr(
@@ -88,14 +120,11 @@ def test_run_floor_calibration_applies_and_raises_min_sim(mock_memory, monkeypat
 
     frag = result["floor_calibration"]
     assert frag["gate"] == "no_curated_labels"
-    assert frag["proposed"] is not None
-    assert frag["applied"] is True
+    assert frag.get("applied") is not True
 
-    from memo.tuned_overlay import read_overlay
+    from memo.tuned_overlay import overlay_path
 
-    overlay = read_overlay(mock_memory.cfg.state_dir)
-    assert overlay["MEMO_RECALL_MIN_SIM"] == frag["proposed"]
-    assert overlay["MEMO_RECALL_MIN_SIM"] > 0.0
+    assert not overlay_path(mock_memory.cfg.state_dir).exists()
 
 
 def test_run_floor_calibration_never_lowers_below_current(mock_memory, monkeypatch):

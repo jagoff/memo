@@ -53,6 +53,7 @@ def test_recall_logic_project_boost_handles_frozen_records(monkeypatch, tmp_path
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -101,6 +102,7 @@ def test_recall_logic_emits_authority_directive(monkeypatch, tmp_path) -> None:
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -126,7 +128,16 @@ def test_recall_logic_emits_directive_only_on_first_turn(monkeypatch, tmp_path) 
     hit = _rec("once0001", "One fact", 0.90)
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -160,7 +171,16 @@ def test_recall_logic_caps_total_context_and_logs_exact_cost(monkeypatch, tmp_pa
     object.__setattr__(hit, "body", "substantial context " * 200)
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [hit]
 
     monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
@@ -206,6 +226,7 @@ def test_recall_logic_passes_recency_to_search(monkeypatch, tmp_path) -> None:
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -258,6 +279,7 @@ def test_recall_logic_records_what_surfaced(monkeypatch, tmp_path) -> None:
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -286,6 +308,7 @@ def test_recall_logic_adds_related_nudge_below_the_cut(monkeypatch, tmp_path) ->
             limit: int,
             mode: str,
             recency: bool = False,
+            budget_ms: float | None = None,
             exclude_types=None,
             exclude_tags=None,
         ) -> list[MemoryRecord]:
@@ -355,7 +378,16 @@ def test_fallback_scoring_does_not_mutate_shared_hits(monkeypatch, tmp_path) -> 
         # 2-dim stub vectors (the guard reads mem.cfg.embedder_dims).
         cfg = SimpleNamespace(embedder_dims=2)
 
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return candidates
 
         def _read_body(self, path):
@@ -399,7 +431,16 @@ def test_project_tag_failure_is_logged_not_silent(monkeypatch, tmp_path, caplog)
     monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
 
     class StubMemory:
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [_rec("ok000001", "Surfaced", 0.9)]
 
     with caplog.at_level("DEBUG", logger=rl._logger.name):
@@ -577,6 +618,120 @@ def test_trivial_bail_disabled(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Machine-prompt gate (MEMO_RECALL_SKIP_MACHINE_PROMPTS)
+# ---------------------------------------------------------------------------
+
+_TASK_NOTIFICATION = (
+    "<task-notification>\n<task-id>bfjjrruh5</task-id>\n"
+    "<status>completed</status>\n</task-notification>"
+)
+
+
+def test_machine_prompt_bails_before_retrieval(tmp_path: Path) -> None:
+    """A `<task-notification>` clears every existing gate — it is long, has no
+    leading slash and is not a trivial word — so before this gate it bought a
+    full embed + search. 40% of measured hook fires were exactly this."""
+    result = _invoke_hook(_TASK_NOTIFICATION, _trivial_env(tmp_path))
+    assert result.exit_code == 0
+    assert "machine prompt (harness envelope)" in result.output
+
+
+def test_machine_prompts_are_dropped_in_the_ablation_arm_too(tmp_path: Path) -> None:
+    """`memo tokens` compares recall-on turns against MEMO_RECALL_DISABLE turns.
+    That comparison only means something if both arms exclude the same turns, so
+    the machine gate has to run before the disable short-circuit — otherwise the
+    disabled arm stamps harness envelopes the enabled arm drops, and the two
+    cohorts are no longer the same population."""
+    env = {**_trivial_env(tmp_path), "MEMO_RECALL_DISABLE": "1"}
+
+    result = _invoke_hook(_TASK_NOTIFICATION, env)
+
+    assert "machine prompt (harness envelope)" in result.output
+
+
+def test_machine_prompt_gate_can_be_turned_off(tmp_path: Path) -> None:
+    env = {**_trivial_env(tmp_path), "MEMO_RECALL_SKIP_MACHINE_PROMPTS": "0"}
+    result = _invoke_hook(_TASK_NOTIFICATION, env)
+    assert "machine prompt" not in result.output
+
+
+def test_human_prompt_is_not_gated_as_machine(tmp_path: Path) -> None:
+    result = _invoke_hook(
+        "why does the recall hook fall back to a subprocess", _trivial_env(tmp_path)
+    )
+    assert "machine prompt" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Fallback wall-clock cap (MEMO_RECALL_HOOK_BUDGET_MS)
+# ---------------------------------------------------------------------------
+
+
+def _capture_itimer(monkeypatch) -> list[tuple[int, float]]:
+    """Record setitimer calls instead of arming a real alarm — signal delivery
+    is the OS's job; what this asserts is that the hook arms the cap at all."""
+    import memo.cli_recall_hook as hook
+
+    calls: list[tuple[int, float]] = []
+    monkeypatch.setattr(hook.signal, "setitimer", lambda which, secs: calls.append((which, secs)))
+    return calls
+
+
+def test_fallback_arms_a_wall_clock_deadline(tmp_path: Path, monkeypatch) -> None:
+    """The per-stage guards missed a measured 126.7s worst case, so the
+    in-process fallback arms an overall cap before it starts work."""
+    calls = _capture_itimer(monkeypatch)
+
+    _invoke_hook("why does the recall hook fall back to a subprocess", _trivial_env(tmp_path))
+
+    assert calls, "the fallback path must arm a deadline"
+    _which, secs = calls[0]
+    assert 0 < secs <= 10.0
+
+
+def test_deadline_can_be_disabled(tmp_path: Path, monkeypatch) -> None:
+    calls = _capture_itimer(monkeypatch)
+    env = {**_trivial_env(tmp_path), "MEMO_RECALL_HOOK_BUDGET_MS": "0"}
+
+    _invoke_hook("why does the recall hook fall back to a subprocess", env)
+
+    # The unconditional disarm on the way out still runs; what must not happen
+    # is any positive arm.
+    assert all(secs == 0 for _which, secs in calls), calls
+
+
+def test_deadline_is_disarmed_before_the_hook_returns(tmp_path: Path, monkeypatch) -> None:
+    """An armed itimer outlives the hook whenever it runs in-process instead of
+    as its own short-lived process. The alarm then fires later, inside unrelated
+    code, and the handler's sys.exit unwinds whatever was running — this cascaded
+    into 578 errors across the suite when the disarm was missing.
+    """
+    calls = _capture_itimer(monkeypatch)
+
+    _invoke_hook("why does the recall hook fall back to a subprocess", _trivial_env(tmp_path))
+
+    assert calls, "the fallback path must arm a deadline"
+    assert calls[-1][1] == 0, f"the last itimer call must disarm, got {calls[-1][1]}"
+
+
+def test_a_bailing_hook_leaves_the_hosts_alarm_alone(tmp_path: Path, monkeypatch) -> None:
+    """The machine-prompt gate bails before the deadline is armed, so the hook
+    must not touch ITIMER_REAL at all.
+
+    The timer is process-global. Whenever the hook runs inside a host that also
+    uses SIGALRM — pytest's own `--timeout` does — an unconditional disarm on the
+    way out would cancel the host's alarm rather than ours, which is how this
+    test first failed in CI (it read a 119.99s pytest-timeout alarm) while
+    passing locally without the flag.
+    """
+    calls = _capture_itimer(monkeypatch)
+
+    _invoke_hook(_TASK_NOTIFICATION, _trivial_env(tmp_path))
+
+    assert calls == [], f"a hook that armed nothing must clear nothing, got {calls}"
+
+
+# ---------------------------------------------------------------------------
 # Daemon-path parity: format steering / adaptive budget / verbosity steering
 # (these knobs only existed on the subprocess fallback before)
 # ---------------------------------------------------------------------------
@@ -586,7 +741,16 @@ class _OneHitStubMemory:
     def __init__(self, hit: MemoryRecord) -> None:
         self._hit = hit
 
-    def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+    def search(
+        self,
+        query,
+        limit,
+        mode,
+        recency=False,
+        budget_ms=None,
+        exclude_types=None,
+        exclude_tags=None,
+    ):
         return [self._hit]
 
 
@@ -672,7 +836,16 @@ def test_cold_embedder_with_broken_micro_falls_back_to_bm25(monkeypatch, tmp_pat
     class StubMemory:
         embedder = SimpleNamespace(is_warm=False)  # main embedder cold
 
-        def search(self, query, limit, mode, recency=False, exclude_types=None, exclude_tags=None):
+        def search(
+            self,
+            query,
+            limit,
+            mode,
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+        ):
             return [hit]
 
     class _BrokenMicro:

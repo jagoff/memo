@@ -8,7 +8,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "dream",
-        "Nightly prune/compact of rebuildable vector sidecars. Markdown and user feedback are preserved; default off until the local DB has been measured.",
+        "Nightly prune/compact of rebuildable vector sidecars. Markdown and user feedback are preserved; default off until the local DB has been measured. Worth measuring: an install carrying 941 MB of un-compacted JSON embedding cache against 22 MB of actual memory vectors packed down to 139 MB in one pass — `memo doctor` reports the ratio.",
     ),
     _spec(
         "MEMO_DREAM_VECTOR_VIEWS_ENABLED",
@@ -330,7 +330,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 41 tools) | core/slim (58 stable-core tools) | full/default (162 tools).",
+        "MCP surface profile: agent (default, 41 tools) | core/slim (58 stable-core tools) | full/default (164 tools).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(

@@ -397,7 +397,7 @@ class _StubLifecycle:
 class _StubMem:
     lifecycle = _StubLifecycle()
 
-    def search(self, query, limit, mode="vec"):
+    def search(self, query, limit, mode="vec", budget_ms=None):
         return []
 
 

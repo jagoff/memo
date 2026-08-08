@@ -243,6 +243,21 @@ SPECS: tuple[FlagSpec, ...] = (
         "Skip recall when the prompt starts with '/'. A slash command WITH substantive args still recalls on the arg text (see MEMO_RECALL_SLASH_MIN_ARG_CHARS); set to 0 to recall on every slash prompt unmodified.",
     ),
     _spec(
+        "MEMO_RECALL_HOOK_BUDGET_MS",
+        "int",
+        10000,
+        "recall",
+        "Wall-clock cap on the recall-hook's in-process fallback (SIGALRM). Past it the hook yields an empty recall and logs 'hook budget exceeded' instead of blocking the prompt; measured worst case before the cap was 126s against a ~5s budget. Delivered between bytecodes, so it bounds waits that pass through the interpreter but cannot preempt a single blocking C call such as a held sqlite lock (that one is busy_timeout's job). 0 disables the cap.",
+        min_val=0,
+    ),
+    _spec(
+        "MEMO_RECALL_SKIP_MACHINE_PROMPTS",
+        "bool",
+        True,
+        "recall",
+        "Skip recall when the prompt is a harness envelope rather than a human turn (<task-notification>, <system-reminder>, command output, interrupted-request markers). Measured at 40% of hook fires on a live install, each paying a full embed + search for a machine-to-machine message. Matched on the opening marker only, so prose mentioning one still recalls; set to 0 to recall on every prompt.",
+    ),
+    _spec(
         "MEMO_RECALL_SLASH_MIN_ARG_CHARS",
         "int",
         8,
@@ -721,6 +736,56 @@ SPECS: tuple[FlagSpec, ...] = (
         "Raise the ⛔ pass recall (loosen the floor / raise K) in detected "
         "high-risk contexts (release/delete/deploy/refactor/migrate) via a pure "
         "O(len(prompt)) keyword scan — never re-embeds. OFF by default.",
+    ),
+    # ── Gamechanger Flags ─────────────────────────────────────────────────────
+    _spec(
+        "MEMO_RECALL_DYNAMIC_STREAM",
+        "bool",
+        True,
+        "recall",
+        "Enable dynamic continuous context streaming and adaptive token window scaling across multi-turn sessions.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_RECALL_TOPIC_SHIFT_SENSITIVITY",
+        "float",
+        0.35,
+        "recall",
+        "Sensitivity threshold for topic shift detection in continuous sessions (0.1 to 0.9).",
+        min_val=0.1,
+        max_val=0.9,
+    ),
+    _spec(
+        "MEMO_RECALL_PREFETCH_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Enable speculative in-memory vector pre-fetching in recall daemon for <10ms latency.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_EVENT_BUS_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Enable local multi-agent lockless event bus (IPC/WAL) for real-time cross-agent state sync.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_SELF_HEALING_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Auto-recalibrate memory confidence & dispute stale memories on execution/test failures.",
+        opt_out=True,
+    ),
+    _spec(
+        "MEMO_WORLD_MODEL_ENABLED",
+        "bool",
+        True,
+        "recall",
+        "Enable Active Latent Kernel & World-Model zero-search cognitive context projection.",
+        opt_out=True,
     ),
 )
 
