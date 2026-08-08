@@ -82,59 +82,6 @@ def _bounded_json(data: dict[str, Any], *, max_edges: int) -> dict[str, Any]:
     }
 
 
-def _bounded_dot(dot: str, *, max_edges: int) -> dict[str, Any]:
-    """Trim the DOT export to `max_edges` edge lines, reporting the true count.
-
-    The live graph renders 100,141 edge lines (3.6 MB) — a whole-graph dump no
-    tool result can carry. Only edge lines are dropped; the header and the
-    closing brace stay, so the trimmed DOT still parses.
-    """
-    lines = dot.split("\n")
-    edge_lines = [i for i, line in enumerate(lines) if " -- " in line]
-    if len(edge_lines) <= max_edges:
-        return {
-            "format": "dot",
-            "content": dot,
-            "edge_count": len(edge_lines),
-            "truncated": False,
-        }
-    dropped = set(edge_lines[max_edges:])
-    return {
-        "format": "dot",
-        "content": "\n".join(line for i, line in enumerate(lines) if i not in dropped),
-        "edge_count": len(edge_lines),
-        "truncated": True,
-    }
-
-
-def _bounded_json(data: dict[str, Any], *, max_edges: int) -> dict[str, Any]:
-    """Trim the JSON export to `max_edges` edges, reporting the true sizes.
-
-    The live graph exports 18,724 nodes and 82,517 edges (6.0 MB). Nodes are
-    filtered down to the endpoints of the retained edges so the payload stays a
-    drawable graph rather than edges pointing at absent nodes plus isolates.
-    """
-    nodes = data.get("nodes") or []
-    edges = data.get("edges") or []
-    if len(edges) <= max_edges:
-        return {
-            "format": "json",
-            "data": data,
-            "node_count": len(nodes),
-            "edge_count": len(edges),
-            "truncated": False,
-        }
-    kept = edges[:max_edges]
-    endpoints = {e.get("source") for e in kept} | {e.get("target") for e in kept}
-    return {
-        "format": "json",
-        "data": {"nodes": [n for n in nodes if n.get("id") in endpoints], "edges": kept},
-        "node_count": len(nodes),
-        "edge_count": len(edges),
-        "truncated": True,
-    }
-
-
 def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
     def memo_graph_path(

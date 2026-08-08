@@ -18,6 +18,7 @@ from rich.table import Table
 from memo.cli_common import console, log_cli_consult
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.memory.record import MemoryRecord
 
 
 def _format_source_score(score: object) -> str:
@@ -71,6 +72,46 @@ def _default_search_json_body_chars() -> int:
 
     value = flag_int("MEMO_SEARCH_JSON_BODY_CHARS")
     return 280 if value is None else value
+
+
+def _render_search_table(
+    hits: list[MemoryRecord],
+    hit_dicts: list[dict],
+    *,
+    explain: bool,
+    trace: list[dict] | None,
+) -> None:
+    """Render the `memo search` results table plus the optional --explain
+    ranking-reason table. Pure presentation — no query/consult logic."""
+    tbl = Table(show_lines=False, expand=True)
+    tbl.add_column("score", justify="right", width=6)
+    tbl.add_column("type", width=10)
+    tbl.add_column("title", overflow="fold")
+    tbl.add_column("tags", overflow="fold")
+    for h in hits:
+        h_dict = h.to_dict()
+        tbl.add_row(
+            f"{h.score:.3f}" if h.score is not None else "—",
+            escape(h.type),
+            escape(h.title + _fact_badge(h_dict)),
+            escape(", ".join(h.tags) or "—"),
+        )
+    console.print(tbl)
+    if explain and trace is not None:
+        reason_tbl = Table(title="Why these ranked", show_header=False, expand=True)
+        reason_tbl.add_column("hit", width=10, style="dim")
+        reason_tbl.add_column("reason", overflow="fold")
+        for hit in hit_dicts:
+            exp = hit.get("explain") if isinstance(hit.get("explain"), dict) else {}
+            why = exp.get("why") if isinstance(exp, dict) else None
+            if not why:
+                continue
+            reason_tbl.add_row(str(hit.get("id") or "")[:8], "; ".join(str(w) for w in why[:3]))
+        if reason_tbl.row_count:
+            console.print(reason_tbl)
+        console.print(
+            f"[dim]search trace stages: {', '.join(str(t.get('stage')) for t in trace)}[/dim]"
+        )
 
 
 @click.command()
@@ -196,35 +237,7 @@ def search(
     if not hits:
         console.print("[dim]no results[/dim]")
         return
-    tbl = Table(show_lines=False, expand=True)
-    tbl.add_column("score", justify="right", width=6)
-    tbl.add_column("type", width=10)
-    tbl.add_column("title", overflow="fold")
-    tbl.add_column("tags", overflow="fold")
-    for h in hits:
-        h_dict = h.to_dict()
-        tbl.add_row(
-            f"{h.score:.3f}" if h.score is not None else "—",
-            escape(h.type),
-            escape(h.title + _fact_badge(h_dict)),
-            escape(", ".join(h.tags) or "—"),
-        )
-    console.print(tbl)
-    if explain and trace is not None:
-        reason_tbl = Table(title="Why these ranked", show_header=False, expand=True)
-        reason_tbl.add_column("hit", width=10, style="dim")
-        reason_tbl.add_column("reason", overflow="fold")
-        for hit in hit_dicts:
-            exp = hit.get("explain") if isinstance(hit.get("explain"), dict) else {}
-            why = exp.get("why") if isinstance(exp, dict) else None
-            if not why:
-                continue
-            reason_tbl.add_row(str(hit.get("id") or "")[:8], "; ".join(str(w) for w in why[:3]))
-        if reason_tbl.row_count:
-            console.print(reason_tbl)
-        console.print(
-            f"[dim]search trace stages: {', '.join(str(t.get('stage')) for t in trace)}[/dim]"
-        )
+    _render_search_table(hits, hit_dicts, explain=explain, trace=trace)
 
 
 @click.command(name="context")

@@ -115,6 +115,7 @@ ARGS: dict[str, dict[str, object]] = {
     "memo_entity": {"name": _TOPIC_A},
     "memo_entity_search": {"query": _TOPIC_A},
     "memo_episodes_search": {"query": _TOPIC_A},
+    "memo_event_bus_publish": {"event_type": "conformance.probe"},
     "memo_evidence_pack": {"question": _TOPIC_A},
     "memo_explore": {"entity": _TOPIC_A},
     "memo_export_csv": {"output_path": "__SET_BELOW__"},
