@@ -140,12 +140,14 @@ audit is really about: **memo builds faster than it enables.**
 > this. It was flipped on against the live corpus and returned **the same ten
 > chunk ids**, only rescored. The flag keys off `extra.parent_id`, which is
 > stamped by the `MEMO_CHUNK_INGEST` path (chunking inside `save()` /
-> `reindex()`). The records in this corpus carry `extra.parent_path` and
-> `source: vault-ingest` instead — they came through `memo ingest --chunk`,
-> which does not stamp `parent_id`. The fix and the corpus's actual ingest
-> mechanism are **two chunk-to-parent linking schemes that do not
-> interoperate**, so the flag is a silent no-op for the exact defect it was
-> built to fix.
+> `reindex()`). 418 records across 63 documents do carry it, and the flag works
+> correctly for those. But 4,832 chunk records — 92% of this corpus's chunked
+> reference content, including every hit in the repro above — carry
+> `extra.parent_path` and `source: vault-ingest` instead, having come through
+> `memo ingest --chunk`, which stamps no `parent_id` and materializes no parent
+> record. The fix and this corpus's dominant ingest path are **two
+> chunk-to-parent linking schemes that do not interoperate**, so the flag is a
+> silent no-op for the exact defect it was built to fix.
 >
 > This sharpens the audit's own thesis rather than softening it. "Built and
 > never enabled" was the charitable reading; the measured reading is that the
