@@ -414,6 +414,38 @@ def test_recall_search_fn_applies_rank_hits_gates(monkeypatch):
     assert [h.id for h in hits] == ["keep1", "keep2"]
 
 
+def _access_snapshot(mem) -> tuple[int, int, str | None]:
+    row = mem.store._conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(access_count), 0), MAX(last_accessed) FROM access"
+    ).fetchone()
+    return tuple(row)
+
+
+def test_recall_search_fn_does_not_inflate_access_count(mock_memory, monkeypatch):
+    """`memo eval ab`'s ON-condition retrieval reproduces the recall pipeline
+    against the live corpus; without `_track_usage=False` every search hit
+    writes an access-log row (search_ops.py's `_stage_record_usage`),
+    inflating access_count on whatever memory the eval surfaces — the same
+    signal `memo usefulness` / `dead_weight()` read to decide what's noise.
+    """
+    _pin_recall_flags(monkeypatch)
+    mock_memory.save(
+        content="the alpha rollout decision was made after deliberation about the gates",
+        title="alpha rollout decision",
+        auto_project=False,
+    )
+
+    before = _access_snapshot(mock_memory)
+    eval_ab.recall_search_fn(mock_memory, k=3)("alpha rollout decision")
+    assert _access_snapshot(mock_memory) == before
+
+    # Contrast: a real (non-eval) search against the same corpus DOES bump
+    # it — proving the assertion above isn't vacuously true because search
+    # never actually ran against a real candidate.
+    mock_memory.search("alpha rollout decision", mode="vec")
+    assert _access_snapshot(mock_memory) != before
+
+
 # --- CLI ----------------------------------------------------------------------
 
 

@@ -78,8 +78,18 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
             with contextlib.suppress(Exception):
                 prefs = mem.contextual.context.get_preferences()
 
+        # Diagnostic-only, not a user-visible retrieval: without this, running
+        # `memo debug-recall` writes an access-log row (search_ops.py's
+        # `_stage_record_usage`) for whatever it surfaces, inflating
+        # `access_count` on the memories being inspected — the same signal
+        # `memo usefulness` / `dead_weight()` read to decide what's noise.
         traced = mem.search_with_trace(
-            prompt, limit=search_k, mode=mode, recency=True, exclude_types=exclude_types
+            prompt,
+            limit=search_k,
+            mode=mode,
+            recency=True,
+            exclude_types=exclude_types,
+            _track_usage=False,
         )
         candidates, trace = traced["hits"], traced["trace"]
         reranker_ran = any(t.get("stage") == "rerank" for t in trace)
