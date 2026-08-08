@@ -20,7 +20,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
@@ -29,6 +29,9 @@ from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.cli_eval_bench import bench_group
 from memo.config import Config
+
+if TYPE_CHECKING:
+    from memo.eval_against import AgainstResult
 
 _CACHE_TTL_S = 24 * 3600
 
@@ -300,12 +303,149 @@ def eval_relations_cmd(labels_path: Path, gate: bool, as_json: bool) -> None:
         raise click.exceptions.Exit(1)
 
 
+def _run_gate(
+    rows: list[Any],
+    cfg: Config,
+    *,
+    labels_fingerprint: str,
+    k: int,
+    corpus_fingerprint: str,
+) -> eval_recall.GateResult:
+    """Load the machine-local baseline and check `rows` against it.
+
+    `corpus_fingerprint` is what lets the result distinguish a code regression
+    from corpus drift; see `eval_recall.check_gate`.
+    """
+    bp = _baseline_path(cfg)
+    if not bp.exists():
+        raise click.ClickException(
+            f"no gate baseline at {bp} — seed it once with "
+            "`memo eval recall --labels <set> --update-baseline`"
+        )
+    try:
+        baseline = json.loads(bp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"unreadable baseline {bp}: {exc}") from exc
+    return eval_recall.check_gate(
+        rows,
+        baseline,
+        labels_fingerprint=labels_fingerprint,
+        k=k,
+        corpus_fingerprint=corpus_fingerprint,
+    )
+
+
+def _resolve_cache_flags(
+    *,
+    gate: bool,
+    update_baseline: bool,
+    graph_ab: bool,
+    against_ref: str | None,
+    force: bool,
+    no_cache: bool,
+) -> tuple[bool, bool]:
+    """Fresh numbers are mandatory for anything that renders a verdict.
+
+    `--gate`/`--update-baseline`/`--graph-ab` need FORCE (skip the cache
+    read; a plain run may still write it). `--against` needs the stronger
+    NO_CACHE (skip the read AND the write) — `force` alone would still let
+    the current side's experimental numbers poison the shared cache that
+    every other worktree on this machine reads from.
+    """
+    if gate or update_baseline or graph_ab:
+        force = True
+    if against_ref:
+        no_cache = True
+    return force, no_cache
+
+
+def _validate_against_flags(
+    against_ref: str | None,
+    quick: bool,
+    max_prompts: int | None,
+    gate: bool,
+    update_baseline: bool,
+    graph_ab: bool,
+) -> None:
+    """--against requires both sides to score the same prompt set, and it
+    exits via `sys.exit` before --gate's, --update-baseline's, or
+    --graph-ab's own logic ever runs — combined with any of them, it
+    silently discards the flag's effect the user actually asked for (no
+    baseline written, no gate check performed, no graph A/B table printed).
+    """
+    if not against_ref:
+        return
+    if quick or max_prompts is not None:
+        bad = "--quick" if quick else "--max-prompts"
+        raise click.ClickException(
+            f"{bad} cannot be combined with --against — both sides of the "
+            "comparison must evaluate the same prompt set, or the delta "
+            "silently stops meaning anything."
+        )
+    if gate or update_baseline:
+        bad = "--gate" if gate else "--update-baseline"
+        raise click.ClickException(
+            f"{bad} cannot be combined with --against — --against prints its "
+            f"own comparison and exits before {bad}'s effect would run, so "
+            f"{bad} would silently do nothing."
+        )
+    if graph_ab:
+        raise click.ClickException(
+            "--graph-ab cannot be combined with --against — the graph A/B "
+            "sweep runs before --against's comparison and exits before its "
+            "table is ever printed, so --graph-ab would silently burn two "
+            "extra eval sweeps for output nobody sees."
+        )
+
+
+def _run_against(
+    against_ref: str,
+    *,
+    rows: list[Any],
+    labels_path: str | None,
+    k: int,
+    profile: str | None,
+    config_names: tuple[str, ...],
+    labels_fingerprint: str,
+) -> AgainstResult:
+    """Run the ref side and compare it against `rows` (the current side).
+
+    `resolve_repo_root`/`run_against` can raise `eval_against.AgainstError`
+    for a bad ref, a missing git repo, or a polluted/non-JSON subprocess
+    payload (see m3). Translated here into `click.ClickException` so the
+    failure reads as a controlled CLI error instead of a raw traceback —
+    otherwise `exit=1` from a broken pipeline is indistinguishable from a
+    genuine ranking regression, which undercuts the point of surfacing the
+    real reason at all.
+    """
+    from memo import eval_against
+
+    try:
+        repo_root = eval_against.resolve_repo_root(Path(__file__).resolve().parent)
+        ref_argv = eval_against.build_eval_argv(
+            labels_path=labels_path, k=k, profile=profile, configs=config_names
+        )
+        ref_run = eval_against.run_against(against_ref, repo_root=repo_root, argv=ref_argv)
+    except eval_against.AgainstError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return eval_against.compare_rows(
+        [r.__dict__ for r in rows],
+        ref_run.rows,
+        current_labels_fingerprint=labels_fingerprint,
+        ref_labels_fingerprint=ref_run.labels_fingerprint,
+    )
+
+
 @eval_group.command(name="recall")
 @click.option("--k", type=int, default=3, help="Top-K to score (default: 3).")
 @click.option(
     "--labels",
     "labels_path",
-    type=click.Path(exists=True, dir_okay=False),
+    # resolve_path=True: --against forwards this path verbatim into a
+    # subprocess whose cwd is a *different* worktree — a relative path would
+    # resolve against the wrong directory and silently score the two sides
+    # against different label sets.
+    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
     help="JSON label set (schema memo.eval_recall.labels.v1). "
     "Defaults to the built-in example — supply your own corpus "
     "for meaningful numbers.",
@@ -354,6 +494,14 @@ def eval_relations_cmd(labels_path: Path, gate: bool, as_json: bool) -> None:
     is_flag=True,
     help="Save the current best precision@K / noise@K as the gate baseline.",
 )
+@click.option(
+    "--against",
+    "against_ref",
+    default=None,
+    help="Compare this worktree's code against a git ref on the SAME live corpus. "
+    "Both runs are uncached, so the corpus term cancels and the delta is the diff. "
+    "This — not --gate — is the check a ranking change has to clear.",
+)
 def eval_recall_cmd(
     k: int,
     labels_path: str | None,
@@ -369,6 +517,7 @@ def eval_recall_cmd(
     graph_ab: bool,
     gate: bool,
     update_baseline: bool,
+    against_ref: str | None,
 ) -> None:
     """Precision@K / noise@K per retrieval config over labeled prompts.
 
@@ -378,10 +527,17 @@ def eval_recall_cmd(
       memo eval recall --labels eval/regression_labels.json --update-baseline
       memo eval recall --labels eval/regression_labels.json --gate
     """
+    _validate_against_flags(against_ref, quick, max_prompts, gate, update_baseline, graph_ab)
+
     cfg = Config.from_env()
-    # The gate compares fresh numbers — never trust a stale cache for a pass/fail.
-    if gate or update_baseline or graph_ab:
-        force = True
+    force, no_cache = _resolve_cache_flags(
+        gate=gate,
+        update_baseline=update_baseline,
+        graph_ab=graph_ab,
+        against_ref=against_ref,
+        force=force,
+        no_cache=no_cache,
+    )
 
     if labels_path:
         try:
@@ -480,12 +636,35 @@ def eval_recall_cmd(
             "summary": eval_recall.graph_ab_summary(comparison),
         }
 
+    if against_ref:
+        against_result = _run_against(
+            against_ref,
+            rows=rows,
+            labels_path=labels_path,
+            k=k,
+            profile=profile,
+            config_names=tuple(config_names),
+            labels_fingerprint=labels.fingerprint(),
+        )
+        if as_json:
+            click.echo(json.dumps(against_result.__dict__, ensure_ascii=False, indent=2))
+        else:
+            color = "green" if against_result.passed else "red"
+            mark = "✓" if against_result.passed else "✗"
+            console.print(f"[{color}]{mark}[/{color}] vs {against_ref}: {against_result.message}")
+        sys.exit(0 if against_result.passed else 1)
+
     if update_baseline:
         # Persist the FULL metrics (precision/noise ∪ avoid@k / avoid_leak@k) so
         # check_gate can enforce the ⛔ coverage/leakage floors — bare
         # gate_metrics wrote neither, leaving those checks vacuously true forever.
         metrics = eval_recall.full_gate_metrics(rows)
-        payload = {**metrics, "k": k, "labels_fingerprint": labels.fingerprint()}
+        payload = eval_recall.baseline_payload(
+            rows,
+            k=k,
+            labels_fingerprint=labels.fingerprint(),
+            corpus_fingerprint=corpus_fp,
+        )
         bp = _baseline_path(cfg)
         _atomic_write_json(bp, payload)
         console.print(
@@ -496,21 +675,12 @@ def eval_recall_cmd(
         return
 
     if gate:
-        bp = _baseline_path(cfg)
-        if not bp.exists():
-            raise click.ClickException(
-                f"no gate baseline at {bp} — seed it once with "
-                "`memo eval recall --labels <set> --update-baseline`"
-            )
-        try:
-            baseline = json.loads(bp.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise click.ClickException(f"unreadable baseline {bp}: {exc}") from exc
-        result = eval_recall.check_gate(
+        result = _run_gate(
             rows,
-            baseline,
+            cfg,
             labels_fingerprint=labels.fingerprint(),
             k=k,
+            corpus_fingerprint=corpus_fp,
         )
         if as_json:
             click.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
