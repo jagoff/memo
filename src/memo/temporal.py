@@ -461,7 +461,7 @@ Body: {(r2.body or "")[:1000]}
         cutoff_dt = _parse_ts(cutoff)
 
         # Get all memories, filter by date
-        all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP)
+        all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP, with_bodies=False)
         if len(all_records) >= _ANALYSIS_ROW_CAP:
             _log.warning(
                 "detect_stale_memories: corpus hit the %d-row cap; older "
@@ -514,7 +514,7 @@ Body: {(r2.body or "")[:1000]}
             - type_distribution_over_time: how memory types change over time
             - most_active_entities: entities with most temporal churn
         """
-        all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP)
+        all_records = self.memory.list(limit=_ANALYSIS_ROW_CAP, with_bodies=False)
         if len(all_records) >= _ANALYSIS_ROW_CAP:
             _log.warning(
                 "detect_temporal_patterns: corpus hit the %d-row cap; older "

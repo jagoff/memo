@@ -204,7 +204,9 @@ class _OutcomeFeedbackOpsMixin(_MemoryBase):
             raise ValueError("min_utility must be between 0 and 1")
         candidates: list[dict[str, Any]] = []
         total = max(0, int(self.store.count()))
-        for record in self.list(limit=max(1, total + 1)):
+        # Metadata-only sweep: the verdict comes from `extra.outcome_stats`,
+        # so materializing every body would be pure overhead.
+        for record in self.list(limit=max(1, total + 1), with_bodies=False):
             if record.type in _LEARNING_TYPES or record.type in {"secret", "reference"}:
                 continue
             stats = _stats(dict(record.extra or {}))

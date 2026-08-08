@@ -21,7 +21,7 @@ class _FakeMem:
         self.records = records
         self.deleted = []
 
-    def list(self, limit=20, type_=None):
+    def list(self, limit=20, type_=None, **_kw):
         return [_FakeRec(r) for r in self.records]
 
     def delete(self, id_, *, actor=None):

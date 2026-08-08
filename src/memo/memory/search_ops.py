@@ -1574,18 +1574,29 @@ class _SearchOpsMixin(_MemoryBase):
         type_: str | None = None,
         include_forgotten: bool = False,
         updated_since: str | None = None,
+        with_bodies: bool = True,
     ) -> list[MemoryRecord]:
-        """Recent entries by `updated` desc. Body included for each.
+        """Recent entries by `updated` desc. Body included unless opted out.
 
         Soft-forgotten memories (see `forget`) are excluded unless
         `include_forgotten=True`. `updated_since` (ISO-8601) filters at the
         DB level — incremental callers (e.g. contradiction scans) get the
         freshest anchors within `limit` instead of post-filtering a page of
         older rows.
+
+        `with_bodies=False` returns the same rows with `body=""` and skips
+        `_read_body` entirely. Every body costs a disk read plus a YAML
+        frontmatter parse (or an FTS lookup for vault-ingest rows), so a
+        full-corpus sweep of ~10k rows spends ~44s materializing text that
+        metadata-only callers (analytics, temporal, federation preview,
+        procedure candidates) immediately discard. Default stays True so
+        no existing caller changes semantics.
         """
         rows = self.store.list_recent(limit=limit, type_=type_, updated_since=updated_since)
         if not include_forgotten:
             rows = [r for r in rows if not (r.get("extra") or {}).get(IS_FORGOTTEN_KEY)]
+        if not with_bodies:
+            return [record_from_row(r) for r in rows]
         return [record_from_row(r, body=self._read_body(r["path"])) for r in rows]
 
     # -- get ----------------------------------------------------------------

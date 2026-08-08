@@ -66,7 +66,7 @@ class AnalyticsEngine:
         # The newest slice — big enough to characterise the corpus, bounded so
         # the command stays cheap. Distributions below describe this sample;
         # the total comes from the store so it never reports the page size.
-        memories = self.memory.list(limit=_SAMPLE_LIMIT)
+        memories = self.memory.list(limit=_SAMPLE_LIMIT, with_bodies=False)
 
         sample_size = len(memories)
         total_memories = self.memory.store.count()
@@ -128,7 +128,7 @@ class AnalyticsEngine:
         Returns:
             GrowthData with dates and counts.
         """
-        memories = self.memory.list(limit=_SAMPLE_LIMIT)
+        memories = self.memory.list(limit=_SAMPLE_LIMIT, with_bodies=False)
 
         # Group by date
         date_counts: Counter[str] = Counter()

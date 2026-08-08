@@ -34,9 +34,12 @@ def ops_group() -> None:
     """Maintenance jobs (GC, vault re-ingest, ingest tombstones)."""
 
 
-def _all_records() -> tuple[Any, list[dict]]:
+def _all_records(*, with_bodies: bool = True) -> tuple[Any, list[dict]]:
+    """Whole-corpus sweep. Pass `with_bodies=False` when the GC rule keys off
+    `extra` only — reading every body off disk costs ~44s on a 10k-row corpus
+    and the duplicate rule is the only one that actually needs the text."""
     mem = _get_memory(Config.from_env())
-    return mem, [r.to_dict() for r in mem.list(limit=_LIST_ALL)]
+    return mem, [r.to_dict() for r in mem.list(limit=_LIST_ALL, with_bodies=with_bodies)]
 
 
 def _delete_records(mem: Any, records: list[dict]) -> int:
@@ -53,7 +56,7 @@ def _delete_records(mem: Any, records: list[dict]) -> int:
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def gc_vault_orphans_cmd(dry_run: bool, as_json: bool) -> None:
     """Delete memo records whose vault source file no longer exists on disk."""
-    mem, records = _all_records()
+    mem, records = _all_records(with_bodies=False)
     orphans = find_vault_orphans(records)
     deleted = 0 if dry_run else _delete_records(mem, orphans)
     result = {
