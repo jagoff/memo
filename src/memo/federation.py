@@ -188,9 +188,14 @@ class FederationManager:
     def __init__(self, memory: Any) -> None:
         self.memory = memory
 
-    def _records(self) -> list[Any]:
+    def _records(self, *, with_bodies: bool = True) -> list[Any]:
+        """Whole-corpus sweep. `with_bodies=False` for the metadata-only legs
+        (preview, the already-applied receipt set) — reading and YAML-parsing
+        every body just to drop it costs ~44s on a 10k-row corpus."""
         total = max(0, int(self.memory.store.count()))
-        return self.memory.list(limit=max(1, min(total + 1, _MAX_RECORDS + 1)))
+        return self.memory.list(
+            limit=max(1, min(total + 1, _MAX_RECORDS + 1)), with_bodies=with_bodies
+        )
 
     def preview(
         self,
@@ -209,7 +214,7 @@ class FederationManager:
                 "type": record.type,
                 "visibility": str((record.extra or {}).get("visibility") or Visibility.OWNER.value),
             }
-            for record in self._records()
+            for record in self._records(with_bodies=False)
             if record.type != "secret"
             and visible_to(record.extra, principal=target, owner_principal=owner)
         ]
@@ -385,7 +390,7 @@ class FederationManager:
                 str(federation.get("bundle_id") or ""),
                 str(federation.get("source_id") or ""),
             )
-            for record in self._records()
+            for record in self._records(with_bodies=False)
             if isinstance((record.extra or {}).get("federation"), dict)
             for federation in [(record.extra or {})["federation"]]
         }

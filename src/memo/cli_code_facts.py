@@ -202,7 +202,7 @@ def mine_code_facts(conn: sqlite3.Connection, *, repo_id: str, top: int) -> list
 def _existing_hashes(mem: Any) -> set[str]:
     """Provenance hashes of codegraph-derived fact memories already saved."""
     hashes: set[str] = set()
-    for rec in mem.list(type_="fact", limit=_EXISTING_SCAN_LIMIT):
+    for rec in mem.list(type_="fact", limit=_EXISTING_SCAN_LIMIT, with_bodies=False):
         if "codegraph-derived" not in (rec.tags or []):
             continue
         value = (rec.extra or {}).get("provenance_hash")
