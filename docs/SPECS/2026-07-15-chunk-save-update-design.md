@@ -1,3 +1,5 @@
+Status: shipped in #32 (feat: MCP client-sampling synthesis + save-time chunk emission + v3.6.0 metadata fix, merged 2026-07-16). `maybe_emit_chunks` is wired into `write_ops.save()` and `update_ops.update()` exactly as designed (commit 3e6f9c2c).
+
 # Chunk emission at save/update time — design
 
 **Date:** 2026-07-15

@@ -204,6 +204,69 @@ def test_memo_temporal_timeline_returns_envelope_for_known_entity(tmp_cfg) -> No
         entity_name="mlx",
         entity_type="technology",
     )
+    # Additive honesty fields — a one-event timeline is not truncated.
+    assert result["event_count"] == 1
+    assert result["truncated"] is False
+
+
+def test_memo_temporal_timeline_keeps_the_newest_events_and_reports_the_total(
+    tmp_cfg,
+) -> None:
+    """`build_entity_timeline` emits one 200-char-snippet event per mention, so
+    a hub entity's timeline tracks the corpus: the conformance gate measured
+    110,326 tokens for an entity with 700 mentions against a 10,000-token cap.
+    The MCP surface keeps the most recent `limit`, in chronological order, and
+    reports the true total."""
+    from memo.memory import Memory
+    from memo.server_temporal import register
+    from memo.temporal import EntityTimeline, TimelineEvent
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    events = [
+        TimelineEvent(
+            memory_id=f"mem{n:03d}",
+            title=f"event {n}",
+            date=f"2024-03-{n + 1:02d}T10:00:00+00:00",
+            type="note",
+            snippet="x" * 200,
+        )
+        for n in range(20)
+    ]
+    mem.temporal.build_entity_timeline.return_value = EntityTimeline(
+        entity_name="hub",
+        entity_type="concept",
+        events=events,
+        first_seen=events[0].date,
+        last_seen=events[-1].date,
+    )
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    result = tools["memo_temporal_timeline"](entity="hub", limit=5)
+
+    assert result is not None
+    assert [e["memory_id"] for e in result["events"]] == [f"mem{n:03d}" for n in range(15, 20)]
+    assert result["event_count"] == 20
+    assert result["truncated"] is True
+    # The span stays honest even though the early events were dropped.
+    assert result["first_seen"] == events[0].date
+    assert result["last_seen"] == events[-1].date
+
+    # limit=0 empties the list rather than returning everything (the trap in
+    # a bare `events[-cap:]`).
+    zero = tools["memo_temporal_timeline"](entity="hub", limit=0)
+    assert zero is not None
+    assert zero["events"] == []
+    assert zero["event_count"] == 20
+    assert zero["truncated"] is True
+
+    # A limit past the end returns the whole timeline, untruncated.
+    whole = tools["memo_temporal_timeline"](entity="hub", limit=999)
+    assert whole is not None
+    assert len(whole["events"]) == 20
+    assert whole["truncated"] is False
 
 
 # ---------------------------------------------------------------------------

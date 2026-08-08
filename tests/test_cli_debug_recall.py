@@ -392,3 +392,58 @@ def test_debug_recall_empty_index(tmp_cfg: Config, monkeypatch: pytest.MonkeyPat
     )
     assert result.exit_code == 0, result.output
     assert "no candidates" in _strip_ansi(result.output)
+
+
+def _open_mem(tmp_cfg: Config) -> Any:
+    from memo.memory import Memory
+
+    return Memory(
+        Config(
+            data_dir=tmp_cfg.data_dir,
+            vault_path=tmp_cfg.vault_path,
+            state_dir=tmp_cfg.state_dir,
+            embedder_model=_STUB_MODEL,
+            embedder_dims=4,
+            reranker_enabled=False,
+        )
+    )
+
+
+def _access_snapshot(tmp_cfg: Config) -> tuple[int, int, str | None]:
+    mem = _open_mem(tmp_cfg)
+    try:
+        row = mem.store._conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(access_count), 0), MAX(last_accessed) FROM access"
+        ).fetchone()
+        return tuple(row)
+    finally:
+        mem.close()
+
+
+def test_debug_recall_does_not_inflate_access_count(
+    tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`memo debug-recall` is diagnostic-only (its own docstring says so), not
+    the hook path; without `_track_usage=False` it would write an access-log
+    row (search_ops.py's `_stage_record_usage`) for whatever it surfaces,
+    inflating access_count — the same signal `memo usefulness` /
+    `dead_weight()` read to decide what's noise."""
+    _install_keyword_stub(monkeypatch)
+    alpha_id, _beta_id = _seed(tmp_cfg)
+
+    before = _access_snapshot(tmp_cfg)
+    result = CliRunner().invoke(debug_recall_cmd, [_PROMPT, "--json"], env=_cli_env(tmp_cfg))
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    # Not vacuous: the diagnostic actually surfaced the seeded memory.
+    assert any(h["id8"] == alpha_id[:8] for h in payload["hits"])
+    assert _access_snapshot(tmp_cfg) == before
+
+    # Contrast: a real (non-diagnostic) search against the same corpus DOES
+    # bump it.
+    mem = _open_mem(tmp_cfg)
+    try:
+        mem.search(_PROMPT, mode="vec")
+    finally:
+        mem.close()
+    assert _access_snapshot(tmp_cfg) != before

@@ -12,6 +12,7 @@ from typing import Annotated, Any
 from fastmcp import FastMCP
 from pydantic import Field
 
+from memo.mcp_budget import bounded_list
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, WRITE, annotated_tool
 
@@ -75,7 +76,25 @@ def register(server: FastMCP, memory: Memory) -> None:
                 "(matched after strip+lowercase). None matches any type."
             ),
         ] = None,
+        limit: Annotated[
+            int,
+            Field(
+                description="Maximum memory ids to return (floored to 0). A full "
+                "page (exactly `limit` ids) means the entity has more — narrow "
+                "with `type`, or use the library/CLI path for the whole set."
+            ),
+        ] = 200,
     ) -> list[str]:
         """Memory IDs that mention `name` (and optionally a specific
-        entity type). Returns a list of full UUIDs."""
-        return memory.graph.entity_memories(name, type_=type)
+        entity type). Returns a list of full UUIDs, capped at `limit`.
+
+        `graph.entity_memories` runs an unfiltered `SELECT` — one row per
+        mention, no LIMIT — so a hub entity's id list tracks the corpus. The
+        conformance gate measured 12,429 tokens for a single entity with 700
+        mentions, over the 10,000-token MCP response cap, which makes the
+        tool unusable on exactly the entities most worth looking up. The
+        library and CLI paths still return everything; only the MCP surface,
+        the one with a token budget, is trimmed.
+        """
+        kept, _ = bounded_list(memory.graph.entity_memories(name, type_=type), cap=max(0, limit))
+        return kept

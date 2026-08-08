@@ -11,11 +11,36 @@ from typing import Any
 import frontmatter
 from fastmcp import Context, FastMCP
 
+from memo.mcp_budget import bounded_list
 from memo.memory import Memory
 from memo.server_annotations import DESTRUCTIVE, READ_ONLY, WRITE, annotated_tool
 from memo.server_common import run_synth
 
 _log = logging.getLogger(__name__)
+
+# Per-result cap on the `sources` provenance list. `synthesize_cross_cluster`
+# returns every id in the cluster it synthesised, and a cluster's size tracks
+# the CORPUS, not `max_clusters`: measured on the conformance corpus, 9,043
+# tokens at 2,000 memories (just under the 10k cap, which is why it slipped
+# through) and 44,043 at 10,001. Bounded here at the MCP boundary rather than
+# in `synthesize_cross_cluster` itself -- the save path writes the full list to
+# the synthesis memory's `synthesis_sources` frontmatter, so the core return
+# must stay complete. `total` reports the real cluster size and `sources_hash`
+# still identifies the exact set.
+_MAX_SYNTHESIS_SOURCES = 20
+
+
+def _bounded_synthesis(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Trim each synthesis result's `sources` list, keeping the true total."""
+    bounded: list[dict[str, Any]] = []
+    for result in results:
+        sources = result.get("sources") if isinstance(result, dict) else None
+        if not isinstance(sources, list):
+            bounded.append(result)
+            continue
+        kept, meta = bounded_list(sources, cap=_MAX_SYNTHESIS_SOURCES)
+        bounded.append({**result, "sources": kept, **meta})
+    return bounded
 
 
 def _delete_synthesis(memory: Memory, id: str) -> dict[str, Any]:
@@ -73,6 +98,11 @@ def register(server: FastMCP, memory: Memory) -> None:
         to MEMO_SAMPLING_MAX_CALLS, then local MLX (list return — no
         synthesizer field).
 
+        Each result's `sources` list is a sample of the cluster that produced
+        it; `total` carries the cluster's real size and `truncated` says
+        whether any ids were dropped. A saved synthesis keeps the complete
+        list in its `synthesis_sources` frontmatter.
+
         Args:
             dry_run: If True (default), propose without saving.
             threshold: Cosine similarity for clustering (default 0.78, looser than consolidation).
@@ -92,7 +122,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         res, _synthesizer = await run_synth(
             memory, ctx, lambda: memory.synthesize_cross_cluster(**kwargs)
         )
-        return res
+        return _bounded_synthesis(res)
 
     @annotated_tool(server, **READ_ONLY)
     def memo_synthesize_list(

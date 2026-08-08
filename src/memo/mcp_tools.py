@@ -2,8 +2,10 @@
 
 Uses a ToolSpec/Param pattern so new tools can be added as compact declarative
 specs instead of boilerplate FastMCP server_*.py files. Existing server_*.py
-modules stay unchanged — this module is the home for *new* tools going forward
-and a migration target for the old ones.
+modules stay unchanged and are NOT being migrated here — porting the ~160
+tools already living in server_*.py was considered and explicitly deferred
+indefinitely (housekeeping audit, 2026-08-07); this module is only the home
+for *new* tools going forward.
 
 Usage
 -----

@@ -40,6 +40,12 @@ from memo.memory.search_pipeline import (
     run_search_stages,
 )
 from memo.perf import timer
+from memo.search_deadline import (
+    COST_EMBED_MS,
+    COST_EXPANSION_MS,
+    COST_GRAPH_SIGNAL_MS,
+    Deadline,
+)
 from memo.store.bm25_queries import _normalize_as_of
 from memo.tiers import REFERENCE_TYPES, SENSITIVE_TYPES
 
@@ -167,6 +173,8 @@ class _SearchOpsMixin(_MemoryBase):
         _track_usage: bool = True,
         _trace: list[dict[str, Any]] | None = None,
         budget_ms: float | None = None,
+        _budget_ms: int | None = None,
+        _degraded: list[str] | None = None,
     ) -> list[MemoryRecord]:
         """Top-k search. Three modes:
 
@@ -210,11 +218,20 @@ class _SearchOpsMixin(_MemoryBase):
             _track_usage: Internal callers may disable access/co-recall writes
                 when search is only a derived processing step rather than a
                 user-visible retrieval.
+            _degraded: Out-parameter, same shape as `_trace`. Pass a list and
+                every stage shed to stay inside the wall-clock budget appends
+                its name to it. Degrade and say so — a search that quietly
+                dropped its reranker looks identical to one that ran it.
+            _budget_ms: Override for MEMO_SEARCH_BUDGET_MS. 0 = no deadline.
         """
 
         def _add_trace(stage: str, **data: Any) -> None:
             if _trace is not None:
                 _trace.append({"stage": stage, **data})
+
+        # Rung zero: the clock every rung below consults. Started before any
+        # stage so the budget covers the whole search, not the tail of it.
+        _deadline = Deadline.start(_budget_ms)
 
         if not query or not query.strip():
             _add_trace("candidate_generation", mode=mode, output_count=0)
@@ -261,6 +278,8 @@ class _SearchOpsMixin(_MemoryBase):
             track_usage=_track_usage,
             as_of=as_of,
             trace=_add_trace,
+            deadline=_deadline,
+            degraded=_degraded,
         )
         rows, emb = self._build_candidate_pool(
             query,
@@ -273,6 +292,8 @@ class _SearchOpsMixin(_MemoryBase):
             date_to=date_to,
             as_of=as_of,
             trace=_add_trace,
+            deadline=_deadline,
+            degraded=_degraded,
         )
         ctx.emb = emb
 
@@ -356,6 +377,8 @@ class _SearchOpsMixin(_MemoryBase):
         date_to: str | None,
         as_of: str | None,
         trace: TraceFn | None,
+        deadline: Deadline | None = None,
+        degraded: list[str] | None = None,
     ) -> tuple[
         list[dict[str, Any]],
         list[dict[str, Any]],
@@ -379,6 +402,10 @@ class _SearchOpsMixin(_MemoryBase):
         Returns ``(vec_hits, bm_hits, exact_hits, fact_hits, emb, resized_input_k)``.
         ``emb`` is None when the vec leg was skipped/failed; callers then fall
         back to the lexical pool only.
+
+        ``deadline``/``degraded`` are forwarded to the vec leg (see
+        ``_hybrid_vec_leg``); the lexical/fact legs are cheap SQL reads with
+        no stage worth shedding.
         """
         emb: list[float] | None = None
         k_each = max(input_k * 2, 20)
@@ -416,64 +443,20 @@ class _SearchOpsMixin(_MemoryBase):
                 as_of=as_of,
             )
 
-        def _vec_leg() -> tuple[list[dict[str, Any]], list[float] | None]:
-            """Embed the query and fetch vec candidates (+ hype fold)."""
-            try:
-                _query_for_embed = query
-                _hyde_enabled = flag_bool("MEMO_HYDE_ENABLED")
-                if _hyde_enabled:
-                    _log.debug("HyDE enabled, generating hypothetical doc")
-                    _hyde_doc = self._generate_hyde_document(query)
-                    if _hyde_doc:
-                        _query_for_embed = _hyde_doc
-                        emit(
-                            trace,
-                            "hyde",
-                            original_query=query,
-                            hyde_doc=_hyde_doc[:100] + "…",
-                        )
-                        _log.info("HyDE doc generated: %s", _hyde_doc[:100])
-                    else:
-                        _log.warning("HyDE returned empty doc, falling back to original query")
-                emb_local = self.embedder.embed_query(_query_for_embed)
-                vec_local = self.store.search(
-                    emb_local,
-                    limit=k_each,
-                    type_=type_,
-                    exclude_types=exclude_types,
-                    date_from=date_from,
-                    date_to=date_to,
-                    exclude_tags=exclude_tags,
-                    as_of=as_of,
-                )
-                if flag_bool("MEMO_HYPE_ENABLED"):
-                    before = len(vec_local)
-                    vec_local = self._hype_fold_candidates(
-                        vec_local,
-                        emb_local,
-                        k_each,
-                        type_=type_,
-                        exclude_types=exclude_types,
-                        exclude_tags=exclude_tags,
-                        as_of=as_of,
-                    )
-                    variant = self._hype_variant_mismatch_warning()
-                    emit(
-                        trace,
-                        "hype_fold",
-                        mode="hybrid",
-                        input_count=before,
-                        output_count=len(vec_local),
-                        **({"warning": variant} if variant else {}),
-                    )
-                return vec_local, emb_local
-            except Exception as exc:
-                _log.warning(
-                    "embedder unavailable, vec leg disabled in hybrid mode: %s",
-                    exc,
-                    exc_info=True,
-                )
-                return [], None
+        def _run_vec_leg() -> tuple[list[dict[str, Any]], list[float] | None]:
+            return self._hybrid_vec_leg(
+                query,
+                k_each=k_each,
+                type_=type_,
+                exclude_types=exclude_types,
+                exclude_tags=exclude_tags,
+                date_from=date_from,
+                date_to=date_to,
+                as_of=as_of,
+                trace=trace,
+                deadline=deadline,
+                degraded=degraded,
+            )
 
         if parallel:
             # Submit the lexical/fact legs first so they overlap the embed.
@@ -481,12 +464,12 @@ class _SearchOpsMixin(_MemoryBase):
                 bm_future = pool.submit(_run_bm25_future)
                 exact_future = pool.submit(_run_exact_future)
                 fact_future = pool.submit(_run_facts) if fact_enabled else None
-                vec_hits, emb = _vec_leg()
+                vec_hits, emb = _run_vec_leg()
                 bm_hits = bm_future.result()
                 exact_hits = exact_future.result()
                 fact_hits = fact_future.result() if fact_future is not None else []
         else:
-            vec_hits, emb = _vec_leg()
+            vec_hits, emb = _run_vec_leg()
             bm_hits = _run_bm25_future()
             exact_hits = _run_exact_future()
             fact_hits = _run_facts()
@@ -511,6 +494,113 @@ class _SearchOpsMixin(_MemoryBase):
                     input_k = max(limit + 5, 15)
         return vec_hits, bm_hits, exact_hits, fact_hits, emb, input_k
 
+    def _hybrid_vec_leg(
+        self,
+        query: str,
+        *,
+        k_each: int,
+        type_: str | None,
+        exclude_types: set[str] | None,
+        exclude_tags: set[str] | None,
+        date_from: str | None,
+        date_to: str | None,
+        as_of: str | None,
+        trace: TraceFn | None,
+        deadline: Deadline | None = None,
+        degraded: list[str] | None = None,
+    ) -> tuple[list[dict[str, Any]], list[float] | None]:
+        """Embed the query and fetch vec candidates (+ hype fold) for the
+        hybrid leg of `_build_hybrid_legs`.
+
+        `deadline`, when given, gates the two most expensive sub-steps (HyDE
+        expansion, embed) the same way `_rerank` and
+        `_apply_curated_graph_order` do: a stage that would not fit inside
+        the remaining budget is skipped rather than started, and its name is
+        appended to `degraded`.
+        """
+        try:
+            _query_for_embed = query
+            _hyde_enabled = flag_bool("MEMO_HYDE_ENABLED")
+            # Rung two: query expansion. HyDE is an LLM generation layered ON
+            # TOP of the embed it feeds, so affording it means affording both
+            # — generating a hypothetical document and then having no budget
+            # left to embed it is the worst of both. Hence the summed cost,
+            # which also makes this rung shed strictly before rung four:
+            # under pressure the search loses the enrichment first and the
+            # semantic leg only after that.
+            if (
+                _hyde_enabled
+                and deadline is not None
+                and not deadline.afford(COST_EXPANSION_MS + COST_EMBED_MS)
+            ):
+                _hyde_enabled = False
+                emit(trace, "hyde_skip", reason="budget")
+                if degraded is not None:
+                    degraded.append("expansion_skipped")
+            if _hyde_enabled:
+                _log.debug("HyDE enabled, generating hypothetical doc")
+                _hyde_doc = self._generate_hyde_document(query)
+                if _hyde_doc:
+                    _query_for_embed = _hyde_doc
+                    emit(
+                        trace,
+                        "hyde",
+                        original_query=query,
+                        hyde_doc=_hyde_doc[:100] + "…",
+                    )
+                    _log.info("HyDE doc generated: %s", _hyde_doc[:100])
+                else:
+                    _log.warning("HyDE returned empty doc, falling back to original query")
+            # Rung four: the vec leg's embed. An MLX embed that cannot finish
+            # inside the budget is the 300s hang this module prevents; the
+            # check sits at the decision, never hoisted above the HyDE
+            # branch above (which can burn arbitrary un-timeboxed wall-clock
+            # of its own via `chat.chat()`).
+            if deadline is not None and not deadline.afford(COST_EMBED_MS):
+                emit(trace, "embed_skip", mode="hybrid", reason="budget")
+                if degraded is not None:
+                    degraded.append("embed_skipped_bm25_only")
+                return [], None
+            emb_local = self.embedder.embed_query(_query_for_embed)
+            vec_local = self.store.search(
+                emb_local,
+                limit=k_each,
+                type_=type_,
+                exclude_types=exclude_types,
+                date_from=date_from,
+                date_to=date_to,
+                exclude_tags=exclude_tags,
+                as_of=as_of,
+            )
+            if flag_bool("MEMO_HYPE_ENABLED"):
+                before = len(vec_local)
+                vec_local = self._hype_fold_candidates(
+                    vec_local,
+                    emb_local,
+                    k_each,
+                    type_=type_,
+                    exclude_types=exclude_types,
+                    exclude_tags=exclude_tags,
+                    as_of=as_of,
+                )
+                variant = self._hype_variant_mismatch_warning()
+                emit(
+                    trace,
+                    "hype_fold",
+                    mode="hybrid",
+                    input_count=before,
+                    output_count=len(vec_local),
+                    **({"warning": variant} if variant else {}),
+                )
+            return vec_local, emb_local
+        except Exception as exc:
+            _log.warning(
+                "embedder unavailable, vec leg disabled in hybrid mode: %s",
+                exc,
+                exc_info=True,
+            )
+            return [], None
+
     def _build_candidate_pool(
         self,
         query: str,
@@ -524,6 +614,8 @@ class _SearchOpsMixin(_MemoryBase):
         date_to: str | None,
         as_of: str | None,
         trace: TraceFn | None,
+        deadline: Deadline | None = None,
+        degraded: list[str] | None = None,
     ) -> tuple[list[dict[str, Any]], list[float] | None]:
         """Generate the raw candidate rows for every search mode.
 
@@ -531,6 +623,10 @@ class _SearchOpsMixin(_MemoryBase):
         vec/hybrid legs produced (None when the caller opted out of the
         bi-encoder). Extracted verbatim from the historical inline
         `search()` body — same legs, same fusion, same traces.
+
+        ``deadline``/``degraded`` are forwarded to the hybrid leg builder only
+        (the only candidate-generation path with a stage worth shedding);
+        other modes are a single unconditional store call.
         """
         emb = None  # set in vec/hybrid branches; consumed by feedback boost below
 
@@ -650,6 +746,8 @@ class _SearchOpsMixin(_MemoryBase):
                 date_to=date_to,
                 as_of=as_of,
                 trace=trace,
+                deadline=deadline,
+                degraded=degraded,
             )
 
             # Fuse all sources. RRF supports multiple ranked lists. `k` is
@@ -912,7 +1010,12 @@ class _SearchOpsMixin(_MemoryBase):
                 )
         if ctx.reranker_will_run:
             before = len(out)
-            out = self._rerank(ctx.query, out, top_n=ctx.limit)
+            # Rung one: the most expensive stage, and the only one reached here
+            # — `reranker_will_run` already proved the reranker was going to
+            # run, so a skip inside `_rerank` is always a budget decision.
+            out = self._rerank(
+                ctx.query, out, top_n=ctx.limit, deadline=ctx.deadline, degraded=ctx.degraded
+            )
             emit(ctx.trace, "rerank", input_count=before, output_count=len(out))
         else:
             # No reranker ran (disabled per-call — e.g. ask/chat pass
@@ -1059,7 +1162,9 @@ class _SearchOpsMixin(_MemoryBase):
     def _stage_curated_graph_order(
         self, out: list[MemoryRecord], ctx: SearchCtx
     ) -> list[MemoryRecord]:
-        return self._apply_curated_graph_order(ctx.query, out, ctx.trace)
+        return self._apply_curated_graph_order(
+            ctx.query, out, ctx.trace, deadline=ctx.deadline, degraded=ctx.degraded
+        )
 
     def _stage_record_usage(self, out: list[MemoryRecord], ctx: SearchCtx) -> list[MemoryRecord]:
         """Record access + co-recall graph edges (side effects of a
@@ -1114,12 +1219,26 @@ class _SearchOpsMixin(_MemoryBase):
         query: str,
         out: list[MemoryRecord],
         trace: Any,
+        *,
+        deadline: Deadline | None = None,
+        degraded: list[str] | None = None,
     ) -> list[MemoryRecord]:
-        """Apply one identity-safe graph ordering pass without changing scores."""
+        """Apply one identity-safe graph ordering pass without changing scores.
+
+        `deadline`, when given, is rung three of the shed ladder: the budget
+        check sits AFTER both enable gates, so a stage held back by its own
+        flag is never reported as budget-degraded. Skipping costs the ordering
+        pass only — the fused order the records already carry is served.
+        """
         if not out or not flag_bool("MEMO_GRAPH_SIGNAL_ENABLED"):
             return out
         if not flag_bool("MEMO_GRAPH_PROJECTION_ENABLED"):
             trace("graph_signal", enabled=True, touched_count=0, skipped="projection_disabled")
+            return out
+        if deadline is not None and not deadline.afford(COST_GRAPH_SIGNAL_MS):
+            trace("graph_signal", enabled=True, touched_count=0, skipped="budget")
+            if degraded is not None:
+                degraded.append("graph_signal_skipped")
             return out
         try:
             from memo.graph_reason import build_graph_reason

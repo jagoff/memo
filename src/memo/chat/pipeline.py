@@ -76,7 +76,16 @@ def chat_stream(
     *,
     history: list[dict[str, str]] | None = None,
     k: int | None = None,
+    _track_usage: bool = True,
 ) -> Iterator[dict[str, Any]]:
+    """
+    _track_usage: False for non-user-visible callers replaying this pipeline
+        for measurement (e.g. `memo eval chat`'s regression gate) — otherwise
+        every retrieval writes an access-log row (search_ops.py's
+        `_stage_record_usage`), inflating `access_count` on whichever
+        memories the gate surfaces. The real chat server (chat/http.py)
+        leaves this at the default so genuine chat turns keep tracking usage.
+    """
     cfg = ChatConfig.load(memory.cfg.state_dir)
     base_k = k or cfg.base_k
     t0 = time.monotonic()
@@ -87,7 +96,13 @@ def chat_stream(
 
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            mem_future = pool.submit(memory.search, memo_query, limit=base_k, mode="hybrid")
+            mem_future = pool.submit(
+                memory.search,
+                memo_query,
+                limit=base_k,
+                mode="hybrid",
+                _track_usage=_track_usage,
+            )
             vault_future = pool.submit(memory.repo_search, memo_query, limit=base_k)
             mem_sources = [_record_to_source(r) for r in (mem_future.result() or [])]
             vault_sources = [_hit_to_source(h) for h in (vault_future.result() or [])]
@@ -98,7 +113,10 @@ def chat_stream(
                 memory._ensure_chat(), memory.cfg.llm_model, memo_query, n=cfg.multi_query_n
             )
             for variant in variants:
-                hits = memory.search(variant, limit=base_k, mode="hybrid") or []
+                hits = (
+                    memory.search(variant, limit=base_k, mode="hybrid", _track_usage=_track_usage)
+                    or []
+                )
                 rankings.append([_record_to_source(r) for r in hits])
 
         fused = normalize_scores(rrf_fuse(rankings, limit=base_k))

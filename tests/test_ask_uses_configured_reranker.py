@@ -33,7 +33,7 @@ def memory_with_reranker(mock_memory):
 def test_ask_reranks_when_the_install_has_a_reranker(memory_with_reranker, monkeypatch) -> None:
     calls: list[int] = []
 
-    def counting_rerank(query, hits, *, top_n):
+    def counting_rerank(query, hits, *, top_n, deadline=None, degraded=None):
         calls.append(len(hits))
         return list(hits)[:top_n]
 

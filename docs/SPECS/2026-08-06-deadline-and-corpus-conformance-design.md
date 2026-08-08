@@ -1,3 +1,5 @@
+Status: partially shipped — neither `src/memo/search_deadline.py` (C1) nor `tests/conformance/` (C2) exist on master. #209 reused/fixed the pre-existing `MEMO_RERANK_BUDGET_S` → RRF fallback and fixed several individual conformance-class defects (symlinked-`/tmp` traceback, missing-parent-dir errors) ad hoc, without the designed `SearchDeadline` shed-ladder or the harness. #210 (merged 2026-08-07) separately added a narrower `SearchBudget` mechanism scoped only to the recall-hook path (`recall_search_budget_ms()`), not the `MEMO_SEARCH_BUDGET_MS`/`degraded`-list contract this design specifies for `Memory.search()` generally. A complete implementation matching this design exists on local branch `feat/conformance-budget-deadline-admission` (`search_deadline.py`, `tests/conformance/*`), not yet opened as a PR.
+
 # Deadline degradation + corpus-scale conformance — design
 
 **Date:** 2026-08-06

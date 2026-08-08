@@ -1,3 +1,5 @@
+Status: partially shipped — the five measured payload defects (`memo_graph_export`, `memo_graph verb=impact/neighbors`, `memo_lint`, `memo_operational_state`) were fixed ad hoc, per-surface, in #209, but the systemic mechanism this design proposes (`src/memo/mcp_budget.py`, `_ResponseBudgetMiddleware`, `MEMO_MCP_RESPONSE_BUDGET_TOKENS`, `bounded_list`) does not exist on master — grep confirms zero matches. A complete implementation exists on local branch `feat/conformance-budget-deadline-admission` (`src/memo/mcp_budget.py`), not yet opened as a PR.
+
 # MCP response budget — design
 
 **Date:** 2026-08-06

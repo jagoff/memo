@@ -1,3 +1,5 @@
+Status: shipped in #150 (feat: cross-agent coordination — live collision scan + LLM directives, merged 2026-08-01). PR body: "Implements docs/SPECS/2026-07-31-cross-agent-coordination-design.md". `src/memo/coordination.py` (`CoordinationStore`) and `src/memo/cli_coordinate.py` present; 34 tests, 91% module coverage per PR body.
+
 # Cross-Agent Coordination — Design
 
 **Date:** 2026-07-31 · **Status:** approved (Fer) · **Decision:** full-LLM coordination.
