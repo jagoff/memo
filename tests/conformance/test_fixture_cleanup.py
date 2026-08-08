@@ -22,6 +22,9 @@ _PATCHED_ENV_KEYS = (
     "MEMO_STATE_DIR",
     "MEMO_AUTO_PROJECT_TAG",
     "MEMO_STORE_BY_PROJECT",
+    # Set only for the duration of the seeding loop (see conftest.big_corpus),
+    # so its revert rides a nested MonkeyPatch rather than the outer one.
+    "MEMO_TANTIVY_ENABLED",
 )
 
 
