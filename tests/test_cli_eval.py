@@ -414,6 +414,20 @@ def test_against_rejects_update_baseline() -> None:
     assert "--update-baseline" in result.output
 
 
+def test_against_rejects_graph_ab() -> None:
+    # Round-5: --graph-ab runs unconditionally BEFORE the `if against_ref:`
+    # branch, so uncaught it burns two full eval sweeps against the live
+    # corpus and builds graph_ab_payload — then _run_against calls sys.exit()
+    # before the table is ever printed. Same silent-waste class as
+    # --quick/--max-prompts/--gate/--update-baseline.
+    result = CliRunner().invoke(eval_group, ["recall", "--against", "origin/master", "--graph-ab"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "--graph-ab" in result.output
+    assert "--against" in result.output
+
+
 # --- MEDIUM-2: eval_against failures reach the CLI as clean errors -----------
 
 

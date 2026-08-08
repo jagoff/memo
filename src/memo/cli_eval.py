@@ -363,11 +363,13 @@ def _validate_against_flags(
     max_prompts: int | None,
     gate: bool,
     update_baseline: bool,
+    graph_ab: bool,
 ) -> None:
     """--against requires both sides to score the same prompt set, and it
-    exits via `sys.exit` before --gate's or --update-baseline's own logic
-    ever runs — combined with either, it silently no-ops the flag the user
-    actually asked for (no baseline written, no gate check performed).
+    exits via `sys.exit` before --gate's, --update-baseline's, or
+    --graph-ab's own logic ever runs — combined with any of them, it
+    silently discards the flag's effect the user actually asked for (no
+    baseline written, no gate check performed, no graph A/B table printed).
     """
     if not against_ref:
         return
@@ -384,6 +386,13 @@ def _validate_against_flags(
             f"{bad} cannot be combined with --against — --against prints its "
             f"own comparison and exits before {bad}'s effect would run, so "
             f"{bad} would silently do nothing."
+        )
+    if graph_ab:
+        raise click.ClickException(
+            "--graph-ab cannot be combined with --against — the graph A/B "
+            "sweep runs before --against's comparison and exits before its "
+            "table is ever printed, so --graph-ab would silently burn two "
+            "extra eval sweeps for output nobody sees."
         )
 
 
@@ -516,7 +525,7 @@ def eval_recall_cmd(
       memo eval recall --labels eval/regression_labels.json --update-baseline
       memo eval recall --labels eval/regression_labels.json --gate
     """
-    _validate_against_flags(against_ref, quick, max_prompts, gate, update_baseline)
+    _validate_against_flags(against_ref, quick, max_prompts, gate, update_baseline, graph_ab)
 
     cfg = Config.from_env()
     force, no_cache = _resolve_cache_flags(
