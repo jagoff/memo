@@ -275,17 +275,25 @@ schemes: `_map_chunks_to_parents` requires `extra.parent_id`, which only
 from `memo ingest --chunk`.
 
 Decide between:
-1. **A fallback in `_map_chunks_to_parents`** — resolve by `parent_path` when
-   `parent_id` is absent. Smallest change; needs a path→memory lookup that is
-   not O(n) per chunk.
+1. ~~**A fallback in `_map_chunks_to_parents`** — resolve by `parent_path`
+   when `parent_id` is absent.~~ **Ruled out by measurement.** `memo ingest
+   --chunk` never materializes a parent memory record at all; `parent_path` is
+   a bare string with nothing to resolve to. There is no cheap fallback.
 2. **Backfill `parent_id`** onto vault-ingested chunks, making one scheme
    canonical. Larger, touches the store, but removes the ambiguity permanently.
 3. **Make `memo ingest --chunk` stamp `parent_id`** going forward, and backfill
    or accept a split corpus.
 
-Scope this from a measurement the reconnaissance already started: how many live
-records carry `parent_id` versus `parent_path`, and whether anything in the
-codebase already bridges the two.
+That measurement is now done. **418 records across 63 documents carry
+`parent_id`, and the flag genuinely works for them** — verified live, chunks
+collapse to their parent correctly. The other **4,832 chunk records — 92% of
+this corpus's chunked reference content, including the exact repro case** —
+came through `memo ingest --chunk`, which materializes no parent record.
+
+So the flag is not broken and was not mis-designed; it was built for one ingest
+path and this corpus overwhelmingly used the other. Reconciling them is real
+engineering work, not a one-line fallback, and 2b should be scoped and
+estimated as such.
 
 Only after that does the original prerequisite apply: `_map_chunks_to_parents`
 calls `self.get(parent_id)` once per chunk, an N+1 over the wide pool. Batch the
