@@ -46,11 +46,16 @@ Expected: FAIL on `test_broad_exception_policy_targets_are_classified`, listing 
 In `src/memo/dev_audit.py`, inside `BROAD_EXCEPTION_ALLOWED`, immediately after the `("recall_logic.py", "_code_ref_lines", 1),` entry:
 
 ```python
+BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
+    ...,
+    ("recall_logic.py", "_code_ref_lines", 1),
     # Graph-cluster recall compaction (MEMO_RECALL_GRAPH_COMPACT): optional
     # token-budget work on the hook hot path. Any projection/store failure
     # degrades to the uncompacted relevant/nudge lists and must never break
     # the recall payload or blow the 5s hook budget.
     ("recall_logic.py", "_apply_graph_compact", 1),
+    ...,
+}
 ```
 
 - [ ] **Step 3: Run the test to verify it passes**
@@ -410,7 +415,9 @@ def test_run_gate_passes_the_live_corpus_fingerprint_to_check_gate(tmp_path, mon
     monkeypatch.setattr(eval_recall, "check_gate", _spy)
 
     rows = [
-        eval_recall.Row(**{**_ROW_TEMPLATE, "config": "A", "precision_at_k": 0.5, "noise_at_k": 0.1})
+        eval_recall.Row(
+            **{**_ROW_TEMPLATE, "config": "A", "precision_at_k": 0.5, "noise_at_k": 0.1}
+        )
     ]
     result = cli_eval._run_gate(
         rows, _Cfg(), labels_fingerprint="labels-1", k=5, corpus_fingerprint="corpus-NEW"
@@ -432,8 +439,7 @@ from memo import eval_recall
 # reports field types as strings ("str", "float") — not as the types
 # themselves. Comparing against `str` alone would silently match nothing.
 _ROW_TEMPLATE = {
-    f.name: ("" if f.type in (str, "str") else 0.0)
-    for f in dataclasses.fields(eval_recall.Row)
+    f.name: ("" if f.type in (str, "str") else 0.0) for f in dataclasses.fields(eval_recall.Row)
 }
 ```
 
