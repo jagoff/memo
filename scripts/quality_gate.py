@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from memo.dev_audit import (
+    BROAD_EXCEPTION_ALLOWED,
     BROAD_EXCEPTION_RATCHET_EXEMPTIONS,
     find_broad_exception_sites,
 )
@@ -90,10 +91,20 @@ def collect_broad_exceptions(
     *,
     exemptions: set[tuple[str, str, int]] | None = None,
 ) -> dict[str, int]:
-    """Count broad handlers, excluding only audited exact lexical sites."""
+    """Count broad handlers, excluding every site the audit already covers.
+
+    The count excludes both the ratchet exemptions and the sites lexically
+    classified in ``BROAD_EXCEPTION_ALLOWED`` (tests/test_dev_audit.py), so
+    the integer budget covers only files no stricter gate guards yet — a
+    site classified in that gate is never billed here too.
+    """
     metrics: dict[str, int] = {}
     source_root = root / "src" / "memo"
-    allowed = BROAD_EXCEPTION_RATCHET_EXEMPTIONS if exemptions is None else exemptions
+    allowed = (
+        BROAD_EXCEPTION_RATCHET_EXEMPTIONS | BROAD_EXCEPTION_ALLOWED
+        if exemptions is None
+        else exemptions
+    )
     for site in find_broad_exception_sites(source_root):
         if (site.relpath, site.scope, site.ordinal) in allowed:
             continue
