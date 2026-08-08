@@ -131,10 +131,27 @@ which are chunks of the same file:
 6.253  …/Comandos Disponibles.md#chunk-11
 ```
 
-The fix exists, has tests, and is off: `MEMO_SEARCH_CHUNK_PARENT`, whose flag
+A fix exists, has tests, and is off: `MEMO_SEARCH_CHUNK_PARENT`, whose flag
 description reads *"Off by default — eval-gated before any flip."* The gate has
 never been run for it. This is the single clearest instance of the pattern this
 audit is really about: **memo builds faster than it enables.**
+
+> **Correction (2026-08-07, measured).** Enabling the flag would not have fixed
+> this. It was flipped on against the live corpus and returned **the same ten
+> chunk ids**, only rescored. The flag keys off `extra.parent_id`, which is
+> stamped by the `MEMO_CHUNK_INGEST` path (chunking inside `save()` /
+> `reindex()`). The records in this corpus carry `extra.parent_path` and
+> `source: vault-ingest` instead — they came through `memo ingest --chunk`,
+> which does not stamp `parent_id`. The fix and the corpus's actual ingest
+> mechanism are **two chunk-to-parent linking schemes that do not
+> interoperate**, so the flag is a silent no-op for the exact defect it was
+> built to fix.
+>
+> This sharpens the audit's own thesis rather than softening it. "Built and
+> never enabled" was the charitable reading; the measured reading is that the
+> feature was never exercised against the corpus shape it would meet in
+> production, so nobody could have discovered it was inert. An eval gate run
+> before flipping would have passed cleanly and confirmed nothing.
 
 ### `HEAD` of the open PR is red
 
@@ -250,10 +267,30 @@ memo-authored records whose title is derived from the same body text that
 already matched. Capping the multiplier treats the magnitude; the cause is that
 the signal is counted twice for auto-titled records.
 
-**2b — Enable `MEMO_SEARCH_CHUNK_PARENT`.** Run the gate, then flip it. One
-prerequisite: `_map_chunks_to_parents` calls `self.get(parent_id)` once per
-chunk, an N+1 over the wide pool. Batch the parent fetch before enabling, or
-the fix trades a ranking defect for a latency one.
+**2b — Make chunk→parent collapsing actually reach this corpus, then enable it.**
+Flipping `MEMO_SEARCH_CHUNK_PARENT` is not the task; it was measured to be a
+no-op here (see the correction above). The real work is reconciling two linking
+schemes: `_map_chunks_to_parents` requires `extra.parent_id`, which only
+`MEMO_CHUNK_INGEST` stamps, while this corpus's chunks carry `extra.parent_path`
+from `memo ingest --chunk`.
+
+Decide between:
+1. **A fallback in `_map_chunks_to_parents`** — resolve by `parent_path` when
+   `parent_id` is absent. Smallest change; needs a path→memory lookup that is
+   not O(n) per chunk.
+2. **Backfill `parent_id`** onto vault-ingested chunks, making one scheme
+   canonical. Larger, touches the store, but removes the ambiguity permanently.
+3. **Make `memo ingest --chunk` stamp `parent_id`** going forward, and backfill
+   or accept a split corpus.
+
+Scope this from a measurement the reconnaissance already started: how many live
+records carry `parent_id` versus `parent_path`, and whether anything in the
+codebase already bridges the two.
+
+Only after that does the original prerequisite apply: `_map_chunks_to_parents`
+calls `self.get(parent_id)` once per chunk, an N+1 over the wide pool. Batch the
+parent fetch before enabling, or the fix trades a ranking defect for a latency
+one.
 
 **2c — Decide the `reference` tier's place in explicit search.** The recall
 hook SQL-excludes the tier; `search` returns it freely, which is why seven of
