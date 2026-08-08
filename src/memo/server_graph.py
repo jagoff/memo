@@ -7,79 +7,112 @@ only the enclosing function and indentation changed.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from pydantic import Field
 
-from memo.mcp_budget import bounded_list
+from memo.mcp_budget import bounded_list, cap_for, fit_to_budget
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
 
-# Per-community entity cap. Measured 2026-08-06 against the developer's LIVE
-# install (~11.3k memories with the codegraph layer merged in), NOT the
-# synthetic conformance corpus -- pytest cannot reach `.codegraph/codegraph.db`
-# and the conformance fixture seeds no code layer at all: `detect_communities`
-# returned 2,278 communities, the largest holding 155 entities. The community
-# COUNT dominated that payload, but one hub community can carry a long entity
-# list on its own, so both dimensions are bounded. The conformance gate
-# (`tests/conformance/test_mcp_response_budget.py`) seeds its own entity graph
-# and holds the resulting payload under the cap; it does not reproduce these
-# live numbers.
-_MAX_COMMUNITY_ENTITIES = 50
+# Default per-community entity sample. Was 50 until 2026-08-08, when the
+# default call was measured at 14,585 tokens on the developer's LIVE install
+# (~11.3k memories with the codegraph layer merged in) against the 10,000-token
+# cap -- i.e. `memo_graph_communities` returned the budget error on EVERY call
+# and could not return data at all. 20 communities x 50 codegraph-length symbol
+# names is simply too much detail for one tool result; at 12 the same call
+# measures 4,628 tokens, and the entities a caller actually loses are reachable
+# via `max_entities`. `size` still reports the community's true entity count.
+#
+# This is the comfort default, NOT the guarantee: `fit_to_budget` below is what
+# makes an over-cap response structurally impossible, because no fixed count
+# bounds a payload whose unit is a symbol name of arbitrary length.
+_DEFAULT_COMMUNITY_ENTITIES = 12
+
+# Why both tools below carry a "Scope:" paragraph naming the working directory.
+# `Navigator._build_adjacency_list` / `_weighted_adjacency` fold
+# `.codegraph/codegraph.db` into the entity graph, and `codegraph_loader`
+# resolves that index from the CWD (nearest `.codegraph` walking up), never
+# from MEMO_DATA_DIR/MEMO_STATE_DIR. Verified 2026-08-08: two brand-new,
+# separately-configured, EMPTY memo stores returned byte-identical communities
+# (58,337 chars, sha256 7a5d26d93f187e9f) made entirely of repo symbols
+# (`conftest.py`, `prep-cesium-path.mjs`). The scoping is intentional and left
+# alone -- a code graph describes the repo you are standing in, which is not
+# something a memory store's path can express, and `MEMO_GRAPH_USE_CODEGRAPH=0`
+# / `MEMO_CODEGRAPH_DISCOVERY=0` are the documented opt-outs -- but it was
+# invisible, so the two tools that surface it now say so.
 
 
-def _bounded_dot(dot: str, *, max_edges: int) -> dict[str, Any]:
-    """Trim the DOT export to `max_edges` edge lines, reporting the true count.
+def _bounded_dot(dot: str, *, max_edges: int, cap: int) -> dict[str, Any]:
+    """Trim the DOT export to `max_edges` edge lines AND to `cap` tokens.
 
-    The live graph renders 100,141 edge lines (3.6 MB) — a whole-graph dump no
-    tool result can carry. Only edge lines are dropped; the header and the
-    closing brace stay, so the trimmed DOT still parses.
+    The live graph renders 24,264 edge lines — a whole-graph dump no tool
+    result can carry. Only edge lines are dropped; the header and the closing
+    brace stay, so the trimmed DOT still parses.
+
+    `max_edges` alone is not a bound: at the 500-edge default this measured
+    11,365 tokens against a 10,000-token cap, because an edge line is two
+    symbol names of arbitrary length. So the count cap picks the candidate
+    pool and `fit_to_budget` decides how much of it actually fits.
     """
     lines = dot.split("\n")
     edge_lines = [i for i, line in enumerate(lines) if " -- " in line]
-    if len(edge_lines) <= max_edges:
+    pool = edge_lines[:max_edges]
+    edge_positions = set(edge_lines)
+
+    def _render(kept: Sequence[int]) -> dict[str, Any]:
+        keep = set(kept)
         return {
             "format": "dot",
-            "content": dot,
+            "content": "\n".join(
+                line for i, line in enumerate(lines) if i not in edge_positions or i in keep
+            ),
             "edge_count": len(edge_lines),
-            "truncated": False,
+            "truncated": len(keep) < len(edge_lines),
         }
-    dropped = set(edge_lines[max_edges:])
-    return {
-        "format": "dot",
-        "content": "\n".join(line for i, line in enumerate(lines) if i not in dropped),
-        "edge_count": len(edge_lines),
-        "truncated": True,
-    }
+
+    _, payload = fit_to_budget(pool, cap=cap, render=_render)
+    return payload
 
 
-def _bounded_json(data: dict[str, Any], *, max_edges: int) -> dict[str, Any]:
-    """Trim the JSON export to `max_edges` edges, reporting the true sizes.
+def _bounded_json(data: dict[str, Any], *, max_edges: int, cap: int) -> dict[str, Any]:
+    """Trim the JSON export to `max_edges` edges AND to `cap` tokens.
 
-    The live graph exports 18,724 nodes and 82,517 edges (6.0 MB). Nodes are
-    filtered down to the endpoints of the retained edges so the payload stays a
-    drawable graph rather than edges pointing at absent nodes plus isolates.
+    Nodes are filtered down to the endpoints of the retained edges so the
+    payload stays a drawable graph rather than edges pointing at absent nodes
+    plus isolates.
+
+    The same 500-edge default that costs 11,365 tokens as DOT costs 27,413
+    here — the clearest proof that one edge COUNT cannot bound both formats,
+    and why the real bound is the size.
     """
     nodes = data.get("nodes") or []
     edges = data.get("edges") or []
-    if len(edges) <= max_edges:
+    pool = edges[:max_edges]
+
+    def _render(kept: Sequence[Any]) -> dict[str, Any]:
+        if len(kept) == len(edges):
+            # Untrimmed: hand back the graph verbatim. Filtering to endpoints
+            # here too would silently drop ISOLATED nodes the caller asked for.
+            payload_data: dict[str, Any] = data
+        else:
+            endpoints = {e.get("source") for e in kept} | {e.get("target") for e in kept}
+            payload_data = {
+                "nodes": [n for n in nodes if n.get("id") in endpoints],
+                "edges": list(kept),
+            }
         return {
             "format": "json",
-            "data": data,
+            "data": payload_data,
             "node_count": len(nodes),
             "edge_count": len(edges),
-            "truncated": False,
+            "truncated": len(kept) < len(edges),
         }
-    kept = edges[:max_edges]
-    endpoints = {e.get("source") for e in kept} | {e.get("target") for e in kept}
-    return {
-        "format": "json",
-        "data": {"nodes": [n for n in nodes if n.get("id") in endpoints], "edges": kept},
-        "node_count": len(nodes),
-        "edge_count": len(edges),
-        "truncated": True,
-    }
+
+    _, payload = fit_to_budget(pool, cap=cap, render=_render)
+    return payload
 
 
 def register(server: FastMCP, memory: Memory) -> None:
@@ -151,6 +184,16 @@ def register(server: FastMCP, memory: Memory) -> None:
                 "or `min_size` to see past it."
             ),
         ] = 20,
+        max_entities: Annotated[
+            int,
+            Field(
+                description="Entity names to sample per community. The default "
+                "is a summary sample, not the whole community — `size` always "
+                "reports the true count and `entities_truncated` flags the "
+                "sampling. Raise it to see more; the response budget still "
+                "applies, so a large value may cost communities off the page."
+            ),
+        ] = _DEFAULT_COMMUNITY_ENTITIES,
     ) -> list[dict[str, Any]]:
         """Detect communities (connected components) in the entity graph.
 
@@ -159,9 +202,11 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Bounded on both dimensions that scale with the corpus: the list is
         capped at `limit` (largest first) and each community's `entities` at
-        50. `size` is always the community's TRUE entity count, so
+        `max_entities`. `size` is always the community's TRUE entity count, so
         `size > len(entities)` means the entity list was trimmed and
-        `entities_truncated` says so outright.
+        `entities_truncated` says so outright. Past those counts the response
+        is trimmed again to fit the MCP response budget, so a default call
+        always returns data instead of a `response_budget_exceeded` error.
 
         The return stays a LIST — memo's tool surface is a public contract
         (PyPI, MCP registries, the Claude store), and wrapping it in an
@@ -170,15 +215,22 @@ def register(server: FastMCP, memory: Memory) -> None:
         of communities beyond the page is therefore not reported; a full
         page is the signal, per the `limit` field description.
 
+        Scope: the code layer merged into this graph comes from the codegraph
+        index resolved from the CURRENT WORKING DIRECTORY (nearest
+        .codegraph/codegraph.db), not from MEMO_DATA_DIR/MEMO_STATE_DIR, so
+        results can include symbols from a repo outside the configured memo
+        store. Set MEMO_GRAPH_USE_CODEGRAPH=0 for the memory-only graph.
+
         Args:
             min_size: Minimum community size to include.
             limit: Maximum communities to return, largest first.
+            max_entities: Entity names sampled per community.
         """
         communities = memory.navigator.detect_communities(min_size=min_size)
         kept, _ = bounded_list(communities, cap=max(0, limit), key=lambda c: -c.size)
         bounded: list[dict[str, Any]] = []
         for c in kept:
-            entities, entity_meta = bounded_list(c.entities, cap=_MAX_COMMUNITY_ENTITIES)
+            entities, entity_meta = bounded_list(c.entities, cap=max(0, max_entities))
             bounded.append(
                 {
                     "id": c.id,
@@ -188,7 +240,10 @@ def register(server: FastMCP, memory: Memory) -> None:
                     "entities_truncated": entity_meta["truncated"],
                 }
             )
-        return bounded
+        fitted, _payload = fit_to_budget(
+            bounded, cap=cap_for("memo_graph_communities"), render=list
+        )
+        return fitted
 
     @annotated_tool(server, **READ_ONLY)
     def memo_graph_trace(
@@ -307,10 +362,13 @@ def register(server: FastMCP, memory: Memory) -> None:
             int,
             Field(
                 description=(
-                    "Maximum edges to return, first seen first (floored to 0). The "
-                    "true graph size is always reported in edge_count/node_count, "
-                    "and truncated says whether edges were dropped. For the whole "
-                    "graph use the CLI: `memo graph export -o <file>`."
+                    "Ceiling on edges returned, first seen first (floored to 0) — "
+                    "FEWER come back when the response budget bites, which it does "
+                    "well before 500 edges on a real graph, and sooner for json "
+                    "than for dot. The true graph size is always reported in "
+                    "edge_count/node_count, and truncated says whether edges were "
+                    "dropped. For the whole graph use the CLI: "
+                    "`memo graph export -o <file>`."
                 ),
             ),
         ] = 500,
@@ -319,15 +377,25 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         Returns graph data in the specified format. Use with external tools
         like Graphviz (dot format) or web visualization libraries (JSON format).
+        The slice is sized to the MCP response budget, so a default call
+        always returns a graph instead of a `response_budget_exceeded` error.
+
+        Scope: the code layer merged into this graph comes from the codegraph
+        index resolved from the CURRENT WORKING DIRECTORY (nearest
+        .codegraph/codegraph.db), not from MEMO_DATA_DIR/MEMO_STATE_DIR, so
+        results can include symbols from a repo outside the configured memo
+        store. Set MEMO_GRAPH_USE_CODEGRAPH=0 for the memory-only graph.
 
         Args:
             format: Either "dot" for Graphviz DOT format or "json" for web UI.
             include_memories: If True and format is "json", include memory IDs in edge data.
-            max_edges: Maximum edges to return; the true sizes come back alongside.
+            max_edges: Ceiling on edges returned; the true sizes come back alongside.
         """
-        cap = max(0, max_edges)
+        edge_ceiling = max(0, max_edges)
+        budget = cap_for("memo_graph_export")
         if format == "dot":
-            return _bounded_dot(memory.navigator.export_graphviz(), max_edges=cap)
-        else:
-            data = memory.navigator.export_json(include_memories=include_memories)
-            return _bounded_json(data, max_edges=cap)
+            return _bounded_dot(
+                memory.navigator.export_graphviz(), max_edges=edge_ceiling, cap=budget
+            )
+        data = memory.navigator.export_json(include_memories=include_memories)
+        return _bounded_json(data, max_edges=edge_ceiling, cap=budget)
