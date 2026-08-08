@@ -638,6 +638,66 @@ def resolve_recall_format(token_budget: int, n_hits: int) -> str:
     return "balanced"
 
 
+#: Per-hit annotation flags that ONLY the ``full`` and ``compact`` renderers
+#: read. ``render_recall_balanced`` deliberately carries no epistemic
+#: annotations (see its docstring), so switching one of these ON while
+#: ``balanced`` is the only reachable format is a guaranteed silent no-op.
+ANNOTATION_ONLY_FLAGS: tuple[str, ...] = (
+    "MEMO_RECALL_EPISTEMIC_LABELS",
+    "MEMO_HIT_DOSSIER",
+    "MEMO_RECALL_CONFIDENCE_GATE",
+)
+
+
+def _reachable_budgets(token_budget: int) -> set[int]:
+    """Every effective budget ``_recall_logic`` can derive from ``token_budget``.
+
+    Mirrors the two reshaping steps it applies before resolving the format.
+    """
+    budgets = {token_budget}
+    if flag_bool("MEMO_RECALL_ADAPTIVE_BUDGET") and token_budget > 0:
+        # adaptive_token_budget is a 3-branch step function of prompt length;
+        # these lengths sample each branch (<50, 50..300, >300).
+        budgets |= {adaptive_token_budget(token_budget, n) for n in (1, 100, 1000)}
+    session_budget = flag_int("MEMO_RECALL_SESSION_TOKEN_BUDGET") or 0
+    if session_budget > 0:
+        # Sample the decayed branch (cumulative >= session_budget).
+        budgets |= {session_budget_scale(session_budget, session_budget, b) for b in tuple(budgets)}
+    return budgets
+
+
+def reachable_recall_formats(token_budget: int, top_k: int) -> set[str]:
+    """Every concrete format this process can actually render.
+
+    ``resolve_recall_format`` is a function of (budget, n_hits) and BOTH inputs
+    are constrained at runtime: ``_recall_logic`` reshapes the budget (adaptive
+    scaling, session decay) and caps the hits at ``top_k``
+    (``relevant = qualifying[:top_k]``). So one configuration maps to a *set* of
+    reachable formats, not a single one. Normalized the way ``render_by_format``
+    dispatches: anything that is not compact/balanced renders as full.
+    """
+    return {
+        fmt if fmt in ("compact", "balanced") else "full"
+        for budget in _reachable_budgets(token_budget)
+        for n_hits in range(max(0, top_k) + 1)
+        for fmt in (resolve_recall_format(budget, n_hits),)
+    }
+
+
+def inert_annotation_flags(token_budget: int, top_k: int) -> list[str]:
+    """Annotation flags switched ON that NO reachable format can render.
+
+    A non-empty result means the operator set a flag that is a guaranteed no-op
+    for this process — the case that motivated this helper being the recall
+    daemon's LaunchAgent exporting ``MEMO_HIT_DOSSIER=1`` /
+    ``MEMO_RECALL_EPISTEMIC_LABELS=1`` while its own budget/top_k make
+    ``balanced`` (which reads neither) the only format it can ever pick.
+    """
+    if reachable_recall_formats(token_budget, top_k) & {"full", "compact"}:
+        return []
+    return [name for name in ANNOTATION_ONLY_FLAGS if flag_bool(name)]
+
+
 def render_by_format(
     fmt: str,
     relevant: list[Any],
