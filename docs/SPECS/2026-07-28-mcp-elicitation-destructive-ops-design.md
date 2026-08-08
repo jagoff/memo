@@ -1,3 +1,5 @@
+Status: shipped in #127 (feat(mcp): elicitation confirm on irreversible tools (MEMO_ELICIT_CONFIRM), merged 2026-07-29). `src/memo/server_elicit.py` and `MEMO_ELICIT_CONFIRM` wired across `server_repo.py`, `server_synthesis.py`, `server_backup.py`, `server_cache.py`, `server_core_records.py`, `server_feedback.py`.
+
 # MCP elicitation on irreversible operations — design
 
 **Date:** 2026-07-28

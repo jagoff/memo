@@ -1,3 +1,5 @@
+Status: shipped in #149 (feat: native memo chat (synapse chat rescue), merged 2026-08-01). PR body explicitly states "Implements docs/SPECS/2026-07-30-memo-chat-design.md". `src/memo/chat/`, `src/memo/cli_chat.py`, `src/memo/server_chat.py`, `com.memo.chat` launchd all present. Known backlog: eval-chat gate 13/22 green, parked per the spec's own pragmatism decision.
+
 # Chat nativo en memo — rescate lean del chat de synapse
 
 **Fecha:** 2026-07-30

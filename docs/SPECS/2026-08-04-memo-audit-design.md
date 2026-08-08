@@ -1,3 +1,5 @@
+Status: partially shipped — P1 (write-policy freeze) shipped in #192. P0 (search ranking dilution) was diagnosed down to the `retrieval_boost` multiplier (documented in this file's own "P0 diagnosis result" section) but the fix was never designed or implemented on master. P2 (daemon-backed CLI latency), P3 (codex consumer gap), P4 (unified score scale), P5 (flag classification), P6 (multi-session synthesis) were not started. Independently corroborated by an unmerged 2026-08-07 re-audit (`docs/SPECS/2026-08-07-repair-program-design.md` on local branch `docs/repair-program`, not yet a PR, not one of the 21 files in scope here): "P1 shipped; P0 was diagnosed and not fixed; P2-P6 were not started."
+
 # memo audit — 7 prioritized findings
 
 Date: 2026-08-04
