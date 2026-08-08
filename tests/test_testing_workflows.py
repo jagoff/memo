@@ -52,6 +52,7 @@ def test_pr_workflow_enforces_resource_and_diff_coverage_gates() -> None:
         "Type check (mypy)",
         "Progressive quality budget",
         "Resource hygiene (serial ownership gate)",
+        "Conformance (corpus-scale surfaces)",
         "Tests (excluding slow real-MLX smoke)",
         "Changed-lines coverage",
     ]
@@ -63,8 +64,11 @@ def test_pr_workflow_enforces_resource_and_diff_coverage_gates() -> None:
     assert steps["Resource hygiene (serial ownership gate)"]["run"] == (
         '.venv/bin/python -m pytest -m "resource_hygiene" -n 0 --timeout=120 --resource-hygiene'
     )
+    conformance = steps["Conformance (corpus-scale surfaces)"]
+    assert conformance["env"] == {"MEMO_CONFORMANCE_CORPUS_N": "10001"}
+    assert conformance["run"] == ('.venv/bin/python -m pytest -m "conformance" -n 0 --timeout=600')
     assert steps["Tests (excluding slow real-MLX smoke)"]["run"] == (
-        '.venv/bin/python -m pytest -m "not slow" -n auto --timeout=120 '
+        '.venv/bin/python -m pytest -m "not slow and not conformance" -n auto --timeout=120 '
         "--cov=memo --cov-report=term-missing --cov-report=xml"
     )
     changed = steps["Changed-lines coverage"]
@@ -107,8 +111,8 @@ def test_stability_workflow_is_replayable_and_never_masks_flakes() -> None:
     full = steps["Full non-slow suite in replayable random order"]
     assert full["env"] == seed_env
     assert full["run"] == (
-        "echo \"Replay: pytest -m 'not slow' -n 0 --randomly-seed=$RANDOM_SEED\"\n"
-        '.venv/bin/python -m pytest -m "not slow" -n 0 --timeout=120 \\\n'
+        "echo \"Replay: pytest -m 'not slow and not conformance' -n 0 --randomly-seed=$RANDOM_SEED\"\n"
+        '.venv/bin/python -m pytest -m "not slow and not conformance" -n 0 --timeout=120 \\\n'
         '  --randomly-seed="$RANDOM_SEED" --junitxml=stability-full.xml\n'
     )
     repeat = steps["Repeat concurrency and resource ownership sessions"]

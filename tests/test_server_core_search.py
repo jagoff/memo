@@ -161,6 +161,53 @@ def test_search_with_file_announces_dropped_date_filters_and_explain(tmp_cfg, mo
     memory.search.assert_called_once()
 
 
+def test_memo_search_reports_degraded_stages(tmp_cfg, monkeypatch) -> None:
+    """`memo_search`'s conditional merge (`**({"degraded": degraded} if
+    degraded else {})`) is a separate expression from the CLI's — a shed
+    stage must show up in the tool's actual returned dict, not just be
+    proven passed as an argument into `Memory.search`."""
+    import memo.server_core_search as search_server
+    from memo.memory import Memory
+
+    monkeypatch.setattr(search_server, "log_consult", lambda *a, **k: None)
+
+    def _search_sheds_embed(*args: Any, **kwargs: Any) -> list[Any]:
+        degraded = kwargs.get("_degraded")
+        if degraded is not None:
+            degraded.append("embed_skipped_bm25_only")
+        return []
+
+    memory = MagicMock(spec=Memory)
+    memory.cfg = tmp_cfg
+    memory.search.side_effect = _search_sheds_embed
+    server = _RecordingServer()
+    search_server.register(server, memory)
+
+    out = server.tools["memo_search"](query="needle")
+
+    assert out["degraded"] == ["embed_skipped_bm25_only"], (
+        f"a shed stage did not reach memo_search's returned dict: {out!r}"
+    )
+
+
+def test_memo_search_omits_degraded_key_when_healthy(tmp_cfg, monkeypatch) -> None:
+    """Converse of the above: a search that sheds nothing must not add a
+    `degraded` key at all — an empty list is not the same as absent."""
+    import memo.server_core_search as search_server
+    from memo.memory import Memory
+
+    monkeypatch.setattr(search_server, "log_consult", lambda *a, **k: None)
+    memory = MagicMock(spec=Memory)
+    memory.cfg = tmp_cfg
+    memory.search.return_value = []
+    server = _RecordingServer()
+    search_server.register(server, memory)
+
+    out = server.tools["memo_search"](query="needle")
+
+    assert "degraded" not in out, f"a healthy search must omit the key entirely: {out!r}"
+
+
 def test_memo_ask_tools_thread_snippet_chars_sentinel(tmp_cfg, monkeypatch) -> None:
     """F4: `memo_ask`/`memo_chat_ask` default `snippet_chars` to `None` and
     forward it unchanged, so `MEMO_ASK_SNIPPET_CHARS` resolution stays in

@@ -20,6 +20,7 @@ from memo.memory.record import (
     MemoryRecord,
     _log,
 )
+from memo.search_deadline import COST_RERANK_MS, Deadline
 
 
 def _feedback_recency_weight(
@@ -366,6 +367,8 @@ class _RerankOpsMixin(_MemoryBase):
         hits: list[MemoryRecord],
         *,
         top_n: int,
+        deadline: Deadline | None = None,
+        degraded: list[str] | None = None,
     ) -> list[MemoryRecord]:
         """Apply the cross-encoder to `hits`, return top-N reordered.
 
@@ -382,7 +385,19 @@ class _RerankOpsMixin(_MemoryBase):
         same fallback bounds latency: scoring is per-pair sequential, so
         `MEMO_RERANK_BUDGET_S` caps how long a contended GPU may stretch
         it before the RRF order is served instead.
+
+        `deadline`, when given, caps that budget by whatever time the
+        caller has left. Rung one of the shed ladder: skipping costs one
+        slightly worse ordering; starting a cross-encoder pass that
+        cannot finish costs the hang. The RRF order the candidates
+        already carry is the fallback — the same one `RerankBudgetExceeded`
+        falls back to below.
         """
+        if deadline is not None and not deadline.afford(COST_RERANK_MS):
+            if degraded is not None:
+                degraded.append("rerank_skipped")
+            return hits[:top_n]
+
         reranker = self._ensure_reranker()
 
         # Snapshot original RRF positions BEFORE rerank rewrites the
@@ -393,12 +408,21 @@ class _RerankOpsMixin(_MemoryBase):
         rrf_pos: dict[str, int] = {h.id: i for i, h in enumerate(hits)}
 
         budget = flag_float("MEMO_RERANK_BUDGET_S")
+        budget_s = 20.0 if budget is None else budget
+        if deadline is not None and not deadline.unlimited:
+            # Floored at 0.1s: `afford()` above already guaranteed the
+            # deadline had > COST_RERANK_MS remaining, but `_ensure_reranker()`
+            # itself can burn real wall-clock time (a cold model load), so by
+            # the time we get here `remaining_ms()` may have dropped further —
+            # the floor keeps a still-live deadline from handing the reranker
+            # a zero or negative budget.
+            budget_s = min(budget_s, max(0.1, deadline.remaining_ms() / 1000.0))
         try:
             reranked = reranker.rerank(
                 query,
                 hits,
                 top_n=None,
-                budget_s=20.0 if budget is None else budget,
+                budget_s=budget_s,
             )
         except RerankBudgetExceeded as exc:
             # Expected under load, not a malfunction — log at info and

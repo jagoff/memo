@@ -1868,4 +1868,19 @@ SPECS: tuple[FlagSpec, ...] = (
         "counterparts are held (row stays open) until they resume.",
         min_val=1,
     ),
+    _spec(
+        "MEMO_MCP_RESPONSE_BUDGET_TOKENS",
+        "int",
+        10000,
+        "mcp",
+        "Cap on the estimated token size of any single MCP tool result. Over "
+        "cap the response is REPLACED by a structured "
+        "`response_budget_exceeded` error naming the tool, the size and the "
+        "cap -- never truncated, because truncating an arbitrary payload "
+        "silently corrupts its contract. Per-tool overrides live in "
+        "`mcp_budget.CAPS`. 0 = unlimited (escape hatch for a client with no "
+        "cap of its own). Motivated by `memo_graph verb=impact` returning "
+        "27.5k tokens with limit=3.",
+        min_val=0,
+    ),
 )

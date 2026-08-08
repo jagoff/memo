@@ -104,6 +104,7 @@ def test_memo_search_does_not_run_capture_inline(tmp_cfg, monkeypatch):
         date_from=None,
         date_to=None,
         quality_rerank=True,
+        _degraded=[],
     )
 
 

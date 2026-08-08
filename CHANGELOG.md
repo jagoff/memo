@@ -9,6 +9,57 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- **A response budget on every MCP tool result.** A `limit` argument bounds an
+  internal loop; it does not bound what the caller receives — `memo_graph
+  verb=impact` returned 27.5k tokens *with* `limit=3`. Any tool result whose
+  estimated size exceeds `MEMO_MCP_RESPONSE_BUDGET_TOKENS` (new flag, default
+  10,000; `0` disables) is now replaced by a small structured
+  `{"error": "response_budget_exceeded", "tool", "tokens", "cap", "hint"}`
+  payload. It comes back as a normal successful call, not a protocol error, so
+  callers read it the way they already read every other `{"error": ...}`
+  refusal on this surface. Results are never truncated by this layer —
+  truncating an arbitrary payload silently corrupts its contract; a tool that
+  knows which of its fields is elastic trims that field itself and says so.
+  The estimate covers both fields the wire carries (content blocks *and*
+  structured content), which for a dict-returning tool is the same JSON twice.
+
+### Changed
+
+MCP payloads that grew with the corpus instead of with the request. Each tool
+below now trims its elastic field and reports what was really there. The
+library and CLI paths are unchanged — they still return everything; only the
+MCP surface, the one with a token budget, is trimmed.
+
+- **`memo_consolidate`** — `max_clusters` default 20 → 10, and a new
+  `member_limit` (default 2) bounds a cluster's sample members; each
+  proposal's `memory_ids`/`archived_ids` and the `proposals` list are bounded
+  too. Measured 74,155 tokens before, ~3,980 after, flat from 2,000 to 10,001
+  memories. **The CLI keeps its old `--max-clusters 20`** and full member
+  detail on purpose: it writes to a terminal, not into a model's context, so
+  it has no token budget to blow. Note that passing `max_clusters=20,
+  member_limit=20` back to the MCP tool does **not** restore the old response
+  — at 20 × 20 the result is ~47k tokens and the response budget refuses it.
+  Raise either argument as far as the budget allows; `total` always reports a
+  cluster's real size and `memo_get` fetches any member by id.
+- **`memo_synthesize_run`** — each result's `sources` list is capped at 20,
+  with `shown`/`total`/`truncated` alongside. Measured 44,043 tokens before,
+  2,143 after. The saved synthesis memory's `synthesis_sources` frontmatter
+  still records every source.
+- **`memo_graph_communities`** — new `limit` (default 20, largest first), and
+  each community's `entities` list is capped at 50 with a per-community
+  `entities_truncated`. `size` still reports the community's true entity
+  count. The tool still returns a **list**, unchanged.
+- **`memo_entity`** — new `limit` (default 200) on the memory ids returned.
+  The query behind it has no `LIMIT`, so a hub entity's id list tracked the
+  corpus: 12,429 tokens for a single entity with 700 mentions.
+- **`memo_temporal_timeline`** — new `limit` (default 30; the most recent
+  events are kept, still in chronological order) plus `event_count` and
+  `truncated`. It emits one event per mention, each with a 200-char snippet:
+  110,326 tokens for an entity with 700 mentions. `first_seen`/`last_seen`
+  still span the whole timeline.
+
 ## [4.9.3] - 2026-08-05
 
 Found by a live health sweep of the installed runtime, not by the test suite.

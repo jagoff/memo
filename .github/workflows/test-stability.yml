@@ -27,8 +27,8 @@ jobs:
         env:
           RANDOM_SEED: ${{ github.run_id }}
         run: |
-          echo "Replay: pytest -m 'not slow' -n 0 --randomly-seed=$RANDOM_SEED"
-          .venv/bin/python -m pytest -m "not slow" -n 0 --timeout=120 \
+          echo "Replay: pytest -m 'not slow and not conformance' -n 0 --randomly-seed=$RANDOM_SEED"
+          .venv/bin/python -m pytest -m "not slow and not conformance" -n 0 --timeout=120 \
             --randomly-seed="$RANDOM_SEED" --junitxml=stability-full.xml
       - name: Repeat concurrency and resource ownership sessions
         env:

@@ -208,7 +208,18 @@ def test_memo_explore_delegates_to_explore_entity(tmp_cfg) -> None:
 
 
 def test_memo_graph_communities_returns_list_of_dicts(tmp_cfg) -> None:
-    """memo_graph_communities converts each Community to a dict."""
+    """memo_graph_communities converts each Community to a dict and returns a
+    LIST -- the shape it has always had on the public tool surface. Bounding
+    (see mcp_budget.bounded_list) trims the page and each community's entity
+    list without changing the container type.
+
+    The bound exists because `detect_communities` grows with the graph: on the
+    developer's live install on 2026-08-06 (~11.3k memories, codegraph layer
+    merged in) it returned 2,278 communities, 132.7k tokens unbounded. That
+    measurement is NOT reproducible from pytest -- it needs the live
+    `.codegraph/codegraph.db`. What the conformance gate reproduces is a
+    seeded entity graph large enough that the payload would exceed the cap
+    unbounded (tests/conformance/test_mcp_response_budget.py)."""
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
 
@@ -230,16 +241,64 @@ def test_memo_graph_communities_returns_list_of_dicts(tmp_cfg) -> None:
     mem.navigator.detect_communities.assert_called_once_with(min_size=2)
     assert isinstance(result, list)
     assert len(result) == 2
-    assert result[0]["id"] == 0
-    assert result[0]["entities"] == ["alpha", "beta"]
-    assert result[0]["size"] == 2
-    assert result[0]["representative_entity"] == "alpha"
-    assert result[1]["id"] == 1
-    assert result[1]["size"] == 3
+    # Largest first (key=lambda c: -c.size): the 3-entity community sorts
+    # before the 2-entity one, regardless of input order.
+    assert result[0]["id"] == 1
+    assert result[0]["entities"] == ["gamma", "delta", "epsilon"]
+    assert result[0]["size"] == 3
+    assert result[0]["entities_truncated"] is False
+    assert result[0]["representative_entity"] == "gamma"
+    assert result[1]["id"] == 0
+    assert result[1]["size"] == 2
+
+
+def test_memo_graph_communities_bounds_entities_but_keeps_the_true_size(tmp_cfg) -> None:
+    """A hub community's entity list is trimmed to _MAX_COMMUNITY_ENTITIES,
+    and `size` still reports the community's real entity count -- the honest
+    total the wrapper object was reverted rather than introduced to carry."""
+    from memo.server_graph import _MAX_COMMUNITY_ENTITIES, register
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    entities = [f"entity{n:04d}" for n in range(_MAX_COMMUNITY_ENTITIES * 3)]
+    mem.navigator.detect_communities.return_value = [
+        Community(id=0, entities=entities, size=len(entities), representative_entity=entities[0])
+    ]
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    result = tools["memo_graph_communities"]()
+
+    assert isinstance(result, list)
+    assert len(result[0]["entities"]) == _MAX_COMMUNITY_ENTITIES
+    assert result[0]["size"] == len(entities)
+    assert result[0]["entities_truncated"] is True
+
+
+def test_memo_graph_communities_caps_the_page_at_limit(tmp_cfg) -> None:
+    """`limit` caps how many communities come back, largest first."""
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    mem.navigator.detect_communities.return_value = [
+        Community(id=n, entities=[f"e{n}a", f"e{n}b"], size=2 + n, representative_entity=f"e{n}a")
+        for n in range(10)
+    ]
+
+    server, tools = _make_server_and_tools()
+    from memo.server_graph import register
+
+    register(server, mem)
+
+    result = tools["memo_graph_communities"](limit=3)
+
+    assert isinstance(result, list)
+    assert [c["size"] for c in result] == [11, 10, 9]
 
 
 def test_memo_graph_communities_empty_graph(tmp_cfg) -> None:
-    """memo_graph_communities returns an empty list when no communities detected."""
+    """memo_graph_communities returns an empty list when no communities are
+    detected -- not an object with an empty field."""
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
 

@@ -39,7 +39,7 @@ jobs:
         run: .venv/bin/python scripts/quality_gate.py
       - name: Non-slow test suite with coverage gate
         run: >-
-          .venv/bin/python -m pytest -m "not slow" -n auto --timeout=120
+          .venv/bin/python -m pytest -m "not slow and not conformance" -n auto --timeout=120
           --cov=memo --cov-report=term-missing
 
   linux-cpu-smoke:
