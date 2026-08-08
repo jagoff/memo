@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 
@@ -60,3 +62,28 @@ def test_flag_off_admits_near_dup(mock_memory, monkeypatch):
     dup = _seed_and_dup(mock_memory, "decision")
     rec = dup()
     assert rec is not None
+
+
+def test_balanced_near_dup_logs_warning(mock_memory, monkeypatch, caplog):
+    # Control for the permissive test below: "balanced" (warn) DOES run the
+    # near-dup check and DOES emit the warning log.
+    monkeypatch.delenv("MEMO_SAVE_GATE_PRESETS", raising=False)
+    monkeypatch.setenv("MEMO_SAVE_DEDUP_CHECK", "1")
+    dup = _seed_and_dup(mock_memory, "note", exact=False)
+    with caplog.at_level(logging.WARNING, logger="memo.memory.record"):
+        dup()
+    assert "near-duplicate detected" in caplog.text
+
+
+def test_permissive_skips_near_dup_check_entirely(mock_memory, monkeypatch, caplog):
+    # dedup_mode="off" is documented as "skip check" (save_gate.py). Before the
+    # fix, write_ops.py's near-dup gate only special-cased "refuse" — "off"
+    # behaved identically to "warn" (same warning log, same corroboration
+    # bookkeeping). Assert the check is actually skipped: no near-duplicate
+    # warning fires for a type pinned to the "permissive" preset.
+    monkeypatch.setenv("MEMO_SAVE_GATE_PRESETS", '{"note": "permissive"}')
+    monkeypatch.setenv("MEMO_SAVE_DEDUP_CHECK", "1")
+    dup = _seed_and_dup(mock_memory, "note", exact=False)
+    with caplog.at_level(logging.WARNING, logger="memo.memory.record"):
+        dup()
+    assert "near-duplicate detected" not in caplog.text
