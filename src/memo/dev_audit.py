@@ -52,6 +52,20 @@ RAW_MEMO_ENV_ALLOWED: set[tuple[str, str]] = {
 }
 
 
+# The files whose broad catches are classified individually (see
+# BROAD_EXCEPTION_ALLOWED). For these, lexical classification is the gate;
+# scripts/quality_gate.py's per-file integer budget deliberately counts zero,
+# so classifying a new fail-open site is ONE edit, not two.
+BROAD_EXCEPTION_TARGET_FILES: frozenset[str] = frozenset(
+    {
+        "recall_logic.py",
+        "memory/write_ops.py",
+        "cli_recall_hook.py",
+        "store/queries.py",
+    }
+)
+
+
 # First sprint only classifies high-risk target files. These stable lexical
 # identifiers are a baseline inventory, not blanket approval for future sites.
 BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
