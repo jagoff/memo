@@ -16,6 +16,7 @@ from memo.contradict import (
     ContradictionStore,
     PairRecord,
     _canonical_pair,
+    _enough_days_apart,
     emit_anomaly,
     is_stale,
 )
@@ -157,6 +158,19 @@ def test_valid_statuses_does_not_include_open_as_resolution():
 def test_is_stale_helper():
     assert is_stale("2020-01-01T00:00:00+00:00", days_threshold=30) is True
     assert is_stale("2999-01-01T00:00:00+00:00", days_threshold=30) is False
+
+
+def test_enough_days_apart_real_date_math_boundary():
+    # Every real call site (server_contradict default aside) exercises this
+    # with min_days_apart=0, which short-circuits before the actual date
+    # comparison (`min_days <= 0` returns True unconditionally). Pin the real
+    # comparison with a non-zero threshold, on both sides of the >= boundary.
+    a = "2026-01-01T00:00:00+00:00"
+    exactly_5_days_later = "2026-01-06T00:00:00+00:00"
+    just_under_5_days_later = "2026-01-05T23:00:00+00:00"
+
+    assert _enough_days_apart(a, exactly_5_days_later, min_days=5) is True
+    assert _enough_days_apart(a, just_under_5_days_later, min_days=5) is False
 
 
 def test_resolve_accepts_competing_status(mock_memory):

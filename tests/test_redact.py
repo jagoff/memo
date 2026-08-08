@@ -102,6 +102,29 @@ def test_entropy_tier_masks_random_token_only_when_enabled():
     assert "high-entropy" in res.found
 
 
+def test_entropy_tier_flags_mixed_case_digit_token():
+    # `_is_high_entropy` requires lower + upper + digit ALL present before it
+    # even checks Shannon entropy — this is the class of token the tier
+    # exists to catch (an API-key-shaped secret).
+    tok = "aB3xQ7mZ9kLp2Vt8Rn5Wc1Ys6Ud4Gf0H"  # 32 chars, mixed case + digits
+    res = redact_secrets(f"token {tok} end", entropy=True)
+    assert tok not in res.text
+    assert "high-entropy" in res.found
+
+
+def test_entropy_tier_does_not_flag_single_case_token():
+    # Regression pin: `has_lower and has_upper and has_digit` is a
+    # false-positive filter — a long single-case token (no digits, e.g. a
+    # constant-case identifier) must NOT be flagged even when its Shannon
+    # entropy alone clears the bit-per-char threshold. Loosening the `and`
+    # to `or` (any one of the three suffices) makes this token high-entropy
+    # too, which is exactly the false-positive the filter exists to avoid.
+    tok = "QPXZWKVJHGFDSALTREYUIOMNBCJHYFRT"  # 32 chars, all uppercase, no digits
+    res = redact_secrets(f"token {tok} end", entropy=True)
+    assert tok in res.text
+    assert "high-entropy" not in res.found
+
+
 def test_scan_secrets_reports_without_rewriting():
     tok = "ghp_" + "a" * 32 + "WXYZ"
     assert scan_secrets(f"body {tok}") == [("github-token", "****WXYZ")]

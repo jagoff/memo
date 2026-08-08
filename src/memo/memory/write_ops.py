@@ -655,7 +655,12 @@ class _WriteOpsMixin(_MemoryBase):
         except Exception as exc:
             _log.debug("save: optimistic identity lookup skipped: %s", exc)
 
-        if flag_bool("MEMO_SAVE_DEDUP_CHECK") and not defer_embed and not identity_candidate_exists:
+        if (
+            flag_bool("MEMO_SAVE_DEDUP_CHECK")
+            and not defer_embed
+            and not identity_candidate_exists
+            and resolve_gate(type_).dedup_mode != "off"
+        ):
             try:
                 _existing_sample = self.store.list_recent(limit=1)
                 if _existing_sample:
