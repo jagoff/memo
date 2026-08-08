@@ -383,12 +383,18 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "search",
-        "Map winning reference-tier CHUNK hits (extra.parent_id from "
-        "MEMO_CHUNK_INGEST) back to their parent memory in explicit search: "
-        "the parent surfaces once at the best chunk's rank/score, deduped "
-        "against parents already in the result list. Skipped when the caller "
+        "Collapse winning reference-tier CHUNK hits in explicit search so one "
+        "source document cannot flood the result. Two ingest schemas, both "
+        "handled: extra.parent_id (MEMO_CHUNK_INGEST) resolves to the parent "
+        "memory, which surfaces once at the best chunk's rank/score; "
+        "extra.parent_path (`memo ingest --chunk`, which materializes no "
+        "parent record) keeps the best-ranked chunk of each source document — "
+        "a real, citable row — and drops its siblings. Collapsing runs on a "
+        "widened candidate pool, so freed slots refill with the next distinct "
+        "documents instead of shrinking the result. Skipped when the caller "
         "filters type='reference'. Recall hook unaffected (reference tier is "
-        "SQL-excluded there). Off by default — eval-gated before any flip.",
+        "SQL-excluded there, and the pool is not widened when it is). Off by "
+        "default — eval-gated before any flip.",
     ),
     _spec(
         "MEMO_ASK_MULTI_ROUND",

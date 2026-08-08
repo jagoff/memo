@@ -601,6 +601,28 @@ class _SearchOpsMixin(_MemoryBase):
             )
             return [], None
 
+    def _chunk_parent_pool_limit(
+        self, limit: int, type_: str | None, exclude_types: set[str] | None
+    ) -> int:
+        """Candidate-pool size that leaves room for chunk→parent collapsing.
+
+        Collapsing removes hits by design (every chunk of one source document
+        becomes one), so without slack the caller silently gets fewer results
+        than it asked for. Widen the pool enough that the collapse refills
+        from the next distinct documents.
+
+        Widen only when a chunk can actually reach the pool: with the flag off
+        (the default) this is the identity, and it stays the identity when the
+        caller asked for the reference tier explicitly (`_stage_chunk_parent`
+        skips those) or excluded it entirely — the recall hook's case, where a
+        4x pool would spend the 5s budget fetching rows that cannot collapse.
+        """
+        if not flag_bool("MEMO_SEARCH_CHUNK_PARENT"):
+            return limit
+        if type_ in REFERENCE_TYPES or (exclude_types and exclude_types >= REFERENCE_TYPES):
+            return limit
+        return limit * _CHUNK_PARENT_POOL_FACTOR
+
     def _build_candidate_pool(
         self,
         query: str,
@@ -630,11 +652,11 @@ class _SearchOpsMixin(_MemoryBase):
         """
         emb = None  # set in vec/hybrid branches; consumed by feedback boost below
 
-        emb = None  # set in vec/hybrid branches; consumed by feedback boost below
+        pool_limit = self._chunk_parent_pool_limit(limit, type_, exclude_types)
 
         if mode == "bm25":
             rows = self.store.search_bm25(
-                query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
+                query, limit=pool_limit, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
             emit(
                 trace,
@@ -649,7 +671,7 @@ class _SearchOpsMixin(_MemoryBase):
             # outranks the same term buried in a body. See search_bm25.
             rows = self.store.search_bm25(
                 query,
-                limit=limit,
+                limit=pool_limit,
                 type_=type_,
                 exclude_types=exclude_types,
                 field_boost="exact",
@@ -664,7 +686,7 @@ class _SearchOpsMixin(_MemoryBase):
             )
         elif mode == "fuzzy":
             rows = self.store.search_fuzzy(
-                query, limit=limit, type_=type_, exclude_types=exclude_types, as_of=as_of
+                query, limit=pool_limit, type_=type_, exclude_types=exclude_types, as_of=as_of
             )
             emit(
                 trace,
@@ -681,7 +703,7 @@ class _SearchOpsMixin(_MemoryBase):
             emb = self.embedder.embed_query(query)
             rows = self.store.search(
                 emb,
-                limit=limit,
+                limit=pool_limit,
                 type_=type_,
                 exclude_types=exclude_types,
                 date_from=date_from,
@@ -722,12 +744,7 @@ class _SearchOpsMixin(_MemoryBase):
             # the cross-encoder has more candidates to discriminate
             # between; the final `limit` is applied AFTER rerank.
             input_k = max(self.cfg.rerank_input_k, limit) if self.cfg.reranker_enabled else limit
-            # Chunk→parent collapsing removes hits by design (eight chunks of
-            # one note become one). Without slack in the pool the caller gets
-            # fewer results than it asked for, so widen it enough that the
-            # collapse can refill from the next distinct documents.
-            if flag_bool("MEMO_SEARCH_CHUNK_PARENT") and type_ not in REFERENCE_TYPES:
-                input_k = max(input_k, limit * _CHUNK_PARENT_POOL_FACTOR)
+            input_k = max(input_k, pool_limit)
             (
                 vec_hits,
                 bm_hits,
@@ -1513,17 +1530,47 @@ class _SearchOpsMixin(_MemoryBase):
         list dedup by id; a chunk whose parent was deleted stays as-is.
         Zero hook cost: the recall hook SQL-excludes the reference tier, so
         this loop never sees a chunk row on that path.
+
+        Two chunk→parent schemas coexist and both must collapse:
+
+        - `extra.parent_id` (MEMO_CHUNK_INGEST) materializes a parent record,
+          so the chunk resolves to that whole note — the behaviour above.
+        - `extra.parent_path` + `chunk_seq` (`memo ingest --chunk`) is the
+          bulk of the chunked corpus and materializes NO parent record, so
+          there is nothing for `self.get()` to resolve and every sibling used
+          to survive — ten chunks of one file taking all ten slots. Since no
+          parent exists, none is fabricated: keep the best-ranked chunk of
+          each source document (a real row, with its own id, citable and
+          fetchable) and drop its siblings. `parent_path` is an established
+          store key — `around()` already resolves siblings by it through
+          `store.chunks_adjacent`, over the `idx_meta_extra_parent_path` index.
+
+        `parent_id` wins when both are present, so the record-resolving path
+        keeps its exact behaviour; the fallback applies only when a chunk has
+        no `parent_id`. Freed slots are not lost: this runs on the wide pool
+        before the trim to `limit`, and `_CHUNK_PARENT_POOL_FACTOR` (already
+        applied whenever the flag is on, for either schema) leaves the slack
+        to refill from the next distinct documents.
         """
         import dataclasses
 
         mapped: list[MemoryRecord] = []
         seen_ids: set[str] = set()
+        seen_parent_paths: set[str] = set()
         for r in out:
-            parent_id = (r.extra or {}).get("parent_id")
-            if r.type in REFERENCE_TYPES and isinstance(parent_id, str) and parent_id:
+            extra = r.extra or {}
+            parent_id = extra.get("parent_id")
+            is_chunk = r.type in REFERENCE_TYPES
+            if is_chunk and isinstance(parent_id, str) and parent_id:
                 parent = self.get(parent_id)
                 if parent is not None:
                     r = dataclasses.replace(parent, score=r.score)
+            elif is_chunk:
+                parent_path = extra.get("parent_path")
+                if isinstance(parent_path, str) and parent_path:
+                    if parent_path in seen_parent_paths:
+                        continue  # a better-ranked chunk already stands for this doc
+                    seen_parent_paths.add(parent_path)
             if r.id in seen_ids:
                 continue  # a better-ranked chunk/parent already covers it
             seen_ids.add(r.id)
