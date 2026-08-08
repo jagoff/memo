@@ -253,14 +253,14 @@ def test_memo_graph_communities_returns_list_of_dicts(tmp_cfg) -> None:
 
 
 def test_memo_graph_communities_bounds_entities_but_keeps_the_true_size(tmp_cfg) -> None:
-    """A hub community's entity list is trimmed to _MAX_COMMUNITY_ENTITIES,
+    """A hub community's entity list is sampled at _DEFAULT_COMMUNITY_ENTITIES,
     and `size` still reports the community's real entity count -- the honest
     total the wrapper object was reverted rather than introduced to carry."""
-    from memo.server_graph import _MAX_COMMUNITY_ENTITIES, register
+    from memo.server_graph import _DEFAULT_COMMUNITY_ENTITIES, register
 
     mem = MagicMock(spec=Memory)
     mem.cfg = tmp_cfg
-    entities = [f"entity{n:04d}" for n in range(_MAX_COMMUNITY_ENTITIES * 3)]
+    entities = [f"entity{n:04d}" for n in range(_DEFAULT_COMMUNITY_ENTITIES * 3)]
     mem.navigator.detect_communities.return_value = [
         Community(id=0, entities=entities, size=len(entities), representative_entity=entities[0])
     ]
@@ -271,7 +271,7 @@ def test_memo_graph_communities_bounds_entities_but_keeps_the_true_size(tmp_cfg)
     result = tools["memo_graph_communities"]()
 
     assert isinstance(result, list)
-    assert len(result[0]["entities"]) == _MAX_COMMUNITY_ENTITIES
+    assert len(result[0]["entities"]) == _DEFAULT_COMMUNITY_ENTITIES
     assert result[0]["size"] == len(entities)
     assert result[0]["entities_truncated"] is True
 
