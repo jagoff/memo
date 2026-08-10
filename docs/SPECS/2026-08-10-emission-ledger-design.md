@@ -104,13 +104,16 @@ MCP-to-MCP coverage.
 `state_dir/emitted/<session_id>.jsonl`, append-only:
 
 ```json
-{"id":"mem_41f","h":"9c2a","n":400,"ref":"memo-h/1c2","t":1754820001,"src":"hook"}
-{"id":"mem_902","h":"be71","n":912,"ref":"memo-r/a3f9","t":1754820044,"src":"mcp"}
+{"id":"mem_41f","h":"9c2a","n":400,"hp":"7b10","ref":"memo-h/1c2","t":1754820001,"src":"hook"}
+{"id":"mem_902","h":"be71","n":912,"hp":"3fa2","ref":"memo-r/a3f9","t":1754820044,"src":"mcp"}
 ```
 
 `h` is a short hash of **the text that was actually emitted**, and `n` is its
-length in characters. Not a memo version number, and not a hash of the stored
-body — the distinction matters:
+length in characters. `hp` is a hash of just that text's first 200 characters
+— the prefix hash the length arm of the monotonic-emission rule below
+requires; `null` on a ledger line written before this field existed. Not a
+memo version number, and not a hash of the stored body — the distinction
+matters:
 
 - Hashing the emitted text is self-contained. A body changed by any route
   (`memo_update`, the nightly consolidate pass, vault-ingest) produces a
@@ -122,10 +125,19 @@ body — the distinction matters:
   emitted 400 chars at turn 2 and a stored-body hash said "same" at turn 3, the
   model would be digested past content it never saw.
 
-This gives the **monotonic-emission rule**: digest only when
-`h` matches *or* the new emission is no longer than the recorded one
-(`new_len <= n`). An emission that would be longer than what is already in the
-window is always sent in full, and replaces the ledger entry.
+This gives the **monotonic-emission rule**: digest only when `h` matches, or
+BOTH `new_len <= n` AND the new emission's prefix hash matches the recorded
+`hp`. An entry with no recorded prefix hash (`hp` is `null`) is always sent in
+full — unknown means unsafe means full, and that direction costs tokens, not
+correctness. An emission that would be longer than what is already in the
+window is always sent in full regardless, and replaces the ledger entry.
+
+The prefix hash exists because length alone is not enough: a body that was
+edited and happens to be shorter would satisfy `new_len <= n` while
+describing text the model never saw. Requiring the first 200 characters to
+match catches an edit that changes the start of a body, while still
+accepting a prefix-preserving shortening — trailing truncation, where the
+model has already seen a superset of the new text.
 
 `ref` is a short token minted per emission batch — `memo-r/` + the first 6 hex of
 `sha256(sorted_ids + t)` for MCP, `memo-h/` for hook injections — echoed in the
