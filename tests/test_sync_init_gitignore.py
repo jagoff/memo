@@ -45,6 +45,10 @@ def sync_root(tmp_path: Path) -> Path:
     (root / "state" / "memvec.db-wal").write_text("wal", encoding="utf-8")
     (root / "memorias" / "note.md").write_text("# a real memory", encoding="utf-8")
     _git(root, "init", "-b", "main")
+    # Repo-local identity: CI runners have no global user.name/user.email, and
+    # `sync_init_home_byo` makes a real commit.
+    _git(root, "config", "user.name", "memo tests")
+    _git(root, "config", "user.email", "tests@memo.invalid")
     return root
 
 
