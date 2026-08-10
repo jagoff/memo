@@ -284,6 +284,13 @@ def register(server: Any, memory: Memory) -> None:
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
 
+        # Suppress bodies already emitted into this session's window. Runs after
+        # log_consult on purpose: attribution should record what was retrieved,
+        # not what survived the ledger.
+        from memo.server_common import apply_ledger
+
+        out, ledger_extra = apply_ledger(memory, "memo_search", out)
+
         # Cross-agent presence: reflect this recall so MCP-only agents (which
         # never run the Claude recall-hook) read honest counts. Decoration only.
         if out:
@@ -297,6 +304,7 @@ def register(server: Any, memory: Memory) -> None:
         return {
             "hits": out,
             "notification": notification,
+            **ledger_extra,
             **({"note": " ".join(notes)} if notes else {}),
             **({"trace": trace} if explain else {}),
             **({"degraded": degraded} if degraded else {}),

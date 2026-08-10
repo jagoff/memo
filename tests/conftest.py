@@ -227,6 +227,59 @@ def mock_memory(tmp_cfg):
 
 
 @pytest.fixture
+def memory_with_memories(tmp_cfg: Config, monkeypatch):
+    """`Memory` with a constant-vector stub embedder (like `mem_with_stub`),
+    seeded with two memories that share the keyword "chat" so
+    `memo_search(query="chat")` reliably returns both regardless of any
+    single memory's later content. Used by MCP tool-surface integration
+    tests (e.g. the emission-ledger wiring) that need real, findable hits
+    rather than a bare `Memory` instance.
+    """
+    from memo.memory import Memory
+
+    cfg = Config(
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+        reranker_enabled=False,
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    mem = Memory(cfg)
+    mem.save(content="Chat UI feedback loop and streaming design notes", title="Chat design notes")
+    mem.save(content="Second chat memory used to exercise ledger dedup", title="Chat dedup memory")
+    yield mem
+    mem.close()
+
+
+@pytest.fixture
+def call_tool(memory_with_memories):
+    """Invoke a registered MCP tool directly, bypassing the JSON-RPC
+    transport -- the pattern `tests/test_server.py`'s `_tool()` helper
+    already establishes (`FastMCP.get_tool` is async; the plain callable
+    lives on the returned `FunctionTool`'s `.fn`). Builds the server once
+    against `memory_with_memories` and returns a `(name, **kwargs) -> dict`
+    callable.
+    """
+    import asyncio
+
+    from memo.server import build_server
+
+    server = build_server(memory=memory_with_memories)
+
+    def _call(name: str, **kwargs: object):
+        tool = asyncio.run(server.get_tool(name))
+        if tool is None:
+            raise RuntimeError(f"tool {name!r} not registered")
+        return tool.fn(**kwargs)
+
+    return _call
+
+
+@pytest.fixture
 def tmp_cfg(tmp_path: Path) -> Config:
     """Isolated `Config` with data dir + vault + state dir under `tmp_path`.
 
