@@ -13,6 +13,24 @@ from memo.errors import MemoError, QueueFullError, StorageError
 _log = logging.getLogger("memo.server")
 
 
+def _is_argument_error(exc: BaseException) -> bool:
+    """Whether ``exc`` describes the CALL rather than anything memo stores.
+
+    FastMCP raises its own ``ValidationError`` from ``FunctionTool.run`` when
+    pydantic cannot bind the arguments — before the tool body executes, so no
+    memory has been read or written yet. Its message lists missing/unexpected
+    parameter names and echoes back the arguments the caller itself just sent;
+    it cannot carry corpus content, and masking it leaves an agent with no way
+    to discover the signature it got wrong (the read-only tools, which never
+    pass through this coordinator, return exactly this detail).
+    """
+    try:
+        from fastmcp.exceptions import ValidationError as FastMCPValidationError
+    except ImportError:  # pragma: no cover - fastmcp is a hard dependency
+        return False
+    return isinstance(exc, FastMCPValidationError)
+
+
 @dataclass
 class _Job:
     run: Callable[[], Awaitable[Any]]
@@ -114,6 +132,8 @@ class McpWriteCoordinator:
                         job.future.set_exception(
                             cause
                             if isinstance(cause, MemoError)
+                            else e
+                            if _is_argument_error(e)
                             else StorageError(
                                 f"coordinated MCP write failed safely ({kind}) — "
                                 "details in the memo-mcp server log"

@@ -18,7 +18,7 @@ from memo.cli_diag import (
 )
 from memo.cli_runtime import _print_runtime_install_report, _runtime_install_report
 from memo.config import Config
-from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs
+from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs, scan_mcp_store_env
 
 # Codegraph doctor check — WARN-only (never fails doctor). Consumers of the
 # code graph degrade silently when the index is absent, but
@@ -124,6 +124,31 @@ def _check_codegraph() -> None:
         )
     else:
         console.print(f"[green]✓[/green] codegraph: CLI v{'.'.join(str(p) for p in cg_version)}")
+
+
+def _report_mcp_store_env() -> bool:
+    """Print MCP client store-path findings; return False when any is broken.
+
+    A store path in a client's `env` is the failure the CLI cannot feel: memo
+    creates whatever directory it is handed, so the MCP client answers from an
+    empty corpus while every other check here stays green.
+    """
+    findings = scan_mcp_store_env()
+    if not findings:
+        console.print("[green]✓[/green] mcp store env: no overrides pointing elsewhere")
+        return True
+    for finding in findings:
+        why = (
+            "resolves against the client's cwd"
+            if finding["issue"] == "relative"
+            else "does not exist — the server would create a new empty store"
+        )
+        console.print(
+            f"[red]✗[/red] mcp store env: {finding['config']} → "
+            f"{finding['var']}={finding['value']} "
+            f"[dim]({why}; set an absolute path or drop the override)[/dim]"
+        )
+    return False
 
 
 @click.command()
@@ -250,6 +275,8 @@ def doctor(
                     f"[yellow]![/yellow] mcp config: {_r['config']} → {_r['command']} "
                     f"({_r['issue']}); shim {_r['suggestion']} missing — install runtime first"
                 )
+
+    ok = _report_mcp_store_env() and ok
 
     if cfg.data_dir.is_dir():
         console.print(f"[green]✓[/green] data_dir: {cfg.data_dir}")
