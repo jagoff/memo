@@ -92,7 +92,13 @@ def build_health_report(memory: Memory, *, probe_embedder: bool = False) -> dict
     cfg = memory.cfg
     conn = memory.store._conn
 
-    memories = _count(conn, "meta") or 0
+    # `store.count()`, not a raw `meta` COUNT: the raw count includes
+    # soft-deleted rows, so `memo health` reported 13,050 "memories" beside
+    # `memo stats` / `memo doctor` reporting 10,742 for the same corpus — the
+    # 2,338-row difference being records the user had deleted. Same denominator
+    # everywhere; the soft-deleted rows are reported as their own number.
+    memories = memory.store.count()
+    soft_deleted = max((_count(conn, "meta") or 0) - memories, 0)
     expected_dims = int(getattr(cfg, "embedder_dims", 0) or 0)
     vec_dims = _vec_dims(memory)
     dims_ok = vec_dims is None or vec_dims == expected_dims
@@ -119,6 +125,7 @@ def build_health_report(memory: Memory, *, probe_embedder: bool = False) -> dict
     report: dict[str, Any] = {
         "corpus": {
             "memories": memories,
+            "soft_deleted": soft_deleted,
             "archived": _archived_count(memory),
             "db_size_bytes": _db_size_bytes(memory),
             "db_path": str(getattr(cfg, "db_path", "")),

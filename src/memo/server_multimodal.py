@@ -57,7 +57,10 @@ def register(server: FastMCP, memory: Memory) -> None:
                 "cached": False,
                 "error": "image path outside allowed directories",
             }
-        if not path.exists():
+        # `is_file`, not `exists`: a DIRECTORY passes `exists()` and then blows
+        # up in `read_bytes()` below, which reached the MCP caller as a raw
+        # `[Errno 21] Is a directory` instead of this tool's error envelope.
+        if not path.is_file():
             return {"text": "", "cached": False, "error": "file not found"}
         cache_dir = memory.cfg.state_dir / "ocr_cache"
         sha = __import__("hashlib").sha256(path.read_bytes()).hexdigest()
