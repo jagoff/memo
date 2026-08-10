@@ -30,13 +30,19 @@ from memo.flags import flag_int
 
 _DIRNAME = "emitted"
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
+_PREFIX_CHARS = 200
 
 
 @dataclass(frozen=True)
 class Entry:
     """One emission: memory ``id``, hash ``h`` and length ``n`` of the text that
-    went out, the batch ``ref`` it went out under, unix seconds ``t``, and
-    ``src`` (``hook`` | ``mcp``)."""
+    went out, prefix hash ``hp`` over its first ``_PREFIX_CHARS`` characters (see
+    ``partition``), the batch ``ref`` it went out under, unix seconds ``t``, and
+    ``src`` (``hook`` | ``mcp``).
+
+    ``hp`` is last and defaults to ``None`` so entries written before this field
+    existed still deserialize in ``read()`` — an older entry simply carries no
+    prefix hash, which ``partition`` treats as unsafe-to-digest-on-length-alone."""
 
     id: str
     h: str
@@ -44,16 +50,25 @@ class Entry:
     ref: str
     t: int
     src: str
+    hp: str | None = None
 
     @classmethod
     def for_text(cls, memory_id: str, text: str, ref: str, t: int, src: str) -> Entry:
         """Build an entry from the text ACTUALLY emitted — the only correct source
-        for ``h`` and ``n``. ``h`` and ``n`` must describe the same string or the
+        for ``h``, ``n`` and ``hp``. All three must describe the same string or the
         monotonic-emission rule digests content the model never saw; this is the
         one call site that can't get that wrong. Prefer this over the plain
         constructor everywhere except rebuilding an ``Entry`` from a disk line
-        (``read``), where ``h``/``n`` are already-computed, trusted fields."""
-        return cls(id=memory_id, h=emitted_hash(text), n=len(text), ref=ref, t=t, src=src)
+        (``read``), where ``h``/``n``/``hp`` are already-computed, trusted fields."""
+        return cls(
+            id=memory_id,
+            h=emitted_hash(text),
+            n=len(text),
+            ref=ref,
+            t=t,
+            src=src,
+            hp=emitted_hash(text[:_PREFIX_CHARS]),
+        )
 
 
 def emitted_hash(text: str) -> str:
@@ -168,6 +183,7 @@ def read(state_dir: Path, session_id: str) -> dict[str, Entry]:
     for line in lines:
         try:
             obj = json.loads(line)
+            hp = obj.get("hp")
             out[str(obj["id"])] = Entry(
                 id=str(obj["id"]),
                 h=str(obj["h"]),
@@ -175,6 +191,7 @@ def read(state_dir: Path, session_id: str) -> dict[str, Entry]:
                 ref=str(obj["ref"]),
                 t=int(obj["t"]),
                 src=str(obj.get("src") or ""),
+                hp=str(hp) if hp is not None else None,
             )
         except Exception:  # noqa: S112  # torn/malformed line — skip it, keep reading
             continue
@@ -216,20 +233,41 @@ def partition(
     text_of: Callable[[Any], str],
     id_of: Callable[[Any], str],
 ) -> Partition:
-    """Split hits into what still needs sending and what is already in the window.
+    """Split hits into what still needs sending and what the caller should digest
+    to a pointer. ``partition`` performs no I/O of its own — it only classifies;
+    the caller is the one that sends the full hits and appends fresh ledger
+    entries for them.
 
     A hit is digested only when the ledger proves the model has already seen at
     least this much of it — the *monotonic-emission rule*:
 
-        same hash          -> the identical text is already up there
-        new_len <= known.n -> a shorter rendering of text already up there
+        same hash                                  -> identical text already up there
+        new_len <= known.n AND prefix hash matches  -> a safe shortening of text
+                                                        already up there
 
-    Anything else, including a *longer* rendering of the same memory, is sent in
-    full and replaces the ledger entry. The asymmetry is the point: emitting
-    less than the model has seen is free, but digesting past content it has
-    never seen is silent data loss. The recall hook truncates to
-    MEMO_RECALL_BODY_CHARS (400) while memo_ask may emit far more, so this case
-    is routine, not hypothetical.
+    An exact hash match is logically subsumed by the length+prefix check below it
+    (equal text has equal length and an equal prefix) but is kept as its own fast
+    path — it is the common case and skips the prefix hash computation. Do not
+    "simplify" it away.
+
+    The length arm alone is not enough: a body that was EDITED and happens to be
+    shorter would pass ``new_len <= known.n`` while describing text the model
+    never saw. The prefix hash closes that hole — it catches an edit that changes
+    the start of a body, while still accepting a prefix-preserving shortening
+    (trailing truncation, where the model has already seen a superset). An entry
+    with no recorded prefix hash (``hp is None`` — an older ledger line written
+    before this field existed) is always sent in full: unknown means unsafe means
+    full, and that direction costs tokens, never correctness. A residual gap is
+    accepted and left unclosed: an edit that changes only the middle or end of a
+    body AND shortens it can still be digested; that is bounded by the ledger
+    reset at the compaction boundary.
+
+    Anything that fails both checks, including a *longer* rendering of the same
+    memory, is sent in full. The length/prefix asymmetry against a longer
+    rendering is the point: emitting less than the model has seen is free, but
+    digesting past content it has never seen is silent data loss. The recall hook
+    truncates to MEMO_RECALL_BODY_CHARS (400) while memo_ask may emit far more,
+    so a longer re-rendering of the same memory is routine, not hypothetical.
     """
     full: list[Any] = []
     digest: list[Any] = []
@@ -237,7 +275,15 @@ def partition(
     for hit in hits:
         text = text_of(hit) or ""
         prior = known.get(id_of(hit))
-        if prior is not None and (emitted_hash(text) == prior.h or len(text) <= prior.n):
+        can_digest = prior is not None and (
+            emitted_hash(text) == prior.h
+            or (
+                len(text) <= prior.n
+                and prior.hp is not None
+                and emitted_hash(text[:_PREFIX_CHARS]) == prior.hp
+            )
+        )
+        if can_digest:
             digest.append(hit)
             suppressed += len(text)
         else:

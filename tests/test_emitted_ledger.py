@@ -67,6 +67,32 @@ def test_trim_rewrites_file_on_disk_past_double_cap(
     assert ids == [f"mem_{i}" for i in range(4, 10)]
 
 
+def test_trim_temp_filename_is_process_specific(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Pins the carried Task 1 review fix: _trim's temp file must be named with
+    our own pid, not a fixed `path.name + ".tmp"`. A fixed name would let two
+    processes racing into _trim interleave writes into one shared temp path
+    before either reached os.replace. Spies on os.replace (as _trim calls it)
+    to capture the temp path actually used, then delegates to the real
+    implementation so the trim still completes normally."""
+    import os
+
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER_MAX", "3")
+    captured_tmp_names: list[str] = []
+    real_replace = os.replace
+
+    def spy_replace(src: object, dst: object) -> None:
+        captured_tmp_names.append(Path(str(src)).name)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(el.os, "replace", spy_replace)
+    for i in range(10):
+        el.append(tmp_path, "s", [_entry(f"mem_{i}", "x", t=i)])
+
+    assert captured_tmp_names, "expected _trim to fire and call os.replace"
+    for name in captured_tmp_names:
+        assert name.endswith(f".{os.getpid()}.tmp")
+
+
 def test_reset_removes_only_that_session(tmp_path: Path):
     el.append(tmp_path, "s1", [_entry("mem_a", "a")])
     el.append(tmp_path, "s2", [_entry("mem_b", "b")])
