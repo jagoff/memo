@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -39,11 +40,31 @@ def test_torn_final_line_is_skipped(tmp_path: Path):
 
 
 def test_cap_is_fifo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("MEMO_EMIT_LEDGER_MAX", "3")
+    """read()'s own lines[-cap:] slice caps what comes back even when the
+    on-disk file hasn't been rewritten by _trim yet (5 appends, cap=3, well
+    under the amortised cap*2=6 rewrite threshold)."""
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER_MAX", "3")
     for i in range(5):
         el.append(tmp_path, "s", [_entry(f"mem_{i}", "x", t=i)])
     got = el.read(tmp_path, "s")
     assert set(got) == {"mem_2", "mem_3", "mem_4"}
+
+
+def test_trim_rewrites_file_on_disk_past_double_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Distinct from test_cap_is_fifo: this proves _trim itself fires and
+    rewrites the file, not just that read() slices what it gets back. cap=3,
+    so the amortised threshold (cap*2=6) is crossed by the 7th append; asserts
+    directly on the bytes on disk, bypassing read()'s own capping."""
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER_MAX", "3")
+    for i in range(10):
+        el.append(tmp_path, "s", [_entry(f"mem_{i}", "x", t=i)])
+    path = el.ledger_path(tmp_path, "s")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) < 10  # unbounded growth would mean _trim never ran
+    ids = [json.loads(line)["id"] for line in lines]
+    assert ids == [f"mem_{i}" for i in range(4, 10)]
 
 
 def test_reset_removes_only_that_session(tmp_path: Path):
@@ -99,3 +120,42 @@ def test_mint_ref_is_stable_and_order_insensitive():
     assert a == b
     assert a.startswith("memo-r/") and len(a) == len("memo-r/") + 6
     assert el.mint_ref(["mem_a"], 1000, prefix="memo-h").startswith("memo-h/")
+
+
+def test_emitted_hash_is_eight_hex_chars():
+    h = el.emitted_hash("hello world")
+    assert len(h) == 8
+    assert all(c in "0123456789abcdef" for c in h)
+
+
+def test_emitted_hash_differs_for_different_text():
+    assert el.emitted_hash("hello") != el.emitted_hash("world")
+
+
+def test_entry_for_text_derives_h_and_n_from_the_same_string():
+    entry = el.Entry.for_text("mem_a", "hello world", "memo-r/aaaaaa", 1000, "mcp")
+    assert entry.h == el.emitted_hash("hello world")
+    assert entry.n == len("hello world")
+
+
+def test_read_survives_corrupt_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """_cap() resolves MEMO_EMITTED_LEDGER_MAX from memo's Markdown config on
+    disk (memo.config_md). A corrupt config file (non-UTF-8 bytes) must not
+    turn read() into a raise — the recall hook calls this inside a 5s budget
+    and must stay fail-open regardless of what else is wrong in memo's config.
+
+    Reproduction requires an existing, readable ledger file: read()'s own
+    file-read is already guarded, so the bug only surfaces once execution
+    reaches the unguarded `cap = _cap()` call after that first try succeeds.
+    """
+    el.append(tmp_path, "s", [_entry("mem_a", "hello")])
+
+    config_home = tmp_path / "config-home"
+    (config_home / "config").mkdir(parents=True)
+    (config_home / "config" / "advanced-config.md").write_bytes(
+        b"\xff\xfe not valid utf-8 \x80\x81"
+    )
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(config_home))
+
+    got = el.read(tmp_path, "s")  # must not raise UnicodeDecodeError
+    assert set(got) == {"mem_a"}

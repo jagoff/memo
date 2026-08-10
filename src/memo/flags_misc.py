@@ -352,7 +352,7 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1024,
     ),
     _spec(
-        "MEMO_EMIT_LEDGER",
+        "MEMO_EMITTED_LEDGER",
         "bool",
         False,
         "mcp",
@@ -362,7 +362,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "docs/SPECS/2026-08-10-emission-ledger-design.md are met.",
     ),
     _spec(
-        "MEMO_EMIT_LEDGER_TOOLS",
+        "MEMO_EMITTED_LEDGER_TOOLS",
         "str",
         "memo_search,memo_ask,memo_context,memo_unified_briefing,memo_evidence_pack",
         "mcp",
@@ -371,7 +371,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "explicitly', and are the escape hatch a digest points at.",
     ),
     _spec(
-        "MEMO_EMIT_LEDGER_MAX",
+        "MEMO_EMITTED_LEDGER_MAX",
         "int",
         500,
         "mcp",

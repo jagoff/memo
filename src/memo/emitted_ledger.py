@@ -44,6 +44,16 @@ class Entry:
     t: int
     src: str
 
+    @classmethod
+    def for_text(cls, memory_id: str, text: str, ref: str, t: int, src: str) -> Entry:
+        """Build an entry from the text ACTUALLY emitted — the only correct source
+        for ``h`` and ``n``. ``h`` and ``n`` must describe the same string or the
+        monotonic-emission rule digests content the model never saw; this is the
+        one call site that can't get that wrong. Prefer this over the plain
+        constructor everywhere except rebuilding an ``Entry`` from a disk line
+        (``read``), where ``h``/``n`` are already-computed, trusted fields."""
+        return cls(id=memory_id, h=emitted_hash(text), n=len(text), ref=ref, t=t, src=src)
+
 
 def emitted_hash(text: str) -> str:
     """8 hex chars over the emitted text. Collisions only ever matter between
@@ -77,7 +87,14 @@ def ledger_path(state_dir: Path, session_id: str) -> Path:
 
 
 def _cap() -> int:
-    value = flag_int("MEMO_EMIT_LEDGER_MAX")
+    """Entry cap, FIFO. Wrapped in its own try: flag resolution reads memo's
+    Markdown config off disk, and a corrupt config file (e.g. non-UTF-8 bytes)
+    must not make ``read()``/``append()`` raise — every caller here counts on
+    this never doing anything but returning an int."""
+    try:
+        value = flag_int("MEMO_EMITTED_LEDGER_MAX")
+    except Exception:
+        return 500
     return 500 if value is None else max(0, value)
 
 
@@ -103,8 +120,19 @@ def append(state_dir: Path, session_id: str, entries: Sequence[Entry]) -> None:
 
 
 def _trim(path: Path) -> None:
-    """FIFO the file back under the cap. Rewrites in place; a crash mid-rewrite
-    loses the ledger, which costs tokens and nothing else."""
+    """FIFO the file back under the cap.
+
+    Rewrites via a temp file + ``os.replace`` in the same directory, so a
+    concurrent reader/writer never observes a half-written file and a crash
+    mid-rewrite can't truncate it — ``os.replace`` is atomic on POSIX.
+
+    This does NOT close the write race between the recall hook and the MCP
+    server: a concurrent ``append`` landed between our read and our replace is
+    silently dropped by this rewrite. That is intentionally left open — the
+    5s hook budget can't afford a lock, and the cost of losing an entry is
+    just a re-emitted body (the pre-feature baseline), never a correctness
+    problem.
+    """
     cap = _cap()
     if cap <= 0:
         return
@@ -112,7 +140,9 @@ def _trim(path: Path) -> None:
         lines = path.read_text(encoding="utf-8").splitlines()
         if len(lines) <= cap * 2:  # amortise: only rewrite once we are well over
             return
-        path.write_text("\n".join(lines[-cap:]) + "\n", encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text("\n".join(lines[-cap:]) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
     except Exception:
         return
 

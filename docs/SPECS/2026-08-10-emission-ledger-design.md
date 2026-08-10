@@ -133,7 +133,7 @@ payload so the digest points at a specific prior message without needing turn
 numbers.
 
 No locking. Short lines written with `O_APPEND` are atomic; a reader that hits an
-unparseable final line skips it. Capped at `MEMO_EMIT_LEDGER_MAX` entries, FIFO.
+unparseable final line skips it. Capped at `MEMO_EMITTED_LEDGER_MAX` entries, FIFO.
 
 ### Flow
 
@@ -191,9 +191,9 @@ explicitly". If `memo_get` participated, the `hint` would deadlock.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `MEMO_EMIT_LEDGER` | bool | `0` | Master switch. Off until the success criteria below are met. |
-| `MEMO_EMIT_LEDGER_TOOLS` | csv | the five above | Participating tools. |
-| `MEMO_EMIT_LEDGER_MAX` | int | `500` | Entry cap, FIFO. |
+| `MEMO_EMITTED_LEDGER` | bool | `0` | Master switch. Off until the success criteria below are met. |
+| `MEMO_EMITTED_LEDGER_TOOLS` | csv | the five above | Participating tools. |
+| `MEMO_EMITTED_LEDGER_MAX` | int | `500` | Entry cap, FIFO. |
 
 ## Invalidation
 
@@ -281,7 +281,7 @@ costs schema tokens on every request and would contradict the feature:
 
 1. **≥25% fewer emitted tokens** over a replayed real transcript.
    The denominator is the total `mcp_budget.est_tokens` of everything memo put
-   into that session's window with `MEMO_EMIT_LEDGER=0` — recall-hook injections
+   into that session's window with `MEMO_EMITTED_LEDGER=0` — recall-hook injections
    plus participating tool results. Not whole-session tokens; memo is not
    responsible for those. Verify: replay the same transcript with the flag off
    and on, diff the two totals.
@@ -293,7 +293,7 @@ costs schema tokens on every request and would contradict the feature:
 4. **Eval gate not regressed.**
    Verify: master worktree first, then the diff.
 
-If 1 or 2 fail, the feature stays at `MEMO_EMIT_LEDGER=0` and is not promoted.
+If 1 or 2 fail, the feature stays at `MEMO_EMITTED_LEDGER=0` and is not promoted.
 That is the decision, not a deferral.
 
 ## Test plan

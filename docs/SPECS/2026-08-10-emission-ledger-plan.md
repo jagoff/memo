@@ -14,7 +14,7 @@
 
 - Branch: `feat/emission-ledger` (already created off `origin/master`).
 - Tests run as `uv run --no-sync pytest tests/ --color=yes`. Never the repo `.venv` for the CLI; the installed tool is a separate uv tool.
-- `MEMO_EMIT_LEDGER` defaults to `0`. No behaviour change ships enabled in this plan.
+- `MEMO_EMITTED_LEDGER` defaults to `0`. No behaviour change ships enabled in this plan.
 - `emitted_ledger.py` is a leaf module: stdlib only, no `memo.memory`, no MLX, no flag reads beyond its own three. Same contract as `recall_dedup.py`.
 - Every ledger call from the recall hook is fail-open — wrapped, swallowed, never propagates. The hook has a 5s budget and recall must never break because of this feature.
 - All new flags registered in `src/memo/flags_misc.py` via `_spec(...)` from `memo.flags_base`. Never read `os.environ` directly for a `MEMO_*` flag.
@@ -30,7 +30,7 @@
 | `src/memo/emitted_ledger.py` | create | Ledger I/O + the partition decision. Leaf, stdlib only. |
 | `tests/test_emitted_ledger.py` | create | Units for the ledger module. |
 | `tests/test_emitted_ledger_partition.py` | create | Units for `partition`, including the monotonic rule. |
-| `src/memo/flags_misc.py` | modify | Register the three `MEMO_EMIT_LEDGER*` flags. |
+| `src/memo/flags_misc.py` | modify | Register the three `MEMO_EMITTED_LEDGER*` flags. |
 | `src/memo/server_common.py` | modify | `apply_ledger()` — the wrapper MCP tools call. |
 | `src/memo/server_core_search.py` | modify | Wire `memo_search`. |
 | `src/memo/server_core_search.py`, `server_ask*.py`, `server_context_pack.py` | modify | Wire the remaining four tools. |
@@ -111,7 +111,7 @@ def test_torn_final_line_is_skipped(tmp_path: Path):
 
 
 def test_cap_is_fifo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("MEMO_EMIT_LEDGER_MAX", "3")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER_MAX", "3")
     for i in range(5):
         el.append(tmp_path, "s", [_entry(f"mem_{i}", "x", t=i)])
     got = el.read(tmp_path, "s")
@@ -184,7 +184,7 @@ In `src/memo/flags_misc.py`, add to the `SPECS` tuple (keep the file's existing 
 
 ```python
     _spec(
-        "MEMO_EMIT_LEDGER",
+        "MEMO_EMITTED_LEDGER",
         "bool",
         False,
         "mcp",
@@ -194,7 +194,7 @@ In `src/memo/flags_misc.py`, add to the `SPECS` tuple (keep the file's existing 
         "docs/SPECS/2026-08-10-emission-ledger-design.md are met.",
     ),
     _spec(
-        "MEMO_EMIT_LEDGER_TOOLS",
+        "MEMO_EMITTED_LEDGER_TOOLS",
         "str",
         "memo_search,memo_ask,memo_context,memo_unified_briefing,memo_evidence_pack",
         "mcp",
@@ -203,7 +203,7 @@ In `src/memo/flags_misc.py`, add to the `SPECS` tuple (keep the file's existing 
         "explicitly', and are the escape hatch a digest points at.",
     ),
     _spec(
-        "MEMO_EMIT_LEDGER_MAX",
+        "MEMO_EMITTED_LEDGER_MAX",
         "int",
         500,
         "mcp",
@@ -291,7 +291,7 @@ def ledger_path(state_dir: Path, session_id: str) -> Path:
 
 
 def _cap() -> int:
-    value = flag_int("MEMO_EMIT_LEDGER_MAX")
+    value = flag_int("MEMO_EMITTED_LEDGER_MAX")
     return 500 if value is None else max(0, value)
 
 
@@ -416,7 +416,7 @@ context window: memory id, hash of the emitted text, and its length. Leaf
 module, stdlib only, fail-open on every write — the recall hook imports it
 inside a 5s budget.
 
-Ships behind MEMO_EMIT_LEDGER=0; nothing reads this yet."
+Ships behind MEMO_EMITTED_LEDGER=0; nothing reads this yet."
 ```
 
 ---
@@ -656,13 +656,13 @@ def _hits():
 
 @pytest.fixture
 def mem(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEMO_EMIT_LEDGER", "1")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-apply")
     return _Mem(tmp_path)
 
 
 def test_flag_off_is_a_passthrough(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEMO_EMIT_LEDGER", "0")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "0")
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-off")
     hits = _hits()
     out, extra = sc.apply_ledger(_Mem(tmp_path), "memo_search", hits)
@@ -711,7 +711,7 @@ def test_changed_body_is_reemitted(mem):
 
 
 def test_unwritable_state_dir_degrades_to_passthrough(tmp_path, monkeypatch):
-    monkeypatch.setenv("MEMO_EMIT_LEDGER", "1")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-ro")
     ro = tmp_path / "ro"
     ro.mkdir()
@@ -751,9 +751,9 @@ def apply_ledger(
     """
     from memo.flags import flag_bool, flag_str
 
-    if not flag_bool("MEMO_EMIT_LEDGER"):
+    if not flag_bool("MEMO_EMITTED_LEDGER"):
         return hits, {}
-    allow = {t.strip() for t in (flag_str("MEMO_EMIT_LEDGER_TOOLS") or "").split(",") if t.strip()}
+    allow = {t.strip() for t in (flag_str("MEMO_EMITTED_LEDGER_TOOLS") or "").split(",") if t.strip()}
     if tool not in allow:
         return hits, {}
 
@@ -853,7 +853,7 @@ from memo import emitted_ledger as el
 
 @pytest.fixture
 def ledger_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("MEMO_EMIT_LEDGER", "1")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-int")
     return tmp_path
 
@@ -884,7 +884,7 @@ def test_update_between_searches_reemits_that_memory(
 def test_flag_off_leaves_the_payload_untouched(
     memory_with_memories, call_tool, monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("MEMO_EMIT_LEDGER", "0")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "0")
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-off-int")
     first = call_tool("memo_search", query="chat", limit=5)
     second = call_tool("memo_search", query="chat", limit=5)
@@ -1027,7 +1027,7 @@ built, substituting the real key name:
 For `memo_context`, `build_context_surface` returns a packed prompt string
 alongside the hit list. Suppress only the structured hit list; leave the packed
 `readonly` wrapper alone. If the pack embeds bodies inside that string, this tool
-is out of scope — remove it from the `MEMO_EMIT_LEDGER_TOOLS` default in
+is out of scope — remove it from the `MEMO_EMITTED_LEDGER_TOOLS` default in
 `flags_misc.py` and note why in the flag help, rather than half-wiring it.
 
 - [ ] **Step 4: Run to verify they pass**
@@ -1210,7 +1210,7 @@ steering block, before the debug print):
     # Record what the model is about to see, so the MCP read tools can skip
     # re-sending it later in this session. Fail-open by contract: the recall
     # hook has a 5s budget and must never break on a bookkeeping write.
-    if flag_bool("MEMO_EMIT_LEDGER") and _emitted:
+    if flag_bool("MEMO_EMITTED_LEDGER") and _emitted:
         try:
             import time as _time
 
@@ -1289,7 +1289,7 @@ in `state_dir/recall_metrics.jsonl`:
 for f in 0 1; do
   for i in $(seq 30); do
     echo '{"prompt":"cómo anda el chat de memo","session_id":"bench-'$f'"}' \
-      | MEMO_EMIT_LEDGER=$f uv run --no-sync memo recall-hook >/dev/null
+      | MEMO_EMITTED_LEDGER=$f uv run --no-sync memo recall-hook >/dev/null
   done
 done
 uv run --no-sync memo stats | grep -i recall
@@ -1352,7 +1352,7 @@ def _seed(state_dir, sid="sess-reset"):
 
 def test_force_clears_the_ledger(tmp_memo_state, monkeypatch):
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-reset")
-    monkeypatch.setenv("MEMO_EMIT_LEDGER", "1")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
     _seed(tmp_memo_state)
     CliRunner().invoke(capture_tick, ["--force"])
     assert el.read(tmp_memo_state, "sess-reset") == {}
@@ -1360,7 +1360,7 @@ def test_force_clears_the_ledger(tmp_memo_state, monkeypatch):
 
 def test_non_force_leaves_the_ledger_alone(tmp_memo_state, monkeypatch):
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-reset")
-    monkeypatch.setenv("MEMO_EMIT_LEDGER", "1")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
     _seed(tmp_memo_state)
     CliRunner().invoke(capture_tick, [])
     assert set(el.read(tmp_memo_state, "sess-reset")) == {"mem_a"}
@@ -1369,7 +1369,7 @@ def test_non_force_leaves_the_ledger_alone(tmp_memo_state, monkeypatch):
 def test_force_is_idempotent(tmp_memo_state, monkeypatch):
     """PreCompact double-fires against the plugin copy."""
     monkeypatch.setenv("MEMO_SESSION_ID", "sess-reset")
-    monkeypatch.setenv("MEMO_EMIT_LEDGER", "1")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
     _seed(tmp_memo_state)
     r1 = CliRunner().invoke(capture_tick, ["--force"])
     r2 = CliRunner().invoke(capture_tick, ["--force"])
@@ -1613,7 +1613,7 @@ return:
 ```python
         from memo.flags import flag_bool
 
-        if flag_bool("MEMO_EMIT_LEDGER"):
+        if flag_bool("MEMO_EMITTED_LEDGER"):
             try:
                 from memo import emitted_ledger as _el
                 from memo.server_session_patterns import _effective_session_id
@@ -1655,7 +1655,7 @@ In `src/memo/server_cache.py`, extend `memo_cache_stats`:
         out = memory.cache.stats()
         from memo.flags import flag_bool
 
-        if flag_bool("MEMO_EMIT_LEDGER"):
+        if flag_bool("MEMO_EMITTED_LEDGER"):
             try:
                 from memo import emitted_ledger as _el
                 from memo.server_session_patterns import _effective_session_id
@@ -1812,7 +1812,7 @@ well past any live session."
 - Consumes: `emitted_ledger.stats`, `mcp_budget.est_tokens`
 - Produces: a measured verdict on success criteria 1 and 2. Nothing imports this.
 
-This task decides whether `MEMO_EMIT_LEDGER` ever defaults to `1`. Criteria 3
+This task decides whether `MEMO_EMITTED_LEDGER` ever defaults to `1`. Criteria 3
 was measured in Task 6 step 8; criterion 4 is the pre-push gate.
 
 - [ ] **Step 1: Write the harness**
@@ -1826,7 +1826,7 @@ corpus, and reports the delta:
 
 Criterion 1 wants the ratio of tokens memo put into one window, not tokens
 overall: the denominator is recall-hook injections plus participating tool
-results with MEMO_EMIT_LEDGER=0. Criterion 2 wants the memo_get-after-digest
+results with MEMO_EMITTED_LEDGER=0. Criterion 2 wants the memo_get-after-digest
 rate, which only the counters can supply.
 
 Usage:
@@ -1873,7 +1873,7 @@ def _memo_calls(transcript: Path) -> list[tuple[str, dict]]:
 def _run(calls: list[tuple[str, dict]], *, enabled: bool, session: str) -> int:
     from memo.memory import Memory
 
-    os.environ["MEMO_EMIT_LEDGER"] = "1" if enabled else "0"
+    os.environ["MEMO_EMITTED_LEDGER"] = "1" if enabled else "0"
     os.environ["MEMO_SESSION_ID"] = session
     memory = Memory()
     el.reset(memory.cfg.state_dir, session)
@@ -1918,7 +1918,7 @@ def main() -> int:
     print(f"net_saved_est:         {counters['net_saved_est']} tokens")
 
     ok = reduction >= 0.25 and (not served or recovered / served < 0.20)
-    print("\nVERDICT:", "PROMOTE" if ok else "KEEP AT MEMO_EMIT_LEDGER=0")
+    print("\nVERDICT:", "PROMOTE" if ok else "KEEP AT MEMO_EMITTED_LEDGER=0")
     return 0 if ok else 2
 
 
