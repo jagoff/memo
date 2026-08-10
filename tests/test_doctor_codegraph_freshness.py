@@ -20,9 +20,52 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from memo.cli_doctor import codegraph_staleness
+from memo.cli_doctor import _newest_source_mtime, codegraph_staleness
 
 DAY = 24 * 3600.0
+
+
+def _git(root: Path, *args: str) -> None:
+    import subprocess
+
+    subprocess.run(["git", *args], cwd=root, capture_output=True, check=True)
+
+
+def test_newest_source_mtime_reads_tracked_files(tmp_path: Path) -> None:
+    """The comparison point: the newest file git knows about."""
+    import os
+
+    _git(tmp_path, "init", "-b", "main")
+    old = tmp_path / "old.py"
+    new = tmp_path / "new.py"
+    old.write_text("a = 1", encoding="utf-8")
+    new.write_text("b = 2", encoding="utf-8")
+    _git(tmp_path, "add", "old.py", "new.py")
+    stamp = time.time() - 3 * DAY
+    os.utime(old, (stamp, stamp))
+    os.utime(new, (stamp + DAY, stamp + DAY))
+
+    assert _newest_source_mtime(tmp_path) == stamp + DAY
+
+
+def test_newest_source_mtime_ignores_untracked_files(tmp_path: Path) -> None:
+    """A build artifact is not a reason to call the index stale."""
+    import os
+
+    _git(tmp_path, "init", "-b", "main")
+    tracked = tmp_path / "mod.py"
+    tracked.write_text("a = 1", encoding="utf-8")
+    _git(tmp_path, "add", "mod.py")
+    stamp = time.time() - 2 * DAY
+    os.utime(tracked, (stamp, stamp))
+    (tmp_path / "artifact.bin").write_text("fresh", encoding="utf-8")
+
+    assert _newest_source_mtime(tmp_path) == stamp
+
+
+def test_newest_source_mtime_is_none_outside_a_repo(tmp_path: Path) -> None:
+    """`git ls-files` fails; there is nothing to compare against."""
+    assert _newest_source_mtime(tmp_path / "not-a-repo") is None
 
 
 def test_index_newer_than_sources_is_fresh(tmp_path: Path) -> None:
