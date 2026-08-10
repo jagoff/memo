@@ -548,9 +548,15 @@ def render_recall_compact(
     Token budget still applies; tail hits are dropped when over budget.
 
     ``emitted_sink``, when a list, receives ``(hit.id, "")`` for every hit
-    actually rendered -- compact never emits a body, only the id/title
-    line, so the recorded text is always empty. A hit dropped by the tail
-    cutoff is left out of the sink entirely.
+    actually rendered. This format DOES render a body fragment (``· first 60
+    chars of body`` above) -- the sink recording "" isn't "no body was
+    emitted", it's a deliberate choice: 60 characters is too short a
+    fragment for the monotonic-emission rule to usefully suppress against
+    later (``partition`` would still send a longer rendering in full; the
+    only thing an accurate ``n=60`` record could ever digest is another
+    60-char-or-shorter compact line for the same hit), so recording it isn't
+    worth the ledger-write cost. A hit dropped by the tail cutoff is left
+    out of the sink entirely.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     hit_lines: list[str] = []
@@ -2085,6 +2091,10 @@ def _recall_logic(
 
     # Format steering — parity with the subprocess path: MEMO_RECALL_FORMAT
     # (default "auto") picks compact/balanced/full from budget + hit count.
+    # emitted_sink feeds the emission ledger (see `_log` below) — this is the
+    # path a warm `com.memo.recall-daemon` actually serves, so the sink must
+    # be wired here too, not only on the subprocess fallback.
+    _emitted: list[tuple[str, str]] = []
     context = render_by_format(
         resolve_recall_format(token_budget, len(relevant)),
         relevant,
@@ -2095,6 +2105,7 @@ def _recall_logic(
         omitted=omitted,
         disputed_by=disputed_by,
         state_dir=cfg.state_dir,
+        emitted_sink=_emitted,
     )
 
     # Graph-associative nudge (MEMO_RECALL_ASSOCIATIVE) — render it on the daemon
@@ -2130,6 +2141,51 @@ def _recall_logic(
                 from memo import session as _session_mod
 
                 _session_mod.mark_ids_recalled(cfg.state_dir, session_id, _ids_to_mark)
+        # Record what the model was just shown, so the MCP read tools can
+        # skip re-sending it later in this session. `_log` is the daemon's
+        # own delivered-gated closure (recall_socket.py only calls it once
+        # `_write_response` confirms the client actually received these
+        # bytes) — same ordering discipline `mark_ids_recalled` above already
+        # follows, for the same reason: a write here before delivery was
+        # confirmed could leave the ledger asserting bodies the model never
+        # received (this is what task-6 review F1 found on the subprocess
+        # side; this closure is what keeps the daemon side from repeating it).
+        #
+        # Uses the `session_id` PARAMETER this function was called with — NOT
+        # identity._session_id(). The daemon is one long-lived process shared
+        # across every Claude Code session on the machine; its own env (fixed
+        # once by the recall-daemon LaunchAgent's EnvironmentVariables at
+        # startup, verified to carry no CLAUDE_CODE_SESSION_ID/
+        # CLAUDE_SESSION_ID/MEMO_SESSION_ID) never reflects which session's
+        # request this is. `session_id` is the correct per-request value: the
+        # socket handler forwards it from the hook's own payload-derived
+        # session id (recall_socket.py, `_recall_logic(..., session_id=_sid,
+        # ...)`), which is the same id `_effective_session_id()` resolves to
+        # for that session on the MCP side. Using identity._session_id() here
+        # would be a partition bug (wrong or shared across sessions), not
+        # merely a missed saving — worse than not recording at all.
+        # Fail-open by contract: never break or slow down the request.
+        if flag_bool("MEMO_EMITTED_LEDGER") and _emitted:
+            with contextlib.suppress(Exception):
+                from memo import emitted_ledger as _el
+
+                # Mirror apply_ledger's safe_hits guard (server_common.py):
+                # an empty-text pair costs no correctness (n=0 can only ever
+                # match another n=0 emission) but would overwrite a richer
+                # prior entry for the same id, silently killing suppression
+                # for that memory for the rest of the session.
+                _pairs = [(_id, _body) for _id, _body in _emitted if _id and _body]
+                if _pairs and session_id:
+                    _now = int(time.time())
+                    _ref = _el.mint_ref([_id for _id, _ in _pairs], _now, prefix="memo-h")
+                    _el.append(
+                        cfg.state_dir,
+                        session_id,
+                        [
+                            _el.Entry.for_text(_id, _body, _ref, _now, "hook")
+                            for _id, _body in _pairs
+                        ],
+                    )
         latency_ms: int | None = int((time.time() - t0) * 1000) if t0 is not None else None
         try:
             from memo.dashboard import append_context_cost_log, append_recall_log

@@ -442,6 +442,8 @@ async def test_tool_body_exception_leaves_the_ledger_empty(memory_with_memories,
         with pytest.raises(ToolError):
             await client.call_tool("memo_search", {"query": "chat", "limit": 5})
 
+    assert el.read(memory_with_memories.cfg.state_dir, "sess-raise") == {}
+
 
 def test_hook_emission_suppresses_a_later_search(memory_with_memories, call_tool, ledger_env):
     """The largest real overlap: the recall hook injected it at turn 2, so

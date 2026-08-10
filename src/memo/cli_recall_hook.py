@@ -893,32 +893,6 @@ def recall_hook() -> None:
     if verbosity_level > 0:
         context = maybe_inject_verbosity_steering(context, verbosity_level)
 
-    # Record what the model is about to see, so the MCP read tools can skip
-    # re-sending it later in this session. Fail-open by contract: the recall
-    # hook has a 5s budget and must never break on a bookkeeping write. Uses
-    # identity._session_id() (env var), not the payload-derived _sid above —
-    # verified to match what the MCP side's _effective_session_id() resolves
-    # to for the same Claude Code session (both inherit CLAUDE_CODE_SESSION_ID),
-    # so hook and MCP writers key the same ledger file without coordination.
-    # A distinct local (not _sid) so a client that exports no session env var
-    # can't clobber the payload-derived _sid the rest of this function relies on.
-    if flag_bool("MEMO_EMITTED_LEDGER") and _emitted:
-        try:
-            from memo import emitted_ledger as _el
-            from memo.identity import _session_id as _identity_session_id
-
-            _ledger_sid = _identity_session_id()
-            if _ledger_sid:
-                _now = int(time.time())
-                _ref = _el.mint_ref([_id for _id, _ in _emitted], _now, prefix="memo-h")
-                _el.append(
-                    cfg.state_dir,
-                    _ledger_sid,
-                    [_el.Entry.for_text(_id, _body, _ref, _now, "hook") for _id, _body in _emitted],
-                )
-        except Exception:  # noqa: S110  # fail-open: a ledger write failure just re-emits later
-            pass
-
     if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
         approx = _est_tokens(context)
         print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=sys.stderr)
@@ -1008,6 +982,47 @@ def recall_hook() -> None:
             output["systemMessage"] = _combined
 
     print(json.dumps(output, ensure_ascii=False))
+
+    # Record what the model was just shown, so the MCP read tools can skip
+    # re-sending it later in this session. Deliberately placed AFTER the
+    # print above, not alongside it — the hook installs its own SIGALRM
+    # wall-clock cap (_arm_deadline; measured p95 9.5s against a 10s cap over
+    # 1500 live fires, so the alarm landing late is the norm, not an edge
+    # case), and any exit between a write and the print would leave the
+    # ledger asserting bodies the model never actually received. Same
+    # ordering discipline as `mark_ids_recalled` just below, and the same
+    # reason: only record post-facto, after delivery is no longer in doubt.
+    # Fail-open by contract: the recall hook has a 5s budget and must never
+    # break or slow down on a bookkeeping write. Uses identity._session_id()
+    # (env var), not the payload-derived _sid above — verified to match what
+    # the MCP side's _effective_session_id() resolves to for the same Claude
+    # Code session (both inherit CLAUDE_CODE_SESSION_ID), so hook and MCP
+    # writers key the same ledger file without coordination. A distinct
+    # local (not _sid) so a client that exports no session env var can't
+    # clobber the payload-derived _sid the rest of this function relies on.
+    if flag_bool("MEMO_EMITTED_LEDGER") and _emitted:
+        try:
+            from memo import emitted_ledger as _el
+            from memo.identity import _session_id as _identity_session_id
+
+            # Mirror apply_ledger's safe_hits guard (server_common.py): an
+            # empty-text pair records nothing lost (an empty string never
+            # digests real content — n=0 can only ever match another n=0
+            # emission) but WOULD overwrite a richer prior entry for the
+            # same id, silently killing suppression for that memory for the
+            # rest of the session. Drop before writing, not after.
+            _pairs = [(_id, _body) for _id, _body in _emitted if _id and _body]
+            _ledger_sid = _identity_session_id() if _pairs else None
+            if _ledger_sid:
+                _now = int(time.time())
+                _ref = _el.mint_ref([_id for _id, _ in _pairs], _now, prefix="memo-h")
+                _el.append(
+                    cfg.state_dir,
+                    _ledger_sid,
+                    [_el.Entry.for_text(_id, _body, _ref, _now, "hook") for _id, _body in _pairs],
+                )
+        except Exception:  # noqa: S110  # fail-open: a ledger write failure just re-emits later
+            pass
 
     # Persist newly recalled IDs so future turns can dedup them
     if _sid and _turn is not None and relevant:
