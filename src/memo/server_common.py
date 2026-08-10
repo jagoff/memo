@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import contextvars
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from memo.memory import Memory
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from memo import emitted_ledger as el
+
+    _LedgerBatch = tuple[Path, str, list[el.Entry]]
 
 _log = logging.getLogger("memo.server")
 
@@ -107,6 +115,75 @@ def _default_id_of(hit: dict[str, Any]) -> str:
     return str(hit.get("id") or "")
 
 
+# Request-scoped staging area for ledger writes `apply_ledger` would
+# otherwise commit immediately. FastMCP runs every sync tool's body (the
+# default; see FunctionTool.run_in_thread) inside `anyio.to_thread.run_sync`,
+# which executes in a COPIED contextvars context -- a `ContextVar.set()`
+# performed there is invisible to the caller once the thread returns (this is
+# standard `contextvars.Context.run()` semantics, not a fastmcp quirk;
+# verified directly against a real FastMCP server + Client dispatch, not just
+# reasoned about). So the response-budget middleware (`mcp_budget.py`) opens
+# a stage by binding a fresh MUTABLE list here BEFORE dispatching into that
+# thread, and `apply_ledger` APPENDS to the existing list rather than
+# rebinding the var: mutating a shared object crosses the thread boundary;
+# rebinding the var does not, because the thread's copied context is
+# discarded when the thread returns.
+#
+# `None` (the default) means no middleware has opened a stage for this call
+# -- true for every direct `apply_ledger(...)` call outside FastMCP's tool
+# dispatch (every test in `test_emitted_ledger_apply.py`, and the `call_tool`
+# fixture in `tests/conftest.py`, which resolves a tool's `.fn` and invokes
+# it directly, bypassing `FunctionTool.run()` and the whole middleware chain
+# with it). `apply_ledger` falls back to writing straight through in that
+# case, so none of that existing coverage changes behavior.
+_LEDGER_STAGE: contextvars.ContextVar[list[_LedgerBatch] | None] = contextvars.ContextVar(
+    "_LEDGER_STAGE", default=None
+)
+
+
+def open_ledger_stage() -> contextvars.Token[list[_LedgerBatch] | None]:
+    """Start staging ledger writes for the current request.
+
+    Called by the response-budget middleware BEFORE ``call_next`` -- binding
+    a fresh list here (rather than ``apply_ledger`` binding one lazily) is
+    what makes the cross-thread visibility described above work at all.
+    Always pair with exactly one of ``commit_ledger_stage`` /
+    ``discard_ledger_stage`` in a ``finally``, so a stage can never survive
+    past its request.
+    """
+    return _LEDGER_STAGE.set([])
+
+
+def commit_ledger_stage(token: contextvars.Token[list[_LedgerBatch] | None]) -> None:
+    """Write every batch staged since the matching ``open_ledger_stage`` to
+    disk, then close the stage.
+
+    No extra guarding needed around each write: ``emitted_ledger.append`` is
+    already fail-open internally (a write it cannot make costs tokens, never
+    correctness), so a bad batch here already can't raise into the
+    middleware calling this.
+    """
+    from memo import emitted_ledger as el
+
+    for state_dir, session_id, entries in _LEDGER_STAGE.get() or []:
+        el.append(state_dir, session_id, entries)
+    _LEDGER_STAGE.reset(token)
+
+
+def discard_ledger_stage(token: contextvars.Token[list[_LedgerBatch] | None]) -> None:
+    """Close the stage from the matching ``open_ledger_stage`` WITHOUT
+    writing anything staged since.
+
+    Called when the payload that would have justified those writes never
+    actually reached the caller: the response-budget middleware substituted
+    a ``response_budget_exceeded`` error, or the tool body raised. A residual
+    gap stays open and is accepted: a failure AFTER the middleware returns
+    (a transport-level error) can still leave a phantom entry -- this closes
+    the routine, reproducible in-process case, not every path to the wire.
+    """
+    _LEDGER_STAGE.reset(token)
+
+
 def apply_ledger(
     memory: Memory,
     tool: str,
@@ -137,6 +214,13 @@ def apply_ledger(
     that misbehaves must cost tokens, never content. (``_effective_session_id``
     never actually returns an empty id today — it mints a process-scoped
     fallback — so "no session id" is a defensive case, not a reachable one.)
+
+    The actual disk write for newly-emitted hits is DEFERRED, not immediate:
+    see ``_LEDGER_STAGE`` below. Inside a real MCP call, the write only lands
+    once ``mcp_budget``'s response-budget middleware has confirmed the caller
+    actually received these bodies -- never for a payload it substituted a
+    ``response_budget_exceeded`` error for, and never for a call whose tool
+    body went on to raise after this ran.
     """
     try:
         from memo.flags import flag_bool, flag_str
@@ -169,11 +253,16 @@ def apply_ledger(
         if part.full:
             now = int(time.time())
             ref = el.mint_ref([id_of(h) for h in part.full], now)
-            el.append(
-                state_dir,
-                session_id,
-                [el.Entry.for_text(id_of(h), text_of(h), ref, now, "mcp") for h in part.full],
-            )
+            entries = [el.Entry.for_text(id_of(h), text_of(h), ref, now, "mcp") for h in part.full]
+            pending = _LEDGER_STAGE.get()
+            if pending is None:
+                # No middleware opened a stage for this call (unit tests that
+                # call apply_ledger directly, or call_tool's .fn()-bypasses-
+                # dispatch fixture) -- write straight through, matching this
+                # function's pre-staging behavior.
+                el.append(state_dir, session_id, entries)
+            else:
+                pending.append((state_dir, session_id, entries))
 
         digested_ids = {id(h) for h in part.digest}
         out = [h for h in hits if id(h) not in digested_ids]

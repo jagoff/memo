@@ -284,6 +284,12 @@ def register(server: Any, memory: Memory) -> None:
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
 
+        # Captured BEFORE the ledger may suppress bodies: a digested hit is
+        # still a recall (the model was served that memory, just as a
+        # pointer instead of a body), so presence must count it too -- not
+        # only the hits that survived as full bodies in `out`.
+        recall_count = len(out)
+
         # Suppress bodies already emitted into this session's window. Runs after
         # log_consult on purpose: attribution should record what was retrieved,
         # not what survived the ledger.
@@ -293,10 +299,10 @@ def register(server: Any, memory: Memory) -> None:
 
         # Cross-agent presence: reflect this recall so MCP-only agents (which
         # never run the Claude recall-hook) read honest counts. Decoration only.
-        if out:
+        if recall_count:
             from memo import presence
 
-            presence.bump(memory.cfg.state_dir, recalls=len(out))
+            presence.bump(memory.cfg.state_dir, recalls=recall_count)
 
         # Read pending idle notification (best-effort, races with writer)
         notification = _read_notification(memory)

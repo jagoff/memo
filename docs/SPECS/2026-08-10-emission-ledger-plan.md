@@ -183,6 +183,7 @@ Expected: collection error, `ModuleNotFoundError: No module named 'memo.emitted_
 In `src/memo/flags_misc.py`, add to the `SPECS` tuple (keep the file's existing ordering style — append near the other MCP/budget entries):
 
 ```python
+(
     _spec(
         "MEMO_EMITTED_LEDGER",
         "bool",
@@ -211,6 +212,7 @@ In `src/memo/flags_misc.py`, add to the `SPECS` tuple (keep the file's existing 
         "read cost on the MCP hot path.",
         min_val=0,
     ),
+)
 ```
 
 - [ ] **Step 4: Write the module**
@@ -453,9 +455,7 @@ def _hit(mid: str, body: str) -> dict[str, str]:
 
 
 def _partition(hits, known):
-    return el.partition(
-        hits, known, text_of=lambda h: h["body"], id_of=lambda h: h["id"]
-    )
+    return el.partition(hits, known, text_of=lambda h: h["body"], id_of=lambda h: h["id"])
 
 
 def test_empty_ledger_emits_everything_full():
@@ -753,7 +753,9 @@ def apply_ledger(
 
     if not flag_bool("MEMO_EMITTED_LEDGER"):
         return hits, {}
-    allow = {t.strip() for t in (flag_str("MEMO_EMITTED_LEDGER_TOOLS") or "").split(",") if t.strip()}
+    allow = {
+        t.strip() for t in (flag_str("MEMO_EMITTED_LEDGER_TOOLS") or "").split(",") if t.strip()
+    }
     if tool not in allow:
         return hits, {}
 
@@ -869,9 +871,7 @@ def test_repeated_search_digests_the_second_time(memory_with_memories, call_tool
     assert second["cache_ref"].startswith("memo-r/")
 
 
-def test_update_between_searches_reemits_that_memory(
-    memory_with_memories, call_tool, ledger_env
-):
+def test_update_between_searches_reemits_that_memory(memory_with_memories, call_tool, ledger_env):
     first = call_tool("memo_search", query="chat", limit=5)
     target = first["hits"][0]["id"]
     call_tool("memo_update", id=target, body="rewritten body for the ledger test")
@@ -1408,11 +1408,16 @@ before the throttle check:
 Extend the `--force` help text:
 
 ```python
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
     help=(
         "Bypass the per-session throttle (PreCompact force-flush at the "
         "compaction boundary). Also clears this session's emission ledger, "
         "since compaction invalidates every claim about what is in the window."
     ),
+)
 ```
 
 - [ ] **Step 4: Run to verify it passes**
@@ -1588,19 +1593,21 @@ In `server_common.apply_ledger`, immediately before the `return part.full, {...}
 that carries suppressions:
 
 ```python
-        extra_payload = {
-            "already_in_context": [...],   # as already written in Task 3
-            "hint": "...",
-            "cache_ref": ref,
-        }
-        el.bump(
-            state_dir,
-            session_id,
-            digests_served=len(part.digest),
-            chars_suppressed=part.suppressed_chars,
-            chars_digest=len(json.dumps(extra_payload)),
-        )
-        return part.full, extra_payload
+def apply_ledger():
+    ...
+    extra_payload = {
+        "already_in_context": [...],  # as already written in Task 3
+        "hint": "...",
+        "cache_ref": ref,
+    }
+    el.bump(
+        state_dir,
+        session_id,
+        digests_served=len(part.digest),
+        chars_suppressed=part.suppressed_chars,
+        chars_digest=len(json.dumps(extra_payload)),
+    )
+    return part.full, extra_payload
 ```
 
 Add `import json` to the function's local import block.
@@ -1639,6 +1646,7 @@ bias is deliberately against the feature.
 In `src/memo/server_cache.py`, extend `memo_cache_stats`:
 
 ```python
+def register(server: FastMCP, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
     def memo_cache_stats() -> dict[str, Any]:
         """Cache-tier status: mode, backend, entry count, capacity, overflow.
@@ -1660,9 +1668,7 @@ In `src/memo/server_cache.py`, extend `memo_cache_stats`:
                 from memo import emitted_ledger as _el
                 from memo.server_session_patterns import _effective_session_id
 
-                out["emit_ledger"] = _el.stats(
-                    memory.cfg.state_dir, _effective_session_id()
-                )
+                out["emit_ledger"] = _el.stats(memory.cfg.state_dir, _effective_session_id())
             except Exception:
                 pass
         return out
