@@ -97,3 +97,82 @@ def log_consult(
         )
     except Exception as exc:
         _log.warning("consult recall-log write failed for %s: %s", tool, exc)
+
+
+def apply_ledger(
+    memory: Memory,
+    tool: str,
+    hits: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Drop bodies this session has already put in the context window.
+
+    Returns ``(hits_to_serialize, extra_payload_keys)``. The extra keys are
+    empty whenever nothing was suppressed, so a cold session's payload is
+    byte-identical to the pre-feature one.
+
+    Fail-open in both directions: flag off, tool not allowlisted, no session
+    id, or any exception -> the caller's hits pass through untouched. A ledger
+    that misbehaves must cost tokens, never content.
+    """
+    from memo.flags import flag_bool, flag_str
+
+    if not flag_bool("MEMO_EMITTED_LEDGER"):
+        return hits, {}
+    allow = {
+        t.strip() for t in (flag_str("MEMO_EMITTED_LEDGER_TOOLS") or "").split(",") if t.strip()
+    }
+    if tool not in allow:
+        return hits, {}
+
+    try:
+        import time
+
+        from memo import emitted_ledger as el
+        from memo.server_session_patterns import _effective_session_id
+
+        state_dir = memory.cfg.state_dir
+        session_id = _effective_session_id()
+        known = el.read(state_dir, session_id)
+        part = el.partition(
+            hits,
+            known,
+            text_of=lambda h: str(h.get("body") or ""),
+            id_of=lambda h: str(h.get("id") or ""),
+        )
+
+        now = int(time.time())
+        ref = el.mint_ref([str(h.get("id") or "") for h in part.full], now)
+        el.append(
+            state_dir,
+            session_id,
+            [
+                el.Entry.for_text(
+                    str(h.get("id") or ""),
+                    str(h.get("body") or ""),
+                    ref,
+                    now,
+                    "mcp",
+                )
+                for h in part.full
+            ],
+        )
+        if not part.digest:
+            return part.full, {}
+
+        return part.full, {
+            "already_in_context": [
+                {
+                    "id": str(h.get("id") or ""),
+                    "title": str(h.get("title") or ""),
+                    "ref": known[str(h.get("id") or "")].ref,
+                }
+                for h in part.digest
+            ],
+            "hint": (
+                "bodies already emitted earlier in this session under the listed "
+                "ref; call memo_get(id) for any you cannot see above"
+            ),
+            "cache_ref": ref,
+        }
+    except Exception:
+        return hits, {}

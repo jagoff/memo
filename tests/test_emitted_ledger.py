@@ -162,6 +162,7 @@ def test_entry_for_text_derives_h_and_n_from_the_same_string():
     entry = el.Entry.for_text("mem_a", "hello world", "memo-r/aaaaaa", 1000, "mcp")
     assert entry.h == el.emitted_hash("hello world")
     assert entry.n == len("hello world")
+    assert entry.hp == el.emitted_hash("hello world"[: el._PREFIX_CHARS])
 
 
 def test_read_survives_corrupt_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
