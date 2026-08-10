@@ -633,7 +633,13 @@ def register(server: Any, memory: Memory) -> None:
         # already used the untruncated sources to synthesize `answer` above --
         # this only affects what's returned to the caller as citations, same
         # as memo_search. Rows carry the emitted text under `snippet`, not
-        # `body` (see ask_ops.py's `_build_ask_context`).
+        # `body` (see ask_ops.py's `_build_ask_context`). `sources` is not
+        # memory-only: with `include_repos=True` (the default) it also
+        # carries `source == "repo"` rows whose id is not a memory id --
+        # `memo_get(id)`, the digest's own escape hatch, cannot resolve one.
+        # Only memory rows may participate; a repo row's `text_of` returns ""
+        # so apply_ledger's own empty-text guard sends it in full and never
+        # records it, same as an id-less/bodyless hit.
         sources = out.get("sources")
         if isinstance(sources, list):
             from memo.server_common import apply_ledger
@@ -642,7 +648,9 @@ def register(server: Any, memory: Memory) -> None:
                 memory,
                 "memo_ask",
                 sources,
-                text_of=lambda h: str(h.get("snippet") or ""),
+                text_of=lambda h: (
+                    str(h.get("snippet") or "") if h.get("source") == "memory" else ""
+                ),
             )
             out["sources"] = kept
             out.update(ledger_extra)

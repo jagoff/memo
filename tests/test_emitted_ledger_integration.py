@@ -278,6 +278,53 @@ def test_ask_snippet_chars_change_reemits_full_not_a_stale_digest(
     assert "already_in_context" not in wide
 
 
+def test_ask_never_digests_a_repo_sourced_row(
+    memory_with_memories, call_tool, ledger_env, stub_llm, monkeypatch
+):
+    """F1 (task-5 review): `ask_ops._build_ask_context` appends repo-corpus
+    rows (`source == "repo"`) into the same `sources` list as memory rows
+    whenever a repo is indexed -- `include_repos=True` is memo_ask's default,
+    gated only by `self.store.list_repo_sources(limit=1)`. A repo row's id
+    is NOT a memory id: `memo_get(id)` -- the digest's own escape hatch --
+    cannot resolve it. Only `source == "memory"` rows may participate;
+    everything else must always be sent in full and never recorded, the
+    same as an id-less/bodyless hit.
+    """
+    import types
+
+    repo_hit = types.SimpleNamespace(
+        id="deadbeefdeadbeefdeadbeefdeadbeef",
+        path="src/memo/chat/pipeline.py",
+        locator="pipeline.py:10-20",
+        text="repo chunk text about the chat pipeline internals " * 5,
+        repo_name="memo",
+        score=0.9,
+        line_start=10,
+        line_end=20,
+        match_type="hybrid",
+    )
+    monkeypatch.setattr(
+        memory_with_memories.store, "list_repo_sources", lambda *a, **k: [{"repo_name": "memo"}]
+    )
+    monkeypatch.setattr(memory_with_memories, "repo_search", lambda *a, **k: [repo_hit])
+
+    first = call_tool("memo_ask", question="chat")
+    by_id = {s["id"]: s for s in first["sources"]}
+    assert by_id.get(repo_hit.id, {}).get("source") == "repo", (
+        "fixture must actually exercise a repo-sourced row"
+    )
+    assert any(s.get("source") == "memory" for s in first["sources"]), (
+        "fixture must also return at least one memory row"
+    )
+
+    second = call_tool("memo_ask", question="chat")
+    digested_ids = {e["id"] for e in second.get("already_in_context", [])}
+    assert repo_hit.id not in digested_ids, "a repo row must never be recorded/digested"
+    remaining_ids = {s["id"] for s in second["sources"]}
+    assert repo_hit.id in remaining_ids, "a repo row must be returned in full every time"
+    assert digested_ids, "memory rows must still digest normally alongside an ignored repo row"
+
+
 def test_evidence_pack_max_chars_change_reemits_full_not_a_stale_digest(
     memory_with_memories, call_tool, ledger_env
 ):

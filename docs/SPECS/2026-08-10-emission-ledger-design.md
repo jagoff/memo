@@ -199,6 +199,17 @@ Participating (return bodies from a search): `memo_search`, `memo_ask`,
 Exempt: `memo_get` and `memo_history`. These mean "give me this one,
 explicitly". If `memo_get` participated, the `hint` would deadlock.
 
+Within `memo_ask`, only rows with `source == "memory"` participate — its
+`sources` list is not memory-only. With `include_repos=True` (the tool's
+default), `ask_ops._build_ask_context` also appends `source == "repo"` rows
+from the indexed repo corpus into the same list. A repo row's id is not a
+memory id, so `memo_get(id)` — the digest's own escape hatch — cannot resolve
+it; digesting one would hand the model a pointer with no way back to the
+content. `memo_evidence_pack`'s `items` cannot carry a non-memory row —
+`evidence_ops._build_items` hardcodes `source="memory"` on every
+`EvidenceItem` and evidence_pack never calls the repo corpus — so no
+equivalent guard is needed there.
+
 Also out of scope, discovered during Task 5's implementation rather than
 anticipated here: `memo_context` and `memo_unified_briefing`. Neither has a
 hit list this mechanism can suppress. `memo_context`'s structured `hits` key
