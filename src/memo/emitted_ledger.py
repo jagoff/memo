@@ -21,9 +21,10 @@ import json
 import os
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from memo.flags import flag_int
 
@@ -132,6 +133,11 @@ def _trim(path: Path) -> None:
     5s hook budget can't afford a lock, and the cost of losing an entry is
     just a re-emitted body (the pre-feature baseline), never a correctness
     problem.
+
+    The temp filename includes our own pid: a fixed ``path.name + ".tmp"``
+    would let two processes racing into ``_trim`` at once interleave writes
+    into the same temp path before either reaches ``os.replace``. Per-pid
+    names make that impossible without adding any locking.
     """
     cap = _cap()
     if cap <= 0:
@@ -140,7 +146,7 @@ def _trim(path: Path) -> None:
         lines = path.read_text(encoding="utf-8").splitlines()
         if len(lines) <= cap * 2:  # amortise: only rewrite once we are well over
             return
-        tmp = path.with_name(path.name + ".tmp")
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         tmp.write_text("\n".join(lines[-cap:]) + "\n", encoding="utf-8")
         os.replace(tmp, path)
     except Exception:
@@ -190,6 +196,53 @@ def reset(state_dir: Path, session_id: str) -> bool:
     except Exception:  # noqa: S110  # fail-open: a removal failure just leaves the file
         pass
     return False
+
+
+@dataclass(frozen=True)
+class Partition:
+    """``full`` keeps its hits verbatim; ``digest`` are hits the caller should
+    render as {id, title, ref}. ``suppressed_chars`` is what was not sent, the
+    numerator of the saving the gate measures."""
+
+    full: list[Any]
+    digest: list[Any]
+    suppressed_chars: int
+
+
+def partition(
+    hits: Sequence[Any],
+    known: dict[str, Entry],
+    *,
+    text_of: Callable[[Any], str],
+    id_of: Callable[[Any], str],
+) -> Partition:
+    """Split hits into what still needs sending and what is already in the window.
+
+    A hit is digested only when the ledger proves the model has already seen at
+    least this much of it — the *monotonic-emission rule*:
+
+        same hash          -> the identical text is already up there
+        new_len <= known.n -> a shorter rendering of text already up there
+
+    Anything else, including a *longer* rendering of the same memory, is sent in
+    full and replaces the ledger entry. The asymmetry is the point: emitting
+    less than the model has seen is free, but digesting past content it has
+    never seen is silent data loss. The recall hook truncates to
+    MEMO_RECALL_BODY_CHARS (400) while memo_ask may emit far more, so this case
+    is routine, not hypothetical.
+    """
+    full: list[Any] = []
+    digest: list[Any] = []
+    suppressed = 0
+    for hit in hits:
+        text = text_of(hit) or ""
+        prior = known.get(id_of(hit))
+        if prior is not None and (emitted_hash(text) == prior.h or len(text) <= prior.n):
+            digest.append(hit)
+            suppressed += len(text)
+        else:
+            full.append(hit)
+    return Partition(full=full, digest=digest, suppressed_chars=suppressed)
 
 
 def prune(state_dir: Path, *, max_age_s: int) -> int:
