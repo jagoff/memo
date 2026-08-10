@@ -194,17 +194,30 @@ in full and digests the rest.
 ### Tool scope
 
 Participating (return bodies from a search): `memo_search`, `memo_ask`,
-`memo_context`, `memo_unified_briefing`, `memo_evidence_pack`.
+`memo_evidence_pack`.
 
 Exempt: `memo_get` and `memo_history`. These mean "give me this one,
 explicitly". If `memo_get` participated, the `hint` would deadlock.
+
+Also out of scope, discovered during Task 5's implementation rather than
+anticipated here: `memo_context` and `memo_unified_briefing`. Neither has a
+hit list this mechanism can suppress. `memo_context`'s structured `hits` key
+(`context_surface.py`'s `_consult_hits_with_sections`) carries `id`/`title`/
+`score`/`section` only — no body text to hash — and the body text it does
+return lives inside the packed `prompt` string, which embeds full snippets
+inline (`context_pack.py`'s `_format_section`); suppressing the bodyless
+structured list while the prompt still carries every body in full would be a
+no-op dressed up as a feature. `memo_unified_briefing` returns one
+`compact_text`-squashed markdown string (`compose_unified_briefing`) with no
+per-hit list to partition at all. Both are absent from
+`MEMO_EMITTED_LEDGER_TOOLS`'s default rather than half-wired.
 
 ### Flags
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `MEMO_EMITTED_LEDGER` | bool | `0` | Master switch. Off until the success criteria below are met. |
-| `MEMO_EMITTED_LEDGER_TOOLS` | csv | the five above | Participating tools. |
+| `MEMO_EMITTED_LEDGER_TOOLS` | csv | the three above | Participating tools. |
 | `MEMO_EMITTED_LEDGER_MAX` | int | `500` | Entry cap, FIFO. |
 
 ## Invalidation
