@@ -99,10 +99,21 @@ def log_consult(
         _log.warning("consult recall-log write failed for %s: %s", tool, exc)
 
 
+def _default_text_of(hit: dict[str, Any]) -> str:
+    return str(hit.get("body") or "")
+
+
+def _default_id_of(hit: dict[str, Any]) -> str:
+    return str(hit.get("id") or "")
+
+
 def apply_ledger(
     memory: Memory,
     tool: str,
     hits: list[dict[str, Any]],
+    *,
+    text_of: Callable[[dict[str, Any]], str] = _default_text_of,
+    id_of: Callable[[dict[str, Any]], str] = _default_id_of,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Drop bodies this session has already put in the context window.
 
@@ -110,21 +121,34 @@ def apply_ledger(
     empty whenever nothing was suppressed, so a cold session's payload is
     byte-identical to the pre-feature one.
 
-    Fail-open in both directions: flag off, tool not allowlisted, no session
-    id, or any exception -> the caller's hits pass through untouched. A ledger
-    that misbehaves must cost tokens, never content.
+    ``text_of``/``id_of`` read a hit's emitted text and memory id; override
+    them for a tool whose rows don't use ``body``/``id`` (e.g. a ``snippet``
+    field) — different MCP tools disagree on the key names. A hit whose
+    accessor returns an empty string, default or custom, is always sent in
+    full and NEVER recorded: an empty string hashes to a fixed value that
+    self-matches regardless of real content, and an empty id would collapse
+    distinct memories onto one shared ledger key — either would let this call
+    or a later one silently digest content the model never saw.
+
+    Fail-open on everything, including flag resolution itself: flag off, tool
+    not allowlisted, no session id, a corrupt on-disk Markdown config (flag
+    resolution reads it before falling back to the built-in default), or any
+    other exception -> the caller's hits pass through untouched. A ledger
+    that misbehaves must cost tokens, never content. (``_effective_session_id``
+    never actually returns an empty id today — it mints a process-scoped
+    fallback — so "no session id" is a defensive case, not a reachable one.)
     """
-    from memo.flags import flag_bool, flag_str
-
-    if not flag_bool("MEMO_EMITTED_LEDGER"):
-        return hits, {}
-    allow = {
-        t.strip() for t in (flag_str("MEMO_EMITTED_LEDGER_TOOLS") or "").split(",") if t.strip()
-    }
-    if tool not in allow:
-        return hits, {}
-
     try:
+        from memo.flags import flag_bool, flag_str
+
+        if not flag_bool("MEMO_EMITTED_LEDGER"):
+            return hits, {}
+        allow = {
+            t.strip() for t in (flag_str("MEMO_EMITTED_LEDGER_TOOLS") or "").split(",") if t.strip()
+        }
+        if tool not in allow:
+            return hits, {}
+
         import time
 
         from memo import emitted_ledger as el
@@ -132,39 +156,36 @@ def apply_ledger(
 
         state_dir = memory.cfg.state_dir
         session_id = _effective_session_id()
+
+        # An id-less or bodyless hit stays out of partition()'s view entirely,
+        # so it can neither be digested itself nor be recorded under a shared
+        # "" key that an unrelated memory could later match against.
+        safe_hits = [h for h in hits if id_of(h) and text_of(h)]
+
         known = el.read(state_dir, session_id)
-        part = el.partition(
-            hits,
-            known,
-            text_of=lambda h: str(h.get("body") or ""),
-            id_of=lambda h: str(h.get("id") or ""),
-        )
+        part = el.partition(safe_hits, known, text_of=text_of, id_of=id_of)
 
-        now = int(time.time())
-        ref = el.mint_ref([str(h.get("id") or "") for h in part.full], now)
-        el.append(
-            state_dir,
-            session_id,
-            [
-                el.Entry.for_text(
-                    str(h.get("id") or ""),
-                    str(h.get("body") or ""),
-                    ref,
-                    now,
-                    "mcp",
-                )
-                for h in part.full
-            ],
-        )
+        ref: str | None = None
+        if part.full:
+            now = int(time.time())
+            ref = el.mint_ref([id_of(h) for h in part.full], now)
+            el.append(
+                state_dir,
+                session_id,
+                [el.Entry.for_text(id_of(h), text_of(h), ref, now, "mcp") for h in part.full],
+            )
+
+        digested_ids = {id(h) for h in part.digest}
+        out = [h for h in hits if id(h) not in digested_ids]
         if not part.digest:
-            return part.full, {}
+            return out, {}
 
-        return part.full, {
+        extra: dict[str, Any] = {
             "already_in_context": [
                 {
-                    "id": str(h.get("id") or ""),
+                    "id": id_of(h),
                     "title": str(h.get("title") or ""),
-                    "ref": known[str(h.get("id") or "")].ref,
+                    "ref": known[id_of(h)].ref,
                 }
                 for h in part.digest
             ],
@@ -172,7 +193,9 @@ def apply_ledger(
                 "bodies already emitted earlier in this session under the listed "
                 "ref; call memo_get(id) for any you cannot see above"
             ),
-            "cache_ref": ref,
         }
+        if ref is not None:
+            extra["cache_ref"] = ref
+        return out, extra
     except Exception:
         return hits, {}
