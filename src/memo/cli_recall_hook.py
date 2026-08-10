@@ -869,6 +869,7 @@ def recall_hook() -> None:
         except Exception:
             _disputed_by = {}
 
+    _emitted: list[tuple[str, str]] = []
     context = render_by_format(
         _recall_format,
         relevant,
@@ -879,6 +880,7 @@ def recall_hook() -> None:
         omitted=omitted,  # daemon parity — MEMO_RECALL_OMISSIONS_TAIL count
         disputed_by=_disputed_by,
         state_dir=cfg.state_dir,
+        emitted_sink=_emitted,
     )
     context = render_associative_line(context, _nudge, token_budget=token_budget)
     if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
@@ -890,6 +892,32 @@ def recall_hook() -> None:
     verbosity_level = flag_recall_verbosity_level()
     if verbosity_level > 0:
         context = maybe_inject_verbosity_steering(context, verbosity_level)
+
+    # Record what the model is about to see, so the MCP read tools can skip
+    # re-sending it later in this session. Fail-open by contract: the recall
+    # hook has a 5s budget and must never break on a bookkeeping write. Uses
+    # identity._session_id() (env var), not the payload-derived _sid above —
+    # verified to match what the MCP side's _effective_session_id() resolves
+    # to for the same Claude Code session (both inherit CLAUDE_CODE_SESSION_ID),
+    # so hook and MCP writers key the same ledger file without coordination.
+    # A distinct local (not _sid) so a client that exports no session env var
+    # can't clobber the payload-derived _sid the rest of this function relies on.
+    if flag_bool("MEMO_EMITTED_LEDGER") and _emitted:
+        try:
+            from memo import emitted_ledger as _el
+            from memo.identity import _session_id as _identity_session_id
+
+            _ledger_sid = _identity_session_id()
+            if _ledger_sid:
+                _now = int(time.time())
+                _ref = _el.mint_ref([_id for _id, _ in _emitted], _now, prefix="memo-h")
+                _el.append(
+                    cfg.state_dir,
+                    _ledger_sid,
+                    [_el.Entry.for_text(_id, _body, _ref, _now, "hook") for _id, _body in _emitted],
+                )
+        except Exception:  # noqa: S110  # fail-open: a ledger write failure just re-emits later
+            pass
 
     if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
         approx = _est_tokens(context)

@@ -387,8 +387,18 @@ def render_recall_context(
     omitted: list[Any] | None = None,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
-    """Render recall context within a strict chars/4 token budget."""
+    """Render recall context within a strict chars/4 token budget.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, body_text)`` for every
+    hit actually committed to the rendered output -- the emission ledger's
+    only correct source, since the body text here is truncated/adapted by
+    ``_effective_body_chars`` and the budget-trimmed path in ways nothing
+    outside this loop can reconstruct. A hit whose block never rendered at
+    all (dropped by the char budget) is left out of the sink entirely --
+    silence there just costs tokens later, never correctness.
+    """
     include_directive = turn is None or turn <= 1 or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
     lines = [RECALL_HEADER]
     if include_directive:
@@ -453,6 +463,8 @@ def render_recall_context(
         block = [*prefix, *([f"> {body}"] if body else []), *code_lines_by_hit.get(i, []), ""]
         if max_chars is None or len(_render(block)) <= max_chars:
             lines.extend(block)
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, body))
             continue
 
         # Preserve the citation/title and spend only the remaining budget on body.
@@ -474,11 +486,16 @@ def render_recall_context(
         )
         appended = False
         if body and available > 20:
-            lines.extend([*prefix, f"> {body[:available].rstrip()}…", ""])
+            trimmed_body = body[:available].rstrip() + "…"
+            lines.extend([*prefix, f"> {trimmed_body}", ""])
             appended = True
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, trimmed_body))
         elif max_chars is None or len(_render([*prefix, ""])) <= max_chars:
             lines.extend([*prefix, ""])
             appended = True
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, ""))
         # hit i counts as dropped when its block never rendered (prefix alone
         # over budget / available <= 20 with no room for the bare prefix).
         dropped.extend(relevant[i + 1 :] if appended else relevant[i:])
@@ -517,6 +534,7 @@ def render_recall_compact(
     token_budget: int,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
     """Compact recall format: one line per hit, no headers/tags/scores/body prose.
 
@@ -528,6 +546,11 @@ def render_recall_compact(
         </memo-recall>
 
     Token budget still applies; tail hits are dropped when over budget.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, "")`` for every hit
+    actually rendered -- compact never emits a body, only the id/title
+    line, so the recorded text is always empty. A hit dropped by the tail
+    cutoff is left out of the sink entirely.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     hit_lines: list[str] = []
@@ -565,12 +588,18 @@ def render_recall_compact(
             break
 
         hit_lines.extend(new_lines)
+        if emitted_sink is not None:
+            emitted_sink.append((hit.id, ""))
 
     return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
 
 
 def render_recall_balanced(
-    relevant: list[Any], *, token_budget: int, turn: int | None = None
+    relevant: list[Any],
+    *,
+    token_budget: int,
+    turn: int | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
     """Balanced recall format: title + short bullets, ~40% savings vs full.
 
@@ -591,9 +620,20 @@ def render_recall_balanced(
     (MEMO_RECALL_CODE_REFS_ENABLED, default OFF): a verified evidence pointer,
     not an epistemic annotation, and the operator opted into it explicitly.
     Compact stays one-line-per-hit and never renders it.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, bullet_text)`` per hit
+    -- the bullet text is the body-derived slice actually rendered, "" when
+    the hit had no body. Unlike ``render_recall_context``, this renderer
+    builds the whole block first and only truncates the joined string as a
+    last step, so a per-hit line can be cut mid-render by that final slice.
+    Rather than guess which lines survived, the sink is populated only when
+    NO truncation happened at all -- any truncation skips recording for
+    every hit in this call, which is safe (costs tokens) and never risks
+    recording a hit as fully emitted when the final slice actually cut it.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     lines = [f"- [{hit.id[:8]}] {hit.title}" for hit in relevant]
+    bullet_text: list[str] = ["" for _ in relevant]
 
     # Add short bullets from body (first 50 chars per sentence)
     for i, hit in enumerate(relevant):
@@ -605,6 +645,7 @@ def render_recall_balanced(
             indent = "\n  • ".join(bullets)
             if i < len(lines):
                 lines[i] = lines[i] + "\n  • " + indent
+                bullet_text[i] = indent
 
     # Verified code citations (flag off ⇒ {} — zero extra work, DB untouched).
     for i, ref_lines in _code_ref_lines(relevant).items():
@@ -617,6 +658,9 @@ def render_recall_balanced(
     if max_chars is not None and len(body) + len(footer) > max_chars:
         # Truncate the body but keep the footer (and its closing tag) intact.
         body = body[: max(0, max_chars - len(footer) - 3)].rstrip() + "..."
+    elif emitted_sink is not None:
+        for i, hit in enumerate(relevant):
+            emitted_sink.append((hit.id, bullet_text[i] if i < len(bullet_text) else ""))
 
     return body + footer
 
@@ -649,8 +693,14 @@ def render_by_format(
     omitted: list[Any] | None = None,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
-    """The compact/balanced/full render switch, shared by both recall paths."""
+    """The compact/balanced/full render switch, shared by both recall paths.
+
+    ``emitted_sink`` is forwarded to whichever renderer handles ``fmt`` --
+    see each renderer's own docstring for what it records. ``None`` (the
+    default) disables recording entirely and leaves output unchanged.
+    """
     world_proj = ""
     if state_dir is not None and flag_bool("MEMO_WORLD_MODEL_ENABLED"):
         try:
@@ -673,9 +723,12 @@ def render_by_format(
             token_budget=token_budget,
             disputed_by=disputed_by,
             state_dir=state_dir,
+            emitted_sink=emitted_sink,
         )
     if fmt == "balanced":
-        return world_proj + render_recall_balanced(relevant, token_budget=token_budget, turn=turn)
+        return world_proj + render_recall_balanced(
+            relevant, token_budget=token_budget, turn=turn, emitted_sink=emitted_sink
+        )
     return world_proj + render_recall_context(
         relevant,
         nudge,
@@ -685,6 +738,7 @@ def render_by_format(
         omitted=omitted,
         disputed_by=disputed_by,
         state_dir=state_dir,
+        emitted_sink=emitted_sink,
     )
 
 

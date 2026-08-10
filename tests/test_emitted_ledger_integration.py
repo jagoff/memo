@@ -442,4 +442,37 @@ async def test_tool_body_exception_leaves_the_ledger_empty(memory_with_memories,
         with pytest.raises(ToolError):
             await client.call_tool("memo_search", {"query": "chat", "limit": 5})
 
+
+def test_hook_emission_suppresses_a_later_search(memory_with_memories, call_tool, ledger_env):
+    """The largest real overlap: the recall hook injected it at turn 2, so
+    memo_search must not re-send the same body at turn 3."""
+    from memo import emitted_ledger as el
+
+    state_dir = memory_with_memories.cfg.state_dir
+    first = call_tool("memo_search", query="chat", limit=5)
+    target = first["hits"][0]
+    el.reset(state_dir, "sess-int")
+
+    # Simulate the hook having injected exactly this rendering.
+    body = target["body"]
+    el.append(
+        state_dir,
+        "sess-int",
+        [
+            el.Entry(
+                id=target["id"],
+                h=el.emitted_hash(body),
+                n=len(body),
+                ref="memo-h/abc123",
+                t=1,
+                src="hook",
+            )
+        ],
+    )
+
+    second = call_tool("memo_search", query="chat", limit=5)
+    digested = {e["id"]: e for e in second.get("already_in_context", [])}
+    assert target["id"] in digested
+    assert digested[target["id"]]["ref"] == "memo-h/abc123"
+
     assert el.read(memory_with_memories.cfg.state_dir, "sess-raise") == {}
