@@ -352,6 +352,34 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1024,
     ),
     _spec(
+        "MEMO_EMIT_LEDGER",
+        "bool",
+        False,
+        "mcp",
+        "Suppress re-emission of memory bodies already sent into this session's "
+        "context window. A repeat hit returns {id, title, ref} instead of the full "
+        "body. Default off until the replay gates in "
+        "docs/SPECS/2026-08-10-emission-ledger-design.md are met.",
+    ),
+    _spec(
+        "MEMO_EMIT_LEDGER_TOOLS",
+        "str",
+        "memo_search,memo_ask,memo_context,memo_unified_briefing,memo_evidence_pack",
+        "mcp",
+        "Comma-separated MCP tools that consult the emission ledger. memo_get and "
+        "memo_history are deliberately absent: they mean 'give me this one, "
+        "explicitly', and are the escape hatch a digest points at.",
+    ),
+    _spec(
+        "MEMO_EMIT_LEDGER_MAX",
+        "int",
+        500,
+        "mcp",
+        "Emission-ledger entry cap per session, FIFO. Bounds both the file and the "
+        "read cost on the MCP hot path.",
+        min_val=0,
+    ),
+    _spec(
         "MEMO_RELATION_CANDIDATES_ENABLED",
         "bool",
         True,
