@@ -68,6 +68,20 @@ def _fact_badge(hit: dict) -> str:
     return f" facts:{len(facts)}" if isinstance(facts, list) and facts else ""
 
 
+def _require_valid_as_of(as_of: str | None) -> None:
+    """Refuse a malformed `--as-of` before the query runs.
+
+    The store keeps every row on a bound it cannot parse, so without this the
+    query answers from the PRESENT while looking like it honoured `--as-of`.
+    """
+    from memo.asof import validate_as_of
+
+    try:
+        validate_as_of(as_of)
+    except MemoError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 def _default_search_json_body_chars() -> int:
     from memo.flags import flag_int
 
@@ -173,15 +187,7 @@ def search(
     """Top-k search — hybrid (semantic + keyword) by default."""
     import time
 
-    from memo.asof import validate_as_of
-
-    # Refuse a malformed boundary here: the store keeps every row on a bound it
-    # cannot parse, so without this the query answers from the PRESENT while
-    # looking like it honoured `--as-of`.
-    try:
-        validate_as_of(as_of)
-    except MemoError as exc:
-        raise click.ClickException(str(exc)) from exc
+    _require_valid_as_of(as_of)
 
     if body_chars is None:
         body_chars = _default_search_json_body_chars()
