@@ -23,7 +23,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         entity_b: str,
         relationship: str,
         confidence: float = 0.7,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Share a discovered connection with the community.
 
         Args:
@@ -81,7 +81,7 @@ def register(server: FastMCP, memory: Memory) -> None:
     def memo_collaborative_share_insight(
         user_id: str,
         content: str,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Share an insight with the community.
 
         Args:

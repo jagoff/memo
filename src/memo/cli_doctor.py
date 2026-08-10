@@ -18,7 +18,7 @@ from memo.cli_diag import (
 )
 from memo.cli_runtime import _print_runtime_install_report, _runtime_install_report
 from memo.config import Config
-from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs
+from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs, scan_mcp_store_env
 
 # Codegraph doctor check — WARN-only (never fails doctor). Consumers of the
 # code graph degrade silently when the index is absent, but
@@ -250,6 +250,25 @@ def doctor(
                     f"[yellow]![/yellow] mcp config: {_r['config']} → {_r['command']} "
                     f"({_r['issue']}); shim {_r['suggestion']} missing — install runtime first"
                 )
+
+    # A store path in a client's env is the failure the CLI cannot feel: memo
+    # creates whatever directory it is handed, so the MCP client answers from an
+    # empty corpus while every check here stays green.
+    _store_env = scan_mcp_store_env()
+    if _store_env:
+        for _s in _store_env:
+            _why = (
+                "resolves against the client's cwd"
+                if _s["issue"] == "relative"
+                else "does not exist — the server would create a new empty store"
+            )
+            console.print(
+                f"[red]✗[/red] mcp store env: {_s['config']} → {_s['var']}={_s['value']} "
+                f"[dim]({_why}; set an absolute path or drop the override)[/dim]"
+            )
+        ok = False
+    else:
+        console.print("[green]✓[/green] mcp store env: no overrides pointing elsewhere")
 
     if cfg.data_dir.is_dir():
         console.print(f"[green]✓[/green] data_dir: {cfg.data_dir}")

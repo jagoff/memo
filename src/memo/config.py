@@ -314,8 +314,39 @@ def _resolve_model_profile(
     _apply_selected_values(kwargs, md_values)
 
 
+def _reject_relative_store_env() -> None:
+    """Refuse a relative store path supplied through the environment.
+
+    An env-supplied store path is meant to name one exact directory, but a
+    relative one resolves against whatever cwd the process happens to inherit
+    — and the consequences diverge silently. A stale
+    ``MEMO_DATA_DIR="sweep/store_cli_2/data"`` in an MCP client's env resolved
+    under the home directory, so memo created a NEW EMPTY store there and every
+    MCP tool answered from an empty corpus while the CLI kept reading the real
+    one; the same string in a launchd plist (cwd ``/``) hit a read-only
+    filesystem and crash-looped with a readable error. Same misconfiguration,
+    and only the inherited cwd decided whether it was loud or invisible.
+
+    Scoped to the environment on purpose: ``_apply_repo_and_legacy_paths``
+    still sets relative ``data_dir``/``state_dir`` defaults for the zero-config
+    in-repo case, where the cwd IS the directory being described.
+    """
+    for env_key in ("MEMO_DATA_DIR", "MEMO_STATE_DIR"):
+        value = os.environ.get(env_key)
+        if not value:
+            continue
+        if not Path(value).expanduser().is_absolute():
+            raise MemoError(
+                f"{env_key}={value!r} is a relative path. It resolves against the "
+                "current working directory, which differs per client (a launchd "
+                "agent runs at '/'), so it can silently point at a different — or "
+                "empty — store. Use an absolute path (or a leading '~')."
+            )
+
+
 def _apply_environment_values(kwargs: dict[str, Any], md_values: dict[str, Any]) -> None:
     """Apply registered environment overrides and platform-aware toggles."""
+    _reject_relative_store_env()
     env_values = {
         field: value
         for env_key, field in _ENV_TO_FIELD.items()

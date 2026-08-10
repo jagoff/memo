@@ -18,6 +18,7 @@ from rich.table import Table
 from memo.cli_common import console, log_cli_consult
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.errors import MemoError
 from memo.memory.record import MemoryRecord
 
 
@@ -171,6 +172,16 @@ def search(
 ) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
     import time
+
+    from memo.asof import validate_as_of
+
+    # Refuse a malformed boundary here: the store keeps every row on a bound it
+    # cannot parse, so without this the query answers from the PRESENT while
+    # looking like it honoured `--as-of`.
+    try:
+        validate_as_of(as_of)
+    except MemoError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     if body_chars is None:
         body_chars = _default_search_json_body_chars()
