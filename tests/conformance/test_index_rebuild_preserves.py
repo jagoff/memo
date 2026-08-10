@@ -233,6 +233,12 @@ def test_rebuild_preserves_user_signal(big_corpus, corpus_size, tmp_path, monkey
         reranker_enabled=False,
     )
 
+    # In-process: `_prime_embedding_cache` writes repo-cache rows whose dim is
+    # validated against the AMBIENT embedder config, and `big_corpus` no longer
+    # leaves its own env set for the whole session (that leak configured every
+    # later test in the run). Function scope is where this belongs.
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", str(DIMS))
+
     store = VecStore(cfg.db_path, dims=DIMS)
     try:
         store.touch([seeded_id(1)])
