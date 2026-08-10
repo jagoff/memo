@@ -364,11 +364,19 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_EMITTED_LEDGER_TOOLS",
         "str",
-        "memo_search,memo_ask,memo_context,memo_unified_briefing,memo_evidence_pack",
+        "memo_search,memo_ask,memo_evidence_pack",
         "mcp",
         "Comma-separated MCP tools that consult the emission ledger. memo_get and "
         "memo_history are deliberately absent: they mean 'give me this one, "
-        "explicitly', and are the escape hatch a digest points at.",
+        "explicitly', and are the escape hatch a digest points at. memo_context "
+        "and memo_unified_briefing are also absent, not merely unwired: "
+        "memo_context's structured 'hits' list carries no body text at all "
+        "(id/title/score/section only), and the body text it does return lives "
+        "inside its packed 'prompt' wrapper, which embeds full snippets inline "
+        "-- suppressing the bodyless hit list would suppress nothing real. "
+        "memo_unified_briefing returns one compacted markdown string with no "
+        "per-hit list to partition. Neither has a hit list this mechanism can "
+        "suppress without half-wiring a lie into this allowlist.",
     ),
     _spec(
         "MEMO_EMITTED_LEDGER_MAX",

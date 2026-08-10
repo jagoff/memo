@@ -169,6 +169,206 @@ async def test_in_budget_call_through_the_real_client_still_commits_and_digests(
     assert el.read(memory_with_memories.cfg.state_dir, "sess-inbudget")
 
 
+@pytest.fixture
+def stub_llm(monkeypatch):
+    """Stub the MLX chat backend so `memo_ask` exercises its real
+    sources-building pipeline without requiring MLX weights or Apple Silicon.
+    Mirrors `test_server_sampling.py`'s
+    `test_memo_ask_falls_back_to_mlx_without_handler` -- `memory.ask()`
+    reaches `Memory._build_mlx_chat()`, which raises without a real MLX
+    runtime unless `mlx_available` is patched, then constructs a real
+    `MLXChat` unless its `__init__`/`chat` are patched too.
+    """
+    monkeypatch.setattr("memo.platform_detect.mlx_available", lambda: True)
+    monkeypatch.setattr("memo.llm.MLXChat.__init__", lambda self, *args, **kwargs: None)
+    monkeypatch.setattr(
+        "memo.llm.MLXChat.chat",
+        lambda self, model, messages, options=None: {"message": {"content": "stub answer"}},
+    )
+
+
+# -- Task 5: memo_ask / memo_evidence_pack wired; memo_context / -------------
+# memo_unified_briefing deliberately left out of the default allowlist. -----
+#
+# memo_ask returns hits under `sources` (id/title/type/score/snippet --
+# `snippet` is the truncated field, see ask_ops.py `_build_ask_context`).
+# memo_evidence_pack returns hits under `items` (EvidenceItem.to_dict(), also
+# an `id`/`snippet` shape). Both differ from memo_search's `body` default, so
+# both need a custom `text_of`.
+#
+# memo_context's structured `hits` key (`_consult_hits_with_sections`) never
+# carries body text at all (id/title/score/section only -- see
+# context_surface.py), and the body text that DOES exist lives inside the
+# packed `prompt` string (context_pack.py's `_format_section` interpolates
+# `row['snippet']` directly into it) -- exactly the disqualifying case the
+# task brief calls out: suppressing the bodyless structured list while the
+# prompt string still carries every body in full would be a no-op dressed up
+# as a feature. memo_unified_briefing returns one `compact_text`-squashed
+# markdown string (`compose_unified_briefing`) with no per-hit list to
+# partition at all. Both are therefore absent from `MEMO_EMITTED_LEDGER_TOOLS`'s
+# default (`flags_misc.py`) and untouched here.
+
+
+@pytest.mark.parametrize(
+    ("tool", "kwargs", "hits_key"),
+    [
+        ("memo_ask", {"question": "chat"}, "sources"),
+        ("memo_evidence_pack", {"question": "chat"}, "items"),
+    ],
+)
+def test_cross_tool_suppression_after_search(
+    memory_with_memories, call_tool, ledger_env, stub_llm, tool, kwargs, hits_key
+):
+    """A memo_search at turn N suppresses the same bodies from a different tool
+    at turn N+1 -- the overlap this feature exists to remove."""
+    first = call_tool("memo_search", query="chat", limit=5)
+    seen = {h["id"] for h in first["hits"]}
+    assert seen
+
+    second = call_tool(tool, **kwargs)
+    digested = {e["id"] for e in second.get("already_in_context", [])}
+    assert digested & seen, f"{tool} did not digest anything memo_search already emitted"
+    remaining = {h["id"] for h in second.get(hits_key, []) or []}
+    assert not (remaining & digested), "a hit was both emitted and digested"
+
+
+@pytest.mark.parametrize(
+    ("tool", "kwargs", "hits_key"),
+    [
+        ("memo_ask", {"question": "chat"}, "sources"),
+        ("memo_evidence_pack", {"question": "chat"}, "items"),
+    ],
+)
+def test_repeated_call_digests_the_second_time(
+    memory_with_memories, call_tool, ledger_env, stub_llm, tool, kwargs, hits_key
+):
+    first = call_tool(tool, **kwargs)
+    first_ids = {h["id"] for h in first.get(hits_key, []) or []}
+    assert first_ids, f"{tool} fixture must return at least one hit"
+    assert "already_in_context" not in first
+
+    second = call_tool(tool, **kwargs)
+    second_ids = {h["id"] for h in second.get(hits_key, []) or []}
+    digested_ids = {e["id"] for e in second.get("already_in_context", [])}
+    assert not second_ids, f"{tool} should have digested every previously-seen id"
+    assert digested_ids == first_ids
+
+
+def test_ask_snippet_chars_change_reemits_full_not_a_stale_digest(
+    memory_with_memories, call_tool, ledger_env, stub_llm
+):
+    """F3 analog (task-4 review) for memo_ask: proves a widened `snippet_chars`
+    is never mistaken for text already digested at a narrower one. Unlike
+    memo_search, `sources` rows carry no separate untruncated-body field a
+    buggy `text_of` could read instead of `snippet` -- that class of bug is
+    instead caught by `test_cross_tool_suppression_after_search` /
+    `test_repeated_call_digests_the_second_time` failing outright (checked:
+    swapping in the module's default `text_of`, which reads a `body` key
+    these rows don't have, makes `apply_ledger` treat every hit as
+    id/text-less and silently never digest -- see task-5-report.md)."""
+    narrow = call_tool("memo_ask", question="chat", snippet_chars=10)
+    assert narrow["sources"], "fixture must return at least one source"
+    # 10 chars plus the ellipsis memo_ask appends when it truncates -- proves
+    # the snippet was actually cut, without pinning the exact ellipsis math.
+    assert all(len(s["snippet"]) <= 11 for s in narrow["sources"])
+    assert "already_in_context" not in narrow
+
+    wide = call_tool("memo_ask", question="chat", snippet_chars=2000)
+    assert {s["id"] for s in wide["sources"]} == {s["id"] for s in narrow["sources"]}
+    assert "already_in_context" not in wide
+
+
+def test_evidence_pack_max_chars_change_reemits_full_not_a_stale_digest(
+    memory_with_memories, call_tool, ledger_env
+):
+    """F3 analog for memo_evidence_pack: unlike memo_search's `body_chars` (a
+    per-hit cap) or memo_ask's `snippet_chars` (also per-hit), evidence_pack's
+    `max_chars` is a single RUNNING budget shared across all items
+    (`_build_items`'s `remaining`), so a narrow budget can drop an item
+    entirely rather than merely shortening it. The invariant under test is
+    narrower as a result: a widened budget must never be treated as
+    already-seen, not that the two calls return identical id sets.
+    """
+    long_body = "chat pipeline notes. " * 60
+    memory_with_memories.save(content=long_body, title="Long chat memory")
+
+    narrow = call_tool("memo_evidence_pack", question="chat", max_chars=256)
+    assert narrow["items"], "fixture must return at least one evidence item"
+    assert "already_in_context" not in narrow
+
+    wide = call_tool("memo_evidence_pack", question="chat", max_chars=12_000)
+    assert "already_in_context" not in wide
+
+
+def test_context_and_briefing_are_not_in_the_default_allowlist():
+    """Pins the Task 5 scope decision at the config-surface level: a tool
+    that can never digest must not be lying in the allowlist."""
+    allow = {t.strip() for t in _LEDGER_TOOLS_DEFAULT.split(",") if t.strip()}
+    assert "memo_context" not in allow
+    assert "memo_unified_briefing" not in allow
+    assert {"memo_search", "memo_ask", "memo_evidence_pack"} <= allow
+
+
+def test_context_never_suppresses_even_after_search(memory_with_memories, call_tool, ledger_env):
+    first = call_tool("memo_search", query="chat", limit=5)
+    assert first["hits"]
+
+    second = call_tool("memo_context", question="chat")
+    assert "already_in_context" not in second
+    assert second.get("hits"), "memo_context must keep returning its structured hit rows"
+
+
+def test_unified_briefing_never_suppresses_even_after_search(
+    memory_with_memories, call_tool, ledger_env
+):
+    first = call_tool("memo_search", query="chat", limit=5)
+    assert first["hits"]
+
+    second = call_tool("memo_unified_briefing")
+    assert "already_in_context" not in second
+    assert second["markdown"]
+
+
+@pytest.mark.parametrize(
+    ("tool", "kwargs", "hits_key"),
+    [
+        ("memo_ask", {"question": "chat"}, "sources"),
+        ("memo_context", {"question": "chat"}, "hits"),
+        ("memo_evidence_pack", {"question": "chat"}, "items"),
+    ],
+)
+def test_flag_off_leaves_each_tool_untouched(
+    memory_with_memories, call_tool, monkeypatch, stub_llm, tool, kwargs, hits_key
+):
+    """With MEMO_EMITTED_LEDGER off, memo_ask/memo_evidence_pack (wired) and
+    memo_context (deliberately not) must all behave exactly as before this
+    feature existed: repeating the same call never suppresses a hit."""
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "0")
+    monkeypatch.setenv("MEMO_SESSION_ID", f"sess-off-{tool}")
+
+    first = call_tool(tool, **kwargs)
+    second = call_tool(tool, **kwargs)
+
+    first_ids = {h["id"] for h in first.get(hits_key, []) or [] if h.get("id")}
+    second_ids = {h["id"] for h in second.get(hits_key, []) or [] if h.get("id")}
+    assert first_ids, f"{tool} fixture must return at least one id-bearing hit"
+    assert first_ids == second_ids
+    assert "already_in_context" not in second
+    assert el.read(memory_with_memories.cfg.state_dir, f"sess-off-{tool}") == {}
+
+
+def test_flag_off_leaves_unified_briefing_untouched(memory_with_memories, call_tool, monkeypatch):
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "0")
+    monkeypatch.setenv("MEMO_SESSION_ID", "sess-off-briefing")
+
+    first = call_tool("memo_unified_briefing")
+    second = call_tool("memo_unified_briefing")
+
+    assert first["markdown"] == second["markdown"]
+    assert "already_in_context" not in second
+    assert el.read(memory_with_memories.cfg.state_dir, "sess-off-briefing") == {}
+
+
 @pytest.mark.asyncio
 async def test_tool_body_exception_leaves_the_ledger_empty(memory_with_memories, monkeypatch):
     """apply_ledger stages its writes before the rest of memo_search's body

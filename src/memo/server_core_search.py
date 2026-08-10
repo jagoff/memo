@@ -629,6 +629,24 @@ def register(server: Any, memory: Memory) -> None:
         log_consult(memory, tool="ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
         out["synthesizer"] = synthesizer
 
+        # Suppress sources already emitted into this session's window. `ask()`
+        # already used the untruncated sources to synthesize `answer` above --
+        # this only affects what's returned to the caller as citations, same
+        # as memo_search. Rows carry the emitted text under `snippet`, not
+        # `body` (see ask_ops.py's `_build_ask_context`).
+        sources = out.get("sources")
+        if isinstance(sources, list):
+            from memo.server_common import apply_ledger
+
+            kept, ledger_extra = apply_ledger(
+                memory,
+                "memo_ask",
+                sources,
+                text_of=lambda h: str(h.get("snippet") or ""),
+            )
+            out["sources"] = kept
+            out.update(ledger_extra)
+
         # Read pending idle notification (best-effort, races with writer)
         out["notification"] = _read_notification(memory)
 

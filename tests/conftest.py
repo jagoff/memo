@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import inspect
 import json
 import os
 import shutil
@@ -262,7 +263,10 @@ def call_tool(memory_with_memories):
     already establishes (`FastMCP.get_tool` is async; the plain callable
     lives on the returned `FunctionTool`'s `.fn`). Builds the server once
     against `memory_with_memories` and returns a `(name, **kwargs) -> dict`
-    callable.
+    callable. Some tools (e.g. `memo_ask`) are declared `async def`, so
+    `.fn(**kwargs)` returns a coroutine rather than the result -- awaited
+    here via a second one-shot `asyncio.run` so callers get a plain dict
+    regardless of the tool's sync/async shape.
     """
     import asyncio
 
@@ -274,7 +278,8 @@ def call_tool(memory_with_memories):
         tool = asyncio.run(server.get_tool(name))
         if tool is None:
             raise RuntimeError(f"tool {name!r} not registered")
-        return tool.fn(**kwargs)
+        result = tool.fn(**kwargs)
+        return asyncio.run(result) if inspect.isawaitable(result) else result
 
     return _call
 

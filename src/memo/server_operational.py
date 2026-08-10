@@ -90,7 +90,7 @@ def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
         when retrieval coverage stays under `min_coverage` the result is an
         explicit abstention, never a fabricated answer.
         """
-        return memory.evidence_pack(
+        out = memory.evidence_pack(
             question,
             k=max(1, min(k, 50)),
             max_chars=max_chars,
@@ -98,6 +98,27 @@ def _register_evidence_and_state_tools(server: Any, memory: Any) -> None:
             type_=type,
             as_of=as_of,
         ).to_dict()
+
+        # Suppress items already emitted into this session's window. `items`
+        # carry the emitted text under `snippet` (EvidenceItem.to_dict()), not
+        # `body`. `confidence`/`coverage`/`token_estimate` above were computed
+        # from the full (pre-suppression) items -- same as memo_ask's answer,
+        # they describe what evidence_pack actually used, not what survives
+        # here as citations.
+        items = out.get("items")
+        if isinstance(items, list):
+            from memo.server_common import apply_ledger
+
+            kept, ledger_extra = apply_ledger(
+                memory,
+                "memo_evidence_pack",
+                items,
+                text_of=lambda h: str(h.get("snippet") or ""),
+            )
+            out["items"] = kept
+            out.update(ledger_extra)
+
+        return out
 
     @annotated_tool(server, **READ_ONLY)
     def memo_operational_state(

@@ -141,9 +141,10 @@ def test_truncated_body_over_prefix_threshold_is_digested_via_hp(mem):
 def test_bodyless_hit_is_always_full_and_never_recorded(mem, tmp_path):
     """F2: a hit with no body key at all must never be digested — an empty
     string hashes to a fixed value that self-matches itself regardless of
-    what the real content later becomes (context_surface.py rows carry no
-    body at all, and MEMO_EMITTED_LEDGER_TOOLS defaults to include
-    memo_context, which reads exactly those rows)."""
+    what the real content later becomes (context_surface.py's memo_context
+    rows carry no body at all — id/title/score/section only — which is
+    exactly why Task 5 left memo_context out of MEMO_EMITTED_LEDGER_TOOLS's
+    default rather than wiring it against a bodyless row)."""
     hit = {"id": "mem_a", "title": "A"}
     sc.apply_ledger(mem, "memo_search", [hit])
     assert el.read(tmp_path, "sess-apply") == {}  # nothing recorded for it
