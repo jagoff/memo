@@ -109,6 +109,37 @@ def _dup_group_iter(stale: list[dict]) -> list[str]:
     return sorted({hashlib.sha256(str(s.get("body") or "").encode()).hexdigest() for s in stale})
 
 
+@ops_group.command(name="gc-emitted-ledgers")
+@click.option(
+    "--max-age-hours",
+    default=48,
+    show_default=True,
+    type=int,
+    help="Remove emission ledgers untouched for longer than this.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def gc_emitted_ledgers_cmd(max_age_hours: int, as_json: bool) -> None:
+    """Remove emission-ledger files from sessions that are long over.
+
+    Sessions leave no close signal, so age is the only liveness proxy: a file
+    untouched for longer than --max-age-hours is treated as an orphan. This
+    does not prove the session is dead, only that it has been silent for that
+    long — 48h is well past any live session, but a session somehow still
+    alive past that age loses its ledger and re-emits already-seen bodies on
+    its next turn. That costs tokens, never correctness.
+    """
+    from memo import emitted_ledger
+    from memo.config import Config
+
+    cfg = Config.from_env()
+    removed = emitted_ledger.prune(cfg.state_dir, max_age_s=max_age_hours * 3600)
+    result = {"removed": removed, "max_age_hours": max_age_hours}
+    if as_json:
+        click.echo(json.dumps(result))
+        return
+    console.print(f"removed: [green]{removed}[/green] emission ledger(s)")
+
+
 @ops_group.command(name="vault-ingest")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def vault_ingest_cmd(as_json: bool) -> None:
