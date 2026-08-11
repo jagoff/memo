@@ -1,8 +1,11 @@
+import json
+
 import pytest
 
 from memo import emitted_ledger as el
 from memo import server_common as sc
 from memo import server_session_patterns as ssp
+from memo.mcp_budget import est_tokens
 
 
 class _Cfg:
@@ -279,6 +282,90 @@ def test_partition_raising_degrades_to_passthrough(mem, monkeypatch):
     out, extra = sc.apply_ledger(mem, "memo_search", hits)
     assert calls, "expected partition() to be called (and raise) before the assertion"
     assert out == hits and extra == {}
+
+
+# -- Task 8: counters -------------------------------------------------------
+
+
+def test_first_call_never_bumps_the_suppression_counters(mem, tmp_path):
+    """A cold ledger emits everything in full -- nothing was suppressed, so
+    the counters `stats()` reports must stay at zero."""
+    sc.apply_ledger(mem, "memo_search", _hits())
+    stats = el.stats(tmp_path, "sess-apply")
+    assert stats["digests_served"] == 0
+    assert stats["tokens_suppressed"] == 0
+    assert stats["tokens_digest"] == 0
+    assert stats["net_saved_est"] == 0
+
+
+def test_digest_call_bumps_the_suppression_counters(mem, tmp_path):
+    sc.apply_ledger(mem, "memo_search", _hits())
+    _, extra = sc.apply_ledger(mem, "memo_search", _hits())
+
+    stats = el.stats(tmp_path, "sess-apply")
+    assert stats["digests_served"] == 2  # mem_a, mem_b
+    expected_suppressed = est_tokens("body a") + est_tokens("body b")
+    assert stats["tokens_suppressed"] == expected_suppressed
+    expected_digest_cost = est_tokens(json.dumps(extra, separators=(",", ":"), default=str))
+    assert stats["tokens_digest"] == expected_digest_cost
+    assert stats["net_saved_est"] == expected_suppressed - expected_digest_cost
+    # NOT asserted positive: these fixture bodies are 6 chars each, so the
+    # fixed {id, title, ref} + "hint" text overhead of the digest stub
+    # legitimately outweighs the saving here -- a real finding about the
+    # stub's fixed cost, not a test bug. See task-8-report.md: the same is
+    # true even for the ~49-char bodies in memory_with_memories's fixture
+    # data, so this is not just a synthetic-fixture artifact -- only bodies
+    # long enough for the per-byte saving to clear the stub's fixed overhead
+    # make the digest pay off, and this repo's regression corpus should be
+    # checked against real body-length distributions before promotion.
+
+
+def test_partial_digest_call_only_counts_the_digested_hits(mem, tmp_path):
+    """test_partial_overlap_across_tools's shape: mem_c is sent full (not
+    suppressed), mem_a/mem_b are digested. Only the digested pair may count
+    toward tokens_suppressed/digests_served."""
+    sc.apply_ledger(mem, "memo_search", _hits())
+    later = [*_hits(), {"id": "mem_c", "title": "C", "body": "body c"}]
+    sc.apply_ledger(mem, "memo_ask", later)
+
+    stats = el.stats(tmp_path, "sess-apply")
+    assert stats["digests_served"] == 2
+    assert stats["tokens_suppressed"] == est_tokens("body a") + est_tokens("body b")
+
+
+def test_flag_off_never_writes_counters(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "0")
+    monkeypatch.setenv("MEMO_SESSION_ID", "sess-off-counters")
+    m = _Mem(tmp_path)
+    sc.apply_ledger(m, "memo_search", _hits())
+    sc.apply_ledger(m, "memo_search", _hits())
+    assert el.stats(tmp_path, "sess-off-counters") == {
+        "entries": 0,
+        "digests_served": 0,
+        "tokens_suppressed": 0,
+        "tokens_digest": 0,
+        "memo_get_after_digest": 0,
+        "net_saved_est": 0,
+    }
+
+
+def test_counter_bump_failure_does_not_break_the_actual_suppression(mem, tmp_path, monkeypatch):
+    """Deliberate design point: a counter is measurement, not correctness.
+    Unlike a ledger/partition failure (which degrades apply_ledger to a full
+    passthrough -- see test_partition_raising_degrades_to_passthrough above),
+    a broken counter must NOT undo the suppression this call already
+    computed correctly. If it did, a bug in the measurement code would make
+    memo re-emit content the model has already seen -- exactly the tokens
+    this feature exists to stop spending."""
+    sc.apply_ledger(mem, "memo_search", _hits())
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(el, "bump", boom)
+    out, extra = sc.apply_ledger(mem, "memo_search", _hits())
+    assert out == []
+    assert [e["id"] for e in extra["already_in_context"]] == ["mem_a", "mem_b"]
 
 
 def test_session_id_lookup_raising_degrades_to_passthrough(mem, monkeypatch):

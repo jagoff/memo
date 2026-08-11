@@ -291,6 +291,85 @@ def partition(
     return Partition(full=full, digest=digest, suppressed_chars=suppressed)
 
 
+def _counters_path(state_dir: Path, session_id: str) -> Path:
+    return Path(state_dir) / _DIRNAME / f"{_safe(session_id)}.counters.json"
+
+
+def bump(
+    state_dir: Path,
+    session_id: str,
+    *,
+    digests_served: int = 0,
+    tokens_suppressed: int = 0,
+    tokens_digest: int = 0,
+    get_after_digest: int = 0,
+    tokens_recovered: int = 0,
+) -> None:
+    """Accumulate the numbers ``stats()`` reports for the promotion gate.
+
+    Every argument is a DELTA to add to this session's running total, already
+    converted to tokens by the caller (``mcp_budget.est_tokens``, the house
+    4-chars-per-token estimate) -- this module stays stdlib-only per its
+    leaf-module contract (see the module docstring), so it never re-derives
+    that conversion itself; ``server_common.apply_ledger`` and
+    ``server_core_records.memo_get`` are the two call sites that hold real
+    text and do the conversion.
+
+    Read-modify-write against a small per-session JSON file, same fail-open
+    envelope as ``append``: a counter this cannot persist costs the
+    promotion gate a measurement, never a caller's response.
+    """
+    try:
+        path = _counters_path(state_dir, session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            cur = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            cur = {}
+        deltas = {
+            "digests_served": digests_served,
+            "tokens_suppressed": tokens_suppressed,
+            "tokens_digest": tokens_digest,
+            "get_after_digest": get_after_digest,
+            "tokens_recovered": tokens_recovered,
+        }
+        for key, delta in deltas.items():
+            cur[key] = int(cur.get(key, 0)) + delta
+        path.write_text(json.dumps(cur, separators=(",", ":")), encoding="utf-8")
+    except Exception:
+        return
+
+
+def stats(state_dir: Path, session_id: str) -> dict[str, int]:
+    """This session's emission-ledger scorecard, in tokens.
+
+    ``net_saved_est`` is the number the promotion gate reads::
+
+        tokens_suppressed - tokens_digest - tokens_recovered
+
+    what was NOT sent, minus what the digest stubs themselves cost, minus
+    what recovering from them via ``memo_get`` cost. It can go negative on
+    purpose: a session that calls ``memo_get`` on every digested id pays the
+    recovery cost on top of a suppression that was never actually realised,
+    and the gate has to be able to see that rather than have it netted away.
+    """
+    try:
+        cur = json.loads(_counters_path(state_dir, session_id).read_text(encoding="utf-8"))
+    except Exception:
+        cur = {}
+    suppressed = int(cur.get("tokens_suppressed", 0))
+    digest_cost = int(cur.get("tokens_digest", 0))
+    recovery = int(cur.get("tokens_recovered", 0))
+    return {
+        "entries": len(read(state_dir, session_id)),
+        "digests_served": int(cur.get("digests_served", 0)),
+        "tokens_suppressed": suppressed,
+        "tokens_digest": digest_cost,
+        "memo_get_after_digest": int(cur.get("get_after_digest", 0)),
+        "net_saved_est": suppressed - digest_cost - recovery,
+    }
+
+
 def prune(state_dir: Path, *, max_age_s: int) -> int:
     """Remove ledgers whose session ended long ago. Sessions leave no close
     signal, so age is the only available liveness proxy."""

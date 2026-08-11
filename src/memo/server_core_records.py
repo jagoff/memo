@@ -37,6 +37,48 @@ def _safe_mcp_extra(extra: dict[str, Any] | None) -> dict[str, Any]:
     return safe_extra
 
 
+def _record_ledger_recovery(memory: Memory, memory_id: str, record: dict[str, Any]) -> None:
+    """Count a `memo_get` against the emission ledger's net-saving estimate
+    when `memory_id` already has an entry in this session's ledger -- some
+    earlier call already put a rendering of it into the context window.
+
+    Conservative attribution, not proof of cause: per the spec, ANY memo_get
+    on a previously-emitted id counts against the feature, including one the
+    model would have issued anyway (e.g. to double-check exact current
+    content) rather than specifically because it followed a digest
+    `{id, title, ref}` pointer. This module has no record of WHY a memo_get
+    happened, only that the id was already in the window -- see
+    task-8-report.md for what this does and does not prove.
+
+    Fail-open, and on its own try/except separate from `memo_get`'s own
+    logic: a counter failure must never affect the record this tool actually
+    returns.
+    """
+    try:
+        from memo.flags import flag_bool
+
+        if not flag_bool("MEMO_EMITTED_LEDGER"):
+            return
+
+        from memo import emitted_ledger as el
+        from memo.mcp_budget import est_tokens
+        from memo.server_common import stage_counters
+        from memo.server_session_patterns import _effective_session_id
+
+        state_dir = memory.cfg.state_dir
+        session_id = _effective_session_id()
+        if memory_id not in el.read(state_dir, session_id):
+            return
+        stage_counters(
+            state_dir,
+            session_id,
+            get_after_digest=1,
+            tokens_recovered=est_tokens(str(record.get("body") or "")),
+        )
+    except Exception:
+        return
+
+
 def _bounded_lint(report: dict[str, list[dict[str, Any]]], *, limit: int) -> dict[str, Any]:
     """Trim each lint category to `limit` findings and keep the true totals.
 
@@ -310,6 +352,13 @@ def register(server: Any, memory: Memory) -> None:
         Read-only. Returns the full memory record, `None` when it does not
         exist, or an ambiguity error when the prefix matches multiple records.
         Use memo_search or memo_list first when you do not know the id.
+
+        When MEMO_EMITTED_LEDGER is on and the resolved id already has an
+        entry in this session's emission ledger, this call counts as a
+        recovery against the feature's net-saving estimate (see
+        `memo_cache_stats`'s `emit_ledger.memo_get_after_digest`) -- the
+        conservative rule the spec calls for, not proof this call actually
+        followed a digest pointer.
         """
         try:
             rec = memory.get(id)
@@ -317,7 +366,9 @@ def register(server: Any, memory: Memory) -> None:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
         if not rec:
             return None
-        return rec.to_dict()
+        out = rec.to_dict()
+        _record_ledger_recovery(memory, rec.id, out)
+        return out
 
     @annotated_tool(server, **DESTRUCTIVE)
     def memo_update(

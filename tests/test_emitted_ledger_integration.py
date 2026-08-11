@@ -144,6 +144,39 @@ async def test_budget_exceeded_call_writes_no_ledger_entries(memory_with_memorie
 
 
 @pytest.mark.asyncio
+async def test_budget_exceeded_digest_call_writes_no_counters(memory_with_memories, monkeypatch):
+    """Task 8: a digested batch the middleware then DISCARDS must not be
+    counted as a saving -- the caller never actually received the digest
+    pointer, so counting tokens_suppressed for it would lie to the promotion
+    gate. `apply_ledger`'s counter bump goes through the same `_LEDGER_STAGE`
+    the F1 ledger-entry fix uses, so this must discard exactly like
+    `test_budget_exceeded_call_writes_no_ledger_entries` above."""
+    from fastmcp import Client
+
+    from memo.server import build_server
+
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER_TOOLS", _LEDGER_TOOLS_DEFAULT)
+    monkeypatch.setenv("MEMO_SESSION_ID", "sess-budget-digest")
+
+    server = build_server(memory=memory_with_memories)
+    async with Client(server) as client:
+        first = await client.call_tool("memo_search", {"query": "chat", "limit": 5})
+        assert first.structured_content["hits"]
+
+        # The second call would digest everything -- shrink the budget only
+        # now so the FIRST call (which populates the ledger) still fits.
+        monkeypatch.setenv("MEMO_MCP_RESPONSE_BUDGET_TOKENS", "10")
+        second = await client.call_tool("memo_search", {"query": "chat", "limit": 5})
+
+    assert second.structured_content.get("error") == "response_budget_exceeded"
+    stats = el.stats(memory_with_memories.cfg.state_dir, "sess-budget-digest")
+    assert stats["digests_served"] == 0
+    assert stats["tokens_suppressed"] == 0
+    assert stats["tokens_digest"] == 0
+
+
+@pytest.mark.asyncio
 async def test_in_budget_call_through_the_real_client_still_commits_and_digests(
     memory_with_memories, monkeypatch
 ):
@@ -167,6 +200,12 @@ async def test_in_budget_call_through_the_real_client_still_commits_and_digests(
     assert second.structured_content["hits"] == []
     assert second.structured_content["already_in_context"]
     assert el.read(memory_with_memories.cfg.state_dir, "sess-inbudget")
+
+    stats = el.stats(memory_with_memories.cfg.state_dir, "sess-inbudget")
+    assert stats["digests_served"] == len(second.structured_content["already_in_context"])
+    assert stats["tokens_suppressed"] > 0
+    assert stats["tokens_digest"] > 0
+    assert stats["net_saved_est"] == stats["tokens_suppressed"] - stats["tokens_digest"]
 
 
 @pytest.fixture
@@ -478,3 +517,114 @@ def test_hook_emission_suppresses_a_later_search(memory_with_memories, call_tool
     assert digested[target["id"]]["ref"] == "memo-h/abc123"
 
     assert el.read(memory_with_memories.cfg.state_dir, "sess-raise") == {}
+
+
+# -- Task 8: memo_get's recovery counter -------------------------------------
+#
+# `memo_get` is deliberately absent from MEMO_EMITTED_LEDGER_TOOLS (it is the
+# digest's own escape hatch), so it never consults `apply_ledger`. What it
+# does instead: if the id it was asked for already has an entry in this
+# session's ledger -- meaning some earlier call already put a rendering of it
+# into the window -- a memo_get for it counts as a RECOVERY against the
+# feature's own saving, per the spec's conservative-attribution rule.
+
+
+def test_memo_get_after_digest_bumps_the_recovery_counter(
+    memory_with_memories, call_tool, ledger_env
+):
+    from memo.mcp_budget import est_tokens
+
+    first = call_tool("memo_search", query="chat", limit=5)
+    target_id = first["hits"][0]["id"]  # memo_search's own call already ledgers this id
+
+    fetched = call_tool("memo_get", id=target_id)
+    assert fetched is not None
+
+    stats = el.stats(memory_with_memories.cfg.state_dir, "sess-int")
+    assert stats["memo_get_after_digest"] == 1
+    expected_tokens_recovered = est_tokens(str(fetched.get("body") or ""))
+    # Nothing was suppressed/digested by memo_search itself in this test (it
+    # was the first call), so the only term left is the recovery cost --
+    # net_saved_est must go negative by exactly that amount.
+    assert stats["net_saved_est"] == -expected_tokens_recovered
+
+
+def test_memo_get_on_a_never_ledgered_id_does_not_bump_the_recovery_counter(
+    memory_with_memories, call_tool, ledger_env
+):
+    """No prior emission for this id in the session ledger -- e.g. the very
+    first tool call of a session -- means there is nothing to recover FROM."""
+    first = call_tool("memo_search", query="chat", limit=5)
+    target_id = first["hits"][0]["id"]
+    el.reset(memory_with_memories.cfg.state_dir, "sess-int")  # wipe what memo_search just wrote
+
+    fetched = call_tool("memo_get", id=target_id)
+    assert fetched is not None
+
+    stats = el.stats(memory_with_memories.cfg.state_dir, "sess-int")
+    assert stats["memo_get_after_digest"] == 0
+    assert stats["net_saved_est"] == 0
+
+
+def test_memo_get_recovery_counter_stays_off_with_the_flag_off(
+    memory_with_memories, call_tool, ledger_env, monkeypatch
+):
+    first = call_tool("memo_search", query="chat", limit=5)
+    target_id = first["hits"][0]["id"]
+
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "0")
+    fetched = call_tool("memo_get", id=target_id)
+    assert fetched is not None
+
+    stats = el.stats(memory_with_memories.cfg.state_dir, "sess-int")
+    assert stats["memo_get_after_digest"] == 0
+
+
+def test_discarding_the_ledger_stage_drops_staged_counter_bumps_too(tmp_path):
+    """Symmetric with test_budget_exceeded_digest_call_writes_no_counters, at
+    the mechanism level: memo_get's recovery bump (`server_common.
+    stage_counters`) shares the exact same `_LEDGER_STAGE` that
+    `apply_ledger`'s entries use, so `discard_ledger_stage` must drop a
+    staged counter bump exactly like it drops a staged ledger entry.
+
+    (Not exercised end-to-end through a real fastmcp.Client for memo_get: its
+    `dict[str, Any] | None` return type makes FastMCP wrap normal responses
+    as `{"result": ...}`, but the budget-exceeded substitution in
+    `mcp_budget.make_response_budget_middleware` returns the raw error dict
+    unwrapped -- a pre-existing schema-validation mismatch on the client
+    side, unrelated to this feature and out of this task's scope. See
+    task-8-report.md.)
+    """
+    from memo import server_common as sc
+
+    token = sc.open_ledger_stage()
+    try:
+        sc.stage_counters(tmp_path, "sess-stage", get_after_digest=1, tokens_recovered=50)
+    finally:
+        # try/finally, not a bare sequential call: `_LEDGER_STAGE` is a plain
+        # ContextVar with no scoping construct of its own -- an exception
+        # between open and discard/commit would leave it bound to a stale
+        # list for the rest of this (synchronous, single-threaded) test
+        # process, silently turning every later test's apply_ledger call
+        # into a stage nothing ever commits. Observed firsthand while this
+        # test was still red (a typo before the real implementation existed
+        # cascaded into unrelated tests elsewhere in this file).
+        sc.discard_ledger_stage(token)
+
+    stats = el.stats(tmp_path, "sess-stage")
+    assert stats["memo_get_after_digest"] == 0
+    assert stats["net_saved_est"] == 0
+
+
+def test_committing_the_ledger_stage_writes_staged_counter_bumps(tmp_path):
+    from memo import server_common as sc
+
+    token = sc.open_ledger_stage()
+    try:
+        sc.stage_counters(tmp_path, "sess-stage", get_after_digest=1, tokens_recovered=50)
+    finally:
+        sc.commit_ledger_stage(token)
+
+    stats = el.stats(tmp_path, "sess-stage")
+    assert stats["memo_get_after_digest"] == 1
+    assert stats["net_saved_est"] == -50

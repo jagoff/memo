@@ -12,7 +12,11 @@ if TYPE_CHECKING:
 
     from memo import emitted_ledger as el
 
-    _LedgerBatch = tuple[Path, str, list[el.Entry]]
+    # Fourth element is a counters delta for `emitted_ledger.bump` (see
+    # `stage_counters` below); empty for a batch that only carries entries,
+    # and vice versa -- kept as one tuple shape (rather than two) so a single
+    # `_LEDGER_STAGE` list and a single commit/discard pass covers both.
+    _LedgerBatch = tuple[Path, str, list[el.Entry], dict[str, int]]
 
 _log = logging.getLogger("memo.server")
 
@@ -158,15 +162,23 @@ def commit_ledger_stage(token: contextvars.Token[list[_LedgerBatch] | None]) -> 
     """Write every batch staged since the matching ``open_ledger_stage`` to
     disk, then close the stage.
 
-    No extra guarding needed around each write: ``emitted_ledger.append`` is
-    already fail-open internally (a write it cannot make costs tokens, never
-    correctness), so a bad batch here already can't raise into the
-    middleware calling this.
+    Each batch carries entries and/or a counters delta (see ``_LedgerBatch``
+    above) -- both are written here, on the SAME commit, so a counter bump
+    describing a saving or a recovery cost shares its fate with the ledger
+    entries staged alongside it: neither survives past a discard.
+
+    No extra guarding needed around each write: ``emitted_ledger.append`` and
+    ``emitted_ledger.bump`` are already fail-open internally (a write either
+    cannot make costs tokens, never correctness), so a bad batch here already
+    can't raise into the middleware calling this.
     """
     from memo import emitted_ledger as el
 
-    for state_dir, session_id, entries in _LEDGER_STAGE.get() or []:
-        el.append(state_dir, session_id, entries)
+    for state_dir, session_id, entries, counters in _LEDGER_STAGE.get() or []:
+        if entries:
+            el.append(state_dir, session_id, entries)
+        if counters:
+            el.bump(state_dir, session_id, **counters)
     _LEDGER_STAGE.reset(token)
 
 
@@ -182,6 +194,42 @@ def discard_ledger_stage(token: contextvars.Token[list[_LedgerBatch] | None]) ->
     the routine, reproducible in-process case, not every path to the wire.
     """
     _LEDGER_STAGE.reset(token)
+
+
+def stage_counters(state_dir: Path, session_id: str, **counters: int) -> None:
+    """Bump emission-ledger counters through the SAME request-scoped stage
+    ``apply_ledger`` uses for its entry writes, so a counter describing a
+    saving or a recovery cost the caller never actually received -- the
+    response-budget middleware discarded the payload, or the tool body
+    raised after this ran -- is discarded right along with it. A counter
+    recorded for content the model never actually saw would lie to the
+    promotion gate the same way a phantom ledger entry would.
+
+    Outside a staged request (no middleware opened one -- every direct call
+    in this module's own tests, and the ``call_tool`` fixture that resolves
+    a tool's ``.fn`` and invokes it directly, bypassing FastMCP dispatch and
+    the whole middleware chain with it) writes straight through, mirroring
+    ``apply_ledger``'s own fallback.
+
+    Deliberately wrapped in its OWN try/except, separate from
+    ``apply_ledger``'s outer one: a counter is measurement, not correctness,
+    so a bug here must degrade to "this call went unmeasured", never to
+    ``apply_ledger`` reverting a suppression it already computed correctly
+    back to a full passthrough. Fail-open, like every other write in this
+    module.
+    """
+    if not counters or not any(counters.values()):
+        return
+    try:
+        pending = _LEDGER_STAGE.get()
+        if pending is None:
+            from memo import emitted_ledger as el
+
+            el.bump(state_dir, session_id, **counters)
+        else:
+            pending.append((state_dir, session_id, [], counters))
+    except Exception:
+        return
 
 
 def apply_ledger(
@@ -221,6 +269,13 @@ def apply_ledger(
     actually received these bodies -- never for a payload it substituted a
     ``response_budget_exceeded`` error for, and never for a call whose tool
     body went on to raise after this ran.
+
+    A digest also bumps the Task 8 counters (``digests_served``,
+    ``tokens_suppressed``, ``tokens_digest`` -- see ``emitted_ledger.stats``)
+    through ``stage_counters``, on the SAME stage as the entries above, so a
+    discarded response drops the measurement right along with the ledger
+    write it would have justified: a saving the caller never actually
+    received must not appear in the promotion gate's numbers.
     """
     try:
         from memo.flags import flag_bool, flag_str
@@ -233,9 +288,11 @@ def apply_ledger(
         if tool not in allow:
             return hits, {}
 
+        import json
         import time
 
         from memo import emitted_ledger as el
+        from memo.mcp_budget import est_tokens
         from memo.server_session_patterns import _effective_session_id
 
         state_dir = memory.cfg.state_dir
@@ -262,7 +319,7 @@ def apply_ledger(
                 # function's pre-staging behavior.
                 el.append(state_dir, session_id, entries)
             else:
-                pending.append((state_dir, session_id, entries))
+                pending.append((state_dir, session_id, entries, {}))
 
         digested_ids = {id(h) for h in part.digest}
         out = [h for h in hits if id(h) not in digested_ids]
@@ -285,6 +342,14 @@ def apply_ledger(
         }
         if ref is not None:
             extra["cache_ref"] = ref
+
+        stage_counters(
+            state_dir,
+            session_id,
+            digests_served=len(part.digest),
+            tokens_suppressed=sum(est_tokens(text_of(h)) for h in part.digest),
+            tokens_digest=est_tokens(json.dumps(extra, separators=(",", ":"), default=str)),
+        )
         return out, extra
     except Exception:
         return hits, {}
