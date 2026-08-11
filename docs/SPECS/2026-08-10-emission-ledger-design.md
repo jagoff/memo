@@ -1,7 +1,8 @@
 # Emission Ledger — design
 
 **Date**: 2026-08-10
-**Status**: design approved, not implemented
+**Status**: implemented, shipped dark — `MEMO_EMITTED_LEDGER=0` by default;
+see "Measured result" below for why
 **Origin**: analysis of [messkan/prompt-cache](https://github.com/messkan/prompt-cache),
 asking what it has that memo could use to cut the user's token spend.
 
@@ -331,6 +332,36 @@ costs schema tokens on every request and would contradict the feature:
 
 If 1 or 2 fail, the feature stays at `MEMO_EMITTED_LEDGER=0` and is not promoted.
 That is the decision, not a deferral.
+
+## Measured result
+
+Task 10. Full methodology, denominator definition, and raw command output:
+`docs/eval/emission-ledger-replay.md`. Harness: `scripts/eval_emission_ledger.py`.
+
+| # | Criterion | Result | Measured |
+| - | --- | --- | --- |
+| 1 | ≥25% fewer emitted tokens on a replayed transcript | **PASS, with margin, under normal load** | Two independent clean runs of the same real transcript (`e00b57f5-8745-4462-a8dd-fbb60a6616b9.jsonl`, 7 participating calls) on a quiet system: 31.4% and 36.6% reduction. A third run measured 21.8% (below the floor) while executing under severe, self-inflicted resource contention (a duplicate `pytest` run competing for MLX/GPU resources) — attributable to memo's cross-encoder reranker falling back under GPU contention, not the ledger. Full run-by-run table: `docs/eval/emission-ledger-replay.md` |
+| 2 | `memo_get_after_digest` < 20% of `digests_served` | **UNMEASURABLE by replay** | a replay has no model in the loop deciding whether to recover a digested id via `memo_get` — any rate a replay produces is an artifact of the harness's determinism, not evidence. Needs a live dogfooding period reading `memo_cache_stats`'s `emit_ledger.memo_get_after_digest` / `emit_ledger.digests_served` |
+| 3 | Recall-hook p95 latency delta < 20ms | **PASS** | warm-daemon path (production path on this machine): delta p50 = -0.56ms, delta p95 = -102.64ms (negative at every percentile — ledger write is noise against a ~400ms round trip). Subprocess-fallback path: delta p50 ≈ +5.95ms, delta p95 ≈ +12.83ms, under the 20ms ceiling. Measured in Task 6, not re-measured here |
+| 4 | Eval gate not regressed | **PASS** | `memo eval recall --gate` fails identically on an isolated `origin/master` worktree and on this branch (stale baseline pinned to a config — `H synth/0.05` — the current default selection doesn't run; predates this diff). The corpus-cancelling `memo eval recall --against origin/master` check — same live corpus, both runs uncached — shows zero delta: prec@k 0.724 vs ref 0.724, noise@k 0.000 vs ref 0.000 |
+
+**Decision: KEEP `MEMO_EMITTED_LEDGER` AT `0`. Do not promote.**
+
+This is not a criterion-1 failure — under normal (uncontended) conditions
+criterion 1 passed with clear margin on two independent runs, with no harness
+tuning, and criteria 3 and 4 are also clean passes. The reason not to
+flip the default is criterion 2: it requires evidence a transcript replay
+cannot produce by construction (no model in the loop to decide whether to
+call `memo_get` on a digest), and no live-dogfooding data exists yet to
+supply it. Promotion needs both criteria 1 and 2 to hold — an unmeasured
+criterion is not the same as a passed one, and this task does not fabricate
+the number to force a promotion.
+
+All ten tasks' code ships regardless, exactly as planned: the feature is
+fully implemented, tested, and available behind the flag for anyone who sets
+`MEMO_EMITTED_LEDGER=1` explicitly (e.g. to start collecting the live data
+criterion 2 needs). The default stays off until a real session population
+supplies a measured `memo_get_after_digest` / `digests_served` ratio.
 
 ## Test plan
 
