@@ -14,6 +14,13 @@ the same env and can resolve the same id -- independent of the `session_id`
 field on the hook's stdin payload, which only keys the CAPTURE watermark
 (a different, pre-existing mechanism). That is also why these tests invoke
 `capture_tick` with no stdin payload at all: the reset must not depend on it.
+
+The reset is UNCONDITIONAL on MEMO_EMITTED_LEDGER (`--force` alone gates it,
+not the flag) — see `test_force_clears_the_ledger_even_with_flag_unset` for
+why: with the flag off there is no ledger file so a gate would be a pure
+optimisation, and that "optimisation" is actually unsafe here because the
+flag is not static across a session's lifetime in this repo (dream_flags'
+flag-graduation machinery flips it through the tuned overlay between nights).
 """
 
 from __future__ import annotations
@@ -86,12 +93,25 @@ def test_force_is_idempotent(state_dir: Path, monkeypatch: pytest.MonkeyPatch) -
     assert el.read(state_dir, _SID) == {}
 
 
-def test_flag_unset_force_leaves_the_ledger_alone(
+def test_force_clears_the_ledger_even_with_flag_unset(
     state_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With MEMO_EMITTED_LEDGER unset (default off), `--force` must behave
-    exactly as it did before this feature: the ledger is untouched, since the
-    reset never engages the flag-gated code path at all."""
+    """The reset is UNCONDITIONAL on MEMO_EMITTED_LEDGER -- do not gate it on
+    the flag as an "optimisation". `MEMO_EMITTED_LEDGER` is not static across
+    a session's lifetime in this repo: dream_flags' flag-graduation/
+    auto-revert machinery flips default-off flags through the tuned overlay
+    between nights. A flag-gated reset would make this reachable: entries
+    accumulate while the flag is ON -> compaction happens while the flag is
+    OFF, so a gated reset would skip and the stale file would survive -> the
+    flag flips back ON. Every ledger reader (apply_ledger, recall_logic._log,
+    the subprocess hook) gates on the flag's value at READ time, not on
+    whether an entry predates the last compaction, so those stale entries
+    would resurface and get digested as if the model could still see them --
+    the exact bug this task exists to prevent. With the feature off there is
+    no ledger file to begin with, so the unconditional reset costs a single
+    free `stat()` on this --force-only path either way (this test still
+    seeds one, to prove the reset doesn't skip merely because the flag looks
+    off at reset time)."""
     monkeypatch.delenv("MEMO_EMITTED_LEDGER", raising=False)
     monkeypatch.setenv("MEMO_SESSION_ID", _SID)
     _seed(state_dir)
@@ -99,7 +119,7 @@ def test_flag_unset_force_leaves_the_ledger_alone(
     result = CliRunner().invoke(capture_tick, ["--force"])
 
     assert result.exit_code == 0
-    assert set(el.read(state_dir, _SID)) == {"mem_a"}
+    assert el.read(state_dir, _SID) == {}
 
 
 def test_no_resolvable_session_id_resets_nothing(

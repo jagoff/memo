@@ -294,6 +294,12 @@ def capture_tick(session_id: str | None, transcript_path: str | None, force: boo
 
     debug = flag_bool("MEMO_CAPTURE_DEBUG")
 
+    # Resolved at most once per invocation: the ledger-reset block below sets
+    # it when it runs far enough to need `state_dir`, and the mining
+    # try-block further down reuses it instead of re-parsing the on-disk
+    # TOML/Markdown config a second time on the same --force pass.
+    cfg: Config | None = None
+
     # PreCompact boundary. Claude Code's PreCompact hook runs exactly this —
     # `MEMO_NONINTERACTIVE=1 memo capture-tick --force` (hooks/hooks.json,
     # cli_hooks.wire_precompact_hook) — so `--force` doubles as the
@@ -303,6 +309,21 @@ def capture_tick(session_id: str | None, transcript_path: str | None, force: boo
     # an ordinary throttled tick fires on every prompt and must never touch
     # the ledger, or it would silently erase the whole feature's savings on
     # every turn.
+    #
+    # Deliberately UNCONDITIONAL on MEMO_EMITTED_LEDGER — do not add that
+    # gate back as an "optimisation". The flag is not static across a
+    # session: dream_flags' flag-graduation/auto-revert machinery flips
+    # default-off flags through the tuned overlay between nights. A flag
+    # gate here would make this sequence reachable: entries accumulate while
+    # the flag is ON -> compaction happens while the flag is OFF, so a gated
+    # reset would skip and the stale file would survive -> the flag flips
+    # back ON. Every reader (apply_ledger, recall_logic._log, the subprocess
+    # hook) gates on the flag's value at READ time and none of them compares
+    # an entry's age against the last compaction, so those stale entries
+    # would resurface and `partition`'s monotonic rule would digest hits for
+    # content the model can no longer see — the exact bug this task exists
+    # to prevent. With the feature off there is no ledger file, so this is a
+    # free `stat()` on a --force-only path either way.
     #
     # Runs first, ahead of MEMO_CAPTURE_DISABLE and the stdin/session
     # resolution below: the ledger reset is not a capture-mining concern, and
@@ -327,14 +348,14 @@ def capture_tick(session_id: str | None, transcript_path: str | None, force: boo
     # try/except: a reset failure must never skip the mining pass below it.
     if force:
         try:
-            if flag_bool("MEMO_EMITTED_LEDGER"):
-                from memo.identity import _session_id as _identity_session_id
+            from memo.identity import _session_id as _identity_session_id
 
-                ledger_sid = _identity_session_id()
-                if ledger_sid:
-                    from memo import emitted_ledger as _el
+            ledger_sid = _identity_session_id()
+            if ledger_sid:
+                from memo import emitted_ledger as _el
 
-                    _el.reset(Config.from_env().state_dir, ledger_sid)
+                cfg = Config.from_env()
+                _el.reset(cfg.state_dir, ledger_sid)
         except Exception as exc:
             if debug:
                 print(f"# memo capture-tick: ledger reset failed: {exc}", file=_sys.stderr)
@@ -363,7 +384,8 @@ def capture_tick(session_id: str | None, transcript_path: str | None, force: boo
     try:
         from memo.capture import incremental_tick_due, run_capture_incremental
 
-        cfg = Config.from_env()
+        if cfg is None:
+            cfg = Config.from_env()
         interval_s = flag_int("MEMO_CAPTURE_INTERVAL_S")
         if interval_s is None:
             interval_s = 600
