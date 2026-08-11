@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +110,33 @@ def _dup_group_iter(stale: list[dict]) -> list[str]:
     return sorted({hashlib.sha256(str(s.get("body") or "").encode()).hexdigest() for s in stale})
 
 
+def _stale_emitted_count(state_dir: Path, max_age_s: int) -> int:
+    """Preview count for `gc-emitted-ledgers --dry-run`, without deleting.
+
+    Mirrors `emitted_ledger.prune`'s inclusion set (ledger `.jsonl`, `bump`'s
+    `.counters.json` sidecar, `_trim`'s crash-leftover `.jsonl.<pid>.tmp`) and
+    its mtime-age liveness proxy. Kept as a read-only twin here rather than a
+    `dry_run` parameter on `prune` itself, because `emitted_ledger` is a
+    shared, settled module (task 8 review) whose signature stays untouched.
+    """
+    from memo import emitted_ledger
+
+    base = emitted_ledger.ledger_path(state_dir, "x").parent
+    now = time.time()
+    try:
+        paths = [*base.glob("*.jsonl"), *base.glob("*.counters.json"), *base.glob("*.jsonl.*.tmp")]
+    except Exception:
+        return 0
+    count = 0
+    for path in paths:
+        try:
+            if now - path.stat().st_mtime > max_age_s:
+                count += 1
+        except Exception:  # noqa: S112  # one file's stat failure skips only that file
+            continue
+    return count
+
+
 @ops_group.command(name="gc-emitted-ledgers")
 @click.option(
     "--max-age-hours",
@@ -117,9 +145,10 @@ def _dup_group_iter(stale: list[dict]) -> list[str]:
     type=int,
     help="Remove emission ledgers untouched for longer than this.",
 )
+@click.option("--dry-run", is_flag=True, help="Count would-be removals without deleting.")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
-def gc_emitted_ledgers_cmd(max_age_hours: int, as_json: bool) -> None:
-    """Remove emission-ledger files from sessions that are long over.
+def gc_emitted_ledgers_cmd(max_age_hours: int, dry_run: bool, as_json: bool) -> None:
+    """Remove emission-ledger files (and their sidecars) from sessions that are long over.
 
     Sessions leave no close signal, so age is the only liveness proxy: a file
     untouched for longer than --max-age-hours is treated as an orphan. This
@@ -129,15 +158,21 @@ def gc_emitted_ledgers_cmd(max_age_hours: int, as_json: bool) -> None:
     its next turn. That costs tokens, never correctness.
     """
     from memo import emitted_ledger
-    from memo.config import Config
 
     cfg = Config.from_env()
-    removed = emitted_ledger.prune(cfg.state_dir, max_age_s=max_age_hours * 3600)
-    result = {"removed": removed, "max_age_hours": max_age_hours}
+    max_age_s = max_age_hours * 3600
+    removed = (
+        _stale_emitted_count(cfg.state_dir, max_age_s)
+        if dry_run
+        else emitted_ledger.prune(cfg.state_dir, max_age_s=max_age_s)
+    )
+    result = {"removed": removed, "max_age_hours": max_age_hours, "dry_run": dry_run}
     if as_json:
         click.echo(json.dumps(result))
         return
-    console.print(f"removed: [green]{removed}[/green] emission ledger(s)")
+    console.print(
+        f"removed: [green]{removed}[/green] file(s){'  [dim](dry-run)[/dim]' if dry_run else ''}"
+    )
 
 
 @ops_group.command(name="vault-ingest")
