@@ -60,6 +60,8 @@ def _record_ledger_recovery(memory: Memory, memory_id: str, record: dict[str, An
         if not flag_bool("MEMO_EMITTED_LEDGER"):
             return
 
+        import json
+
         from memo import emitted_ledger as el
         from memo.mcp_budget import est_tokens
         from memo.server_common import stage_counters
@@ -69,11 +71,17 @@ def _record_ledger_recovery(memory: Memory, memory_id: str, record: dict[str, An
         session_id = _effective_session_id()
         if memory_id not in el.read(state_dir, session_id):
             return
+        # F1 (task-8 review): charge the whole record `memo_get` actually
+        # returns (the full `rec.to_dict()` -- id/path/title/type/tags/
+        # timestamps/extra/... -- not just its `body` field), matching the
+        # same whole-row basis `apply_ledger`'s tokens_suppressed now uses.
+        # A recovery costs the caller the entire returned payload, not one
+        # field of it.
         stage_counters(
             state_dir,
             session_id,
             get_after_digest=1,
-            tokens_recovered=est_tokens(str(record.get("body") or "")),
+            tokens_recovered=est_tokens(json.dumps(record, separators=(",", ":"), default=str)),
         )
     except Exception:
         return

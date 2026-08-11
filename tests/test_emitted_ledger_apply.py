@@ -298,26 +298,35 @@ def test_first_call_never_bumps_the_suppression_counters(mem, tmp_path):
     assert stats["net_saved_est"] == 0
 
 
+def _row_tokens(hits) -> int:
+    """Sum of `est_tokens` over each hit's whole serialized JSON row -- the
+    basis `tokens_suppressed` must use (F1, task-8 review), not a bare
+    `est_tokens(body)` per hit. Computed here from literal hit dicts the
+    caller already knows, independent of anything `apply_ledger` does
+    internally, so a regression back to a body-only basis fails whichever
+    test calls this."""
+    return sum(est_tokens(json.dumps(h, separators=(",", ":"), default=str)) for h in hits)
+
+
 def test_digest_call_bumps_the_suppression_counters(mem, tmp_path):
     sc.apply_ledger(mem, "memo_search", _hits())
     _, extra = sc.apply_ledger(mem, "memo_search", _hits())
 
     stats = el.stats(tmp_path, "sess-apply")
     assert stats["digests_served"] == 2  # mem_a, mem_b
-    expected_suppressed = est_tokens("body a") + est_tokens("body b")
+    # F1 (task-8 review): tokens_suppressed must charge the whole serialized
+    # row a digested hit would have cost on the wire, not just its `body`
+    # field -- memo_search/memo_ask/memo_evidence_pack all return the full
+    # hit dict, never a bare body string.
+    expected_suppressed = _row_tokens(_hits())
     assert stats["tokens_suppressed"] == expected_suppressed
+    # Proves the fix, not a coincidence: the pre-fix body-only basis would
+    # have measured far less for these hits (id/title fields excluded).
+    body_only = est_tokens("body a") + est_tokens("body b")
+    assert expected_suppressed > body_only
     expected_digest_cost = est_tokens(json.dumps(extra, separators=(",", ":"), default=str))
     assert stats["tokens_digest"] == expected_digest_cost
     assert stats["net_saved_est"] == expected_suppressed - expected_digest_cost
-    # NOT asserted positive: these fixture bodies are 6 chars each, so the
-    # fixed {id, title, ref} + "hint" text overhead of the digest stub
-    # legitimately outweighs the saving here -- a real finding about the
-    # stub's fixed cost, not a test bug. See task-8-report.md: the same is
-    # true even for the ~49-char bodies in memory_with_memories's fixture
-    # data, so this is not just a synthetic-fixture artifact -- only bodies
-    # long enough for the per-byte saving to clear the stub's fixed overhead
-    # make the digest pay off, and this repo's regression corpus should be
-    # checked against real body-length distributions before promotion.
 
 
 def test_partial_digest_call_only_counts_the_digested_hits(mem, tmp_path):
@@ -330,7 +339,7 @@ def test_partial_digest_call_only_counts_the_digested_hits(mem, tmp_path):
 
     stats = el.stats(tmp_path, "sess-apply")
     assert stats["digests_served"] == 2
-    assert stats["tokens_suppressed"] == est_tokens("body a") + est_tokens("body b")
+    assert stats["tokens_suppressed"] == _row_tokens(_hits())
 
 
 def test_flag_off_never_writes_counters(tmp_path, monkeypatch):

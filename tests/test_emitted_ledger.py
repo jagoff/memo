@@ -140,6 +140,58 @@ def test_prune_removes_only_old_files(tmp_path: Path):
     assert el.ledger_path(tmp_path, "new").exists()
 
 
+def test_prune_also_collects_the_counters_sidecar_and_a_crash_tmp_file(tmp_path: Path):
+    """F2 (task-8 review): `prune()` originally globbed only `*.jsonl`, so
+    the counters sidecar `bump` writes (`<sid>.counters.json`) and a
+    `_trim`-crash leftover (`<sid>.jsonl.<pid>.tmp`) matched nothing and
+    leaked forever -- one pair of files per Claude Code session id ever
+    started, since every session mints a new one. A live session's files
+    (of all three shapes) must survive; only the stale session's do not."""
+    import os
+    import time
+
+    el.append(tmp_path, "old", [_entry("mem_a", "a")])
+    el.bump(tmp_path, "old", digests_served=1, tokens_suppressed=10)
+    old_counters = tmp_path / "emitted" / "old.counters.json"
+    assert old_counters.exists()
+    old_tmp_leftover = tmp_path / "emitted" / "old.jsonl.99999.tmp"
+    old_tmp_leftover.write_text("leftover\n", encoding="utf-8")
+
+    el.append(tmp_path, "live", [_entry("mem_b", "b")])
+    el.bump(tmp_path, "live", digests_served=1, tokens_suppressed=10)
+    live_counters = tmp_path / "emitted" / "live.counters.json"
+    assert live_counters.exists()
+
+    stale = time.time() - 60 * 60 * 72
+    for p in (el.ledger_path(tmp_path, "old"), old_counters, old_tmp_leftover):
+        os.utime(p, (stale, stale))
+
+    removed = el.prune(tmp_path, max_age_s=60 * 60 * 48)
+    assert removed == 3  # old.jsonl, old.counters.json, old.jsonl.99999.tmp
+    assert not el.ledger_path(tmp_path, "old").exists()
+    assert not old_counters.exists()
+    assert not old_tmp_leftover.exists()
+    assert el.ledger_path(tmp_path, "live").exists()
+    assert live_counters.exists()
+
+
+def test_reset_never_touches_the_counters_sidecar(tmp_path: Path):
+    """F2's flip side, made explicit: `reset()` (the compaction-boundary
+    call) must leave the counters file alone even though it deletes the
+    `.jsonl` ledger -- the counters are the promotion gate's per-session
+    measurement and must span compactions. Only `prune`'s age-based GC
+    (above) may remove them."""
+    el.append(tmp_path, "s", [_entry("mem_a", "a")])
+    el.bump(tmp_path, "s", digests_served=1, tokens_suppressed=10)
+    counters_path = tmp_path / "emitted" / "s.counters.json"
+    assert counters_path.exists()
+
+    assert el.reset(tmp_path, "s") is True
+    assert not el.ledger_path(tmp_path, "s").exists()
+    assert counters_path.exists()
+    assert el.stats(tmp_path, "s")["tokens_suppressed"] == 10
+
+
 def test_mint_ref_is_stable_and_order_insensitive():
     a = el.mint_ref(["mem_b", "mem_a"], 1000)
     b = el.mint_ref(["mem_a", "mem_b"], 1000)

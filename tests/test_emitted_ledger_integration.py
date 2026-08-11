@@ -15,6 +15,8 @@ Exercises the real MCP tool two ways:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from memo import emitted_ledger as el
@@ -182,9 +184,19 @@ async def test_in_budget_call_through_the_real_client_still_commits_and_digests(
 ):
     """Proves the F1 fix DEFERS the write rather than disabling it: a
     normal in-budget call through the actual middleware chain still records
-    its emissions and still digests them on a repeat call."""
+    its emissions and still digests them on a repeat call.
+
+    Also pins the task-8 review's F1 fix (whole-row basis, not body-only):
+    `expected_suppressed` is computed independently here from the FIRST
+    call's actual hits (the full `MemoryRecord.to_dict()` shape memo_search
+    returns -- id/path/title/type/tags/created/updated/body/extra/score/...),
+    not by re-invoking apply_ledger's own internals, so a regression back to
+    charging only `hit["body"]` fails this test rather than just the `> 0`
+    check that let the original bug through review.
+    """
     from fastmcp import Client
 
+    from memo.mcp_budget import est_tokens
     from memo.server import build_server
 
     monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
@@ -201,11 +213,24 @@ async def test_in_budget_call_through_the_real_client_still_commits_and_digests(
     assert second.structured_content["already_in_context"]
     assert el.read(memory_with_memories.cfg.state_dir, "sess-inbudget")
 
+    first_hits = first.structured_content["hits"]
     stats = el.stats(memory_with_memories.cfg.state_dir, "sess-inbudget")
     assert stats["digests_served"] == len(second.structured_content["already_in_context"])
-    assert stats["tokens_suppressed"] > 0
+
+    expected_suppressed = sum(
+        est_tokens(json.dumps(h, separators=(",", ":"), default=str)) for h in first_hits
+    )
+    assert stats["tokens_suppressed"] == expected_suppressed
+    # Proves the fix, not a coincidence: a body-only basis would have
+    # measured far less for these multi-field records.
+    body_only = sum(est_tokens(str(h.get("body") or "")) for h in first_hits)
+    assert expected_suppressed > body_only * 3
+
     assert stats["tokens_digest"] > 0
     assert stats["net_saved_est"] == stats["tokens_suppressed"] - stats["tokens_digest"]
+    # A real payload's whole-row saving clears the digest stub's fixed
+    # overhead -- see task-8-report.md for the exact measured numbers.
+    assert stats["net_saved_est"] > 0
 
 
 @pytest.fixture
@@ -542,11 +567,74 @@ def test_memo_get_after_digest_bumps_the_recovery_counter(
 
     stats = el.stats(memory_with_memories.cfg.state_dir, "sess-int")
     assert stats["memo_get_after_digest"] == 1
-    expected_tokens_recovered = est_tokens(str(fetched.get("body") or ""))
+    # F1 (task-8 review): tokens_recovered must charge the whole record
+    # memo_get actually returns (the full `rec.to_dict()`), not just its
+    # `body` field -- that full dict is what the caller actually paid for.
+    expected_tokens_recovered = est_tokens(json.dumps(fetched, separators=(",", ":"), default=str))
+    body_only = est_tokens(str(fetched.get("body") or ""))
+    assert expected_tokens_recovered > body_only * 3  # proves the fix, not a coincidence
     # Nothing was suppressed/digested by memo_search itself in this test (it
     # was the first call), so the only term left is the recovery cost --
     # net_saved_est must go negative by exactly that amount.
     assert stats["net_saved_est"] == -expected_tokens_recovered
+
+
+def test_memo_get_recovery_survives_a_broken_flag_read(
+    memory_with_memories, call_tool, ledger_env, monkeypatch
+):
+    """F3 (task-8 review): the fail-open envelope around
+    `_record_ledger_recovery` was untested -- deleting its try/except left
+    every other test in this file green, and the failure it guards is real:
+    `flag_bool` resolves through `config_md.load_values`, whose
+    `path.read_text(encoding="utf-8")` is guarded only by `except OSError`,
+    so a non-UTF-8 byte in a user's markdown config raises
+    `UnicodeDecodeError` straight out of `flag_bool`. With the envelope
+    removed that makes `memo_get` raise on EVERY call for that user.
+    Mirrors `test_counter_bump_failure_does_not_break_the_actual_
+    suppression` (test_emitted_ledger_apply.py) on the apply_ledger side.
+    """
+    import memo.flags as flags_mod
+
+    first = call_tool("memo_search", query="chat", limit=5)
+    target_id = first["hits"][0]["id"]
+
+    calls: list[object] = []
+
+    def boom(*args: object, **kwargs: object) -> bool:
+        calls.append(args)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(flags_mod, "flag_bool", boom)
+
+    fetched = call_tool("memo_get", id=target_id)
+    assert calls, "expected flag_bool() to be called (and raise) before the assertion"
+    assert fetched is not None
+    assert fetched["id"] == target_id
+
+
+def test_memo_get_with_a_prefix_still_counts_as_a_recovery(
+    memory_with_memories, call_tool, ledger_env
+):
+    """F4 (task-8 review): `memo_get` accepts a short id prefix -- its own
+    docstring says so, and it's the normal way an agent calls it, not the
+    exception. `_record_ledger_recovery` must check the ledger against the
+    RESOLVED full id (`rec.id`), not the caller's raw `id` argument, or a
+    prefix lookup on a previously-emitted memory silently fails the
+    `memory_id not in el.read(...)` check and is never counted. Every other
+    recovery test in this file passes a full id (taken straight from
+    memo_search's hits), so none of them exercise this path -- confirmed by
+    mutation: swapping `rec.id` for the raw `id` parameter in
+    `_record_ledger_recovery` keeps every OTHER test in this file green."""
+    first = call_tool("memo_search", query="chat", limit=5)
+    target_id = first["hits"][0]["id"]
+    prefix = target_id[:8]
+
+    fetched = call_tool("memo_get", id=prefix)
+    assert fetched is not None
+    assert fetched["id"] == target_id
+
+    stats = el.stats(memory_with_memories.cfg.state_dir, "sess-int")
+    assert stats["memo_get_after_digest"] == 1
 
 
 def test_memo_get_on_a_never_ledgered_id_does_not_bump_the_recovery_counter(

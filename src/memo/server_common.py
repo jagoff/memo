@@ -343,11 +343,24 @@ def apply_ledger(
         if ref is not None:
             extra["cache_ref"] = ref
 
+        # F1 (task-8 review): tokens_suppressed must charge the whole
+        # serialized row a digested hit would have cost on the wire, not
+        # just `text_of(h)` (its body/snippet field alone) -- the row IS
+        # what a caller would have received had it been sent in full
+        # (memo_search's `d = r.to_dict()`, memo_ask's citation dict,
+        # memo_evidence_pack's item dict all carry many fields beyond body).
+        # Measuring only the field undercounted the real saving by roughly
+        # 16x on a real payload (id/title/tags/timestamps/extra/... dwarf
+        # the body text) -- serializing the whole hit `h` puts this side on
+        # the same basis as `tokens_digest` below, which already measures
+        # the real serialized digest payload.
         stage_counters(
             state_dir,
             session_id,
             digests_served=len(part.digest),
-            tokens_suppressed=sum(est_tokens(text_of(h)) for h in part.digest),
+            tokens_suppressed=sum(
+                est_tokens(json.dumps(h, separators=(",", ":"), default=str)) for h in part.digest
+            ),
             tokens_digest=est_tokens(json.dumps(extra, separators=(",", ":"), default=str)),
         )
         return out, extra

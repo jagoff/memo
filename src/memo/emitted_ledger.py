@@ -204,6 +204,13 @@ def reset(state_dir: Path, session_id: str) -> bool:
     Called at the compaction boundary: once the window is rewritten, memo can no
     longer claim anything is in it. Idempotent — PreCompact double-fires against
     the plugin copy.
+
+    Deliberately does NOT touch the counters sidecar (`bump`/`stats`, see
+    `_counters_path`) — reviewed and confirmed in task-8-findings-r1.md F2.
+    The ledger's claim expires at compaction, but the counters are the
+    promotion gate's per-session measurement and must span compactions; only
+    `prune`'s age-based GC may remove them, once the session itself is gone.
+    Do not "fix" this asymmetry.
     """
     try:
         path = ledger_path(state_dir, session_id)
@@ -371,12 +378,33 @@ def stats(state_dir: Path, session_id: str) -> dict[str, int]:
 
 
 def prune(state_dir: Path, *, max_age_s: int) -> int:
-    """Remove ledgers whose session ended long ago. Sessions leave no close
-    signal, so age is the only available liveness proxy."""
+    """Remove ledger files whose session ended long ago. Sessions leave no
+    close signal, so mtime age is the only available liveness proxy.
+
+    F2 (task-8 review): collects all three file shapes `emitted/` can hold,
+    not just the `.jsonl` ledger itself -- `bump`'s counters sidecar
+    (``<sid>.counters.json``) and any crash-mid-rewrite leftover from
+    `_trim` (``<sid>.jsonl.<pid>.tmp``) matched no glob before this fix and
+    leaked forever, one pair of files per Claude Code session id ever
+    started. Same liveness proxy (mtime age) applies to all three.
+
+    Does NOT touch ``reset()``, and never should: the ledger's
+    already-in-context claim expires at compaction (what the window can
+    still see), but the counters file is the promotion gate's per-session
+    measurement and must survive a compaction reset -- deleting it there
+    would zero out `net_saved_est` mid-session, before the session that
+    earned it has even ended. Only age-based pruning, here, once the
+    session itself is long gone, may remove the counters file.
+    """
     removed = 0
     now = time.time()
     try:
-        entries = list((Path(state_dir) / _DIRNAME).glob("*.jsonl"))
+        base = Path(state_dir) / _DIRNAME
+        entries = [
+            *base.glob("*.jsonl"),
+            *base.glob("*.counters.json"),
+            *base.glob("*.jsonl.*.tmp"),
+        ]
     except Exception:
         return 0
     for path in entries:
