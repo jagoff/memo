@@ -813,7 +813,7 @@ def _run_config_inner(
         if cfg.injection_fidelity:
             # Hook-faithful injection: the same post-rank skip-below/gap
             # filters _recall_logic applies before injecting (shared helper).
-            ranked = apply_injection_filters(ranked)
+            ranked = apply_injection_filters(ranked, mode=prompt_knobs.mode, vec_cosine=vc)
             if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and unmatched_term_gate(query, ranked):
                 ranked = []
         if cfg.exclude_archived:
