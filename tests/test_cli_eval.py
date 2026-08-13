@@ -545,3 +545,45 @@ def test_eval_chat_cmd_does_not_inflate_access_count(mem_with_stub, tmp_cfg, mon
     hits = mem.search("deploy runbook lambda")
     assert any(h.id == rec.id for h in hits)
     assert _access_snapshot(mem) != before
+
+
+def test_against_anchors_the_repo_root_on_the_invocation_cwd(tmp_path, monkeypatch):
+    """`--against` must resolve the repo from where the user invoked it.
+
+    Anchoring on `Path(__file__).parent` resolved the *module's* directory,
+    which under the isolated uv-tool install is site-packages — outside any
+    git worktree. So `memo eval recall --against origin/master` failed with
+    `fatal: not a git repository` for every non-source install, including the
+    one the pre-push gate's own failure message tells you to run.
+    """
+    from pathlib import Path
+
+    from memo import cli_eval, eval_against
+
+    seen: list[Path] = []
+
+    def _resolve(start):
+        seen.append(Path(start))
+        return tmp_path
+
+    monkeypatch.setattr(eval_against, "resolve_repo_root", _resolve)
+    monkeypatch.setattr(
+        eval_against,
+        "run_against",
+        lambda ref, *, repo_root, argv: eval_against.AgainstRun(
+            rows=[{"config": "A", "precision_at_k": 1.0, "noise_at_k": 0.0}],
+            labels_fingerprint="labels-fp",
+        ),
+    )
+
+    cli_eval._run_against(
+        "origin/master",
+        rows=[eval_recall.Row(config="A", precision_at_k=1.0, noise_at_k=0.0)],
+        labels_path=str(tmp_path / "labels.json"),
+        k=5,
+        profile="pre-push",
+        config_names=(),
+        labels_fingerprint="labels-fp",
+    )
+
+    assert seen == [Path.cwd()]

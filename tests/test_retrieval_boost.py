@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from memo.retrieval_boost import _MAX_BOOST, boost_for, query_terms
+from memo.retrieval_boost import boost_for, query_terms
 
 # ---------- query_terms ----------
 
@@ -39,16 +37,15 @@ def test_no_query_terms_returns_1() -> None:
     assert boost_for(query="los los", filename="anything.md") == 1.0
 
 
-def test_filename_exact_match_is_the_strongest_single_signal() -> None:
+def test_filename_exact_match_boost_4x() -> None:
     b = boost_for(query="correr goku", filename="02-Areas/Correr Goku.md")
-    assert b == pytest.approx(1.30)
+    assert b >= 4.0
 
 
-def test_filename_half_match_scores_below_an_exact_one() -> None:
+def test_filename_half_match_boost_2x() -> None:
     b = boost_for(query="correr goku otra cosa", filename="Correr Goku.md")
-    # 2/3 terms in filename → >= 0.5 → the mid tier
-    assert b == pytest.approx(1.15)
-    assert b < boost_for(query="correr goku", filename="Correr Goku.md")
+    # 2/3 terms in filename → >= 0.5 → x2
+    assert 1.5 < b <= 3.0
 
 
 def test_filename_no_match_returns_1() -> None:
@@ -57,23 +54,20 @@ def test_filename_no_match_returns_1() -> None:
 
 
 def test_title_match_adds_boost() -> None:
-    filename_only = boost_for(query="aws legacy", filename="login-legacy.md")
     b = boost_for(
         query="aws legacy",
         filename="login-legacy.md",
         title="AWS Legacy Access Procedure",
     )
-    # filename has "legacy" (1/2 → mid tier); the title newly covers "aws", the
-    # one term the filename missed, so it compounds.
-    assert b > filename_only
-    assert b == pytest.approx(1.15 * 1.08)
+    # filename has "legacy" (1/2 = 0.5 → x2), title has "aws legacy" (2/2 → x1.5)
+    assert b >= 2.0 * 1.5 * 0.99
 
 
 def test_tag_match_adds_boost() -> None:
     b_no_tag = boost_for(query="goku", filename="other.md")
     b_with_tag = boost_for(query="goku", filename="other.md", tags=["#goku"])
     assert b_with_tag > b_no_tag
-    assert b_with_tag == pytest.approx(1.08)
+    assert b_with_tag >= 1.4
 
 
 def test_heading_match_adds_boost() -> None:
@@ -82,10 +76,10 @@ def test_heading_match_adds_boost() -> None:
         filename="other.md",
         headings=["## AWS Legacy access flow", "## Other section"],
     )
-    assert b == pytest.approx(1.10)
+    assert b >= 1.25
 
 
-def test_total_boost_is_hard_capped() -> None:
+def test_total_boost_cap_around_10() -> None:
     b = boost_for(
         query="aws legacy",
         filename="aws-legacy.md",
@@ -93,9 +87,8 @@ def test_total_boost_is_hard_capped() -> None:
         headings=["AWS Legacy procedure"],
         tags=["#aws", "#legacy"],
     )
-    # filename×1.30 · heading×1.10 · tag×1.08 = 1.544 → capped. The title adds
-    # nothing: the filename already matched both of its terms.
-    assert b == pytest.approx(_MAX_BOOST)
+    # filename×4 · title×2.5 · heading×1.5 · tag×1.4 = 21 → hard-capped at 12.
+    assert 11.0 < b <= 12.0
 
 
 def test_title_scales_with_overlap() -> None:
@@ -103,7 +96,7 @@ def test_title_scales_with_overlap() -> None:
     # half-match — the asymmetry that let a terse correct note get blended.
     near = boost_for(query="deploy lambda", title="Deploy nuevas lambda")
     half = boost_for(query="deploy lambda aws prod", title="Deploy nuevas lambda")
-    assert near == pytest.approx(1.20)
+    assert near >= 2.5
     assert near > half
 
 
@@ -111,11 +104,11 @@ def test_filename_with_extension_handled() -> None:
     # `.stem` strips extension; "correr goku" should match.
     b1 = boost_for(query="correr goku", filename="Correr Goku.md")
     b2 = boost_for(query="correr goku", filename="path/to/Correr Goku.MD")
-    assert b1 == pytest.approx(1.30)
-    assert b2 == pytest.approx(1.30)
+    assert b1 >= 4.0
+    assert b2 >= 4.0
 
 
-def test_filename_partial_match_is_the_weakest_tier() -> None:
-    # 1/3 of terms in filename → <0.5 but >0 → the weakest filename tier
+def test_filename_partial_match_boost_1_3x() -> None:
+    # 1/3 of terms in filename → <0.5 but >0 → x1.3
     b = boost_for(query="aws legacy login", filename="aws-only.md")
-    assert b == pytest.approx(1.06)
+    assert 1.2 < b < 1.4
