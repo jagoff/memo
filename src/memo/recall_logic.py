@@ -387,8 +387,18 @@ def render_recall_context(
     omitted: list[Any] | None = None,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
-    """Render recall context within a strict chars/4 token budget."""
+    """Render recall context within a strict chars/4 token budget.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, body_text)`` for every
+    hit actually committed to the rendered output -- the emission ledger's
+    only correct source, since the body text here is truncated/adapted by
+    ``_effective_body_chars`` and the budget-trimmed path in ways nothing
+    outside this loop can reconstruct. A hit whose block never rendered at
+    all (dropped by the char budget) is left out of the sink entirely --
+    silence there just costs tokens later, never correctness.
+    """
     include_directive = turn is None or turn <= 1 or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
     lines = [RECALL_HEADER]
     if include_directive:
@@ -453,6 +463,8 @@ def render_recall_context(
         block = [*prefix, *([f"> {body}"] if body else []), *code_lines_by_hit.get(i, []), ""]
         if max_chars is None or len(_render(block)) <= max_chars:
             lines.extend(block)
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, body))
             continue
 
         # Preserve the citation/title and spend only the remaining budget on body.
@@ -474,11 +486,16 @@ def render_recall_context(
         )
         appended = False
         if body and available > 20:
-            lines.extend([*prefix, f"> {body[:available].rstrip()}…", ""])
+            trimmed_body = body[:available].rstrip() + "…"
+            lines.extend([*prefix, f"> {trimmed_body}", ""])
             appended = True
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, trimmed_body))
         elif max_chars is None or len(_render([*prefix, ""])) <= max_chars:
             lines.extend([*prefix, ""])
             appended = True
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, ""))
         # hit i counts as dropped when its block never rendered (prefix alone
         # over budget / available <= 20 with no room for the bare prefix).
         dropped.extend(relevant[i + 1 :] if appended else relevant[i:])
@@ -517,6 +534,7 @@ def render_recall_compact(
     token_budget: int,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
     """Compact recall format: one line per hit, no headers/tags/scores/body prose.
 
@@ -528,6 +546,17 @@ def render_recall_compact(
         </memo-recall>
 
     Token budget still applies; tail hits are dropped when over budget.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, "")`` for every hit
+    actually rendered. This format DOES render a body fragment (``· first 60
+    chars of body`` above) -- the sink recording "" isn't "no body was
+    emitted", it's a deliberate choice: 60 characters is too short a
+    fragment for the monotonic-emission rule to usefully suppress against
+    later (``partition`` would still send a longer rendering in full; the
+    only thing an accurate ``n=60`` record could ever digest is another
+    60-char-or-shorter compact line for the same hit), so recording it isn't
+    worth the ledger-write cost. A hit dropped by the tail cutoff is left
+    out of the sink entirely.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     hit_lines: list[str] = []
@@ -565,12 +594,18 @@ def render_recall_compact(
             break
 
         hit_lines.extend(new_lines)
+        if emitted_sink is not None:
+            emitted_sink.append((hit.id, ""))
 
     return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
 
 
 def render_recall_balanced(
-    relevant: list[Any], *, token_budget: int, turn: int | None = None
+    relevant: list[Any],
+    *,
+    token_budget: int,
+    turn: int | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
     """Balanced recall format: title + short bullets, ~40% savings vs full.
 
@@ -591,9 +626,20 @@ def render_recall_balanced(
     (MEMO_RECALL_CODE_REFS_ENABLED, default OFF): a verified evidence pointer,
     not an epistemic annotation, and the operator opted into it explicitly.
     Compact stays one-line-per-hit and never renders it.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, bullet_text)`` per hit
+    -- the bullet text is the body-derived slice actually rendered, "" when
+    the hit had no body. Unlike ``render_recall_context``, this renderer
+    builds the whole block first and only truncates the joined string as a
+    last step, so a per-hit line can be cut mid-render by that final slice.
+    Rather than guess which lines survived, the sink is populated only when
+    NO truncation happened at all -- any truncation skips recording for
+    every hit in this call, which is safe (costs tokens) and never risks
+    recording a hit as fully emitted when the final slice actually cut it.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     lines = [f"- [{hit.id[:8]}] {hit.title}" for hit in relevant]
+    bullet_text: list[str] = ["" for _ in relevant]
 
     # Add short bullets from body (first 50 chars per sentence)
     for i, hit in enumerate(relevant):
@@ -605,6 +651,7 @@ def render_recall_balanced(
             indent = "\n  • ".join(bullets)
             if i < len(lines):
                 lines[i] = lines[i] + "\n  • " + indent
+                bullet_text[i] = indent
 
     # Verified code citations (flag off ⇒ {} — zero extra work, DB untouched).
     for i, ref_lines in _code_ref_lines(relevant).items():
@@ -617,6 +664,9 @@ def render_recall_balanced(
     if max_chars is not None and len(body) + len(footer) > max_chars:
         # Truncate the body but keep the footer (and its closing tag) intact.
         body = body[: max(0, max_chars - len(footer) - 3)].rstrip() + "..."
+    elif emitted_sink is not None:
+        for i, hit in enumerate(relevant):
+            emitted_sink.append((hit.id, bullet_text[i] if i < len(bullet_text) else ""))
 
     return body + footer
 
@@ -709,8 +759,14 @@ def render_by_format(
     omitted: list[Any] | None = None,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
-    """The compact/balanced/full render switch, shared by both recall paths."""
+    """The compact/balanced/full render switch, shared by both recall paths.
+
+    ``emitted_sink`` is forwarded to whichever renderer handles ``fmt`` --
+    see each renderer's own docstring for what it records. ``None`` (the
+    default) disables recording entirely and leaves output unchanged.
+    """
     world_proj = ""
     if state_dir is not None and flag_bool("MEMO_WORLD_MODEL_ENABLED"):
         try:
@@ -733,9 +789,12 @@ def render_by_format(
             token_budget=token_budget,
             disputed_by=disputed_by,
             state_dir=state_dir,
+            emitted_sink=emitted_sink,
         )
     if fmt == "balanced":
-        return world_proj + render_recall_balanced(relevant, token_budget=token_budget, turn=turn)
+        return world_proj + render_recall_balanced(
+            relevant, token_budget=token_budget, turn=turn, emitted_sink=emitted_sink
+        )
     return world_proj + render_recall_context(
         relevant,
         nudge,
@@ -745,6 +804,7 @@ def render_by_format(
         omitted=omitted,
         disputed_by=disputed_by,
         state_dir=state_dir,
+        emitted_sink=emitted_sink,
     )
 
 
@@ -2091,6 +2151,10 @@ def _recall_logic(
 
     # Format steering — parity with the subprocess path: MEMO_RECALL_FORMAT
     # (default "auto") picks compact/balanced/full from budget + hit count.
+    # emitted_sink feeds the emission ledger (see `_log` below) — this is the
+    # path a warm `com.memo.recall-daemon` actually serves, so the sink must
+    # be wired here too, not only on the subprocess fallback.
+    _emitted: list[tuple[str, str]] = []
     context = render_by_format(
         resolve_recall_format(token_budget, len(relevant)),
         relevant,
@@ -2101,6 +2165,7 @@ def _recall_logic(
         omitted=omitted,
         disputed_by=disputed_by,
         state_dir=cfg.state_dir,
+        emitted_sink=_emitted,
     )
 
     # Graph-associative nudge (MEMO_RECALL_ASSOCIATIVE) — render it on the daemon
@@ -2136,6 +2201,51 @@ def _recall_logic(
                 from memo import session as _session_mod
 
                 _session_mod.mark_ids_recalled(cfg.state_dir, session_id, _ids_to_mark)
+        # Record what the model was just shown, so the MCP read tools can
+        # skip re-sending it later in this session. `_log` is the daemon's
+        # own delivered-gated closure (recall_socket.py only calls it once
+        # `_write_response` confirms the client actually received these
+        # bytes) — same ordering discipline `mark_ids_recalled` above already
+        # follows, for the same reason: a write here before delivery was
+        # confirmed could leave the ledger asserting bodies the model never
+        # received (this is what task-6 review F1 found on the subprocess
+        # side; this closure is what keeps the daemon side from repeating it).
+        #
+        # Uses the `session_id` PARAMETER this function was called with — NOT
+        # identity._session_id(). The daemon is one long-lived process shared
+        # across every Claude Code session on the machine; its own env (fixed
+        # once by the recall-daemon LaunchAgent's EnvironmentVariables at
+        # startup, verified to carry no CLAUDE_CODE_SESSION_ID/
+        # CLAUDE_SESSION_ID/MEMO_SESSION_ID) never reflects which session's
+        # request this is. `session_id` is the correct per-request value: the
+        # socket handler forwards it from the hook's own payload-derived
+        # session id (recall_socket.py, `_recall_logic(..., session_id=_sid,
+        # ...)`), which is the same id `_effective_session_id()` resolves to
+        # for that session on the MCP side. Using identity._session_id() here
+        # would be a partition bug (wrong or shared across sessions), not
+        # merely a missed saving — worse than not recording at all.
+        # Fail-open by contract: never break or slow down the request.
+        if flag_bool("MEMO_EMITTED_LEDGER") and _emitted:
+            with contextlib.suppress(Exception):
+                from memo import emitted_ledger as _el
+
+                # Mirror apply_ledger's safe_hits guard (server_common.py):
+                # an empty-text pair costs no correctness (n=0 can only ever
+                # match another n=0 emission) but would overwrite a richer
+                # prior entry for the same id, silently killing suppression
+                # for that memory for the rest of the session.
+                _pairs = [(_id, _body) for _id, _body in _emitted if _id and _body]
+                if _pairs and session_id:
+                    _now = int(time.time())
+                    _ref = _el.mint_ref([_id for _id, _ in _pairs], _now, prefix="memo-h")
+                    _el.append(
+                        cfg.state_dir,
+                        session_id,
+                        [
+                            _el.Entry.for_text(_id, _body, _ref, _now, "hook")
+                            for _id, _body in _pairs
+                        ],
+                    )
         latency_ms: int | None = int((time.time() - t0) * 1000) if t0 is not None else None
         try:
             from memo.dashboard import append_context_cost_log, append_recall_log

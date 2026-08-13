@@ -109,6 +109,12 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("cli_recall_hook.py", "recall_hook", 19),
     ("cli_recall_hook.py", "recall_hook", 20),
     ("cli_recall_hook.py", "recall_hook", 21),
+    # Emission-ledger write recording what the hook just injected (see
+    # emitted_ledger.py): fail-open by contract, same as every other site in
+    # this function -- the recall hook has a 5s budget and a ledger write
+    # failure must only cost a re-emitted body later, never break or slow
+    # down the recall payload.
+    ("cli_recall_hook.py", "recall_hook", 22),
     # Proactive urgent rendering is optional hook-hot-path work. Store reads,
     # timestamp parsing, or rendering failures must degrade to no urgent line
     # and must never block the recall payload.

@@ -1,7 +1,7 @@
 #!/bin/sh
 # memo nightly maintenance — one wake, one MLX load. Sequential:
 # codegraph sync → contradict scan → contradict resolve → gc dupes →
-# gc orphans → consolidate.
+# gc orphans → gc emitted ledgers → consolidate.
 # Template: replace __MEMO_BIN__ (`command -v memo`) and __CODEGRAPH_BIN__
 # (`command -v codegraph`; delete that block if you don't use codegraph),
 # then install to ~/.local/share/memo/bin/memo-nightly.sh (chmod 755).
@@ -34,6 +34,9 @@ log "start gc-memo-duplicates"
 
 log "start gc-vault-orphans"
 "__MEMO_BIN__" ops gc-vault-orphans --json || log "gc-vault-orphans FAILED (exit $?)"
+
+log "start gc-emitted-ledgers"
+"__MEMO_BIN__" ops gc-emitted-ledgers --json || log "gc-emitted-ledgers FAILED (exit $?)"
 
 log "start memo-consolidate"
 "__MEMO_BIN__" consolidate apply --force --auto-threshold 0.95 --max-clusters 15 || log "memo-consolidate FAILED (exit $?)"
