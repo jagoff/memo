@@ -10,8 +10,11 @@ This module returns a multiplicative boost ≥ 1.0 to apply to the
 existing hybrid score before final sort. Deterministic, no model, no
 network — same query always produces the same boost.
 
-The cap (~10×) prevents legitimate distant matches from being buried:
-hits with body score 50× the top still surface.
+It is a *prior*, not evidence, and it is applied downstream of stages that
+bound the score to 1.0 (`_rerank` fuses `alpha * P(yes) + (1 - alpha) *
+rrf_bonus`, both in [0, 1]). So the cap has to stay small enough that the
+retrieval evidence still decides the ranking: `_MAX_BOOST` is exactly the
+score ratio a candidate needs in order to be immune to metadata alone.
 """
 
 from __future__ import annotations
@@ -23,8 +26,12 @@ from pathlib import PurePosixPath
 __all__ = ["boost_for", "query_terms"]
 
 # Hard cap on the multiplicative boost — keeps a metadata-perfect note from
-# burying a much stronger body match.
-_MAX_BOOST = 12.0
+# burying a much stronger body match. This number IS the guarantee: a candidate
+# scoring `_MAX_BOOST`x another cannot be overtaken by curatorial metadata. At
+# the historical 12.0 that guarantee was vacuous, because the score this
+# multiplies is bounded to 1.0 six stages upstream, and no real body-score
+# spread is 12x — the boost simply decided the ranking on its own.
+_MAX_BOOST = 1.5
 
 _TERM_RE = re.compile(r"[\w\-]{3,}", re.UNICODE)
 _STOPWORDS_ES_EN = frozenset(
@@ -135,17 +142,25 @@ def boost_for(
     high-precision metadata fields.
 
     Weighting (loosely curatorial-confidence-ordered):
-      - Filename (basename without extension) exact match: ×4.0
-      - Filename ≥50% match: ×2.0
-      - Filename any term match: ×1.3
-      - Frontmatter title ≥50% match (and distinct from filename): ×1.5
-      - Heading inside chunk with ≥50% match: ×1.25
-      - Any tag matches a query term: ×1.4
+      - Filename (basename without extension) exact match: ×1.30
+      - Filename ≥50% match: ×1.15
+      - Filename any term match: ×1.06
+      - Frontmatter title, over the terms the filename did NOT match:
+        full ×1.20, ≥75% ×1.14, ≥50% ×1.08
+      - Heading inside chunk: exact ×1.10, ≥50% match ×1.05
+      - Any tag matches a query term: ×1.08
+
+    The title is scored only on terms the filename missed. memo derives a
+    record's title from its own body and its filename from that title, so for a
+    self-titled record "filename matches" and "title matches" are one signal
+    counted twice — and what that signal encodes is *entity mention*, not
+    *answer relevance*. Double-counting it is what let notes whose title merely
+    names the query's subject outrank the note that answers the question.
 
     Returns 1.0 when query has no significant terms (e.g. all stopwords)
-    or no metadata fields match. Hard-capped at ``_MAX_BOOST`` (12×) so a
-    metadata-perfect note wins decisively without burying a stronger body
-    match. Tests assert these ranges.
+    or no metadata fields match. Hard-capped at ``_MAX_BOOST`` so curatorial
+    metadata can reorder near-ties without overriding the retrieval evidence.
+    Tests assert these ranges.
     """
     terms = query_terms(query)
     if not terms:
@@ -153,30 +168,30 @@ def boost_for(
     boost = 1.0
 
     fname = _fold_diacritics(PurePosixPath(filename or "").stem.lower())
-    fname_hits = 0
+    fname_hits: set[str] = set()
     if fname:
-        fname_hits = sum(1 for t in terms if t in fname)
-        ratio = fname_hits / len(terms)
+        fname_hits = {t for t in terms if t in fname}
+        ratio = len(fname_hits) / len(terms)
         if ratio >= 0.99:
-            boost *= 4.0
+            boost *= 1.30
         elif ratio >= 0.5:
-            boost *= 2.0
+            boost *= 1.15
         elif ratio > 0:
-            boost *= 1.3
+            boost *= 1.06
 
     t_lower = _fold_diacritics((title or "").lower().strip())
-    if t_lower and t_lower != fname:
-        ratio = sum(1 for t in terms if t in t_lower) / len(terms)
-        # Scale with overlap like the filename does — a near-exact frontmatter
-        # title is a strong curatorial signal that THIS note is the answer, so it
-        # must win decisively, not flat ×1.5 (which tied a 50% match with a
-        # full-coverage one and let a terse correct note get blended with noise).
+    if t_lower:
+        # Only terms the filename left unmatched — see the docstring. Denominator
+        # stays len(terms) so the title still scales with how much of the *query*
+        # it newly explains, not with how little the filename happened to cover.
+        novel = sum(1 for t in terms if t not in fname_hits and t in t_lower)
+        ratio = novel / len(terms)
         if ratio >= 0.99:
-            boost *= 2.5
+            boost *= 1.20
         elif ratio >= 0.75:
-            boost *= 2.0
+            boost *= 1.14
         elif ratio >= 0.5:
-            boost *= 1.5
+            boost *= 1.08
 
     for h in headings or []:
         h_lower = _fold_diacritics((h or "").lower())
@@ -184,10 +199,10 @@ def boost_for(
             continue
         ratio = sum(1 for t in terms if t in h_lower) / len(terms)
         if ratio >= 0.99:
-            boost *= 1.5
+            boost *= 1.10
             break
         if ratio >= 0.5:
-            boost *= 1.25
+            boost *= 1.05
             break
 
     for tag in tags or []:
@@ -195,9 +210,9 @@ def boost_for(
         if not t_clean:
             continue
         if t_clean in terms or any(t_clean in t or t in t_clean for t in terms):
-            boost *= 1.4
+            boost *= 1.08
             break
 
-    # Explicit cap: a metadata-perfect note wins decisively but never buries a
-    # much stronger body match (a hit with body score >cap× the top still surfaces).
+    # Explicit cap: curatorial metadata reorders near-ties, but a candidate
+    # scoring `_MAX_BOOST`x another is immune to it.
     return min(boost, _MAX_BOOST)
