@@ -51,7 +51,16 @@
   </dict>
   <key>RunAtLoad</key>
   <false/>
-  <!-- 03:00 daily — same slot the synapse-era agent used -->
+  <!--
+    03:00 daily — the same slot the synapse-era agent used. Paired with an
+    hourly StartInterval because macOS does not wake for a
+    StartCalendarInterval and does not reliably replay a slot it slept
+    through: on mac-black 2026-08-13 the machine was in darkwake at 03:02,
+    `launchctl print` reported `runs = 0`, and the newest nightly.log entry
+    was three days old. memo-nightly.sh carries the matching due-guard
+    (MEMO_NIGHTLY_MIN_INTERVAL_H, default 20h), so the extra ticks exit
+    immediately and the pass still runs at most once a day.
+  -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
@@ -59,6 +68,8 @@
     <key>Minute</key>
     <integer>0</integer>
   </dict>
+  <key>StartInterval</key>
+  <integer>3600</integer>
   <key>StandardOutPath</key>
   <string>__HOME__/Library/Logs/memo/nightly.log</string>
   <key>StandardErrorPath</key>
