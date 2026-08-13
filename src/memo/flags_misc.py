@@ -594,8 +594,9 @@ SPECS: tuple[FlagSpec, ...] = (
         True,
         "retrieval",
         "Apply filename/title/heading/tag curatorial boost to memory-surface "
-        "search ranking (a note whose metadata is the answer wins decisively). "
-        "Measured: precision@5 +0.04..+0.08 across configs, noise unchanged.",
+        "search ranking, so a note whose metadata is the answer wins a near-tie "
+        "against a body-text-only match. Bounded by retrieval_boost._MAX_BOOST: "
+        "it reorders close calls, it does not override the retrieval evidence.",
         opt_out=True,
     ),
     _spec("MEMO_PROMPT_CACHE", "bool", False, "misc", "Enable LLM prompt caching."),
