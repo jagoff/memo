@@ -195,7 +195,7 @@ def recall_search_fn(mem: Any, *, k: int) -> SearchFn:
             )
         vc = make_vec_cosine(mem, text) if knobs.mode == "hybrid" else None
         ranked = rank_hits(hits, knobs, vec_cosine=vc)
-        ranked = apply_injection_filters(ranked, mode=knobs.mode, vec_cosine=vc)
+        ranked = apply_injection_filters(ranked)
         if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and unmatched_term_gate(text, ranked):
             ranked = []
         if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(ranked) > 1:
