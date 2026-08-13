@@ -421,7 +421,12 @@ def _run_against(
     from memo import eval_against
 
     try:
-        repo_root = eval_against.resolve_repo_root(Path(__file__).resolve().parent)
+        # Anchor on the INVOCATION cwd, not on this module's directory: under
+        # the isolated uv-tool/pipx install `__file__` lives in site-packages,
+        # outside any git worktree, so `--against` died with `fatal: not a git
+        # repository` on precisely the install the pre-push gate's own failure
+        # message tells you to run it from.
+        repo_root = eval_against.resolve_repo_root(Path.cwd())
         ref_argv = eval_against.build_eval_argv(
             labels_path=labels_path, k=k, profile=profile, configs=config_names
         )

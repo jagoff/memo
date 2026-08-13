@@ -30,7 +30,7 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
     reuses its ranking core (``rank_hits`` + ``make_vec_cosine``) — the ranking
     itself is never reimplemented here.
     """
-    from memo.recall_logic import RankKnobs, apply_injection_filters, make_vec_cosine, rank_hits
+    from memo.recall_logic import RankKnobs, make_vec_cosine, rank_hits
     from memo.tiers import REFERENCE_TYPES
 
     cfg = Config.from_env()
@@ -108,16 +108,24 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
         # Post-rank_hits output filters — the hook path (recall_logic._recall_logic)
         # applies MEMO_RECALL_SKIP_BELOW / MEMO_RECALL_GAP_THRESHOLD AFTER
         # rank_hits, so `injected` must honor them or debug-recall shows
-        # "● injected" for a hit the real hook suppressed. Call the shared
-        # helper rather than re-deriving it: an inline copy silently drifts from
-        # the hook (it did — it compared the raw hybrid RRF score against the
-        # cosine-calibrated floor after the hook stopped doing so).
+        # "● injected" for a hit the real hook suppressed. Same resolution
+        # (`or 0.0`) and same checks as _recall_logic.
         skip_below = flag_float("MEMO_RECALL_SKIP_BELOW") or 0.0
         gap_threshold = flag_float("MEMO_RECALL_GAP_THRESHOLD") or 0.0
-        qualifying = apply_injection_filters(ranked, mode=knobs.mode, vec_cosine=vec_cosine)
-        # apply_injection_filters returns [] only via the skip-below floor, so a
-        # non-empty input that came back empty IS that floor firing.
-        skip_below_triggered = bool(ranked) and not qualifying
+        qualifying = list(ranked)
+        skip_below_triggered = bool(
+            skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below
+        )
+        if skip_below_triggered:
+            qualifying = []
+        elif (
+            gap_threshold > 0
+            and len(qualifying) > 1
+            and qualifying[0].score is not None
+            and qualifying[1].score is not None
+            and (qualifying[0].score - qualifying[1].score) > gap_threshold
+        ):
+            qualifying = qualifying[:1]
         injected_ids = {h.id for h in qualifying[:top_k]}
 
         # Supplementary display columns (never affect ranking): BM25 leg score
