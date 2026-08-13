@@ -118,16 +118,21 @@ def big_corpus(tmp_path_factory, corpus_size: int) -> Iterator[Config]:
         # 10001 docs) -- so BM25 conformance still runs against the backend this
         # machine actually dispatches to. No-op when tantivy is absent/disabled.
         VecStore(cfg.db_path, dims=DIMS).close()
-    except BaseException:
-        # Setup failed before the yield -- the generator never resumes, so
-        # this is the only chance to revert the monkeypatched env. Without
-        # it, MEMO_EMBEDDER_DIMS/MEMO_DATA_DIR/etc. leak into the rest of
-        # the pytest session for every test after this one.
+    finally:
+        # Undo BEFORE the yield, not after it. This fixture is session-scoped,
+        # so "after the yield" means session teardown -- every test that ran
+        # after the first conformance test saw MEMO_EMBEDDER_DIMS=64 and this
+        # fixture's MEMO_DATA_DIR/MEMO_STATE_DIR as ambient config. Measured
+        # 2026-08-10: `tests/test_config.py::test_model_profile_quality_sets_
+        # model_bundle` and `tests/test_profile.py` failed with `assert 64 ==
+        # 2560` in a full run and passed in isolation.
+        #
+        # The env is only needed WHILE seeding. Conformance tests take the
+        # `Config` this yields (and `_env(cfg)` for CliRunner calls), so they
+        # never depend on the ambient copy.
         mp.undo()
-        raise
 
     yield cfg
-    mp.undo()
 
 
 def _seed(cfg: Config, corpus_size: int) -> None:

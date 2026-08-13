@@ -18,7 +18,7 @@ from memo.cli_diag import (
 )
 from memo.cli_runtime import _print_runtime_install_report, _runtime_install_report
 from memo.config import Config
-from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs
+from memo.runtime.mcp_config import repair_mcp_configs, scan_mcp_configs, scan_mcp_store_env
 
 # Codegraph doctor check — WARN-only (never fails doctor). Consumers of the
 # code graph degrade silently when the index is absent, but
@@ -54,6 +54,62 @@ def _codegraph_cli_version(timeout_s: float = 2.0) -> tuple[int, int, int] | Non
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
+def _newest_source_mtime(project_root: Path) -> float | None:
+    """Newest mtime among git-tracked files, or None when git cannot answer.
+
+    Tracked files only: an index is not stale because a build artifact or a
+    scratch file changed, and walking the whole tree would read node_modules.
+    """
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(project_root), "ls-files", "-z"],
+            capture_output=True,
+            timeout=10.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    newest: float | None = None
+    for raw in proc.stdout.split(b"\0"):
+        if not raw:
+            continue
+        try:
+            mtime = (project_root / raw.decode()).stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
+
+
+def codegraph_staleness(db_path: Path, *, newest_source_mtime: float | None) -> str | None:
+    """Return a staleness warning for the codegraph index, or None if current.
+
+    Staleness is "behind the code", not "old". Comparing the index's age
+    against a flat 24-hour window warned on every repo nobody had touched for a
+    day, and `codegraph sync` answered "Already up to date" — a warning the
+    documented remedy could not clear, which trains the operator to ignore the
+    line and takes the real signal with it.
+
+    ``newest_source_mtime`` is None when git cannot enumerate the tree; there
+    is nothing to compare against, so age remains the best guess available.
+    """
+    import time
+
+    index_mtime = db_path.stat().st_mtime
+    if newest_source_mtime is not None:
+        if index_mtime >= newest_source_mtime:
+            return None
+        return "index is behind the working tree — run `codegraph sync`"
+    if time.time() - index_mtime > _CODEGRAPH_FRESH_MAX_AGE_S:
+        return "index older than 24h and freshness unverifiable — run `codegraph sync`"
+    return None
+
+
 def _check_codegraph() -> None:
     """Codegraph index health — WARN-only, never flips doctor's `ok`.
 
@@ -83,7 +139,6 @@ def _check_codegraph() -> None:
     else:
         try:
             import sqlite3 as cg_sqlite3
-            import time as cg_time
 
             cg_conn = cg_sqlite3.connect(f"file:{cg_db}?mode=ro", uri=True)
             try:
@@ -92,20 +147,22 @@ def _check_codegraph() -> None:
                 cg_edges = int(cg_conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0])
             finally:
                 cg_conn.close()
-            cg_age_s = cg_time.time() - cg_db.stat().st_mtime
             cg_warnings: list[str] = []
             if cg_journal != "wal":
                 cg_warnings.append(f"journal_mode={cg_journal} (expected wal)")
             if cg_nodes == 0 or cg_edges == 0:
                 cg_warnings.append(f"index empty (nodes={cg_nodes} edges={cg_edges})")
-            if cg_age_s > _CODEGRAPH_FRESH_MAX_AGE_S:
-                cg_warnings.append("index older than 24h — run `codegraph sync`")
+            cg_stale = codegraph_staleness(
+                cg_db, newest_source_mtime=_newest_source_mtime(cg_db.parent.parent)
+            )
+            if cg_stale:
+                cg_warnings.append(cg_stale)
             if cg_warnings:
                 console.print(f"[yellow]![/yellow] codegraph: {'; '.join(cg_warnings)}")
             else:
                 console.print(
                     f"[green]✓[/green] codegraph: index ok "
-                    f"(nodes={cg_nodes} edges={cg_edges}, wal, fresh <24h)"
+                    f"(nodes={cg_nodes} edges={cg_edges}, wal, current with the tree)"
                 )
         except Exception as exc:
             console.print(f"[yellow]![/yellow] codegraph: index unreadable: {exc}")
@@ -124,6 +181,31 @@ def _check_codegraph() -> None:
         )
     else:
         console.print(f"[green]✓[/green] codegraph: CLI v{'.'.join(str(p) for p in cg_version)}")
+
+
+def _report_mcp_store_env() -> bool:
+    """Print MCP client store-path findings; return False when any is broken.
+
+    A store path in a client's `env` is the failure the CLI cannot feel: memo
+    creates whatever directory it is handed, so the MCP client answers from an
+    empty corpus while every other check here stays green.
+    """
+    findings = scan_mcp_store_env()
+    if not findings:
+        console.print("[green]✓[/green] mcp store env: no overrides pointing elsewhere")
+        return True
+    for finding in findings:
+        why = (
+            "resolves against the client's cwd"
+            if finding["issue"] == "relative"
+            else "does not exist — the server would create a new empty store"
+        )
+        console.print(
+            f"[red]✗[/red] mcp store env: {finding['config']} → "
+            f"{finding['var']}={finding['value']} "
+            f"[dim]({why}; set an absolute path or drop the override)[/dim]"
+        )
+    return False
 
 
 @click.command()
@@ -250,6 +332,8 @@ def doctor(
                     f"[yellow]![/yellow] mcp config: {_r['config']} → {_r['command']} "
                     f"({_r['issue']}); shim {_r['suggestion']} missing — install runtime first"
                 )
+
+    ok = _report_mcp_store_env() and ok
 
     if cfg.data_dir.is_dir():
         console.print(f"[green]✓[/green] data_dir: {cfg.data_dir}")

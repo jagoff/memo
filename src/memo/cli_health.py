@@ -317,8 +317,10 @@ def health(probe: bool, as_json: bool, daemon_only: bool, watch: bool, interval:
 
     console.print("[bold]memo health[/bold]")
     console.print(
-        f"  corpus     : {corpus['memories']} memories "
-        f"({corpus.get('archived') or 0} archived, {_fmt_bytes(corpus.get('db_size_bytes'))})"
+        f"  corpus     : {corpus['memories']} live "
+        f"({corpus.get('soft_deleted') or 0} soft-deleted, "
+        f"{corpus.get('archived') or 0} archived .md on disk, "
+        f"{_fmt_bytes(corpus.get('db_size_bytes'))})"
     )
     dims_flag = "[green]ok[/green]" if index["dims_ok"] else "[red]MISMATCH[/red]"
     console.print(

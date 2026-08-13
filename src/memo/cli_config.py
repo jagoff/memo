@@ -357,12 +357,22 @@ def config_migrate(force: bool) -> None:
     storage = legacy.get("storage") if isinstance(legacy, dict) else {}
     if not isinstance(storage, dict) or not storage.get("data_dir"):
         raise click.ClickException("legacy config.toml has no [storage].data_dir to migrate")
+    # `write_default_config` refuses to clobber an existing Markdown config.
+    # Unhandled, that surfaced as a raw FileExistsError traceback (`config init`
+    # already translates the same failure), and the `pre-md-config` snapshot
+    # taken first left a backup of a migration that never happened. Write first,
+    # snapshot only once the migration has actually succeeded.
+    try:
+        written = write_default_config(
+            data_dir=Path(str(storage["data_dir"])),
+            vault_path=Path(str(storage["vault_path"])) if storage.get("vault_path") else None,
+            force=force,
+        )
+    except FileExistsError as exc:
+        raise click.ClickException(
+            f"config already exists: {exc}; use --force to overwrite"
+        ) from exc
     backup = snapshot_config_file(label="pre-md-config")
-    written = write_default_config(
-        data_dir=Path(str(storage["data_dir"])),
-        vault_path=Path(str(storage["vault_path"])) if storage.get("vault_path") else None,
-        force=force,
-    )
     console.print(f"[green]migrated[/green] legacy config to {len(written)} Markdown file(s)")
     if backup is not None:
         console.print(f"[dim]legacy backup: {backup}[/dim]")
