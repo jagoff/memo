@@ -815,6 +815,46 @@ def sync_pull(cfg: Config, store: VecStore, mem: Memory, *, remote: str = "origi
     return out
 
 
+# Memo's own derived state: a Tantivy segment directory and the sqlite
+# sidecars. `sync init` stages from `memory_dir.parent`, which contains
+# `state_dir` whenever both are pointed at one directory, so without this the
+# sweep races Tantivy's writer (`fatal: unable to stat '.tmpXXXXXX'`) and, when
+# it wins the race, commits a machine-local index into a cross-machine repo.
+# Markdown is the source of truth; the index is rebuildable from it.
+_SYNC_IGNORE_HEADER = "# memo: derived state, rebuildable from the markdown corpus"
+_SYNC_IGNORE_ENTRIES: tuple[str, ...] = (
+    "tantivy/",
+    "*.db-wal",
+    "*.db-shm",
+    "*.tmp*",
+)
+
+
+def ensure_sync_gitignore(root: Path) -> None:
+    """Append memo's derived-state ignores to ``root/.gitignore``, idempotently.
+
+    Only adds lines that are missing, so a hand-written ``.gitignore`` in the
+    sync repo survives untouched.
+    """
+    gitignore = root / ".gitignore"
+    try:
+        existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    except OSError:
+        return
+    present = {line.strip() for line in existing.splitlines()}
+    missing = [entry for entry in _SYNC_IGNORE_ENTRIES if entry not in present]
+    if not missing:
+        return
+    block = "" if not existing or existing.endswith("\n") else "\n"
+    if _SYNC_IGNORE_HEADER not in existing:
+        block += f"{_SYNC_IGNORE_HEADER}\n"
+    block += "".join(f"{entry}\n" for entry in missing)
+    try:
+        gitignore.write_text(existing + block, encoding="utf-8")
+    except OSError:
+        return
+
+
 def sync_init_home(cfg: Config, private: bool = True) -> dict:
     """Initialize a new memo-sync repo: create GitHub repo + ensure local git + first push.
 
@@ -837,6 +877,7 @@ def sync_init_home(cfg: Config, private: bool = True) -> dict:
     # repo create --push` has nothing to push and _current_branch() fails.
     # Mirror the byo path — stage whatever exists and make a (possibly empty)
     # initial commit so HEAD is born before gh pushes.
+    ensure_sync_gitignore(root)
     if _git(root, "rev-parse", "HEAD", check=False).returncode != 0:
         _git(root, "add", "-A")
         _git(root, "commit", "--allow-empty", "-m", "memo: initial memory corpus")
@@ -891,6 +932,7 @@ def sync_init_home_byo(cfg: Config, url: str) -> dict:
     else:
         _git(root, "remote", "add", "origin", url)
 
+    ensure_sync_gitignore(root)
     _git(root, "add", "-A")
     # Even with no memories yet, make a real (possibly empty) initial commit so
     # HEAD is born — otherwise a brand-new user running the create path before

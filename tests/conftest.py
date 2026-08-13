@@ -79,12 +79,24 @@ configure_freezegun(extend_ignore_list=["transformers"])
 # without pinning it read the developer's REAL markdown config (data_dir,
 # model_profile, dream flags, etc. — whatever is actually configured on this
 # machine) and silently override the test's own env/TOML-derived values.
-# Point it at a nonexistent dir by default so `field_values()` returns empty
-# unless a test opts in with its own `MEMO_CONFIG_DIR` (monkeypatch.setenv or
-# an explicit `env=`).
+# Point it at an empty dir by default so `field_values()` returns empty unless a
+# test opts in with its own `MEMO_CONFIG_DIR` (monkeypatch.setenv or an explicit
+# `env=`).
+#
+# The dir must be UNIQUE PER RUN. It used to be the fixed
+# `$TMPDIR/memo-test-nonexistent-config-dir`, and "nonexistent" was an
+# assumption, not an invariant: the first test that wrote a Markdown config
+# without pinning its own `MEMO_CONFIG_DIR` created it — after which every
+# later pytest run ON THAT MACHINE read those files as real config. Observed
+# 2026-08-09: a stray `models-config.md` carrying `embedder_dims = 1024` and
+# `model_profile = "balanced"` made `_embedder_was_pinned()` true, so
+# `Config.from_env()` stopped adopting an index's embedder profile and 27 tests
+# failed — reproducibly, forever, until the directory was deleted by hand. CI
+# never saw it (fresh runner, empty TMPDIR), so it read as flakiness local to
+# one machine. A per-run directory dies with the process that polluted it.
 os.environ.setdefault(
     "MEMO_CONFIG_DIR",
-    str(Path(tempfile.gettempdir()) / "memo-test-nonexistent-config-dir"),
+    tempfile.mkdtemp(prefix="memo-test-config-"),
 )
 # Most server tests exercise the complete administrative contract. Production
 # defaults to the 30-tool agent profile; the dedicated surface-profile tests

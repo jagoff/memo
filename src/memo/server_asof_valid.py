@@ -20,6 +20,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from memo.asof import validate_as_of
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
 from memo.server_common import log_consult, now_ms
@@ -57,6 +58,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         shape as ``memo_search`` items.
         """
         t0 = now_ms()
+        validate_as_of(as_of)
         records = memory.search(query, limit=limit, type_=type, mode=mode, as_of=as_of)
         results = [r.to_dict() for r in records]
         log_consult(
@@ -89,6 +91,7 @@ def register(server: FastMCP, memory: Memory) -> None:
         Returns: the ``memo_ask`` answer envelope plus an ``as_of`` echo.
         """
         t0 = now_ms()
+        validate_as_of(as_of)
         res = memory.ask(question, k=k, type_=type, as_of=as_of)
         cites = res.get("sources") or []
         hit_dicts = [c for c in cites if isinstance(c, dict)]

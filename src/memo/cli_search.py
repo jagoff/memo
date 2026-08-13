@@ -18,6 +18,7 @@ from rich.table import Table
 from memo.cli_common import console, log_cli_consult
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+from memo.errors import MemoError
 from memo.memory.record import MemoryRecord
 
 
@@ -65,6 +66,20 @@ def _fact_badge(hit: dict) -> str:
     extra = hit.get("extra") if isinstance(hit.get("extra"), dict) else {}
     facts = extra.get("related_fact_edges") if isinstance(extra, dict) else None
     return f" facts:{len(facts)}" if isinstance(facts, list) and facts else ""
+
+
+def _require_valid_as_of(as_of: str | None) -> None:
+    """Refuse a malformed `--as-of` before the query runs.
+
+    The store keeps every row on a bound it cannot parse, so without this the
+    query answers from the PRESENT while looking like it honoured `--as-of`.
+    """
+    from memo.asof import validate_as_of
+
+    try:
+        validate_as_of(as_of)
+    except MemoError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _default_search_json_body_chars() -> int:
@@ -171,6 +186,8 @@ def search(
 ) -> None:
     """Top-k search — hybrid (semantic + keyword) by default."""
     import time
+
+    _require_valid_as_of(as_of)
 
     if body_chars is None:
         body_chars = _default_search_json_body_chars()

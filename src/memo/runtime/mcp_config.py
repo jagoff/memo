@@ -128,6 +128,64 @@ def scan_mcp_configs(
     return findings
 
 
+# Store paths handed to the server through the client's `env` block. Matched
+# in raw text so JSON, JSONC, TOML and YAML all work without a parser, the same
+# way the command scan does.
+_STORE_ENV_VARS: tuple[str, ...] = ("MEMO_DATA_DIR", "MEMO_STATE_DIR")
+_STORE_ENV_ASSIGNMENT = re.compile(
+    r"[\"']?(?P<var>MEMO_(?:DATA|STATE)_DIR)[\"']?\s*[:=]\s*[\"'](?P<value>[^\"']+)[\"']"
+)
+
+
+def scan_mcp_store_env(
+    config_paths: tuple[str, ...] = KNOWN_MCP_CONFIGS,
+) -> list[dict[str, str]]:
+    """Inspect known MCP configs for store paths that point somewhere else.
+
+    A wrong ``command`` fails loudly — the server does not start. A wrong
+    ``MEMO_DATA_DIR``/``MEMO_STATE_DIR`` does the opposite: memo opens (and
+    creates) whatever directory it is given, so the client answers every query
+    from an empty or foreign corpus while the CLI, reading the real store,
+    looks perfectly healthy. That gap is invisible from inside the CLI, which
+    is exactly why it belongs in ``memo doctor``.
+
+    Two issues are reported, both report-only — unlike a command path, memo
+    cannot know which corpus was intended, so there is nothing safe to rewrite:
+
+    - ``"relative"``: resolves against the client's cwd, which differs per
+      client (a launchd agent runs at ``/``).
+    - ``"missing"``: absolute but absent, so the server would create a new
+      empty store there on first open.
+    """
+    findings: list[dict[str, str]] = []
+    for cfg_str in config_paths:
+        cfg_path = Path(cfg_str).expanduser()
+        try:
+            if not cfg_path.exists():
+                continue
+            text = cfg_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for match in _STORE_ENV_ASSIGNMENT.finditer(text):
+            value = match.group("value")
+            resolved = Path(value).expanduser()
+            if not resolved.is_absolute():
+                issue = "relative"
+            elif not resolved.exists():
+                issue = "missing"
+            else:
+                continue
+            findings.append(
+                {
+                    "config": str(cfg_path),
+                    "var": match.group("var"),
+                    "value": value,
+                    "issue": issue,
+                }
+            )
+    return findings
+
+
 def _replace_bare_launch_command(text: str, command: str, suggestion: str) -> str:
     command_pattern = re.escape(command)
     scalar_pattern = re.compile(
