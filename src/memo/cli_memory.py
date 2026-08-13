@@ -17,6 +17,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -553,6 +554,27 @@ def rename(title: str, id_: str | None, as_json: bool) -> None:
     )
 
 
+@contextlib.contextmanager
+def _skip_model_version_check() -> Iterator[None]:
+    """Set ``MEMO_SKIP_MODEL_VERSION_CHECK=1`` for the duration of the block.
+
+    Restores whatever was there before — including "nothing" — so a rebuild
+    cannot disarm the stamped-embedder guard for the rest of a long-lived
+    process.
+    """
+    name = "MEMO_SKIP_MODEL_VERSION_CHECK"
+    previous = os.environ.get(name)
+    if previous is None:
+        os.environ[name] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+
+
 @click.command()
 @click.option(
     "--force",
@@ -578,16 +600,20 @@ def reindex(force: bool, rebuild: bool, as_json: bool) -> None:
     without losing user-signal data — the safe alternative to deleting the DB.
     """
 
-    import os
-
-    if rebuild:
-        os.environ.setdefault("MEMO_SKIP_MODEL_VERSION_CHECK", "1")
-    mem = _get_memory(Config.from_env())
-    try:
-        counts = mem.reindex(force=force, rebuild=rebuild)
-    except StorageError as exc:
-        console.print(f"[red]✗[/red] {exc}")
-        raise SystemExit(1) from exc
+    # A rebuild re-embeds from the markdown source of truth, so the
+    # stamped-model guard has nothing to compare against yet and must be
+    # bypassed FOR THIS CALL. Scoping matters: a bare `os.environ.setdefault`
+    # is invisible in a CLI process that exits a second later, and permanent in
+    # a long-lived host — the MCP server exposes `memo_reindex`, and in the
+    # pytest process one rebuild through CliRunner disarmed the guard for every
+    # test that ran after it.
+    with _skip_model_version_check() if rebuild else contextlib.nullcontext():
+        mem = _get_memory(Config.from_env())
+        try:
+            counts = mem.reindex(force=force, rebuild=rebuild)
+        except StorageError as exc:
+            console.print(f"[red]✗[/red] {exc}")
+            raise SystemExit(1) from exc
     if as_json:
         click.echo(json.dumps(counts, indent=2))
         return
