@@ -244,6 +244,20 @@ def make_response_budget_middleware() -> Any:
     `to_mcp_result()` serialises (content + structured content). It tracks
     the wire payload closely enough to gate on; it is not the JSON-RPC
     frame's exact length.
+
+    Also the sole committer of `server_common`'s emission-ledger stage (see
+    `_LEDGER_STAGE` there): `apply_ledger` (called from inside a tool body,
+    which FastMCP runs in a worker thread) can only STAGE what it would
+    write, because a plain `ContextVar.set()` performed in that thread never
+    becomes visible back here (a copied-context/thread boundary, not a
+    fastmcp quirk). This middleware is the one place that both (a) sits in
+    the SAME context the tool's stage list was bound in, so it can read what
+    got staged, and (b) knows whether the caller actually received the
+    payload those writes describe -- being outermost, it is registered
+    before every other middleware, so its stage covers every tool
+    unconditionally, not just the ones that happen to use the ledger. A tool
+    that never calls `apply_ledger` simply stages nothing, at negligible
+    cost (one `ContextVar.set([])` + `.reset()` per call).
     """
     try:
         from fastmcp.server.middleware import Middleware
@@ -253,14 +267,36 @@ def make_response_budget_middleware() -> Any:
 
     class _ResponseBudgetMiddleware(Middleware):
         async def on_call_tool(self, context: Any, call_next: Any) -> Any:
-            result = await call_next(context)
+            from memo.server_common import (
+                commit_ledger_stage,
+                discard_ledger_stage,
+                open_ledger_stage,
+            )
+
+            token = open_ledger_stage()
+            try:
+                result = await call_next(context)
+            except Exception:
+                # The tool body raised: whatever it staged describes bodies
+                # the caller never received (they got an error, not the
+                # payload). Discard, then let the original exception
+                # propagate exactly as it would have before this ran.
+                discard_ledger_stage(token)
+                raise
             name = str(getattr(context.message, "name", "") or "")
             cap = cap_for(name)
             if cap <= 0:
+                commit_ledger_stage(token)
                 return result
             tokens = est_tokens(result_text(result))
             if tokens <= cap:
+                commit_ledger_stage(token)
                 return result
+            # Over cap: the substituted payload below, not `result`, is what
+            # the caller actually receives. Whatever apply_ledger staged for
+            # `result`'s bodies describes content that never reached them --
+            # discard rather than commit.
+            discard_ledger_stage(token)
             payload = budget_exceeded_payload(name, tokens, cap)
             # meta={} (not is_error=True): every other refusal on this MCP
             # surface (server_graph_tool.py, server_core_records.py,

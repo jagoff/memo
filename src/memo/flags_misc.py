@@ -352,6 +352,42 @@ SPECS: tuple[FlagSpec, ...] = (
         max_val=1024,
     ),
     _spec(
+        "MEMO_EMITTED_LEDGER",
+        "bool",
+        False,
+        "mcp",
+        "Suppress re-emission of memory bodies already sent into this session's "
+        "context window. A repeat hit returns {id, title, ref} instead of the full "
+        "body. Default off until the replay gates in "
+        "docs/SPECS/2026-08-10-emission-ledger-design.md are met.",
+    ),
+    _spec(
+        "MEMO_EMITTED_LEDGER_TOOLS",
+        "str",
+        "memo_search,memo_ask,memo_evidence_pack",
+        "mcp",
+        "Comma-separated MCP tools that consult the emission ledger. memo_get and "
+        "memo_history are deliberately absent: they mean 'give me this one, "
+        "explicitly', and are the escape hatch a digest points at. memo_context "
+        "and memo_unified_briefing are also absent, not merely unwired: "
+        "memo_context's structured 'hits' list carries no body text at all "
+        "(id/title/score/section only), and the body text it does return lives "
+        "inside its packed 'prompt' wrapper, which embeds full snippets inline "
+        "-- suppressing the bodyless hit list would suppress nothing real. "
+        "memo_unified_briefing returns one compacted markdown string with no "
+        "per-hit list to partition. Neither has a hit list this mechanism can "
+        "suppress without half-wiring a lie into this allowlist.",
+    ),
+    _spec(
+        "MEMO_EMITTED_LEDGER_MAX",
+        "int",
+        500,
+        "mcp",
+        "Emission-ledger entry cap per session, FIFO. Bounds both the file and the "
+        "read cost on the MCP hot path.",
+        min_val=0,
+    ),
+    _spec(
         "MEMO_RELATION_CANDIDATES_ENABLED",
         "bool",
         True,
@@ -558,9 +594,8 @@ SPECS: tuple[FlagSpec, ...] = (
         True,
         "retrieval",
         "Apply filename/title/heading/tag curatorial boost to memory-surface "
-        "search ranking, so a note whose metadata is the answer wins a near-tie "
-        "against a body-text-only match. Bounded by retrieval_boost._MAX_BOOST: "
-        "it reorders close calls, it does not override the retrieval evidence.",
+        "search ranking (a note whose metadata is the answer wins decisively). "
+        "Measured: precision@5 +0.04..+0.08 across configs, noise unchanged.",
         opt_out=True,
     ),
     _spec("MEMO_PROMPT_CACHE", "bool", False, "misc", "Enable LLM prompt caching."),

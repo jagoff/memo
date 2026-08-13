@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.10.0] - 2026-08-13
+
 ### Added
 
 - **A response budget on every MCP tool result.** A `limit` argument bounds an
@@ -24,6 +26,32 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   knows which of its fields is elastic trims that field itself and says so.
   The estimate covers both fields the wire carries (content blocks *and*
   structured content), which for a dict-returning tool is the same JSON twice.
+
+- **An emission ledger, so memo stops re-sending bodies already in the window.**
+  memo produces the same memory body from two places — the recall hook on every
+  `UserPromptSubmit` and the MCP read tools — and nothing tracked emissions
+  across them, so one body could enter a session's context three or four times.
+  `MEMO_EMITTED_LEDGER` (new flag, **default `0`**) records what was emitted
+  per session and replaces a repeat with `{id, title, ref}`, which the model
+  expands via `memo_get` when it actually needs the text. Consulted by
+  `memo_search`, `memo_ask` and `memo_evidence_pack`
+  (`MEMO_EMITTED_LEDGER_TOOLS`); `memo_context` and `memo_unified_briefing` are
+  deliberately excluded, not half-wired — neither has a hit list this mechanism
+  can suppress. Writes are deferred until the response-budget middleware
+  commits, so a truncated response never records an emission the model never
+  saw, and the ledger is cleared at the PreCompact boundary because compaction
+  invalidates every claim about what is in the window. Counters
+  (`digests_served`, `memo_get_after_digest`, `net_saved_est`) surface in
+  `memo_cache_stats`; stale ledgers are pruned by the nightly pass.
+
+  Measured on a replayed real transcript: **31.4% and 36.6% fewer emitted
+  tokens** across two clean runs, recall-hook p95 latency delta negative on the
+  warm-daemon path, and zero delta on the retrieval eval. It stays default-off
+  because promotion also requires a `memo_get_after_digest` rate that a replay
+  cannot produce — there is no model in the loop deciding whether to recover a
+  digested id. An unmeasured criterion is not a passed one. See
+  `docs/SPECS/2026-08-10-emission-ledger-design.md` and
+  `docs/eval/emission-ledger-replay.md`.
 
 ### Changed
 
@@ -59,6 +87,56 @@ MCP surface, the one with a token budget, is trimmed.
   `truncated`. It emits one event per mention, each with a 200-char snippet:
   110,326 tokens for an entity with 700 mentions. `first_seen`/`last_seen`
   still span the whole timeline.
+
+### Fixed
+
+- **Reverted the metadata-boost ranking change (#223): it cost 22% of
+  precision@5.** Measured A/B on the live corpus with the curated regression
+  set (43 prompts, `--profile pre-push`, both sides uncached): **precision@5
+  0.524 with it, 0.676 without**, noise@5 unchanged at 0.000. The scale
+  argument behind it — hybrid's `h.score` is RRF-fused, so a cosine-calibrated
+  floor cannot be compared against it — may be right on its own, but it shipped
+  together with `_MAX_BOOST` 12.0 → 1.5 and a wholesale collapse of the
+  curatorial boost weights, which made the regression unattributable. Either
+  half can be re-landed separately, each measured against the label set.
+
+- **A sub-threshold contradiction froze writes forever.** Every detected
+  `semantic_contradiction` opened a conflict with `freeze_write=True`, but the
+  only automatic passes that adjudicate one — `memo maintain --confidence`
+  (default 0.9) and dream's contradictions pass — skip anything below 0.9. A
+  0.80–0.85 pair therefore froze writes to its subject memories permanently:
+  an agent cannot lift it (`write_policy` requires authenticated human
+  authority), and no nightly ever would. Freeze only what the configuration
+  says is actionable; an anomaly with no readable confidence keeps the
+  conservative freeze.
+
+- **The nightly's consolidate pass had never run.** `consolidate apply
+  --force` still raises the interactive confirmation — `--force` is gated on
+  `--yes` — and a LaunchAgent has no stdin, so the last pass of every nightly
+  aborted with exit 1. The same script also still synced `memflow`, archived on
+  the 2026-07-30 trinity deprecation.
+
+- **Neither the nightly nor dream fired on a machine that sleeps at 03:00.**
+  macOS does not wake for a `StartCalendarInterval` and does not reliably
+  replay a slot it slept through, so memo's whole self-maintenance story could
+  silently not run for days. Both agents now pair the 03:00 slot with an hourly
+  `StartInterval` and an idempotent entrypoint: dream runs `memo dream if-due`
+  (which already existed for this and was simply never wired), and the nightly
+  script carries a matching stamp guard (`MEMO_NIGHTLY_MIN_INTERVAL_H`, default
+  20h; `--force` bypasses).
+
+- **A NULL FTS body silently downgraded the BM25 backend.** `update_meta` read
+  `fts.body` — NULL for thousands of live rows — straight into tantivy's
+  `add_document`, which rejects a non-str field. The error was caught, but the
+  handler marks the whole backend unhealthy, so one such row downgraded BM25
+  from tantivy to FTS5 for the rest of the process.
+
+- **`memo eval recall --against <ref>` could not run from an installed
+  memo.** It resolved the repo root from `Path(__file__)`, which under the
+  isolated uv-tool install is site-packages — outside any git worktree — so it
+  failed with `fatal: not a git repository` on precisely the install the
+  pre-push gate's own failure message tells you to run it from. It now anchors
+  on the invocation cwd.
 
 ## [4.9.3] - 2026-08-05
 

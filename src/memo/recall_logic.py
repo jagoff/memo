@@ -387,8 +387,18 @@ def render_recall_context(
     omitted: list[Any] | None = None,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
-    """Render recall context within a strict chars/4 token budget."""
+    """Render recall context within a strict chars/4 token budget.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, body_text)`` for every
+    hit actually committed to the rendered output -- the emission ledger's
+    only correct source, since the body text here is truncated/adapted by
+    ``_effective_body_chars`` and the budget-trimmed path in ways nothing
+    outside this loop can reconstruct. A hit whose block never rendered at
+    all (dropped by the char budget) is left out of the sink entirely --
+    silence there just costs tokens later, never correctness.
+    """
     include_directive = turn is None or turn <= 1 or not flag_bool("MEMO_RECALL_DIRECTIVE_ONCE")
     lines = [RECALL_HEADER]
     if include_directive:
@@ -453,6 +463,8 @@ def render_recall_context(
         block = [*prefix, *([f"> {body}"] if body else []), *code_lines_by_hit.get(i, []), ""]
         if max_chars is None or len(_render(block)) <= max_chars:
             lines.extend(block)
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, body))
             continue
 
         # Preserve the citation/title and spend only the remaining budget on body.
@@ -474,11 +486,16 @@ def render_recall_context(
         )
         appended = False
         if body and available > 20:
-            lines.extend([*prefix, f"> {body[:available].rstrip()}…", ""])
+            trimmed_body = body[:available].rstrip() + "…"
+            lines.extend([*prefix, f"> {trimmed_body}", ""])
             appended = True
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, trimmed_body))
         elif max_chars is None or len(_render([*prefix, ""])) <= max_chars:
             lines.extend([*prefix, ""])
             appended = True
+            if emitted_sink is not None:
+                emitted_sink.append((hit.id, ""))
         # hit i counts as dropped when its block never rendered (prefix alone
         # over budget / available <= 20 with no room for the bare prefix).
         dropped.extend(relevant[i + 1 :] if appended else relevant[i:])
@@ -517,6 +534,7 @@ def render_recall_compact(
     token_budget: int,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
     """Compact recall format: one line per hit, no headers/tags/scores/body prose.
 
@@ -528,6 +546,17 @@ def render_recall_compact(
         </memo-recall>
 
     Token budget still applies; tail hits are dropped when over budget.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, "")`` for every hit
+    actually rendered. This format DOES render a body fragment (``· first 60
+    chars of body`` above) -- the sink recording "" isn't "no body was
+    emitted", it's a deliberate choice: 60 characters is too short a
+    fragment for the monotonic-emission rule to usefully suppress against
+    later (``partition`` would still send a longer rendering in full; the
+    only thing an accurate ``n=60`` record could ever digest is another
+    60-char-or-shorter compact line for the same hit), so recording it isn't
+    worth the ledger-write cost. A hit dropped by the tail cutoff is left
+    out of the sink entirely.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     hit_lines: list[str] = []
@@ -565,12 +594,18 @@ def render_recall_compact(
             break
 
         hit_lines.extend(new_lines)
+        if emitted_sink is not None:
+            emitted_sink.append((hit.id, ""))
 
     return "<memo-recall readonly>\n" + "\n".join(hit_lines) + "\n</memo-recall>"
 
 
 def render_recall_balanced(
-    relevant: list[Any], *, token_budget: int, turn: int | None = None
+    relevant: list[Any],
+    *,
+    token_budget: int,
+    turn: int | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
     """Balanced recall format: title + short bullets, ~40% savings vs full.
 
@@ -591,9 +626,20 @@ def render_recall_balanced(
     (MEMO_RECALL_CODE_REFS_ENABLED, default OFF): a verified evidence pointer,
     not an epistemic annotation, and the operator opted into it explicitly.
     Compact stays one-line-per-hit and never renders it.
+
+    ``emitted_sink``, when a list, receives ``(hit.id, bullet_text)`` per hit
+    -- the bullet text is the body-derived slice actually rendered, "" when
+    the hit had no body. Unlike ``render_recall_context``, this renderer
+    builds the whole block first and only truncates the joined string as a
+    last step, so a per-hit line can be cut mid-render by that final slice.
+    Rather than guess which lines survived, the sink is populated only when
+    NO truncation happened at all -- any truncation skips recording for
+    every hit in this call, which is safe (costs tokens) and never risks
+    recording a hit as fully emitted when the final slice actually cut it.
     """
     max_chars = token_budget * 4 if token_budget > 0 else None
     lines = [f"- [{hit.id[:8]}] {hit.title}" for hit in relevant]
+    bullet_text: list[str] = ["" for _ in relevant]
 
     # Add short bullets from body (first 50 chars per sentence)
     for i, hit in enumerate(relevant):
@@ -605,6 +651,7 @@ def render_recall_balanced(
             indent = "\n  • ".join(bullets)
             if i < len(lines):
                 lines[i] = lines[i] + "\n  • " + indent
+                bullet_text[i] = indent
 
     # Verified code citations (flag off ⇒ {} — zero extra work, DB untouched).
     for i, ref_lines in _code_ref_lines(relevant).items():
@@ -617,6 +664,9 @@ def render_recall_balanced(
     if max_chars is not None and len(body) + len(footer) > max_chars:
         # Truncate the body but keep the footer (and its closing tag) intact.
         body = body[: max(0, max_chars - len(footer) - 3)].rstrip() + "..."
+    elif emitted_sink is not None:
+        for i, hit in enumerate(relevant):
+            emitted_sink.append((hit.id, bullet_text[i] if i < len(bullet_text) else ""))
 
     return body + footer
 
@@ -638,6 +688,66 @@ def resolve_recall_format(token_budget: int, n_hits: int) -> str:
     return "balanced"
 
 
+#: Per-hit annotation flags that ONLY the ``full`` and ``compact`` renderers
+#: read. ``render_recall_balanced`` deliberately carries no epistemic
+#: annotations (see its docstring), so switching one of these ON while
+#: ``balanced`` is the only reachable format is a guaranteed silent no-op.
+ANNOTATION_ONLY_FLAGS: tuple[str, ...] = (
+    "MEMO_RECALL_EPISTEMIC_LABELS",
+    "MEMO_HIT_DOSSIER",
+    "MEMO_RECALL_CONFIDENCE_GATE",
+)
+
+
+def _reachable_budgets(token_budget: int) -> set[int]:
+    """Every effective budget ``_recall_logic`` can derive from ``token_budget``.
+
+    Mirrors the two reshaping steps it applies before resolving the format.
+    """
+    budgets = {token_budget}
+    if flag_bool("MEMO_RECALL_ADAPTIVE_BUDGET") and token_budget > 0:
+        # adaptive_token_budget is a 3-branch step function of prompt length;
+        # these lengths sample each branch (<50, 50..300, >300).
+        budgets |= {adaptive_token_budget(token_budget, n) for n in (1, 100, 1000)}
+    session_budget = flag_int("MEMO_RECALL_SESSION_TOKEN_BUDGET") or 0
+    if session_budget > 0:
+        # Sample the decayed branch (cumulative >= session_budget).
+        budgets |= {session_budget_scale(session_budget, session_budget, b) for b in tuple(budgets)}
+    return budgets
+
+
+def reachable_recall_formats(token_budget: int, top_k: int) -> set[str]:
+    """Every concrete format this process can actually render.
+
+    ``resolve_recall_format`` is a function of (budget, n_hits) and BOTH inputs
+    are constrained at runtime: ``_recall_logic`` reshapes the budget (adaptive
+    scaling, session decay) and caps the hits at ``top_k``
+    (``relevant = qualifying[:top_k]``). So one configuration maps to a *set* of
+    reachable formats, not a single one. Normalized the way ``render_by_format``
+    dispatches: anything that is not compact/balanced renders as full.
+    """
+    return {
+        fmt if fmt in ("compact", "balanced") else "full"
+        for budget in _reachable_budgets(token_budget)
+        for n_hits in range(max(0, top_k) + 1)
+        for fmt in (resolve_recall_format(budget, n_hits),)
+    }
+
+
+def inert_annotation_flags(token_budget: int, top_k: int) -> list[str]:
+    """Annotation flags switched ON that NO reachable format can render.
+
+    A non-empty result means the operator set a flag that is a guaranteed no-op
+    for this process — the case that motivated this helper being the recall
+    daemon's LaunchAgent exporting ``MEMO_HIT_DOSSIER=1`` /
+    ``MEMO_RECALL_EPISTEMIC_LABELS=1`` while its own budget/top_k make
+    ``balanced`` (which reads neither) the only format it can ever pick.
+    """
+    if reachable_recall_formats(token_budget, top_k) & {"full", "compact"}:
+        return []
+    return [name for name in ANNOTATION_ONLY_FLAGS if flag_bool(name)]
+
+
 def render_by_format(
     fmt: str,
     relevant: list[Any],
@@ -649,8 +759,14 @@ def render_by_format(
     omitted: list[Any] | None = None,
     disputed_by: dict[str, list[str]] | None = None,
     state_dir: Any | None = None,
+    emitted_sink: list[tuple[str, str]] | None = None,
 ) -> str:
-    """The compact/balanced/full render switch, shared by both recall paths."""
+    """The compact/balanced/full render switch, shared by both recall paths.
+
+    ``emitted_sink`` is forwarded to whichever renderer handles ``fmt`` --
+    see each renderer's own docstring for what it records. ``None`` (the
+    default) disables recording entirely and leaves output unchanged.
+    """
     world_proj = ""
     if state_dir is not None and flag_bool("MEMO_WORLD_MODEL_ENABLED"):
         try:
@@ -673,9 +789,12 @@ def render_by_format(
             token_budget=token_budget,
             disputed_by=disputed_by,
             state_dir=state_dir,
+            emitted_sink=emitted_sink,
         )
     if fmt == "balanced":
-        return world_proj + render_recall_balanced(relevant, token_budget=token_budget, turn=turn)
+        return world_proj + render_recall_balanced(
+            relevant, token_budget=token_budget, turn=turn, emitted_sink=emitted_sink
+        )
     return world_proj + render_recall_context(
         relevant,
         nudge,
@@ -685,6 +804,7 @@ def render_by_format(
         omitted=omitted,
         disputed_by=disputed_by,
         state_dir=state_dir,
+        emitted_sink=emitted_sink,
     )
 
 
@@ -1324,13 +1444,17 @@ def rank_hits(
     )
 
     def _passes(h: Any) -> bool:
-        # `min_sim` is cosine-calibrated, so it is compared against the hit's
-        # score ON THE COSINE SCALE (see cosine_gate_score): bm25 has none →
-        # floor skipped; hybrid's h.score is RRF-fused → gate on the true
-        # cosine; vec's h.score already is the cosine.
-        gate = cosine_gate_score(h, knobs.mode, vec_cosine)
-        if gate is not None and gate < knobs.min_sim:
-            return False
+        # bm25-mode `h.score` is on the BM25 relevance scale, NOT cosine — applying
+        # the cosine-calibrated `min_sim` floor (0.5 fresh default) to it is a
+        # category error that gates out genuine matches (e.g. a cold-start
+        # vec->bm25 downgrade, where a hit's bm25 ~0.156 fails the floor its vec
+        # cosine ~0.87 would pass). Skip the cosine floor in bm25 mode; bm25 hits
+        # are already relevance-ranked and any match scores > 0. vec/hybrid keep
+        # the floor unchanged.
+        if knobs.mode != "bm25":
+            gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
+            if gate is not None and gate < knobs.min_sim:
+                return False
         return not (knobs.min_body_chars > 0 and len((h.body or "").strip()) < knobs.min_body_chars)
 
     if explain is None:
@@ -1393,38 +1517,7 @@ def apply_recency_band(hits: list[Any], band: list[Any]) -> list[Any]:
     return [*hits, *[b for b in band if b.id not in seen]]
 
 
-def cosine_gate_score(
-    hit: Any,
-    mode: str,
-    vec_cosine: Callable[[Any], float | None] | None,
-) -> float | None:
-    """The hit's score expressed on the COSINE scale that memo's similarity
-    floors (``min_sim``, ``skip_below``) are calibrated in — or ``None`` when
-    no such score exists for this hit.
-
-    * ``vec``   — ``h.score`` IS the query·doc cosine. Returned as-is.
-    * ``hybrid``— ``h.score`` is RRF-fused (~0.02-0.2 with the reranker off),
-      a scale on which a 0.45-0.5 cosine floor is unreachable. Gate on the
-      TRUE cosine instead (``make_vec_cosine``).
-    * ``bm25``  — a BM25 relevance score, with no cosine reading at all.
-      ``None`` ⇒ callers skip the floor rather than reject on a category error.
-
-    ``None`` always means *surface on doubt*: never drop a hit because its
-    comparable score could not be computed."""
-    if mode == "bm25":
-        return None
-    if mode == "hybrid" and vec_cosine is not None:
-        return vec_cosine(hit)
-    score: float | None = hit.score
-    return score
-
-
-def apply_injection_filters(
-    qualifying: list[Any],
-    *,
-    mode: str = "vec",
-    vec_cosine: Callable[[Any], float | None] | None = None,
-) -> list[Any]:
+def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
     """The hook's post-rank injection filters, flag-resolved (env > overlay).
 
     * skip-below floor (``MEMO_RECALL_SKIP_BELOW``): if the TOP hit scores
@@ -1432,40 +1525,13 @@ def apply_injection_filters(
     * gap trim (``MEMO_RECALL_GAP_THRESHOLD``): a large score gap after the
       top hit trims the list to that single hit.
 
-    In **hybrid** mode the floor is applied to the true vec cosine, not to
-    ``h.score``. Hybrid's ``h.score`` is an RRF rank-fusion artefact — a sum of
-    ``1/(k + rank)`` over the legs, ~0.02-0.2 with ``k=60`` — so a floor in the
-    cosine range is unreachable *by construction*: comparing them did not make
-    the gate strict, it suppressed EVERY hybrid injection whose curatorial
-    metadata did not happen to multiply the score over the floor. That made
-    hybrid recall depend on ``retrieval_boost`` to clear a gate measuring the
-    wrong quantity, and a correctly bounded boost then looked like a recall
-    regression. This is the same scale error ``rank_hits`` already fixes for
-    ``min_sim`` (see ``cosine_gate_score``), one stage later.
-
-    ``vec`` and ``bm25`` keep comparing ``h.score`` — deliberately, and it is
-    not the same situation: vec's score IS the cosine, and bm25's is a monotone
-    squash of a real relevance score into [0, 1] (``store/bm25_queries.py``).
-    A cosine-calibrated floor is arguably mis-*calibrated* for bm25, but it is
-    still thresholding a genuine relevance quantile, so re-tuning it is a knob
-    decision rather than a scale bug. ``mode`` defaults to ``vec`` so every
-    caller that does not opt in keeps its exact behaviour.
-
-    The gap trim keeps using ``h.score`` in every mode: it compares two hits on
-    ONE scale (a difference, not a threshold), which stays meaningful.
-
-    Shared by ``_recall_logic``, the subprocess hook, ``memo debug-recall`` and
-    the eval harnesses so they cannot diverge. Registry defaults: skip_below
-    0.45, gap_threshold 0.10 (set either to 0 to disable that filter).
+    Shared by ``_recall_logic`` and the eval harness's injection-fidelity
+    mode so the two cannot diverge. Registry defaults: skip_below 0.45,
+    gap_threshold 0.10 (set either to 0 to disable that filter).
     """
     skip_below = flag_float("MEMO_RECALL_SKIP_BELOW") or 0.0
-    if skip_below > 0 and qualifying:
-        top = qualifying[0]
-        # An uncomputable cosine yields None ⇒ the floor is skipped, never
-        # applied to a score on the wrong scale (surface on doubt).
-        floor_score = cosine_gate_score(top, mode, vec_cosine) if mode == "hybrid" else top.score
-        if floor_score is not None and floor_score < skip_below:
-            return []
+    if skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below:
+        return []
     gap_threshold = flag_float("MEMO_RECALL_GAP_THRESHOLD") or 0.0
     if (
         gap_threshold > 0
@@ -1951,7 +2017,7 @@ def _recall_logic(
     )
 
     pre_filter = qualifying
-    qualifying = apply_injection_filters(qualifying, mode=knobs.mode, vec_cosine=_vec_cosine)
+    qualifying = apply_injection_filters(qualifying)
     if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and unmatched_term_gate(prompt, qualifying):
         qualifying = []
 
@@ -2085,6 +2151,10 @@ def _recall_logic(
 
     # Format steering — parity with the subprocess path: MEMO_RECALL_FORMAT
     # (default "auto") picks compact/balanced/full from budget + hit count.
+    # emitted_sink feeds the emission ledger (see `_log` below) — this is the
+    # path a warm `com.memo.recall-daemon` actually serves, so the sink must
+    # be wired here too, not only on the subprocess fallback.
+    _emitted: list[tuple[str, str]] = []
     context = render_by_format(
         resolve_recall_format(token_budget, len(relevant)),
         relevant,
@@ -2095,6 +2165,7 @@ def _recall_logic(
         omitted=omitted,
         disputed_by=disputed_by,
         state_dir=cfg.state_dir,
+        emitted_sink=_emitted,
     )
 
     # Graph-associative nudge (MEMO_RECALL_ASSOCIATIVE) — render it on the daemon
@@ -2130,6 +2201,51 @@ def _recall_logic(
                 from memo import session as _session_mod
 
                 _session_mod.mark_ids_recalled(cfg.state_dir, session_id, _ids_to_mark)
+        # Record what the model was just shown, so the MCP read tools can
+        # skip re-sending it later in this session. `_log` is the daemon's
+        # own delivered-gated closure (recall_socket.py only calls it once
+        # `_write_response` confirms the client actually received these
+        # bytes) — same ordering discipline `mark_ids_recalled` above already
+        # follows, for the same reason: a write here before delivery was
+        # confirmed could leave the ledger asserting bodies the model never
+        # received (this is what task-6 review F1 found on the subprocess
+        # side; this closure is what keeps the daemon side from repeating it).
+        #
+        # Uses the `session_id` PARAMETER this function was called with — NOT
+        # identity._session_id(). The daemon is one long-lived process shared
+        # across every Claude Code session on the machine; its own env (fixed
+        # once by the recall-daemon LaunchAgent's EnvironmentVariables at
+        # startup, verified to carry no CLAUDE_CODE_SESSION_ID/
+        # CLAUDE_SESSION_ID/MEMO_SESSION_ID) never reflects which session's
+        # request this is. `session_id` is the correct per-request value: the
+        # socket handler forwards it from the hook's own payload-derived
+        # session id (recall_socket.py, `_recall_logic(..., session_id=_sid,
+        # ...)`), which is the same id `_effective_session_id()` resolves to
+        # for that session on the MCP side. Using identity._session_id() here
+        # would be a partition bug (wrong or shared across sessions), not
+        # merely a missed saving — worse than not recording at all.
+        # Fail-open by contract: never break or slow down the request.
+        if flag_bool("MEMO_EMITTED_LEDGER") and _emitted:
+            with contextlib.suppress(Exception):
+                from memo import emitted_ledger as _el
+
+                # Mirror apply_ledger's safe_hits guard (server_common.py):
+                # an empty-text pair costs no correctness (n=0 can only ever
+                # match another n=0 emission) but would overwrite a richer
+                # prior entry for the same id, silently killing suppression
+                # for that memory for the rest of the session.
+                _pairs = [(_id, _body) for _id, _body in _emitted if _id and _body]
+                if _pairs and session_id:
+                    _now = int(time.time())
+                    _ref = _el.mint_ref([_id for _id, _ in _pairs], _now, prefix="memo-h")
+                    _el.append(
+                        cfg.state_dir,
+                        session_id,
+                        [
+                            _el.Entry.for_text(_id, _body, _ref, _now, "hook")
+                            for _id, _body in _pairs
+                        ],
+                    )
         latency_ms: int | None = int((time.time() - t0) * 1000) if t0 is not None else None
         try:
             from memo.dashboard import append_context_cost_log, append_recall_log

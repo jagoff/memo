@@ -638,6 +638,36 @@ def run_server(state_dir: Path | None = None) -> None:
         os.close(lock_fd)
 
 
+def _warn_inert_annotation_flags() -> None:
+    """Warn when this daemon's env sets per-hit annotation flags no reachable
+    recall format can render.
+
+    The daemon is a long-lived launchd process: it does NOT inherit the recall
+    hook's environment, and the socket request carries only prompt/cwd/session/
+    turn/client (`recall_client.connect_and_recall`) — no budget and no format.
+    So it resolves MEMO_RECALL_TOKEN_BUDGET / _TOP_K / _FORMAT from its OWN flag
+    chain. A LaunchAgent that exports MEMO_HIT_DOSSIER=1 while that chain only
+    ever yields `balanced` is stating something the daemon cannot honour; say so
+    at startup instead of dropping it silently.
+    """
+    from memo.flags import flag_int
+    from memo.recall_logic import inert_annotation_flags, reachable_recall_formats
+
+    budget = flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
+    top_k = flag_int("MEMO_RECALL_TOP_K") or 3
+    inert = inert_annotation_flags(budget, top_k)
+    if not inert:
+        return
+    formats = "/".join(sorted(reachable_recall_formats(budget, top_k)))
+    print(
+        f"recall-daemon: WARNING {', '.join(inert)} set but unreadable here — "
+        f"with MEMO_RECALL_TOKEN_BUDGET={budget} and MEMO_RECALL_TOP_K={top_k} "
+        f"this daemon can only render '{formats}', which carries no per-hit "
+        f"annotations. Those flags annotate the full/compact formats only.",
+        file=sys.stderr,
+    )
+
+
 def _bind_recall_server(sock_path: Path, cfg: Any, mem: Any) -> Any:
     try:
         return _RecallServer(str(sock_path), cfg, mem)
@@ -686,6 +716,10 @@ def _run_server_locked(
 
         if flag_bool("MEMO_RECALL_DEBUG"):
             print(f"# recall-daemon: listening on {sock_path}", file=sys.stderr)
+
+        # Not debug-gated: a set-but-unreadable flag is a config lie, and the
+        # operator only ever sees it if we say it unprompted.
+        _warn_inert_annotation_flags()
 
         interval = flag_float("MEMO_EMBEDDER_STATS_INTERVAL_S") or _STATS_DEFAULT_PERSIST_INTERVAL_S
         if interval > 0:

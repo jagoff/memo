@@ -22,8 +22,31 @@ def register(server: FastMCP, memory: Memory) -> None:
 
         When MEMO_CACHE_MODE=off (the default) `enabled` is False and memo is
         behaving as a durable store with no eviction.
+
+        When MEMO_EMITTED_LEDGER is on, also carries `emit_ledger`: this
+        session's emission-ledger scorecard (digests served, tokens
+        suppressed/spent on digest stubs, memo_get recoveries, and the
+        resulting `net_saved_est`) -- see `emitted_ledger.stats`. Surfaced
+        here rather than as its own tool: a new MCP tool costs schema tokens
+        on every request, which would spend back part of what this feature
+        saves. Absent (not zeroed) when the flag is off, so a cold-flag
+        caller's payload is byte-identical to before this feature existed.
         """
-        return memory.cache.stats()
+        base = memory.cache.stats()
+        from memo.flags import flag_bool
+
+        if not flag_bool("MEMO_EMITTED_LEDGER"):
+            return base
+        try:
+            from memo import emitted_ledger as el
+            from memo.server_session_patterns import _effective_session_id
+
+            return {
+                **base,
+                "emit_ledger": el.stats(memory.cfg.state_dir, _effective_session_id()),
+            }
+        except Exception:
+            return base
 
     @annotated_tool(server, **DESTRUCTIVE)
     async def memo_cache_evict(ctx: Context | None = None) -> dict[str, Any]:

@@ -191,6 +191,83 @@ def test_memo_cache_flush_noop_when_cache_disabled(tmp_cfg) -> None:
     assert result["dirty_remaining"] == 0
 
 
+def test_memo_cache_stats_omits_emit_ledger_with_the_flag_off(tmp_cfg, monkeypatch) -> None:
+    """With MEMO_EMITTED_LEDGER unset (the default), memo_cache_stats' output
+    must be byte-identical to before this feature existed -- no `emit_ledger`
+    key, nothing written to disk."""
+    from memo.server_cache import register
+
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "0")
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+
+    fake_stats = {"mode": "off", "enabled": False, "entries": 0}
+    mem.cache.stats.return_value = fake_stats
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    result = tools["memo_cache_stats"]()
+
+    assert result == fake_stats
+    assert "emit_ledger" not in result
+    assert not (tmp_cfg.state_dir / "emitted").exists()
+
+
+def test_memo_cache_stats_surfaces_emit_ledger_when_flag_on(tmp_cfg, monkeypatch) -> None:
+    from memo import emitted_ledger as el
+    from memo.server_cache import register
+
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
+    monkeypatch.setenv("MEMO_SESSION_ID", "sess-cache-stats")
+    el.bump(tmp_cfg.state_dir, "sess-cache-stats", digests_served=2, tokens_suppressed=40)
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    fake_stats = {"mode": "off", "enabled": False, "entries": 0}
+    mem.cache.stats.return_value = fake_stats
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    result = tools["memo_cache_stats"]()
+
+    # The base cache-tier keys are untouched, `emit_ledger` is additive.
+    assert result["mode"] == "off"
+    assert result["enabled"] is False
+    assert result["emit_ledger"] == el.stats(tmp_cfg.state_dir, "sess-cache-stats")
+    assert result["emit_ledger"]["digests_served"] == 2
+    assert result["emit_ledger"]["tokens_suppressed"] == 40
+
+
+def test_memo_cache_stats_emit_ledger_failure_falls_back_to_base_stats(
+    tmp_cfg, monkeypatch
+) -> None:
+    """Fail-open: a broken emit_ledger read must not break memo_cache_stats
+    itself -- the tool still returns the cache-tier stats it always did."""
+    from memo.server_cache import register
+
+    monkeypatch.setenv("MEMO_EMITTED_LEDGER", "1")
+    monkeypatch.setenv("MEMO_SESSION_ID", "sess-cache-boom")
+    monkeypatch.setattr(
+        "memo.emitted_ledger.stats",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    mem = MagicMock(spec=Memory)
+    mem.cfg = tmp_cfg
+    fake_stats = {"mode": "off", "enabled": False, "entries": 0}
+    mem.cache.stats.return_value = fake_stats
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    result = tools["memo_cache_stats"]()
+
+    assert result == fake_stats
+    assert "emit_ledger" not in result
+
+
 def test_memo_cache_flush_partial_failure(tmp_cfg) -> None:
     """memo_cache_flush returns accurate failure counts when some pushes fail."""
     from memo.server_cache import register
