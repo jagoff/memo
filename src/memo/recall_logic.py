@@ -1384,17 +1384,13 @@ def rank_hits(
     )
 
     def _passes(h: Any) -> bool:
-        # bm25-mode `h.score` is on the BM25 relevance scale, NOT cosine — applying
-        # the cosine-calibrated `min_sim` floor (0.5 fresh default) to it is a
-        # category error that gates out genuine matches (e.g. a cold-start
-        # vec->bm25 downgrade, where a hit's bm25 ~0.156 fails the floor its vec
-        # cosine ~0.87 would pass). Skip the cosine floor in bm25 mode; bm25 hits
-        # are already relevance-ranked and any match scores > 0. vec/hybrid keep
-        # the floor unchanged.
-        if knobs.mode != "bm25":
-            gate = vec_cosine(h) if (knobs.mode == "hybrid" and vec_cosine is not None) else h.score
-            if gate is not None and gate < knobs.min_sim:
-                return False
+        # `min_sim` is cosine-calibrated, so it is compared against the hit's
+        # score ON THE COSINE SCALE (see cosine_gate_score): bm25 has none →
+        # floor skipped; hybrid's h.score is RRF-fused → gate on the true
+        # cosine; vec's h.score already is the cosine.
+        gate = cosine_gate_score(h, knobs.mode, vec_cosine)
+        if gate is not None and gate < knobs.min_sim:
+            return False
         return not (knobs.min_body_chars > 0 and len((h.body or "").strip()) < knobs.min_body_chars)
 
     if explain is None:
@@ -1457,7 +1453,38 @@ def apply_recency_band(hits: list[Any], band: list[Any]) -> list[Any]:
     return [*hits, *[b for b in band if b.id not in seen]]
 
 
-def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
+def cosine_gate_score(
+    hit: Any,
+    mode: str,
+    vec_cosine: Callable[[Any], float | None] | None,
+) -> float | None:
+    """The hit's score expressed on the COSINE scale that memo's similarity
+    floors (``min_sim``, ``skip_below``) are calibrated in — or ``None`` when
+    no such score exists for this hit.
+
+    * ``vec``   — ``h.score`` IS the query·doc cosine. Returned as-is.
+    * ``hybrid``— ``h.score`` is RRF-fused (~0.02-0.2 with the reranker off),
+      a scale on which a 0.45-0.5 cosine floor is unreachable. Gate on the
+      TRUE cosine instead (``make_vec_cosine``).
+    * ``bm25``  — a BM25 relevance score, with no cosine reading at all.
+      ``None`` ⇒ callers skip the floor rather than reject on a category error.
+
+    ``None`` always means *surface on doubt*: never drop a hit because its
+    comparable score could not be computed."""
+    if mode == "bm25":
+        return None
+    if mode == "hybrid" and vec_cosine is not None:
+        return vec_cosine(hit)
+    score: float | None = hit.score
+    return score
+
+
+def apply_injection_filters(
+    qualifying: list[Any],
+    *,
+    mode: str = "vec",
+    vec_cosine: Callable[[Any], float | None] | None = None,
+) -> list[Any]:
     """The hook's post-rank injection filters, flag-resolved (env > overlay).
 
     * skip-below floor (``MEMO_RECALL_SKIP_BELOW``): if the TOP hit scores
@@ -1465,13 +1492,40 @@ def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
     * gap trim (``MEMO_RECALL_GAP_THRESHOLD``): a large score gap after the
       top hit trims the list to that single hit.
 
-    Shared by ``_recall_logic`` and the eval harness's injection-fidelity
-    mode so the two cannot diverge. Registry defaults: skip_below 0.45,
-    gap_threshold 0.10 (set either to 0 to disable that filter).
+    In **hybrid** mode the floor is applied to the true vec cosine, not to
+    ``h.score``. Hybrid's ``h.score`` is an RRF rank-fusion artefact — a sum of
+    ``1/(k + rank)`` over the legs, ~0.02-0.2 with ``k=60`` — so a floor in the
+    cosine range is unreachable *by construction*: comparing them did not make
+    the gate strict, it suppressed EVERY hybrid injection whose curatorial
+    metadata did not happen to multiply the score over the floor. That made
+    hybrid recall depend on ``retrieval_boost`` to clear a gate measuring the
+    wrong quantity, and a correctly bounded boost then looked like a recall
+    regression. This is the same scale error ``rank_hits`` already fixes for
+    ``min_sim`` (see ``cosine_gate_score``), one stage later.
+
+    ``vec`` and ``bm25`` keep comparing ``h.score`` — deliberately, and it is
+    not the same situation: vec's score IS the cosine, and bm25's is a monotone
+    squash of a real relevance score into [0, 1] (``store/bm25_queries.py``).
+    A cosine-calibrated floor is arguably mis-*calibrated* for bm25, but it is
+    still thresholding a genuine relevance quantile, so re-tuning it is a knob
+    decision rather than a scale bug. ``mode`` defaults to ``vec`` so every
+    caller that does not opt in keeps its exact behaviour.
+
+    The gap trim keeps using ``h.score`` in every mode: it compares two hits on
+    ONE scale (a difference, not a threshold), which stays meaningful.
+
+    Shared by ``_recall_logic``, the subprocess hook, ``memo debug-recall`` and
+    the eval harnesses so they cannot diverge. Registry defaults: skip_below
+    0.45, gap_threshold 0.10 (set either to 0 to disable that filter).
     """
     skip_below = flag_float("MEMO_RECALL_SKIP_BELOW") or 0.0
-    if skip_below > 0 and qualifying and (qualifying[0].score or 0.0) < skip_below:
-        return []
+    if skip_below > 0 and qualifying:
+        top = qualifying[0]
+        # An uncomputable cosine yields None ⇒ the floor is skipped, never
+        # applied to a score on the wrong scale (surface on doubt).
+        floor_score = cosine_gate_score(top, mode, vec_cosine) if mode == "hybrid" else top.score
+        if floor_score is not None and floor_score < skip_below:
+            return []
     gap_threshold = flag_float("MEMO_RECALL_GAP_THRESHOLD") or 0.0
     if (
         gap_threshold > 0
@@ -1957,7 +2011,7 @@ def _recall_logic(
     )
 
     pre_filter = qualifying
-    qualifying = apply_injection_filters(qualifying)
+    qualifying = apply_injection_filters(qualifying, mode=knobs.mode, vec_cosine=_vec_cosine)
     if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and unmatched_term_gate(prompt, qualifying):
         qualifying = []
 
