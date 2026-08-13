@@ -23,13 +23,20 @@ MEM_B = "d459004fa4df49dda36d36e455c1a716"
 SUMMARY = f"memo contradiction between memories {MEM_A[:12]} and {MEM_B[:12]}"
 
 
-def _open_semantic_conflict(store: OperationalStore, *, a: str = MEM_A, b: str = MEM_B) -> str:
+def _open_semantic_conflict(
+    store: OperationalStore,
+    *,
+    a: str = MEM_A,
+    b: str = MEM_B,
+    confidence: float | None = None,
+) -> str:
     anomaly_id = "anomaly-test-0001"
     store.record_anomaly(
         {
             "anomaly_id": anomaly_id,
             "kind": "semantic_contradiction",
             "state": "detected",
+            **({} if confidence is None else {"confidence": confidence}),
             "summary": SUMMARY,
             "memory_id_a": a,
             "memory_id_b": b,
@@ -160,3 +167,32 @@ def test_topic_conflict_with_no_significant_tokens_never_freezes(tmp_path):
 
     assert store.active_conflicts("anything at all") == []
     assert store.active_conflicts("t") == []
+
+
+def test_sub_threshold_contradiction_records_without_freezing_writes(tmp_path):
+    """A contradiction memo will never auto-adjudicate must not freeze writes.
+
+    `memo maintain` and dream's contradictions pass both act only at
+    confidence >= 0.9, so a 0.80-0.85 pair is never superseded, never
+    resolved, and its `freeze_write` never lifts without a hand-run
+    `memo operational conflict resolve`. Measured on the live corpus
+    2026-08-13: three such pairs had been freezing their subject memories
+    since 2026-08-06. The conflict is still recorded and still listed — it
+    just does not block the writes nothing will ever unblock.
+    """
+    store = OperationalStore(tmp_path, device_id="device-a")
+    _open_semantic_conflict(store, confidence=0.85)
+
+    hits = store.active_conflicts(f"updating memory {MEM_A} with a new value")
+    assert len(hits) == 1, "the conflict must still be recorded and matchable"
+    assert hits[0]["freeze_write"] is False
+
+
+def test_at_threshold_contradiction_still_freezes_writes(tmp_path):
+    """The safety property is intact for exactly what the nightly will act on."""
+    store = OperationalStore(tmp_path, device_id="device-a")
+    _open_semantic_conflict(store, confidence=0.9)
+
+    hits = store.active_conflicts(f"updating memory {MEM_A} with a new value")
+    assert len(hits) == 1
+    assert hits[0]["freeze_write"] is True

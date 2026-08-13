@@ -1192,7 +1192,10 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                             title=title,
                             type_=type_,
                             tags=tags,
-                            body_text=str(existing_body["body"] if existing_body else ""),
+                            # `or ""` before str(): a NULL body column would
+                            # otherwise stringify to the literal "None" and
+                            # poison the derived normalized content hash.
+                            body_text=str((existing_body["body"] if existing_body else "") or ""),
                             topic_key=current_topic_key,
                             namespace=namespace,
                             normalized_title=normalized_title,
@@ -1256,7 +1259,11 @@ class _QueriesMixin(_BM25QueriesMixin, _SignalQueriesMixin):
                         "SELECT body FROM fts WHERE id = ?",
                         (id_,),
                     ).fetchone()
-                    body_text = existing["body"] if existing else ""
+                    # `or ""`, not just the else-branch: the column itself is
+                    # NULL for thousands of live rows, and a None reaching
+                    # `add_document` below raises inside tantivy, which then
+                    # marks the whole backend unhealthy for the process.
+                    body_text = (existing["body"] if existing else "") or ""
                     cx.execute("DELETE FROM fts WHERE id = ?", (id_,))
                     cx.execute(
                         "INSERT INTO fts (id, title, tags, body) VALUES (?, ?, ?, ?)",

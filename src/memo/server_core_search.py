@@ -284,12 +284,25 @@ def register(server: Any, memory: Memory) -> None:
             out.append(d)
         log_consult(memory, tool="search", query=query, hits=out, t0_ms=t0, source=source)
 
+        # Captured BEFORE the ledger may suppress bodies: a digested hit is
+        # still a recall (the model was served that memory, just as a
+        # pointer instead of a body), so presence must count it too -- not
+        # only the hits that survived as full bodies in `out`.
+        recall_count = len(out)
+
+        # Suppress bodies already emitted into this session's window. Runs after
+        # log_consult on purpose: attribution should record what was retrieved,
+        # not what survived the ledger.
+        from memo.server_common import apply_ledger
+
+        out, ledger_extra = apply_ledger(memory, "memo_search", out)
+
         # Cross-agent presence: reflect this recall so MCP-only agents (which
         # never run the Claude recall-hook) read honest counts. Decoration only.
-        if out:
+        if recall_count:
             from memo import presence
 
-            presence.bump(memory.cfg.state_dir, recalls=len(out))
+            presence.bump(memory.cfg.state_dir, recalls=recall_count)
 
         # Read pending idle notification (best-effort, races with writer)
         notification = _read_notification(memory)
@@ -297,6 +310,7 @@ def register(server: Any, memory: Memory) -> None:
         return {
             "hits": out,
             "notification": notification,
+            **ledger_extra,
             **({"note": " ".join(notes)} if notes else {}),
             **({"trace": trace} if explain else {}),
             **({"degraded": degraded} if degraded else {}),
@@ -614,6 +628,32 @@ def register(server: Any, memory: Memory) -> None:
         hit_dicts = [c for c in cites if isinstance(c, dict)]
         log_consult(memory, tool="ask", query=question, hits=hit_dicts, t0_ms=t0, source=source)
         out["synthesizer"] = synthesizer
+
+        # Suppress sources already emitted into this session's window. `ask()`
+        # already used the untruncated sources to synthesize `answer` above --
+        # this only affects what's returned to the caller as citations, same
+        # as memo_search. Rows carry the emitted text under `snippet`, not
+        # `body` (see ask_ops.py's `_build_ask_context`). `sources` is not
+        # memory-only: with `include_repos=True` (the default) it also
+        # carries `source == "repo"` rows whose id is not a memory id --
+        # `memo_get(id)`, the digest's own escape hatch, cannot resolve one.
+        # Only memory rows may participate; a repo row's `text_of` returns ""
+        # so apply_ledger's own empty-text guard sends it in full and never
+        # records it, same as an id-less/bodyless hit.
+        sources = out.get("sources")
+        if isinstance(sources, list):
+            from memo.server_common import apply_ledger
+
+            kept, ledger_extra = apply_ledger(
+                memory,
+                "memo_ask",
+                sources,
+                text_of=lambda h: (
+                    str(h.get("snippet") or "") if h.get("source") == "memory" else ""
+                ),
+            )
+            out["sources"] = kept
+            out.update(ledger_extra)
 
         # Read pending idle notification (best-effort, races with writer)
         out["notification"] = _read_notification(memory)

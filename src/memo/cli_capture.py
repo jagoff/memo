@@ -244,7 +244,11 @@ def capture_stop() -> None:
     "--force",
     is_flag=True,
     default=False,
-    help="Bypass the per-session throttle (PreCompact force-flush at the compaction boundary).",
+    help=(
+        "Bypass the per-session throttle (PreCompact force-flush at the "
+        "compaction boundary). Also clears this session's emission ledger, "
+        "since compaction invalidates every claim about what is in the window."
+    ),
 )
 def capture_tick(session_id: str | None, transcript_path: str | None, force: bool) -> None:
     """UserPromptSubmit hook — incremental mid-session ambient capture.
@@ -278,7 +282,8 @@ def capture_tick(session_id: str | None, transcript_path: str | None, force: boo
                                  (default 600; 0 = every prompt, no throttle).
       MEMO_CAPTURE_DEBUG       — "1" → print progress to stderr.
       PreCompact wiring passes --force so the last throttle window is flushed
-      before context is destroyed.
+      before context is destroyed. --force also resets this session's
+      emission ledger (MEMO_EMITTED_LEDGER) — see the --force option's help.
 
     Failure modes are absorbed: the hook never blocks or breaks the session.
     """
@@ -287,11 +292,77 @@ def capture_tick(session_id: str | None, transcript_path: str | None, force: boo
 
     from memo.flags import flag_bool, flag_int
 
+    debug = flag_bool("MEMO_CAPTURE_DEBUG")
+
+    # Resolved at most once per invocation: the ledger-reset block below sets
+    # it when it runs far enough to need `state_dir`, and the mining
+    # try-block further down reuses it instead of re-parsing the on-disk
+    # TOML/Markdown config a second time on the same --force pass.
+    cfg: Config | None = None
+
+    # PreCompact boundary. Claude Code's PreCompact hook runs exactly this —
+    # `MEMO_NONINTERACTIVE=1 memo capture-tick --force` (hooks/hooks.json,
+    # cli_hooks.wire_precompact_hook) — so `--force` doubles as the
+    # compaction-boundary signal: once the window is rewritten, memo can no
+    # longer claim any previously-emitted body is still in it, so the
+    # emission ledger must not outlive compaction. Gated on `force` alone —
+    # an ordinary throttled tick fires on every prompt and must never touch
+    # the ledger, or it would silently erase the whole feature's savings on
+    # every turn.
+    #
+    # Deliberately UNCONDITIONAL on MEMO_EMITTED_LEDGER — do not add that
+    # gate back as an "optimisation". The flag is not static across a
+    # session: dream_flags' flag-graduation/auto-revert machinery flips
+    # default-off flags through the tuned overlay between nights. A flag
+    # gate here would make this sequence reachable: entries accumulate while
+    # the flag is ON -> compaction happens while the flag is OFF, so a gated
+    # reset would skip and the stale file would survive -> the flag flips
+    # back ON. Every reader (apply_ledger, recall_logic._log, the subprocess
+    # hook) gates on the flag's value at READ time and none of them compares
+    # an entry's age against the last compaction, so those stale entries
+    # would resurface and `partition`'s monotonic rule would digest hits for
+    # content the model can no longer see — the exact bug this task exists
+    # to prevent. With the feature off there is no ledger file, so this is a
+    # free `stat()` on a --force-only path either way.
+    #
+    # Runs first, ahead of MEMO_CAPTURE_DISABLE and the stdin/session
+    # resolution below: the ledger reset is not a capture-mining concern, and
+    # PreCompact must be able to reset it even with mining disabled or with
+    # no session/transcript to mine this tick (both of those bail out below,
+    # before ever reaching the mining try-block).
+    #
+    # Session id: `identity._session_id()` reads MEMO_SESSION_ID /
+    # CLAUDE_SESSION_ID / CLAUDE_CODE_SESSION_ID from THIS process's own env
+    # — the same resolution the subprocess recall hook (cli_recall_hook.py)
+    # and the MCP tools (server_common.py's `_effective_session_id()`) use to
+    # key their own ledger writes, per those modules' own comments, and
+    # capture-tick is spawned the same way (a per-invocation subprocess of
+    # the Claude Code session), so it inherits the same env and resolves the
+    # same id. Deliberately NOT the payload's `session_id` field read below —
+    # that only keys the unrelated capture watermark. If no env var is set,
+    # reset nothing rather than guess: wiping the wrong session's ledger
+    # would cost that session its savings for no reason.
+    #
+    # `emitted_ledger.reset` is itself idempotent (unlink-if-present) and
+    # fail-open (never raises), but this whole block still gets its own
+    # try/except: a reset failure must never skip the mining pass below it.
+    if force:
+        try:
+            from memo.identity import _session_id as _identity_session_id
+
+            ledger_sid = _identity_session_id()
+            if ledger_sid:
+                from memo import emitted_ledger as _el
+
+                cfg = Config.from_env()
+                _el.reset(cfg.state_dir, ledger_sid)
+        except Exception as exc:
+            if debug:
+                print(f"# memo capture-tick: ledger reset failed: {exc}", file=_sys.stderr)
+
     if flag_bool("MEMO_CAPTURE_DISABLE"):
         print("{}")
         _sys.exit(0)
-
-    debug = flag_bool("MEMO_CAPTURE_DEBUG")
 
     payload: dict = {}
     # Stdin is a TTY when run interactively → don't block on a read.
@@ -313,7 +384,8 @@ def capture_tick(session_id: str | None, transcript_path: str | None, force: boo
     try:
         from memo.capture import incremental_tick_due, run_capture_incremental
 
-        cfg = Config.from_env()
+        if cfg is None:
+            cfg = Config.from_env()
         interval_s = flag_int("MEMO_CAPTURE_INTERVAL_S")
         if interval_s is None:
             interval_s = 600

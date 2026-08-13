@@ -55,6 +55,10 @@ class VersionTarget:
     flags: int = 0
     json_paths: tuple[VersionJsonPath, ...] = ()
     optional: bool = False
+    # Substitute the supported-release LINE (`X.Y.x`) rather than the exact
+    # version. SECURITY.md names the line that still gets fixes, so it changes
+    # on a minor bump and stays put on a patch one.
+    release_line: bool = False
 
 
 _VERSION_TARGETS = (
@@ -133,6 +137,18 @@ _VERSION_TARGETS = (
         r"(raw\.githubusercontent\.com/jagoff/memo/v)([^/]+)(/install\.sh)",
         1,
         optional=True,
+    ),
+    # The supported-release line, asserted by
+    # tests/test_supply_chain.py::test_security_policy_matches_current_release_
+    # and_opt_in_surfaces. Left out of this table, `release bump minor` produced
+    # a tree that failed CI on a test the bump itself invalidated (4.9.3 ->
+    # 4.10.0, 2026-08-13).
+    VersionTarget(
+        Path("SECURITY.md"),
+        r"(currently the `)([^`]+)(` line)",
+        1,
+        optional=True,
+        release_line=True,
     ),
 )
 
@@ -614,11 +630,12 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
 
 
 def _replace_target_version(text: str, target: VersionTarget, version: str) -> str:
+    written = ".".join(version.split(".")[:2]) + ".x" if target.release_line else version
     # No `count=` cap: n must count ALL matches so a surplus version field
     # (e.g. a second server.json package) fails loudly instead of shipping stale.
     new, n = re.subn(
         target.pattern,
-        lambda m: f"{m.group(1)}{version}{m.group(3)}",
+        lambda m: f"{m.group(1)}{written}{m.group(3)}",
         text,
         flags=target.flags,
     )
