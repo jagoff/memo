@@ -11,6 +11,25 @@ set -u
 
 log() { echo "[memo-nightly $(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
 
+# Due-guard. The LaunchAgent asks for 03:00, but macOS does not wake for a
+# StartCalendarInterval and does not reliably replay a slot it slept through:
+# measured on mac-black 2026-08-13, the machine was in darkwake at 03:02,
+# `launchctl print` reported `runs = 0`, and the newest nightly.log entry was
+# three days old. The plist therefore also carries an hourly StartInterval, and
+# this guard is what keeps that from running the whole pass every hour: the
+# pass runs at most once per MEMO_NIGHTLY_MIN_INTERVAL_H (default 20 — under
+# 24 so a slightly-late catch-up run never pushes the next night out).
+# `--force` (or MEMO_NIGHTLY_FORCE=1) runs it regardless.
+_stamp="${HOME}/.local/share/memo/.last_nightly_ts"
+_min_h="${MEMO_NIGHTLY_MIN_INTERVAL_H:-20}"
+if [ "${1:-}" != "--force" ] && [ "${MEMO_NIGHTLY_FORCE:-0}" != "1" ] && [ -f "$_stamp" ]; then
+  _age_s=$(( $(date +%s) - $(cat "$_stamp" 2>/dev/null || echo 0) ))
+  if [ "$_age_s" -lt $(( _min_h * 3600 )) ]; then
+    exit 0
+  fi
+fi
+mkdir -p "$(dirname "$_stamp")" && date +%s > "$_stamp"
+
 # Only repos that still exist: memflow was archived to ~/repos/_archived on the
 # 2026-07-30 trinity deprecation, and syncing it printed
 # "✗ CodeGraph not initialized in .../memflow" into nightly.err every night.
