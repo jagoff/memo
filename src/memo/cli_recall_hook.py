@@ -657,7 +657,7 @@ def recall_hook() -> None:
     )
 
     pre_filter = qualifying
-    qualifying = apply_injection_filters(qualifying, mode=knobs.mode, vec_cosine=_vec_cosine)
+    qualifying = apply_injection_filters(qualifying)
     # Unmatched-term gate (daemon parity, recall_logic): drop the whole injection
     # when no hit lexically covers the query's salient terms. Default OFF.
     if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and qualifying:
