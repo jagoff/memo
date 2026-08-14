@@ -12,11 +12,16 @@ import pytest
 from memo.identity import IdentityConflictError, cluster_scope, namespace_for_write
 
 
-def _item(mid: str, tags: list[str], emb: list[float] | None = None) -> dict:
+def _item(
+    mid: str,
+    tags: list[str],
+    emb: list[float] | None = None,
+    type_: str = "note",
+) -> dict:
     return {
         "id": mid,
         "title": f"title {mid}",
-        "type": "note",
+        "type": type_,
         "tags": tags,
         "path": f"{mid}.md",
         "updated": "2026-01-01T00:00:00+00:00",
@@ -101,6 +106,36 @@ def test_a_record_that_is_ambiguous_by_itself_is_never_proposed(mock_memory, mon
 
     assert len(clusters) == 1
     assert {m["id"] for m in clusters[0]["members"]} == {"memo0", "memo1"}
+
+
+def test_types_never_get_merged_together(mock_memory, monkeypatch):
+    """The merged record takes the type of its newest member, so a cross-type
+    merge retypes everyone else — and type decides which surface a memory shows
+    up on (`failure_pattern` → the recall hook's ⛔ AVOID block, `procedure` →
+    procedure promotion). A live pass merged five types into one `decision` and
+    a labelled AVOID probe stopped resolving."""
+    mem = mock_memory
+    items = [
+        _item("d1", ["project:memo"], type_="decision"),
+        _item("d2", ["project:memo"], type_="decision"),
+        _item("p1", ["project:memo"], type_="procedure"),
+        _item("p2", ["project:memo"], type_="procedure"),
+        _item("f1", ["project:memo"], type_="failure_pattern"),
+    ]
+
+    monkeypatch.setattr(mem, "_pull_embeddings", lambda **kwargs: items)
+    monkeypatch.setattr(mem, "_read_body", lambda path: f"body:{path}")
+
+    clusters = mem.consolidate(threshold=0.85, max_clusters=10, skip_llm=True)
+
+    for cluster in clusters:
+        assert len({m["type"] for m in cluster["members"]}) == 1
+    # The lone failure_pattern has no same-type partner, so it is not proposed
+    # at all rather than being folded into the decisions it resembles.
+    assert {frozenset(m["id"] for m in c["members"]) for c in clusters} == {
+        frozenset({"d1", "d2"}),
+        frozenset({"p1", "p2"}),
+    }
 
 
 def test_every_proposed_cluster_survives_namespace_for_write(mock_memory, monkeypatch):

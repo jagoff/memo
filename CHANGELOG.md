@@ -25,6 +25,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   memories stay untagged rather than being absorbed into one. A record
   carrying two `project:` tags of its own is left out entirely — no partner
   makes its union writable.
+- **Consolidation silently retyped what it merged.** The merged record takes
+  the type of its newest member, so a cross-type cluster retypes everyone
+  else — and type decides which surface a memory appears on:
+  `failure_pattern` feeds the recall hook's ⛔ AVOID block, `procedure` feeds
+  procedure promotion, `preference`/`feedback` get their own recall boost
+  tier. One live pass merged `decision`, `procedure`, `failure_pattern`,
+  `preference` and `note` into a single `decision`; across that pass 55 of 66
+  archived records lost their type, and the committed retrieval label set
+  caught it as an AVOID probe that stopped resolving (avoid@k 1.000 → 0.500).
+  Clustering is now partitioned by type as well as by project scope: records
+  that are near-identical in wording but differ in type are not duplicates,
+  they are the same topic seen through different lenses. Measured on the same
+  corpus, this trades 106 merged memories per pass for 79 — and 0 retyped
+  instead of 57.
 
 ## [4.10.0] - 2026-08-13
 
