@@ -9,6 +9,37 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Fixed
+
+- **Consolidation proposed merges the write path then refused.** Clusters were
+  built on cosine alone, but `apply_merge` saves the merged record with the
+  *union* of its members' tags and `identity.namespace_for_write` rejects a
+  union carrying more than one `project:` slug. Every cluster that spanned two
+  projects was proposed, attempted, and lost to `memory identity conflict:
+  ambiguous_namespace` — measured on a 6,135-memory corpus at the default
+  threshold, **14 of 15 clusters died that way**, so the nightly pass looked
+  like it ran while merging 9 memories instead of 138. Clustering now runs
+  independently inside each project scope (`identity.cluster_scope`), which
+  keeps every proposal writable *and* leaves project attribution untouched: a
+  memory is only ever merged with memories of its own project, and untagged
+  memories stay untagged rather than being absorbed into one. A record
+  carrying two `project:` tags of its own is left out entirely — no partner
+  makes its union writable.
+- **Consolidation silently retyped what it merged.** The merged record takes
+  the type of its newest member, so a cross-type cluster retypes everyone
+  else — and type decides which surface a memory appears on:
+  `failure_pattern` feeds the recall hook's ⛔ AVOID block, `procedure` feeds
+  procedure promotion, `preference`/`feedback` get their own recall boost
+  tier. One live pass merged `decision`, `procedure`, `failure_pattern`,
+  `preference` and `note` into a single `decision`; across that pass 55 of 66
+  archived records lost their type, and the committed retrieval label set
+  caught it as an AVOID probe that stopped resolving (avoid@k 1.000 → 0.500).
+  Clustering is now partitioned by type as well as by project scope: records
+  that are near-identical in wording but differ in type are not duplicates,
+  they are the same topic seen through different lenses. Measured on the same
+  corpus, this trades 106 merged memories per pass for 79 — and 0 retyped
+  instead of 57.
+
 ## [4.10.0] - 2026-08-13
 
 ### Added

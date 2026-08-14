@@ -348,6 +348,57 @@ class _ConsolidateOpsMixin(_MemoryBase):
             return clusters
 
     @staticmethod
+    def _cluster_within_scope(
+        items: builtins.list[dict[str, Any]],
+        threshold: float,
+    ) -> builtins.list[builtins.list[int]]:
+        """Cluster inside each (project scope, memory type), never across either.
+
+        Cosine similarity is blind to two things a merge cannot ignore:
+
+        **Project.** `apply_merge` writes the merged record with the UNION of
+        its members' tags, and `identity.namespace_for_write` refuses a union
+        carrying more than one `project:` slug. A cross-project cluster was
+        therefore proposed and then rejected at apply time
+        (`ambiguous_namespace`) — on the live corpus that killed 14 of 15
+        clusters, leaving consolidation looking like it ran while doing ~7% of
+        the work.
+
+        **Type.** The merged record takes the type of its newest member, so a
+        cross-type merge silently retypes everyone else — and type decides
+        which surface a memory appears on: `failure_pattern` feeds the recall
+        hook's ⛔ AVOID block, `procedure` feeds procedure promotion,
+        `preference`/`feedback` get their own recall boost tier. One measured
+        pass merged `decision`, `procedure`, `failure_pattern`, `preference`
+        and `note` into a single `decision`; across the pass 57 records lost
+        their type, and the retrieval label set caught it as an AVOID probe
+        that stopped resolving. Records that are near-identical in wording but
+        differ in type are not duplicates — they are the same topic seen
+        through different lenses.
+
+        Partitioning on both keeps every proposal writable and lossless: a
+        memory is only ever merged with memories of its own project and its own
+        type, so nothing changes attribution or leaves its surface.
+        """
+        from memo.identity import cluster_scope
+
+        groups: dict[tuple[str, str], builtins.list[int]] = {}
+        for idx, item in enumerate(items):
+            scope = cluster_scope(item.get("tags") or [])
+            if scope is None:
+                # Already ambiguous by itself: no partner makes the union
+                # writable, so it can never be a merge candidate.
+                continue
+            groups.setdefault((scope, str(item.get("type") or "")), []).append(idx)
+
+        out: builtins.list[builtins.list[int]] = []
+        for member_idxs in groups.values():
+            sub_items = [items[i] for i in member_idxs]
+            for cluster in _ConsolidateOpsMixin._greedy_cluster(sub_items, threshold):
+                out.append([member_idxs[j] for j in cluster])
+        return out
+
+    @staticmethod
     def _split_oversized_clusters(
         items: builtins.list[dict[str, Any]],
         clusters: builtins.list[builtins.list[int]],
@@ -423,7 +474,10 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
         Algorithm:
         1. Pull all stored embeddings (we have them already; no re-embed).
-        2. Greedy single-link clustering by cosine ≥ `threshold`.
+        2. Greedy single-link clustering by cosine ≥ `threshold`, run
+           independently inside each (project scope, type) so the merge it
+           proposes is one the write path accepts and one that costs no
+           record its type (see `_cluster_within_scope`).
            Each memory joins the first existing cluster it's
            ≥-similar to, or starts a new one.
         3. Drop singletons. The remaining clusters are candidates.
@@ -455,7 +509,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
             items = self._pull_embeddings(exclude_types={"reference"} | SENSITIVE_TYPES)
         if not items:
             return []
-        clusters = self._greedy_cluster(items, threshold)
+        clusters = self._cluster_within_scope(items, threshold)
 
         # 3) Drop singletons; rank by size (then by most-recent updated).
         candidate_clusters = [c for c in clusters if len(c) >= 2]
