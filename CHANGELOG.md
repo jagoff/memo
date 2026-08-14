@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.10.1] - 2026-08-14
+
 ### Fixed
 
 - **Consolidation proposed merges the write path then refused.** Clusters were
