@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Fixed
+
+- **Consolidation proposed merges the write path then refused.** Clusters were
+  built on cosine alone, but `apply_merge` saves the merged record with the
+  *union* of its members' tags and `identity.namespace_for_write` rejects a
+  union carrying more than one `project:` slug. Every cluster that spanned two
+  projects was proposed, attempted, and lost to `memory identity conflict:
+  ambiguous_namespace` — measured on a 6,135-memory corpus at the default
+  threshold, **14 of 15 clusters died that way**, so the nightly pass looked
+  like it ran while merging 9 memories instead of 138. Clustering now runs
+  independently inside each project scope (`identity.cluster_scope`), which
+  keeps every proposal writable *and* leaves project attribution untouched: a
+  memory is only ever merged with memories of its own project, and untagged
+  memories stay untagged rather than being absorbed into one. A record
+  carrying two `project:` tags of its own is left out entirely — no partner
+  makes its union writable.
+
 ## [4.10.0] - 2026-08-13
 
 ### Added
