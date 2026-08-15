@@ -85,6 +85,14 @@ class _MigrationsMixin(_StoreBase):
                 current = 2
             _log.info("backfilled signal rows for v2: access + memory_health")
 
+        # NOTE on the suppressed ALTERs in the v3 and v4 steps below: they look
+        # like silent failures that stamp a version they did not complete, and
+        # audits keep flagging them. They are masked — `schema.py` (~line 424 for
+        # the v3 columns, ~479 for the v4 ones) re-runs an equivalent pass on
+        # every store init, logs each failure, and derives `_has_pattern_cols` /
+        # `_has_identity_cols` from the live `PRAGMA table_info` rather than the
+        # version stamp. So a swallowed ALTER here is retried and reported
+        # there. Duplicated migration logic, not a live silent failure.
         # v2 → v3: add session pattern columns (topic_key, normalized_hash, etc.)
         if current < 3:
             with self._tx() as cx:
