@@ -118,7 +118,20 @@ RANK_KNOB_LATENCY_HEADROOM = 1.25
 
 def measure(mem: Any, labels: LabelSet, *, k: int, floor: float) -> dict[str, float]:
     """precision@K / noise@K for a single vec config at ``floor``."""
-    cfg = Cfg(name=f"vec/{floor}", mode="vec", floor=floor, exclude_archived=True)
+    cfg = Cfg(
+        name=f"vec/{floor}",
+        mode="vec",
+        floor=floor,
+        exclude_archived=True,
+        # The tuner auto-APPLIES its winner, so it has to score the way the
+        # hook ranks. Without this the injection filters (skip-below + gap
+        # trim) are off during the search and on in production — measured
+        # 2026-08-15 on the curated set: prec@5 0.363 with them off vs 0.205
+        # with them on, a 44% gap the tuner was optimising blind to.
+        # (`min_body_chars` stays pinned at 0 by run_config: measured at
+        # 0.368 -> 0.363, negligible next to the above.)
+        injection_fidelity=True,
+    )
     rows = evaluate(mem, k=k, labels=labels, configs=[cfg])
     return gate_metrics(rows)
 
@@ -597,12 +610,22 @@ def measure_rank_knob(
     Goes through the recall-faithful seam: ``Cfg.knob_overrides`` ->
     ``knobs_from_flags(overrides=...)`` -> ``rank_hits`` — every OTHER knob
     inherits the live flag/overlay resolution, so the delta vs the current
-    value is attributable to this knob alone."""
+    value is attributable to this knob alone. ``injection_fidelity`` is on for
+    the same reason: the tuner auto-applies its winner, so it must not score a
+    pipeline the hook does not run."""
     cfg = Cfg(
         name=f"{knob}={value}",
         mode="vec",
         floor=floor,
         exclude_archived=True,
+        # The tuner auto-APPLIES its winner, so it has to score the way the
+        # hook ranks. Without this the injection filters (skip-below + gap
+        # trim) are off during the search and on in production — measured
+        # 2026-08-15 on the curated set: prec@5 0.363 with them off vs 0.205
+        # with them on, a 44% gap the tuner was optimising blind to.
+        # (`min_body_chars` stays pinned at 0 by run_config: measured at
+        # 0.368 -> 0.363, negligible next to the above.)
+        injection_fidelity=True,
         knob_overrides={_KNOB_TO_FIELD[knob]: value},
     )
     rows = evaluate(mem, k=k, labels=labels, configs=[cfg])
@@ -742,6 +765,14 @@ def measure_hyde(mem: Any, labels: LabelSet, *, k: int, enabled: bool) -> dict[s
         mode="hybrid",
         floor=_HYDE_FLOOR,
         exclude_archived=True,
+        # The tuner auto-APPLIES its winner, so it has to score the way the
+        # hook ranks. Without this the injection filters (skip-below + gap
+        # trim) are off during the search and on in production — measured
+        # 2026-08-15 on the curated set: prec@5 0.363 with them off vs 0.205
+        # with them on, a 44% gap the tuner was optimising blind to.
+        # (`min_body_chars` stays pinned at 0 by run_config: measured at
+        # 0.368 -> 0.363, negligible next to the above.)
+        injection_fidelity=True,
         flag_overrides={_HYDE_FLAG: "1" if enabled else "0"},
     )
     rows = evaluate(mem, k=k, labels=labels, configs=[cfg])
@@ -852,6 +883,14 @@ def measure_graph_signal(
         mode="vec",
         floor=floor,
         exclude_archived=True,
+        # The tuner auto-APPLIES its winner, so it has to score the way the
+        # hook ranks. Without this the injection filters (skip-below + gap
+        # trim) are off during the search and on in production — measured
+        # 2026-08-15 on the curated set: prec@5 0.363 with them off vs 0.205
+        # with them on, a 44% gap the tuner was optimising blind to.
+        # (`min_body_chars` stays pinned at 0 by run_config: measured at
+        # 0.368 -> 0.363, negligible next to the above.)
+        injection_fidelity=True,
         flag_overrides={
             _GRAPH_ENABLED: "1" if enabled else "0",
             _GRAPH_ALPHA: str(alpha),
