@@ -334,7 +334,10 @@ def default_answerer(context: str, prompt: str) -> str:
         },
         {"role": "user", "content": prompt},
     ]
-    reply = MLXChat().chat(_model_name(), messages, {"temperature": 0.0, "max_tokens": 400})
+    # Generous: a truncated answer fails `answer_must_contain_any` for any fact
+    # that would have appeared past the cut, which reads as "the payload did not
+    # steer" when it only means "the answer was cut off".
+    reply = MLXChat().chat(_model_name(), messages, {"temperature": 0.0, "max_tokens": 1200})
     return str((reply.get("message") or {}).get("content") or "")
 
 
