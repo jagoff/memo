@@ -22,6 +22,21 @@ That is squarely memo's responsibility: block formatting, labelling, ordering,
 truncation and token budget are all memo-side. Read a red gate as "the payload
 under-steers", never as a claim about a specific agent.
 
+**Known limitation — the answerer is small.** With `MEMO_HELPER_MODEL` (a 4B)
+as the answerer, a red answer-gate can also mean the answerer was not competent
+enough to quote a specific from context. That is why a failing
+``answer_must_contain_any`` reports whether the demanded fact was in the block
+at all, which splits the two verdicts:
+
+* **absent from the block** — memo-side and unambiguous. The payload cannot
+  steer toward a fact it does not carry.
+* **present in the block** — real under-steering *or* a weak answerer; not
+  separable without a stronger one.
+
+So ``--recall-only`` is the trustworthy gate today; full mode's absolute score
+is diagnostic, not a pass/fail line. Measured on the first live corpus run:
+7/8 recall-only, 18/38 gates in full mode.
+
 Scenario corpus: ``eval/behavior_scenarios.json``
 (schema ``memo.eval_behavior.scenario.v1``).
 """
@@ -374,12 +389,29 @@ def _eval_recall_gate(gate: Gate, block: str, seed_ids: list[str]) -> GateResult
     )
 
 
-def _eval_answer_gate(gate: Gate, answer: str, judge: Judge) -> GateResult:
+def _eval_answer_gate(gate: Gate, answer: str, judge: Judge, block: str = "") -> GateResult:
     folded = answer.casefold()
     if gate.kind == "answer_must_contain_any":
         hit = next((p for p in gate.patterns if p.casefold() in folded), None)
+        if hit is not None:
+            return GateResult(gate, True)
+        # Attribute the failure. Whether the demanded fact was even IN the
+        # injected block splits two very different verdicts, and without this
+        # they look identical in the report:
+        #   absent  -> memo-side and unambiguous. The payload cannot steer
+        #              toward a fact it does not carry (truncated body, memory
+        #              not injected, budget trim).
+        #   present -> the payload carried it and the answer ignored it. Real
+        #              under-steering, OR simply an answerer too weak to quote
+        #              specifics — not separable without a stronger answerer.
+        in_block = [p for p in gate.patterns if p.casefold() in block.casefold()]
+        where = (
+            f"but {in_block[0]!r} IS in the recall block — payload carried it, answer ignored it"
+            if in_block
+            else "and none reached the recall block either — the payload never carried the fact"
+        )
         return GateResult(
-            gate, hit is not None, "" if hit else f"none of {list(gate.patterns)} appear"
+            gate, False, f"none of {list(gate.patterns)} appear in the answer, {where}"
         )
     if gate.kind == "answer_must_not_contain_any":
         hit = next((p for p in gate.patterns if p.casefold() in folded), None)
@@ -415,7 +447,9 @@ def run_scenario(
 
         result.answer = (answerer or default_answerer)(result.recall_block, scenario.prompt)
         for gate in scenario.answer_gates:
-            result.gates.append(_eval_answer_gate(gate, result.answer, judge or default_judge))
+            result.gates.append(
+                _eval_answer_gate(gate, result.answer, judge or default_judge, result.recall_block)
+            )
         return result
     except (RuntimeError, OSError, ValueError) as exc:
         # Surfaced, never swallowed: an errored scenario is not a passing one.

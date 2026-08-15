@@ -429,6 +429,28 @@ never that a specific agent misbehaved. The answerer and judge both default to
 resident during a run, and stacking a 30B answerer + 30B judge on top is the
 residency mix that has OOM'd this machine before.
 
+**A corollary of the small answerer:** a red answer-gate can also mean the
+answerer was not competent enough to quote a specific. A failing
+`answer_must_contain_any` therefore reports whether the demanded fact reached
+the block at all — **absent** is memo-side and unambiguous (the payload cannot
+steer toward a fact it does not carry); **present** is real under-steering *or*
+a weak answerer, not separable without a stronger one. So `--recall-only` is
+the trustworthy gate today and full mode's absolute score is diagnostic, not a
+pass/fail line. First live corpus run: **7/8 recall-only, 18/38 gates full**.
+
+**Open findings from the first live run** (`superseded-fact-must-not-drive-the-answer`):
+
+- With two conflicting memories in the block, the model answered from the wrong
+  one **and cited it**. The block is a flat list with no freshness or
+  supersession signal in the rendering, so nothing marks which is current.
+- Body-bullet truncation surfaced a misleading fragment: the first visible line
+  of the memory whose entire point is "the chat port is 8767" was truncated to
+  `En esta máquina el 8765 lo ocupa ...` — showing only the *wrong* port. This
+  one is independent of supersession and reproducible.
+
+Not yet fixed: both are ranking/rendering changes and must go through
+`memo eval recall --gate` (the pre-push discipline above), not a quick patch.
+
 ## Dream — nightly self-maintenance + self-improvement
 
 `memo dream run` is the nightly pipeline (LaunchAgent `com.memo.dream` at 03:00;

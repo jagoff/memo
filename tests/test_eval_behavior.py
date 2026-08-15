@@ -289,3 +289,16 @@ def test_end_to_end_against_a_real_seeded_store(tmp_path: Path) -> None:
 
 def test_gate_result_detail_is_empty_on_pass() -> None:
     assert GateResult(Gate(kind="semantic", statement="s"), True).detail == ""
+
+
+def test_a_missing_fact_gate_says_whether_the_payload_carried_it() -> None:
+    """The two verdicts look identical without this and mean opposite things:
+    a fact absent from the block is memo-side and unambiguous; a fact present
+    in the block that the answer ignored may just be a weak answerer."""
+    gate = Gate(kind="answer_must_contain_any", patterns=("2560",))
+
+    absent = eb._eval_answer_gate(gate, "no sé", _judge_never, block="## Memory\n- nada")
+    present = eb._eval_answer_gate(gate, "no sé", _judge_never, block="## Memory\n- son 2560 dims")
+
+    assert not absent.passed and "never carried the fact" in absent.detail
+    assert not present.passed and "IS in the recall block" in present.detail
