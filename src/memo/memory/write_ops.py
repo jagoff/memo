@@ -166,6 +166,24 @@ def _graph_entities_from_extra(extra: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
+def _live_markdown_files(root: Path) -> Iterator[Path]:
+    """Every canonical ``.md`` under ``root``, skipping the lifecycle archives.
+
+    ``inactive/`` and ``archived/`` keep their canonical ``id`` so a human — or
+    ``memo consolidate restore`` — can move a note back out by hand. Any walker
+    that re-indexes what it finds has to skip them, or it resurrects an
+    archived memory behind the user's back. ``reindex`` and the disk-orphan gc
+    already do; this is the same rule for the write path.
+    """
+    from memo.project import LIFECYCLE_ARCHIVE_DIRS
+
+    for path in sorted(root.rglob("*.md")):
+        parts = path.relative_to(root).parts
+        if parts[:1] and parts[0] in LIFECYCLE_ARCHIVE_DIRS:
+            continue
+        yield path
+
+
 class _WriteOpsMixin(_MemoryBase):
     # -- save ---------------------------------------------------------------
 
@@ -1526,7 +1544,7 @@ class _WriteOpsMixin(_MemoryBase):
         from memo.redact import sanitize_memory_input
 
         candidates: list[tuple[Path, frontmatter.Post, list[str]]] = []
-        for candidate in sorted(self.cfg.memory_dir.rglob("*.md")):
+        for candidate in _live_markdown_files(self.cfg.memory_dir):
             try:
                 if candidate.is_symlink():
                     continue

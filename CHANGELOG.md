@@ -9,6 +9,48 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- **`memo consolidate restore` — merges are reversible now.** Consolidation
+  archives the memories it absorbs, and that was a one-way door: `_archive_memory`
+  stripped the frontmatter `id` before writing to `archived/`, so `reindex`
+  (which requires a canonical id) could never adopt the file again even if a
+  human moved it back. Recovering a single wrongly-merged record meant
+  hand-editing YAML and re-injecting its id. The archived copy now keeps its
+  `id` and records the `archived_from` path it used to occupy, and
+  `memo consolidate restore <id>…` / `--for <merged-id>` moves memories back
+  into the live corpus — into their original path when it is still free,
+  otherwise a freshly allocated one. Legacy archives written without an id are
+  recovered from the filename. Restoring is additive: `--drop-merged` also
+  deletes the merged record, and refuses unless that record carries the new
+  `consolidated_from` provenance proving the merge created it, so a
+  `keep_latest` survivor — a pre-existing memory, not a merge artifact — can
+  never be deleted by an undo. `maintain`'s compaction has had the symmetric
+  `_restore_archived` since it shipped; consolidation had nothing.
+
+  Restoring is also honest about the index: `(namespace, topic_key)` is UNIQUE
+  across live rows, and archiving a record soft-deletes it — which *frees* its
+  topic reservation for a later save to claim. Restoring such a record
+  verbatim made reindex's `deleted_at=NULL` un-delete violate that index, and
+  reindex reports a per-file failure as a log warning and carries on: the `.md`
+  landed in the live tree permanently unindexed while the restore claimed
+  success. The record coming out of the archive is by definition the superseded
+  one, so it now gives the slot up instead of colliding for it. As a general
+  net, every restored id is re-checked after the reindex; anything the index
+  would not adopt is reported in `unindexed_ids` with the `memo reindex
+  --rebuild` remedy, never counted as restored.
+
+### Fixed
+
+- **A disk-only topic-reservation recovery could resurrect an archived memory.**
+  `_recover_topic_reservation_locked` walks every `.md` under `memory_dir` and
+  re-indexes the one holding a claimed `(namespace, topic_key)`. It never
+  skipped `inactive/` or `archived/` — and `inactive/` has always kept its
+  canonical id — so a compacted memory could be silently pulled back into the
+  index behind the user's back. It now skips `LIFECYCLE_ARCHIVE_DIRS`, the same
+  two directories `reindex` and the disk-orphan gc already refuse to absorb.
+  This is what makes preserving the `id` on the archived copy safe.
+
 ## [4.10.1] - 2026-08-14
 
 ### Fixed
