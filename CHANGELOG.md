@@ -9,6 +9,46 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.11.0] - 2026-08-15
+
+### Added
+
+- `memo eval behavior` — measures whether a recalled memory actually *steers*
+  the answer, the step after `memo eval recall`. Seeds an isolated store, runs
+  the real `memo recall-hook` subprocess against it, and scores the answer a
+  model gives with that injected block. A scenario whose gates are all
+  recall-layer is rejected at load: that is retrieval, already covered.
+- `L live/...` eval config — the configuration the recall hook actually runs.
+  It pins nothing it can inherit, and its name carries the resolved mode/floor
+  so a tuner moving the floor underneath the gate is visible. Included in the
+  `pre-push` profile, which is the profile the blocking gate runs.
+- Adapter drift checks folded into `memo release check`: hook commands still
+  resolving in the CLI, `.mcp.json` embedder dims still matching their model
+  (MLX invariant 3), and manifest paths still existing. Each has a test that
+  mutates one surface and asserts the check flips to fail.
+
+### Fixed
+
+- The recall gate scored configurations nobody runs. Measured on the curated
+  44-prompt set at k=5: the grid reported precision@5 0.568-0.716 and stayed
+  green while the live hook was at 0.205 / recall@5 0.20, because the tuner's
+  overlay had moved `MEMO_RECALL_MIN_SIM` to 0.8835 — a floor no grid config
+  uses.
+- The nightly tuner scored a pipeline it does not apply. All four measurement
+  sites ran with the hook's post-rank injection filters OFF and then applied
+  the winner into a hook that has them ON (measured: precision@5 0.363 vs
+  0.205, a 44% gap the search was blind to). Since the tuner auto-applies, that
+  was a mechanism for shipping regressions, not just a measurement error.
+- `gc` could delete a row whose path it was never able to verify. A
+  `StorageError` from `_resolve_existing` is a path-*safety* refusal (a symlink
+  component, a path escaping `memory_dir`), not evidence the `.md` is gone. It
+  ran unattended on every `sync_pull`, logged nothing, and `_reindex_locked`
+  refuses the same paths — so the row never came back and the memory left
+  search, recall and list permanently.
+- `turn_store`'s BM25 query swallowed `sqlite3.OperationalError` into an empty
+  list with no logger in the module, making a corrupt verbatim FTS index
+  indistinguishable from "nothing matched" forever.
+
 ## [4.10.2] - 2026-08-15
 
 ### Added
