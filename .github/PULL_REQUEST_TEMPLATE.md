@@ -31,9 +31,10 @@ blocks the merge.
       `_memo_embed_pending`; `delete()` still drops the index first and unlinks
       the `.md` last; `memo reindex --rebuild` still preserves the user-signal
       tables (`access`, `memory_health`, `source_feedback*`).
-- [ ] **Release surfaces changed** — `python3 scripts/adapter_matrix.py --check`
-      passes (versions locked across `pyproject.toml`, `.claude-plugin/plugin.json`,
-      `plugins/memo/.codex-plugin/plugin.json`, `server.json`, `CHANGELOG.md`).
+- [ ] **Release surfaces changed** — `memo release check` passes (version parity
+      across every manifest, plus the silent-drift checks: hook commands still
+      resolve in the CLI, `.mcp.json` embedder dims still match their model,
+      manifest paths still exist).
 - [ ] **A new `MEMO_*` flag was added** — registered in the matching
       `flags_<group>.py`, accessed via `flag_bool/int/float/str`, and (if it is a
       default-off `*_ENABLED` flag) declares its gate in `dream_flags.GATES`.

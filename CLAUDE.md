@@ -301,21 +301,22 @@ Bump the version in sync across **five** source-of-truth files:
 version), and `CHANGELOG.md` (Keep-a-Changelog) — `memo release bump` edits
 all five. Commit / tag / push stays manual.
 
-**Prove the surfaces still agree** before releasing:
-
-```bash
-python3 scripts/adapter_matrix.py --check   # exit 1 on drift
-```
-
-Four deterministic checks (`tests/test_adapter_matrix.py` proves each one fails
-on real drift, not just passes on a clean tree):
+`memo release check` is the gate. It validates version parity across every
+versioned surface (both plugin manifests, `server.json` incl. extra packages,
+the mcpb manifests + archive, install pins, the Homebrew formula, the CHANGELOG
+section) **and** — via `src/memo/adapter_matrix.py` — three surfaces that carry
+no version and whose drift is *silent*:
 
 | check | catches |
 |---|---|
-| `version-parity` | a partial bump — the five manifests disagreeing |
-| `embedder-dims-parity` | an `.mcp.json` pinning `MEMO_EMBEDDER_MODEL` whose `MEMO_EMBEDDER_DIMS` doesn't match the model size (MLX invariant 3 — corrupts the vec0 table). A config pinning *neither* stays legal: the installed index is self-describing |
-| `hook-commands-resolve` | `hooks/hooks.json` firing a `memo` subcommand the CLI no longer registers. Hooks are soft-fail by design, so a rename breaks them **silently** |
+| `hook-commands-resolve` | `hooks/hooks.json` firing a `memo` subcommand the CLI no longer registers. Hooks are soft-fail by design, so a rename stops recall/capture/sync with **no error anywhere** |
+| `embedder-dims-parity` | an `.mcp.json` pinning `MEMO_EMBEDDER_MODEL` whose `MEMO_EMBEDDER_DIMS` doesn't match the model size (MLX invariant 3 — corrupts the vec0 table on first write). A config pinning *neither* stays legal: the installed index is self-describing |
 | `referenced-paths-exist` | the codex manifest's `mcpServers` path or the marketplace `source` pointing at nothing |
+
+`tests/test_adapter_matrix.py` mutates one surface per test and asserts the
+check flips to fail — a gate that only ever passes proves nothing. Version
+parity deliberately lives only in `cli_release`; a second, weaker opinion that
+can disagree with the real gate is worse than none.
 
 ## Source of truth — role & contract
 
