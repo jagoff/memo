@@ -1523,12 +1523,21 @@ class _WriteOpsMixin(_MemoryBase):
         self, *, namespace: str, topic_key: str
     ) -> list[dict[str, Any]]:
         """Rebuild a disk-only topic reservation after an index failure."""
+        from memo.project import LIFECYCLE_ARCHIVE_DIRS
         from memo.redact import sanitize_memory_input
 
         candidates: list[tuple[Path, frontmatter.Post, list[str]]] = []
         for candidate in sorted(self.cfg.memory_dir.rglob("*.md")):
             try:
                 if candidate.is_symlink():
+                    continue
+                parts = candidate.relative_to(self.cfg.memory_dir).parts
+                if parts[:1] and parts[0] in LIFECYCLE_ARCHIVE_DIRS:
+                    # `inactive/` and `archived/` keep their canonical id so a
+                    # human (or `consolidate restore`) can move a note back.
+                    # Recovering one here would resurrect it into the index
+                    # behind everyone's back — the same reason reindex and the
+                    # disk-orphan gc skip these two directories.
                     continue
                 candidate_post = frontmatter.loads(candidate.read_text(encoding="utf-8"))
                 candidate_id = str(candidate_post.metadata.get("id") or "")

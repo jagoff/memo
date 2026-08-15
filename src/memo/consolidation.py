@@ -26,8 +26,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from memo.llm import ChatBackend, MLXChat
@@ -94,6 +96,25 @@ class ConsolidationResult:
     archived_ids: list[str]  # IDs of archived memories
     skipped_ids: list[str]  # IDs that were skipped (e.g., conflicts)
     summary: str
+
+
+@dataclass(frozen=True)
+class RestoreResult:
+    """Result of moving archived memories back into the live corpus."""
+
+    restored_ids: list[str]
+    missing_ids: list[str]  # not recovered: absent, ambiguous prefix, or unreadable
+    dropped_merged_id: str | None  # merged record deleted to complete the undo
+    summary: str
+
+
+def _id_matches(value: str, wanted: str) -> bool:
+    """Exact id, or an unambiguous-length prefix of one.
+
+    `consolidate list-archived` prints 8-char prefixes, so those have to work
+    as input. Shorter fragments are refused rather than guessed at.
+    """
+    return value == wanted or (len(wanted) >= 8 and value.startswith(wanted))
 
 
 class AdvancedConsolidator:
@@ -339,6 +360,11 @@ class AdvancedConsolidator:
                     title=proposal.merged_title,
                     type_=type_,
                     tags=list(all_tags),
+                    # Provenance, and the marker `restore_archived --drop-merged`
+                    # keys off: only a record the merge CREATED may be deleted
+                    # when the merge is undone. A `keep_latest` survivor is a
+                    # pre-existing memory and never carries this.
+                    extra={"consolidated_from": sorted(proposal.memory_ids)},
                 )
 
             # Archive the old memories
@@ -368,7 +394,15 @@ class AdvancedConsolidator:
     def _archive_memory(self, memory_id: str, replacement_id: str) -> bool:
         """Archive a memory by moving it to the archived/ subdirectory.
 
-        Adds a frontmatter field `archived_for` pointing to the replacement.
+        The archived copy keeps everything ``restore_archived`` needs to put
+        it back: its canonical ``id``, the ``archived_from`` path it used to
+        occupy, and ``archived_for`` naming the record that replaced it.
+
+        Keeping the ``id`` is safe because every path that walks
+        ``memory_dir`` skips ``LIFECYCLE_ARCHIVE_DIRS`` — reindex, disk-orphan
+        gc, and topic-reservation recovery alike — and it is what makes the
+        merge reversible. ``inactive/`` (maintain's archive) has always kept
+        its id for exactly that reason.
         """
         rec = self.memory.get(memory_id)
         if not rec:
@@ -390,11 +424,8 @@ class AdvancedConsolidator:
         # Add archival metadata
         post["archived_for"] = replacement_id
         post["archived_at"] = datetime.now(UTC).isoformat()
-        # Drop the live `id` so `memo reindex`/gc (which rglob memory_dir,
-        # archived/ included) do NOT re-index this archived copy and
-        # resurrect the deleted memory. The id is preserved in the filename
-        # and in `archived_for`'s chain.
-        post.metadata.pop("id", None)
+        post["archived_from"] = rec.path
+        post["id"] = memory_id
 
         # Write to archived location
         archived_path = self._archival_dir / f"{memory_id}.md"
@@ -404,6 +435,168 @@ class AdvancedConsolidator:
         self.memory.delete(memory_id)
 
         return True
+
+    def restore_archived(
+        self,
+        memory_ids: Sequence[str] | None = None,
+        *,
+        for_merged: str | None = None,
+        drop_merged: bool = False,
+        dry_run: bool = False,
+    ) -> RestoreResult:
+        """Move archived memories back into the live corpus — the undo of a merge.
+
+        Pass explicit ``memory_ids`` to recover individual records, or
+        ``for_merged`` to recover every member a given merge absorbed.
+
+        ``drop_merged`` completes the undo by deleting the merged record, and
+        refuses unless that record carries the ``consolidated_from`` provenance
+        that proves the merge created it — a ``keep_latest`` merge keeps one of
+        its own members, and deleting that would destroy the very data the undo
+        is trying to rescue.
+
+        Restoring is additive on its own: without ``drop_merged`` the merged
+        record stays, so the corpus briefly holds both. That is deliberate —
+        nothing is destroyed by an undo that turns out to be a mistake.
+        """
+        if not memory_ids and not for_merged:
+            raise ValueError("restore_archived needs memory_ids or for_merged")
+
+        archived_files = (
+            sorted(self._archival_dir.glob("*.md")) if self._archival_dir.is_dir() else []
+        )
+        selected, missing = self._select_archived(archived_files, memory_ids, for_merged)
+
+        restored: list[str] = []
+        for path, memory_id in selected:
+            if dry_run or self._restore_one(path, memory_id):
+                restored.append(memory_id)
+            else:
+                # Present but unreadable. Report it rather than let it fall
+                # out of both lists — a silent drop is how you lose a memory.
+                missing.append(memory_id)
+
+        if restored and not dry_run:
+            # Files under archived/ are skipped by every walker, so the live
+            # copy only becomes searchable once it is back in the tree — then
+            # reindex adopts it (the upsert clears any delete tombstone).
+            self.memory.reindex()
+
+        dropped, note = self._drop_merged_record(
+            for_merged if drop_merged else None, dry_run=dry_run
+        )
+        summary = f"Restored {len(restored)} archived memories"
+        if missing:
+            summary += f", {len(missing)} not found"
+        if note:
+            summary += f" — {note}"
+        return RestoreResult(
+            restored_ids=restored,
+            missing_ids=missing,
+            dropped_merged_id=dropped,
+            summary=summary,
+        )
+
+    def _select_archived(
+        self,
+        archived_files: list[Path],
+        memory_ids: Sequence[str] | None,
+        for_merged: str | None,
+    ) -> tuple[list[tuple[Path, str]], list[str]]:
+        """Resolve the request to (file, id) pairs plus the ids not found."""
+        import frontmatter
+
+        if for_merged:
+            selected = []
+            for path in archived_files:
+                try:
+                    post = frontmatter.loads(path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    # One corrupt archive must not sink the rest of the batch.
+                    _log.warning("restore: cannot read %s: %s", path.name, exc)
+                    continue
+                if _id_matches(str(post.get("archived_for") or ""), for_merged):
+                    selected.append((path, str(post.get("id") or path.stem)))
+            return selected, []
+
+        by_stem = {path.stem: path for path in archived_files}
+        selected, missing = [], []
+        for wanted in memory_ids or []:
+            matches = [stem for stem in by_stem if _id_matches(stem, wanted)]
+            if len(matches) != 1:
+                # Zero matches, or a prefix short enough to be ambiguous —
+                # both are the caller's to disambiguate, never ours to guess.
+                missing.append(wanted)
+                continue
+            selected.append((by_stem[matches[0]], matches[0]))
+        return selected, missing
+
+    def _restore_one(self, path: Path, memory_id: str) -> bool:
+        """Write one archived file back into the live tree. Returns success."""
+        import frontmatter
+
+        try:
+            post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            # A corrupt or unreadable archive is reported and skipped; the rest
+            # of the batch still gets restored.
+            _log.warning("restore: cannot read %s: %s", path.name, exc)
+            return False
+
+        post.metadata.pop("archived_for", None)
+        post.metadata.pop("archived_at", None)
+        origin = post.metadata.pop("archived_from", None)
+        # Files archived before the id was preserved carry it only in their
+        # filename; re-inject it or reindex will skip them as non-canonical.
+        post["id"] = memory_id
+
+        rel = self._restore_destination(post, origin)
+        dest = self.memory.cfg.memory_dir / rel
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(frontmatter.dumps(post), encoding="utf-8")
+            path.unlink()
+        except OSError as exc:
+            _log.warning("restore: cannot write %s: %s", rel, exc)
+            return False
+        return True
+
+    def _restore_destination(self, post: Any, origin: Any) -> str:
+        """Prefer the path the memory used to hold; allocate a fresh one if taken."""
+        memory_dir = self.memory.cfg.memory_dir
+        if isinstance(origin, str) and origin:
+            candidate = Path(origin)
+            unsafe = candidate.is_absolute() or ".." in candidate.parts
+            if not unsafe and not (memory_dir / candidate).exists():
+                return origin
+
+        raw_tags = post.metadata.get("tags") or []
+        tags = [str(raw_tags)] if isinstance(raw_tags, str) else [str(t) for t in raw_tags]
+        return str(
+            self.memory._build_rel_path(
+                str(post.metadata.get("title") or "untitled"),
+                str(post.metadata.get("created") or datetime.now(UTC).isoformat()),
+                tags,
+            )
+        )
+
+    def _drop_merged_record(
+        self, merged_id: str | None, *, dry_run: bool
+    ) -> tuple[str | None, str]:
+        """Delete the record a merge created. Returns (dropped_id, note)."""
+        if not merged_id:
+            return None, ""
+        merged = self.memory.get(merged_id)
+        if merged is None:
+            return None, f"merged record {merged_id[:8]} not found"
+        if not (merged.extra or {}).get("consolidated_from"):
+            return None, (
+                f"kept {merged_id[:8]}: not created by a merge (no consolidated_from "
+                "provenance) — a keep_latest merge survivor is real data"
+            )
+        if not dry_run:
+            self.memory.delete(merged.id)
+        return merged.id, f"dropped merged record {merged.id[:8]}"
 
     def _fast_lane_proposal(self, cluster: dict[str, Any]) -> MergeProposal | None:
         """Build a keep_latest MergeProposal without calling the LLM.

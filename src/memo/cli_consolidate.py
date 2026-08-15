@@ -184,6 +184,91 @@ def consolidate_apply(
         console.print(f"[dim]...and {len(results) - 5} more[/dim]")
 
 
+@consolidate_group.command(name="restore")
+@click.argument("memory_ids", nargs=-1)
+@click.option(
+    "--for",
+    "for_merged",
+    metavar="MERGED_ID",
+    help="Restore every memory a given merge archived (undo one merge).",
+)
+@click.option(
+    "--drop-merged",
+    is_flag=True,
+    help="With --for, also delete the merged record. Refused unless that record was "
+    "created by the merge (a keep_latest survivor is real data).",
+)
+@click.option("--dry-run", is_flag=True, help="Report what would be restored, change nothing.")
+@click.option("--yes", "-y", is_flag=True, help="Skip the confirmation for --drop-merged.")
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
+def consolidate_restore(
+    memory_ids: tuple[str, ...],
+    for_merged: str | None,
+    drop_merged: bool,
+    dry_run: bool,
+    yes: bool,
+    as_json: bool,
+) -> None:
+    """Move archived memories back into the live corpus — the undo of a merge.
+
+    Restoring is additive: the merged record survives unless --drop-merged is
+    given, so an undo that turns out to be wrong destroys nothing.
+
+    Example: memo consolidate restore --for e9599fe4 --drop-merged
+    """
+    if not memory_ids and not for_merged:
+        raise click.UsageError("pass one or more memory ids, or --for <merged-id>")
+    if drop_merged and not for_merged:
+        raise click.UsageError("--drop-merged only applies with --for <merged-id>")
+    if drop_merged and not dry_run and not yes:
+        click.confirm(
+            f"This will delete the merged record {for_merged[:8] if for_merged else ''}. Continue?",
+            abort=True,
+        )
+
+    cfg = Config.from_env()
+    mem = _get_memory(cfg)
+
+    result = mem.consolidator.restore_archived(
+        list(memory_ids),
+        for_merged=for_merged,
+        drop_merged=drop_merged,
+        dry_run=dry_run,
+    )
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "restored_ids": result.restored_ids,
+                    "missing_ids": result.missing_ids,
+                    "dropped_merged_id": result.dropped_merged_id,
+                    "summary": result.summary,
+                    "dry_run": dry_run,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if dry_run:
+        console.print("[yellow]Dry run — nothing changed.[/yellow]")
+    console.print(f"[green]✓ Restored {len(result.restored_ids)} memories[/green]")
+    for mid in result.restored_ids[:20]:
+        console.print(f"  [cyan]{mid[:8]}[/cyan]")
+    if len(result.restored_ids) > 20:
+        console.print(f"[dim]...and {len(result.restored_ids) - 20} more[/dim]")
+    if result.missing_ids:
+        console.print(
+            f"[yellow]⊘ Not found under archived/: "
+            f"{escape(', '.join(m[:8] for m in result.missing_ids))}[/yellow]"
+        )
+    if result.dropped_merged_id:
+        console.print(f"[red]✗ Dropped merged record {result.dropped_merged_id[:8]}[/red]")
+    elif drop_merged:
+        console.print(f"[yellow]{escape(result.summary)}[/yellow]")
+
+
 @consolidate_group.command(name="list-archived")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON")
 def consolidate_list_archived(as_json: bool) -> None:
