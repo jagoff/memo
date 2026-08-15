@@ -171,6 +171,44 @@ def test_restore_does_not_overwrite_a_live_file_holding_the_old_path(consolidato
     assert mock_memory.get(rec.id).path != original_path
 
 
+def test_restore_gives_up_a_topic_slot_a_newer_record_took(consolidator, mock_memory):
+    """`(namespace, topic_key)` is UNIQUE among live rows.
+
+    Archiving soft-deletes the row, which frees its topic reservation, so a
+    later save can claim it. Restoring the frontmatter verbatim would make
+    reindex's un-delete violate that index — and reindex swallows the
+    IntegrityError as a per-file warning, leaving the `.md` in the live tree
+    permanently unindexed while the restore reports success.
+    """
+    rec = _save(mock_memory, "Deploy process", "the original", topic_key="deploy-process")
+    keeper = _save(mock_memory, "Keeper", "other")
+    consolidator._archive_memory(rec.id, keeper.id)
+    newer = _save(mock_memory, "Deploy process v2", "the newer one", topic_key="deploy-process")
+
+    result = consolidator.restore_archived([rec.id])
+
+    assert result.restored_ids == [rec.id]
+    assert result.unindexed_ids == []
+    revived = mock_memory.get(rec.id)
+    assert revived is not None, "restore reported success but the record is not indexed"
+    assert revived.body.strip() == "the original"
+    assert mock_memory.get(newer.id) is not None
+
+
+def test_restore_reports_a_memory_the_index_refused(consolidator, mock_memory, monkeypatch):
+    """A restore the index would not adopt must never be reported as done."""
+    rec = _save(mock_memory, "Never indexed", "body")
+    keeper = _save(mock_memory, "Keeper", "other")
+    consolidator._archive_memory(rec.id, keeper.id)
+    monkeypatch.setattr(mock_memory, "reindex", lambda **kw: {"added": 0})
+
+    result = consolidator.restore_archived([rec.id])
+
+    assert result.restored_ids == []
+    assert result.unindexed_ids == [rec.id]
+    assert "reindex --rebuild" in result.summary
+
+
 def test_restore_dry_run_changes_nothing(consolidator, mock_memory):
     rec = _save(mock_memory, "Untouched", "body")
     keeper = _save(mock_memory, "Keeper", "other")
@@ -292,6 +330,23 @@ def test_cli_consolidate_restore_reports_what_it_restored(consolidator, mock_mem
     assert result.exit_code == 0, result.output
     assert rec.id[:8] in result.output
     assert mock_memory.get(rec.id) is not None
+
+
+def test_cli_consolidate_restore_refuses_ids_together_with_a_merge(mock_memory, monkeypatch):
+    """`--for` ignores positional ids; refuse rather than silently drop them."""
+    monkeypatch.setattr("memo.cli_consolidate._get_memory", lambda cfg: mock_memory)
+    monkeypatch.setattr(
+        "memo.cli_consolidate.Config.from_env", staticmethod(lambda: mock_memory.cfg)
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["consolidate", "restore", "deadbeefdeadbeefdeadbeefdeadbeef", "--for", "cafebabe"],
+        env={"MEMO_NONINTERACTIVE": "1"},
+    )
+
+    assert result.exit_code != 0
+    assert "--for" in result.output
 
 
 def test_cli_consolidate_restore_needs_ids_or_a_merge(mock_memory, monkeypatch):

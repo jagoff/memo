@@ -28,6 +28,18 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   never be deleted by an undo. `maintain`'s compaction has had the symmetric
   `_restore_archived` since it shipped; consolidation had nothing.
 
+  Restoring is also honest about the index: `(namespace, topic_key)` is UNIQUE
+  across live rows, and archiving a record soft-deletes it — which *frees* its
+  topic reservation for a later save to claim. Restoring such a record
+  verbatim made reindex's `deleted_at=NULL` un-delete violate that index, and
+  reindex reports a per-file failure as a log warning and carries on: the `.md`
+  landed in the live tree permanently unindexed while the restore claimed
+  success. The record coming out of the archive is by definition the superseded
+  one, so it now gives the slot up instead of colliding for it. As a general
+  net, every restored id is re-checked after the reindex; anything the index
+  would not adopt is reported in `unindexed_ids` with the `memo reindex
+  --rebuild` remedy, never counted as restored.
+
 ### Fixed
 
 - **A disk-only topic-reservation recovery could resurrect an archived memory.**

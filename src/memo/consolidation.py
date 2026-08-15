@@ -104,6 +104,7 @@ class RestoreResult:
 
     restored_ids: list[str]
     missing_ids: list[str]  # not recovered: absent, ambiguous prefix, or unreadable
+    unindexed_ids: list[str]  # .md is back on disk but the index would not adopt it
     dropped_merged_id: str | None  # merged record deleted to complete the undo
     summary: str
 
@@ -476,11 +477,19 @@ class AdvancedConsolidator:
                 # out of both lists — a silent drop is how you lose a memory.
                 missing.append(memory_id)
 
+        unindexed: list[str] = []
         if restored and not dry_run:
             # Files under archived/ are skipped by every walker, so the live
             # copy only becomes searchable once it is back in the tree — then
             # reindex adopts it (the upsert clears any delete tombstone).
             self.memory.reindex()
+            # reindex reports a per-file failure as a log warning and carries
+            # on, so "the file is back" does not prove "the memory is back".
+            # Anything the index would not adopt is called out, never counted
+            # as restored — the .md is safe on disk either way.
+            unindexed = [mid for mid in restored if self.memory.get(mid) is None]
+            if unindexed:
+                restored = [mid for mid in restored if mid not in set(unindexed)]
 
         dropped, note = self._drop_merged_record(
             for_merged if drop_merged else None, dry_run=dry_run
@@ -488,11 +497,16 @@ class AdvancedConsolidator:
         summary = f"Restored {len(restored)} archived memories"
         if missing:
             summary += f", {len(missing)} not found"
+        if unindexed:
+            summary += (
+                f", {len(unindexed)} written to disk but NOT indexed (run `memo reindex --rebuild`)"
+            )
         if note:
             summary += f" — {note}"
         return RestoreResult(
             restored_ids=restored,
             missing_ids=missing,
+            unindexed_ids=unindexed,
             dropped_merged_id=dropped,
             summary=summary,
         )
@@ -553,6 +567,7 @@ class AdvancedConsolidator:
         post["id"] = memory_id
 
         rel = self._restore_destination(post, origin)
+        self._release_taken_topic_key(post, rel)
         dest = self.memory.cfg.memory_dir / rel
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -562,6 +577,42 @@ class AdvancedConsolidator:
             _log.warning("restore: cannot write %s: %s", rel, exc)
             return False
         return True
+
+    def _release_taken_topic_key(self, post: Any, rel: str) -> None:
+        """Drop a topic reservation a live record has since claimed.
+
+        `(namespace, topic_key)` is UNIQUE across non-deleted rows. Archiving
+        soft-deleted this record, which released its reservation, so a later
+        save may hold it now. Restoring the frontmatter verbatim would make
+        reindex's `deleted_at=NULL` un-delete violate that index — and reindex
+        reports a per-file failure as a warning and moves on, so the `.md`
+        would sit in the live tree permanently unindexed while the restore
+        claimed success.
+
+        The record coming back out of the archive is by definition the
+        superseded one, so it gives the slot up rather than fight for it. Its
+        content is restored either way; only the topic claim is dropped.
+        """
+        from memo.identity import canonical_topic_key, namespace_for_index
+
+        topic_key = canonical_topic_key(post.metadata.get("topic_key"))
+        if not topic_key:
+            return
+        raw_tags = post.metadata.get("tags") or []
+        tags = [str(raw_tags)] if isinstance(raw_tags, str) else [str(t) for t in raw_tags]
+        namespace = namespace_for_index(tags, path=rel)
+        if namespace is None:
+            return
+        holders = self.memory.store.find_active_by_topic_identity(namespace, topic_key)
+        if not holders:
+            return
+        _log.warning(
+            "restore: %s gives up topic %r — %s holds it now",
+            str(post.metadata.get("id") or "?")[:8],
+            topic_key,
+            str(holders[0].get("id") or "?")[:8],
+        )
+        post.metadata.pop("topic_key", None)
 
     def _restore_destination(self, post: Any, origin: Any) -> str:
         """Prefer the path the memory used to hold; allocate a fresh one if taken."""

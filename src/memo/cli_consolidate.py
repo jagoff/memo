@@ -222,6 +222,11 @@ def consolidate_restore(
     """
     if not memory_ids and not for_merged:
         raise click.UsageError("pass one or more memory ids, or --for <merged-id>")
+    if memory_ids and for_merged:
+        # --for selects by archived_for and ignores positional ids entirely.
+        # Silently dropping what the user typed is how a partial restore gets
+        # mistaken for a complete one.
+        raise click.UsageError("pass memory ids or --for <merged-id>, not both")
     if drop_merged and not for_merged:
         raise click.UsageError("--drop-merged only applies with --for <merged-id>")
     if drop_merged and not dry_run and not yes:
@@ -246,6 +251,7 @@ def consolidate_restore(
                 {
                     "restored_ids": result.restored_ids,
                     "missing_ids": result.missing_ids,
+                    "unindexed_ids": result.unindexed_ids,
                     "dropped_merged_id": result.dropped_merged_id,
                     "summary": result.summary,
                     "dry_run": dry_run,
@@ -271,6 +277,12 @@ def _print_restore(result: RestoreResult, *, drop_merged: bool, dry_run: bool) -
         console.print(
             f"[yellow]⊘ Not recovered: "
             f"{escape(', '.join(m[:8] for m in result.missing_ids))}[/yellow]"
+        )
+    if result.unindexed_ids:
+        console.print(
+            f"[red]! Written to disk but NOT indexed: "
+            f"{escape(', '.join(m[:8] for m in result.unindexed_ids))}[/red]\n"
+            "[dim]  The .md is safe; the index refused it. Run `memo reindex --rebuild`.[/dim]"
         )
     if result.dropped_merged_id:
         console.print(f"[red]✗ Dropped merged record {result.dropped_merged_id[:8]}[/red]")
