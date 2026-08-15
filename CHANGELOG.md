@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.10.2] - 2026-08-15
+
 ### Added
 
 - **`memo consolidate restore` — merges are reversible now.** Consolidation
