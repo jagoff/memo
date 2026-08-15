@@ -294,10 +294,9 @@
       "text": "hace el push a master",
       "relevant": true,
       "expect_ids": [
-        "a97d17c0",
         "a979dcb7"
       ],
-      "_note": "2026-08-15 incident. `master` is branch-protected (GH006 on direct push); the only path is a PR. The fact was stored since 2026-08-02 as the decision a97d17c0, yet asking for a push to master surfaced merge-conflict and push-auth memories instead. Root cause is not ranking: capture created two paraphrase duplicates of the same fact on 2026-08-15 (a979dcb7, abdbfbc7), because write-time dedup keys on normalized_content_hash and a paraphrase — here also across languages — hashes differently. Three records then split the signal across a flat-similarity neighbourhood (vec 0.594-0.636) that the hook's search_k=9 pool samples almost arbitrarily. Either surviving decision counts as a hit."
+      "_note": "2026-08-15 incident, RESOLVED. `master` is branch-protected (GH006 on a direct push); the only path is a PR. Asking for a push to master surfaced merge-conflict and push-auth memories instead, and the protection fact was absent from the top 40. Root cause was capture, not ranking: auto-capture created THREE paraphrase duplicates within 30 minutes on 2026-08-15 (abdbfbc7 15:51, 58edcf94 16:08, a979dcb7 16:20) of a fact already stored since 2026-08-02 (a97d17c0). Write-time dedup keys on normalized_content_hash, so a paraphrase — here also across languages — hashes differently and passes. Four records then split the signal across a flat-similarity neighbourhood (vec 0.594-0.636) that the hook's search_k=9 pool samples almost arbitrarily. Resolved by consolidating onto a979dcb7 (the only one that ranked) after merging the best content into it, and superseding the other three (reversible). Verified through the real hook: absent -> rank 1 at score 9.588. Gate held at prec@k 0.647 / noise 0.000. NOT fixed: `memo consolidate propose` clusters the near-identical English pair but not the Spanish original, so cosine clustering has the same cross-language blind spot as the hash dedup."
     }
   ],
   "relevant_terms": [
