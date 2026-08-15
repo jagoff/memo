@@ -301,6 +301,22 @@ Bump the version in sync across **five** source-of-truth files:
 version), and `CHANGELOG.md` (Keep-a-Changelog) — `memo release bump` edits
 all five. Commit / tag / push stays manual.
 
+**Prove the surfaces still agree** before releasing:
+
+```bash
+python3 scripts/adapter_matrix.py --check   # exit 1 on drift
+```
+
+Four deterministic checks (`tests/test_adapter_matrix.py` proves each one fails
+on real drift, not just passes on a clean tree):
+
+| check | catches |
+|---|---|
+| `version-parity` | a partial bump — the five manifests disagreeing |
+| `embedder-dims-parity` | an `.mcp.json` pinning `MEMO_EMBEDDER_MODEL` whose `MEMO_EMBEDDER_DIMS` doesn't match the model size (MLX invariant 3 — corrupts the vec0 table). A config pinning *neither* stays legal: the installed index is self-describing |
+| `hook-commands-resolve` | `hooks/hooks.json` firing a `memo` subcommand the CLI no longer registers. Hooks are soft-fail by design, so a rename breaks them **silently** |
+| `referenced-paths-exist` | the codex manifest's `mcpServers` path or the marketplace `source` pointing at nothing |
+
 ## Source of truth — role & contract
 
 memo is the canonical store of **durable semantic knowledge**: decisions,
@@ -378,6 +394,40 @@ across the whole regression set — never per-question.
   crowding) gate here; end-to-end grounding, abstention, and integrity gate in
   `memo definitive check` plus the relevant Memo eval command.
 
+### Behavior eval — did the recalled memory actually steer the answer?
+
+`memo eval recall` stops at "the right note surfaced". A memory can be top-1 and
+still be ignored, re-litigated, or answered around, with every retrieval metric
+green. `memo eval behavior` (`src/memo/eval_behavior.py`, corpus
+`eval/behavior_scenarios.json`, schema `memo.eval_behavior.scenario.v1`) covers
+the step after retrieval:
+
+1. seeds an isolated store with the scenario's memories (real store, real
+   embeddings — nothing mocked),
+2. runs the **real `memo recall-hook` as a subprocess** against it and takes its
+   `additionalContext` verbatim (no ranking is reimplemented, so the harness
+   cannot drift from the hook),
+3. feeds `[injected block + prompt]` to a model and scores the scenario's gates.
+
+Gates are two-layered: `must_recall` / `must_not_recall` (deterministic, from
+the block) and `answer_must_contain_any` / `answer_must_not_contain_any` /
+`semantic` (from the answer). **A scenario with only recall-layer gates is
+rejected at load** — that is retrieval, already covered above.
+
+```bash
+memo eval behavior --recall-only          # deterministic, no LLM loaded
+memo eval behavior --gate                 # full, exits non-zero on any failure
+memo eval behavior --only <scenario-id> --json
+```
+
+**Read a red gate correctly.** The model in step 3 is memo's own local LLM, not
+Claude — a failure proves *the injected payload under-steers a competent model*
+(block formatting, labelling, ordering, truncation, token budget: all memo-side),
+never that a specific agent misbehaved. The answerer and judge both default to
+`MEMO_HELPER_MODEL`, never the 30B generation model: the embedder is already
+resident during a run, and stacking a 30B answerer + 30B judge on top is the
+residency mix that has OOM'd this machine before.
+
 ## Dream — nightly self-maintenance + self-improvement
 
 `memo dream run` is the nightly pipeline (LaunchAgent `com.memo.dream` at 03:00;
@@ -399,10 +449,12 @@ Wiring is `src/memo/cli_dream.py` (Click) + `src/memo/cli_dream_passes.py`
     `eval/regression_labels.json` (a change that helps mined labels but hurts the
     curated set is rejected) and **auto-reverted** when a later night regresses
     vs the saved baseline. CLI `memo dream tune`. Scope: it only moves `min_sim`
-    — the one knob the eval harness (`run_config` / `Cfg.floor`) measures
-    faithfully in vec mode; boosts/rerank-pool need a recall-faithful eval (a
-    pure `rank_hits()` extracted from `recall_logic._recall_logic`) and are
-    deliberately deferred.
+    — the one knob the *tuner* line-searches today. The blocker this used to
+    name is gone: `rank_hits()` is already public and pure
+    (`recall_logic.py:1388`) and is the shared ranking path for the recall hook,
+    the eval harness and the A/B seam, so boosts and rerank-pool are measurable
+    now with `memo eval recall`. Widening the tuner to them is unstarted work,
+    not a missing extraction.
   - **Consolidate** (`dream_consolidate.py`,
     `MEMO_DREAM_CONSOLIDATE_EPISODES_ENABLED`): groups recent episodes
     (`EpisodeStore.recent`) by project and abstracts recurring cross-session work
