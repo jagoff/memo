@@ -289,6 +289,15 @@
       "text": "explain quantum entanglement",
       "relevant": false,
       "_note": "Noise probe — general physics, not stored as a personal memory."
+    },
+    {
+      "text": "hace el push a master",
+      "relevant": true,
+      "expect_ids": [
+        "a97d17c0",
+        "a979dcb7"
+      ],
+      "_note": "2026-08-15 incident. `master` is branch-protected (GH006 on direct push); the only path is a PR. The fact was stored since 2026-08-02 as the decision a97d17c0, yet asking for a push to master surfaced merge-conflict and push-auth memories instead. Root cause is not ranking: capture created two paraphrase duplicates of the same fact on 2026-08-15 (a979dcb7, abdbfbc7), because write-time dedup keys on normalized_content_hash and a paraphrase — here also across languages — hashes differently. Three records then split the signal across a flat-similarity neighbourhood (vec 0.594-0.636) that the hook's search_k=9 pool samples almost arbitrarily. Either surviving decision counts as a hit."
     }
   ],
   "relevant_terms": [
