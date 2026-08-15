@@ -33,6 +33,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -232,7 +233,7 @@ def seed_store(scenario: Scenario, workdir: Path) -> list[str]:
                 mem.save(
                     content=seed.content,
                     title=seed.title,
-                    type=seed.type,
+                    type_=seed.type,
                     tags=list(seed.tags),
                 ).id
                 for seed in scenario.seed_memories
@@ -255,11 +256,33 @@ def run_recall_hook(prompt: str, workdir: Path, *, timeout: float = 60.0) -> str
     injection filters, token budget and formatting are exactly what we want to
     measure, and a subprocess is also how Claude Code invokes it.
     """
+    # The hook downgrades to BM25 unless `state_dir/.prewarm_ts` is fresh — its
+    # subprocess-side guard against paying a cold MLX load inside the 5s budget.
+    # A per-scenario temp state_dir never has that signal, so without this stamp
+    # the eval would only ever measure the cold-start downgrade: a degraded mode
+    # a real session does not run in (SessionStart's `memo prewarm` stamps it).
+    # Combined with the warm-daemon socket below, the signal is accurate rather
+    # than a cheat — the embedder really is warm.
+    state_dir = workdir / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / ".prewarm_ts").write_text(str(time.time()), encoding="utf-8")
+
     env = {
         **os.environ,
         "MEMO_DATA_DIR": str(workdir / "data"),
-        "MEMO_STATE_DIR": str(workdir / "state"),
+        "MEMO_STATE_DIR": str(state_dir),
         "MEMO_NONINTERACTIVE": "1",
+        # Serve embeds off the warm recall daemon when it is up, exactly as a
+        # live session does; falls back to an in-process load when it is not.
+        "MEMO_EMBEDDER_VIA_DAEMON": "1",
+        # Never let a socket hiccup silently degrade the measurement. With
+        # REQUIRE_DAEMON on (the ambient setting on this machine) an
+        # unreachable daemon makes embed_query fail and the hook falls back to
+        # BM25 — so the eval would report a vec-mode result it never measured.
+        # A live daemon can still read "unreachable" purely from a client
+        # timeout too short for the 4B profile, hence the explicit timeout.
+        "MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON": "0",
+        "MEMO_EMBEDDER_CLIENT_TIMEOUT": os.environ.get("MEMO_EVAL_BEHAVIOR_EMBED_TIMEOUT", "120"),
         # The eval is about the payload, not about a session's adaptive state.
         "MEMO_RECALL_DISABLE": "0",
     }
