@@ -302,3 +302,95 @@ def test_a_missing_fact_gate_says_whether_the_payload_carried_it() -> None:
 
     assert not absent.passed and "never carried the fact" in absent.detail
     assert not present.passed and "IS in the recall block" in present.detail
+
+
+# --- error paths -------------------------------------------------------------
+
+
+def test_scenario_without_an_id_is_rejected(tmp_path: Path) -> None:
+    doc = _scenario_doc()
+    del doc["scenarios"][0]["scenario_id"]
+
+    with pytest.raises(ValueError, match="missing scenario_id"):
+        load_scenarios(_write(tmp_path, doc))
+
+
+def test_corpus_that_is_not_an_object_with_scenarios_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must be an object"):
+        load_scenarios(_write(tmp_path, {"schema_version": eb.SCHEMA_VERSION}))
+
+    with pytest.raises(ValueError, match="must be an object"):
+        load_scenarios(_write(tmp_path, ["not", "an", "object"]))
+
+
+def test_corpus_with_an_empty_scenarios_list_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="has no scenarios"):
+        load_scenarios(_write(tmp_path, {"schema_version": eb.SCHEMA_VERSION, "scenarios": []}))
+
+
+def test_malformed_json_corpus_raises_valueerror(tmp_path: Path) -> None:
+    path = tmp_path / "scenarios.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="could not read"):
+        load_scenarios(path)
+
+
+class _Proc:
+    def __init__(self, returncode: int = 0, stdout: str = "{}", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_recall_hook_timeout_is_raised_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+
+    def _timeout(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="memo", timeout=1.0)
+
+    monkeypatch.setattr(eb.subprocess, "run", _timeout)
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        eb.run_recall_hook("p", tmp_path, timeout=1.0)
+
+
+def test_recall_hook_nonzero_exit_is_raised_with_its_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        eb.subprocess, "run", lambda *a, **k: _Proc(returncode=2, stderr="boom detail")
+    )
+
+    with pytest.raises(RuntimeError, match=r"exited 2.*boom detail"):
+        eb.run_recall_hook("p", tmp_path)
+
+
+def test_recall_hook_non_json_output_is_raised(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(eb.subprocess, "run", lambda *a, **k: _Proc(stdout="not json at all"))
+
+    with pytest.raises(RuntimeError, match="non-JSON"):
+        eb.run_recall_hook("p", tmp_path)
+
+
+def test_recall_hook_returns_the_injected_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = json.dumps({"hookSpecificOutput": {"additionalContext": "## Memory\n- [aa] x"}})
+    monkeypatch.setattr(eb.subprocess, "run", lambda *a, **k: _Proc(stdout=payload))
+
+    assert eb.run_recall_hook("p", tmp_path) == "## Memory\n- [aa] x"
+    # The warm signal the hook needs must have been stamped in the seeded state.
+    assert (tmp_path / "state" / ".prewarm_ts").is_file()
+
+
+def test_recall_hook_with_no_context_key_returns_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(eb.subprocess, "run", lambda *a, **k: _Proc(stdout="{}"))
+
+    assert eb.run_recall_hook("p", tmp_path) == ""

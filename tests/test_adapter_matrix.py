@@ -295,3 +295,38 @@ def test_real_repo_has_no_adapter_drift() -> None:
     root = Path(__file__).resolve().parent.parent
 
     assert adapter_issues(root) == []
+
+
+# --- error / skip paths -------------------------------------------------------
+
+
+def test_unreadable_json_becomes_an_issue_not_a_silent_pass(repo: Path) -> None:
+    """A gate that cannot parse its input must say so. Returning [] here would
+    report "no drift" for a repo it never actually checked."""
+    (repo / ".mcp.json").write_text("{ this is not json", encoding="utf-8")
+
+    issues = adapter_issues(repo)
+
+    assert issues and any("could not run" in i for i in issues)
+
+
+def test_a_check_that_could_not_run_is_reported_as_an_issue(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`skipped` exists for a surface that IS there but could not be verified —
+    e.g. the CLI is not importable. That must surface, never pass silently."""
+    from memo import adapter_matrix as am
+
+    def _unimportable(root: Path):
+        check = am.Check(check_id="hook-commands-resolve", surface="s", description="d")
+        check.skipped = True
+        check.findings.append("memo package not importable, CLI not verified: boom")
+        return check
+
+    monkeypatch.setattr(am, "CHECKS", (_unimportable,))
+
+    issues = adapter_issues(repo)
+
+    assert issues == [
+        "hook-commands-resolve did not run: memo package not importable, CLI not verified: boom"
+    ]
