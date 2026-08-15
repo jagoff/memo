@@ -282,7 +282,10 @@ def run_recall_hook(prompt: str, workdir: Path, *, timeout: float = 60.0) -> str
         # A live daemon can still read "unreachable" purely from a client
         # timeout too short for the 4B profile, hence the explicit timeout.
         "MEMO_EMBEDDER_CLIENT_REQUIRE_DAEMON": "0",
-        "MEMO_EMBEDDER_CLIENT_TIMEOUT": os.environ.get("MEMO_EVAL_BEHAVIOR_EMBED_TIMEOUT", "120"),
+        # Well above the 30s query default — a fixed harness decision, not a
+        # knob: an eval is not latency-bound, and every MEMO_* knob has to be a
+        # registered FlagSpec rather than an inline os.environ read.
+        "MEMO_EMBEDDER_CLIENT_TIMEOUT": "120",
         # The eval is about the payload, not about a session's adaptive state.
         "MEMO_RECALL_DISABLE": "0",
     }
