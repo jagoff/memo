@@ -1141,8 +1141,17 @@ class _MaintainOpsMixin(_MemoryBase):
                         # Legacy ingest rows without abs_path provenance:
                         # existence can't be verified here — never mass-delete.
                         continue
-            except StorageError:
-                path_exists = False
+            except StorageError as exc:
+                # A path-safety refusal (symlink component, or a path escaping
+                # memory_dir) means existence could NOT be verified — it is not
+                # evidence the canonical `.md` is gone. Deleting on it is
+                # effectively irreversible: `_reindex_locked` refuses the very
+                # same paths, so the row never comes back, and `sync_pull` runs
+                # `gc(fix=True)` unattended on every pull. Same rule as the
+                # legacy `reference` rows above — never delete what we could not
+                # check.
+                _log.warning("gc: cannot verify canonical path for %s: %s", row["id"], exc)
+                continue
             if not path_exists:
                 orphan_store.append(row["id"])
                 if fix:

@@ -303,6 +303,76 @@ def eval_relations_cmd(labels_path: Path, gate: bool, as_json: bool) -> None:
         raise click.exceptions.Exit(1)
 
 
+@eval_group.command(name="behavior")
+@click.option(
+    "--scenarios",
+    "scenarios_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("eval/behavior_scenarios.json"),
+    show_default=True,
+)
+@click.option(
+    "--recall-only",
+    is_flag=True,
+    help="Score only the recall-layer gates. No LLM is loaded — deterministic and fast.",
+)
+@click.option("--only", default=None, help="Run a single scenario by id.")
+@click.option("--gate", is_flag=True, help="Exit non-zero when any scenario fails.")
+@click.option("--json", "as_json", is_flag=True, help="Emit raw JSON.")
+def eval_behavior_cmd(
+    scenarios_path: Path, recall_only: bool, only: str | None, gate: bool, as_json: bool
+) -> None:
+    """Measure whether a recalled memory actually steers the answer.
+
+    Seeds an isolated store, runs the real `memo recall-hook` against it, then
+    judges the answer a model gives with that injected block. A red gate means
+    the injected payload under-steers — not that a specific agent misbehaved.
+    """
+    from memo.eval_behavior import load_scenarios, run_scenarios
+
+    try:
+        scenarios = load_scenarios(scenarios_path)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if only:
+        scenarios = [s for s in scenarios if s.scenario_id == only]
+        if not scenarios:
+            raise click.ClickException(f"no scenario with id {only!r} in {scenarios_path}")
+
+    results = run_scenarios(scenarios, recall_only=recall_only)
+    passed = sum(1 for r in results if r.passed)
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "schema_version": "memo.eval_behavior.report.v1",
+                    "recall_only": recall_only,
+                    "scenarios": len(results),
+                    "passed": passed,
+                    "results": [r.as_dict() for r in results],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        for result in results:
+            mark = "✓" if result.passed else "✗"
+            color = "green" if result.passed else "red"
+            console.print(f"[{color}]{mark}[/{color}] {result.scenario_id}")
+            if result.error:
+                console.print(f"    [red]error:[/red] {result.error}")
+            for gate_result in result.gates:
+                if not gate_result.passed:
+                    console.print(f"    [red]✗[/red] {gate_result.gate.kind}: {gate_result.detail}")
+        mode = "recall-layer only" if recall_only else "full"
+        console.print(f"\n{passed}/{len(results)} scenarios passed ({mode})")
+
+    if gate and passed != len(results):
+        raise click.exceptions.Exit(1)
+
+
 def _run_gate(
     rows: list[Any],
     cfg: Config,

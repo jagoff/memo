@@ -1001,6 +1001,50 @@ def test_gc_never_deletes_labeled_ingest_reference_rows(mem_with_stub: Memory, t
     assert mem_with_stub.store.get(live) is None
 
 
+def test_gc_never_deletes_rows_whose_canonical_path_cannot_be_verified(
+    mem_with_stub: Memory, tmp_path
+):
+    """A path-safety refusal is not evidence the `.md` is gone.
+
+    `_resolve_existing` -> `_safe_path_under` raises StorageError when a path
+    component is a symlink (a *safety* refusal, e.g. a symlinked vault folder or
+    an iCloud placeholder). Treating that as "file missing" deletes a live row
+    whose Markdown is right there — and it is unrecoverable in practice, because
+    `_reindex_locked` refuses the very same symlinked paths, so reindex never
+    puts the row back. `sync_pull` runs `gc(fix=True)` unattended on every pull,
+    so the memory silently leaves search/recall/list during background sync.
+    Same rule as the legacy `reference` rows above: never delete what we could
+    not check.
+    """
+    memory_dir = mem_with_stub.cfg.memory_dir
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    real_bucket = tmp_path / "real-bucket"
+    real_bucket.mkdir()
+    (real_bucket / "note.md").write_text("cuerpo vivo en disco", encoding="utf-8")
+    (memory_dir / "bucket").symlink_to(real_bucket, target_is_directory=True)
+
+    row_id = "symlinked-01"
+    mem_with_stub.store.upsert(
+        id_=row_id,
+        path="bucket/note.md",
+        title="behind a symlinked bucket",
+        type_="note",
+        tags=[],
+        created="2026-01-01T00:00:00+00:00",
+        updated="2026-01-01T00:00:00+00:00",
+        body_hash="z" * 16,
+        embedding=_unit(mem_with_stub.cfg.embedder_dims),
+        extra={},
+    )
+    # The canonical file really is on disk — only the safety check refuses it.
+    assert (memory_dir / "bucket" / "note.md").is_file()
+
+    report = mem_with_stub.gc(fix=True)
+
+    assert row_id not in report["orphan_store"]
+    assert mem_with_stub.store.get(row_id) is not None
+
+
 def test_reindex_updates_store_path_after_markdown_move_without_embedding(
     mem_with_stub: Memory, monkeypatch
 ):

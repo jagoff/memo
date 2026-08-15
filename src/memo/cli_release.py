@@ -626,6 +626,14 @@ def release_check_report(repo: Path, *, strict_docs: bool = False) -> ReleaseChe
         warnings=warnings,
     )
 
+    # Surfaces that carry no version but ship with the release, and whose drift
+    # is silent: a hook firing a subcommand the CLI dropped (hooks soft-fail by
+    # design), an `.mcp.json` whose embedder dims stopped matching its model
+    # (MLX invariant 3), a manifest pointing at a file that is gone.
+    from memo.adapter_matrix import adapter_issues
+
+    issues.extend(adapter_issues(repo))
+
     return ReleaseCheckReport(version, versions, issues, warnings)
 
 
