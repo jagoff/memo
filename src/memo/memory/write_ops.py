@@ -166,6 +166,24 @@ def _graph_entities_from_extra(extra: dict[str, Any]) -> list[dict[str, str]]:
     return out
 
 
+def _live_markdown_files(root: Path) -> Iterator[Path]:
+    """Every canonical ``.md`` under ``root``, skipping the lifecycle archives.
+
+    ``inactive/`` and ``archived/`` keep their canonical ``id`` so a human — or
+    ``memo consolidate restore`` — can move a note back out by hand. Any walker
+    that re-indexes what it finds has to skip them, or it resurrects an
+    archived memory behind the user's back. ``reindex`` and the disk-orphan gc
+    already do; this is the same rule for the write path.
+    """
+    from memo.project import LIFECYCLE_ARCHIVE_DIRS
+
+    for path in sorted(root.rglob("*.md")):
+        parts = path.relative_to(root).parts
+        if parts[:1] and parts[0] in LIFECYCLE_ARCHIVE_DIRS:
+            continue
+        yield path
+
+
 class _WriteOpsMixin(_MemoryBase):
     # -- save ---------------------------------------------------------------
 
@@ -1523,21 +1541,12 @@ class _WriteOpsMixin(_MemoryBase):
         self, *, namespace: str, topic_key: str
     ) -> list[dict[str, Any]]:
         """Rebuild a disk-only topic reservation after an index failure."""
-        from memo.project import LIFECYCLE_ARCHIVE_DIRS
         from memo.redact import sanitize_memory_input
 
         candidates: list[tuple[Path, frontmatter.Post, list[str]]] = []
-        for candidate in sorted(self.cfg.memory_dir.rglob("*.md")):
+        for candidate in _live_markdown_files(self.cfg.memory_dir):
             try:
                 if candidate.is_symlink():
-                    continue
-                parts = candidate.relative_to(self.cfg.memory_dir).parts
-                if parts[:1] and parts[0] in LIFECYCLE_ARCHIVE_DIRS:
-                    # `inactive/` and `archived/` keep their canonical id so a
-                    # human (or `consolidate restore`) can move a note back.
-                    # Recovering one here would resurrect it into the index
-                    # behind everyone's back — the same reason reindex and the
-                    # disk-orphan gc skip these two directories.
                     continue
                 candidate_post = frontmatter.loads(candidate.read_text(encoding="utf-8"))
                 candidate_id = str(candidate_post.metadata.get("id") or "")

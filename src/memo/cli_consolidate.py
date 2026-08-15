@@ -7,6 +7,7 @@ root group in cli.py via `cli.add_command(consolidate_group)`.
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import click
 from rich.markup import escape
@@ -15,6 +16,9 @@ from rich.table import Table
 from memo.cli_common import console
 from memo.cli_common import get_memory as _get_memory
 from memo.config import Config
+
+if TYPE_CHECKING:
+    from memo.consolidation import RestoreResult
 
 # -- advanced consolidation commands -------------------------------------------
 
@@ -251,6 +255,11 @@ def consolidate_restore(
         )
         return
 
+    _print_restore(result, drop_merged=drop_merged, dry_run=dry_run)
+
+
+def _print_restore(result: RestoreResult, *, drop_merged: bool, dry_run: bool) -> None:
+    """Render a RestoreResult for humans."""
     if dry_run:
         console.print("[yellow]Dry run — nothing changed.[/yellow]")
     console.print(f"[green]✓ Restored {len(result.restored_ids)} memories[/green]")
@@ -260,7 +269,7 @@ def consolidate_restore(
         console.print(f"[dim]...and {len(result.restored_ids) - 20} more[/dim]")
     if result.missing_ids:
         console.print(
-            f"[yellow]⊘ Not found under archived/: "
+            f"[yellow]⊘ Not recovered: "
             f"{escape(', '.join(m[:8] for m in result.missing_ids))}[/yellow]"
         )
     if result.dropped_merged_id:

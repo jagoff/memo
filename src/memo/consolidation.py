@@ -505,13 +505,14 @@ class AdvancedConsolidator:
     ) -> tuple[list[tuple[Path, str]], list[str]]:
         """Resolve the request to (file, id) pairs plus the ids not found."""
         import frontmatter
+        import yaml
 
         if for_merged:
             selected = []
             for path in archived_files:
                 try:
                     post = frontmatter.loads(path.read_text(encoding="utf-8"))
-                except Exception as exc:
+                except (OSError, yaml.YAMLError) as exc:
                     # One corrupt archive must not sink the rest of the batch.
                     _log.warning("restore: cannot read %s: %s", path.name, exc)
                     continue
@@ -534,10 +535,11 @@ class AdvancedConsolidator:
     def _restore_one(self, path: Path, memory_id: str) -> bool:
         """Write one archived file back into the live tree. Returns success."""
         import frontmatter
+        import yaml
 
         try:
             post = frontmatter.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
+        except (OSError, yaml.YAMLError) as exc:
             # A corrupt or unreadable archive is reported and skipped; the rest
             # of the batch still gets restored.
             _log.warning("restore: cannot read %s: %s", path.name, exc)
