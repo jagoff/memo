@@ -9,6 +9,22 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.11.1] - 2026-08-15
+
+### Fixed
+
+- `memo eval memory --gate` compared its own numbers against a baseline written
+  by `memo eval recall`. The two measure different pipelines and shared one
+  file; only `eval recall` ever wrote it, so the defect was on the read side,
+  and `check_gate`'s k guard caught it only when the two happened to run at a
+  different top-K. Each command now owns its baseline file, the payload is
+  stamped with the command that wrote it, and a mismatched one is refused.
+  `eval recall` keeps the historical filename so no machine has to re-seed, and
+  an unstamped baseline counts as recall's because before the split only that
+  command could produce one. `eval memory` also gains `--update-baseline` —
+  refusing the foreign baseline without giving it a way to seed its own would
+  have left its gate with no remedy at all.
+
 ## [4.11.0] - 2026-08-15
 
 ### Added
