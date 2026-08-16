@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import click
 import pytest
 
 from memo import cli_eval
@@ -49,7 +50,7 @@ def test_default_command_is_recall(tmp_path: Path) -> None:
 def test_a_baseline_written_by_the_other_command_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "recall_baseline.json"
 
-    with pytest.raises(Exception, match="was written by `memo eval recall`"):
+    with pytest.raises(click.ClickException, match="was written by `memo eval recall`"):
         _reject_foreign_baseline({"gate_command": GATE_RECALL}, GATE_MEMORY, path)
 
 
@@ -64,7 +65,7 @@ def test_an_unstamped_baseline_counts_as_recall(tmp_path: Path) -> None:
     instead of forcing everyone to re-seed."""
     _reject_foreign_baseline({"precision_at_k": 0.6}, GATE_RECALL, tmp_path / "b.json")
 
-    with pytest.raises(Exception, match="was written by `memo eval recall`"):
+    with pytest.raises(click.ClickException, match="was written by `memo eval recall`"):
         _reject_foreign_baseline({"precision_at_k": 0.6}, GATE_MEMORY, tmp_path / "b.json")
 
 
@@ -78,6 +79,7 @@ def _stub_eval(monkeypatch: pytest.MonkeyPatch) -> None:
     from memo import eval_recall
 
     labels = eval_recall.LabelSet(prompts=[eval_recall.Prompt("where is memo", relevant=True)])
+
     class _Mem:
         def close(self) -> None:  # eval memory closes the store before scoring
             pass
@@ -152,5 +154,5 @@ def test_gate_payload_round_trips_the_stamp(tmp_path: Path) -> None:
     loaded = json.loads(path.read_text(encoding="utf-8"))
 
     _reject_foreign_baseline(loaded, GATE_MEMORY, path)
-    with pytest.raises(Exception):
+    with pytest.raises(click.ClickException):
         _reject_foreign_baseline(loaded, GATE_RECALL, path)
