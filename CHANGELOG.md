@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.11.3] - 2026-08-16
+
+### Fixed
+
+- An `unload()` landing between `_ensure_loaded()` and the dereference could
+  null the model or tokenizer mid-embed, surfacing as an `AttributeError` on
+  `None` instead of a clean failure. Both embedders now snapshot the pair under
+  the same lock that loads it, so an in-flight embed always runs against a
+  consistent model/tokenizer or raises a named error (#256).
+
 ## [4.11.2] - 2026-08-15
 
 ### Fixed
