@@ -30,8 +30,19 @@ def _tantivy_available() -> bool:
 
 
 @lru_cache(maxsize=4096)
-def _fold_diacritics(text: str) -> str:
-    """Strip combining diacritical marks so 'decisión' matches 'decision'."""
+def _fold_diacritics(text: str | None) -> str:
+    """Strip combining diacritical marks so 'decisión' matches 'decision'.
+
+    ``None`` folds to ``""``. A nullable column reaching this raised
+    ``normalize() argument 2 must be str, not None`` inside ``add_document``,
+    and the caller's except-branch then called ``_mark_tantivy_unhealthy()`` —
+    so one row with a NULL title or body silently downgraded the whole BM25
+    backend to FTS5 for the rest of the process. Coercing at this boundary
+    covers every ``add_document`` call site at once (queries.py has four)
+    rather than one of them; ``rebuild`` already guarded with ``or ""``.
+    """
+    if text is None:
+        return ""
     return "".join(
         c for c in unicodedata.normalize("NFD", text) if not unicodedata.combining(c)
     ).lower()
@@ -111,7 +122,9 @@ class TantivyFTSIndex:
             self._pending.clear()
             self._closed = True
 
-    def add_document(self, id_: str, title: str, tags: str, body: str) -> None:
+    def add_document(self, id_: str, title: str | None, tags: str | None, body: str | None) -> None:
+        """Queue a document. Nullable text folds to "" (see _fold_diacritics):
+        a NULL title or body must not be able to mark the backend unhealthy."""
         with self._lock:
             self._ensure_open()
             self._pending.append(

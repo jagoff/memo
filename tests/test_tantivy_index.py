@@ -287,3 +287,31 @@ def test_fallback_to_fts5_when_tantivy_absent(
     assert len(results) == 1
     assert results[0]["id"] == "abc"
     store.close()
+
+
+def test_fold_diacritics_accepts_none_so_a_null_column_cannot_kill_the_backend() -> None:
+    """A NULL title or body used to raise `normalize() argument 2 must be str,
+    not None` inside add_document; the caller then called
+    _mark_tantivy_unhealthy(), downgrading BM25 to FTS5 for the whole process
+    over one bad row. Observed 3x in watch.err.log on this machine.
+    """
+    from memo.store.tantivy_index import _fold_diacritics
+
+    assert _fold_diacritics(None) == ""
+    # The folding itself must be unchanged for real text.
+    assert _fold_diacritics("Decisión") == "decision"
+    assert _fold_diacritics("") == ""
+
+
+def test_add_document_tolerates_null_text_fields() -> None:
+    """The boundary fix has to cover the queue path, not just the helper:
+    queries.py has four add_document call sites that pass DB columns straight
+    through."""
+    import inspect
+
+    from memo.store.tantivy_index import TantivyFTSIndex
+
+    sig = inspect.signature(TantivyFTSIndex.add_document)
+    for name in ("title", "tags", "body"):
+        annotation = str(sig.parameters[name].annotation)
+        assert "None" in annotation, f"{name} must accept None, got {annotation}"
