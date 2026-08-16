@@ -5,7 +5,12 @@ import time
 
 import pytest
 
-from memo.terminal_receiver import ReceiverClient, ReceiverSession, ReceiverSupervisor
+from memo.terminal_receiver import (
+    ReceiverClient,
+    ReceiverSession,
+    ReceiverSupervisor,
+    read_capability_file,
+)
 
 
 def _session():
@@ -85,3 +90,32 @@ def test_enter_and_conflicting_message_id_are_deterministic(tmp_path):
         assert write_conflict["error"] == "message_id conflict"
     finally:
         sup.close()
+
+
+def test_capability_file_requires_exact_owner_mode_and_content(tmp_path):
+    path = tmp_path / "cap"
+    path.write_text("secret\n", encoding="ascii")
+    path.chmod(0o600)
+    assert read_capability_file(path) == "secret"
+    path.write_text("", encoding="ascii")
+    with pytest.raises(ValueError, match="empty"):
+        read_capability_file(path)
+    path.write_text("secret", encoding="ascii")
+    path.chmod(0o640)
+    with pytest.raises(ValueError, match="0600"):
+        read_capability_file(path)
+
+
+def test_session_rejects_invalid_inputs_and_oversized_payload():
+    with pytest.raises(ValueError, match="invalid receiver"):
+        ReceiverSession(-1, 1)
+    s = _session()
+    try:
+        with pytest.raises(ValueError, match="string"):
+            s.write(123)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="frame too large"):
+            s.write("x" * (64 * 1024 + 1))
+        assert s.alive()
+    finally:
+        s.close()
+        s.close()
