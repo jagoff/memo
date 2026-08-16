@@ -155,3 +155,33 @@ Threshold fiel-lean a synapse `user_model.py:636-659` (sin accept-rate — no re
 - Cobertura de la tabla del spec: feedback (plan 1 ✔); eval-chat (plan 1 ✔); insight → Tasks 4-5 ✔; crystallize → Task 6 ✔; SSM threshold → Task 4 (lean: ups-only, sin accept-rate — decisión documentada) ✔; goal_model → tags `goal` + briefing Task 7 ✔; morning_digest → Task 7 (lean: solo señales vivas; federación muerta descartada) ✔; dream-synthesis → ya cubierto por memo dream (verificado: synthesize_cross_cluster/distill/chronicle) — sin task ✔; contacts_alias+whatsapp_live → Tasks 1-3 ✔; whatsapp-ingest → Task 8 (comando ya existe en memo) ✔; ocr_enrich → fuera (spec) ✔.
 - Sin placeholders: algoritmos con fórmulas/regex/SQL verbatim citados; los pocos "verificar firma real" tienen file:line y fallback.
 - Consistencia: knobs nuevos todos vía ChatConfig + owned set; stores bajo `state_dir/chat/`; patrones de test idénticos al plan 1.
+
+## Revisión 2026-08-01 — WhatsApp eliminado
+
+**Decisión del usuario:** WhatsApp era funcionalidad heredada de la era synapse
+y ya no hace falta. Se elimina todo rastro, tanto lo agregado en este plan
+como una feature preexistente de memo que no tenía relación con el chat.
+
+- **Tasks 1-3 revertidas** (`contacts_alias.py`, `whatsapp_live.py`, el hook
+  exclusivo de WA live en `chat_stream`) — commit `revert(chat): drop
+  whatsapp live layer from learning branch` (06b16bfa). `chat_stream` vuelve
+  al flujo de retrieval semántico plano, sin la fuente sintética `wa-live:*`.
+- **Task 8 revertida** (servicio launchd `com.memo.whatsapp-ingest`,
+  `render_whatsapp_ingest_plist`/`install_whatsapp_ingest`) — mismo commit
+  06b16bfa (Task 8R en la ledger: "removal", supersede la review original de
+  Task 8).
+- **Feature preexistente removida** (no era parte de este plan — indexación
+  WhatsApp que memo ya tenía desde antes de synapse): `whatsapp_ingest.py`,
+  el subcomando `memo import whatsapp`, la exclusión del dir de notas de
+  WhatsApp en `vault_ingest.py`, y el rerank por recencia/conversación
+  flotante para transcripts de WhatsApp en `ask()` — commit `feat!: remove
+  whatsapp indexing from memo` (813ea18a).
+- **Breaking:** `memo import whatsapp` y los flags `MEMO_WHATSAPP_DB` /
+  `MEMO_WHATSAPP_NOTES_DIR` / `WHATSAPP_BOT_JID` /
+  `WA_LISTENER_NOTES_CHAT_JID` ya no existen. Cualquier automatización o
+  launchd job externo que los usara debe eliminarse a mano (no hay shim de
+  compatibilidad — decisión explícita, no accidental).
+- **Tasks 4-7 intactas**: insight (detector + threshold adaptativo, Task 4),
+  `/api/insight/capture` (Task 5), `memo chat crystallize` (Task 6), y el
+  digest de chat + metas en el briefing (Task 7) no dependen de WhatsApp y
+  no fueron tocados por la reversión.

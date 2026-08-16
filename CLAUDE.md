@@ -181,6 +181,28 @@ dominant source group), `MEMO_CHAT_ANSWER_MAX_TOKENS` (1200),
 checks pass/fail + p50/p95 latency — the chat-side counterpart to `memo eval
 recall` (see Retrieval-regression discipline below).
 
+**Learning layer:** after the SSE `done` frame, `src/memo/chat/insight.py`
+runs a heuristic-only detector (no LLM judge, faithful to synapse's
+production config) over the question/answer/sources and — above an adaptive
+threshold (90 default, 75 once ≥5 👍 feedback events match the question's
+domain) — emits an `insight_proposal` frame with a candidate memoria. `POST
+/api/insight/capture` (`src/memo/chat/http.py`) persists an accepted
+candidate via `mem.save`, tagged `chat-capture` and, when `score < 90`,
+`_uncertain` — the same quarantine tag `dream_graduate` already untags
+nightly, so a low-confidence chat capture graduates or gets pruned like any
+other quarantined memory. `memo chat crystallize [SESSION_ID] [--dry-run]`
+(`src/memo/chat/crystallize.py`) synthesizes a session's transcript into one
+`decision` memoria via the verbatim synapse `crystallize.py` prompt (JSON
+title/situation/decisions/learnings/goal_progress), falling back to a
+heuristic summary if the LLM call fails; a dedup window skips a re-run of the
+same session within 1800s. `briefing.chat_digest_lines` adds a "💬 Chat"
+SessionStart section — insight captures + active chat sessions from the last
+24h, plus up to 3 active goals (`mem.store.list_by_tag("goal")`,
+`invalid_at`-filtered) — gated by `MEMO_BRIEFING_CHAT_DIGEST` (default on,
+registered `FlagSpec`). The insight toggle, `MEMO_CHAT_INSIGHT` (default
+True), lives in `src/memo/chat/config.py` alongside the other env-only chat
+knobs above (excluded from `flags.unknown_memo_vars`, same as them).
+
 **Ops (launchd):** `memo ops install chat [--port 8765] [--dist <path>]` /
 `memo ops uninstall chat` / `memo ops status` (`src/memo/ops_launchd.py`)
 render and bootstrap a `com.memo.chat` LaunchAgent (`KeepAlive`, logs to
