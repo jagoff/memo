@@ -18,7 +18,7 @@ from memo.embedder import MLXEmbedder
 
 
 def _embedder() -> MLXEmbedder:
-    return MLXEmbedder("stub-model", 8)
+    return MLXEmbedder("stub-model", expected_dims=8)
 
 
 def test_embed_snapshots_the_model_under_the_load_lock(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,3 +132,98 @@ def test_snapshot_raises_when_only_the_tokenizer_is_gone() -> None:
 
     with _pytest.raises(RuntimeError):
         _snapshot_loaded(threading.Lock(), lambda: object(), lambda: None, "gone")
+
+
+# -- the embed bodies, exercised without MLX ---------------------------------
+#
+# These lines only ran on Apple Silicon before: CI's Linux runners cannot
+# import mlx, so `embed()`'s body had zero coverage there. The fake below is
+# deliberately tiny — it fakes only the four ops the bodies call — and each
+# test asserts a real contract, not that a stub returned a stub.
+
+
+class _FakeArr:
+    def __init__(self, data, shape=None):
+        self.data = data
+        self.shape = shape or (1, 1, len(data[0]) if data and isinstance(data[0], list) else 1)
+
+    def __mul__(self, other):
+        return self
+
+    def __truediv__(self, other):
+        return self
+
+    def __getitem__(self, key):
+        return self
+
+    def tolist(self):
+        return self.data[0] if self.data else []
+
+
+def _fake_mlx(monkeypatch: pytest.MonkeyPatch, *, dims: int) -> None:
+    import sys
+    import types
+
+    core = types.ModuleType("mlx.core")
+    core.array = lambda d: _FakeArr(d if isinstance(d[0], list) else [d])  # type: ignore[attr-defined]
+    core.mean = lambda a, axis=None: _FakeArr([[1.0] * dims])  # type: ignore[attr-defined]
+    core.sum = lambda a, axis=None, keepdims=False: _FakeArr([[1.0]])  # type: ignore[attr-defined]
+    core.sqrt = lambda a: _FakeArr([[1.0]])  # type: ignore[attr-defined]
+    core.where = lambda c, a, b: b  # type: ignore[attr-defined]
+    core.ones_like = lambda a: a  # type: ignore[attr-defined]
+    core.clear_cache = lambda: None  # type: ignore[attr-defined]
+    mlx = types.ModuleType("mlx")
+    mlx.core = core  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx", mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", core)
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _noop_guard():
+        yield
+
+    monkeypatch.setattr("memo.embedder.gpu_guard", _noop_guard)
+
+
+class _StubTokenizer:
+    eos_token_id = 7
+
+    def encode(self, text, add_special_tokens=False):
+        return [1, 2, 3]
+
+
+def test_micro_embed_uses_the_snapshotted_locals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs MicroEmbedder's pooling body end to end with the model nulled
+    AFTERWARDS: it must still succeed, because the body holds locals."""
+    from memo.embedder import MicroEmbedder
+
+    _fake_mlx(monkeypatch, dims=4)
+    micro = MicroEmbedder("stub", expected_dims=4)
+    micro._model = type("M", (), {"model": lambda self, arr: _FakeArr([[1.0] * 4])})()
+    micro._tokenizer = _StubTokenizer()
+    monkeypatch.setattr(type(micro), "_ensure_loaded", lambda self: None)
+
+    out = micro.embed(["hola"])
+
+    assert len(out) == 1 and len(out[0]) == 4
+
+
+def test_mlx_embed_rejects_a_model_whose_width_is_not_the_configured_dims(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MLX invariant 3 at runtime: a model whose hidden width disagrees with
+    `embedder_dims` must fail loudly, not write wrong-width vectors into vec0.
+    Reaching this guard also exercises the tokenizer/model dereferences."""
+    from memo.embedder import MLXEmbedder
+
+    _fake_mlx(monkeypatch, dims=8)
+    emb = MLXEmbedder("stub-model", expected_dims=8)
+    emb._model = type(
+        "M", (), {"model": lambda self, arr: _FakeArr([[1.0] * 3], shape=(1, 1, 3))}
+    )()
+    emb._tokenizer = _StubTokenizer()
+    monkeypatch.setattr(type(emb), "_ensure_loaded", lambda self: None)
+
+    with pytest.raises(RuntimeError, match=r"dim=3.*expects 8"):
+        emb.embed(["hola"])
