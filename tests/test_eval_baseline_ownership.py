@@ -156,3 +156,88 @@ def test_gate_payload_round_trips_the_stamp(tmp_path: Path) -> None:
     _reject_foreign_baseline(loaded, GATE_MEMORY, path)
     with pytest.raises(click.ClickException):
         _reject_foreign_baseline(loaded, GATE_RECALL, path)
+
+
+def test_memory_gate_without_its_own_baseline_says_how_to_seed_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal has to be actionable. Falling back to recall's baseline is
+    exactly what this change removes, so the error must name the remedy."""
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    _stub_eval(monkeypatch)
+    result = CliRunner().invoke(
+        cli,
+        ["eval", "memory", "--labels", str(_labels_file(tmp_path)), "--gate"],
+        env=_env(tmp_path),
+    )
+
+    assert result.exit_code != 0
+    assert "no memory gate baseline" in result.output
+    assert "--update-baseline" in result.output
+    assert "different pipeline" in result.output
+
+
+def test_memory_gate_runs_against_a_baseline_it_seeded_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seed then gate: the full loop the refusal above would otherwise block."""
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    _stub_eval(monkeypatch)
+    labels = _labels_file(tmp_path)
+    env = _env(tmp_path)
+
+    seeded = CliRunner().invoke(
+        cli, ["eval", "memory", "--labels", str(labels), "--update-baseline"], env=env
+    )
+    assert seeded.exit_code == 0, seeded.output
+
+    gated = CliRunner().invoke(
+        cli, ["eval", "memory", "--labels", str(labels), "--gate", "--json"], env=env
+    )
+
+    assert gated.exit_code == 0, gated.output
+    assert json.loads(gated.output)["gate"]["passed"] is True
+
+
+def test_memory_gate_refuses_a_baseline_recall_left_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regression this whole change exists for: a recall-written file must
+    not be silently accepted just because it happens to sit in state_dir."""
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    _stub_eval(monkeypatch)
+    env = _env(tmp_path)
+    eval_dir = tmp_path / "state" / "eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    # Same filename the memory gate now reads, but stamped by the other command.
+    (eval_dir / "memory_baseline.json").write_text(
+        json.dumps({"gate_command": GATE_RECALL, "precision_at_k": 0.9, "k": 5}), "utf-8"
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["eval", "memory", "--labels", str(_labels_file(tmp_path)), "--gate"],
+        env=env,
+    )
+
+    assert result.exit_code != 0
+    assert "was written by `memo eval recall`" in result.output
+
+
+def test_load_baseline_reads_a_stored_payload(tmp_path: Path) -> None:
+    cfg = _Cfg(tmp_path)
+    path = _baseline_path(cfg, GATE_MEMORY)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"gate_command": GATE_MEMORY, "precision_at_k": 0.42}), "utf-8")
+
+    assert cli_eval._load_baseline(cfg, GATE_MEMORY)["precision_at_k"] == 0.42
+    assert cli_eval._load_baseline(cfg, GATE_RECALL) == {}
