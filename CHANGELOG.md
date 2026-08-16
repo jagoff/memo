@@ -9,6 +9,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.11.2] - 2026-08-15
+
+### Fixed
+
+- A NULL title or body no longer downgrades the BM25 backend. `_fold_diacritics`
+  called `unicodedata.normalize` on whatever the caller passed; a nullable
+  column reaching it raised `normalize() argument 2 must be str, not None`
+  inside `add_document`, and the caller's except-branch then ran
+  `_mark_tantivy_unhealthy()` — so one bad row silently downgraded BM25 to FTS5
+  for the rest of the process. Fixed at the boundary rather than at the four
+  `add_document` call sites in `queries.py`, since patching one would have left
+  the other three. Only reachable with the `tantivy` extra installed.
+
 ## [4.11.1] - 2026-08-15
 
 ### Fixed
