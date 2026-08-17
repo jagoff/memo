@@ -19,6 +19,24 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   canonical parent. Covers the recall-hook subprocess; the warm daemon path
   does not call this yet, a named follow-up.
 
+### Fixed
+
+- Two bugs in `MEMO_SAVE_ABSORB` found by adversarial review right after it
+  shipped default-on:
+  - The absorb target's LLM merge call (up to `MEMO_CONSOLIDATE_TIMEOUT`,
+    default 180s) runs unlocked. If a concurrent nightly consolidation merge
+    archives+deletes the same target while the call is in flight, `update()`
+    silently resolved to `None` with zero logging and the caller fell
+    through to creating a brand-new near-duplicate record — undoing the
+    consolidation that just ran, invisibly. Now logs a warning naming the
+    likely cause, so the outcome is observable instead of a silent mystery.
+  - Absorb had no type-match check: a near-duplicate of a *different* type
+    (e.g. a `note` scoring >=0.88 against an existing `fact`) would still
+    rewrite the existing record's body via LLM merge while keeping its
+    original type label, silently blending cross-type content. Absorb now
+    only triggers on a same-type match; a type mismatch falls through to
+    the ordinary warn-and-create path.
+
 ### Changed
 
 - `MEMO_SAVE_ABSORB` defaults ON: a near-duplicate save now rewrites the
