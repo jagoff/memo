@@ -9,6 +9,18 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.12.1] - 2026-08-17
+
+### Fixed
+
+- Docker image builds again (`docker-publish` had been red since 4.11.2):
+  the wheel force-includes `eval/regression_labels.json`, but the Dockerfiles'
+  explicit COPY allowlist never copied `eval/` into the build context, so the
+  in-image `uv build --wheel` failed with `Forced include not found`. Both
+  `Dockerfile` and `Dockerfile.glama` now `COPY eval ./eval`. This patch
+  release exists to re-run the tag-gated `docker-publish` workflow from a ref
+  that contains the fix — there are no code changes beyond the Dockerfiles.
+
 ## [4.12.0] - 2026-08-17
 
 ### Added
