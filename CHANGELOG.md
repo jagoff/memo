@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.12.0] - 2026-08-17
+
 ### Added
 
 - `MEMO_RECALL_CHUNK_PARENT` (default off): closes a gap where a chunked
@@ -21,6 +23,30 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- Consolidation clustering (`memo consolidate`) no longer splits above-threshold
+  near-duplicates across different proposed clusters. `_greedy_cluster` compared
+  each new memory only to each existing cluster's FIRST member (frozen forever
+  as its "representative"), never to members added afterwards — so two
+  near-duplicates could land in different clusters purely because of pull
+  order. Measured on the live corpus: 38.4% of above-threshold pairs (861 of
+  1450) split this way. Single-linkage (connected components of the threshold
+  graph) was tried and rejected as the fix: it transitively chains anything
+  reachable through a path of individually-strong pairs, and on the live
+  corpus one (project, type) bucket alone chained 157 of its 950 memories into
+  one unmergeable blob. Merge-consolidation (`_cluster_within_scope`) now uses
+  average-link (UPGMA) agglomerative clustering instead: two clusters merge
+  only when the AVERAGE similarity across every cross-pair clears the
+  threshold, which fixes the greedy split (previously-split near-duplicates
+  now co-cluster) without single-linkage's chaining (max cluster size stays
+  bounded — 6 vs. 157 on the same corpus). Hand-checked purity on real
+  title+body pairs roughly doubled (~30% -> ~55-60% correct near-duplicates)
+  versus greedy's proposals. The merge itself uses Lance-Williams
+  average-linkage updates (O(k³) at C speed): the naive
+  recompute-every-block-mean formulation was O(k⁴) and turned one
+  `memo_consolidate` call over a dense 500-member component into ~2h of
+  GIL-holding work (caught by the corpus-scale conformance suite).
+  `synthesize_cross_cluster` and `dream_distill.run_distill` (read-only
+  insight generation, not merges) still use the original `_greedy_cluster`.
 - Two bugs in `MEMO_SAVE_ABSORB` found by adversarial review right after it
   shipped default-on:
   - The absorb target's LLM merge call (up to `MEMO_CONSOLIDATE_TIMEOUT`,
@@ -60,28 +86,6 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   `MEMO_SAVE_ABSORB` is enabled, an absorb — can in principle match across
   memory types or projects; this pre-exists the threshold at 0.88 too.
 
-### Fixed
-
-- Consolidation clustering (`memo consolidate`) no longer splits above-threshold
-  near-duplicates across different proposed clusters. `_greedy_cluster` compared
-  each new memory only to each existing cluster's FIRST member (frozen forever
-  as its "representative"), never to members added afterwards — so two
-  near-duplicates could land in different clusters purely because of pull
-  order. Measured on the live corpus: 38.4% of above-threshold pairs (861 of
-  1450) split this way. Single-linkage (connected components of the threshold
-  graph) was tried and rejected as the fix: it transitively chains anything
-  reachable through a path of individually-strong pairs, and on the live
-  corpus one (project, type) bucket alone chained 157 of its 950 memories into
-  one unmergeable blob. Merge-consolidation (`_cluster_within_scope`) now uses
-  average-link (UPGMA) agglomerative clustering instead: two clusters merge
-  only when the AVERAGE similarity across every cross-pair clears the
-  threshold, which fixes the greedy split (previously-split near-duplicates
-  now co-cluster) without single-linkage's chaining (max cluster size stays
-  bounded — 6 vs. 157 on the same corpus). Hand-checked purity on real
-  title+body pairs roughly doubled (~30% -> ~55-60% correct near-duplicates)
-  versus greedy's proposals. `synthesize_cross_cluster` and
-  `dream_distill.run_distill` (read-only insight generation, not merges) still
-  use the original `_greedy_cluster`.
 ## [4.11.3] - 2026-08-16
 
 ### Fixed

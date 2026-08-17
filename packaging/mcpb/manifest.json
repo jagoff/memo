@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "memo",
   "display_name": "memo - local-first memory",
-  "version": "4.11.3",
+  "version": "4.12.0",
   "description": "Local-first long-term memory for AI agents. 100% offline: no cloud API, no keys.",
   "long_description": "memo gives Claude a persistent, local-first memory: decisions, facts and preferences saved today are recalled automatically in future sessions.\n\n- Hybrid retrieval: vector (sqlite-vec) + BM25 fused with RRF, optional cross-encoder rerank\n- Embeddings run in-process - MLX on Apple Silicon, CPU sentence-transformers on Linux - so nothing ever leaves your machine\n- Markdown files are the source of truth (Obsidian-compatible); the sqlite index is fully rebuildable\n- Time-machine queries (ask what was known at any past date), contradiction detection, nightly synthesis\n- Focused default MCP surface (30 tools, ~3k tokens)\n\nRequires the `uv` Python runtime (https://docs.astral.sh/uv/) and Python 3.13+. First launch downloads the package and the embedding model; subsequent launches are instant.",
   "author": {
@@ -23,7 +23,7 @@
     "entry_point": "server/main.py",
     "mcp_config": {
       "command": "uvx",
-      "args": ["--from", "mlx-memo==4.11.3", "memo-mcp"]
+      "args": ["--from", "mlx-memo==4.12.0", "memo-mcp"]
     }
   },
   "keywords": ["memory", "mcp", "local-first", "rag", "obsidian", "offline", "mlx"],
