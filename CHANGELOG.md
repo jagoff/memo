@@ -9,6 +9,25 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.12.2] - 2026-08-17
+
+### Fixed
+
+- Findings from an adversarial review of the (dark) emission ledger that
+  touch live surfaces: `MEMO_EMITTED_LEDGER` now declares its gate in the
+  dark-flag graduation contract (a dark bool without the `_ENABLED` suffix,
+  it escaped the automatic completeness check); `MEMO_SESSION_ID` is no
+  longer flagged as a typo by `memo config validate` (env-only per-session
+  identity); the `memory_with_memories` test fixture pins
+  `MEMO_SAVE_ABSORB=0` so its two cosine-identical seeds stop firing a real
+  LLM absorb per test setup (integration module: ~436s → ~17s on Apple
+  Silicon, and the two-hit premise can no longer be merged away). The
+  emission-ledger spec's invalidation table now records that the promised
+  `/clear` → SessionStart reset was never implemented, and lists the
+  confirmed gaps as explicit promotion blockers.
+- Homebrew reference formula (`docs/homebrew/mlx-memo.rb`) pinned to the
+  published 4.12.1 source distribution (was 4.11.3).
+
 ## [4.12.1] - 2026-08-17
 
 ### Fixed
