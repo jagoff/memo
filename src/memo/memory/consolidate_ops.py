@@ -470,24 +470,48 @@ class _ConsolidateOpsMixin(_MemoryBase):
         threshold: float,
     ) -> builtins.list[builtins.list[int]]:
         """Bottom-up average-link merge of one threshold-graph component.
-        `members` indexes into `sim`; returns index groups still in that space."""
+        `members` indexes into `sim`; returns index groups still in that space.
+
+        Uses the Lance-Williams average-linkage update — when clusters A and B
+        merge, the new average similarity to any C is exactly
+        ``(|A|·sim(A,C) + |B|·sim(B,C)) / (|A|+|B|)`` — so each merge is an
+        O(k) row update plus an O(k^2) C-level argmax over the cluster-sim
+        matrix, O(k^3) total at C speed. The first version instead recomputed
+        every cross-cluster block mean per candidate pair per merge (an
+        O(k^2) *Python* pair loop of `np.ix_().mean()` calls, O(k^4) element
+        touches overall): fine on the live corpus (largest component 157), but
+        the corpus-scale conformance fixture — 20 topics of ~500 near-identical
+        vectors, so components of ~500 — turned `memo_consolidate` into ~2h of
+        GIL-holding work that also starved every later test in the process."""
         import numpy as _np
 
-        clusters: builtins.list[builtins.list[int]] = [[i] for i in range(len(members))]
-        sub = sim[_np.ix_(members, members)]
-        while len(clusters) > 1:
-            best_avg, best_a, best_b = -1.0, -1, -1
-            for a in range(len(clusters)):
-                for b in range(a + 1, len(clusters)):
-                    block = sub[_np.ix_(clusters[a], clusters[b])]
-                    avg = float(block.mean())
-                    if avg > best_avg:
-                        best_avg, best_a, best_b = avg, a, b
-            if best_avg < threshold:
+        k = len(members)
+        # Cluster-level sim matrix, float64: Lance-Williams accumulates
+        # weighted averages in place, and float32 drift could flip a
+        # near-threshold merge the pure-python (float) path accepts.
+        cs = sim[_np.ix_(members, members)].astype(_np.float64)
+        _np.fill_diagonal(cs, -_np.inf)
+        sizes = _np.ones(k, dtype=_np.int64)
+        # A merged-away cluster keeps its slot as [] (falsy) so live clusters
+        # never shift position — the argmax tie-break must stay stable.
+        clusters: builtins.list[builtins.list[int]] = [[i] for i in range(k)]
+        for _ in range(k - 1):
+            flat = int(_np.argmax(cs))
+            a, b = divmod(flat, k)
+            if cs[a, b] < threshold:
                 break
-            clusters[best_a] = clusters[best_a] + clusters[best_b]
-            del clusters[best_b]
-        return [[members[i] for i in c] for c in clusters]
+            if b < a:
+                a, b = b, a
+            row = (sizes[a] * cs[a, :] + sizes[b] * cs[b, :]) / (sizes[a] + sizes[b])
+            cs[a, :] = row
+            cs[:, a] = row
+            cs[a, a] = -_np.inf
+            cs[b, :] = -_np.inf
+            cs[:, b] = -_np.inf
+            sizes[a] += sizes[b]
+            clusters[a] = clusters[a] + clusters[b]
+            clusters[b] = []
+        return [[members[i] for i in c] for c in clusters if c]
 
     @staticmethod
     def _average_link_cluster_pure_python(
@@ -534,39 +558,41 @@ class _ConsolidateOpsMixin(_MemoryBase):
         members: builtins.list[int],
         threshold: float,
     ) -> builtins.list[builtins.list[int]]:
-        """`_upgma_merge_numpy` without numpy — same bottom-up average-link
-        merge of one threshold-graph component, over a plain nested-list
-        similarity matrix. `members`/`sim` index into the same original-item
-        space, so no local/global index remapping is needed here (unlike the
-        numpy path's `sim[np.ix_(...)]` submatrix)."""
+        """`_upgma_merge_numpy` without numpy — the same Lance-Williams
+        average-linkage merge (see that docstring for why the naive
+        recompute-every-block-mean version was replaced), over a local
+        cluster-level nested-list matrix built from `sim` for this component's
+        `members`."""
+        k = len(members)
+        cs = [[sim[members[a]][members[b]] for b in range(k)] for a in range(k)]
+        for i in range(k):
+            cs[i][i] = float("-inf")
+        sizes = [1] * k
         clusters: builtins.list[builtins.list[int]] = [[m] for m in members]
-        while len(clusters) > 1:
-            best_avg, best_a, best_b = -1.0, -1, -1
-            for a in range(len(clusters)):
-                for b in range(a + 1, len(clusters)):
-                    avg = _ConsolidateOpsMixin._cross_pair_avg(sim, clusters[a], clusters[b])
-                    if avg > best_avg:
-                        best_avg, best_a, best_b = avg, a, b
+        for _ in range(k - 1):
+            best_avg, best_a, best_b = float("-inf"), -1, -1
+            for a in range(k):
+                if not clusters[a]:
+                    continue
+                row = cs[a]
+                for b in range(k):
+                    if row[b] > best_avg:
+                        best_avg, best_a, best_b = row[b], a, b
             if best_avg < threshold:
                 break
-            clusters[best_a] = clusters[best_a] + clusters[best_b]
-            del clusters[best_b]
-        return clusters
-
-    @staticmethod
-    def _cross_pair_avg(
-        sim: builtins.list[builtins.list[float]],
-        cluster_a: builtins.list[int],
-        cluster_b: builtins.list[int],
-    ) -> float:
-        """Mean similarity over every (x in cluster_a, y in cluster_b) pair."""
-        total = 0.0
-        count = 0
-        for x in cluster_a:
-            for y in cluster_b:
-                total += sim[x][y]
-                count += 1
-        return total / count
+            a, b = (best_a, best_b) if best_a < best_b else (best_b, best_a)
+            na, nb = sizes[a], sizes[b]
+            for c in range(k):
+                merged = (na * cs[a][c] + nb * cs[b][c]) / (na + nb)
+                cs[a][c] = merged
+                cs[c][a] = merged
+                cs[b][c] = float("-inf")
+                cs[c][b] = float("-inf")
+            cs[a][a] = float("-inf")
+            sizes[a] = na + nb
+            clusters[a] = clusters[a] + clusters[b]
+            clusters[b] = []
+        return [c for c in clusters if c]
 
     @staticmethod
     def _cluster_within_scope(

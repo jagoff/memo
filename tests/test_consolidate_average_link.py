@@ -132,3 +132,36 @@ def test_average_link_singletons_pass_through_untouched():
 
 def test_average_link_empty_input_returns_empty():
     assert _ConsolidateOpsMixin._average_link_cluster([], threshold=0.85) == []
+
+
+def test_dense_component_clusters_in_bounded_time():
+    """One dense component of 500 near-identical vectors — the shape the
+    corpus-scale conformance fixture produces (20 topics × ~500 members whose
+    within-topic cosine is ~0.999). The first UPGMA implementation recomputed
+    every cross-cluster block mean per candidate pair per merge (O(k^4) element
+    touches), which turned `memo_consolidate` over that fixture into ~2h of
+    GIL-holding work — CI's conformance step timed out twice on it, and the
+    still-running FastMCP worker starved the *next* test in the process too.
+    Lance-Williams updates make the same merge O(k^3) at C speed (~0.1s).
+
+    The 30s bound is ~300× the measured time — loose enough for any CI runner,
+    tight enough that an O(k^4) regression (minutes at minimum) can never pass.
+    """
+    import random
+    import time
+
+    rng = random.Random(7)  # noqa: S311 — deterministic test fixture, not crypto
+    base = [rng.gauss(0, 1) for _ in range(64)]
+    items = []
+    for i in range(500):
+        v = [b + rng.gauss(0, 0.005) for b in base]
+        norm = math.sqrt(sum(x * x for x in v)) or 1.0
+        items.append({"id": str(i), "emb": [x / norm for x in v]})
+
+    start = time.monotonic()
+    clusters = _ConsolidateOpsMixin._average_link_cluster(items, threshold=0.85)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 30, f"dense-component clustering took {elapsed:.1f}s (O(k^4) regression?)"
+    # Near-identical vectors are one coherent cluster, not a shredded pile.
+    assert max(len(c) for c in clusters) == 500
