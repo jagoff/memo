@@ -1,5 +1,6 @@
-"""C3 absorb-on-recurrence: a >=0.88 near-dup save rewrites the EXISTING
-record via versioned update() instead of creating a near-copy (flag-gated)."""
+"""C3 absorb-on-recurrence: a near-dup save (>= MEMO_SAVE_DEDUP_THRESHOLD,
+default 0.85) rewrites the EXISTING record via versioned update() instead of
+creating a near-copy (flag-gated)."""
 
 from __future__ import annotations
 

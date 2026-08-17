@@ -49,6 +49,10 @@ def test_flag_returns_default_when_unset(tmp_path: Path) -> None:
     assert flags.flag("MEMO_CONTRADICT_PENALTY_ENABLED", env=env) is False
     assert "MEMO_EMIT_LEDGER" not in flags.REGISTRY
     assert flags.flag_int("MEMO_DREAM_COMPRESS_THRESHOLD", env=env) == 0
+    # Lowered from 0.88 (2026-08): live-corpus measurement in the real
+    # query-vs-document regime found the [0.85, 0.88) band 71% true
+    # duplicates vs 18% distinct-fact risk — see flags_misc.py's help text.
+    assert flags.flag_float("MEMO_SAVE_DEDUP_THRESHOLD", env=env) == 0.85
 
 
 def test_graph_integration_flags_have_safe_defaults(tmp_path: Path) -> None:

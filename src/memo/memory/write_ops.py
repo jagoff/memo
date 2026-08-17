@@ -684,7 +684,7 @@ class _WriteOpsMixin(_MemoryBase):
                 if _existing_sample:
                     _dedup_threshold_flag = flag_float("MEMO_SAVE_DEDUP_THRESHOLD")
                     _dedup_threshold = (
-                        0.88 if _dedup_threshold_flag is None else _dedup_threshold_flag
+                        0.85 if _dedup_threshold_flag is None else _dedup_threshold_flag
                     )
                     _dedup_q = f"{title}\n{content[:300]}"
                     _dedup_emb = self.embedder.embed_query(_dedup_q)
