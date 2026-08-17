@@ -9,6 +9,16 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- `MEMO_RECALL_CHUNK_PARENT` (default off): closes a gap where a chunked
+  long durable memory was invisible to auto-recall — its fragments
+  (type=reference) were excluded by `MEMO_RECALL_EXCLUDE_REFERENCE` before
+  the search pipeline's chunk->parent rollup ever saw them. Runs one small,
+  bounded, type-scoped search to resolve a winning chunk back to its
+  canonical parent. Covers the recall-hook subprocess; the warm daemon path
+  does not call this yet, a named follow-up.
+
 ### Changed
 
 - `MEMO_SAVE_ABSORB` defaults ON: a near-duplicate save now rewrites the
