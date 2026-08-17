@@ -1517,6 +1517,82 @@ def apply_recency_band(hits: list[Any], band: list[Any]) -> list[Any]:
     return [*hits, *[b for b in band if b.id not in seen]]
 
 
+def fetch_chunk_parent_hits(
+    mem: Any,
+    query_text: str,
+    *,
+    mode: str,
+    limit: int,
+    budget_ms: float | None,
+) -> list[Any]:
+    """Chunk->parent rollup for auto-recall (MEMO_RECALL_CHUNK_PARENT, off by
+    default). Auto-recall excludes the reference tier at the SQL layer
+    (MEMO_RECALL_EXCLUDE_REFERENCE) so a chunked long durable memory's
+    fragments never reach the general search pipeline's chunk->parent
+    collapse (memory/search_ops.py _map_chunks_to_parents) — the parent's
+    own single-vector embedding dilutes across the whole document and
+    under-ranks against a query that matches one specific section, while its
+    highest-scoring chunk (type=reference) is excluded outright. Measured
+    2026-08-16: a 9-chunk memory's fragments swept the top 5 search hits
+    (0.975-1.096 cosine) while the canonical record did not reach the top 6.
+
+    Runs one small, bounded, TYPE-SCOPED search restricted to
+    `type="reference"` — a cheap vec0 push-down (`vec.type = ?`, the fast
+    direction; unlike the main pool's `vec.type != ?` exclusion this needs no
+    schema change) — and resolves ONLY hits carrying `extra.parent_id` (the
+    `MEMO_CHUNK_INGEST` schema: a chunk of a real durable memory) to their
+    canonical parent record.
+
+    Deliberately does NOT surface the `parent_path`-only bulk-vault-ingest
+    chunk schema (`memo ingest --chunk`, no parent record) even though those
+    rows are also `type=reference` and would show up in the same query — that
+    material has no durable-memory parent to resolve to, and staying excluded
+    from auto-recall is the entire point of `MEMO_RECALL_EXCLUDE_REFERENCE`.
+
+    Caller unions the result into the main hit list (see `apply_recency_band`,
+    which does the same id-deduped union and is reused for this). Never
+    raises — a failure here must not break the primary recall path.
+
+    Covers the recall-hook subprocess only (`cli_recall_hook.py`). The warm
+    daemon path (`_recall_logic` in this module) is a separate, more complex
+    function with several search branches (micro-embedder scoring, context
+    expansion) and is NOT yet wired to this — a named follow-up, not a silent
+    gap.
+    """
+    from memo.tiers import REFERENCE_TYPES
+
+    try:
+        chunk_hits = mem.search(
+            query_text,
+            limit=limit,
+            mode=mode,
+            type_="reference",
+            budget_ms=budget_ms,
+        )
+    except Exception as exc:
+        _logger.debug("chunk-parent rollup skipped: %s", exc)
+        return []
+
+    out: list[Any] = []
+    seen_parents: set[str] = set()
+    for h in chunk_hits:
+        if h.type not in REFERENCE_TYPES:
+            continue
+        parent_id = (h.extra or {}).get("parent_id")
+        if not isinstance(parent_id, str) or not parent_id or parent_id in seen_parents:
+            continue
+        try:
+            parent = mem.get(parent_id)
+        except Exception as exc:
+            _logger.debug("chunk-parent lookup failed for %s: %s", parent_id[:8], exc)
+            continue
+        if parent is None:
+            continue
+        seen_parents.add(parent_id)
+        out.append(replace(parent, score=h.score))
+    return out
+
+
 def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
     """The hook's post-rank injection filters, flag-resolved (env > overlay).
 

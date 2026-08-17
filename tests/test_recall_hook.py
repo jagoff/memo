@@ -416,6 +416,125 @@ def test_vec_subprocess_search_merges_recency_band(
     apply_recency_band.assert_called_once_with([hit], [hit])
 
 
+def test_vec_subprocess_search_merges_chunk_parent_rollup(
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memo.memory import MemoryRecord
+
+    parent_hit = MemoryRecord(
+        id="608e16fcfe504cc09fbb900a50ccdd7a",
+        path="memo/gate-fix.md",
+        title="El pre-push recall gate mide el árbol compartido",
+        type="bug",
+        tags=[],
+        created="2026-08-16T00:00:00+00:00",
+        updated="2026-08-16T00:00:00+00:00",
+        body="A chunked long bug note whose canonical row scores lower than its "
+        "own best chunk on this query." * 2,
+        extra={},
+        score=0.95,
+    )
+
+    class _VecMemory:
+        def __init__(self, cfg: object) -> None:
+            pass
+
+        def search(
+            self,
+            query,
+            limit=5,
+            mode="bm25",
+            recency=False,
+            budget_ms=None,
+            exclude_types=None,
+            exclude_tags=None,
+            type_=None,
+        ):
+            assert mode == "vec"
+            return []
+
+        def close(self) -> None:
+            pass
+
+    fetch_chunk_parent_hits = MagicMock(return_value=[parent_hit])
+    apply_recency_band = MagicMock(return_value=[parent_hit])
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: '{"busy": true}')
+    monkeypatch.setattr("memo.memory.Memory", _VecMemory)
+    monkeypatch.setattr("memo.recall_logic.fetch_chunk_parent_hits", fetch_chunk_parent_hits)
+    monkeypatch.setattr("memo.recall_logic.apply_recency_band", apply_recency_band)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "vec")
+    monkeypatch.setenv("MEMO_RECALL_FORCE_MODE", "1")
+    monkeypatch.setenv("MEMO_RECALL_CHUNK_PARENT", "1")
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+
+    result = CliRunner().invoke(
+        cli,
+        ["recall-hook"],
+        input=json.dumps({"prompt": "el pre-push me fallo con label set changed, que hago"}),
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "608e16fc" in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+    )
+    fetch_chunk_parent_hits.assert_called_once()
+    assert fetch_chunk_parent_hits.call_args.args[0].__class__ is _VecMemory
+    assert fetch_chunk_parent_hits.call_args.kwargs["mode"] == "vec"
+    apply_recency_band.assert_called_once_with([], [parent_hit])
+
+
+def test_chunk_parent_rollup_off_by_default(
+    recall_env: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No env override — MEMO_RECALL_CHUNK_PARENT defaults off, so the
+    supplementary search never runs."""
+    from memo.memory import MemoryRecord
+
+    parent_hit = MemoryRecord(
+        id="608e16fcfe504cc09fbb900a50ccdd7a",
+        path="memo/gate-fix.md",
+        title="El pre-push recall gate mide el árbol compartido",
+        type="bug",
+        tags=[],
+        created="2026-08-16T00:00:00+00:00",
+        updated="2026-08-16T00:00:00+00:00",
+        body="unused body text long enough to pass the recall gate " * 3,
+        extra={},
+        score=0.95,
+    )
+
+    class _VecMemory:
+        def __init__(self, cfg: object) -> None:
+            pass
+
+        def search(self, query, **kwargs):
+            return []
+
+        def close(self) -> None:
+            pass
+
+    fetch_chunk_parent_hits = MagicMock(return_value=[parent_hit])
+    monkeypatch.setattr("memo.recall_server.connect_and_recall", lambda *a, **k: '{"busy": true}')
+    monkeypatch.setattr("memo.memory.Memory", _VecMemory)
+    monkeypatch.setattr("memo.recall_logic.fetch_chunk_parent_hits", fetch_chunk_parent_hits)
+    monkeypatch.setenv("MEMO_RECALL_MODE", "vec")
+    monkeypatch.setenv("MEMO_RECALL_FORCE_MODE", "1")
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+
+    result = CliRunner().invoke(
+        cli,
+        ["recall-hook"],
+        input=json.dumps({"prompt": "some meaningful query here to test recall"}),
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    fetch_chunk_parent_hits.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("input_k_env", "recall_input_k_env", "expected"),
     [

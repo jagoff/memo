@@ -31,6 +31,13 @@ from memo.recall_logic import (
 
 _log = logging.getLogger("memo.cli_recall_hook")
 
+# Small and fixed, not a share of the main search budget: the rollup is an
+# additive extra query, not a replacement for the primary search, and must
+# stay cheap enough to never meaningfully compete with it for the hook's
+# wall-clock budget. See fetch_chunk_parent_hits for what this buys.
+_CHUNK_PARENT_HOOK_LIMIT = 5
+_CHUNK_PARENT_HOOK_BUDGET_MS = 400.0
+
 
 def _rank_overflow_omitted(qualifying: list[Any], pre_filter: list[Any], top_k: int) -> list[Any]:
     """Hits omitted from the injection: the rank-overflow tail below the nudge
@@ -617,6 +624,23 @@ def recall_hook() -> None:
                 hits,
                 fetch_recency_band(
                     mem, days=_band_days, exclude_types=exclude_types, floor=_knobs.min_sim
+                ),
+            )
+        # Chunk->parent rollup (MEMO_RECALL_CHUNK_PARENT, default off — see
+        # fetch_chunk_parent_hits for the full rationale). Skipped on the bm25
+        # downgrade for the same reason the recency band is: don't re-stall a
+        # daemon we just fell away from with a second query.
+        if flag_bool("MEMO_RECALL_CHUNK_PARENT") and _mode != "bm25":
+            from memo.recall_logic import apply_recency_band, fetch_chunk_parent_hits
+
+            hits = apply_recency_band(
+                hits,
+                fetch_chunk_parent_hits(
+                    mem,
+                    query_text,
+                    mode=_mode,
+                    limit=_CHUNK_PARENT_HOOK_LIMIT,
+                    budget_ms=_CHUNK_PARENT_HOOK_BUDGET_MS,
                 ),
             )
         # query=prompt (the original prompt, NOT query_text which may be the
