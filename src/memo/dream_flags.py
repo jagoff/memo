@@ -62,7 +62,11 @@ CODE_REPAIR_FLAG = "MEMO_DREAM_CODE_REPAIR_ENABLED"
 # seam pins "0"/"1", e.g. 0.0 = off, 1.0 = full boost) or a bool whose name
 # doesn't end in `_ENABLED`. Explicit allowlist — most float knobs are tuner
 # territory, not graduation candidates.
-_DARK_SCALAR_FLAGS = ("MEMO_RECALL_CODE_PROXIMITY_BOOST", "MEMO_GRAPH_SEMANTIC_RELATIONS")
+_DARK_SCALAR_FLAGS = (
+    "MEMO_RECALL_CODE_PROXIMITY_BOOST",
+    "MEMO_GRAPH_SEMANTIC_RELATIONS",
+    "MEMO_EMITTED_LEDGER",
+)
 
 
 @dataclass(frozen=True)
@@ -208,6 +212,14 @@ GATES: dict[str, GateSpec] = dict(
             "surface, not recall-measurable",
         ),
         _g("MEMO_SECRET_STORAGE_ENABLED", "manual", "security opt-in; human-only, never auto"),
+        _g(
+            "MEMO_EMITTED_LEDGER",
+            "manual",
+            "promotion needs the live memo_get_after_digest/digests_served ratio "
+            "(criterion 2, unmeasurable by replay) plus the open invalidation "
+            "gaps closed — see docs/SPECS/2026-08-10-emission-ledger-design.md; "
+            "human-only",
+        ),
         _g(
             "MEMO_SAMPLING_SYNTH_ENABLED",
             "manual",
