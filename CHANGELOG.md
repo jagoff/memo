@@ -9,6 +9,108 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.12.1] - 2026-08-17
+
+### Fixed
+
+- Docker image builds again (`docker-publish` had been red since 4.11.2):
+  the wheel force-includes `eval/regression_labels.json`, but the Dockerfiles'
+  explicit COPY allowlist never copied `eval/` into the build context, so the
+  in-image `uv build --wheel` failed with `Forced include not found`. Both
+  `Dockerfile` and `Dockerfile.glama` now `COPY eval ./eval`, and the
+  allowlist-style `.dockerignore` re-includes `eval/` so the directory
+  actually reaches the build context (without that, the new COPY line would
+  fail with `"/eval": not found`). This patch release exists to re-run the
+  tag-gated `docker-publish` workflow from a ref that contains the fix —
+  there are no code changes beyond the Docker build surface.
+
+## [4.12.0] - 2026-08-17
+
+### Added
+
+- `MEMO_RECALL_CHUNK_PARENT` (default off): closes a gap where a chunked
+  long durable memory was invisible to auto-recall — its fragments
+  (type=reference) were excluded by `MEMO_RECALL_EXCLUDE_REFERENCE` before
+  the search pipeline's chunk->parent rollup ever saw them. Runs one small,
+  bounded, type-scoped search to resolve a winning chunk back to its
+  canonical parent. Covers the recall-hook subprocess; the warm daemon path
+  does not call this yet, a named follow-up.
+
+### Fixed
+
+- Consolidation clustering (`memo consolidate`) no longer splits above-threshold
+  near-duplicates across different proposed clusters. `_greedy_cluster` compared
+  each new memory only to each existing cluster's FIRST member (frozen forever
+  as its "representative"), never to members added afterwards — so two
+  near-duplicates could land in different clusters purely because of pull
+  order. Measured on the live corpus: 38.4% of above-threshold pairs (861 of
+  1450) split this way. Single-linkage (connected components of the threshold
+  graph) was tried and rejected as the fix: it transitively chains anything
+  reachable through a path of individually-strong pairs, and on the live
+  corpus one (project, type) bucket alone chained 157 of its 950 memories into
+  one unmergeable blob. Merge-consolidation (`_cluster_within_scope`) now uses
+  average-link (UPGMA) agglomerative clustering instead: two clusters merge
+  only when the AVERAGE similarity across every cross-pair clears the
+  threshold, which fixes the greedy split (previously-split near-duplicates
+  now co-cluster) without single-linkage's chaining (max cluster size stays
+  bounded — 6 vs. 157 on the same corpus). Hand-checked purity on real
+  title+body pairs roughly doubled (~30% -> ~55-60% correct near-duplicates)
+  versus greedy's proposals. The merge itself uses Lance-Williams
+  average-linkage updates (O(k³) at C speed): the naive
+  recompute-every-block-mean formulation was O(k⁴) and turned one
+  `memo_consolidate` call over a dense 500-member component into ~2h of
+  GIL-holding work (caught by the corpus-scale conformance suite).
+  `synthesize_cross_cluster` and `dream_distill.run_distill` (read-only
+  insight generation, not merges) still use the original `_greedy_cluster`.
+- Two bugs in `MEMO_SAVE_ABSORB` found by adversarial review right after it
+  shipped default-on:
+  - The absorb target's LLM merge call (up to `MEMO_CONSOLIDATE_TIMEOUT`,
+    default 180s) runs unlocked. If a concurrent nightly consolidation merge
+    archives+deletes the same target while the call is in flight, `update()`
+    silently resolved to `None` with zero logging and the caller fell
+    through to creating a brand-new near-duplicate record — undoing the
+    consolidation that just ran, invisibly. Now logs a warning naming the
+    likely cause, so the outcome is observable instead of a silent mystery.
+  - Absorb had no type-match check: a near-duplicate of a *different* type
+    (e.g. a `note` scoring >=0.88 against an existing `fact`) would still
+    rewrite the existing record's body via LLM merge while keeping its
+    original type label, silently blending cross-type content. Absorb now
+    only triggers on a same-type match; a type mismatch falls through to
+    the ordinary warn-and-create path.
+
+### Changed
+
+- `MEMO_SAVE_ABSORB` defaults ON: a near-duplicate save now rewrites the
+  existing record (versioned, rollbackable) instead of creating a near-copy.
+  Measured 2026-08-16: absorbs correctly at cosine 0.9691/matching type,
+  ~24s per absorption (one bounded LLM call). Opt out with `=0`.
+- **`MEMO_SAVE_DEDUP_THRESHOLD` default lowered 0.88 → 0.85.** The save-time
+  near-duplicate cosine floor was measured against the live corpus in the
+  *real* regime the check actually runs in — `embed_query` on the new
+  candidate vs. the stored document embedding of each existing memory, not
+  symmetric document-document cosine, which scores meaningfully higher and
+  was masking the true precision of this band. A census of every real-regime
+  candidate whose top hit fell in the newly-caught [0.85, 0.88) window (28
+  pairs, not a sample — the whole population out of a 2,012-candidate scan)
+  came out 71% genuine duplicates vs. 18% distinct-fact false-positive risk,
+  dominated by same-session cross-language (es/en) and refined restatements;
+  the two pairs already caught at 0.88 today were both genuine duplicates
+  too. The event stays rare corpus-wide (~1.5% of candidates cross 0.85).
+  Separately (not changed by this PR): the save-time dedup search has no
+  type or project filter, so a near-duplicate hit — and, if
+  `MEMO_SAVE_ABSORB` is enabled, an absorb — can in principle match across
+  memory types or projects; this pre-exists the threshold at 0.88 too.
+
+## [4.11.3] - 2026-08-16
+
+### Fixed
+
+- An `unload()` landing between `_ensure_loaded()` and the dereference could
+  null the model or tokenizer mid-embed, surfacing as an `AttributeError` on
+  `None` instead of a clean failure. Both embedders now snapshot the pair under
+  the same lock that loads it, so an in-flight embed always runs against a
+  consistent model/tokenizer or raises a named error (#256).
+
 ## [4.11.2] - 2026-08-15
 
 ### Fixed

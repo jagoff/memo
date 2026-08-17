@@ -684,7 +684,7 @@ class _WriteOpsMixin(_MemoryBase):
                 if _existing_sample:
                     _dedup_threshold_flag = flag_float("MEMO_SAVE_DEDUP_THRESHOLD")
                     _dedup_threshold = (
-                        0.88 if _dedup_threshold_flag is None else _dedup_threshold_flag
+                        0.85 if _dedup_threshold_flag is None else _dedup_threshold_flag
                     )
                     _dedup_q = f"{title}\n{content[:300]}"
                     _dedup_emb = self.embedder.embed_query(_dedup_q)
@@ -724,13 +724,21 @@ class _WriteOpsMixin(_MemoryBase):
                                 )
                             if _dh.get("id") and not defer_to_identity:
                                 bump_support_if_enabled(self.store, [_dh["id"]])
-                            # C3: absorb-on-recurrence (flag-gated, default off).
+                            # C3: absorb-on-recurrence (flag-gated, default on).
                             # Never in derived-save scope — dream/consolidation
                             # batch saves are merged by the consolidate pass.
+                            # Same-type only: the LLM merge rewrites the
+                            # EXISTING record's body in place without touching
+                            # its type, so absorbing a differently-typed save
+                            # (e.g. a `note` into a `fact`) would silently
+                            # blend cross-type content under the original
+                            # type label. A type mismatch falls through to
+                            # the ordinary warn-and-create path below.
                             if (
                                 flag_bool("MEMO_SAVE_ABSORB")
                                 and not in_derived_save_scope()
                                 and _dh.get("id")
+                                and _dh.get("type") == type_
                             ):
                                 _absorbed = self._absorb_into_existing(_dh["id"], title, content)
                                 if _absorbed is not None:
@@ -1702,6 +1710,21 @@ class _WriteOpsMixin(_MemoryBase):
                     "save: absorbed near-duplicate into %s (proof_count=%d)",
                     existing_id[:8],
                     new_extra["proof_count"],
+                )
+            else:
+                # update() resolves the id fresh and returns None if it no
+                # longer exists — most likely the target was archived+deleted
+                # by a concurrent consolidation merge while this LLM call (up
+                # to MEMO_CONSOLIDATE_TIMEOUT, unlocked) was in flight. The
+                # caller falls back to creating a new record from the raw
+                # content, which is correct but must not be silent: without
+                # this log, that fallback looks identical to "absorb was
+                # never attempted."
+                _log.warning(
+                    "save: absorb target %s vanished before update() landed "
+                    "(likely archived by a concurrent consolidation merge) "
+                    "— falling back to a new record",
+                    existing_id[:8],
                 )
             return updated  # type: ignore[no-any-return]
         except Exception as exc:

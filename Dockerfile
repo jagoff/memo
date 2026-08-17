@@ -10,6 +10,7 @@ COPY src ./src
 COPY .agents ./.agents
 COPY .claude-plugin ./.claude-plugin
 COPY commands ./commands
+COPY eval ./eval
 COPY hooks ./hooks
 COPY plugins ./plugins
 COPY skills ./skills

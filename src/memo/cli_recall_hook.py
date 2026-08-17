@@ -31,6 +31,36 @@ from memo.recall_logic import (
 
 _log = logging.getLogger("memo.cli_recall_hook")
 
+# Small and fixed, not a share of the main search budget: the rollup is an
+# additive extra query, not a replacement for the primary search, and must
+# stay cheap enough to never meaningfully compete with it for the hook's
+# wall-clock budget. See fetch_chunk_parent_hits for what this buys.
+_CHUNK_PARENT_HOOK_LIMIT = 5
+_CHUNK_PARENT_HOOK_BUDGET_MS = 400.0
+
+
+def _apply_chunk_parent_rollup(mem: Any, query_text: str, mode: str, hits: list[Any]) -> list[Any]:
+    """Chunk->parent rollup (MEMO_RECALL_CHUNK_PARENT, default off — see
+    fetch_chunk_parent_hits for the full rationale). Skipped on the bm25
+    downgrade for the same reason the recency band is: don't re-stall a
+    daemon we just fell away from with a second query. Extracted out of
+    `recall_hook`'s nested `_rank` to keep that closure's complexity budget
+    unchanged (see the quality gate)."""
+    if not (flag_bool("MEMO_RECALL_CHUNK_PARENT") and mode != "bm25"):
+        return hits
+    from memo.recall_logic import apply_recency_band, fetch_chunk_parent_hits
+
+    return apply_recency_band(
+        hits,
+        fetch_chunk_parent_hits(
+            mem,
+            query_text,
+            mode=mode,
+            limit=_CHUNK_PARENT_HOOK_LIMIT,
+            budget_ms=_CHUNK_PARENT_HOOK_BUDGET_MS,
+        ),
+    )
+
 
 def _rank_overflow_omitted(qualifying: list[Any], pre_filter: list[Any], top_k: int) -> list[Any]:
     """Hits omitted from the injection: the rank-overflow tail below the nudge
@@ -619,6 +649,7 @@ def recall_hook() -> None:
                     mem, days=_band_days, exclude_types=exclude_types, floor=_knobs.min_sim
                 ),
             )
+        hits = _apply_chunk_parent_rollup(mem, query_text, _mode, hits)
         # query=prompt (the original prompt, NOT query_text which may be the
         # expanded context) matches every daemon-path rank_hits call
         # (recall_logic._recall_logic): without it _is_broad_query(None) is

@@ -51,6 +51,10 @@ def _assert_all_rag_calls_envelope_retrieved_data(
 
 
 def test_consolidate_clusters_near_duplicates(mem_with_stub: Memory, monkeypatch):
+    # This test is about the CONSOLIDATE pass clustering pre-existing near-dups
+    # after the fact — MEMO_SAVE_ABSORB=1 (now the default) would rewrite rec_a
+    # in place at save time, leaving nothing for consolidate to cluster.
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     monkeypatch.setattr(
         "memo.embedder.MLXEmbedder.embed",
         lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],

@@ -1,8 +1,11 @@
 """Consolidation + cross-cluster synthesis for `Memory`.
 
 `_ConsolidateOpsMixin` holds dedup/merge consolidation and LLM cross-cluster
-synthesis. They share the embedding-pull + greedy-cluster helpers, so they live
-together. Extracted from maintain_ops.py; composed into `Memory` in facade.py.
+synthesis. They share the embedding-pull helper and, historically, a greedy
+clustering pass; merge-consolidation now clusters via `_average_link_cluster`
+(`_cluster_within_scope`) while synthesis/distillation still use the original
+`_greedy_cluster` — see that method's docstring for why the merge path moved
+off it. Extracted from maintain_ops.py; composed into `Memory` in facade.py.
 """
 
 from __future__ import annotations
@@ -291,7 +294,13 @@ class _ConsolidateOpsMixin(_MemoryBase):
         threshold: float,
     ) -> builtins.list[builtins.list[int]]:
         """Greedy single-link clustering over L2-normalised embeddings (dot ==
-        cosine). Uses numpy for the O(N²) pass when available (1024-dim × 2000
+        cosine). Used by `synthesize_cross_cluster` and `dream_distill.run_distill`
+        — read-only insight generation, where an occasional split/chained group
+        just costs LLM budget, not data. The merge-consolidation path
+        (`_cluster_within_scope`) moved to `_average_link_cluster` instead; see
+        its docstring for the measured order-sensitivity/chaining tradeoffs that
+        make greedy the wrong choice when the output actually gets merged.
+        Uses numpy for the O(N²) pass when available (1024-dim × 2000
         in pure Python ≈ 400s; numpy < 1s), else a pure-Python fallback."""
         try:
             import numpy as _np
@@ -348,6 +357,244 @@ class _ConsolidateOpsMixin(_MemoryBase):
             return clusters
 
     @staticmethod
+    def _average_link_cluster(
+        items: builtins.list[dict[str, Any]],
+        threshold: float,
+    ) -> builtins.list[builtins.list[int]]:
+        """Average-link (UPGMA) agglomerative clustering, cut at cosine >= threshold.
+
+        The consolidation merge path used `_greedy_cluster` until this replaced
+        it (`_cluster_within_scope` is the only caller). Two failure modes,
+        measured on the live corpus at the default 0.85 threshold, motivated the
+        change — they are opposite ends of the same axis, not independent bugs:
+
+        - **Greedy under-merges, order-dependently.** `_greedy_cluster` compares
+          a new item only against each existing cluster's FIRST member, frozen
+          as its "representative" forever — never against members that joined
+          afterwards. Two near-duplicates above threshold therefore land in
+          different clusters whenever the first one to arrive gets buried inside
+          a cluster (stops being anyone's comparison target) before the second
+          is processed. Measured: 38.4% of above-threshold pairs (861/1450)
+          ended up split across different clusters.
+        - **Single-linkage over-merges via chaining.** Connected components of
+          the >=threshold graph transitively absorb anything reachable through a
+          path of individually-strong pairs, even when the path's endpoints
+          share nothing. Measured: one (project, type) bucket alone
+          (`memo`/`note`) chained 157 of its 950 memories into a single
+          component — unmergeable, unreviewable, and rejected for exactly this
+          reason when tried as a replacement.
+
+        Average-link sits between them: two clusters merge only when the
+        AVERAGE similarity across every cross-pair clears the threshold, so one
+        strong bridge is not enough on its own — it gets diluted the moment its
+        partner disagrees with the rest of the group. Clustering first restricts
+        to each connected component of the threshold graph (identical to the
+        single-linkage grouping) before running the O(k^3) HAC merge inside it;
+        that restriction is exact, not an approximation — two different
+        components share no >=threshold edge at all, so every cross-component
+        pairwise similarity is already < threshold, and the mean of values that
+        are all below a bound can never clear that bound either. On the live
+        corpus the largest such component was 157 (of a 950-item scope group);
+        the full corpus clustered in ~8s.
+
+        Purity, spot-checked by hand against real title+body pairs (n=15
+        clusters each): greedy proposals were correct near-duplicates in ~30%
+        of sampled pairs (topically-adjacent-but-distinct memories glued onto
+        an arbitrary first representative); average-link's were correct in
+        ~55-60% — a real quality gap the raw threshold can't see, since cosine
+        >= 0.85 alone conflates "same topic" with "same fact." Raw pair-recall
+        against that same blind threshold is actually a hair LOWER than
+        greedy's (58.8% vs 61.6%) — the difference is exactly the marginal,
+        mostly-false pairs greedy was matching that average-link correctly
+        declines.
+        """
+        if not items:
+            return []
+        try:
+            import numpy as _np
+
+            mat = _np.array([it["emb"] for it in items], dtype=_np.float32)
+            norms = _np.linalg.norm(mat, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            mat = mat / norms
+            sim = mat @ mat.T
+            n = sim.shape[0]
+            ii, jj = _np.where(_np.triu(sim, k=1) >= threshold)
+            components = _ConsolidateOpsMixin._union_find_components(
+                n, zip(ii.tolist(), jj.tolist(), strict=False)
+            )
+
+            out: builtins.list[builtins.list[int]] = []
+            for members in components:
+                if len(members) == 1:
+                    out.append(members)
+                    continue
+                out.extend(_ConsolidateOpsMixin._upgma_merge_numpy(sim, members, threshold))
+            return out
+        except ImportError:
+            return _ConsolidateOpsMixin._average_link_cluster_pure_python(items, threshold)
+
+    @staticmethod
+    def _union_find_components(
+        n: int,
+        edges: Any,
+    ) -> builtins.list[builtins.list[int]]:
+        """Connected components of the graph on `range(n)` formed by `edges`
+        (an iterable of `(i, j)` pairs). Every index 0..n-1 appears in exactly
+        one returned group, singletons included. Shared by the numpy and
+        pure-python paths of `_average_link_cluster` — this IS single-linkage's
+        own grouping step; average-link uses it only to bound which items are
+        even worth an O(k^3) UPGMA pass (see `_average_link_cluster`'s
+        docstring for why restricting to it is exact, not an approximation)."""
+        parent = list(range(n))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for a, b in edges:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+        components: dict[int, builtins.list[int]] = {}
+        for i in range(n):
+            components.setdefault(find(i), []).append(i)
+        return list(components.values())
+
+    @staticmethod
+    def _upgma_merge_numpy(
+        sim: Any,
+        members: builtins.list[int],
+        threshold: float,
+    ) -> builtins.list[builtins.list[int]]:
+        """Bottom-up average-link merge of one threshold-graph component.
+        `members` indexes into `sim`; returns index groups still in that space.
+
+        Uses the Lance-Williams average-linkage update — when clusters A and B
+        merge, the new average similarity to any C is exactly
+        ``(|A|·sim(A,C) + |B|·sim(B,C)) / (|A|+|B|)`` — so each merge is an
+        O(k) row update plus an O(k^2) C-level argmax over the cluster-sim
+        matrix, O(k^3) total at C speed. The first version instead recomputed
+        every cross-cluster block mean per candidate pair per merge (an
+        O(k^2) *Python* pair loop of `np.ix_().mean()` calls, O(k^4) element
+        touches overall): fine on the live corpus (largest component 157), but
+        the corpus-scale conformance fixture — 20 topics of ~500 near-identical
+        vectors, so components of ~500 — turned `memo_consolidate` into ~2h of
+        GIL-holding work that also starved every later test in the process."""
+        import numpy as _np
+
+        k = len(members)
+        # Cluster-level sim matrix, float64: Lance-Williams accumulates
+        # weighted averages in place, and float32 drift could flip a
+        # near-threshold merge the pure-python (float) path accepts.
+        cs = sim[_np.ix_(members, members)].astype(_np.float64)
+        _np.fill_diagonal(cs, -_np.inf)
+        sizes = _np.ones(k, dtype=_np.int64)
+        # A merged-away cluster keeps its slot as [] (falsy) so live clusters
+        # never shift position — the argmax tie-break must stay stable.
+        clusters: builtins.list[builtins.list[int]] = [[i] for i in range(k)]
+        for _ in range(k - 1):
+            flat = int(_np.argmax(cs))
+            a, b = divmod(flat, k)
+            if cs[a, b] < threshold:
+                break
+            if b < a:
+                a, b = b, a
+            row = (sizes[a] * cs[a, :] + sizes[b] * cs[b, :]) / (sizes[a] + sizes[b])
+            cs[a, :] = row
+            cs[:, a] = row
+            cs[a, a] = -_np.inf
+            cs[b, :] = -_np.inf
+            cs[:, b] = -_np.inf
+            sizes[a] += sizes[b]
+            clusters[a] = clusters[a] + clusters[b]
+            clusters[b] = []
+        return [[members[i] for i in c] for c in clusters if c]
+
+    @staticmethod
+    def _average_link_cluster_pure_python(
+        items: builtins.list[dict[str, Any]],
+        threshold: float,
+    ) -> builtins.list[builtins.list[int]]:
+        """`_average_link_cluster` without numpy — same algorithm, nested lists.
+        Only ever exercised on the small synthetic fixtures unit tests build;
+        the live corpus always has numpy available (it is the only path that
+        makes the O(N^2) similarity pass tractable at corpus scale)."""
+        n = len(items)
+        sim = _ConsolidateOpsMixin._cosine_matrix_pure_python(items)
+        edges = ((i, j) for i in range(n) for j in range(i + 1, n) if sim[i][j] >= threshold)
+        components = _ConsolidateOpsMixin._union_find_components(n, edges)
+
+        out: builtins.list[builtins.list[int]] = []
+        for members in components:
+            if len(members) == 1:
+                out.append(members)
+                continue
+            out.extend(_ConsolidateOpsMixin._upgma_merge_pure_python(sim, members, threshold))
+        return out
+
+    @staticmethod
+    def _cosine_matrix_pure_python(
+        items: builtins.list[dict[str, Any]],
+    ) -> builtins.list[builtins.list[float]]:
+        """Full N×N cosine similarity matrix over `items[i]["emb"]`, no numpy."""
+        n = len(items)
+        norms = [sum(x * x for x in it["emb"]) ** 0.5 or 1.0 for it in items]
+        sim: builtins.list[builtins.list[float]] = [[0.0] * n for _ in range(n)]
+        for i in range(n):
+            sim[i][i] = 1.0
+            for j in range(i + 1, n):
+                dot = sum(x * y for x, y in zip(items[i]["emb"], items[j]["emb"], strict=False))
+                cosine = dot / (norms[i] * norms[j])
+                sim[i][j] = cosine
+                sim[j][i] = cosine
+        return sim
+
+    @staticmethod
+    def _upgma_merge_pure_python(
+        sim: builtins.list[builtins.list[float]],
+        members: builtins.list[int],
+        threshold: float,
+    ) -> builtins.list[builtins.list[int]]:
+        """`_upgma_merge_numpy` without numpy — the same Lance-Williams
+        average-linkage merge (see that docstring for why the naive
+        recompute-every-block-mean version was replaced), over a local
+        cluster-level nested-list matrix built from `sim` for this component's
+        `members`."""
+        k = len(members)
+        cs = [[sim[members[a]][members[b]] for b in range(k)] for a in range(k)]
+        for i in range(k):
+            cs[i][i] = float("-inf")
+        sizes = [1] * k
+        clusters: builtins.list[builtins.list[int]] = [[m] for m in members]
+        for _ in range(k - 1):
+            best_avg, best_a, best_b = float("-inf"), -1, -1
+            for a in range(k):
+                if not clusters[a]:
+                    continue
+                row = cs[a]
+                for b in range(k):
+                    if row[b] > best_avg:
+                        best_avg, best_a, best_b = row[b], a, b
+            if best_avg < threshold:
+                break
+            a, b = (best_a, best_b) if best_a < best_b else (best_b, best_a)
+            na, nb = sizes[a], sizes[b]
+            for c in range(k):
+                merged = (na * cs[a][c] + nb * cs[b][c]) / (na + nb)
+                cs[a][c] = merged
+                cs[c][a] = merged
+                cs[b][c] = float("-inf")
+                cs[c][b] = float("-inf")
+            cs[a][a] = float("-inf")
+            sizes[a] = na + nb
+            clusters[a] = clusters[a] + clusters[b]
+            clusters[b] = []
+        return [c for c in clusters if c]
+
+    @staticmethod
     def _cluster_within_scope(
         items: builtins.list[dict[str, Any]],
         threshold: float,
@@ -394,7 +641,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
         out: builtins.list[builtins.list[int]] = []
         for member_idxs in groups.values():
             sub_items = [items[i] for i in member_idxs]
-            for cluster in _ConsolidateOpsMixin._greedy_cluster(sub_items, threshold):
+            for cluster in _ConsolidateOpsMixin._average_link_cluster(sub_items, threshold):
                 out.append([member_idxs[j] for j in cluster])
         return out
 
@@ -474,12 +721,10 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
         Algorithm:
         1. Pull all stored embeddings (we have them already; no re-embed).
-        2. Greedy single-link clustering by cosine ≥ `threshold`, run
-           independently inside each (project scope, type) so the merge it
-           proposes is one the write path accepts and one that costs no
-           record its type (see `_cluster_within_scope`).
-           Each memory joins the first existing cluster it's
-           ≥-similar to, or starts a new one.
+        2. Average-link (UPGMA) agglomerative clustering by cosine ≥ `threshold`,
+           run independently inside each (project scope, type) so the merge it
+           proposes is one the write path accepts and one that costs no record
+           its type (see `_cluster_within_scope`, `_average_link_cluster`).
         3. Drop singletons. The remaining clusters are candidates.
         4. For each cluster, MLXChat 7B reads the bodies and emits a
            JSON `{summary, relationship, rationale}` per
@@ -495,7 +740,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
         Qwen3-Embedding-0.6B vector space.
         """
         # 1) Pull all embeddings (already stored; no re-embed) and
-        # 2) greedy single-link cluster by cosine ≥ threshold.
+        # 2) average-link cluster by cosine ≥ threshold, scoped per (project, type).
         # Always exclude reference tier: reference memories are bulk-ingested
         # vault chunks whose paths resolve back to the user's Obsidian vault
         # files (via _resolve_existing's legacy fallback). Archiving them via

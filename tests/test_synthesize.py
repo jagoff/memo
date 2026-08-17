@@ -99,6 +99,16 @@ def _force_close_embeddings(mem: Any) -> None:
     mem.embedder.embed_query = lambda query: unit
 
 
+@pytest.fixture(autouse=True)
+def _no_absorb(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test here seeds 2+ near-identical records via mock_memory.save()
+    expecting them to stay distinct so synthesis has multiple sources to
+    cluster from. MEMO_SAVE_ABSORB=1 (now the default) would rewrite those
+    seeds into one record instead, defeating the whole file's testing
+    strategy — off by default here, not per-test."""
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
+
+
 # ── synthesize_cross_cluster tests ──────────────────────────────────────────
 
 

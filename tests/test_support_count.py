@@ -90,8 +90,8 @@ def test_merge_signal_tolerates_old_payload_without_support(tmp_path: Path) -> N
 def mem_const(tmp_cfg, monkeypatch):
     """Memory with a constant-vector embedder: every text embeds to the same
     unit vector, so ANY two records are cosine-1.0 near-duplicates — the
-    near-dup path (threshold 0.88) fires deterministically. Dims pinned to
-    the stub's output via Config(embedder_dims=4)."""
+    near-dup path (default threshold 0.85) fires deterministically. Dims
+    pinned to the stub's output via Config(embedder_dims=4)."""
     from memo.memory import Memory
 
     cfg = Config(
@@ -110,7 +110,10 @@ def mem_const(tmp_cfg, monkeypatch):
     mem.close()
 
 
-def test_near_dup_save_bumps_existing_support(mem_const):
+def test_near_dup_save_bumps_existing_support(mem_const, monkeypatch):
+    # Tests the warn-then-create corroboration path specifically —
+    # MEMO_SAVE_ABSORB=1 (now the default) would rewrite r1 in place instead.
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     r1 = mem_const.save(content="El dashboard corre en el puerto 8765", title="Dashboard port")
     r2 = mem_const.save(content="El dashboard escucha en 8765", title="Dashboard listens")
     assert r2.id != r1.id  # near-dup still only warns; record is created
