@@ -9,6 +9,13 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Changed
+
+- `MEMO_SAVE_ABSORB` defaults ON: a near-duplicate save now rewrites the
+  existing record (versioned, rollbackable) instead of creating a near-copy.
+  Measured 2026-08-16: absorbs correctly at cosine 0.9691/matching type,
+  ~24s per absorption (one bounded LLM call). Opt out with `=0`.
+
 ## [4.11.3] - 2026-08-16
 
 ### Fixed

@@ -65,10 +65,20 @@ def test_absorb_is_versioned_and_rollbackable(mem_const, monkeypatch):
     assert versions  # pre-update snapshot exists → memo version rollback works
 
 
-def test_absorb_off_by_default_creates_new(mem_const):
+def test_absorb_on_by_default_rewrites_existing_record(mem_const):
+    """No monkeypatch.setenv here — proves the flag's own default (now True)
+    drives the absorb, not just an explicit override."""
+    mem_const._chat = _AbsorbChat()
     r1 = mem_const.save(content="El dashboard corre en el puerto 8765", title="Dashboard port")
     r2 = mem_const.save(content="Confirmado: dashboard en 8765", title="Dashboard port check")
-    assert r2.id != r1.id  # current warn-and-create behavior preserved
+    assert r2.id == r1.id
+
+
+def test_absorb_can_be_disabled(mem_const, monkeypatch):
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
+    r1 = mem_const.save(content="El dashboard corre en el puerto 8765", title="Dashboard port")
+    r2 = mem_const.save(content="Confirmado: dashboard en 8765", title="Dashboard port check")
+    assert r2.id != r1.id  # opt-out preserved: warn-and-create behavior
 
 
 def test_absorb_falls_back_on_llm_failure(mem_const, monkeypatch):

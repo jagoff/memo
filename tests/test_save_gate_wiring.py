@@ -69,6 +69,9 @@ def test_balanced_near_dup_logs_warning(mock_memory, monkeypatch, caplog):
     # near-dup check and DOES emit the warning log.
     monkeypatch.delenv("MEMO_SAVE_GATE_PRESETS", raising=False)
     monkeypatch.setenv("MEMO_SAVE_DEDUP_CHECK", "1")
+    # This test is about the WARN path specifically — MEMO_SAVE_ABSORB=1
+    # (now the default) would silently rewrite instead of warning.
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     dup = _seed_and_dup(mock_memory, "note", exact=False)
     with caplog.at_level(logging.WARNING, logger="memo.memory.record"):
         dup()
