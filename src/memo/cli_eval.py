@@ -40,10 +40,41 @@ def _cache_path(cfg: Config) -> Path:
     return cfg.state_dir / "eval" / "recall.json"
 
 
-def _baseline_path(cfg: Config) -> Path:
+# Which command a baseline belongs to. `eval memory` and `eval recall` measure
+# different pipelines and used to share ONE file. Only `eval recall` ever wrote
+# it, so the bug was on the READ side: `eval memory --gate` silently compared
+# its own pipeline against a baseline recorded from recall's. The k guard in
+# check_gate catches the case where the two ran at different top-K and nothing
+# else — at equal k the comparison looked healthy and meant nothing.
+#
+# `eval memory` therefore also gains `--update-baseline`; without it, refusing
+# the foreign baseline would leave its gate with no way to seed one at all.
+GATE_RECALL = "recall"
+GATE_MEMORY = "memory"
+
+
+def _baseline_path(cfg: Config, command: str = GATE_RECALL) -> Path:
     # Machine-local: the gate runs against THIS machine's live index, so the
     # baseline can't be a committed repo file — it lives under state_dir.
-    return cfg.state_dir / "eval" / "recall_baseline.json"
+    # `recall` keeps the historical filename so existing baselines stay valid.
+    name = "recall_baseline.json" if command == GATE_RECALL else f"{command}_baseline.json"
+    return cfg.state_dir / "eval" / name
+
+
+def _reject_foreign_baseline(baseline: dict, expected: str, path: Path) -> None:
+    """Refuse a baseline another command wrote.
+
+    Absent stamp = written before baselines were separated; those files only
+    ever came from `eval recall`, so treat them as such rather than forcing a
+    re-seed on upgrade.
+    """
+    owner = baseline.get("gate_command") or GATE_RECALL
+    if owner != expected:
+        raise click.ClickException(
+            f"baseline at {path} was written by `memo eval {owner}`, not "
+            f"`memo eval {expected}` — re-seed with "
+            f"`memo eval {expected} ... --update-baseline`"
+        )
 
 
 def _atomic_write_json(path: Path, payload: object) -> None:
@@ -93,9 +124,9 @@ def _save_cache(cfg: Config, cache: dict) -> None:
     p.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _load_baseline(cfg: Config) -> dict:
-    """Load the machine-local recall gate baseline, if one exists."""
-    p = _baseline_path(cfg)
+def _load_baseline(cfg: Config, command: str = GATE_RECALL) -> dict:
+    """Load the machine-local gate baseline for `command`, if one exists."""
+    p = _baseline_path(cfg, command)
     if not p.exists():
         return {}
     try:
@@ -174,6 +205,11 @@ def eval_repo_search_cmd(
 
 
 @eval_group.command(name="memory")
+@click.option(
+    "--update-baseline",
+    is_flag=True,
+    help="Record THIS run as the memory gate's baseline (its own file, never recall's).",
+)
 @click.option("--k", type=click.IntRange(min=1, max=50), default=5, show_default=True)
 @click.option(
     "--labels",
@@ -195,6 +231,7 @@ def eval_repo_search_cmd(
     "--gate", is_flag=True, help="Compare precision/noise with the saved recall baseline."
 )
 def eval_memory_cmd(
+    update_baseline: bool,
     k: int,
     labels_path: Path,
     eval_profile: str,
@@ -213,6 +250,9 @@ def eval_memory_cmd(
     mem = _get_memory(Config.from_env())
     try:
         rows = eval_recall.evaluate(mem, k=k, labels=labels, configs=configs)
+        # Taken while the store is open: check_gate uses it to tell a code
+        # regression apart from corpus drift.
+        corpus_fp = eval_recall.fingerprint_corpus(mem)
     finally:
         mem.close()
     payload: dict[str, Any] = {
@@ -238,11 +278,29 @@ def eval_memory_cmd(
             for row in rows
         ],
     }
+    if update_baseline:
+        _cfg = Config.from_env()
+        _payload = eval_recall.baseline_payload(
+            rows, k=k, labels_fingerprint=labels.fingerprint(), corpus_fingerprint=corpus_fp
+        )
+        _payload["gate_command"] = GATE_MEMORY
+        _bp = _baseline_path(_cfg, GATE_MEMORY)
+        _atomic_write_json(_bp, _payload)
+        console.print(f"[green]✓[/green] memory baseline saved → {_bp}")
+        return
+
     if gate:
-        baseline = _load_baseline(Config.from_env())
-        # Pass k so check_gate fails fast on a k mismatch — `eval memory` (k=5)
-        # and `eval recall` (k=3) share one recall_baseline.json, so a baseline
-        # seeded at a different top-K must not be compared silently.
+        _cfg = Config.from_env()
+        baseline = _load_baseline(_cfg, GATE_MEMORY)
+        if not baseline:
+            raise click.ClickException(
+                f"no memory gate baseline at {_baseline_path(_cfg, GATE_MEMORY)} — seed it "
+                "with `memo eval memory --update-baseline`. It deliberately no longer falls "
+                "back to `eval recall`'s baseline: that measured a different pipeline."
+            )
+        _reject_foreign_baseline(baseline, GATE_MEMORY, _baseline_path(_cfg, GATE_MEMORY))
+        # k is still passed so a baseline seeded at a different top-K is refused
+        # rather than compared silently.
         result = eval_recall.check_gate(
             rows, baseline, labels_fingerprint=labels.fingerprint(), k=k
         )
@@ -303,6 +361,76 @@ def eval_relations_cmd(labels_path: Path, gate: bool, as_json: bool) -> None:
         raise click.exceptions.Exit(1)
 
 
+@eval_group.command(name="behavior")
+@click.option(
+    "--scenarios",
+    "scenarios_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("eval/behavior_scenarios.json"),
+    show_default=True,
+)
+@click.option(
+    "--recall-only",
+    is_flag=True,
+    help="Score only the recall-layer gates. No LLM is loaded — deterministic and fast.",
+)
+@click.option("--only", default=None, help="Run a single scenario by id.")
+@click.option("--gate", is_flag=True, help="Exit non-zero when any scenario fails.")
+@click.option("--json", "as_json", is_flag=True, help="Emit raw JSON.")
+def eval_behavior_cmd(
+    scenarios_path: Path, recall_only: bool, only: str | None, gate: bool, as_json: bool
+) -> None:
+    """Measure whether a recalled memory actually steers the answer.
+
+    Seeds an isolated store, runs the real `memo recall-hook` against it, then
+    judges the answer a model gives with that injected block. A red gate means
+    the injected payload under-steers — not that a specific agent misbehaved.
+    """
+    from memo.eval_behavior import load_scenarios, run_scenarios
+
+    try:
+        scenarios = load_scenarios(scenarios_path)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if only:
+        scenarios = [s for s in scenarios if s.scenario_id == only]
+        if not scenarios:
+            raise click.ClickException(f"no scenario with id {only!r} in {scenarios_path}")
+
+    results = run_scenarios(scenarios, recall_only=recall_only)
+    passed = sum(1 for r in results if r.passed)
+
+    if as_json:
+        click.echo(
+            json.dumps(
+                {
+                    "schema_version": "memo.eval_behavior.report.v1",
+                    "recall_only": recall_only,
+                    "scenarios": len(results),
+                    "passed": passed,
+                    "results": [r.as_dict() for r in results],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        for result in results:
+            mark = "✓" if result.passed else "✗"
+            color = "green" if result.passed else "red"
+            console.print(f"[{color}]{mark}[/{color}] {result.scenario_id}")
+            if result.error:
+                console.print(f"    [red]error:[/red] {result.error}")
+            for gate_result in result.gates:
+                if not gate_result.passed:
+                    console.print(f"    [red]✗[/red] {gate_result.gate.kind}: {gate_result.detail}")
+        mode = "recall-layer only" if recall_only else "full"
+        console.print(f"\n{passed}/{len(results)} scenarios passed ({mode})")
+
+    if gate and passed != len(results):
+        raise click.exceptions.Exit(1)
+
+
 def _run_gate(
     rows: list[Any],
     cfg: Config,
@@ -326,6 +454,7 @@ def _run_gate(
         baseline = json.loads(bp.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise click.ClickException(f"unreadable baseline {bp}: {exc}") from exc
+    _reject_foreign_baseline(baseline, GATE_RECALL, bp)
     return eval_recall.check_gate(
         rows,
         baseline,
@@ -670,7 +799,10 @@ def eval_recall_cmd(
             labels_fingerprint=labels.fingerprint(),
             corpus_fingerprint=corpus_fp,
         )
-        bp = _baseline_path(cfg)
+        # Stamp the owner so the other eval command's gate refuses this file
+        # instead of silently comparing against it.
+        payload["gate_command"] = GATE_RECALL
+        bp = _baseline_path(cfg, GATE_RECALL)
         _atomic_write_json(bp, payload)
         console.print(
             f"[green]✓[/green] baseline saved: config {metrics['config']!r} · "

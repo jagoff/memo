@@ -56,8 +56,15 @@ def real_mlx_memory(tmp_cfg: Config) -> Iterator[Memory]:
     mem.close()
 
 
-def _seed(mem: Memory) -> tuple[str, str, str]:
-    """Seed the fixture; return (distinct_id, older_id, newer_id)."""
+def _seed(mem: Memory, monkeypatch) -> tuple[str, str, str]:
+    """Seed the fixture; return (distinct_id, older_id, newer_id).
+
+    MEMO_SAVE_ABSORB=1 (now the default) would rewrite these near-duplicate
+    paraphrases and the older/newer contradiction pair into fewer records at
+    save time, defeating the crowding and contradiction scenarios this
+    fixture exists to build.
+    """
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     for i, text in enumerate(_PARAPHRASES):
         mem.save(content=text, title=f"deploy migrations {i}", type_="fact")
     distinct_id = mem.save(content=_DISTINCT, title="deploy cache warm", type_="fact").id
@@ -101,7 +108,7 @@ def test_dedup_collapse_rescues_distinct_fact_from_paraphrase_crowding(
     real_mlx_memory: Memory, monkeypatch
 ) -> None:
     mem = real_mlx_memory
-    distinct_id, _older, _newer = _seed(mem)
+    distinct_id, _older, _newer = _seed(mem, monkeypatch)
     prompt = Prompt(
         "what does the nightly deploy pipeline do after the rollout finishes",
         relevant=True,
@@ -126,7 +133,7 @@ def test_declare_disputes_surfaces_both_sides_of_open_pair(
     real_mlx_memory: Memory, monkeypatch
 ) -> None:
     mem = real_mlx_memory
-    _distinct, older_id, newer_id = _seed(mem)
+    _distinct, older_id, newer_id = _seed(mem, monkeypatch)
     prompt = Prompt(
         "what engine does the production database run",
         relevant=True,

@@ -39,8 +39,13 @@ _FILLERS = [
 
 
 @pytest.fixture
-def real_mlx_memory(tmp_cfg: Config) -> Iterator[Memory]:
-    """Release SQLite handles and Metal model/cache between slow cases."""
+def real_mlx_memory(tmp_cfg: Config, monkeypatch: pytest.MonkeyPatch) -> Iterator[Memory]:
+    """Release SQLite handles and Metal model/cache between slow cases.
+
+    ABSORB off: the fixture's whole point is a *contradiction pair* — two
+    distinct records for the same fact — and default-on absorb would merge
+    the second save into the first, collapsing the pair into one id."""
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     mem = Memory(tmp_cfg)
     yield mem
     mem.close()

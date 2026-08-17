@@ -177,13 +177,19 @@ def test_select_configs_rejects_unknown_name():
 
 def test_profile_configs_name_eval_roles() -> None:
     assert [c.name for c in eval_recall.profile_configs("quick")] == ["A vec/0.60/keep"]
-    assert [c.name for c in eval_recall.profile_configs("default")] == [
+    default_names = [c.name for c in eval_recall.profile_configs("default")]
+    assert default_names[:4] == [
         "A vec/0.60/keep",
         "B vec/0.72/excl",
         "C hyb/0.40/excl",
         "D hyb/0.40/ctx",
     ]
-    assert [c.name for c in eval_recall.profile_configs("pre-push")] == [
+    # The live config's name carries the RESOLVED mode/floor, so it cannot be a
+    # fixed string — that is deliberate: a fixed label would hide the tuner
+    # moving the floor underneath the gate.
+    assert len(default_names) == 5 and default_names[4].startswith("L live/")
+    pre_push_names = [c.name for c in eval_recall.profile_configs("pre-push")]
+    assert pre_push_names[:7] == [
         "A vec/0.60/keep",
         "B vec/0.72/excl",
         "E mmr/0.3",
@@ -192,7 +198,12 @@ def test_profile_configs_name_eval_roles() -> None:
         "H synth/0.05",
         "I synth/0.10",
     ]
-    assert [c.name for c in eval_recall.profile_configs("matrix")] == [
+    # The gate that blocks pushes MUST score the live configuration; without it
+    # the grid can stay green while the hook regresses.
+    assert len(pre_push_names) == 8 and pre_push_names[7].startswith("L live/")
+    matrix_names = [c.name for c in eval_recall.profile_configs("matrix")]
+    assert matrix_names[4].startswith("L live/")
+    assert [n for n in matrix_names if not n.startswith("L live/")] == [
         "A vec/0.60/keep",
         "B vec/0.72/excl",
         "C hyb/0.40/excl",
@@ -737,7 +748,7 @@ def test_cli_eval_recall_fresh_human_run_prints_progress(tmp_path: Path, monkeyp
 
     assert result.exit_code == 0, result.output
     output = unstyle(result.output)
-    assert "Running recall eval: 4 config(s) x 1 prompt(s) = 4 search(es)." in output
+    assert "Running recall eval: 5 config(s) x 1 prompt(s) = 5 search(es)." in output
     assert "eval A vec/0.60/keep: prompt 1/1" in output
 
 
@@ -767,7 +778,7 @@ def test_cli_eval_recall_profile_pre_push_selects_named_subset(tmp_path: Path, m
     )
 
     assert result.exit_code == 0, result.output
-    assert seen == [
+    assert seen[:7] == [
         "A vec/0.60/keep",
         "B vec/0.72/excl",
         "E mmr/0.3",
@@ -776,6 +787,8 @@ def test_cli_eval_recall_profile_pre_push_selects_named_subset(tmp_path: Path, m
         "H synth/0.05",
         "I synth/0.10",
     ]
+    # The live config rides along on the pre-push profile — see profile_configs.
+    assert len(seen) == 8 and seen[7].startswith("L live/")
 
 
 # --- harvest labels from grounding.log --------------------------------------
@@ -957,12 +970,13 @@ def test_run_config_knob_overrides_beat_env(monkeypatch):
 def test_tuning_configs_are_named_only_mmr_and_synth_variants():
     cfgs = eval_recall.default_configs()
     names = [c.name for c in cfgs]
-    assert names == [
+    assert names[:4] == [
         "A vec/0.60/keep",
         "B vec/0.72/excl",
         "C hyb/0.40/excl",
         "D hyb/0.40/ctx",
     ]
+    assert names[4].startswith("L live/") and cfgs[4].live is True
 
     tuning = eval_recall.tuning_configs()
     by_name = {c.name: c for c in tuning}

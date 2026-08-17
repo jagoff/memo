@@ -133,13 +133,15 @@ class MicroEmbedder:
         self._ensure_loaded()
         if not inputs:
             return []
-        if self._model is None:
-            # Load failed: surface it — returning all-zero vectors here made
-            # recall silently score every candidate 0. Callers gate on
-            # `is_warm` (or catch) and fall back to BM25 instead.
-            raise RuntimeError(
-                f"MicroEmbedder: model {self.model_path!r} failed to load; cannot embed"
-            )
+        # A failed load surfaces here rather than returning all-zero vectors,
+        # which made recall silently score every candidate 0. Callers gate on
+        # `is_warm` (or catch) and fall back to BM25 instead.
+        model, tokenizer = _snapshot_loaded(
+            self._load_lock,
+            lambda: self._model,
+            lambda: self._tokenizer,
+            f"MicroEmbedder: model {self.model_path!r} failed to load; cannot embed",
+        )
 
         import mlx.core as mx
 
@@ -152,9 +154,9 @@ class MicroEmbedder:
                 if not text:
                     out.append([0.0] * self.expected_dims)
                     continue
-                ids = self._tokenizer.encode(text, add_special_tokens=False)
+                ids = tokenizer.encode(text, add_special_tokens=False)
                 arr = mx.array([ids])
-                hidden = self._model.model(arr)
+                hidden = model.model(arr)
                 # Simple mean pooling for micro-models
                 row = mx.mean(hidden, axis=1)
                 norm = mx.sqrt(mx.sum(row * row, axis=-1, keepdims=True))
@@ -270,9 +272,16 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
         if not inputs:
             return []
 
+        model, tokenizer = _snapshot_loaded(
+            self._load_lock,
+            lambda: self._model,
+            lambda: self._tokenizer,
+            "embedder model was unloaded before embed could run",
+        )
+
         import mlx.core as mx
 
-        eos = self._tokenizer.eos_token_id
+        eos = tokenizer.eos_token_id
         # Cap leaves room for the EOS slot we append.
         cap = self.max_seq_len - (1 if eos is not None else 0)
 
@@ -288,7 +297,7 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
                 eos_idx.append(-1)
                 skip_mask.append(True)
                 continue
-            ids = self._tokenizer.encode(text, add_special_tokens=False)
+            ids = tokenizer.encode(text, add_special_tokens=False)
             # Head-truncate (preserves title-like header) + append EOS
             # (Qwen3-Embedding pools on EOS hidden state).
             if len(ids) > cap:
@@ -327,7 +336,7 @@ class MLXEmbedder(EmbedderBase):  # see memo.embed_base for the shared contract
             # that's what produces the hidden states we pool. Calling
             # `model(arr)` would route through `lm_head` and return logits
             # over vocab (~151k floats per token), totally wrong here.
-            hidden = self._model.model(arr)  # (B, T, H)
+            hidden = model.model(arr)  # (B, T, H)
 
             if hidden.shape[-1] != self.expected_dims:
                 raise RuntimeError(
@@ -489,3 +498,27 @@ def assert_valid_embedding(
 
 
 __all__ = ["MLXEmbedder", "MicroEmbedder", "assert_valid_embedding"]
+
+
+def _snapshot_loaded(lock: Any, model: Any, tokenizer: Any, unavailable: str) -> tuple[Any, Any]:
+    """Return (model, tokenizer) captured under `lock`, or raise if unloaded.
+
+    `_ensure_loaded` releases the load lock before its caller dereferences the
+    model, so a concurrent `unload()` (which nulls both under the same lock)
+    could blank them mid-embed — seen in production as
+    `AttributeError: 'NoneType' object has no attribute 'model'` in
+    recall-daemon.log when two daemon instances raced on startup. Callers use
+    the returned LOCALS, which an unload landing afterwards cannot touch.
+
+    Shared by both embedders: the raced dereference is the same in each, and
+    fixing only the one that showed up in a log would leave the other. The
+    message differs by caller on purpose — MicroEmbedder's `_ensure_loaded`
+    SWALLOWS a load error and leaves `_model` None, so there a null really does
+    mean "failed to load"; MLXEmbedder's raises on load failure, so there it
+    can only mean a concurrent unload.
+    """
+    with lock:
+        snap_model, snap_tokenizer = model(), tokenizer()
+    if snap_model is None or snap_tokenizer is None:
+        raise RuntimeError(unavailable)
+    return snap_model, snap_tokenizer

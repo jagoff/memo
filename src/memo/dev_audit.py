@@ -162,6 +162,11 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("recall_logic.py", "make_vec_cosine._cos", 1),
     ("recall_logic.py", "make_vec_cosine._cos", 2),
     ("recall_logic.py", "fetch_recency_band", 1),
+    # Chunk->parent rollup is additive recall-hook enrichment (see
+    # fetch_chunk_parent_hits docstring): a search or store-lookup failure
+    # must degrade to no rollup, never break the primary recall path.
+    ("recall_logic.py", "fetch_chunk_parent_hits", 1),
+    ("recall_logic.py", "fetch_chunk_parent_hits", 2),
     # World-model projection is optional hook-hot-path enrichment: any
     # kernel/state/projection failure degrades to no kernel section and must
     # never break the recall payload or blow the 5s hook budget.

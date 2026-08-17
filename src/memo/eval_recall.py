@@ -258,6 +258,43 @@ class Cfg:
     # for flags read INSIDE Memory.search at call time (e.g. MEMO_HYDE_ENABLED)
     # that RankKnobs/knob_overrides cannot reach. None = no pins.
     flag_overrides: dict[str, str] | None = None
+    # Inherit `min_sim` and `min_body_chars` from the LIVE flag/overlay chain
+    # instead of pinning them, so this config ranks the way the hook actually
+    # ranks right now. `floor` is then descriptive only (see live_config).
+    live: bool = False
+
+
+def live_config() -> Cfg:
+    """The config that mirrors what the recall hook actually runs today.
+
+    Grid configs A-D pin a chosen floor (0.60/0.72/0.40) and `min_body_chars=0`,
+    which is right for comparing knob settings but means none of them measures
+    the LIVE hook: with the tuner's overlay moving `MEMO_RECALL_MIN_SIM`, the
+    hook can rank at a floor no grid config uses. A gate that only runs the grid
+    reports precision for a configuration nobody is running — the same failure
+    shape as a pre-push gate that measures the installed binary instead of the
+    diff.
+
+    So this one pins nothing it can inherit: mode, floor and min-body come from
+    the live flag/overlay chain, archived rows are excluded, and the hook's
+    post-rank injection filters (skip-below + gap trim) are applied.
+
+    Residual known gap: `top_k` is still the eval's `k` (precision@k needs k
+    candidates), so the candidate pool is wider than the hook's when k > the
+    live `MEMO_RECALL_TOP_K`.
+    """
+    from memo.flags import flag_float, flag_str
+
+    mode = flag_str("MEMO_RECALL_MODE") or "vec"
+    floor = flag_float("MEMO_RECALL_MIN_SIM")
+    return Cfg(
+        f"L live/{mode}/{0.5 if floor is None else floor:g}",
+        mode,
+        0.5 if floor is None else floor,  # descriptive; `live` inherits at runtime
+        exclude_archived=True,
+        injection_fidelity=True,
+        live=True,
+    )
 
 
 def default_configs() -> list[Cfg]:
@@ -266,6 +303,7 @@ def default_configs() -> list[Cfg]:
         Cfg("B vec/0.72/excl", "vec", 0.72, exclude_archived=True),
         Cfg("C hyb/0.40/excl", "hybrid", 0.40, exclude_archived=True),
         Cfg("D hyb/0.40/ctx", "hybrid", 0.40, exclude_archived=True, context=True),
+        live_config(),
     ]
 
 
@@ -332,7 +370,13 @@ def profile_configs(profile: EvalProfile) -> list[Cfg]:
     if profile == "default":
         return default_configs()
     if profile == "pre-push":
-        return select_configs(["A", "B", "E", "F", "G", "H", "I"])
+        # "L" is not optional here: this is the profile the pre-push gate runs,
+        # and without the live config the gate scores configurations nobody is
+        # running. Measured 2026-08-15 on the curated set: the grid reported
+        # prec@5 0.568-0.716 and stayed green while the live hook was at 0.205,
+        # because the tuner's overlay had moved MEMO_RECALL_MIN_SIM to 0.8835 —
+        # a floor no grid config uses.
+        return select_configs(["A", "B", "E", "F", "G", "H", "I", "L"])
     if profile == "matrix":
         return [*default_configs(), *tuning_configs()]
     if profile == "expensive":
@@ -739,11 +783,14 @@ def _run_config_inner(
     # live/pinnable while disabling only that unmeasurable I/O stage.
     knob_overrides = dict(cfg.knob_overrides or {})
     knob_overrides["code_proximity"] = False
+    # A `live` config pins nothing it can inherit: passing None makes
+    # knobs_from_flags resolve min_sim/min_body_chars/mode from the live
+    # env > markdown > overlay > default chain, exactly as the hook does.
     knobs = knobs_from_flags(
         top_k=k,
-        min_sim=cfg.floor,
-        min_body_chars=0,
-        mode=cfg.mode,
+        min_sim=None if cfg.live else cfg.floor,
+        min_body_chars=None if cfg.live else 0,
+        mode=None if cfg.live else cfg.mode,
         overrides=knob_overrides,
     )
     # Recall-faithful candidate pool: the hook SQL-excludes the bulk
@@ -1139,7 +1186,14 @@ def recommend(rows: list[Row]) -> str:
     cfg = next((c for c in [*default_configs(), *extra_configs()] if c.name == best.config), None)
     knobs = ""
     if cfg is not None:
-        knobs = f"  export MEMO_RECALL_MODE={cfg.mode}\n  export MEMO_RECALL_MIN_SIM={cfg.floor}"
+        if cfg.live:
+            # It inherits the live chain, so there is nothing to export — saying
+            # otherwise would recommend pinning the value it just measured.
+            knobs = "  (this IS the live configuration — no knob change to apply)"
+        else:
+            knobs = (
+                f"  export MEMO_RECALL_MODE={cfg.mode}\n  export MEMO_RECALL_MIN_SIM={cfg.floor}"
+            )
         for field_name, value in (cfg.knob_overrides or {}).items():
             flag_name = _KNOB_FIELD_TO_FLAG.get(field_name)
             if flag_name:
