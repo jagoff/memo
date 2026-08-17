@@ -476,9 +476,7 @@ def test_vec_subprocess_search_merges_chunk_parent_rollup(
     )
 
     assert result.exit_code == 0, result.output
-    assert (
-        "608e16fc" in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-    )
+    assert "608e16fc" in json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
     fetch_chunk_parent_hits.assert_called_once()
     assert fetch_chunk_parent_hits.call_args.args[0].__class__ is _VecMemory
     assert fetch_chunk_parent_hits.call_args.kwargs["mode"] == "vec"
