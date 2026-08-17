@@ -1556,7 +1556,7 @@ def fetch_chunk_parent_hits(
     Covers the recall-hook subprocess only (`cli_recall_hook.py`). The warm
     daemon path (`_recall_logic` in this module) is a separate, more complex
     function with several search branches (micro-embedder scoring, context
-    expansion) and is NOT yet wired to this — a named follow-up, not a silent
+    expansion) that does not call this yet — a named follow-up, not a silent
     gap.
     """
     from memo.tiers import REFERENCE_TYPES
