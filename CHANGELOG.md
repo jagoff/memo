@@ -43,6 +43,22 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   existing record (versioned, rollbackable) instead of creating a near-copy.
   Measured 2026-08-16: absorbs correctly at cosine 0.9691/matching type,
   ~24s per absorption (one bounded LLM call). Opt out with `=0`.
+- **`MEMO_SAVE_DEDUP_THRESHOLD` default lowered 0.88 → 0.85.** The save-time
+  near-duplicate cosine floor was measured against the live corpus in the
+  *real* regime the check actually runs in — `embed_query` on the new
+  candidate vs. the stored document embedding of each existing memory, not
+  symmetric document-document cosine, which scores meaningfully higher and
+  was masking the true precision of this band. A census of every real-regime
+  candidate whose top hit fell in the newly-caught [0.85, 0.88) window (28
+  pairs, not a sample — the whole population out of a 2,012-candidate scan)
+  came out 71% genuine duplicates vs. 18% distinct-fact false-positive risk,
+  dominated by same-session cross-language (es/en) and refined restatements;
+  the two pairs already caught at 0.88 today were both genuine duplicates
+  too. The event stays rare corpus-wide (~1.5% of candidates cross 0.85).
+  Separately (not changed by this PR): the save-time dedup search has no
+  type or project filter, so a near-duplicate hit — and, if
+  `MEMO_SAVE_ABSORB` is enabled, an absorb — can in principle match across
+  memory types or projects; this pre-exists the threshold at 0.88 too.
 
 ## [4.11.3] - 2026-08-16
 

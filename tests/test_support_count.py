@@ -90,8 +90,8 @@ def test_merge_signal_tolerates_old_payload_without_support(tmp_path: Path) -> N
 def mem_const(tmp_cfg, monkeypatch):
     """Memory with a constant-vector embedder: every text embeds to the same
     unit vector, so ANY two records are cosine-1.0 near-duplicates — the
-    near-dup path (threshold 0.88) fires deterministically. Dims pinned to
-    the stub's output via Config(embedder_dims=4)."""
+    near-dup path (default threshold 0.85) fires deterministically. Dims
+    pinned to the stub's output via Config(embedder_dims=4)."""
     from memo.memory import Memory
 
     cfg = Config(
