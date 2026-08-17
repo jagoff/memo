@@ -46,7 +46,11 @@ def _dedup_records(caplog) -> list[logging.LogRecord]:
     return [r for r in caplog.records if _DEDUP_MSG in r.getMessage()]
 
 
-def test_dedup_warns_for_interactive_save(mem_const_embed, caplog):
+def test_dedup_warns_for_interactive_save(mem_const_embed, caplog, monkeypatch):
+    # This test is about the WARN path specifically — MEMO_SAVE_ABSORB=1
+    # (now the default) would silently rewrite the existing record instead
+    # of warning, which is a different mechanism covered by test_save_absorb.py.
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     mem_const_embed.save(content="seed body one", title="seed", type_="note")
     with caplog.at_level(logging.DEBUG, logger="memo.memory.record"):
         mem_const_embed.save(content="seed body two", title="dup", type_="note")
