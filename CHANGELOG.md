@@ -17,9 +17,12 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   the wheel force-includes `eval/regression_labels.json`, but the Dockerfiles'
   explicit COPY allowlist never copied `eval/` into the build context, so the
   in-image `uv build --wheel` failed with `Forced include not found`. Both
-  `Dockerfile` and `Dockerfile.glama` now `COPY eval ./eval`. This patch
-  release exists to re-run the tag-gated `docker-publish` workflow from a ref
-  that contains the fix — there are no code changes beyond the Dockerfiles.
+  `Dockerfile` and `Dockerfile.glama` now `COPY eval ./eval`, and the
+  allowlist-style `.dockerignore` re-includes `eval/` so the directory
+  actually reaches the build context (without that, the new COPY line would
+  fail with `"/eval": not found`). This patch release exists to re-run the
+  tag-gated `docker-publish` workflow from a ref that contains the fix —
+  there are no code changes beyond the Docker build surface.
 
 ## [4.12.0] - 2026-08-17
 
