@@ -1,4 +1,5 @@
 import json
+import logging
 
 import pytest
 
@@ -124,6 +125,68 @@ def test_a_transform_that_mutates_then_fails_still_forwards_pristine_bytes(tmp_p
     assert out == raw
     assert json.loads(out)["messages"][0]["content"] == "hi"
     assert plan.applied == []
+
+
+# ---------------------------------------------------------------------------
+# Runtime prefix-stability check (design Section 2: a mismatch within one
+# session is "a test failure and a logged runtime warning"). Fix round 1 on
+# Task 9 found this half only existed as a test, never wired into the actual
+# request path — so a real instability would have failed silently in prod.
+# ---------------------------------------------------------------------------
+
+
+def test_prefix_drift_within_a_session_logs_a_warning(tmp_path, caplog):
+    """A cached-prefix transform that reshuffles the tools list mid-session
+    (the exact Critical bug this fix round addresses) must be caught by a
+    logged warning on the request path, not silently swallowed."""
+    ctx = Context(state_dir=tmp_path, session_key="drift-sess", project=None)
+    raw1 = json.dumps(
+        {"tools": [{"name": "a"}], "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+    raw2 = json.dumps(
+        {"tools": [{"name": "b"}], "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+
+    with caplog.at_level(logging.WARNING, logger="memo.proxy.server"):
+        rewrite_body(raw1, ctx, transforms=[])
+        rewrite_body(raw2, ctx, transforms=[])
+
+    assert any("prefix" in r.message.lower() for r in caplog.records)
+
+
+def test_stable_prefix_across_turns_does_not_warn(tmp_path, caplog):
+    """The complementary negative case: an unchanging prefix across repeated
+    requests in the same session must NOT spam a warning."""
+    ctx = Context(state_dir=tmp_path, session_key="stable-sess", project=None)
+    raw = json.dumps(
+        {"tools": [{"name": "a"}], "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+
+    with caplog.at_level(logging.WARNING, logger="memo.proxy.server"):
+        rewrite_body(raw, ctx, transforms=[])
+        rewrite_body(raw, ctx, transforms=[])
+        rewrite_body(raw, ctx, transforms=[])
+
+    assert not any("prefix" in r.message.lower() for r in caplog.records)
+
+
+def test_prefix_drift_check_is_fail_open(tmp_path, monkeypatch):
+    """A failure inside the drift check itself (fingerprinting blows up) must
+    not raise into rewrite_body's caller — it's a diagnostic side effect, not
+    part of the request's success path."""
+    import memo.proxy.server as server_mod
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("fingerprint exploded")
+
+    monkeypatch.setattr(server_mod, "prefix_fingerprint", _boom)
+    ctx = Context(state_dir=tmp_path, session_key="boom-sess", project=None)
+    raw = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
+
+    out, plan = rewrite_body(raw, ctx, [_Clear()])
+
+    assert json.loads(out)["messages"] == []
+    assert plan.applied == ["clear"]
 
 
 # ---------------------------------------------------------------------------
@@ -462,3 +525,85 @@ async def test_tool_usage_is_recorded_during_a_real_request(proxy_env, monkeypat
     assert resp.status_code == 200
     data = json.loads(tool_usage_path(proxy_env).read_text())
     assert data["sessions"]["sess-real"]["tools"] == ["memo_search"]
+
+
+@pytest.mark.asyncio
+async def test_session_key_comes_from_the_header_and_freezes_across_real_requests(
+    proxy_env, monkeypatch
+):
+    """End-to-end regression for the Critical bug found in fix round 1:
+    `Context.session_key` used to be `_request_key(raw)` (a hash of the body,
+    different on every single turn), which defeated ANY per-session freeze
+    regardless of caching logic — `record_tool_usage` writes BEFORE
+    `rewrite_body` runs, keyed on the real `x-claude-code-session-id` header,
+    so the moment a previously-pruned tool got called, the next turn's
+    keep-set computation (if re-run fresh, or even if frozen under the WRONG
+    key) would see it and the tools list would drift.
+
+    This drives two real requests through the actual ASGI app (not a mock)
+    with the SAME session header, where the SECOND request's own body
+    reports a `memo_graph` tool_use — exactly the discover-then-hydrate flow
+    `memo_tool_docs` exists to enable. The wire payload's tool list must be
+    byte-for-byte the same set on both turns.
+    """
+    monkeypatch.setenv("MEMO_PROXY_ENABLED", "1")
+    monkeypatch.setenv("MEMO_PROXY_TOOL_SCHEMAS", "1")
+    monkeypatch.setenv("MEMO_PROXY_TOOL_WINDOW_SESSIONS", "20")
+
+    tools = [
+        {"name": name, "description": f"description of {name} " * 5, "input_schema": {}}
+        for name in ("memo_search", "memo_graph", "memo_rename")
+    ]
+    headers = {"x-api-key": "k", "x-claude-code-session-id": "real-sess-1"}
+
+    # `_round_trip` patches httpx.AsyncClient itself; calling it twice with
+    # ONE shared monkeypatch stacks the patch (the second _PatchedAsyncClient
+    # subclasses the first, and the first's __init__ overwrites kwargs
+    # AFTER the second's, silently routing turn 2's request to turn 1's fake
+    # upstream). Each call gets its own MonkeyPatch scope, undone right
+    # after, so turn 2 starts from the true, unpatched httpx.AsyncClient.
+    mp1 = pytest.MonkeyPatch()
+    try:
+        # Turn 1: no usage history yet — only the always-keep tools survive.
+        body1 = json.dumps(
+            {"tools": tools, "messages": [{"role": "user", "content": "hi"}]}
+        ).encode()
+        resp1, captured1 = await _round_trip(
+            mp1, path_and_query="/v1/messages?beta=true", body=body1, headers=headers
+        )
+    finally:
+        mp1.undo()
+    assert resp1.status_code == 200
+    names1 = {t["name"] for t in json.loads(captured1["body"])["tools"]}
+    assert "memo_graph" not in names1
+
+    mp2 = pytest.MonkeyPatch()
+    try:
+        # Turn 2, same session: memo_graph gets called mid-session.
+        # record_tool_usage writes it to tool_usage.json BEFORE this same
+        # request's rewrite_body runs.
+        body2 = json.dumps(
+            {
+                "tools": tools,
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "tool_use", "id": "t1", "name": "memo_graph", "input": {}}
+                        ],
+                    },
+                ],
+            }
+        ).encode()
+        resp2, captured2 = await _round_trip(
+            mp2, path_and_query="/v1/messages?beta=true", body=body2, headers=headers
+        )
+    finally:
+        mp2.undo()
+    assert resp2.status_code == 200
+    names2 = {t["name"] for t in json.loads(captured2["body"])["tools"]}
+
+    # Frozen: turn 2's wire tool list must match turn 1's, not the
+    # now-updated tool_usage.json this same request just wrote.
+    assert names2 == names1

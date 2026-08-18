@@ -74,6 +74,103 @@ def test_pruning_is_stable_across_turns_in_a_session(tmp_path, monkeypatch):
     assert len(fingerprints) == 1
 
 
+def test_keep_set_is_frozen_even_when_tool_usage_changes_mid_session(tmp_path):
+    """The prefix must not drift when a pruned tool gets called mid-session —
+    exactly the flow `memo_tool_docs` exists to enable. Exercises the real
+    (unmocked) `recent_tool_names` against a real `tool_usage.json` that
+    changes between two same-session requests, through two DIFFERENT
+    `ToolSchemas()` instances (proving the freeze lives at module scope, not
+    per-instance — a fresh instance is constructed by `build_registry()` on
+    every request)."""
+    from memo.proxy.zones import prefix_fingerprint
+
+    ctx = _ctx(tmp_path)
+    usage_path = tmp_path / "proxy" / "tool_usage.json"
+    usage_path.parent.mkdir(parents=True)
+
+    def _write_usage(tools):
+        usage_path.write_text(
+            json.dumps(
+                {
+                    "schema": "memo.proxy.tool_usage.v1",
+                    "sessions": {ctx.session_key: {"tools": tools, "ts": 1.0}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    # Turn 1: usage file lists only memo_search for this session.
+    _write_usage(["memo_search"])
+    zones1 = make_zones(["memo_search", "memo_graph", "memo_rename"])
+    ToolSchemas().apply(zones1, ctx)
+    kept_turn1 = {t["name"] for t in zones1.tools}
+    fp_turn1 = prefix_fingerprint(zones1)
+
+    # Turn 2: memo_graph gets called mid-session (the flow memo_tool_docs
+    # enables) — record_tool_usage would really write exactly this.
+    _write_usage(["memo_search", "memo_graph"])
+    zones2 = make_zones(["memo_search", "memo_graph", "memo_rename"])
+    ToolSchemas().apply(zones2, ctx)
+    kept_turn2 = {t["name"] for t in zones2.tools}
+    fp_turn2 = prefix_fingerprint(zones2)
+
+    assert kept_turn2 == kept_turn1
+    assert fp_turn2 == fp_turn1
+
+
+def test_a_new_session_computes_its_own_keep_set(tmp_path):
+    """The freeze is keyed per-session, not global.
+
+    `recent_tool_names` aggregates across the whole project's last N
+    sessions by design (not filtered to one session), so two sessions CAN
+    legitimately compute the same keep-set — that's not what this test
+    checks. It checks the cache boundary: session A's first-turn snapshot
+    must survive unchanged even after the underlying aggregate changes
+    (proving A's entry is frozen, not re-read), and session B — a genuinely
+    different session_key — must compute its own fresh value on ITS first
+    turn rather than reusing A's cached one (proving the cache key includes
+    session identity, not just state_dir).
+    """
+    ctx_a = Context(state_dir=tmp_path, session_key="session-a", project="memo")
+    ctx_b = Context(state_dir=tmp_path, session_key="session-b", project="memo")
+    usage_path = tmp_path / "proxy" / "tool_usage.json"
+    usage_path.parent.mkdir(parents=True)
+
+    def _write_usage(sessions):
+        usage_path.write_text(
+            json.dumps({"schema": "memo.proxy.tool_usage.v1", "sessions": sessions}),
+            encoding="utf-8",
+        )
+
+    # Session A's first (and only, so far) request: only memo_search has
+    # ever been used project-wide.
+    _write_usage({"session-a": {"tools": ["memo_search"], "ts": 1.0}})
+    zones_a = make_zones(["memo_search", "memo_graph", "memo_rename"])
+    ToolSchemas().apply(zones_a, ctx_a)
+    kept_a_turn1 = {t["name"] for t in zones_a.tools}
+    assert kept_a_turn1 == {"memo_search"}
+
+    # memo_graph gets used (by session A or anyone else) before session B's
+    # first request — B's first computation legitimately sees the new data.
+    _write_usage(
+        {
+            "session-a": {"tools": ["memo_search", "memo_graph"], "ts": 2.0},
+            "session-b": {"tools": [], "ts": 2.0},
+        }
+    )
+    zones_b = make_zones(["memo_search", "memo_graph", "memo_rename"])
+    ToolSchemas().apply(zones_b, ctx_b)
+    kept_b = {t["name"] for t in zones_b.tools}
+    assert kept_b == {"memo_search", "memo_graph"}
+
+    # Session A, re-applied on a later turn, must still show its FROZEN
+    # first-turn snapshot — not the now-larger project-wide aggregate.
+    zones_a_turn2 = make_zones(["memo_search", "memo_graph", "memo_rename"])
+    ToolSchemas().apply(zones_a_turn2, ctx_a)
+    kept_a_turn2 = {t["name"] for t in zones_a_turn2.tools}
+    assert kept_a_turn2 == kept_a_turn1
+
+
 def test_no_tools_is_a_noop(tmp_path):
     zones = make_zones([])
     saved = ToolSchemas().apply(zones, _ctx(tmp_path))

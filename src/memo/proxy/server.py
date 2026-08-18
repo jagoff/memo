@@ -31,6 +31,8 @@ import hashlib
 import json
 import logging
 import time
+import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -38,7 +40,7 @@ from typing import Any
 from memo.proxy import meter
 from memo.proxy.plan import Context, TransformPlan, apply_all
 from memo.proxy.registry import build_registry
-from memo.proxy.zones import split
+from memo.proxy.zones import Zones, prefix_fingerprint, split
 
 _log = logging.getLogger(__name__)
 
@@ -62,6 +64,62 @@ HOP_BY_HOP = frozenset(
 
 TOOL_USAGE_SCHEMA = "memo.proxy.tool_usage.v1"
 _SESSION_HEADER = "x-claude-code-session-id"
+# Claude Code always sends _SESSION_HEADER (confirmed by the Task 1 probe);
+# this is a defensive fallback for a client that doesn't. It must be STABLE
+# across requests, never a per-turn value (a hash of the body, a per-request
+# id, etc.) — that stability is what session-scoped state (the toolschemas
+# keep-set freeze, the prefix-drift tracker below) depends on. It is
+# per-*process*, not a single shared literal like the old "unknown": every
+# header-less request within one running proxy maps to the same fallback
+# session, generated once at import time.
+_NO_SESSION_HEADER_FALLBACK = f"no-session-header-{uuid.uuid4().hex}"
+
+# Per-session cached-prefix fingerprint, for the runtime half of the design's
+# cache-stability rule (docs/SPECS/2026-08-18-token-savings-proxy-context-
+# compression-design.md Section 2: a mismatch across turns within one session
+# is "a test failure and a logged runtime warning" — the test half already
+# existed; this is the runtime half). Bounded like the toolschemas keep-set
+# cache, for the same reason (a long-lived proxy process must not leak
+# memory), keyed the same way (state_dir, session_key) to avoid collisions.
+_MAX_TRACKED_PREFIX_SESSIONS = 1000
+_last_prefix_fingerprint: OrderedDict[tuple[str, str], str] = OrderedDict()
+
+
+def _warn_on_prefix_drift(zones: Zones, ctx: Context) -> None:
+    """Log (never raise, never block) if this session's cached-prefix
+    fingerprint differs from the one seen on this session's last request.
+
+    This is a diagnostic side effect, not part of the request's success
+    path — any failure here is swallowed, matching every other function in
+    this module.
+
+    Known limitation, not fixed here: `prefix_fingerprint` hashes
+    `frozen_messages` too, and that zone legitimately GROWS every turn as the
+    live window advances — so in real multi-turn traffic this will warn on
+    turns beyond the first even when tool-schema pruning is behaving
+    correctly. The two-turn regression this fixes (a transform changing
+    `tools` mid-session) has no `frozen_messages` growth in play and is
+    exactly what this catches; narrowing the tracked fingerprint to exclude
+    the legitimately-growing zone is a follow-up, not done in this round.
+    """
+    try:
+        key = (str(ctx.state_dir), ctx.session_key)
+        fingerprint = prefix_fingerprint(zones)
+        previous = _last_prefix_fingerprint.get(key)
+        if previous is not None and previous != fingerprint:
+            _log.warning(
+                "proxy: cached prefix changed within session (state_dir=%s, "
+                "session=%s) — a stable-prefix transform reshuffled it and "
+                "will force a re-cache instead of a provider cache hit",
+                ctx.state_dir,
+                ctx.session_key,
+            )
+        _last_prefix_fingerprint[key] = fingerprint
+        _last_prefix_fingerprint.move_to_end(key)
+        while len(_last_prefix_fingerprint) > _MAX_TRACKED_PREFIX_SESSIONS:
+            _last_prefix_fingerprint.popitem(last=False)
+    except Exception:
+        _log.warning("proxy: prefix-stability check failed; continuing unaffected")
 
 
 def forward_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -91,6 +149,7 @@ def rewrite_body(
 
     zones = split(payload)
     plan = apply_all(zones, ctx, transforms if transforms is not None else build_registry())
+    _warn_on_prefix_drift(zones, ctx)
     if not plan.applied:
         # No transform succeeded — forward the pristine original bytes, not a
         # re-serialization. A transform that mutated a zone's aliased dict
@@ -256,7 +315,7 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
         cfg = Config.from_env()
         state_dir = cfg.state_dir
 
-        session_key = request.headers.get(_SESSION_HEADER) or "unknown"
+        session_key = request.headers.get(_SESSION_HEADER) or _NO_SESSION_HEADER_FALLBACK
         record_tool_usage(state_dir, session_key, raw)
 
         request_key = _request_key(raw)
@@ -265,7 +324,15 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
         plan = TransformPlan()
         body = raw
         if not holdout and flag_bool("MEMO_PROXY_ENABLED"):
-            ctx = Context(state_dir=state_dir, session_key=request_key, project=None)
+            # session_key (the real Claude Code session id, or the stable
+            # per-process fallback above) — NOT request_key, which hashes the
+            # raw body and is different on every single turn. A per-turn
+            # session_key would defeat any per-session freeze a transform
+            # does (e.g. toolschemas' keep-set), regardless of how correct
+            # that transform's own caching is. request_key stays reserved for
+            # holdout assignment and the measurement ledger below, where
+            # per-request identity is exactly what's wanted.
+            ctx = Context(state_dir=state_dir, session_key=session_key, project=None)
             body, plan = rewrite_body(raw, ctx)
 
         upstream_req = client.build_request(
