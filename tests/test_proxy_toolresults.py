@@ -228,3 +228,57 @@ def test_apply_marker_lets_the_original_be_recovered(tmp_path):
 
     key = new_text.split('key="')[1].split('"')[0]
     assert ccr.recover(tmp_path, key) == output
+
+
+# --- Fix round 1 regressions -------------------------------------------------
+
+
+def test_apply_never_stores_a_net_larger_block_than_the_original(tmp_path):
+    """Critical 1 repro: the shipped git-status filter's truncate_lines step
+    barely shortens two long-path porcelain lines, and the recovery marker's
+    own overhead (~130 bytes) outweighs that small saving. The stored block
+    must never end up larger than the original -- previously it did, while
+    apply() reported saved=0 as if nothing had happened, hiding a net-LOSS
+    cut from both the caller and the token ledger."""
+
+    def _line(prefix: str) -> str:
+        return f"{prefix} src/" + ("nested/" * 28) + "file.py"
+
+    original = f"{_line('M ')}\n{_line('??')}\n"
+    zones = _zones_with_tool_result("git status", original)
+
+    saved = ToolResults().apply(zones, _ctx(tmp_path))
+
+    stored = zones.live_messages[1]["content"][0]["content"]
+    assert len(stored) <= len(original), (
+        f"stored block ({len(stored)} chars) is larger than the original "
+        f"({len(original)} chars) -- a net-loss cut reported as neutral"
+    )
+    assert stored == original  # left untouched: the cut wasn't worth spending
+    assert saved == 0
+
+
+def test_pytest_filter_survives_a_pathological_separator_line():
+    """Critical 2 repro: the shipped pytest.yaml keep_lines pattern
+    `(FAILED|ERROR|error:|assert|=+ .* =+)` backtracks O(n^2) on a long line
+    of '=' with no closing structure to match -- no malice required, just a
+    large diff, a printed data structure, or a stray separator in captured
+    output. The proxy runs synchronously in the critical path of every model
+    call, so a slow match doesn't fail one request, it hangs the whole
+    session. Must stay bounded regardless of how long the adversarial line
+    actually is."""
+    import time
+
+    filters = load_filters(DEFAULT_FILTERS_DIR)
+    pytest_filter = next(f for f in filters if f.name == "pytest")
+
+    adversarial_line = "=" * 100_000  # no spaces anywhere: never completes a match
+    text = f"{adversarial_line}\nFAILED tests/test_x.py::test_broken\n"
+
+    start = time.perf_counter()
+    apply_pipeline(text, pytest_filter.pipeline)
+    elapsed = time.perf_counter() - start
+
+    # Generous enough not to flake on a busy machine; tight enough to catch
+    # a return of quadratic behavior (measured ~3.3s at this size, unbounded).
+    assert elapsed < 2.0, f"pipeline took {elapsed:.2f}s on a pathological line -- ReDoS"

@@ -68,6 +68,28 @@ def _lines(text: str) -> list[str]:
     return text.splitlines()
 
 
+# ReDoS guard: keep_lines/remove_lines/aggregate run a `pattern` that comes
+# from hand-edited, untrusted YAML (or, one day, a user-authored filter). An
+# unlucky quantifier shape (the shipped pytest.yaml's original
+# `=+ .* =+` among them) backtracks O(line_length^2) against a single long
+# line with no closing structure to match -- no malice required, just a big
+# diff, a printed data structure, or a stray separator line in captured
+# output. Measured on this pattern: 0.03s/10k chars, 0.5s/40k, ~3.3s/100k. The
+# proxy runs synchronously in the critical path of every model call, so a
+# slow match doesn't fail one request, it hangs the whole session. Capping
+# both axes BEFORE any regex runs bounds worst-case work to a small constant
+# regardless of what pattern a filter supplies -- this is the floor; the
+# shipped patterns are additionally rewritten below to not backtrack at all.
+_MAX_REGEX_LINE_CHARS = 2000
+_MAX_REGEX_TOTAL_CHARS = 2_000_000
+
+
+def _regex_safe_lines(text: str) -> list[str]:
+    """Lines to run a filter's regex against. A line over the cap is
+    truncated before matching is even attempted, not matched in full."""
+    return [line[:_MAX_REGEX_LINE_CHARS] for line in text[:_MAX_REGEX_TOTAL_CHARS].splitlines()]
+
+
 def _compile(pattern: object) -> re.Pattern[str] | None:
     if not isinstance(pattern, str):
         return None
@@ -81,14 +103,14 @@ def _keep_lines(text: str, action: dict) -> str:
     rx = _compile(action.get("pattern"))
     if rx is None:
         return text
-    return "\n".join(line for line in _lines(text) if rx.search(line))
+    return "\n".join(line for line in _regex_safe_lines(text) if rx.search(line))
 
 
 def _remove_lines(text: str, action: dict) -> str:
     rx = _compile(action.get("pattern"))
     if rx is None:
         return text
-    return "\n".join(line for line in _lines(text) if not rx.search(line))
+    return "\n".join(line for line in _regex_safe_lines(text) if not rx.search(line))
 
 
 def _head(text: str, action: dict) -> str:
@@ -134,7 +156,7 @@ def _aggregate(text: str, action: dict) -> str:
     label = action.get("label")
     if rx is None or not isinstance(label, str):
         return text
-    count = sum(1 for line in _lines(text) if rx.search(line))
+    count = sum(1 for line in _regex_safe_lines(text) if rx.search(line))
     return f"{count} {label}"
 
 
@@ -365,10 +387,9 @@ class ToolResults:
                 if pipeline is not None
                 else generic_fallback(text, _FALLBACK_MAX_CHARS)
             )
-            # Only a genuine reduction counts as a cut. A pipeline that leaves
-            # the text unchanged -- or, in a pathological near-threshold case,
-            # even makes it longer (marker overhead outweighing a tiny elision)
-            # -- is not worth spending a recovery-cache entry on.
+            # Cheap pre-filter: a pipeline that didn't even shrink the raw
+            # text can't possibly be worth a stash call -- the marker we'd
+            # append only adds more bytes on top.
             if not isinstance(new_text, str) or len(new_text) >= len(text):
                 return 0
 
@@ -380,6 +401,16 @@ class ToolResults:
             marked = new_text + ccr.marker(
                 key, kept_chars=len(new_text), dropped_chars=len(text) - len(new_text)
             )
+            # The REAL comparison: the marker is a ~130-byte fixed recovery
+            # pointer appended after the pre-filter above ran, so a pipeline
+            # reduction smaller than that overhead would otherwise still get
+            # written back as a "cut" that is actually net-LARGER than the
+            # original -- and reported as saved=0, hiding it from the ledger.
+            # Only the FINAL, marker-included text counts; anything else
+            # leaves the block completely untouched.
+            if len(marked) >= len(text):
+                return 0
+
             _set_block_text(block, marked)
             return max(0, est_tokens(text) - est_tokens(marked))
         except Exception:
