@@ -295,6 +295,21 @@ SPECS: tuple[FlagSpec, ...] = (
         opt_out=True,
     ),
     _spec(
+        "MEMO_RECALL_CHUNK_PARENT",
+        "bool",
+        False,
+        "recall",
+        "Chunk->parent rollup for auto-recall: a chunked long durable memory "
+        "(MEMO_CHUNK_INGEST) is invisible to MEMO_RECALL_EXCLUDE_REFERENCE "
+        "because its fragments are type=reference — this flag runs one small, "
+        "bounded, type-scoped search to resolve a winning chunk back to its "
+        "durable parent. Never surfaces genuine bulk-vault reference material "
+        "(the parent_path-only ingest schema, no parent_id). Default off "
+        "pending a measured proof-loop (precision AND recall-hook latency). "
+        "Covers the recall-hook subprocess only; the warm daemon path is a "
+        "separate, not-yet-wired follow-up (see recall_logic.fetch_chunk_parent_hits).",
+    ),
+    _spec(
         "MEMO_RECALL_EXCLUDE_UNCERTAIN",
         "bool",
         True,

@@ -171,6 +171,37 @@ def _resolved_anomaly_patch(payload: dict[str, Any]) -> dict[str, str]:
     }
 
 
+# Confidence floor at which an automatic pass will act on a contradiction:
+# `memo maintain --confidence` defaults to 0.9 and dream's contradictions pass
+# hard-codes `list_open(min_confidence=0.9)`. Below it, NO automatic pass ever
+# touches the pair.
+_AUTO_ADJUDICATION_CONFIDENCE = 0.9
+
+
+def _freezes_writes(payload: dict[str, Any]) -> bool:
+    """Whether a detected contradiction should block writes to its subjects.
+
+    Freezing a pair memo will never auto-adjudicate is a permanent block: only
+    `memo operational conflict resolve`, run by hand, lifts it (an agent cannot
+    — `write_policy` requires authenticated *human* authority to override).
+    Measured on the live corpus 2026-08-13: three 0.80-0.85 pairs had been
+    freezing their subject memories since 2026-08-06, with every nightly pass
+    skipping them for being under the same 0.9 floor. Freezing on a finding the
+    configuration declares non-actionable is incoherent, so record it — it still
+    surfaces in the briefing and `conflict list` — without the block.
+
+    An anomaly carrying no readable confidence keeps the conservative freeze:
+    unknown is not the same as low.
+    """
+    raw = payload.get("confidence")
+    if raw is None:
+        return True
+    try:
+        return float(raw) >= _AUTO_ADJUDICATION_CONFIDENCE
+    except (TypeError, ValueError):
+        return True
+
+
 def _detected_anomaly_conflict(
     anomaly_id: str,
     payload: dict[str, Any],
@@ -184,7 +215,7 @@ def _detected_anomaly_conflict(
         ).strip(),
         "summary": str(payload.get("summary") or "semantic contradiction"),
         "lifecycle_state": "detected",
-        "freeze_write": True,
+        "freeze_write": _freezes_writes(payload),
         "created_at": str(payload.get("created_at") or ""),
         "resolved_at": "",
         "resolution": "",

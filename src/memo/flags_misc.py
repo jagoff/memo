@@ -617,9 +617,16 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_SAVE_DEDUP_THRESHOLD",
         "float",
-        0.88,
+        0.85,
         "misc",
-        "Cosine similarity floor for near-duplicate detection on save (requires MEMO_SAVE_DEDUP_CHECK=1).",
+        "Cosine similarity floor for near-duplicate detection on save (requires "
+        "MEMO_SAVE_DEDUP_CHECK=1). Lowered from 0.88 (2026-08): a census of the "
+        "live-corpus [0.85, 0.88) query-vs-document band (the real asymmetric "
+        "regime this check runs in, not raw doc-doc cosine) found 71% true "
+        "duplicates vs 18% distinct-fact false-positive risk, dominated by "
+        "same-session cross-language (es/en) and refined restatements — and the "
+        "event is rare corpus-wide (~1.5% of candidates). See PR discussion for "
+        "the measurement.",
         min_val=0.0,
         max_val=1.0,
     ),
@@ -648,14 +655,17 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_SAVE_ABSORB",
         "bool",
-        False,
+        True,
         "misc",
         "Living canonical records: when a save hits a near-duplicate "
         "(MEMO_SAVE_DEDUP_THRESHOLD), rewrite the EXISTING record via one "
         "bounded LLM call + versioned update() (rollbackable) instead of "
         "creating a near-copy; proof_count grows in extra. Requires "
         "MEMO_SAVE_DEDUP_CHECK. Skipped in derived-save scope "
-        "(dream/consolidation). Never on the recall-hook path.",
+        "(dream/consolidation). Never on the recall-hook path. Default ON "
+        "(opt out with =0) — measured 2026-08-16: absorbs correctly at "
+        "cosine 0.9691/matching type, ~24s per absorption (one bounded "
+        "LLM call), reversible via memo version rollback.",
     ),
     _spec(
         "MEMO_INVALIDATE_PENALTY",

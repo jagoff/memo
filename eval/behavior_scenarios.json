@@ -1,0 +1,532 @@
+{
+  "schema_version": "memo.eval_behavior.scenario.v1",
+  "_doc": "Behavior-eval corpus: does a recalled memory actually steer the answer? Every scenario generalizes a REAL incident (see each `why`). Seeds are written into an isolated store, the real `memo recall-hook` produces the injected block, and the gates score the answer a model gives with it. A scenario with only recall-layer gates is rejected at load — that is retrieval, and `memo eval recall` already covers it. Run: `memo eval behavior --gate`.",
+  "scenarios": [
+    {
+      "schema_version": "memo.eval_behavior.scenario.v1",
+      "scenario_id": "recall-mode-hybrid-flip-rejected",
+      "title": "Flipping MEMO_RECALL_MODE to hybrid was measured and rejected — do not re-propose it",
+      "why": "2026-06-27 sweep recorded in memo-gamechanger-roadmap-2026-06-27.md item #6 (\"#6 FLIP RESUELTO 2026-06-27 — RECHAZADO por data (loop cerrado)\"): prec@5 vec 0.095 vs hybrid 0.062, and p50 vec 28ms vs hybrid 9025-9635ms (~340x), which alone blows the recall hook's 5s budget. The default is still `vec` at src/memo/flags_recall.py:22, and the only in-repo trace is commit 6c551657, which fixed hybrid's empty-result bug and calls hybrid a 'functional opt-in pending per-corpus eval validation' — it does NOT record that the validation ran and rejected the flip. So a fresh agent reading 'memo is a vec+BM25 hybrid store' flips it on standard-practice grounds and silently kills injected recall on every prompt.",
+      "seed_memories": [
+        {
+          "title": "FLIP MEMO_RECALL_MODE vec→hybrid: RECHAZADO por medición (2026-06-27)",
+          "content": "DECISIÓN: el default de MEMO_RECALL_MODE queda en `vec` — NO flipear a hybrid. Sweep A/B de ~39min (`memo eval recall --labels eval/auto_labels.json --k 5 --force`): prec@5 vec/0.60 = 0.095 vs hybrid = 0.062 (hybrid es PEOR), y p50 vec = 28ms vs hybrid = 9025-9635ms (~9.0-9.6 SEGUNDOS, ~340x más lento) -> revienta el budget de 5s del recall-hook (UserPromptSubmit) en cada prompt y el usuario pierde la inyección de memoria sin enterarse. El harness imprimió literal \"Baseline already wins — no knob change\". No re-litigar sin una medición nueva sobre el corpus vivo.",
+          "type": "decision",
+          "tags": [
+            "project:memo",
+            "recall",
+            "eval",
+            "no-relitigar"
+          ]
+        },
+        {
+          "title": "commit 6c55165: el gate min_sim comparaba contra el score RRF",
+          "content": "Bug real detrás de \"hybrid devuelve vacío\": el gate `min_sim` comparaba contra el score RRF (escala ~0.04-0.28) en vez del coseno vec calibrado en 0.5, así que `MEMO_RECALL_MODE=hybrid` filtraba todo y volvía sin hits. Arreglado en 6c55165; ahora hybrid devuelve resultados y es un opt-in funcional.",
+          "type": "bug",
+          "tags": [
+            "project:memo",
+            "recall",
+            "hybrid"
+          ]
+        },
+        {
+          "title": "BM25 español: FTS5 arma AND-of-tokens, no phrase match",
+          "content": "El tokenizer de FTS5 encierra cada token `\\w+` en sus propias comillas de frase, así que una query multi-token termina siendo un AND de tokens y no un match de frase. `store/bm25_queries.py` tokeniza, AND-joinea y cae a OR sólo con recall cero. Diacríticos plegados con `unicode61 remove_diacritics 2` para que \"decision\" matchee \"decisión\".",
+          "type": "note",
+          "tags": [
+            "project:memo",
+            "bm25",
+            "search"
+          ]
+        }
+      ],
+      "prompt": "Che, memo es un store híbrido vec + BM25 pero `MEMO_RECALL_MODE` viene en `vec` por default. ¿No deberíamos flipearlo a hybrid? El retrieval híbrido siempre le gana al dense puro, parece que quedó a medio cablear.",
+      "gates": [
+        {
+          "kind": "must_recall",
+          "seed_index": 0
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "0.062",
+            "0.095",
+            "28ms",
+            "340"
+          ]
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer recommend keeping MEMO_RECALL_MODE at `vec` and justify it by citing the prior measurement (hybrid scored worse precision@5 and roughly 340x higher p50 latency, blowing the recall hook's 5s budget), rather than endorsing the generic 'hybrid beats pure dense' argument?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer correct the user's premise that hybrid is 'a medio cablear' (half-wired), stating that hybrid is functional and available as an opt-in and that the default stays vec because it lost on measurement, not because hybrid is unfinished or broken?"
+        }
+      ]
+    },
+    {
+      "schema_version": "memo.eval_behavior.scenario.v1",
+      "scenario_id": "rank-hits-already-extracted-claude-md-stale",
+      "title": "CLAUDE.md's 'extract a pure rank_hits() first' blocker is stale — ranking is measurable today",
+      "why": "Stored correction in memo-improvement-program-2026-08-06.md (\"CORRECCIÓN a CLAUDE.md … No re-litigar\") versus the still-present doc line in /Users/fer/repos/memo/CLAUDE.md (Dream/tuner section: \"boosts/rerank-pool need a recall-faithful eval (a pure `rank_hits()` extracted from `recall_logic._recall_logic`) and are deliberately deferred\"). Verified in-tree: `rank_hits()` is public and pure at src/memo/recall_logic.py:1388 and is the shared ranking path for the eval harness (src/memo/eval_recall.py:716,798), the A/B seam (src/memo/eval_ab.py:160,197) and the recall hook (src/memo/cli_recall_hook.py:448,627). The stale doc wins over the memory for any agent that reads CLAUDE.md first, costing a phantom prerequisite phase.",
+      "seed_memories": [
+        {
+          "title": "CORRECCIÓN a CLAUDE.md: rank_hits YA está extraído (2026-08-06)",
+          "content": "La extracción de `rank_hits` YA ESTÁ HECHA: `rank_hits()` es pública y pura en `src/memo/recall_logic.py` y `eval_recall.py` rankea con ella — el comentario dice \"Used by both `_recall_logic` and the eval harness so they cannot diverge\". Sumado al seam `flag_overrides` de `eval_ab.py` para A/B, los boosts, el tamaño del pool de rerank y los tiers de project boost son medibles HOY con `memo eval recall --labels eval/regression_labels.json --k 5`. Eso borró una fase entera del plan de mejora. No re-litigar ni planificar la extracción de nuevo.",
+          "type": "fact",
+          "tags": [
+            "project:memo",
+            "recall",
+            "eval",
+            "claude-md",
+            "no-relitigar"
+          ]
+        },
+        {
+          "title": "CLAUDE.md (Dream/tuner) dice que sólo min_sim es medible",
+          "content": "La sección Dream/tuner de CLAUDE.md dice que el tuner sólo mueve `MEMO_RECALL_MIN_SIM` porque es \"the one knob the eval harness (`run_config` / `Cfg.floor`) measures faithfully in vec mode\", y que boosts y rerank-pool necesitan \"a pure `rank_hits()` extracted from `recall_logic._recall_logic`\" y quedan \"deliberately deferred\".",
+          "type": "note",
+          "tags": [
+            "project:memo",
+            "claude-md",
+            "docs"
+          ]
+        }
+      ],
+      "prompt": "Quiero subir `MEMO_RECALL_PROJECT_BOOST` y tocar el tamaño del pool del reranker, pero CLAUDE.md dice que el harness sólo mide `min_sim` fiel y que primero hay que extraer un `rank_hits()` puro de `_recall_logic`. ¿Arranco por esa extracción entonces?",
+      "gates": [
+        {
+          "kind": "must_recall",
+          "seed_index": 0
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "eval recall",
+            "eval_recall",
+            "regression_labels"
+          ]
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer state that the extraction is already done — that `rank_hits()` is already public and shared with the eval harness — so no extraction phase is needed?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer tell the user to go ahead and measure the project-boost / rerank-pool change now with the existing eval harness, instead of treating the CLAUDE.md line as a real prerequisite or blocker?"
+        }
+      ]
+    },
+    {
+      "schema_version": "memo.eval_behavior.scenario.v1",
+      "scenario_id": "ranking-change-ci-green-is-not-evidence",
+      "title": "A ranking fix with all GitHub checks green still needs the machine-local A/B, and must not bundle two changes",
+      "why": "PR #223 (ae0a1d1d) shipped a well-argued ranking fix with 17 green GitHub checks and cost precision@5 0.676 -> 0.524 on the live corpus; it was reverted whole in a3713a49 (PR #235), whose commit message carries the A/B command and both numbers. #223 really did bundle two separable changes (the _MAX_BOOST cap recalibration and gating skip_below on the cosine instead of hybrid's RRF artefact), so the combined failure was unattributable. _MAX_BOOST = 12.0 lives at /Users/fer/repos/memo/src/memo/retrieval_boost.py:27; the only gate that measures ranking is machine-local (.git/hooks/pre-push + state_dir/eval/recall_baseline.json), rule text at /Users/fer/repos/memo/CLAUDE.md:388.",
+      "seed_memories": [
+        {
+          "title": "Todo cambio de ranking se mide A/B antes de mergear — CI verde no es evidencia",
+          "content": "PR #223 (ae0a1d1d) bajó `_MAX_BOOST` 12.0→1.5 con un argumento de escala (el boost corre downstream de un score ya acotado a 1.0) y pasó los 17 checks de GitHub en verde. Medido sobre el corpus vivo con eval/regression_labels.json: precision@5 0.676→0.524, −0.152 absoluto (−22% relativo), atribuible a ese commit solo (A/B desde un worktree detached en ae0a1d1d contra su propio padre, sin otro diff de ningún lado). Revertido entero en a3713a49 (PR #235). Regla: cualquier toque a boosts, caps, floors o fusión se mide con `memo eval recall --k 5 --profile pre-push --against <ref>` sobre eval/regression_labels.json ANTES del merge. GitHub CI (pytest/mypy/ruff/coverage) no mide retrieval; el único gate que lo mide es machine-local: .git/hooks/pre-push + state_dir/eval/recall_baseline.json. El hook exporta PYTHONPATH=$(git rev-parse --show-toplevel)/src para puntuar el DIFF y no el binario uv-tool instalado.",
+          "type": "decision",
+          "tags": [
+            "project:memo",
+            "ranking",
+            "eval"
+          ]
+        },
+        {
+          "title": "Nunca dos cambios de ranking independientes en el mismo PR",
+          "content": "#223 traía dos cosas separables: el arreglo de escala (comparar el floor calibrado en coseno contra el artefacto RRF de la fusión híbrida) y el cap `_MAX_BOOST` 12.0→1.5 con su tabla de pesos recalibrada. Cuando el A/B dio rojo la falla combinada no era atribuible a ninguna de las dos, así que hubo que tirar las dos juntas — el arreglo de escala puede haber sido correcto y se fue igual en el revert. Un cambio de ranking por PR, medido solo.",
+          "type": "decision",
+          "tags": [
+            "project:memo",
+            "ranking",
+            "process"
+          ]
+        },
+        {
+          "title": "Re-seed del baseline de calidad tras drift esperado de corpus",
+          "content": "Cuando el corpus se movió por una razón independiente y confirmada, el baseline de eval se re-siembra con `memo eval recall --labels eval/regression_labels.json --k 5 --update-baseline` (ver 74e46675). El baseline vive en state_dir/eval/, es per-máquina y sigue *tu* corpus, no el de CI. Re-sembrar NO es una respuesta a un gate en rojo: tapa la caída en vez de medirla.",
+          "type": "note",
+          "tags": [
+            "project:memo",
+            "eval",
+            "baseline"
+          ]
+        }
+      ],
+      "prompt": "Encontré el bug del ranking: `_MAX_BOOST` es 12.0 y se aplica downstream de un término ya acotado a 1.0 — un multiplicador 12x no ajusta el ranking, lo reemplaza. Lo bajo a 1.5 y de paso normalizo la fusión RRF a coseno, que es la raíz del problema de escala. Ya tengo los 17 checks de GitHub en verde. ¿Mergeo?",
+      "gates": [
+        {
+          "kind": "must_recall",
+          "seed_index": 0
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "eval recall",
+            "--against",
+            "pre-push"
+          ]
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "#223",
+            "0.676",
+            "0.524",
+            "ae0a1d1d"
+          ]
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer require running the machine-local A/B (`memo eval recall ... --against <ref>` over eval/regression_labels.json) before merging, rather than accepting the green GitHub checks as evidence about ranking quality?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer say the `_MAX_BOOST` cap change and the RRF/cosine fusion change must go in separate PRs (or otherwise be measured one at a time) so a regression stays attributable to one of them?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer state that this exact `_MAX_BOOST` 12.0 -> 1.5 change was already shipped and then reverted after a measured precision@5 drop, instead of treating it as a new idea?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Is the answer free of any suggestion to re-seed or update the eval baseline (e.g. `--update-baseline`) as a way to get this change through?"
+        }
+      ]
+    },
+    {
+      "schema_version": "memo.eval_behavior.scenario.v1",
+      "scenario_id": "reranker-batching-benchmark-configured-model",
+      "title": "Batching the cross-encoder forward is a measured regression on the configured 4B reranker",
+      "why": "09b9ec26 batched the cross-encoder forward and was reverted in 06f3563a after measuring a slowdown on the production 4B reranker (revert message: N=10 1997ms->2206ms = 0.91x, N=20 4697ms->5033ms = 0.93x); the head-slice-only path is what survived, at /Users/fer/repos/memo/src/memo/reranker.py:190-199 with the parity test tests/test_reranker.py:310 (test_head_slice_matches_full_forward_ranking).",
+      "seed_memories": [
+        {
+          "title": "Batchear el forward del cross-encoder REGRESIONA el reranker 4B — revertido",
+          "content": "09b9ec2 batcheó el forward del cross-encoder; revertido en 06f3563a. Medido sobre el reranker de producción (Qwen3-Reranker-4B-4bit-MLX), mediana de 7 trials calientes sobre el índice vivo: N=10 1997ms→2206ms (0.91x), N=20 4697ms→5033ms (0.93x). El 4B es compute-bound, así que el desperdicio del right-padding se come el ahorro del head-slice. El 1.2-1.5x sólo existe en el 0.6B por defecto, que es dispatch-bound. Regla: cualquier cambio de performance MLX se benchmarkea sobre el modelo CONFIGURADO, no sobre el default. No re-litigar.",
+          "type": "decision",
+          "tags": [
+            "project:memo",
+            "reranker",
+            "mlx",
+            "performance"
+          ]
+        },
+        {
+          "title": "Head-slice sin batching del body es lo que shippeó",
+          "content": "Correr el body del transformer y proyectar SÓLO el último token por la LM head (`_apply_lm_head` sobre hidden[:, -1, :], reranker.py:190-199) evita el matmul hidden×151k vocab sobre las demás posiciones: +9% en 4B, +24% en 0.6B — gana en los dos, es el win universal limpio. Caveat: en 4-bit el matmul de la head es shape-sensitive, así que P(yes) se corre ~un paso de cuantización (1/64). Ranking-safe (el set recuperado no cambia, cubierto por tests/test_reranker.py:310) pero los scores no son bit-fieles.",
+          "type": "fact",
+          "tags": [
+            "project:memo",
+            "reranker",
+            "mlx"
+          ]
+        },
+        {
+          "title": "MLXEmbedder.embed() se llama siempre batcheado",
+          "content": "`embed()` toma `Sequence[str]`, nunca un str pelado (se itera por caracteres y devuelve basura silenciosa): siempre `embed([text])`. Batchear los documentos en ingest sube el throughput bastante y el cache content-addressed absorbe el resto. El prefijo asimétrico de retrieval va SOLO en queries, nunca en documentos.",
+          "type": "fact",
+          "tags": [
+            "project:memo",
+            "embedder",
+            "mlx"
+          ]
+        }
+      ],
+      "prompt": "Mirando reranker.py: el scoring va par por par en un for, un forward por cada par. Eso es desperdicio obvio de GPU — armo un batch con padding a la derecha y hago un solo forward para los N candidatos. Por lo que vi en el embedder, batchear en MLX paga; acá debería darme 1.2-1.5x. ¿Lo hago?",
+      "gates": [
+        {
+          "kind": "must_recall",
+          "seed_index": 0
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "0.91x",
+            "0.93x",
+            "2206",
+            "5033",
+            "06f3563a",
+            "09b9ec2"
+          ]
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "4B",
+            "0.6B",
+            "Qwen3-Reranker-4B"
+          ]
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer tell the user NOT to batch the cross-encoder forward, citing that this exact change was already implemented and then reverted after being measured as a slowdown on the production 4B reranker, instead of agreeing it is an obvious throughput win?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer state that the expected 1.2-1.5x speedup materializes only on the smaller 0.6B default model (which is dispatch-bound), and not on the configured 4B (which is compute-bound, so right-padding waste outweighs the saving)?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer state the general rule that an MLX performance change must be benchmarked against the CONFIGURED model rather than the default model?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer explicitly reject the user's embedder analogy — that is, does it say the embedder's batching win does not transfer to the cross-encoder reranker — rather than accepting or ignoring that analogy?"
+        }
+      ]
+    },
+    {
+      "schema_version": "memo.eval_behavior.scenario.v1",
+      "scenario_id": "eval-harness-must-not-write-access-rows",
+      "title": "A measurement sweep through Memory.search must pass _track_usage=False — access rows are not rebuildable",
+      "why": "PR #215 (a9d99bcb, 'fix(eval): stop evaluation/diagnostic harnesses from writing access rows') added the guard; the signature-introspection pattern lives at src/memo/eval_recall.py:606-607 and the explicit kwarg at src/memo/eval_ab.py:185, and the comment there names the exact damage (inflated access_count feeding `memo usefulness` / dead_weight()). The damage is permanent because truncate_for_rebuild (src/memo/store/queries.py:564-566) deletes only meta/fts/vec and never touches access.",
+      "seed_memories": [
+        {
+          "title": "Todo path de medición pasa `_track_usage=False` a Memory.search",
+          "content": "PR #215 (a9d99bcb): cualquier código que llame Memory.search() —o un wrapper como chat_stream()— puramente para MEDIR (eval, benchmark, tuning, sweep de diagnóstico) DEBE pasar `_track_usage=False`. Si no, `_stage_record_usage` en search_ops.py llama a `_record_access` y escribe una fila de access por hit, inflando access_count/last_accessed, que es exactamente la señal que leen `memo usefulness` y `dead_weight()` (MEMO_OUTCOME_DEAD_MIN_SURFACED decide qué es ruido con access_count). Se thread-ea por introspección de firma (`if \"_track_usage\" in sig.parameters or has_var_kw`) para no romper stubs de test sin el kwarg. Sitios: eval_recall.py:606, eval_ab.py:185, cli_eval.py:856, cli_debug_recall.py:92. Las superficies reales de producto (recall hook, memo search/ask, MCP, HTTP) SIGUEN trackeando: eso es el producto.",
+          "type": "decision",
+          "tags": [
+            "project:memo",
+            "eval",
+            "outcome"
+          ]
+        },
+        {
+          "title": "La tabla `access` no es reconstruible — reindex la preserva a propósito",
+          "content": "`memo reindex --rebuild` trunca sólo lo derivable del markdown (meta/vec/fts) y PRESERVA deliberadamente access / memory_health / source_feedback*: son señal de usuario primaria, no están en los .md y re-joinean por el id estable. Ergo, una corrida de eval que ensucia access_count no se deshace con un reindex — el daño es permanente.",
+          "type": "fact",
+          "tags": [
+            "project:memo",
+            "storage",
+            "eval"
+          ]
+        },
+        {
+          "title": "Markdown es la fuente de verdad; sqlite es un índice reconstruible",
+          "content": "Los .md son canónicos y el índice sqlite es derivado y replayable. Nunca `rm memvec.db`: se usa `memo reindex --rebuild`, que reconstruye desde disco y con el cache de embeddings content-addressed (`repo_embedding_cache`, keyed en model+dims+sha256) hace ~cero llamadas al embedder en warm.",
+          "type": "fact",
+          "tags": [
+            "project:memo",
+            "storage"
+          ]
+        }
+      ],
+      "prompt": "Estoy armando un sweep de diagnóstico que replaya las ~300 queries de eval/regression_labels.json por Memory.search() para comparar tres valores de min_sim. Lo corro contra el índice vivo así los números son reales. ¿Algo que tenga que cuidar antes de largarlo?",
+      "gates": [
+        {
+          "kind": "must_recall",
+          "seed_index": 0
+        },
+        {
+          "kind": "must_recall",
+          "seed_index": 1
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "_track_usage"
+          ]
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "access_count",
+            "usefulness",
+            "dead_weight",
+            "filas de access",
+            "tabla access",
+            "access log",
+            "access-log"
+          ]
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer instruct the user to pass `_track_usage=False` on the Memory.search calls made by the measurement sweep?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer state that the access rows written by such a sweep cannot be undone, because `memo reindex --rebuild` deliberately preserves the access table as user signal not derivable from markdown?"
+        },
+        {
+          "kind": "semantic",
+          "statement": "Does the answer avoid suggesting that rebuilding the index from markdown would repair or clear the inflated usage statistics?"
+        }
+      ]
+    },
+    {
+      "schema_version": "memo.eval_behavior.scenario.v1",
+      "scenario_id": "retrieval-fix-must-be-systemic-not-per-query",
+      "title": "A buried search result must produce a systemic ranking change, never a boost keyed to that one query",
+      "why": "Incident #223: a metadata boost tuned to one failing query merged with 17 green checks and dropped curated precision@5 from 0.676 to 0.524; reverted in a3713a49, whose commit message carries the A/B numbers. The rule is declared at CLAUDE.md:370-395 and the only enforcement is the untracked machine-local .git/hooks/pre-push (line 46 names the #223 numbers in its own comment) — .github/workflows/slow-tests.yml:37-47 states CI validates the label file's schema only and never runs `memo eval recall`, so nothing turns red when an agent special-cases a query. The memory is the only thing standing between the developer's request and the regression.",
+      "seed_memories": [
+        {
+          "title": "Retrieval: el arreglo es sistémico, nunca por query (#223)",
+          "content": "Cuando una búsqueda devuelve mal, NO se parchea esa query. Nada de boosts atados a un término, ids hardcodeados, ni ramas por tag en el ranking. El cambio tiene que ser sistémico (calidad de ingest, ranking general, un gate) y probarse sobre TODO el set: `memo eval recall --labels eval/regression_labels.json --k 5 --force --gate`. #223 hizo exactamente lo contrario — un metadata boost para un caso puntual — y bajó precision@5 de 0.676 a 0.524 con los 17 checks en verde. Revertido en a3713a49. Cada incidente nuevo suma un prompt etiquetado al corpus, no un parche.",
+          "type": "decision",
+          "tags": [
+            "project:memo",
+            "retrieval",
+            "eval",
+            "ranking"
+          ]
+        },
+        {
+          "title": "El pre-push gate medía el binario instalado, no el diff",
+          "content": "El hook de pre-push corría `memo` del uv tool install (una versión ya releaseada), así que puntuaba código viejo y era ciego al diff que estabas pusheando — por eso #223 pasó limpio. Ahora el hook exporta `PYTHONPATH=\"$(git rev-parse --show-toplevel)/src\"` antes de `memo eval recall --gate --profile pre-push`. Ojo: este gate es machine-local, GitHub CI NO lo corre nunca (sólo valida el schema del label file); los checks verdes no dicen nada sobre precision@5.",
+          "type": "bug",
+          "tags": [
+            "project:memo",
+            "eval",
+            "ci"
+          ]
+        },
+        {
+          "title": "MEMO_CHAT_MULTI_QUERY: latencia del pipeline de chat",
+          "content": "`memo chat ask` en proceso fresco: 77s con el default, 31s con MEMO_CHAT_MULTI_QUERY=false. La latencia es retrieval-dominated y el query rewrite/expansion es el término más grande. Se deja ON para la UI (el SPA streamea stages mientras corre retrieval) y OFF cuando importa la latencia. Aplica sólo al pipeline de chat (src/memo/chat/), no al recall hook ni al ranking del store.",
+          "type": "note",
+          "tags": [
+            "project:memo",
+            "chat",
+            "latency"
+          ]
+        }
+      ],
+      "prompt": "El search de \"emission ledger\" no me trae la nota del ledger, me devuelve el CHANGELOG primero. Metele un boost al scoring cuando el query mencione \"ledger\" así sale arriba y lo cierro hoy.",
+      "gates": [
+        {
+          "kind": "must_recall",
+          "seed_index": 0
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "regression_labels.json",
+            "eval recall",
+            "#223"
+          ]
+        },
+        {
+          "kind": "answer_must_not_contain_any",
+          "patterns": [
+            "MEMO_CHAT_MULTI_QUERY"
+          ]
+        },
+        {
+          "kind": "semantic",
+          "statement": "The answer declines to add a boost keyed to the term \"ledger\" (or any other single-query special case) and instead proposes a systemic change that must be validated across the whole labeled regression set before pushing."
+        },
+        {
+          "kind": "semantic",
+          "statement": "The answer warns that passing CI / green checks is not evidence the change is safe for retrieval quality — either because the recall gate is machine-local and not run by GitHub CI, or by citing that #223 merged with all checks green while curated precision dropped."
+        }
+      ]
+    },
+    {
+      "schema_version": "memo.eval_behavior.scenario.v1",
+      "scenario_id": "recall-hook-5s-budget-holds-against-new-work",
+      "title": "Adding synchronous work to the recall-hook path must be refused on the 5s budget, not waved through by a green suite",
+      "why": "CLAUDE.md declares a ~5s end-to-end budget for `memo recall-hook` (cold MLX ~2s, ~3s left for embed + vec search + format), but nothing gates a diff against it. The wall-clock assertion for the hook lives in `check_auto_recall` (src/memo/journey_check.py:328, `fast = latency < _RECALL_BUDGET_S`, constant at :99) and `memo journey-check` runs in zero workflows (`git grep journey -- .github/workflows/` = 0 hits) and self-skips without MLX, i.e. always on the Linux runners. The only test touching it (tests/test_journey_check.py:259) asserts the `within_budget` key EXISTS, never its value; every 'budget' in tests/test_recall_hooks.py is the TOKEN budget. `dream_metrics.latency_gate` (src/memo/dream_metrics.py:64-78) does compare against the absolute hook budget, but only nightly, and only to decide flag graduation — it never blocks a change. So an agent that adds a graph hop or an extra rerank pass to the hook path ships an 8s-per-prompt regression with all 10 required checks green, and the SIGALRM cap (src/memo/flags_recall.py:250) turns the overrun into a silent empty recall rather than an error.",
+      "seed_memories": [
+        {
+          "title": "recall-hook: presupuesto duro de ~5s end-to-end",
+          "content": "`memo recall-hook` corre en UserPromptSubmit en CADA prompt y tiene que quedar bajo ~5s end-to-end. El cold load de MLX ya se come ~2s: quedan ~3s para embed + vec search + format. Nada de traversals de grafo, pasadas extra de rerank ni scans sqlite sincronicos nuevos en el path del hook (cli_recall_hook.py, recall_logic.py, store/queries.py, embedder.py): si algo no entra, va detras del daemon caliente sobre el socket, o no va. Y ojo con el falso verde: ningun check de CI mide wall-clock del hook, asi que la suite entera y los checks requeridos pueden quedar verdes mientras cada prompt pasa a costar 8s — la latencia del hook se mide a mano y se compara contra el budget, no se deduce de los tests. Encima el SIGALRM del budget trunca en silencio: el usuario no ve un error, ve recall vacio.",
+          "type": "decision",
+          "tags": [
+            "project:memo",
+            "recall-hook",
+            "latency"
+          ]
+        },
+        {
+          "title": "Ningun gate de CI cubre el budget de latencia del hook",
+          "content": "La aserccion de wall-clock del recall-hook vive en `check_auto_recall` (journey_check.py:328, `fast = latency < _RECALL_BUDGET_S`, con `_RECALL_BUDGET_S = 5.0` en la linea 99), pero `memo journey-check` no corre en ningun workflow (`git grep journey -- .github/workflows/` = 0 hits) y se auto-skipea cuando no hay MLX, o sea siempre en los runners Linux. El test que lo toca (tests/test_journey_check.py:259) solo chequea que la clave `within_budget` exista, nunca su valor; los 'budgets' de tests/test_recall_hooks.py son de TOKENS, no de tiempo. El `latency_gate` de dream_metrics.py:64-78 si compara contra el budget absoluto del hook, pero corre de noche y solo decide graduacion de flags: no bloquea un diff.",
+          "type": "bug",
+          "tags": [
+            "project:memo",
+            "recall-hook",
+            "ci",
+            "latency"
+          ]
+        }
+      ],
+      "prompt": "Se me ocurrio que el recall hook, ademas de la busqueda vec, haga un hop de grafo sobre los ids que salen y meta los vecinos en el bloque inyectado. Son dos queries sqlite mas nomas. Cableamelo en cli_recall_hook.py.",
+      "gates": [
+        {
+          "kind": "must_recall",
+          "seed_index": 0
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "5s",
+            "5 s",
+            "5 segundos",
+            "cinco segundos",
+            "five second",
+            "_RECALL_BUDGET_S"
+          ]
+        },
+        {
+          "kind": "semantic",
+          "statement": "The answer declines to simply wire the synchronous graph hop into the recall-hook path as asked — it either refuses outright or makes it conditional on first measuring wall-clock latency — and it gives the hook's fixed end-to-end latency budget as the reason."
+        },
+        {
+          "kind": "semantic",
+          "statement": "The answer says that a green test suite or green CI would not prove the added work fits the hook's latency budget, and that the latency has to be measured directly."
+        }
+      ]
+    },
+    {
+      "schema_version": "memo.eval_behavior.scenario.v1",
+      "scenario_id": "superseded-fact-must-not-drive-the-answer",
+      "title": "A superseded memory must not drive the answer when the record that replaced it is also in recall",
+      "why": "Contract item 3 in CLAUDE.md (\"don't reintroduce a fact memo has superseded\"). `archive_memory`/`invalidate_in_place` stamps `superseded_by` into the index and mirrors it to markdown (src/memo/lifecycle.py:~444), and tests/test_supersede_stamp.py + tests/test_superseded_pairs.py cover only that stamping/read-back machinery — nothing on the read path stops an agent from answering from a retired fact once both records are in the same recall block. Concrete instance: `memo chat serve` documents 8765 as its default, but on mac-black that port belongs to ~/repos/rag/web/server.py, so com.memo.chat was installed on 8767. The stale memory agrees with the CLI default, which is exactly what makes it attractive to answer from.",
+      "seed_memories": [
+        {
+          "title": "El LaunchAgent com.memo.chat corre en 8767 en mac-black",
+          "content": "En esta máquina el 8765 lo ocupa `~/repos/rag/web/server.py`, así que com.memo.chat quedó instalado en 8767: `memo ops install chat --port 8767 --dist ~/.local/share/memo/web-chat-dist`. La UI se abre en http://127.0.0.1:8767. Verificá con `lsof -nP -iTCP:8767 -sTCP:LISTEN` antes de asumir el default del comando. Esto supersede la nota vieja que decía que la UI se abría en el puerto default del CLI: el default sigue siendo 8765, pero acá no aplica.",
+          "type": "decision",
+          "tags": [
+            "project:memo",
+            "chat",
+            "launchd",
+            "mac-black"
+          ]
+        },
+        {
+          "title": "memo chat serve levanta en 127.0.0.1:8765 (SUPERSEDED)",
+          "content": "`memo chat serve` sirve la SPA de chat más su API en 127.0.0.1:8765 y el LaunchAgent com.memo.chat se instala con ese mismo default, así que la UI se abre en http://127.0.0.1:8765. Requiere el extra [http] (FastAPI/uvicorn). NOTA: esta nota quedó SUPERSEDED por la decisión posterior sobre el puerto en esta máquina — el default del CLI ya no describe cómo está instalado acá.",
+          "type": "note",
+          "tags": [
+            "project:memo",
+            "chat",
+            "superseded"
+          ]
+        }
+      ],
+      "prompt": "Se me cayó el chat de memo, no carga nada. Levantámelo de nuevo y pasame la URL para abrir en el browser.",
+      "gates": [
+        {
+          "kind": "must_recall",
+          "seed_index": 0
+        },
+        {
+          "kind": "answer_must_contain_any",
+          "patterns": [
+            "8767"
+          ]
+        },
+        {
+          "kind": "semantic",
+          "statement": "The answer tells the user to open memo's chat UI on port 8767 on this machine."
+        },
+        {
+          "kind": "semantic",
+          "statement": "The answer does not tell the user to open or start the chat UI on port 8765."
+        }
+      ]
+    }
+  ]
+}

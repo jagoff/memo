@@ -240,7 +240,7 @@ per-hit list to partition at all. Both are absent from
 | a tool would emit *more* of a memory than was emitted before (hook truncated to 400, `memo_ask` has room for 900) | re-emit full, replace the entry | monotonic-emission rule (`new_len <= n`) |
 | memory deleted | absent from hits | nothing needed |
 | auto-compaction | reset | PreCompact, already wired at `cli_hooks.py:98` |
-| `/clear` | reset | SessionStart |
+| `/clear` | reset | SessionStart — **NOT IMPLEMENTED** (see promotion blockers below) |
 | new session | new file | session-id partition |
 | two sessions, same cwd | separate files | session-id partition |
 | **subagent** | **inherits the parent ledger, has its own window** | see hazard 1 |
@@ -362,6 +362,34 @@ fully implemented, tested, and available behind the flag for anyone who sets
 `MEMO_EMITTED_LEDGER=1` explicitly (e.g. to start collecting the live data
 criterion 2 needs). The default stays off until a real session population
 supplies a measured `memo_get_after_digest` / `digests_served` ratio.
+
+### Promotion blockers (2026-08-17 adversarial review, confirmed on the shipped code)
+
+Beyond criterion 2, an adversarial review of the landed implementation
+confirmed gaps that must be fixed (or explicitly accepted here) before the
+default flips to `1`. None of them affect the shipped `0` default:
+
+1. **`/clear` reset was never implemented.** The invalidation table promises a
+   SessionStart-driven reset; the only `reset()` call site is the
+   PreCompact-driven `memo capture-tick --force` block. Post-`/clear`, a stale
+   ledger digests first-time emissions — and the stdio `memo-mcp` server
+   resolves its session id from its own frozen process env
+   (`server_session_patterns.py`), so even a new session id after `/clear`
+   does not reach already-running MCP tools. Needs a SessionStart(clear) reset
+   hook plus a per-request (not env-frozen) session id on the MCP side.
+2. **HTTP transport collapses all clients onto one ledger session** — client
+   A's emission digests client B's first read. Needs per-connection identity.
+3. **The counters sidecar `bump()` is an unlocked read-modify-write** with
+   truncate-in-place: concurrent calls lose deltas and a torn write zeroes the
+   counters criterion 2 depends on. Needs the same locking discipline as the
+   ledger file itself.
+4. **`MEMO_EMITTED_LEDGER_MAX=0` is accepted and disables both the FIFO trim
+   and the read-side cap** (unbounded file growth on the hook path);
+   an invalid-UTF-8 byte blinds the whole ledger rather than the torn line;
+   `_safe()` can collide two session ids onto one file (`a/b` vs `a_b`,
+   120-char truncation); hook-minted refs are dangling by construction (the
+   ref is minted after the context is printed). Small hardening items, listed
+   so promotion review re-checks them.
 
 ## Test plan
 

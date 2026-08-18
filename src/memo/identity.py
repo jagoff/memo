@@ -155,6 +155,25 @@ def namespace_for_write(tags: Sequence[str], *, auto_project: bool) -> str:
     return UNSCOPED_NAMESPACE if auto_project else GLOBAL_NAMESPACE
 
 
+def cluster_scope(tags: Sequence[str]) -> str | None:
+    """Scope key for grouping records that may legally be merged together.
+
+    A merged record carries the UNION of its members' tags, so any grouping
+    done ahead of a merge has to agree with :func:`namespace_for_write` or the
+    write is refused as ``ambiguous_namespace``. Records sharing this key
+    always produce a writable union; ``None`` marks a record that is already
+    ambiguous on its own and therefore cannot be merged with anything.
+
+    Untagged records get their own ``""`` scope rather than joining a project:
+    the write path would accept the union, but the merge would silently
+    reassign them to that project.
+    """
+    slugs, invalid = _project_slugs(tags)
+    if invalid or len(slugs) > 1:
+        return None
+    return slugs[0] if slugs else ""
+
+
 def namespace_for_index(tags: Sequence[str], *, path: str) -> str | None:
     """Derive namespace for an existing Markdown/index row.
 

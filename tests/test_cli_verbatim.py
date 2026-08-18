@@ -63,3 +63,28 @@ def test_verbatim_search_rejects_unbounded_cli_limit(tmp_path: Path):
 
     assert result.exit_code != 0
     assert "100" in result.output
+
+
+def test_turn_store_logs_a_failed_bm25_query_instead_of_returning_empty_silently(tmp_path, caplog):
+    """A corrupt/invalid FTS5 query and a legitimately-unmatched one both return
+    []. Without the log they are indistinguishable, so a permanently-degraded
+    verbatim index looks like "nothing matched" forever."""
+    import logging
+
+    from memo.store.turn_store import TurnStore
+
+    store = TurnStore(tmp_path / "verbatim.db")
+    try:
+        with caplog.at_level(logging.WARNING, logger="memo.store.turn_store"):
+            # A joiner that is not valid FTS5 syntax makes sqlite raise
+            # OperationalError inside the MATCH — the real shape of the failure.
+            rows = store._run_search(
+                ["alpha", "beta"], " AND AND ", limit=10, session_id=None, since=None
+            )
+
+        assert rows == []
+        assert any("turn bm25 query failed" in r.message for r in caplog.records), [
+            r.message for r in caplog.records
+        ]
+    finally:
+        store.close()

@@ -261,6 +261,12 @@ def memory_with_memories(tmp_cfg: Config, monkeypatch):
         "memo.embedder.MLXEmbedder.embed",
         lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
     )
+    # The constant stub makes the two seeds cosine-1.0 near-duplicates, so
+    # default-ON MEMO_SAVE_ABSORB would fire a REAL 30B LLM chat per setup on
+    # Apple Silicon (~15s each, 180s timeout under GPU contention) and, when
+    # that chat succeeds, absorb seed #2 INTO seed #1 — leaving one seeded
+    # memory instead of the two the "both hits for query=chat" premise needs.
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     mem = Memory(cfg)
     mem.save(content="Chat UI feedback loop and streaming design notes", title="Chat design notes")
     mem.save(content="Second chat memory used to exercise ledger dedup", title="Chat dedup memory")

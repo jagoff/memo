@@ -195,7 +195,12 @@ def test_resolve_accepts_competing_status(mock_memory):
 @pytest.fixture
 def mem_with_stub_embed(tmp_cfg: Config, monkeypatch) -> Memory:
     """Memory with a small deterministic embedder. Same body → same bucket
-    so we can stage near-duplicate clusters."""
+    so we can stage near-duplicate clusters.
+
+    ABSORB off: these tests seed *distinct* records that the stub maps to
+    identical vectors (cos=1.0) — exactly what default-on absorb merges into
+    one id, which would collapse every staged contradiction pair."""
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     cfg = Config(
         data_dir=tmp_cfg.data_dir,
         vault_path=tmp_cfg.vault_path,

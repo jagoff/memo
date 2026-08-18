@@ -10,6 +10,7 @@ surfaces; this is an on-demand, explicit-query-only store). Folds into
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import threading
@@ -18,6 +19,8 @@ from typing import Any
 
 from .connection import _ConnectionHolder, _ConnectionMixin
 from .schema import _BM25_ES_STOPWORDS
+
+_log = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 MAX_VERBATIM_RESULTS = 100
@@ -142,7 +145,13 @@ class TurnStore(_ConnectionMixin):
         params.append(max(1, min(int(limit), MAX_VERBATIM_RESULTS)))
         try:
             return list(self._conn.execute(sql, params).fetchall())
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            # A malformed MATCH expression and a corrupt FTS index both land
+            # here, and both return the same empty list a legitimately unmatched
+            # query returns. Log it (same as repo_store's BM25 queries) so a
+            # permanently-degraded verbatim index leaves a trace instead of
+            # looking like "nothing matched" forever.
+            _log.warning("turn bm25 query failed: %s", exc)
             return []
 
     def search(

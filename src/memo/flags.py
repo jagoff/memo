@@ -287,6 +287,10 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         # compatible for the lifetime of a process started before the upgrade.
         "MEMO_TERMINAL_ID",
         "MEMO_TERMINAL_REGISTRATION_ATTEMPTED",
+        # Per-session identity override read by identity._session_id() (and the
+        # emission ledger's per-session key). Env-only by nature — a session id
+        # in the markdown config would pin every session to one identity.
+        "MEMO_SESSION_ID",
         # User-facing banner toggle consumed by the bash shell shim
         # (runtime/shims.py). Env-only: the shim can't see the markdown-config
         # chain, so registering it as a flag would diverge silently.

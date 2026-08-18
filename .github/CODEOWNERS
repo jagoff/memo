@@ -1,0 +1,28 @@
+# Code owners for memo.
+# Every PR gets @jagoff as a reviewer; the entries below exist so that a change
+# to a surface with a non-obvious invariant is never merged as a routine diff.
+
+*                       @jagoff
+
+# MLX invariants (asymmetric query prefix, Sequence[str] embed, dims/model
+# match, deferred mlx imports) — see CLAUDE.md "MLX invariants".
+/src/memo/embedder.py   @jagoff
+/src/memo/llm.py        @jagoff
+/src/memo/memory/       @jagoff
+
+# Markdown is the source of truth; sqlite is a rebuildable index.
+/src/memo/store/        @jagoff
+
+# Recall hook 5s budget.
+/hooks/                 @jagoff
+/src/memo/cli.py        @jagoff
+
+# Retrieval-regression labels — every incident adds a prompt here.
+/eval/                  @jagoff
+
+# Release surfaces that must stay version-locked (scripts/adapter_matrix.py).
+/pyproject.toml         @jagoff
+/server.json            @jagoff
+/.claude-plugin/        @jagoff
+/plugins/               @jagoff
+/CHANGELOG.md           @jagoff

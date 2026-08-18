@@ -21,7 +21,7 @@ Persistent, searchable memory for Claude Code, Codex, Cursor, Cline, Devin, and 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.3/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | bash
 ```
 
 <sub>Prefer a package manager? `uv tool install mlx-memo` · `pipx install mlx-memo` · `brew tap jagoff/memo && brew install mlx-memo`</sub>
@@ -42,14 +42,14 @@ That's it. Your agents pick it up over MCP automatically — the installer wires
 New Mac:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.3/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | bash
 memo sync bootstrap git@github.com:yourname/memo-sync.git
 ```
 
 Agent-managed setup:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.9.3/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | bash
 memo doctor --strict-runtime
 ```
 

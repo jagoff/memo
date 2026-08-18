@@ -9,6 +9,275 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.12.2] - 2026-08-17
+
+### Fixed
+
+- Findings from an adversarial review of the (dark) emission ledger that
+  touch live surfaces: `MEMO_EMITTED_LEDGER` now declares its gate in the
+  dark-flag graduation contract (a dark bool without the `_ENABLED` suffix,
+  it escaped the automatic completeness check); `MEMO_SESSION_ID` is no
+  longer flagged as a typo by `memo config validate` (env-only per-session
+  identity); the `memory_with_memories` test fixture pins
+  `MEMO_SAVE_ABSORB=0` so its two cosine-identical seeds stop firing a real
+  LLM absorb per test setup (integration module: ~436s → ~17s on Apple
+  Silicon, and the two-hit premise can no longer be merged away). The
+  emission-ledger spec's invalidation table now records that the promised
+  `/clear` → SessionStart reset was never implemented, and lists the
+  confirmed gaps as explicit promotion blockers.
+- Homebrew reference formula (`docs/homebrew/mlx-memo.rb`) pinned to the
+  published 4.12.1 source distribution (was 4.11.3).
+
+## [4.12.1] - 2026-08-17
+
+### Fixed
+
+- Docker image builds again (`docker-publish` had been red since 4.11.2):
+  the wheel force-includes `eval/regression_labels.json`, but the Dockerfiles'
+  explicit COPY allowlist never copied `eval/` into the build context, so the
+  in-image `uv build --wheel` failed with `Forced include not found`. Both
+  `Dockerfile` and `Dockerfile.glama` now `COPY eval ./eval`, and the
+  allowlist-style `.dockerignore` re-includes `eval/` so the directory
+  actually reaches the build context (without that, the new COPY line would
+  fail with `"/eval": not found`). This patch release exists to re-run the
+  tag-gated `docker-publish` workflow from a ref that contains the fix —
+  there are no code changes beyond the Docker build surface.
+
+## [4.12.0] - 2026-08-17
+
+### Added
+
+- `MEMO_RECALL_CHUNK_PARENT` (default off): closes a gap where a chunked
+  long durable memory was invisible to auto-recall — its fragments
+  (type=reference) were excluded by `MEMO_RECALL_EXCLUDE_REFERENCE` before
+  the search pipeline's chunk->parent rollup ever saw them. Runs one small,
+  bounded, type-scoped search to resolve a winning chunk back to its
+  canonical parent. Covers the recall-hook subprocess; the warm daemon path
+  does not call this yet, a named follow-up.
+
+### Fixed
+
+- Consolidation clustering (`memo consolidate`) no longer splits above-threshold
+  near-duplicates across different proposed clusters. `_greedy_cluster` compared
+  each new memory only to each existing cluster's FIRST member (frozen forever
+  as its "representative"), never to members added afterwards — so two
+  near-duplicates could land in different clusters purely because of pull
+  order. Measured on the live corpus: 38.4% of above-threshold pairs (861 of
+  1450) split this way. Single-linkage (connected components of the threshold
+  graph) was tried and rejected as the fix: it transitively chains anything
+  reachable through a path of individually-strong pairs, and on the live
+  corpus one (project, type) bucket alone chained 157 of its 950 memories into
+  one unmergeable blob. Merge-consolidation (`_cluster_within_scope`) now uses
+  average-link (UPGMA) agglomerative clustering instead: two clusters merge
+  only when the AVERAGE similarity across every cross-pair clears the
+  threshold, which fixes the greedy split (previously-split near-duplicates
+  now co-cluster) without single-linkage's chaining (max cluster size stays
+  bounded — 6 vs. 157 on the same corpus). Hand-checked purity on real
+  title+body pairs roughly doubled (~30% -> ~55-60% correct near-duplicates)
+  versus greedy's proposals. The merge itself uses Lance-Williams
+  average-linkage updates (O(k³) at C speed): the naive
+  recompute-every-block-mean formulation was O(k⁴) and turned one
+  `memo_consolidate` call over a dense 500-member component into ~2h of
+  GIL-holding work (caught by the corpus-scale conformance suite).
+  `synthesize_cross_cluster` and `dream_distill.run_distill` (read-only
+  insight generation, not merges) still use the original `_greedy_cluster`.
+- Two bugs in `MEMO_SAVE_ABSORB` found by adversarial review right after it
+  shipped default-on:
+  - The absorb target's LLM merge call (up to `MEMO_CONSOLIDATE_TIMEOUT`,
+    default 180s) runs unlocked. If a concurrent nightly consolidation merge
+    archives+deletes the same target while the call is in flight, `update()`
+    silently resolved to `None` with zero logging and the caller fell
+    through to creating a brand-new near-duplicate record — undoing the
+    consolidation that just ran, invisibly. Now logs a warning naming the
+    likely cause, so the outcome is observable instead of a silent mystery.
+  - Absorb had no type-match check: a near-duplicate of a *different* type
+    (e.g. a `note` scoring >=0.88 against an existing `fact`) would still
+    rewrite the existing record's body via LLM merge while keeping its
+    original type label, silently blending cross-type content. Absorb now
+    only triggers on a same-type match; a type mismatch falls through to
+    the ordinary warn-and-create path.
+
+### Changed
+
+- `MEMO_SAVE_ABSORB` defaults ON: a near-duplicate save now rewrites the
+  existing record (versioned, rollbackable) instead of creating a near-copy.
+  Measured 2026-08-16: absorbs correctly at cosine 0.9691/matching type,
+  ~24s per absorption (one bounded LLM call). Opt out with `=0`.
+- **`MEMO_SAVE_DEDUP_THRESHOLD` default lowered 0.88 → 0.85.** The save-time
+  near-duplicate cosine floor was measured against the live corpus in the
+  *real* regime the check actually runs in — `embed_query` on the new
+  candidate vs. the stored document embedding of each existing memory, not
+  symmetric document-document cosine, which scores meaningfully higher and
+  was masking the true precision of this band. A census of every real-regime
+  candidate whose top hit fell in the newly-caught [0.85, 0.88) window (28
+  pairs, not a sample — the whole population out of a 2,012-candidate scan)
+  came out 71% genuine duplicates vs. 18% distinct-fact false-positive risk,
+  dominated by same-session cross-language (es/en) and refined restatements;
+  the two pairs already caught at 0.88 today were both genuine duplicates
+  too. The event stays rare corpus-wide (~1.5% of candidates cross 0.85).
+  Separately (not changed by this PR): the save-time dedup search has no
+  type or project filter, so a near-duplicate hit — and, if
+  `MEMO_SAVE_ABSORB` is enabled, an absorb — can in principle match across
+  memory types or projects; this pre-exists the threshold at 0.88 too.
+
+## [4.11.3] - 2026-08-16
+
+### Fixed
+
+- An `unload()` landing between `_ensure_loaded()` and the dereference could
+  null the model or tokenizer mid-embed, surfacing as an `AttributeError` on
+  `None` instead of a clean failure. Both embedders now snapshot the pair under
+  the same lock that loads it, so an in-flight embed always runs against a
+  consistent model/tokenizer or raises a named error (#256).
+
+## [4.11.2] - 2026-08-15
+
+### Fixed
+
+- A NULL title or body no longer downgrades the BM25 backend. `_fold_diacritics`
+  called `unicodedata.normalize` on whatever the caller passed; a nullable
+  column reaching it raised `normalize() argument 2 must be str, not None`
+  inside `add_document`, and the caller's except-branch then ran
+  `_mark_tantivy_unhealthy()` — so one bad row silently downgraded BM25 to FTS5
+  for the rest of the process. Fixed at the boundary rather than at the four
+  `add_document` call sites in `queries.py`, since patching one would have left
+  the other three. Only reachable with the `tantivy` extra installed.
+
+## [4.11.1] - 2026-08-15
+
+### Fixed
+
+- `memo eval memory --gate` compared its own numbers against a baseline written
+  by `memo eval recall`. The two measure different pipelines and shared one
+  file; only `eval recall` ever wrote it, so the defect was on the read side,
+  and `check_gate`'s k guard caught it only when the two happened to run at a
+  different top-K. Each command now owns its baseline file, the payload is
+  stamped with the command that wrote it, and a mismatched one is refused.
+  `eval recall` keeps the historical filename so no machine has to re-seed, and
+  an unstamped baseline counts as recall's because before the split only that
+  command could produce one. `eval memory` also gains `--update-baseline` —
+  refusing the foreign baseline without giving it a way to seed its own would
+  have left its gate with no remedy at all.
+
+## [4.11.0] - 2026-08-15
+
+### Added
+
+- `memo eval behavior` — measures whether a recalled memory actually *steers*
+  the answer, the step after `memo eval recall`. Seeds an isolated store, runs
+  the real `memo recall-hook` subprocess against it, and scores the answer a
+  model gives with that injected block. A scenario whose gates are all
+  recall-layer is rejected at load: that is retrieval, already covered.
+- `L live/...` eval config — the configuration the recall hook actually runs.
+  It pins nothing it can inherit, and its name carries the resolved mode/floor
+  so a tuner moving the floor underneath the gate is visible. Included in the
+  `pre-push` profile, which is the profile the blocking gate runs.
+- Adapter drift checks folded into `memo release check`: hook commands still
+  resolving in the CLI, `.mcp.json` embedder dims still matching their model
+  (MLX invariant 3), and manifest paths still existing. Each has a test that
+  mutates one surface and asserts the check flips to fail.
+
+### Fixed
+
+- The recall gate scored configurations nobody runs. Measured on the curated
+  44-prompt set at k=5: the grid reported precision@5 0.568-0.716 and stayed
+  green while the live hook was at 0.205 / recall@5 0.20, because the tuner's
+  overlay had moved `MEMO_RECALL_MIN_SIM` to 0.8835 — a floor no grid config
+  uses.
+- The nightly tuner scored a pipeline it does not apply. All four measurement
+  sites ran with the hook's post-rank injection filters OFF and then applied
+  the winner into a hook that has them ON (measured: precision@5 0.363 vs
+  0.205, a 44% gap the search was blind to). Since the tuner auto-applies, that
+  was a mechanism for shipping regressions, not just a measurement error.
+- `gc` could delete a row whose path it was never able to verify. A
+  `StorageError` from `_resolve_existing` is a path-*safety* refusal (a symlink
+  component, a path escaping `memory_dir`), not evidence the `.md` is gone. It
+  ran unattended on every `sync_pull`, logged nothing, and `_reindex_locked`
+  refuses the same paths — so the row never came back and the memory left
+  search, recall and list permanently.
+- `turn_store`'s BM25 query swallowed `sqlite3.OperationalError` into an empty
+  list with no logger in the module, making a corrupt verbatim FTS index
+  indistinguishable from "nothing matched" forever.
+
+## [4.10.2] - 2026-08-15
+
+### Added
+
+- **`memo consolidate restore` — merges are reversible now.** Consolidation
+  archives the memories it absorbs, and that was a one-way door: `_archive_memory`
+  stripped the frontmatter `id` before writing to `archived/`, so `reindex`
+  (which requires a canonical id) could never adopt the file again even if a
+  human moved it back. Recovering a single wrongly-merged record meant
+  hand-editing YAML and re-injecting its id. The archived copy now keeps its
+  `id` and records the `archived_from` path it used to occupy, and
+  `memo consolidate restore <id>…` / `--for <merged-id>` moves memories back
+  into the live corpus — into their original path when it is still free,
+  otherwise a freshly allocated one. Legacy archives written without an id are
+  recovered from the filename. Restoring is additive: `--drop-merged` also
+  deletes the merged record, and refuses unless that record carries the new
+  `consolidated_from` provenance proving the merge created it, so a
+  `keep_latest` survivor — a pre-existing memory, not a merge artifact — can
+  never be deleted by an undo. `maintain`'s compaction has had the symmetric
+  `_restore_archived` since it shipped; consolidation had nothing.
+
+  Restoring is also honest about the index: `(namespace, topic_key)` is UNIQUE
+  across live rows, and archiving a record soft-deletes it — which *frees* its
+  topic reservation for a later save to claim. Restoring such a record
+  verbatim made reindex's `deleted_at=NULL` un-delete violate that index, and
+  reindex reports a per-file failure as a log warning and carries on: the `.md`
+  landed in the live tree permanently unindexed while the restore claimed
+  success. The record coming out of the archive is by definition the superseded
+  one, so it now gives the slot up instead of colliding for it. As a general
+  net, every restored id is re-checked after the reindex; anything the index
+  would not adopt is reported in `unindexed_ids` with the `memo reindex
+  --rebuild` remedy, never counted as restored.
+
+### Fixed
+
+- **A disk-only topic-reservation recovery could resurrect an archived memory.**
+  `_recover_topic_reservation_locked` walks every `.md` under `memory_dir` and
+  re-indexes the one holding a claimed `(namespace, topic_key)`. It never
+  skipped `inactive/` or `archived/` — and `inactive/` has always kept its
+  canonical id — so a compacted memory could be silently pulled back into the
+  index behind the user's back. It now skips `LIFECYCLE_ARCHIVE_DIRS`, the same
+  two directories `reindex` and the disk-orphan gc already refuse to absorb.
+  This is what makes preserving the `id` on the archived copy safe.
+
+## [4.10.1] - 2026-08-14
+
+### Fixed
+
+- **Consolidation proposed merges the write path then refused.** Clusters were
+  built on cosine alone, but `apply_merge` saves the merged record with the
+  *union* of its members' tags and `identity.namespace_for_write` rejects a
+  union carrying more than one `project:` slug. Every cluster that spanned two
+  projects was proposed, attempted, and lost to `memory identity conflict:
+  ambiguous_namespace` — measured on a 6,135-memory corpus at the default
+  threshold, **14 of 15 clusters died that way**, so the nightly pass looked
+  like it ran while merging 9 memories instead of 138. Clustering now runs
+  independently inside each project scope (`identity.cluster_scope`), which
+  keeps every proposal writable *and* leaves project attribution untouched: a
+  memory is only ever merged with memories of its own project, and untagged
+  memories stay untagged rather than being absorbed into one. A record
+  carrying two `project:` tags of its own is left out entirely — no partner
+  makes its union writable.
+- **Consolidation silently retyped what it merged.** The merged record takes
+  the type of its newest member, so a cross-type cluster retypes everyone
+  else — and type decides which surface a memory appears on:
+  `failure_pattern` feeds the recall hook's ⛔ AVOID block, `procedure` feeds
+  procedure promotion, `preference`/`feedback` get their own recall boost
+  tier. One live pass merged `decision`, `procedure`, `failure_pattern`,
+  `preference` and `note` into a single `decision`; across that pass 55 of 66
+  archived records lost their type, and the committed retrieval label set
+  caught it as an AVOID probe that stopped resolving (avoid@k 1.000 → 0.500).
+  Clustering is now partitioned by type as well as by project scope: records
+  that are near-identical in wording but differ in type are not duplicates,
+  they are the same topic seen through different lenses. Measured on the same
+  corpus, this trades 106 merged memories per pass for 79 — and 0 retyped
+  instead of 57.
+
+## [4.10.0] - 2026-08-13
+
 ### Added
 
 - **A response budget on every MCP tool result.** A `limit` argument bounds an
@@ -24,6 +293,32 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   knows which of its fields is elastic trims that field itself and says so.
   The estimate covers both fields the wire carries (content blocks *and*
   structured content), which for a dict-returning tool is the same JSON twice.
+
+- **An emission ledger, so memo stops re-sending bodies already in the window.**
+  memo produces the same memory body from two places — the recall hook on every
+  `UserPromptSubmit` and the MCP read tools — and nothing tracked emissions
+  across them, so one body could enter a session's context three or four times.
+  `MEMO_EMITTED_LEDGER` (new flag, **default `0`**) records what was emitted
+  per session and replaces a repeat with `{id, title, ref}`, which the model
+  expands via `memo_get` when it actually needs the text. Consulted by
+  `memo_search`, `memo_ask` and `memo_evidence_pack`
+  (`MEMO_EMITTED_LEDGER_TOOLS`); `memo_context` and `memo_unified_briefing` are
+  deliberately excluded, not half-wired — neither has a hit list this mechanism
+  can suppress. Writes are deferred until the response-budget middleware
+  commits, so a truncated response never records an emission the model never
+  saw, and the ledger is cleared at the PreCompact boundary because compaction
+  invalidates every claim about what is in the window. Counters
+  (`digests_served`, `memo_get_after_digest`, `net_saved_est`) surface in
+  `memo_cache_stats`; stale ledgers are pruned by the nightly pass.
+
+  Measured on a replayed real transcript: **31.4% and 36.6% fewer emitted
+  tokens** across two clean runs, recall-hook p95 latency delta negative on the
+  warm-daemon path, and zero delta on the retrieval eval. It stays default-off
+  because promotion also requires a `memo_get_after_digest` rate that a replay
+  cannot produce — there is no model in the loop deciding whether to recover a
+  digested id. An unmeasured criterion is not a passed one. See
+  `docs/SPECS/2026-08-10-emission-ledger-design.md` and
+  `docs/eval/emission-ledger-replay.md`.
 
 ### Changed
 
@@ -59,6 +354,56 @@ MCP surface, the one with a token budget, is trimmed.
   `truncated`. It emits one event per mention, each with a 200-char snippet:
   110,326 tokens for an entity with 700 mentions. `first_seen`/`last_seen`
   still span the whole timeline.
+
+### Fixed
+
+- **Reverted the metadata-boost ranking change (#223): it cost 22% of
+  precision@5.** Measured A/B on the live corpus with the curated regression
+  set (43 prompts, `--profile pre-push`, both sides uncached): **precision@5
+  0.524 with it, 0.676 without**, noise@5 unchanged at 0.000. The scale
+  argument behind it — hybrid's `h.score` is RRF-fused, so a cosine-calibrated
+  floor cannot be compared against it — may be right on its own, but it shipped
+  together with `_MAX_BOOST` 12.0 → 1.5 and a wholesale collapse of the
+  curatorial boost weights, which made the regression unattributable. Either
+  half can be re-landed separately, each measured against the label set.
+
+- **A sub-threshold contradiction froze writes forever.** Every detected
+  `semantic_contradiction` opened a conflict with `freeze_write=True`, but the
+  only automatic passes that adjudicate one — `memo maintain --confidence`
+  (default 0.9) and dream's contradictions pass — skip anything below 0.9. A
+  0.80–0.85 pair therefore froze writes to its subject memories permanently:
+  an agent cannot lift it (`write_policy` requires authenticated human
+  authority), and no nightly ever would. Freeze only what the configuration
+  says is actionable; an anomaly with no readable confidence keeps the
+  conservative freeze.
+
+- **The nightly's consolidate pass had never run.** `consolidate apply
+  --force` still raises the interactive confirmation — `--force` is gated on
+  `--yes` — and a LaunchAgent has no stdin, so the last pass of every nightly
+  aborted with exit 1. The same script also still synced `memflow`, archived on
+  the 2026-07-30 trinity deprecation.
+
+- **Neither the nightly nor dream fired on a machine that sleeps at 03:00.**
+  macOS does not wake for a `StartCalendarInterval` and does not reliably
+  replay a slot it slept through, so memo's whole self-maintenance story could
+  silently not run for days. Both agents now pair the 03:00 slot with an hourly
+  `StartInterval` and an idempotent entrypoint: dream runs `memo dream if-due`
+  (which already existed for this and was simply never wired), and the nightly
+  script carries a matching stamp guard (`MEMO_NIGHTLY_MIN_INTERVAL_H`, default
+  20h; `--force` bypasses).
+
+- **A NULL FTS body silently downgraded the BM25 backend.** `update_meta` read
+  `fts.body` — NULL for thousands of live rows — straight into tantivy's
+  `add_document`, which rejects a non-str field. The error was caught, but the
+  handler marks the whole backend unhealthy, so one such row downgraded BM25
+  from tantivy to FTS5 for the rest of the process.
+
+- **`memo eval recall --against <ref>` could not run from an installed
+  memo.** It resolved the repo root from `Path(__file__)`, which under the
+  isolated uv-tool install is site-packages — outside any git worktree — so it
+  failed with `fatal: not a git repository` on precisely the install the
+  pre-push gate's own failure message tells you to run it from. It now anchors
+  on the invocation cwd.
 
 ## [4.9.3] - 2026-08-05
 

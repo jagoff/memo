@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "4.9.3"
+version = "4.12.2"
 description = "Local-first semantic memory for AI agents — time-travel, contradiction radar, automatic synthesis. MLX (Apple Silicon) or CPU sentence-transformers (Linux) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -74,7 +74,7 @@ dev = [
     # Starlette >=1.3 deprecates the legacy httpx TestClient transport.
     "httpx2>=2.5,<3",
     "freezegun>=1.5",
-    "ruff==0.16.1",
+    "ruff==0.16.2",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
 ]
