@@ -98,7 +98,13 @@ Expected in `probe_capture.jsonl`:
 
 If `path` never appears, **stop and report**: the proxy approach does not work on this Claude Code version and the spec needs revision before any further task.
 
-- [ ] **Step 4: Record the result in the plan**
+- [x] **Step 4: Record the result in the plan**
+
+**Observed result (2026-08-18, macOS, Claude Code / `rtk` CLI v2.1.226, `claude-cli/2.1.226 (external, sdk-cli)`, port 8768):** the assumption holds — all three facts confirmed.
+
+1. `"path": "/v1/messages?beta=true"` — request arrived (query suffix `?beta=true`, not a bare `/v1/messages`).
+2. `"has_auth": true` — credential attached on every request.
+3. `"anthropic_beta"` non-null — `claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,advisor-tool-2026-03-01,effort-2025-11-24,fallback-credit-2026-06-01,extended-cache-ttl-2025-04-11` (12 beta flags; `oauth-2025-04-20` confirms subscription auth, not an API key). The proxy's synthetic 400 triggered one client-side retry (2nd request identical minus `fallback-credit-2026-06-01`); the design must tolerate retries and the `?beta=true` suffix. Full transcript: `.superpowers/sdd/2026-08-18-token-savings-proxy-context-compression-plan/task-1-report.md`.
 
 Edit this file, replacing this line with the observed values. Commit only this plan file:
 
