@@ -1,3 +1,5 @@
+import pytest
+
 from memo.proxy.plan import Context
 from memo.proxy.transforms.toolresults import (
     DEFAULT_FILTERS_DIR,
@@ -282,3 +284,112 @@ def test_pytest_filter_survives_a_pathological_separator_line():
     # Generous enough not to flake on a busy machine; tight enough to catch
     # a return of quadratic behavior (measured ~3.3s at this size, unbounded).
     assert elapsed < 2.0, f"pipeline took {elapsed:.2f}s on a pathological line -- ReDoS"
+
+
+# --- Fix round 2 regressions --------------------------------------------------
+
+
+def _adversarial_filter_yaml(command: str) -> str:
+    return (
+        "name: adversarial\n"
+        "match:\n"
+        f"  command: {command}\n"
+        "pipeline:\n"
+        "  - action: keep_lines\n"
+        '    pattern: "^(a+)+$"\n'
+    )
+
+
+def test_nested_quantifier_pattern_is_rejected_at_load(tmp_path):
+    """Critical 2, exponential class: `^(a+)+$` is the textbook catastrophic-
+    backtracking shape -- a quantified GROUP that itself contains a
+    quantifier. This is a different failure mode from the quadratic
+    `=+ .* =+` fixed in round 1: cost doubles with every extra character
+    (re-reviewer's calibration: n=26 -> 2.07s, n=28 -> 8.97s, n=30 -> 37.3s),
+    so a line comfortably inside the (now 20k-char) length cap still hangs
+    -- the cap only bounds polynomial backtracking, not exponential. This
+    assertion never executes the pattern: `load_filters` is a pure string
+    scan over the YAML, so it cannot hang regardless of whether the
+    validator is correct -- a validator bug would show up as the filter
+    being present, not as a stall."""
+    (tmp_path / "adversarial.yaml").write_text(_adversarial_filter_yaml("advcmd"))
+    filters = load_filters(tmp_path)
+    assert filters == []
+
+
+@pytest.mark.timeout(10, method="thread")
+def test_nested_quantifier_filter_is_never_executed_end_to_end(tmp_path, monkeypatch):
+    """End-to-end proof, not just a unit check on load_filters: even when a
+    command WOULD have matched the adversarial filter, ToolResults.apply()
+    must fall back to generic_fallback instead of ever compiling/running
+    the pattern. Hard-timeout-guarded per the ruling: if the load-time
+    rejection above ever regresses, this test fails fast instead of
+    hanging the whole suite -- the re-reviewer's own reproduction (`"a"*1999
+    + "!" + "a"*100000`) hung past a 10s alarm and never returned. Uses a
+    smaller-but-still-clearly-exponential trigger (n=27, ~4-9s if the
+    dangerous pattern actually ran, per the calibration above) so this
+    test's own "before" verification completes in a bounded, sane time
+    rather than needing the full-scale trigger, which is documented above
+    for fidelity to the actual report but deliberately not replayed here."""
+    import time
+
+    (tmp_path / "adversarial.yaml").write_text(_adversarial_filter_yaml("advcmd"))
+    monkeypatch.setattr("memo.proxy.transforms.toolresults.DEFAULT_FILTERS_DIR", tmp_path)
+
+    trigger = "a" * 27 + "!"  # exponential trigger; never reached if load-rejection holds
+    zones = _zones_with_tool_result("advcmd", trigger)
+
+    start = time.perf_counter()
+    saved = ToolResults().apply(zones, _ctx(tmp_path))
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 1.0, f"apply() took {elapsed:.2f}s -- the dangerous pattern ran"
+    stored = zones.live_messages[1]["content"][0]["content"]
+    assert stored == trigger  # too short for generic_fallback to touch either
+    assert saved == 0
+
+
+def test_an_ordinary_pattern_still_loads_and_works(tmp_path):
+    """The nested-quantifier validator must not be so aggressive that it
+    rejects everyday patterns: a single quantified group with nothing
+    quantified INSIDE it (`(bar)+`, not `(a+)+`) is completely safe and
+    must still load and run normally."""
+    (tmp_path / "ordinary.yaml").write_text(
+        "name: ordinary\n"
+        "match:\n"
+        "  command: ordcmd\n"
+        "pipeline:\n"
+        "  - action: keep_lines\n"
+        '    pattern: "foo(bar)+baz"\n'
+    )
+    filters = load_filters(tmp_path)
+    assert len(filters) == 1
+    assert filters[0].name == "ordinary"
+
+    out = apply_pipeline("foobarbaz\nnope\nfoobarbarbaz\n", filters[0].pipeline)
+    assert out == "foobarbaz\nfoobarbarbaz"
+
+
+def test_keep_lines_finds_a_match_whose_target_sits_past_the_old_cap():
+    """False-negative repro: round 1's `_regex_safe_lines` truncated each
+    line to a fixed prefix and used that truncated text as BOTH the match
+    target and the output, so a legitimately matching line whose match sits
+    past the cap was silently dropped entirely. `"FAILED"` here sits well
+    past the old 2000-char cliff."""
+    line = "x" * 2500 + " FAILED at the end"
+    out = apply_pipeline(
+        f"{line}\nsomething else\n", [{"action": "keep_lines", "pattern": "FAILED"}]
+    )
+    assert "FAILED at the end" in out
+    assert "something else" not in out
+
+
+def test_keep_lines_preserves_the_full_content_of_a_long_matching_line():
+    """Silent-truncation repro: a matching line longer than the cap must
+    come back with its FULL original content, not silently clipped with no
+    marker -- unlike `truncate_lines`, which truncates deliberately and
+    marks it."""
+    long_tail = "y" * 3000
+    line = f"FAILED at the start {long_tail}"
+    out = apply_pipeline(f"{line}\n", [{"action": "keep_lines", "pattern": "FAILED"}])
+    assert out == line  # full content, not clipped to the regex-safe match-target cap
