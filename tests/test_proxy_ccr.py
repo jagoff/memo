@@ -32,3 +32,8 @@ def test_stash_returns_empty_key_when_the_cache_is_unwritable(tmp_path, monkeypa
 
     monkeypatch.setattr("memo.store.crush_cache.CrushCache.cache", boom)
     assert ccr.stash(tmp_path, "content") == ""
+
+
+def test_stash_returns_empty_key_for_content_that_cannot_be_encoded(tmp_path):
+    # A lone surrogate is reachable: json.loads('"\\ud800"') produces one.
+    assert ccr.stash(tmp_path, "hello \ud800 world") == ""

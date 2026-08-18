@@ -19,8 +19,8 @@ def stash(state_dir: Path, content: str) -> str:
     An empty key is the caller's signal to skip the lossy edit entirely: cutting
     without a recovery path is not a trade this package makes.
     """
-    key = hashlib.sha256(content.encode("utf-8")).hexdigest()
     try:
+        key = hashlib.sha256(content.encode("utf-8")).hexdigest()
         from memo.store.crush_cache import CrushCache
 
         CrushCache(Path(state_dir)).cache(key, content)
