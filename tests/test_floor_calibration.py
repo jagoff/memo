@@ -20,6 +20,10 @@ class _StubEmbedder:
             out.append(v.tolist())
         return out
 
+    def embed_query(self, text):
+        # Asymmetric: a query encodes differently from the same text as a doc.
+        return self.embed([f"query: {text}"])[0]
+
 
 def test_estimate_noise_floor_is_sane():
     floor = floor_calibration.estimate_noise_floor(
@@ -204,3 +208,26 @@ def test_run_floor_calibration_dry_run_writes_nothing(mock_memory, monkeypatch):
     from memo.tuned_overlay import overlay_path
 
     assert not overlay_path(mock_memory.cfg.state_dir).exists()
+
+
+def test_estimate_noise_floor_uses_query_side_encoding():
+    """The floor is compared against QUERY-to-doc scores, so its null
+    distribution must be measured the same way (MLX invariant 1).
+
+    Measuring doc-doc cosine put the null ceiling in a different region of the
+    space and proposed 0.8033 on the live corpus — a floor that buried recall.
+    """
+    calls: list[str] = []
+
+    class _TrackingEmbedder(_StubEmbedder):
+        def embed_query(self, text):
+            calls.append(text)
+            return super().embed_query(text)
+
+    floor_calibration.estimate_noise_floor(
+        _TrackingEmbedder(),
+        probes=["alpha beta", "gamma delta", "epsilon zeta"],
+        quantile=0.95,
+        dims=8,
+    )
+    assert calls == ["alpha beta", "gamma delta", "epsilon zeta"]
