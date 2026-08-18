@@ -183,6 +183,77 @@ def _check_codegraph() -> None:
         console.print(f"[green]✓[/green] codegraph: CLI v{'.'.join(str(p) for p in cg_version)}")
 
 
+def _check_proxy() -> None:
+    """Proxy health — WARN-only, never flips doctor's `ok`.
+
+    The failure that matters here is silent: ANTHROPIC_BASE_URL pointed at
+    this machine's loopback while no proxy listens there. Claude Code then
+    fails exactly like a dead network, because from the CLI's side there is
+    no proxy between here and there — just connection refused. Agent load
+    state and the listening probe are context for that diagnosis.
+    """
+    import os as _os
+    import socket as _sock
+    import subprocess as _sp
+    from urllib.parse import urlparse
+
+    from memo.flags import flag_int
+    from memo.ops_launchd import PROXY_LABEL, parse_launchctl_list
+
+    port = flag_int("MEMO_PROXY_PORT") or 8768
+
+    def _listening(p: int) -> bool:
+        try:
+            with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as sock:
+                sock.settimeout(0.25)
+                return sock.connect_ex(("127.0.0.1", p)) == 0
+        except OSError:
+            return False
+
+    listening = _listening(port)
+    loaded = False
+    try:
+        out = _sp.run(
+            ["launchctl", "list"], capture_output=True, text=True, timeout=5, check=False
+        ).stdout
+        loaded = any(row["label"] == PROXY_LABEL for row in parse_launchctl_list(out))
+    except Exception:  # noqa: S110  # launchctl probing must never fail doctor
+        pass
+
+    pointed_url = ""
+    pointed_port: int | None = None
+    base_url = _os.environ.get("ANTHROPIC_BASE_URL", "").strip().rstrip("/")
+    if base_url:
+        try:
+            parsed = urlparse(base_url)
+            host = (parsed.hostname or "").lower()
+            bport = parsed.port or (443 if parsed.scheme == "https" else 80)
+            if host in ("127.0.0.1", "localhost", "::1"):
+                pointed_url = base_url
+                pointed_port = bport
+        except ValueError:
+            pass
+
+    if listening:
+        state = "loaded (launchd)" if loaded else "not loaded in launchd"
+        console.print(
+            f"[green]✓[/green] proxy: {PROXY_LABEL} {state} — listening on 127.0.0.1:{port}"
+        )
+        return
+    if not (pointed_url and pointed_port is not None):
+        console.print(
+            "[dim]•[/dim] proxy: not running "
+            "[dim](`memo proxy serve`, or `memo ops install proxy` for a launchd agent)[/dim]"
+        )
+        return
+    console.print(
+        f"[yellow]![/yellow] proxy: ANTHROPIC_BASE_URL={pointed_url} is set, but "
+        f"nothing is listening on 127.0.0.1:{pointed_port} — Claude Code fails "
+        "as if the network were down. Run `memo proxy serve` (foreground) or "
+        "`memo ops install proxy` (launchd agent)."
+    )
+
+
 def _report_mcp_store_env() -> bool:
     """Print MCP client store-path findings; return False when any is broken.
 
@@ -501,6 +572,8 @@ def doctor(
         )
 
     _check_codegraph()
+
+    _check_proxy()
 
     if check_db:
         for db in _db_health_report(cfg):

@@ -238,7 +238,7 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
 
 
 @ops_group.command(name="install")
-@click.argument("service", type=click.Choice(["chat"]))
+@click.argument("service", type=click.Choice(["chat", "proxy"]))
 @click.option("--port", default=8765, show_default=True, type=int)
 @click.option(
     "--dist",
@@ -247,29 +247,33 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
     help="Directorio dist de la SPA (opcional).",
 )
 def ops_install(service: str, port: int, dist: Path | None) -> None:
-    """Install a memo launchd agent (currently: chat)."""
+    """Install a memo launchd agent (chat or proxy)."""
     import shutil
 
-    from memo.ops_launchd import install_chat
+    from memo.ops_launchd import install_chat, install_proxy
 
     memo_bin = shutil.which("memo")
     if not memo_bin:
         raise click.ClickException("no encuentro el binario `memo` en PATH")
-    resolved_dist = str(dist.expanduser().resolve()) if dist else None
     try:
-        path = install_chat(memo_bin, Path.home(), port=port, dist=resolved_dist)
+        if service == "chat":
+            resolved_dist = str(dist.expanduser().resolve()) if dist else None
+            path = install_chat(memo_bin, Path.home(), port=port, dist=resolved_dist)
+        else:
+            path = install_proxy(memo_bin, Path.home())
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"installed {path}")
 
 
 @ops_group.command(name="uninstall")
-@click.argument("service", type=click.Choice(["chat"]))
+@click.argument("service", type=click.Choice(["chat", "proxy"]))
 def ops_uninstall(service: str) -> None:
     """Uninstall a memo launchd agent."""
-    from memo.ops_launchd import uninstall_chat
+    from memo.ops_launchd import uninstall_chat, uninstall_proxy
 
-    click.echo("removed" if uninstall_chat(Path.home()) else "not installed")
+    ok = uninstall_chat(Path.home()) if service == "chat" else uninstall_proxy(Path.home())
+    click.echo("removed" if ok else "not installed")
 
 
 @ops_group.command(name="status")
