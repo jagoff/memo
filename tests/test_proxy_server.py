@@ -137,19 +137,25 @@ def test_plan_module_exposes_no_registry_constant():
     assert not hasattr(plan_mod, "REGISTRY")
 
 
-def test_build_registry_returns_an_empty_list_today():
+def test_build_registry_includes_toolschemas():
+    """Task 9 registers the first real transform; the registry is no longer
+    empty (see the superseded test this replaced, `..._returns_an_empty_list_today`)."""
     from memo.proxy.registry import build_registry
+    from memo.proxy.transforms.toolschemas import ToolSchemas
 
-    assert build_registry() == []
+    registry = build_registry()
+    assert len(registry) == 1
+    assert isinstance(registry[0], ToolSchemas)
 
 
-def test_rewrite_body_with_no_explicit_transforms_is_a_noop_today(tmp_path):
-    """The registry is empty (populated by later tasks), so the default path
-    (transforms=None) must forward the body unchanged."""
+def test_rewrite_body_with_no_explicit_transforms_runs_the_real_registry(tmp_path):
+    """No `tools` key on this payload means ToolSchemas has nothing to prune,
+    so the body is unchanged — but the default path (transforms=None) now
+    runs the real registry's `toolschemas` transform, not an empty one."""
     raw = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
     out, plan = rewrite_body(raw, _ctx(tmp_path))
     assert out == raw
-    assert plan.applied == []
+    assert plan.applied == ["toolschemas"]
 
 
 def test_rewrite_body_default_transforms_come_from_build_registry(tmp_path, monkeypatch):

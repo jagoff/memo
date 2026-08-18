@@ -322,7 +322,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "mcp",
-        "Select the 58-tool core MCP surface (skip advanced domain modules) "
+        "Select the 59-tool core MCP surface (skip advanced domain modules) "
         "for local/constrained LLMs.",
     ),
     _spec(
@@ -330,7 +330,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 41 tools) | core/slim (58 stable-core tools) | full/default (164 tools).",
+        "MCP surface profile: agent (default, 42 tools) | core/slim (59 stable-core tools) | full/default (165 tools).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(

@@ -72,6 +72,7 @@ from memo import server_sync as _srv_sync
 from memo import server_synthesis as _srv_synthesis
 from memo import server_temporal as _srv_temporal
 from memo import server_terminal as _srv_terminal
+from memo import server_tool_docs as _srv_tool_docs
 from memo import server_verbatim as _srv_verbatim
 from memo import server_version as _srv_version
 from memo.config import Config
@@ -299,7 +300,7 @@ def _build_server(
     # Stable and advanced domain tool modules register their @server.tool()
     # closures here. Presence on the MCP surface does not by itself mean a
     # feature is part of memo's stable core contract; see experimental_index.md.
-    # Skip when MEMO_MCP_SLIM=1 — reduces 164 tools to the 58-tool core surface
+    # Skip when MEMO_MCP_SLIM=1 — reduces 165 tools to the 59-tool core surface
     # for local/constrained LLMs where tool-definition tokens are expensive.
     from memo.surface import mcp_include_advanced_tools
 
@@ -365,6 +366,10 @@ def _build_server(
     # Truth-validity lifecycle is part of the stable CRUD contract and must be
     # available to the default agent profile, not only the advanced surface.
     _srv_lifecycle.register(server, memory)
+    # The proxy's toolschemas transform prunes rarely-used memo_* schemas
+    # from context on every profile it runs against, so the escape hatch back
+    # to a pruned tool's schema must be registered unconditionally too.
+    _srv_tool_docs.register(server, memory)
 
     from memo.surface import mcp_tools_to_remove
 
