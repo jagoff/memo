@@ -98,9 +98,15 @@ Expected in `probe_capture.jsonl`:
 
 If `path` never appears, **stop and report**: the proxy approach does not work on this Claude Code version and the spec needs revision before any further task.
 
-- [ ] **Step 4: Record the result in the plan**
+- [x] **Step 4: Record the result in the plan**
 
-Edit this file, replacing this line with the observed values. Commit only this plan file:
+Observed 2026-08-18 (claude CLI, 1 call `-p "say ok" --max-turns 1`, loopback probe on 8768):
+1. `"path": "/v1/messages?beta=true"` — requests arrive. ✅
+2. `"has_auth": true` — credentials attached. ✅
+3. `"anthropic_beta"` non-null — `claude-code-20250219,oauth-2025-04-20,context-1m-2025-08-07,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,advisor-tool-2026-03-01,effort-2025-11-24,fallback-credit-2026-06-01,extended-cache-ttl-2025-04-11`. ✅
+Also observed: body_bytes ≈ 339,833 for a one-turn "say ok" — the build ships very fat payloads even for trivial calls, so the compression headroom is real.
+
+Verdict: **assumption confirmed — proceed with Tasks 2–8.**
 
 ```bash
 git add docs/SPECS/2026-08-18-token-savings-proxy-context-compression-plan.md
