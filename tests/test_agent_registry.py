@@ -1,5 +1,3 @@
-
-
 def test_mcp_command_profile_follows_the_registry(monkeypatch, tmp_path) -> None:
     """`mcp-command`, `setup` and `doctor --agent` must agree on the profile.
 

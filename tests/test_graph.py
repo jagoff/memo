@@ -1,5 +1,3 @@
-
-
 def test_weighted_neighbors_is_safe_under_a_concurrent_writer(tmp_path) -> None:
     """One shared connection + a lazily-consumed cursor + another thread's
     commit is the interleaving sqlite makes no promises about.
