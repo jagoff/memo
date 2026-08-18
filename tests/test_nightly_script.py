@@ -43,9 +43,7 @@ def test_uses_a_portable_lock_not_flock() -> None:
     body = SCRIPT.read_text(encoding="utf-8")
     assert 'mkdir "$_lockdir"' in body
     # No executable flock call (the comment explaining why may mention it).
-    assert not [
-        ln for ln in body.splitlines() if "flock" in ln and not ln.lstrip().startswith("#")
-    ]
+    assert not [ln for ln in body.splitlines() if "flock" in ln and not ln.lstrip().startswith("#")]
 
 
 def test_rotates_its_own_logs() -> None:
