@@ -5,9 +5,12 @@ Contract with Claude Code, from its gateway documentation:
   * The response body must never be buffered: the byte-level watchdog aborts a
     stream after 180s of silence on the direct API.
   * Any failure forwards the original body rather than failing the request.
-"""
 
-from __future__ import annotations
+Note: deliberately NO `from __future__ import annotations` — FastAPI resolves
+the `request: Request` parameter by annotation identity; a PEP-563 string
+annotation cannot be resolved (Request is a `build_app` local, not a module
+global) and the handler degrades to a required query param (HTTP 422).
+"""
 
 import json
 import logging
