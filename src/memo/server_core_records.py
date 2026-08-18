@@ -187,6 +187,17 @@ def _bounded_consolidate(
     return result
 
 
+def _mark_partial(counts: dict[str, int]) -> dict[str, int]:
+    """Flag a reindex that could not index everything it was handed.
+
+    `errors` is the subset of `skipped` that FAILED (parse error, embed
+    failure, refused path) rather than being deliberately passed over.
+    """
+    if counts.get("errors"):
+        counts["partial"] = 1
+    return counts
+
+
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **WRITE)
     def memo_save(
@@ -523,10 +534,7 @@ def register(server: Any, memory: Memory) -> None:
         skips (archives, chronicle, secrets). A non-zero `errors` means the
         index is incomplete: fix the cause and re-run.
         """
-        counts = memory.reindex(force=force)
-        if counts.get("errors"):
-            counts["partial"] = 1
-        return counts
+        return _mark_partial(memory.reindex(force=force))
 
     @annotated_tool(server, **DESTRUCTIVE)
     async def memo_delete(

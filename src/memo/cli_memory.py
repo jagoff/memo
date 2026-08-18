@@ -625,11 +625,16 @@ def reindex(force: bool, rebuild: bool, as_json: bool) -> None:
         f"facts: [cyan]{counts.get('facts', 0)}[/cyan]",
     )
     if counts.get("errors"):
-        console.print(
-            f"[red]✗[/red] {counts['errors']} file(s) FAILED to index "
-            "(parse/embed/refused) — see warnings above; rerun after fixing",
-        )
+        _print_reindex_errors(counts)
         raise SystemExit(1)
+
+
+def _print_reindex_errors(counts: dict[str, int]) -> None:
+    """Surface a partial reindex — `errors` is the subset of `skipped` that failed."""
+    if counts.get("errors"):
+        console.print(
+            f"[red]✗[/red] reindex: {counts['errors']} file(s) failed to index",
+        )
 
 
 @click.command()
@@ -1092,7 +1097,4 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
             f"reindex: checked {counts['checked']}  reindexed {counts['reindexed']}  "
             f"added {counts['added']}  skipped {counts['skipped']}  facts {counts.get('facts', 0)}",
         )
-        if counts.get("errors"):
-            console.print(
-                f"[red]✗[/red] reindex: {counts['errors']} file(s) failed to index",
-            )
+        _print_reindex_errors(counts)

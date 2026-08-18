@@ -71,6 +71,17 @@ def _purge_legacy_secret_index(
     return True
 
 
+def _warn_reindex_errors(errors: int, skipped: int) -> None:
+    """Say it out loud when part of a reindex did not land."""
+    if errors:
+        _log.warning(
+            "reindex: %d of %d skipped file(s) FAILED to index "
+            "(parse/embed/refused) — see the warnings above",
+            errors,
+            skipped,
+        )
+
+
 def _path_has_symlink_component(memory_root: Path, relative_parts: tuple[str, ...]) -> bool:
     """Return whether any component in a canonical Markdown path is a symlink."""
     current = memory_root
@@ -738,13 +749,7 @@ class _MaintainOpsMixin(_MemoryBase):
             "errors": errors,
             "facts": facts,
         }
-        if errors:
-            _log.warning(
-                "reindex: %d of %d skipped file(s) FAILED to index "
-                "(parse/embed/refused) — see the warnings above",
-                errors,
-                skipped,
-            )
+        _warn_reindex_errors(errors, skipped)
         if reindexed or added:
             self.operational.receipt(
                 "reindex",
@@ -1143,6 +1148,35 @@ class _MaintainOpsMixin(_MemoryBase):
             counts["links_written"] += n
         return counts
 
+    def _gc_probe_row(
+        self,
+        row: dict[str, Any],
+        *,
+        parent_id: Any,
+        ingest_abs: Any,
+    ) -> tuple[Path | None, bool, bool]:
+        """`(checked_path, exists, unverifiable)` for one store row.
+
+        `unverifiable` marks a legacy ingest row with no `abs_path`
+        provenance: existence cannot be established from here, so the caller
+        must leave it alone rather than mass-delete.
+        """
+        if parent_id:
+            parent = self.store.get(str(parent_id))
+            if parent is None:
+                return None, False, False
+            path = self._resolve_existing(parent["path"])
+            return path, path.is_file(), False
+        if ingest_abs:
+            # Ingested reference rows store label-prefixed paths that never
+            # resolve under memory_dir/vault — check the recorded source file
+            # instead of mass-deleting every labeled row.
+            path = Path(str(ingest_abs))
+            return path, path.is_file(), False
+        path = self._resolve_existing(row["path"])
+        exists = path.is_file()
+        return path, exists, (not exists and row.get("type") == "reference")
+
     def _gc_roots_healthy(self) -> bool:
         """Whether the canonical roots are actually mounted and readable.
 
@@ -1185,26 +1219,12 @@ class _MaintainOpsMixin(_MemoryBase):
             extra = row.get("extra") or {}
             parent_id = extra.get("parent_id") if isinstance(extra, dict) else None
             ingest_abs = extra.get("abs_path") if isinstance(extra, dict) else None
-            checked_path: Path | None = None
             try:
-                if parent_id:
-                    parent = self.store.get(str(parent_id))
-                    if parent is not None:
-                        checked_path = self._resolve_existing(parent["path"])
-                    path_exists = checked_path is not None and checked_path.is_file()
-                elif ingest_abs:
-                    # Ingested reference rows store label-prefixed paths that
-                    # never resolve under memory_dir/vault — check the recorded
-                    # source file instead of mass-deleting every labeled row.
-                    checked_path = Path(str(ingest_abs))
-                    path_exists = checked_path.is_file()
-                else:
-                    checked_path = self._resolve_existing(row["path"])
-                    path_exists = checked_path.is_file()
-                    if not path_exists and row.get("type") == "reference":
-                        # Legacy ingest rows without abs_path provenance:
-                        # existence can't be verified here — never mass-delete.
-                        continue
+                checked_path, path_exists, unverifiable = self._gc_probe_row(
+                    row, parent_id=parent_id, ingest_abs=ingest_abs
+                )
+                if unverifiable:
+                    continue
             except StorageError as exc:
                 # A path-safety refusal (symlink component, or a path escaping
                 # memory_dir) means existence could NOT be verified — it is not
