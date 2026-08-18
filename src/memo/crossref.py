@@ -150,6 +150,10 @@ class CrossReferenceIndex:
         self._conn.row_factory = sqlite3.Row
         with suppress(sqlite3.Error):
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # Bound the WAL: long-lived readers (daemons, MCP sessions) pin
+            # snapshots, so a passive checkpoint never truncates on its own
+            # (graph.db-wal was found at 80MB against a 127MB database).
+            self._conn.execute("PRAGMA journal_size_limit=16777216")
         try:
             self._init_schema()
         except Exception:

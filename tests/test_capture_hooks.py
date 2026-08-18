@@ -731,3 +731,23 @@ def test_prune_stale_sidecars_is_throttled(tmp_path: Path):
     _prune_stale_sidecars(d)
 
     assert dead.exists()  # throttled — not scanned this call
+
+
+def test_run_capture_incremental_no_pair_advances_the_throttle_clock(tmp_path: Path, monkeypatch):
+    """An empty/unparseable transcript must still stamp the watermark clock.
+
+    `capture-tick` decides whether to run from that stamp, so returning without
+    it made MEMO_CAPTURE_INTERVAL_S a no-op for the session: every prompt
+    re-parsed the whole transcript.
+    """
+    from memo.capture import incremental_tick_due
+
+    state = _setup_env(tmp_path, monkeypatch)
+    transcript = tmp_path / "empty-inc.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    sid = "sess-no-pair"
+
+    result = run_capture_incremental(transcript, sid, debug=False)
+
+    assert result["status"] == "no_pair"
+    assert incremental_tick_due(state, sid, 600) is False

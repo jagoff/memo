@@ -392,6 +392,14 @@ def _clear_retry_backoff(state_dir: Path, session_id: str) -> None:
     _retry_file(state_dir, session_id).unlink(missing_ok=True)
 
 
+def _touch_watermark(state_dir: Path, session_id: str) -> None:
+    """Advance only the throttle clock, preserving the rest of the watermark."""
+    wm = _load_watermark(state_dir, session_id)
+    wm["session_id"] = session_id
+    wm["updated"] = time.time()
+    _save_watermark(state_dir, session_id, wm)
+
+
 def incremental_tick_due(state_dir: Path, session_id: str, interval_s: int) -> bool:
     """True if at least `interval_s` seconds elapsed since this session's last
     incremental pass (the watermark `updated` stamp).
@@ -488,6 +496,11 @@ def run_capture_incremental(
 
         exchanges = _parse_exchanges(transcript_path)
         if not exchanges:
+            # Stamp the throttle clock even here. The per-prompt hook decides
+            # whether to run from the watermark's `updated`, so returning
+            # without touching it made MEMO_CAPTURE_INTERVAL_S a no-op for this
+            # session: every single prompt re-parsed the whole transcript.
+            _touch_watermark(cfg.state_dir, session_id)
             return {"status": "no_pair"}
 
         total = len(exchanges)
