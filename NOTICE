@@ -1,0 +1,24 @@
+This project (memo, MIT licensed — see LICENSE) includes design and
+vocabulary ported from third-party open-source software, listed below.
+
+--------------------------------------------------------------------------------
+
+snip
+https://github.com/edouard-claude/snip
+Copyright (c) 2026 snip contributors
+Licensed under the MIT License.
+
+`src/memo/proxy/transforms/toolresults.py` reimplements, in Python, the
+declarative per-command tool-output filter design used by snip's Go CLI: a
+YAML `match` (command/subcommand) + `pipeline` (ordered list of named
+actions) shape, and the pipeline-action vocabulary `keep_lines`,
+`remove_lines`, `head`, `tail`, `dedup`, `truncate_lines`, `aggregate`,
+`json_extract`, and `format_template`.
+
+No source code was copied — snip is written in Go and this module is an
+independent Python implementation, verified against the upstream repository
+(license file and `filters/*.yaml` examples) on 2026-08-18 and scoped down to
+what this proxy needs (memo's filter schema omits snip's `inject`,
+`exclude_flags`, `on_error`, and embedded `tests` fields).
+
+--------------------------------------------------------------------------------

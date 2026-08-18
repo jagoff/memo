@@ -1,0 +1,10 @@
+name: pytest
+match:
+  command: pytest
+pipeline:
+  - action: keep_lines
+    pattern: "(FAILED|ERROR|error:|assert|=+ .* =+)"
+  - action: truncate_lines
+    max: 200
+  - action: tail
+    n: 40
