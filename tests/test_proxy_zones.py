@@ -1,4 +1,4 @@
-from memo.proxy.zones import Zones, prefix_fingerprint, split
+from memo.proxy.zones import prefix_fingerprint, split
 
 
 def _payload(n_messages: int) -> dict:
