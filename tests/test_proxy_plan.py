@@ -61,3 +61,73 @@ def test_a_disabled_transform_never_runs(tmp_path):
     result = apply_all(zones, _ctx(tmp_path), [_Off()])
     assert result.applied == []
     assert result.est_saved_tokens == 0
+
+
+class _Garbage:
+    name = "garbage"
+    zone = "live"
+
+    def enabled(self) -> bool:
+        return True
+
+    def apply(self, zones, ctx):
+        return "abc"
+
+
+class _NoneReturn:
+    name = "none"
+    zone = "live"
+
+    def enabled(self) -> bool:
+        return True
+
+    def apply(self, zones, ctx):
+        return None
+
+
+def test_a_non_numeric_return_does_not_propagate(tmp_path):
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_Garbage()])
+    assert result.est_saved_tokens == 0
+
+
+def test_a_none_return_counts_as_zero_saved(tmp_path):
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_NoneReturn()])
+    assert result.est_saved_tokens == 0
+
+
+def test_a_garbage_return_still_leaves_the_planner_usable(tmp_path):
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_Garbage(), _Good()])
+    assert result.est_saved_tokens == 42
+
+
+class _RaisingName:
+    """`apply()` fails AND `name` is a property that also raises on access —
+    the exact shape of a transform that would blow up an unguarded
+    `transform.name` read inside the `except` handler."""
+
+    zone = "live"
+
+    def enabled(self) -> bool:
+        return True
+
+    def apply(self, zones, ctx) -> int:
+        raise RuntimeError("apply exploded")
+
+    @property
+    def name(self) -> str:
+        raise RuntimeError("name exploded too")
+
+
+def test_a_transform_whose_name_also_raises_does_not_propagate(tmp_path):
+    """`apply_all`'s except-handler reads `transform.name` to log which
+    transform failed. If that access itself raises (a transform exposing
+    `name` as a raising property), the failure must still be contained —
+    skip the transform, keep running the plan — not crash the request the
+    plan module exists to protect."""
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_RaisingName(), _Good()])
+    assert result.applied == ["good"]
+    assert result.est_saved_tokens == 42

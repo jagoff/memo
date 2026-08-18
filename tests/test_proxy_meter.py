@@ -87,3 +87,24 @@ def test_summarize_survives_a_corrupt_line(tmp_path):
     (tmp_path / "proxy").mkdir()
     (tmp_path / "proxy" / "requests.jsonl").write_text("{not json\n")
     assert summarize(tmp_path)["skipped"] == 1
+
+
+def test_summarize_skips_a_valid_json_line_that_is_not_an_object(tmp_path):
+    (tmp_path / "proxy").mkdir()
+    (tmp_path / "proxy" / "requests.jsonl").write_text("42\n")
+    assert summarize(tmp_path)["skipped"] == 1
+
+
+def test_summarize_survives_a_torn_write_with_invalid_utf8(tmp_path):
+    (tmp_path / "proxy").mkdir()
+    (tmp_path / "proxy" / "requests.jsonl").write_bytes(b'{"holdout": false}\n\xc3\x28')
+    result = summarize(tmp_path)
+    assert result["n_treated"] == 1
+
+
+def test_summarize_skips_a_row_whose_counter_is_not_a_number(tmp_path):
+    (tmp_path / "proxy").mkdir()
+    (tmp_path / "proxy" / "requests.jsonl").write_text(
+        '{"holdout": false, "input_tokens": "abc"}\n'
+    )
+    assert summarize(tmp_path)["measured_saving_frac"] is None
