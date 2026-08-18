@@ -56,9 +56,12 @@ def proxy_on() -> None:
 
 
 @proxy_group.command("status")
-@click.option("--port", default=8768, show_default=True, type=int)
-def proxy_status(port: int) -> None:
+@click.option("--port", default=None, type=int, help="Loopback port (default: MEMO_PROXY_PORT).")
+def proxy_status(port: int | None) -> None:
     """Report whether the proxy is listening."""
+    from memo.flags import flag_int
+
+    port = port or int(flag_int("MEMO_PROXY_PORT") or 8768)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
         listening = sock.connect_ex(("127.0.0.1", port)) == 0

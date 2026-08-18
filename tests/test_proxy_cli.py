@@ -27,7 +27,14 @@ def test_plist_never_embeds_an_api_key(monkeypatch):
 
 
 def test_status_reports_not_running_without_a_daemon(tmp_path):
-    result = CliRunner().invoke(proxy_group, ["status"], env=_env(tmp_path))
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        free_port = s.getsockname()[1]
+    env = _env(tmp_path)
+    env["MEMO_PROXY_PORT"] = str(free_port)
+    result = CliRunner().invoke(proxy_group, ["status"], env=env)
     assert result.exit_code == 0
     assert "not running" in result.output.lower()
 
