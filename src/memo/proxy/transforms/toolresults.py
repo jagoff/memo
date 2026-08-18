@@ -529,7 +529,10 @@ class ToolResults:
                 return 0
 
             marked = new_text + ccr.marker(
-                key, kept_chars=len(new_text), dropped_chars=len(text) - len(new_text)
+                key,
+                kept_chars=len(new_text),
+                dropped_chars=len(text) - len(new_text),
+                stashed=text,
             )
             # The REAL comparison: the marker is a ~130-byte fixed recovery
             # pointer appended after the pre-filter above ran, so a pipeline

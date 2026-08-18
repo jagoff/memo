@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 import pytest
 
@@ -315,6 +316,56 @@ def test_rewrite_body_default_transforms_come_from_build_registry(tmp_path, monk
     out, plan = rewrite_body(raw, _ctx(tmp_path))
     assert json.loads(out)["messages"] == []
     assert plan.applied == ["clear"]
+
+
+def test_marker_never_claims_full_original_when_a_crush_reference_is_nested(tmp_path, monkeypatch):
+    """Fix round 1 regression (task 11): JsonCrush runs before ToolResults in
+    the real registry, so for a large JSON tool_result -- the common case
+    this whole task exists for -- ToolResults' own recovery marker wraps
+    text JsonCrush ALREADY crushed. `ccr.stash` in that path stores the
+    crushed intermediate, not the true original, so a marker literally
+    saying "Full original: memo_retrieve(key=...)" is false: the key
+    recovers text that itself still carries JsonCrush's own
+    `<<memo-crush:HASH>>` reference one hop further out.
+
+    Isolated from the developer's real Markdown config per the process note
+    on this fix round -- MEMO_CONFIG_DIR is pinned explicitly even though
+    conftest.py already defaults it, since this test exercises the exact
+    config_md/tuned_overlay read path the capture-flag scoping in
+    JsonCrush consults.
+    """
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "config-home"))
+    monkeypatch.delenv("MEMO_CRUSHER_ENABLED", raising=False)
+
+    big = json.dumps([{"id": i, "text": "row " * 20} for i in range(400)])
+    raw = json.dumps(
+        {"messages": [{"role": "user", "content": [{"type": "tool_result", "content": big}]}]}
+    ).encode()
+
+    ctx = _ctx(tmp_path)
+    out, plan = rewrite_body(raw, ctx)
+
+    assert "jsoncrush" in plan.applied
+    assert "toolresults" in plan.applied
+
+    final_text = json.loads(out)["messages"][0]["content"][0]["content"]
+
+    match = re.search(r'memo_retrieve\(key="([0-9a-f]+)"\)', final_text)
+    assert match, f"expected a ToolResults recovery marker in: {final_text!r}"
+
+    from memo.proxy import ccr
+
+    recovered = ccr.recover(ctx.state_dir, match.group(1))
+    assert recovered is not None
+    assert "<<memo-crush:" in recovered, (
+        "setup check: the content ToolResults stashed should still carry "
+        "JsonCrush's nested reference, or this test isn't reproducing the bug"
+    )
+    assert "Full original" not in final_text, (
+        "the marker must not claim to hold the full original when what its "
+        "key actually recovers is itself only an intermediate with a "
+        "further memo-crush reference nested inside it"
+    )
 
 
 # ---------------------------------------------------------------------------

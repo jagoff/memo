@@ -24,6 +24,25 @@ def test_marker_names_the_key_and_what_was_dropped():
     assert "abc123" in m
     assert "900" in m
     assert "memo_retrieve" in m
+    assert "Full original" in m
+
+
+def test_marker_flags_a_nested_crush_reference_instead_of_claiming_full_original():
+    """Fix round 1 (task 11): when `stashed` (the content actually stored
+    under `key`) already carries an earlier crush's `<<memo-crush:...>>`
+    reference, `key` recovers an intermediate, not the true original --
+    the wording must say so instead of the (false) "Full original" claim."""
+    m = ccr.marker(
+        "abc123",
+        kept_chars=100,
+        dropped_chars=900,
+        stashed='[{"id": 1}, {"_compressed": "5 rows offloaded -- ask memo '
+        'retrieve <<memo-crush:deadbeef>>"}]',
+    )
+    assert "abc123" in m
+    assert "memo_retrieve" in m
+    assert "Full original" not in m
+    assert "memo-crush" in m
 
 
 def test_stash_returns_empty_key_when_the_cache_is_unwritable(tmp_path, monkeypatch):

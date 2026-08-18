@@ -39,9 +39,32 @@ def recover(state_dir: Path, key: str) -> str | None:
         return None
 
 
-def marker(key: str, *, kept_chars: int, dropped_chars: int) -> str:
-    """The text that replaces what was cut. Tells the model how to get it back."""
+_NESTED_CRUSH_MARKER = "<<memo-crush:"
+
+
+def marker(key: str, *, kept_chars: int, dropped_chars: int, stashed: str = "") -> str:
+    """The text that replaces what was cut. Tells the model how to get it back.
+
+    `stashed` is the exact content stored under `key` (the same string passed
+    to `stash()`) — pass it so the wording can be checked against what `key`
+    ACTUALLY recovers, not just what the caller hopes it recovers. When a
+    transform (e.g. `ToolResults`) runs on a block an EARLIER transform (e.g.
+    `JsonCrush`) already crushed, `key` recovers that earlier transform's
+    output — an intermediate that still carries its own
+    `<<memo-crush:HASH>>` reference — not the true original. Saying "Full
+    original" in that case is false and would make a model reading the
+    marker stop one hop too early; omitting `stashed` (or passing content
+    with no nested reference) keeps the stronger, still-true "Full original"
+    claim for the common case where this really is the first and only cut.
+    """
+    if _NESTED_CRUSH_MARKER in stashed:
+        return (
+            f"\n[memo: {dropped_chars} chars elided, {kept_chars} kept. "
+            f'Not the full original -- memo_retrieve(key="{key}") recovers this '
+            f"filter's input, which itself still contains a further "
+            f"memo-crush reference; retrieve that one too for the true original.]"
+        )
     return (
         f"\n[memo: {dropped_chars} chars elided, {kept_chars} kept. "
-        f"Full original: memo_retrieve(key=\"{key}\")]"
+        f'Full original: memo_retrieve(key="{key}")]'
     )
