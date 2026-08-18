@@ -9,6 +9,40 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.13.1] - 2026-08-18
+
+### Fixed
+
+Follow-up to the 4.13.0 QA sweep — the MEDIUM findings that release left on the
+table.
+
+- `Config.ensure_dirs` raised a bare `RuntimeError` on an unwritable
+  data/state dir; `cli.main` only catches `MemoError`, so the clean "cannot
+  create <dir>" message was replaced by a ~40-line chained traceback.
+- `memo mcp-command --client codex` emitted `MEMO_MCP_PROFILE=agent` while
+  `memo setup codex` wrote `core` and `memo doctor --agent codex` asserted
+  `core`: the profile now comes from the agent registry unless explicitly set.
+- The graph/contradiction/crossref sidecars share one sqlite connection across
+  the FastMCP worker threadpool but locked only their writes; reads now take the
+  same (re-entrant) lock and no cursor outlives it.
+- `memo_graph verb="communities"` returned a silently truncated page (no
+  `total`) with every community's full entity list — 4,327 communities and 156
+  entities in the largest, ~12k tokens at the default limit.
+- `consolidate` classified clusters from a prompt capped at 24k chars while
+  returning the full member list; a truncated cluster now reports
+  `members_seen_by_llm` and refuses to classify.
+- The lifecycle metadata writers read the legacy vault copy and wrote to
+  `memory_dir`, leaving two `.md` files with the same canonical id.
+- The eval cache key omitted every inherited ranking knob, so an A/B run could
+  return the other arm's cached rows.
+- The nightly dream receipt blended curated and auto-harvested labels into one
+  `prec@k` headline; both partitions are now recorded, curated first.
+- The chat SPA's delete action hit an endpoint answering `501 "deferred to plan
+  2"`; it now explains the refusal and names the CLI command instead.
+- `eval/regression_labels.json` gains three project-tagged prompts: every prompt
+  carried `project=null`, so the three project/global boost tiers were dead code
+  for the entire regression gate.
+
 ## [4.13.0] - 2026-08-18
 
 A full-project QA sweep (24 adversarially verified findings, measured

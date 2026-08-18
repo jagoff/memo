@@ -17,8 +17,14 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from memo.mcp_budget import bounded_list
 from memo.memory import Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
+
+# Per-community entity cap. A community's membership is elastic (156 entities
+# in the largest live one) and a caller asking for communities wants the shape,
+# not every member — `entities_truncated` says when there is more.
+_MAX_COMMUNITY_ENTITIES = 25
 
 _VERBS = ["path", "neighbors", "explore", "communities", "why", "impact", "architecture"]
 
@@ -59,6 +65,30 @@ def _bounded_impact(result: dict[str, Any], *, limit: int) -> dict[str, Any]:
     bounded["symbols"] = symbols[: max(0, limit)]
     bounded["symbol_count"] = len(symbols)
     return bounded
+
+
+def _communities_payload(communities: list[Any], *, limit: int) -> dict[str, Any]:
+    """Bound BOTH elastic dimensions of the communities verb.
+
+    The page was a bare slice with no `total`/`truncated`, and each community
+    carried its FULL entity list — measured on the live corpus: 4,327
+    communities, the largest holding 156 entities, ~12k tokens at the default
+    limit of 8.
+    """
+    kept, meta = bounded_list(communities, cap=limit, key=lambda c: -c.size)
+    result = []
+    for community in kept:
+        entities = list(getattr(community, "entities", []) or [])
+        shown = entities[:_MAX_COMMUNITY_ENTITIES]
+        result.append(
+            {
+                **{k: v for k, v in community.__dict__.items() if k != "entities"},
+                "entities": shown,
+                "entities_shown": len(shown),
+                "entities_truncated": len(entities) > len(shown),
+            }
+        )
+    return {"verb": "communities", "result": result, **meta}
 
 
 def _memory_navigation_result(
@@ -114,10 +144,12 @@ def _memory_navigation_result(
         return _with_code_evidence(payload, include_code=include_code)
     if verb == "communities":
         communities = nav.detect_communities(min_size=2, use_codegraph=use_codegraph)
-        payload = {
-            "verb": "communities",
-            "result": [community.__dict__ for community in communities[:limit]],
-        }
+        # Both dimensions were unbounded-in-effect: the page was a bare slice
+        # with no `total`/`truncated`, and each community carried its FULL
+        # entity list. Measured on the live corpus: 4,327 communities, the
+        # largest holding 156 entities — the default limit=8 rendered ~12k
+        # tokens, over the response budget, and reported neither fact.
+        payload = _communities_payload(communities, limit=limit)
         return _with_code_evidence(payload, include_code=include_code)
     return None
 

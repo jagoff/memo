@@ -120,9 +120,14 @@ def test_eval_recall_receipt_shape_and_history_append(tmp_cfg):
         encoding="utf-8",
     )
     frag = _run_eval_recall(tmp_cfg, _StubMem(), k=3, max_labels=200)
+    # `*_curated` are present whenever the curated partition is non-empty: the
+    # blended headline mixes ~150 harvested labels with the 46 curated ones the
+    # regression discipline actually gates on.
     assert set(frag) == {
         "prec_at_k",
         "noise_at_k",
+        "prec_at_k_curated",
+        "noise_at_k_curated",
         "k",
         "labels_total",
         "harvested",

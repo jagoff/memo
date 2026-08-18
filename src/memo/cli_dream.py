@@ -1664,12 +1664,22 @@ def dream_run(
                     fragment_key="eval_recall",
                 )
                 _ev = receipt["eval_recall"]
+                # Headline the CURATED figure when it exists: that is the set
+                # the regression discipline gates on. The blended number (which
+                # mixes in ~150 auto-harvested labels) follows it.
+                _headline = _ev.get("prec_at_k_curated", _ev["prec_at_k"])
+                _headline_noise = _ev.get("noise_at_k_curated", _ev["noise_at_k"])
+                _blend = (
+                    f" · blended {_ev['prec_at_k']} over {_ev['labels_total']}"
+                    if "prec_at_k_curated" in _ev
+                    else f" ({_ev['labels_total']} labels)"
+                )
                 progress.update(
                     step,
                     description=(
                         f"[13] eval recall [green]✓[/green]  "
-                        f"prec@{_ev['k']} {_ev['prec_at_k']} · noise@{_ev['k']} "
-                        f"{_ev['noise_at_k']} ({_ev['labels_total']} labels)"
+                        f"prec@{_ev['k']} {_headline} · noise@{_ev['k']} "
+                        f"{_headline_noise} ({_ev.get('curated', 0)} curated){_blend}"
                     ),
                 )
             except Exception as exc:

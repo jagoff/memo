@@ -313,6 +313,33 @@
         "608e16fcfe50"
       ],
       "_note": "2026-08-16 incident: a long durable memory is split into <id>_chunk_N rows typed 'reference'. The chunks swept the top 5 search hits (1.096->0.975) but auto-recall excludes the reference tier, so the hook can use none of them, and the canonical row does not even reach the top 6 (its embedding is diluted across the whole document). Perverse effect: the longer and better-chunked a durable memory, the LESS likely auto-recall surfaces it. Guards the chunk/tier class."
+    },
+    {
+      "text": "budget del recall hook de memo",
+      "project": "memo",
+      "relevant": true,
+      "expect_ids": [
+        "a953a820"
+      ],
+      "_note": "Tier 1 (current project). The answer carries project:memo and the prompt runs as project memo, so MEMO_RECALL_PROJECT_BOOST applies. Added 2026-08-18: until then EVERY prompt had project=null, so rank_hits never entered _apply_project_tiers and all three boosts were dead code for the whole gate — 0.35 and 0.25 measured byte-identical."
+    },
+    {
+      "text": "no activar compactación por limitaciones",
+      "project": "memo",
+      "relevant": true,
+      "expect_ids": [
+        "cefe0a45"
+      ],
+      "_note": "Tier 3 (another project). The answer is project:evidence-graph-compact while the prompt runs as project memo: it gets NO boost and must still surface. Guards the failure mode a larger project boost would cause — burying other projects' answers."
+    },
+    {
+      "text": "prueba de funcionalidades como usuario",
+      "project": "memo",
+      "relevant": true,
+      "expect_ids": [
+        "2d9d297d"
+      ],
+      "_note": "Tier 2 (global). The answer carries no project tag, so it takes MEMO_RECALL_GLOBAL_BOOST rather than the project one."
     }
   ],
   "relevant_terms": [
