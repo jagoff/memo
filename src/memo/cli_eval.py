@@ -985,6 +985,14 @@ def eval_tokens_cmd(
             has_var_kw = any(
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
             )
+            # Retrieval-only, same rationale as eval_recall._search_for_eval:
+            # this gate measures the rendered block (tokens + id survival)
+            # over the fused candidate pool, NOT the cross-encoder. Disabling
+            # it keeps the measurement deterministic and cannot hang the
+            # gate on the machine-global GPU flock while a batch MLX job
+            # (capture-stop, another test suite) holds it.
+            if "disable_reranker" in sig.parameters or has_var_kw:
+                search_kwargs["disable_reranker"] = True
             if "_track_usage" in sig.parameters or has_var_kw:
                 search_kwargs["_track_usage"] = False
         return list(mem.search(text, **search_kwargs))
