@@ -61,3 +61,43 @@ def test_a_disabled_transform_never_runs(tmp_path):
     result = apply_all(zones, _ctx(tmp_path), [_Off()])
     assert result.applied == []
     assert result.est_saved_tokens == 0
+
+
+class _Garbage:
+    name = "garbage"
+    zone = "live"
+
+    def enabled(self) -> bool:
+        return True
+
+    def apply(self, zones, ctx):
+        return "abc"
+
+
+class _NoneReturn:
+    name = "none"
+    zone = "live"
+
+    def enabled(self) -> bool:
+        return True
+
+    def apply(self, zones, ctx):
+        return None
+
+
+def test_a_non_numeric_return_does_not_propagate(tmp_path):
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_Garbage()])
+    assert result.est_saved_tokens == 0
+
+
+def test_a_none_return_counts_as_zero_saved(tmp_path):
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_NoneReturn()])
+    assert result.est_saved_tokens == 0
+
+
+def test_a_garbage_return_still_leaves_the_planner_usable(tmp_path):
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_Garbage(), _Good()])
+    assert result.est_saved_tokens == 42

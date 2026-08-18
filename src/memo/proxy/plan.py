@@ -50,9 +50,19 @@ def apply_all(zones: Zones, ctx: Context, transforms: list[Transform]) -> Transf
             if not transform.enabled():
                 continue
             saved = transform.apply(zones, ctx)
+            # Coerce to int defensively: non-numeric and None both → 0
+            try:
+                saved_int = int(saved or 0)
+            except (ValueError, TypeError):
+                saved_int = 0
+            plan.applied.append(transform.name)
+            plan.est_saved_tokens += saved_int
         except Exception:
-            _log.warning("proxy: transform %s failed; skipped", transform.name)
+            # Guard access to transform.name in case it raises
+            try:
+                transform_name = transform.name
+            except Exception:
+                transform_name = "<unknown>"
+            _log.warning("proxy: transform %s failed; skipped", transform_name)
             continue
-        plan.applied.append(transform.name)
-        plan.est_saved_tokens += int(saved or 0)
     return plan
