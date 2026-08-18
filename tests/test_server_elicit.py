@@ -484,3 +484,25 @@ def test_gated_noop_targets_never_elicit(tool, mock_memory, monkeypatch):
     assert calls == []  # gate skipped: handler never invoked
     assert check(data), data
     assert _signal_count(mock_memory) == 0
+
+
+def test_memo_delete_confirms_even_when_the_pre_read_fails(mock_memory, monkeypatch):
+    """A failed pre-read is not "nothing to delete".
+
+    `memo_delete` swallows every exception from its pre-read into `rec = None`;
+    gating the confirmation on that took the irreversible delete with no prompt
+    whenever the store hiccupped (locked DB, transient storage error).
+    """
+    note = mock_memory.save(content="cuerpo", title="Nota", type_="note")
+
+    def _boom(_id):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(mock_memory, "get", _boom)
+
+    server = build_server(mock_memory)
+    calls: list[str] = []
+    data = _call(server, "memo_delete", {"id": note.id}, handler=_result_handler("decline", calls))
+
+    assert calls, "the destructive gate must still be offered"
+    assert data.get("deleted") is not True

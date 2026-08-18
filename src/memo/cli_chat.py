@@ -217,12 +217,17 @@ def chat_serve(host: str, port: int, dist: Path | None) -> None:
             "hosts (127.0.0.1, ::1, or localhost)"
         )
     try:
+        # Import EVERY piece of the http extra behind the same guard: uvicorn
+        # alone can be pulled in by an unrelated dependency, and then a missing
+        # fastapi escaped as a raw ModuleNotFoundError from build_app — the
+        # KeepAlive crash loop that took the chat LaunchAgent down silently.
         import uvicorn
+
+        from memo.chat.http import build_app
     except ImportError as exc:
         raise click.ClickException(
             "chat serve requiere el extra http: uv tool install 'mlx-memo[http]'"
         ) from exc
-    from memo.chat.http import build_app
 
     memory = _build_memory()
     uvicorn.run(build_app(memory, dist=dist), host=host, port=port, log_level="info")

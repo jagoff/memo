@@ -192,16 +192,36 @@ def _handle_version(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# One bus per state_dir for the lifetime of the process. `poll_new_events`
+# tracks delivered ids in instance state, so building a fresh bus per MCP call
+# reset that cursor and made `memo_event_poll` re-return every event forever,
+# contradicting its documented "delivered once" contract.
+_MCP_EVENT_BUSES: dict[str, Any] = {}
+
+
+def _mcp_event_bus(memory: Memory) -> Any:
+    from memo.agent_event_bus import AgentEventBus
+
+    key = str(memory.cfg.state_dir)
+    bus = _MCP_EVENT_BUSES.get(key)
+    if bus is None:
+        bus = AgentEventBus(memory.cfg.state_dir, agent_id="mcp")
+        _MCP_EVENT_BUSES[key] = bus
+    return bus
+
+
 def _handle_event_bus_publish(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
     """Publish one `agent` event to the shared local event journal (multi-agent
     sync). Agent-id is this memory's own; the event lands in `memo events list`
     and is visible to other local agents via memo_event_poll."""
-    from memo.agent_event_bus import AgentEventBus
-
-    bus = AgentEventBus(memory.cfg.state_dir, agent_id="mcp")
+    bus = _mcp_event_bus(memory)
     event = bus.publish(args["event_type"], args.get("data") or {})
     return {
-        "published": True,
+        # Honest: False when MEMO_EVENT_BUS_ENABLED is off or the journal write
+        # failed. Reporting True regardless told the caller a coordination
+        # signal was delivered when nothing was written.
+        "published": bus.last_publish_ok,
+        **({} if bus.enabled else {"reason": "MEMO_EVENT_BUS_ENABLED is off"}),
         "event": {
             "event_type": event.event_type,
             "agent_id": event.agent_id,
@@ -216,9 +236,7 @@ def _handle_event_poll(memory: Memory, args: dict[str, Any]) -> dict[str, Any]:
 
     Idempotent: each event id is delivered once per session and excluded from
     later polls. Empty list means no new cross-agent activity."""
-    from memo.agent_event_bus import AgentEventBus
-
-    bus = AgentEventBus(memory.cfg.state_dir, agent_id="mcp")
+    bus = _mcp_event_bus(memory)
     events = bus.poll_new_events()
     return {
         "events": [

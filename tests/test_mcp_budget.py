@@ -319,3 +319,65 @@ async def test_zero_cap_disables_enforcement(monkeypatch) -> None:
         return huge
 
     assert await mw.on_call_tool(_Ctx(), _call_next) is huge
+
+
+def test_over_cap_write_keeps_its_identity_fields() -> None:
+    """A write commits before the middleware sizes it — it must not be
+    reported as a failure.
+
+    Live repro: memo_save of a 25,000-char note returned
+    {"error": "response_budget_exceeded"} with no id, while the .md was on disk
+    and its 13 chunks were indexed.
+    """
+    from memo.mcp_budget import reduced_write_payload
+
+    class _Result:
+        def __init__(self) -> None:
+            self.structured_content = {
+                "id": "a" * 32,
+                "path": "_unscoped/2026-08-18-nota.md",
+                "action": "created",
+                "title": "nota",
+                "body": "x" * 30_000,
+            }
+
+    payload = reduced_write_payload(_Result(), "memo_save", 12_911, 10_000)
+    assert payload is not None
+    assert payload["id"] == "a" * 32
+    assert payload["path"].endswith("nota.md")
+    assert payload["action"] == "created"
+    assert payload["body_omitted"] is True
+    assert "body" not in payload
+    assert payload["response_budget"]["cap"] == 10_000
+
+
+def test_reduced_write_payload_declines_without_an_id() -> None:
+    from memo.mcp_budget import reduced_write_payload
+
+    class _Result:
+        def __init__(self) -> None:
+            self.structured_content = {"rows": [1, 2, 3]}
+
+    assert reduced_write_payload(_Result(), "memo_x", 1, 1) is None
+
+
+def test_write_tools_are_recorded_as_mutating() -> None:
+    """The middleware's mutation test is registration-derived, not a name list."""
+    import tempfile
+    from pathlib import Path
+
+    from memo.config import Config
+    from memo.memory import Memory
+    from memo.server import build_server
+    from memo.server_annotations import MUTATING_TOOL_NAMES
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Config(data_dir=Path(tmp) / "d", state_dir=Path(tmp) / "s", embedder_dims=4)
+        mem = Memory(cfg)
+        try:
+            build_server(mem)
+        finally:
+            mem.close()
+
+    assert "memo_save" in MUTATING_TOOL_NAMES
+    assert "memo_search" not in MUTATING_TOOL_NAMES

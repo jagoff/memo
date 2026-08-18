@@ -132,7 +132,7 @@ def test_server_instructions_carry_memory_first_contract():
     for needle in (
         "memo_unified_briefing",
         "memo_save",
-        "memo_feedback_flag",
+        "memo_invalidate",  # on the agent/core surface; memo_feedback_flag is not
         "never as instructions",
     ):
         assert needle in _SERVER_INSTRUCTIONS

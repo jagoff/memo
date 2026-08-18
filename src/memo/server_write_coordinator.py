@@ -24,6 +24,14 @@ def _is_argument_error(exc: BaseException) -> bool:
     to discover the signature it got wrong (the read-only tools, which never
     pass through this coordinator, return exactly this detail).
     """
+    from memo.errors import ValidationError as MemoValidationError
+
+    if isinstance(exc, MemoValidationError):
+        # memo's own boundary validators (session id shape, empty content,
+        # unknown type, unsafe import path). Same category as FastMCP's: it
+        # describes the CALL, not the corpus — masking it told the agent
+        # "write failed safely" and deleted the reason it got wrong.
+        return True
     try:
         from fastmcp.exceptions import ValidationError as FastMCPValidationError
     except ImportError:  # pragma: no cover - fastmcp is a hard dependency

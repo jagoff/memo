@@ -231,3 +231,31 @@ async def test_default_server_coordinates_a_real_mutating_tool(mock_memory):
     assert after["submitted"] == before["submitted"] + 1
     assert after["completed"] == before["completed"] + 1
     assert after["failed"] == 0
+
+
+def test_memo_validation_error_is_treated_as_an_argument_error() -> None:
+    """A caller-input error must reach the agent with its message intact.
+
+    memo's boundary validators used to raise a plain ValueError, which the
+    coordinator rewrote to "coordinated MCP write failed safely (ValueError)" —
+    deleting the one thing the agent needed (what it got wrong).
+    """
+    from memo.errors import StorageError, ValidationError
+    from memo.server_write_coordinator import _is_argument_error
+
+    assert _is_argument_error(ValidationError("session_id must be 1-128 ASCII")) is True
+    assert _is_argument_error(StorageError("disk exploded")) is False
+    assert _is_argument_error(RuntimeError("boom")) is False
+
+
+def test_session_id_validation_raises_a_memo_validation_error() -> None:
+    """…and it stays a ValueError, so existing callers keep working."""
+    import pytest
+
+    from memo.errors import ValidationError
+    from memo.session import validate_session_id
+
+    with pytest.raises(ValidationError):
+        validate_session_id("../../evil")
+    with pytest.raises(ValueError):
+        validate_session_id("../../evil")

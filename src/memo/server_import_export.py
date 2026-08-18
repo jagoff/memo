@@ -12,6 +12,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from memo.errors import ValidationError
 from memo.memory import Memory
 from memo.server_annotations import WRITE, WRITE_IDEMPOTENT, annotated_tool
 
@@ -46,14 +47,14 @@ def _resolve_safe_path(raw: str, purpose: str) -> Path:
     allowed_dirs = _get_allowed_base_dirs()
     allowed = any(p == base or _is_subdir(p, base) for base in allowed_dirs)
     if not allowed:
-        raise ValueError(
+        raise ValidationError(
             f"Unsafe {purpose} path: {raw}. "
             f"Must be under one of: {', '.join(str(d) for d in allowed_dirs)}."
         )
     if p.is_dir():
-        raise ValueError(f"{purpose} path must be a file, not a directory: {raw}")
+        raise ValidationError(f"{purpose} path must be a file, not a directory: {raw}")
     if purpose == "import" and not p.exists():
-        raise ValueError(f"Import file does not exist: {raw}")
+        raise ValidationError(f"Import file does not exist: {raw}")
     return p
 
 
