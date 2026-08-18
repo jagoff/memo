@@ -275,28 +275,33 @@ def test_plan_module_exposes_no_registry_constant():
 
 
 def test_build_registry_includes_toolschemas():
-    """Task 9 registers the first real transform, Task 10 the second; the
-    registry is no longer empty (see the superseded test this replaced,
-    `..._returns_an_empty_list_today`)."""
+    """Task 9 registers the first real transform, Task 10 the second, Task 11
+    the third; the registry is no longer empty (see the superseded test this
+    replaced, `..._returns_an_empty_list_today`). JsonCrush runs BEFORE
+    ToolResults -- see the ordering rationale in `registry.build_registry`'s
+    docstring."""
     from memo.proxy.registry import build_registry
+    from memo.proxy.transforms.jsoncrush import JsonCrush
     from memo.proxy.transforms.toolresults import ToolResults
     from memo.proxy.transforms.toolschemas import ToolSchemas
 
     registry = build_registry()
-    assert len(registry) == 2
+    assert len(registry) == 3
     assert isinstance(registry[0], ToolSchemas)
-    assert isinstance(registry[1], ToolResults)
+    assert isinstance(registry[1], JsonCrush)
+    assert isinstance(registry[2], ToolResults)
 
 
 def test_rewrite_body_with_no_explicit_transforms_runs_the_real_registry(tmp_path):
-    """No `tools` key and no tool_result blocks on this payload means neither
-    ToolSchemas nor ToolResults has anything to rewrite, so the body is
-    unchanged — but the default path (transforms=None) now runs the real
-    registry's transforms, not an empty one, so both still report applied."""
+    """No `tools` key and no tool_result blocks on this payload means none of
+    ToolSchemas, JsonCrush, or ToolResults has anything to rewrite, so the
+    body is unchanged — but the default path (transforms=None) now runs the
+    real registry's transforms, not an empty one, so all three still report
+    applied."""
     raw = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
     out, plan = rewrite_body(raw, _ctx(tmp_path))
     assert out == raw
-    assert plan.applied == ["toolschemas", "toolresults"]
+    assert plan.applied == ["toolschemas", "jsoncrush", "toolresults"]
 
 
 def test_rewrite_body_default_transforms_come_from_build_registry(tmp_path, monkeypatch):
