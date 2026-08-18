@@ -131,6 +131,20 @@ def _has_nested_quantifier(pattern: str) -> bool:
     quantifiers, but anything else ambiguous is more likely to be flagged
     than missed -- a false positive just makes one filter unusable (logged,
     skipped); a false negative is a live hang.
+
+    A `(` immediately followed by `?` is Python/PCRE extension-group syntax
+    -- non-capturing `(?:`, named `(?P<name>`/`(?P=name`, lookaround
+    `(?=`/`(?!`/`(?<=`/`(?<!`, a `(?#...)` comment, or an inline-flags group
+    -- and that leading `?` is NOT a quantifier on anything; misreading it
+    as one flagged every one of those (among the most common regex idioms)
+    as "has an inner quantifier" and silently disabled any filter using
+    them. Only the marker `?` itself needs skipping: none of the marker
+    characters that can follow it (`:`, `=`, `!`, `<`, `P`, a group name,
+    `>`, flag letters) collide with a real quantifier character, so normal
+    scanning resumes correctly right after. The one exception is `(?#...)`,
+    whose body is inert comment text with no regex meaning at all (even a
+    literal `+` inside one is just a comment character) -- skipped whole,
+    not scanned.
     """
     stack: list[bool] = []
     in_class = False
@@ -150,6 +164,12 @@ def _has_nested_quantifier(pattern: str) -> bool:
             in_class = True
         elif c == "(":
             stack.append(False)
+            if i + 1 < n and pattern[i + 1] == "?":
+                if i + 2 < n and pattern[i + 2] == "#":
+                    close = pattern.find(")", i + 3)
+                    i = close if close != -1 else n
+                    continue
+                i += 1  # skip only the marker `?`; resume normal scanning after it
         elif c == ")":
             if stack:
                 had_inner_quantifier = stack.pop()

@@ -393,3 +393,66 @@ def test_keep_lines_preserves_the_full_content_of_a_long_matching_line():
     line = f"FAILED at the start {long_tail}"
     out = apply_pipeline(f"{line}\n", [{"action": "keep_lines", "pattern": "FAILED"}])
     assert out == line  # full content, not clipped to the regex-safe match-target cap
+
+
+# --- Fix round 3 regressions ---------------------------------------------------
+#
+# Round 2's `_has_nested_quantifier` reads a bare `?` right after `(` as an
+# inner quantifier, since `?` is itself in `_QUANT_CHARS`. That misreads
+# Python's `(?...)` extension-group syntax -- non-capturing `(?:`, named
+# `(?P<name>`, and lookaround `(?=`/`(?!`/`(?<=`/`(?<!` -- as "this group has
+# a quantifier inside", so any of those followed by an outer quantifier gets
+# falsely flagged as the dangerous shape. Non-capturing and named groups are
+# among the most common regex idioms, so this is the exact "validator too
+# aggressive, silently disables real filters" failure the round-2 fix was
+# meant to avoid.
+
+
+def _filter_yaml_with_pattern(pattern: str) -> str:
+    return (
+        "name: extgroup\n"
+        "match:\n"
+        "  command: extcmd\n"
+        "pipeline:\n"
+        "  - action: keep_lines\n"
+        f"    pattern: {pattern!r}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "(?:foo|bar)+",  # non-capturing group, safe
+        "(?:foo)+",  # non-capturing group, no inner quantifier, safe
+        "(?P<name>foo)+",  # named group, safe
+        "(?=foo)+",  # lookahead, safe
+    ],
+)
+def test_extension_group_patterns_load_without_being_falsely_rejected(tmp_path, pattern):
+    (tmp_path / "f.yaml").write_text(_filter_yaml_with_pattern(pattern))
+    filters = load_filters(tmp_path)
+    assert len(filters) == 1, f"{pattern!r} was falsely rejected at load"
+    assert filters[0].pipeline[0]["pattern"] == pattern
+
+
+def test_a_nested_quantifier_inside_a_non_capturing_group_is_still_rejected(tmp_path):
+    """The extension-group fix must not blunt the round-2 detector: `(?:a+)+`
+    uses non-capturing-group syntax but is exactly the dangerous shape --
+    a quantified group with a real quantifier inside."""
+    (tmp_path / "f.yaml").write_text(_filter_yaml_with_pattern("(?:a+)+"))
+    filters = load_filters(tmp_path)
+    assert filters == []
+
+
+@pytest.mark.parametrize("pattern", [r"[\]+]", r"[]]+"])
+def test_bracket_expressions_with_a_literal_close_bracket_are_not_false_positives(
+    tmp_path, pattern
+):
+    """A `]` that is escaped (`[\\]+]`) or appears first in a class (`[]]+`,
+    the regex convention for a literal `]`) is not a real class terminator --
+    the scanner must not exit `in_class` early and start reading the rest of
+    the pattern as structural regex, which could manufacture a false
+    nested-quantifier flag downstream."""
+    (tmp_path / "f.yaml").write_text(_filter_yaml_with_pattern(pattern))
+    filters = load_filters(tmp_path)
+    assert len(filters) == 1, f"{pattern!r} was falsely rejected at load"
