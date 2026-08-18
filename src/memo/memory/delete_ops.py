@@ -201,6 +201,26 @@ class _DeleteOpsMixin(_MemoryBase):
                     self.store.upsert(embedding=stored_embedding, **restore_kwargs)
                 else:
                     self.store.upsert_text_only(**restore_kwargs)
+                # upsert() carries neither the validity interval nor the review
+                # state. Under soft delete the ON CONFLICT path preserves both,
+                # but on the hard-delete path the meta row was really gone — so
+                # without these a superseded fact would come back with
+                # invalid_at=NULL (re-entering normal recall) and reset to
+                # 'unverified'. Best-effort: the meta row is the load-bearing
+                # part of the rollback.
+                with contextlib.suppress(Exception):
+                    self.store.update_validity(
+                        id_=id_,
+                        valid_at=r.get("valid_at"),
+                        invalid_at=r.get("invalid_at"),
+                    )
+                with contextlib.suppress(Exception):
+                    self.store.update_review_state(
+                        id_=id_,
+                        review_after=r.get("review_after"),
+                        verification_state=str(r.get("verification_state") or "unverified"),
+                        verified_at=r.get("verified_at"),
+                    )
             except Exception as restore_exc:
                 raise StorageError(
                     f"delete partially failed AND rollback failed: {restore_exc}. "

@@ -36,8 +36,26 @@ def refresh_candidates(mem: Any, store: ProactiveStore, *, now: str) -> int:
         + detect_roi(mem, now=now)
         + detect_dejavu(mem, now=now)
     )
-    store.put_candidates(nudges)
-    return len(nudges)
+    deduped = _dedup(nudges)
+    store.put_candidates(deduped)
+    return len(deduped)
+
+
+def _dedup(nudges: list[Nudge]) -> list[Nudge]:
+    """Collapse nudges sharing an id, keeping the most urgent.
+
+    `Nudge.id` is `sha256(kind:subject_id)` and it is the candidates-table
+    primary key, so two detectors (or one detector twice — e.g. two recurring
+    prompts whose top hit is the same memory) emitting the same subject would
+    abort the whole refresh with an IntegrityError and leave stale candidates
+    behind. Order is preserved so routing stays deterministic.
+    """
+    best: dict[str, Nudge] = {}
+    for n in nudges:
+        prev = best.get(n.id)
+        if prev is None or n.urgency > prev.urgency:
+            best[n.id] = n
+    return list(best.values())
 
 
 def compute_routed(store: ProactiveStore, *, now: str, day: str) -> Routed:

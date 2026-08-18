@@ -32,6 +32,13 @@ def test_put_and_active_excludes_dismissed_and_snoozed(tmp_path: Path):
         assert store.active_candidates("2026-07-21T02:00:00Z") == []
 
 
+def test_put_candidates_tolerates_duplicate_ids(tmp_path: Path):
+    """The write itself stays total when a batch repeats an id."""
+    with ProactiveStore(tmp_path / "p.db") as store:
+        store.put_candidates([_n(KIND_RELIABILITY, "a"), _n(KIND_RELIABILITY, "a")])
+        assert len(store.active_candidates("2026-07-21T01:00:00Z")) == 1
+
+
 def test_multipliers_demote_ignored_kind(tmp_path: Path):
     with ProactiveStore(tmp_path / "p.db") as store:
         for i in range(5):

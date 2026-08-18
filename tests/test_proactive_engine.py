@@ -61,6 +61,28 @@ def test_refresh_candidates_empty_sources_emit_no_v2_nudges(tmp_path: Path):
         assert n == 0
 
 
+def test_refresh_candidates_dedups_colliding_nudge_ids(tmp_path: Path):
+    """Two patterns whose top hit is the same memory must not abort the refresh.
+
+    `Nudge.id` is sha256(kind:subject_id) and it is the candidates primary key,
+    so the duplicate used to raise `IntegrityError: UNIQUE constraint failed:
+    proactive_candidates.id`, rolling back the DELETE+INSERT and leaving the
+    nightly dream pass with stale candidates.
+    """
+
+    class _CollidingMem(_FullFakeMem):
+        def recurring_pattern_pairs(self, *, limit):
+            return [("m1", "same memory, first phrasing"), ("m1", "same memory, again")]
+
+    with ProactiveStore(tmp_path / "dup.db") as store:
+        n = refresh_candidates(_CollidingMem(), store, now="2026-07-21T00:00:00Z")
+        # 1 reliability + 1 continuity + 1 health + 1 roi + 1 (deduped) dejavu
+        assert n == 5
+        candidates = store.active_candidates("2026-07-21T01:00:00Z")
+        assert len(candidates) == 5
+        assert len({c.id for c in candidates}) == 5
+
+
 def test_push_gate_respects_cooldown_and_cap(tmp_path: Path):
     with ProactiveStore(tmp_path / "p.db") as store:
         assert (

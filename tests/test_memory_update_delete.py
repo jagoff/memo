@@ -103,6 +103,49 @@ def test_hard_delete_rollback_preserves_signal_tables(mem_with_stub: Memory, mon
     assert mem_with_stub.store.sources_with_feedback([rec.id]) == {rec.id}
 
 
+def test_hard_delete_rollback_preserves_validity_and_review_state(
+    mem_with_stub: Memory, monkeypatch
+):
+    """A rolled-back hard delete must not silently re-open a superseded fact.
+
+    `upsert()` carries neither the validity interval nor the review state, so
+    the restored row used to come back with invalid_at=NULL (re-entering normal
+    recall as if it were still current) and verification reset to 'unverified'.
+    """
+    monkeypatch.setenv("MEMO_SOFT_DELETE", "0")
+    from memo.errors import StorageError
+
+    rec = mem_with_stub.save(content="hecho superado", title="Superado")
+    mem_with_stub.store.update_validity(
+        id_=rec.id,
+        valid_at="2026-01-01T00:00:00+00:00",
+        invalid_at="2026-06-01T00:00:00+00:00",
+    )
+    mem_with_stub.store.update_review_state(
+        id_=rec.id,
+        review_after="2026-12-01T00:00:00+00:00",
+        verification_state="verified",
+        verified_at=1,
+    )
+
+    real_unlink = type(mem_with_stub.cfg.memory_dir).unlink
+
+    def _boom(self, *a, **k):
+        if self.name.endswith(".md"):
+            raise OSError("permission denied")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr("pathlib.Path.unlink", _boom)
+    with pytest.raises(StorageError, match="delete partially failed"):
+        mem_with_stub.delete(rec.id)
+
+    restored = mem_with_stub.store.get(rec.id)
+    assert restored is not None
+    assert restored["invalid_at"] == "2026-06-01T00:00:00+00:00"
+    assert restored["valid_at"] == "2026-01-01T00:00:00+00:00"
+    assert restored["verification_state"] == "verified"
+
+
 def test_delete_proceeds_when_md_already_missing(mem_with_stub: Memory):
     rec = mem_with_stub.save(content="huérfano", title="X")
     (mem_with_stub.cfg.memory_dir / rec.path).unlink()
@@ -344,3 +387,63 @@ def test_update_migrates_legacy_vault_copy(mem_with_stub: Memory):
     fetched = mem_with_stub.get(rec.id)
     assert fetched is not None
     assert "nuevo parrafo" in fetched.body
+
+
+def test_append_refuses_when_the_canonical_body_cannot_be_read(mem_with_stub: Memory, monkeypatch):
+    """An unreadable .md must abort the edit, not overwrite it with the fragment.
+
+    `_read_body` falls back to the FTS body and then to "" — fine for a search
+    snippet, catastrophic for `append=`, which derives the new body from the old
+    one: the canonical file used to be rewritten with just the appended text,
+    and the pre-update snapshot recorded body='' so version rollback could not
+    recover it either.
+    """
+    from memo.errors import StorageError
+
+    rec = mem_with_stub.save(content="PARA-1 original\n\nPARA-2 original", title="Larga")
+    md = mem_with_stub.cfg.memory_dir / rec.path
+    original = md.read_text(encoding="utf-8")
+
+    real_read_text = type(md).read_text
+
+    def _boom(self, *a, **k):
+        if self.name == md.name:
+            raise OSError("permission denied")
+        return real_read_text(self, *a, **k)
+
+    monkeypatch.setattr("pathlib.Path.read_text", _boom)
+    with pytest.raises(StorageError, match="cannot read the canonical body"):
+        mem_with_stub.update(rec.id, append="APPENDED-ONLY")
+
+    monkeypatch.undo()
+    assert md.read_text(encoding="utf-8") == original  # untouched
+
+
+def test_append_refuses_when_the_canonical_file_is_gone_and_index_has_no_body(
+    mem_with_stub: Memory,
+):
+    from memo.errors import StorageError
+
+    rec = mem_with_stub.save(content="PARA-1 original", title="Movida")
+    (mem_with_stub.cfg.memory_dir / rec.path).unlink()
+    mem_with_stub.store._conn.execute("UPDATE fts SET body = NULL WHERE id = ?", (rec.id,))
+    mem_with_stub.store._conn.commit()
+
+    with pytest.raises(StorageError, match="refusing to rewrite"):
+        mem_with_stub.update(rec.id, append="APPENDED-ONLY")
+
+
+def test_list_returns_the_full_page_despite_forgotten_rows(mem_with_stub: Memory):
+    """The forgotten filter runs after the SQL LIMIT — it must refill, not shrink.
+
+    A short page reads as "the corpus only holds this many", with no signal that
+    anything was filtered.
+    """
+    ids = [mem_with_stub.save(content=f"cuerpo {i}", title=f"N{i}").id for i in range(10)]
+    for id_ in ids[:5]:
+        mem_with_stub.forget(id_)
+
+    got = mem_with_stub.list(limit=5)
+
+    assert len(got) == 5
+    assert not set(r.id for r in got) & set(ids[:5])

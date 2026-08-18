@@ -950,6 +950,37 @@ def test_gc_reports_and_fixes_orphans(mem_with_stub: Memory):
     assert mem_with_stub.store.get(b.id) is None
 
 
+def test_gc_does_not_delete_when_the_memory_root_is_gone(mem_with_stub: Memory):
+    """An unmounted volume is not evidence that every memory was deleted.
+
+    `Path.is_file()` returns False on ANY OSError, and `sync_pull` runs
+    `gc(fix=True)` unattended on every pull — so a missing root used to wipe the
+    whole corpus out of search in the background.
+    """
+    import shutil
+
+    a = mem_with_stub.save(content="vivo", title="A")
+    shutil.rmtree(mem_with_stub.cfg.memory_dir)
+
+    report = mem_with_stub.gc(fix=True)
+
+    assert a.id in report["orphan_store"]  # still reported
+    assert mem_with_stub.store.get(a.id) is not None  # but never deleted
+
+
+def test_gc_does_not_delete_icloud_evicted_files(mem_with_stub: Memory):
+    """`.name.md.icloud` means evicted, not deleted."""
+    a = mem_with_stub.save(content="vivo", title="A")
+    md = mem_with_stub.cfg.memory_dir / a.path
+    md.unlink()
+    (md.parent / f".{md.name}.icloud").write_bytes(b"")
+
+    report = mem_with_stub.gc(fix=True)
+
+    assert a.id in report["orphan_store"]
+    assert mem_with_stub.store.get(a.id) is not None
+
+
 def _unit(dims: int) -> list[float]:
     v = 1.0 / dims**0.5
     return [v] * dims

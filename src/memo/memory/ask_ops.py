@@ -36,6 +36,10 @@ from memo.sampling import grounding_chat
 # Max provenance memories pulled into the ask context per _build_ask_context
 # call when MEMO_ASK_EXPAND_SYNTHESIS is on (bounds disk reads + tokens).
 _EXPAND_SOURCES_MAX = 4
+# How long a memoized corpus fingerprint may be reused. Bounds how stale a
+# cached RAG retrieval can get when a SIBLING session writes to the shared
+# memvec.db (that write doesn't bump this process's `_write_gen`).
+_CORPUS_VERSION_TTL_S = 2.0
 
 _UNTRUSTED_CONTEXT_BEGIN = "BEGIN UNTRUSTED RETRIEVED DATA"
 _UNTRUSTED_CONTEXT_END = "END UNTRUSTED RETRIEVED DATA"
@@ -809,11 +813,16 @@ class _AskOpsMixin(_MemoryBase):
         """Cheap corpus fingerprint: row count + latest update timestamp.
         Any save/update/delete moves it, invalidating cached retrievals.
         Includes repo source state so repo index/embed/delete busts the cache.
-        Memoized per-instance; auto-invalidated by the write generation
-        counter (bumped on save/update/delete)."""
+        Memoized per-instance, invalidated by the write generation counter
+        (bumped on save/update/delete) AND by a short TTL: `_write_gen` only
+        counts THIS process's writes, but every session on the machine shares
+        one `memvec.db` (the LOCAL sync tier), so a sibling's save would
+        otherwise leave this cache serving a stale answer for the whole RAG TTL.
+        """
         gen = getattr(self, "_write_gen", 0)
-        cached: tuple[int, str] | None = getattr(self, "_corpus_version_cached", None)
-        if cached is not None and cached[0] == gen:
+        now = time.time()
+        cached: tuple[int, str, float] | None = getattr(self, "_corpus_version_cached", None)
+        if cached is not None and cached[0] == gen and (now - cached[2]) < _CORPUS_VERSION_TTL_S:
             return cached[1]
         try:
             meta = self.store._conn.execute(
@@ -829,7 +838,7 @@ class _AskOpsMixin(_MemoryBase):
             ver += f":r{repo[0]}:{repo[1]}"
         except Exception:
             ver += ":r0:"
-        self._corpus_version_cached = (gen, ver)
+        self._corpus_version_cached = (gen, ver, now)
         return ver
 
     def _verbatim_short_circuit(

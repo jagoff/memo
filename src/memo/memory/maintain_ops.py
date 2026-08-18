@@ -199,12 +199,23 @@ class _MaintainOpsMixin(_MemoryBase):
         is always indexed whole-note for semantic coherence. Default off
         (MEMO_CHUNK_INGEST=0) preserves existing whole-note behaviour.
 
-        Returns counts including checked, reindexed, added, skipped, and facts.
+        Returns counts including checked, reindexed, added, skipped, errors,
+        and facts. `errors` is the subset of `skipped` that failed rather than
+        being deliberately passed over (parse error, embed failure, refused
+        path) — without it a run whose embedder died on 50 files reports the
+        same healthy shape as one that skipped 50 archived notes.
         """
         memory_root = self.cfg.memory_dir
-        checked = reindexed = added = skipped = facts = 0
+        checked = reindexed = added = skipped = errors = facts = 0
         if not memory_root.is_dir():
-            return {"checked": 0, "reindexed": 0, "added": 0, "skipped": 0, "facts": 0}
+            return {
+                "checked": 0,
+                "reindexed": 0,
+                "added": 0,
+                "skipped": 0,
+                "errors": 0,
+                "facts": 0,
+            }
 
         chunk_ingest = flag_bool("MEMO_CHUNK_INGEST")
         rebuild_rows: list[dict[str, Any]] | None = [] if rebuild else None
@@ -251,6 +262,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     raise StorageError(message)
                 _log.warning(message)
                 skipped += 1
+                errors += 1
                 continue
             try:
                 source_text = md_path.read_text(encoding="utf-8")
@@ -269,6 +281,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     ) from exc
                 _log.warning("reindex: skipping %s (parse error): %s", md_path.name, exc)
                 skipped += 1
+                errors += 1
                 continue
             meta: dict[str, Any] = post.metadata
             md_id = meta.get("id")
@@ -292,6 +305,7 @@ class _MaintainOpsMixin(_MemoryBase):
             if not is_canonical_memory_id(md_id):
                 _log.warning("reindex: skipping %s (invalid memory id)", md_path.name)
                 skipped += 1
+                errors += 1
                 continue
             md_id = str(md_id)
             duplicate_path = canonical_paths_by_id.get(md_id)
@@ -303,6 +317,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     raise StorageError(message)
                 _log.warning(message)
                 skipped += 1
+                errors += 1
                 continue
             canonical_paths_by_id[md_id] = md_path
             canonical_parent_count += 1
@@ -487,6 +502,7 @@ class _MaintainOpsMixin(_MemoryBase):
                         ) from exc
                     _log.warning("reindex: skipping %s (embed failed): %s", md_path.name, exc)
                     skipped += 1
+                    errors += 1
                     continue
                 if had_embed_pending:
                     pending_marker_paths.append((md_path, source_text))
@@ -569,6 +585,7 @@ class _MaintainOpsMixin(_MemoryBase):
                 except Exception as exc:
                     _log.warning("reindex: skipping %s (re-embed failed): %s", md_path.name, exc)
                     skipped += 1
+                    errors += 1
                     continue
                 if had_embed_pending:
                     pending_marker_paths.append((md_path, source_text))
@@ -718,8 +735,16 @@ class _MaintainOpsMixin(_MemoryBase):
             "reindexed": reindexed,
             "added": added,
             "skipped": skipped,
+            "errors": errors,
             "facts": facts,
         }
+        if errors:
+            _log.warning(
+                "reindex: %d of %d skipped file(s) FAILED to index "
+                "(parse/embed/refused) — see the warnings above",
+                errors,
+                skipped,
+            )
         if reindexed or added:
             self.operational.receipt(
                 "reindex",
@@ -729,6 +754,7 @@ class _MaintainOpsMixin(_MemoryBase):
                     "reindexed": reindexed,
                     "added": added,
                     "skipped": skipped,
+                    "errors": errors,
                     "facts": facts,
                     "force": force,
                 },
@@ -1117,26 +1143,64 @@ class _MaintainOpsMixin(_MemoryBase):
             counts["links_written"] += n
         return counts
 
+    def _gc_roots_healthy(self) -> bool:
+        """Whether the canonical roots are actually mounted and readable.
+
+        `Path.is_file()` returns False on ANY OSError, so an unmounted volume or
+        an iCloud-evicted Obsidian vault looks exactly like "every memory was
+        deleted". `sync_pull` runs `gc(fix=True)` unattended on every pull, so
+        that misreading would silently drop the whole corpus out of search.
+        """
+        try:
+            if not self.cfg.memory_dir.is_dir():
+                _log.warning(
+                    "gc: memory_dir %s is not readable — reporting orphans, deleting none",
+                    self.cfg.memory_dir,
+                )
+                return False
+            vault = self.cfg.vault_path
+            if vault is not None and not Path(vault).is_dir():
+                _log.warning(
+                    "gc: vault_path %s is not readable — reporting orphans, deleting none",
+                    vault,
+                )
+                return False
+        except OSError as exc:
+            _log.warning("gc: cannot stat the canonical roots (%s) — deleting nothing", exc)
+            return False
+        return True
+
+    @staticmethod
+    def _icloud_evicted(path: Path) -> bool:
+        """Whether `path` is an iCloud placeholder rather than a deleted file."""
+        with contextlib.suppress(OSError):
+            return (path.parent / f".{path.name}.icloud").exists()
+        return False
+
     def _gc_store_orphans(self, *, fix: bool) -> builtins.list[str]:
         """Find store rows whose canonical source cannot be verified."""
         orphan_store: list[str] = []
+        roots_ok = self._gc_roots_healthy()
         for row in self.store.list_recent(limit=100_000):
             extra = row.get("extra") or {}
             parent_id = extra.get("parent_id") if isinstance(extra, dict) else None
             ingest_abs = extra.get("abs_path") if isinstance(extra, dict) else None
+            checked_path: Path | None = None
             try:
                 if parent_id:
                     parent = self.store.get(str(parent_id))
-                    path_exists = (
-                        parent is not None and self._resolve_existing(parent["path"]).is_file()
-                    )
+                    if parent is not None:
+                        checked_path = self._resolve_existing(parent["path"])
+                    path_exists = checked_path is not None and checked_path.is_file()
                 elif ingest_abs:
                     # Ingested reference rows store label-prefixed paths that
                     # never resolve under memory_dir/vault — check the recorded
                     # source file instead of mass-deleting every labeled row.
-                    path_exists = Path(str(ingest_abs)).is_file()
+                    checked_path = Path(str(ingest_abs))
+                    path_exists = checked_path.is_file()
                 else:
-                    path_exists = self._resolve_existing(row["path"]).is_file()
+                    checked_path = self._resolve_existing(row["path"])
+                    path_exists = checked_path.is_file()
                     if not path_exists and row.get("type") == "reference":
                         # Legacy ingest rows without abs_path provenance:
                         # existence can't be verified here — never mass-delete.
@@ -1154,7 +1218,16 @@ class _MaintainOpsMixin(_MemoryBase):
                 continue
             if not path_exists:
                 orphan_store.append(row["id"])
-                if fix:
+                if checked_path is not None and self._icloud_evicted(checked_path):
+                    # `.name.md.icloud` placeholder: the file is evicted, not
+                    # deleted. Report it; a download restores it.
+                    _log.warning(
+                        "gc: %s is iCloud-evicted (%s) — reporting, not deleting",
+                        row["id"],
+                        checked_path.name,
+                    )
+                    continue
+                if fix and roots_ok:
                     if parent_id:
                         self.store.hard_delete(row["id"])
                         self._purge_version_history(row["id"])

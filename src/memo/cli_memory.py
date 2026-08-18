@@ -624,6 +624,12 @@ def reindex(force: bool, rebuild: bool, as_json: bool) -> None:
         f"skipped: [dim]{counts['skipped']}[/dim]  "
         f"facts: [cyan]{counts.get('facts', 0)}[/cyan]",
     )
+    if counts.get("errors"):
+        console.print(
+            f"[red]✗[/red] {counts['errors']} file(s) FAILED to index "
+            "(parse/embed/refused) — see warnings above; rerun after fixing",
+        )
+        raise SystemExit(1)
 
 
 @click.command()
@@ -1086,3 +1092,7 @@ def restore(zip_path: str, reindex: bool, yes: bool) -> None:
             f"reindex: checked {counts['checked']}  reindexed {counts['reindexed']}  "
             f"added {counts['added']}  skipped {counts['skipped']}  facts {counts.get('facts', 0)}",
         )
+        if counts.get("errors"):
+            console.print(
+                f"[red]✗[/red] reindex: {counts['errors']} file(s) failed to index",
+            )
