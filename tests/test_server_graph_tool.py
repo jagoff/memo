@@ -243,3 +243,44 @@ def test_memo_graph_impact_bounds_the_symbol_walk(mock_memory, monkeypatch):
     assert out["result"]["symbol_count"] == 376
     # Nearest-first ordering is preserved, so the kept rows are the relevant ones.
     assert [s["distance"] for s in out["result"]["symbols"]] == [0, 1, 2]
+
+
+def test_communities_verb_bounds_both_dimensions() -> None:
+    """A page slice with no `total` reads as "that's all there is", and each
+    community used to carry its full entity list (156 in the largest live one).
+    """
+    from types import SimpleNamespace
+
+    from memo.server_graph_tool import _memory_navigation_result
+
+    communities = [
+        SimpleNamespace(
+            id=i,
+            entities=[f"e{i}-{n}" for n in range(60)],
+            size=60,
+            representative_entity=f"e{i}-0",
+        )
+        for i in range(30)
+    ]
+
+    class _Nav:
+        def detect_communities(self, *, min_size, use_codegraph):
+            return communities
+
+    payload = _memory_navigation_result(
+        SimpleNamespace(navigator=_Nav()),
+        "communities",
+        a=None,
+        b=None,
+        focus=None,
+        limit=8,
+        include_code=False,
+    )
+
+    assert payload["total"] == 30
+    assert payload["truncated"] is True
+    assert len(payload["result"]) == 8
+    first = payload["result"][0]
+    assert first["entities_truncated"] is True
+    assert len(first["entities"]) == first["entities_shown"] <= 25
+    assert first["size"] == 60  # the TRUE size, not the shown count

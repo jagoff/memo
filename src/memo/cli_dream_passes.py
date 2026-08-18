@@ -528,6 +528,26 @@ def _run_eval_recall(cfg: Config, mem: Memory, *, k: int = 5, max_labels: int = 
     fragment["prec_at_k"] = metrics["precision_at_k"]
     fragment["noise_at_k"] = metrics["noise_at_k"]
 
+    # The blend above mixes 46 curated prompts with ~150 auto-harvested ones, so
+    # `memo dream status` printed a headline (0.12 in the 2026-08-17 receipt)
+    # that no curated number matches — while the regression discipline gates on
+    # the CURATED set alone. Record that partition separately.
+    if curated_prompts:
+        curated_rows = evaluate(
+            mem,
+            k=k,
+            labels=LabelSet(
+                prompts=curated_prompts,
+                relevant_terms=set(curated.relevant_terms) if curated else set(),
+                noise_tags=set(curated.noise_tags) if curated else set(),
+                noise_path_fragments=tuple(curated.noise_path_fragments) if curated else (),
+            ),
+            configs=[EvalCfg(name="vec", mode="vec", floor=floor, exclude_archived=True)],
+        )
+        curated_metrics = gate_metrics(curated_rows)
+        fragment["prec_at_k_curated"] = curated_metrics["precision_at_k"]
+        fragment["noise_at_k_curated"] = curated_metrics["noise_at_k"]
+
     hist = cfg.state_dir / "eval" / "history.jsonl"
     hist.parent.mkdir(parents=True, exist_ok=True)
     line = {

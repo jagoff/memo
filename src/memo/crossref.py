@@ -141,7 +141,10 @@ class CrossReferenceIndex:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._tx_lock = threading.Lock()
+        # RLock, not Lock: reads take the same lock as writes (one shared
+        # connection across the FastMCP threadpool), and a read issued
+        # from inside a _tx() block on this thread must not self-deadlock.
+        self._tx_lock = threading.RLock()
         # Open one shared connection eagerly (check_same_thread=False so it
         # survives the FastMCP worker threadpool). Eager init + _tx_lock kills
         # the lazy-init race where two threads each opened a connection, and

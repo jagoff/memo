@@ -232,7 +232,10 @@ class ContradictionStore:
             self._conn, "pairs", {"memoria_id_a": "memory_id_a", "memoria_id_b": "memory_id_b"}
         )
         self._conn.executescript(_SCHEMA_DDL)
-        self._tx_lock = threading.Lock()
+        # RLock, not Lock: reads take the same lock as writes (one shared
+        # connection across the FastMCP threadpool), and a read issued
+        # from inside a _tx() block on this thread must not self-deadlock.
+        self._tx_lock = threading.RLock()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:

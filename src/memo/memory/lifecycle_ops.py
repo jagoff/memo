@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import frontmatter
@@ -13,6 +15,8 @@ from memo.memory.record import MemoryRecord, _now_iso
 from memo.project import slugify_project
 from memo.redact import sanitize_persisted_text
 from memo.tiers import DURABLE_TYPES, VerificationState
+
+_log = logging.getLogger("memo.memory.record")
 
 
 def review_interval_days(type_: str, tags: list[str]) -> int | None:
@@ -173,6 +177,28 @@ class _LifecycleOpsMixin(_MemoryBase):
             reason=f"superseded by {new.id[:8]}: {reason}",
         )
 
+    def _drop_legacy_copy(self, source_path: Path, record: Any) -> None:
+        """Remove the legacy vault copy after a metadata write landed in memory_dir.
+
+        `_resolve_existing` can return `vault_path / rel` (legacy layout) while
+        `_atomic_write_text` always writes under `memory_dir`, so the read and
+        the write hit different files — leaving two `.md` carrying the same
+        canonical id, which a later reindex reports as a duplicate-id conflict.
+        Best-effort, mirroring `update_ops`' cleanup of the same hazard.
+        """
+        target_path = self.cfg.memory_dir / record.path
+        if source_path == target_path:
+            return
+        try:
+            source_path.unlink(missing_ok=True)
+        except OSError as exc:
+            _log.warning(
+                "lifecycle(%s): stale legacy copy %s left in place — %s",
+                record.id[:8],
+                source_path,
+                exc,
+            )
+
     def _set_review_metadata(
         self,
         id_: str,
@@ -215,8 +241,15 @@ class _LifecycleOpsMixin(_MemoryBase):
                 if not updated:
                     raise StorageError(f"review target missing from index: {record.id[:8]}")
             except Exception:
+                # Roll back the file we actually READ. `_atomic_write_text`
+                # always resolves under memory_dir, so on the legacy-vault
+                # branch that is a DIFFERENT file from `path`.
                 self._atomic_write_text(record.path, original)
+                if path != self.cfg.memory_dir / record.path:
+                    with contextlib.suppress(OSError):
+                        path.write_text(original, encoding="utf-8")
                 raise
+            self._drop_legacy_copy(path, record)
         with contextlib.suppress(Exception):
             self.history.log_update(
                 ts=datetime.now(UTC).isoformat(),
@@ -266,8 +299,15 @@ class _LifecycleOpsMixin(_MemoryBase):
                 if not updated:
                     raise StorageError(f"validity target missing from index: {record.id[:8]}")
             except Exception:
+                # Roll back the file we actually READ. `_atomic_write_text`
+                # always resolves under memory_dir, so on the legacy-vault
+                # branch that is a DIFFERENT file from `path`.
                 self._atomic_write_text(record.path, original)
+                if path != self.cfg.memory_dir / record.path:
+                    with contextlib.suppress(OSError):
+                        path.write_text(original, encoding="utf-8")
                 raise
+            self._drop_legacy_copy(path, record)
         with contextlib.suppress(Exception):
             self.history.log_update(
                 ts=datetime.now(UTC).isoformat(),

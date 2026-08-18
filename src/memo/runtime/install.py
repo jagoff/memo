@@ -150,7 +150,9 @@ def init_cmd(force: bool) -> None:
 )
 def mcp_command(client: str) -> None:
     memo_mcp = _require_isolated_memo_mcp()
-    env = _mcp_server_env()
+    # Client-aware: the registry owns each adapter's profile, so `mcp-command`
+    # and `setup`/`doctor --agent` cannot disagree about it.
+    env = _mcp_server_env(client)
     if client == "json":
         click.echo(
             json.dumps(

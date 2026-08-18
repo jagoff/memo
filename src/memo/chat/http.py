@@ -629,11 +629,35 @@ class _ChatApi:
         chips = [{"label": query, "query": query} for query in queries]
         return {"chips": chips}
 
+    # Both routes stay registered (the shipped SPA calls them) but refuse, with
+    # a message a human can act on — "deferred to plan 2" told the user nothing
+    # and read as a bug. They are NOT implemented on purpose: this API carries
+    # no credential (loopback-only is not a user boundary), so destructive and
+    # corpus-writing verbs stay on the CLI/MCP surfaces that do.
+    _NO_WRITE_HINT = (
+        "the chat API is read-only: it has no authentication, so writes stay on "
+        "the authenticated surfaces"
+    )
+
     async def memory_delete(self) -> Any:
-        return self.json_response({"error": "deferred to plan 2"}, status_code=501)
+        return self.json_response(
+            {
+                "error": "not_supported",
+                "detail": f"deleting a memory from the chat UI is disabled — {self._NO_WRITE_HINT}",
+                "use_instead": "memo delete <id>",
+            },
+            status_code=501,
+        )
 
     async def insight_capture(self) -> Any:
-        return self.json_response({"error": "deferred to plan 2"}, status_code=501)
+        return self.json_response(
+            {
+                "error": "not_supported",
+                "detail": f"capturing an insight from the chat UI is disabled — {self._NO_WRITE_HINT}",
+                "use_instead": "memo save <content>",
+            },
+            status_code=501,
+        )
 
 
 def _request_endpoint(handler: Any, request_type: Any) -> Any:

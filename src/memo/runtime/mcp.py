@@ -98,12 +98,44 @@ def _actual_embedder_config() -> dict[str, str]:
         return {}
 
 
-def _mcp_server_env() -> dict[str, str]:
+def _resolved_mcp_profile(client: str | None) -> str:
+    """Explicit user config if there is one, else the client's registry profile.
+
+    `flag_str` can't answer this on its own: MEMO_MCP_PROFILE has a registry
+    DEFAULT of "agent", so a plain `flag_str(...) or fallback` never reaches the
+    fallback and every client got "agent" — while `memo setup codex` wrote the
+    adapter's "core" and `memo doctor --agent codex` asserted "core".
+    """
+    import os
+
+    from memo.config_md import flag_values
     from memo.flags import flag_str
 
+    src = os.environ
+    explicitly_set = "MEMO_MCP_PROFILE" in src or "MEMO_MCP_PROFILE" in flag_values(src)
+    if explicitly_set:
+        return str(flag_str("MEMO_MCP_PROFILE", strict=True) or "agent")
+    if client:
+        from memo.runtime.agent_registry import AGENT_REGISTRY
+
+        adapter = AGENT_REGISTRY.get(client)
+        if adapter is not None:
+            return str(adapter.mcp_profile)
+    return "agent"
+
+
+def _mcp_server_env(client: str | None = None) -> dict[str, str]:
+    """MCP server env for `client` (default: the generic `agent` surface).
+
+    The profile MUST come from the registry when the client is known: with a
+    hardcoded `agent` fallback, `memo mcp-command --client codex` printed
+    MEMO_MCP_PROFILE=agent while `memo setup codex` wrote the adapter's `core`
+    and `memo doctor --agent codex` asserted `core` — so a config produced by
+    one command failed the other's check.
+    """
     env = {
         "MEMO_NONINTERACTIVE": "1",
-        "MEMO_MCP_PROFILE": flag_str("MEMO_MCP_PROFILE", strict=True) or "agent",
+        "MEMO_MCP_PROFILE": _resolved_mcp_profile(client),
         # MCP clients may inherit a dev shell's PYTHONPATH (for example `src`
         # inside this checkout). Clear it so the isolated memo-mcp shim imports
         # its installed runtime, not whichever repo happens to be the cwd.
