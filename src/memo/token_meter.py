@@ -18,7 +18,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-LEDGER_SCHEMA = "memo.token_meter.sessions.v1"
+LEDGER_SCHEMA = "memo.token_meter.sessions.v2"
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,10 @@ class SessionUsage:
     answer_tok: int
     tool_tok: int
     output_tok: int
+    input_tok: int = 0
+    cache_read_tok: int = 0
+    cache_creation_tok: int = 0
+    models: dict[str, int] | None = None
 
 
 def _is_human_prompt(row: dict) -> bool:
@@ -112,6 +116,56 @@ def iter_prompt_turns(rows: list[dict]) -> list[TurnUsage]:
     return turns
 
 
+def _transcript_input_side(rows: list[dict]) -> tuple[int, int, int, dict[str, int]]:
+    """Aggregate the prompt-side `usage` fields the transcript exposes.
+
+    Claude Code stamps each assistant message with the API usage of its call:
+    ``input_tokens`` (this call's full prompt footprint), and the two cache
+    splits ``cache_read_input_tokens`` / ``cache_creation_input_tokens``.
+    ``input_tokens`` is cumulative-per-call, so the session footprint is the
+    MAX; the cache splits are per-call volumes, so they SUM (that is also
+    what the provider bills against). Returns ``(input_max, cache_read_sum,
+    cache_creation_sum, models)`` where ``models`` tallies output tokens per
+    distinct model name — ccusage-style per-model accounting off the same
+    transcript (Stop hook only; pure stdlib).
+
+    Some Claude Code builds stamp a degenerate ``input_tokens`` (a fixed 1–2
+    per call, while the cache splits stay sane). The cache splits are real
+    billed volumes either way, so they are always summed; ``input_max`` is
+    reported as 0 (unknown) when every call's footprint looks degenerate —
+    honest zero beats a wrong number.
+    """
+    input_max = 0
+    cache_read = 0
+    cache_creation = 0
+    models: dict[str, int] = {}
+    seen_ids: set[str] = set()
+    for row in rows:
+        if row.get("type") != "assistant" or row.get("isSidechain"):
+            continue
+        msg = row.get("message") or {}
+        usage = msg.get("usage") or {}
+        model = str(msg.get("model") or "")
+        if model == "<synthetic>":
+            # Internal generations (titles, summaries) are not user-facing
+            # spend; counting them inflates the answer/tool narrative.
+            continue
+        mid = str(msg.get("id") or "")
+        if mid and mid in seen_ids:
+            continue  # streaming rows repeat the same message's usage
+        if mid:
+            seen_ids.add(mid)
+        input_max = max(input_max, int(usage.get("input_tokens") or 0))
+        cache_read += int(usage.get("cache_read_input_tokens") or 0)
+        cache_creation += int(usage.get("cache_creation_input_tokens") or 0)
+        out = int(usage.get("output_tokens") or 0)
+        if model:
+            models[model] = models.get(model, 0) + out
+    if input_max < 100:
+        input_max = 0
+    return input_max, cache_read, cache_creation, models
+
+
 def session_usage(transcript_path: Path) -> SessionUsage | None:
     """Parse a transcript file into a per-session usage aggregate."""
     p = Path(transcript_path).expanduser()
@@ -135,7 +189,18 @@ def session_usage(transcript_path: Path) -> SessionUsage | None:
     turns = iter_prompt_turns(rows)
     answer = sum(t.answer_tok for t in turns)
     tool = sum(t.tool_tok for t in turns)
-    return SessionUsage(sid, len(turns), answer, tool, answer + tool)
+    input_max, cache_read, cache_creation, models = _transcript_input_side(rows)
+    return SessionUsage(
+        sid,
+        len(turns),
+        answer,
+        tool,
+        answer + tool,
+        input_tok=input_max,
+        cache_read_tok=cache_read,
+        cache_creation_tok=cache_creation,
+        models=models or None,
+    )
 
 
 from memo.dashboard_logs import (  # noqa: E402
@@ -330,6 +395,10 @@ def roll(state_dir: Path, session_id: str, transcript_path: str | Path | None) -
             "n_turns": su.n_turns,
             "answer_tok": su.answer_tok,
             "tool_tok": su.tool_tok,
+            "input_tok": su.input_tok,
+            "cache_read_tok": su.cache_read_tok,
+            "cache_creation_tok": su.cache_creation_tok,
+            "models": su.models or {},
             "injected_chars": _injected_chars_for(state_dir, session_id),
             "grounded": _grounded_for(state_dir, session_id),
         }
@@ -374,11 +443,19 @@ def summarize(state_dir: Path) -> dict:
     )
     grounded_turns = sum(int(r.get("n_turns", 0)) for r in grounded_ss)
     ungrounded_turns = sum(int(r.get("n_turns", 0)) for r in ungrounded_ss)
+    models: dict[str, int] = {}
+    for r in rows:
+        for model, out in (r.get("models") or {}).items():
+            models[str(model)] = models.get(str(model), 0) + int(out)
     return {
         "schema": LEDGER_SCHEMA,
         "sessions": len(rows),
         "answer_tok": answer,
         "tool_tok": tool,
+        "input_tok": sum(int(r.get("input_tok", 0)) for r in rows),
+        "cache_read_tok": sum(int(r.get("cache_read_tok", 0)) for r in rows),
+        "cache_creation_tok": sum(int(r.get("cache_creation_tok", 0)) for r in rows),
+        "models": dict(sorted(models.items(), key=lambda kv: kv[1], reverse=True)),
         "injected_tokens": injected_tokens,
         "grounded": grounded,
         "proxy": {

@@ -129,6 +129,33 @@ def _by_client_panel(s: dict) -> Panel | None:
     )
 
 
+def _transcript_side_line(measured: dict) -> str:
+    """The measured prompt-side surface (ccusage accounting): input footprint,
+    cache-read/created volumes, and per-model output spend. Empty when the
+    transcripts never carried the richer `usage` fields."""
+    parts = []
+    if int(measured.get("input_tok", 0)) > 0:
+        parts.append(
+            f"[bold]{_fmt_tokens(measured['input_tok'])}[/bold] tok input footprint "
+            f"([dim]max prompt[/dim])"
+        )
+        if int(measured.get("cache_read_tok", 0)) > 0:
+            parts.append(f"[bold]{_fmt_tokens(measured['cache_read_tok'])}[/bold] tok cache-read")
+        if int(measured.get("cache_creation_tok", 0)) > 0:
+            parts.append(
+                f"[bold]{_fmt_tokens(measured['cache_creation_tok'])}[/bold] tok cache-written"
+            )
+    models = measured.get("models") or {}
+    if models:
+        parts.append(
+            "by model: "
+            + " · ".join(
+                f"[bold]{name}[/bold] {_fmt_tokens(out)}" for name, out in models.items()
+            )
+        )
+    return "\n" + " · ".join(parts) if parts else ""
+
+
 def _growth_text(s: dict) -> Text:
     g = s["growth"]
     t = Text()
@@ -210,7 +237,9 @@ def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> Non
                     f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok answer · "
                     f"[bold]{_fmt_tokens(measured['tool_tok'])}[/bold] tok tool-loops · "
                     f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok injected "
-                    f"([dim]{measured['sessions']} measured sessions[/dim])\n[dim]{proxy_line}[/dim]"
+                    f"([dim]{measured['sessions']} measured sessions[/dim])"
+                    + _transcript_side_line(measured)
+                    + f"\n[dim]{proxy_line}[/dim]"
                 ),
                 title="[bold]memo · measured (real transcript)[/bold]",
                 border_style="green",
