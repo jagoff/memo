@@ -74,6 +74,7 @@ def append(state_dir: Path, record: Record) -> None:
         with path.open("a", encoding="utf-8") as fh:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            fh.flush()
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
     except Exception:
         _log.warning("proxy: could not append measurement row")
@@ -86,20 +87,32 @@ def summarize(state_dir: Path) -> dict:
     skipped = 0
     path = ledger_path(state_dir)
     if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            text = ""
+        for line in text.splitlines():
             if not line.strip():
                 continue
             try:
                 row = json.loads(line)
-            except (json.JSONDecodeError, ValueError):
+                if not isinstance(row, dict):
+                    skipped += 1
+                    continue
+                (holdout if row.get("holdout") else treated).append(row)
+            except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
                 skipped += 1
                 continue
-            (holdout if row.get("holdout") else treated).append(row)
 
     def _mean(rows: list[dict], key: str) -> float | None:
         if not rows:
             return None
-        return sum(int(r.get(key) or 0) for r in rows) / len(rows)
+        total = 0
+        for r in rows:
+            val = r.get(key)
+            if isinstance(val, int):
+                total += val
+        return total / len(rows)
 
     mean_t = _mean(treated, "input_tokens")
     mean_h = _mean(holdout, "input_tokens")
@@ -112,6 +125,12 @@ def summarize(state_dir: Path) -> dict:
         for name in row.get("transforms") or []:
             by_transform[name] = by_transform.get(name, 0) + 1
 
+    retrieved = 0
+    for r in treated:
+        val = r.get("retrieved")
+        if isinstance(val, int):
+            retrieved += val
+
     return {
         "n_treated": len(treated),
         "n_holdout": len(holdout),
@@ -119,6 +138,6 @@ def summarize(state_dir: Path) -> dict:
         "mean_input_holdout": mean_h,
         "measured_saving_frac": saving,
         "by_transform": by_transform,
-        "retrieved": sum(int(r.get("retrieved") or 0) for r in treated),
+        "retrieved": retrieved,
         "skipped": skipped,
     }
