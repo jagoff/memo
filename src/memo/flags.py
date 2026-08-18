@@ -37,6 +37,7 @@ from memo.flags_capture import SPECS as _capture_specs
 from memo.flags_graph import SPECS as _graph_specs
 from memo.flags_ingest import SPECS as _ingest_specs
 from memo.flags_misc import SPECS as _misc_specs
+from memo.flags_proxy import SPECS as _proxy_specs
 from memo.flags_recall import SPECS as _recall_specs
 from memo.flags_search import SPECS as _search_specs
 
@@ -51,6 +52,7 @@ _SPECS: tuple[FlagSpec, ...] = (
     + _capture_specs
     + _ingest_specs
     + _misc_specs
+    + _proxy_specs
 )
 
 REGISTRY: dict[str, FlagSpec] = {s.name: s for s in _SPECS}
