@@ -43,6 +43,8 @@ def _as_list(value: object) -> list[dict]:
 
 def split(payload: dict, *, live_turns: int = LIVE_TURNS_DEFAULT) -> Zones:
     """Partition a request payload. Never raises on a malformed payload."""
+    if not isinstance(payload, dict):
+        return Zones()
     messages = payload.get("messages")
     messages = messages if isinstance(messages, list) else []
     cut = max(0, len(messages) - live_turns)

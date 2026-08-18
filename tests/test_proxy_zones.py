@@ -1,3 +1,5 @@
+import pytest
+
 from memo.proxy.zones import prefix_fingerprint, split
 
 
@@ -50,3 +52,12 @@ def test_zones_reassemble_into_an_equivalent_payload():
     original = _payload(6)
     z = split(original, live_turns=2)
     assert z.to_payload(original)["messages"] == original["messages"]
+
+
+@pytest.mark.parametrize("bad", [None, [], "x", 42, 3.5, True])
+def test_split_never_raises_on_a_malformed_payload(bad):
+    z = split(bad)
+    assert z.system == []
+    assert z.tools == []
+    assert z.frozen_messages == []
+    assert z.live_messages == []
