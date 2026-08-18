@@ -1,6 +1,6 @@
 import pytest
 
-from memo.proxy.zones import prefix_fingerprint, split
+from memo.proxy.zones import prefix_fingerprint, split, stable_head_fingerprint
 
 
 def _payload(n_messages: int) -> dict:
@@ -46,6 +46,30 @@ def test_prefix_fingerprint_changes_when_tools_change():
     b = split(_payload(10), live_turns=2)
     b.tools.append({"name": "memo_get", "input_schema": {"type": "object"}})
     assert prefix_fingerprint(a) != prefix_fingerprint(b)
+
+
+def test_stable_head_fingerprint_ignores_frozen_messages_too():
+    """Unlike prefix_fingerprint, growth of frozen_messages (a normal,
+    cache-friendly consequence of the conversation getting longer) must not
+    change this fingerprint — only system/tools do."""
+    a = split(_payload(10), live_turns=2)
+    b = split(_payload(20), live_turns=2)  # far more history -> different frozen_messages
+    assert a.frozen_messages != b.frozen_messages
+    assert stable_head_fingerprint(a) == stable_head_fingerprint(b)
+
+
+def test_stable_head_fingerprint_changes_when_tools_change():
+    a = split(_payload(10), live_turns=2)
+    b = split(_payload(10), live_turns=2)
+    b.tools.append({"name": "memo_get", "input_schema": {"type": "object"}})
+    assert stable_head_fingerprint(a) != stable_head_fingerprint(b)
+
+
+def test_stable_head_fingerprint_changes_when_system_changes():
+    a = split(_payload(10), live_turns=2)
+    b = split(_payload(10), live_turns=2)
+    b.system.append({"type": "text", "text": "extra instruction"})
+    assert stable_head_fingerprint(a) != stable_head_fingerprint(b)
 
 
 def test_zones_reassemble_into_an_equivalent_payload():

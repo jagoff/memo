@@ -40,7 +40,7 @@ from typing import Any
 from memo.proxy import meter
 from memo.proxy.plan import Context, TransformPlan, apply_all
 from memo.proxy.registry import build_registry
-from memo.proxy.zones import Zones, prefix_fingerprint, split
+from memo.proxy.zones import Zones, split, stable_head_fingerprint
 
 _log = logging.getLogger(__name__)
 
@@ -74,50 +74,57 @@ _SESSION_HEADER = "x-claude-code-session-id"
 # session, generated once at import time.
 _NO_SESSION_HEADER_FALLBACK = f"no-session-header-{uuid.uuid4().hex}"
 
-# Per-session cached-prefix fingerprint, for the runtime half of the design's
+# Per-session cached-HEAD fingerprint, for the runtime half of the design's
 # cache-stability rule (docs/SPECS/2026-08-18-token-savings-proxy-context-
 # compression-design.md Section 2: a mismatch across turns within one session
 # is "a test failure and a logged runtime warning" — the test half already
 # existed; this is the runtime half). Bounded like the toolschemas keep-set
 # cache, for the same reason (a long-lived proxy process must not leak
 # memory), keyed the same way (state_dir, session_key) to avoid collisions.
-_MAX_TRACKED_PREFIX_SESSIONS = 1000
-_last_prefix_fingerprint: OrderedDict[tuple[str, str], str] = OrderedDict()
+#
+# Tracks `stable_head_fingerprint` (system + tools), NOT `prefix_fingerprint`
+# (which also hashes `frozen_messages`). Provider prompt caching matches the
+# LONGEST CACHED PREFIX, so appending new turns is cache-FRIENDLY — earlier
+# cached bytes stay valid. `frozen_messages` growing every turn as the live
+# window advances is normal traffic, not instability; comparing the full
+# `prefix_fingerprint` across turns would warn on essentially every request
+# in a real conversation, training everyone to ignore the warning — which is
+# how the round-1 Critical this check exists to catch stayed invisible in
+# the first place. What actually breaks a cache hit is REWRITING content
+# that was already cached — `system` or `tools` changing mid-session — and
+# that is exactly what `stable_head_fingerprint` isolates.
+_MAX_TRACKED_HEAD_SESSIONS = 1000
+_last_head_fingerprint: OrderedDict[tuple[str, str], str] = OrderedDict()
 
 
 def _warn_on_prefix_drift(zones: Zones, ctx: Context) -> None:
-    """Log (never raise, never block) if this session's cached-prefix
-    fingerprint differs from the one seen on this session's last request.
+    """Log (never raise, never block) if this session's cached-HEAD
+    (system + tools) fingerprint differs from the one seen on this
+    session's last request — see the module-level comment above for why
+    this checks `stable_head_fingerprint`, not the stricter
+    `prefix_fingerprint`.
 
     This is a diagnostic side effect, not part of the request's success
     path — any failure here is swallowed, matching every other function in
     this module.
-
-    Known limitation, not fixed here: `prefix_fingerprint` hashes
-    `frozen_messages` too, and that zone legitimately GROWS every turn as the
-    live window advances — so in real multi-turn traffic this will warn on
-    turns beyond the first even when tool-schema pruning is behaving
-    correctly. The two-turn regression this fixes (a transform changing
-    `tools` mid-session) has no `frozen_messages` growth in play and is
-    exactly what this catches; narrowing the tracked fingerprint to exclude
-    the legitimately-growing zone is a follow-up, not done in this round.
     """
     try:
         key = (str(ctx.state_dir), ctx.session_key)
-        fingerprint = prefix_fingerprint(zones)
-        previous = _last_prefix_fingerprint.get(key)
+        fingerprint = stable_head_fingerprint(zones)
+        previous = _last_head_fingerprint.get(key)
         if previous is not None and previous != fingerprint:
             _log.warning(
-                "proxy: cached prefix changed within session (state_dir=%s, "
-                "session=%s) — a stable-prefix transform reshuffled it and "
-                "will force a re-cache instead of a provider cache hit",
+                "proxy: cached head (system/tools) changed within session "
+                "(state_dir=%s, session=%s) — a stable-prefix transform "
+                "rewrote it and will force a re-cache instead of a "
+                "provider cache hit",
                 ctx.state_dir,
                 ctx.session_key,
             )
-        _last_prefix_fingerprint[key] = fingerprint
-        _last_prefix_fingerprint.move_to_end(key)
-        while len(_last_prefix_fingerprint) > _MAX_TRACKED_PREFIX_SESSIONS:
-            _last_prefix_fingerprint.popitem(last=False)
+        _last_head_fingerprint[key] = fingerprint
+        _last_head_fingerprint.move_to_end(key)
+        while len(_last_head_fingerprint) > _MAX_TRACKED_HEAD_SESSIONS:
+            _last_head_fingerprint.popitem(last=False)
     except Exception:
         _log.warning("proxy: prefix-stability check failed; continuing unaffected")
 

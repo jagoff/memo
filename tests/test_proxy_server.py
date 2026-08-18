@@ -132,6 +132,16 @@ def test_a_transform_that_mutates_then_fails_still_forwards_pristine_bytes(tmp_p
 # session is "a test failure and a logged runtime warning"). Fix round 1 on
 # Task 9 found this half only existed as a test, never wired into the actual
 # request path — so a real instability would have failed silently in prod.
+#
+# Fix round 2 corrected WHAT is compared: the check tracks
+# `stable_head_fingerprint` (system + tools only), not the stricter
+# `prefix_fingerprint` (which also hashes `frozen_messages`). Provider
+# caching matches the longest cached prefix, so a growing conversation is
+# cache-friendly and must NOT trip the warning — only a REWRITE of the
+# already-cached system/tools is a real economic problem. See
+# `test_prefix_drift_warning_is_silent_when_only_history_grows` (must stay
+# silent) and `test_prefix_drift_warning_fires_when_tools_change_mid_session`
+# (must still fire) below.
 # ---------------------------------------------------------------------------
 
 
@@ -170,6 +180,70 @@ def test_stable_prefix_across_turns_does_not_warn(tmp_path, caplog):
     assert not any("prefix" in r.message.lower() for r in caplog.records)
 
 
+def test_prefix_drift_warning_is_silent_when_only_history_grows(tmp_path, caplog):
+    """Fix round 2: provider prompt caching matches the LONGEST CACHED
+    PREFIX, so APPENDING new turns is cache-friendly — earlier cached bytes
+    stay valid. What actually breaks a cache hit is REWRITING content that
+    was already cached (system / tools). A growing conversation changes
+    `frozen_messages` turn over turn — that's normal, expected, and must NOT
+    trip the warning, or a warning that always fires on ordinary traffic
+    trains everyone to ignore it (exactly how the round-1 Critical stayed
+    invisible). `system`/`tools` are unchanged across these two calls; only
+    the message history grows (3 messages -> 5), so `frozen_messages` grows
+    too (live_turns=2 default: cut 1 -> cut 3) — this must stay silent."""
+    ctx = Context(state_dir=tmp_path, session_key="growth-sess", project=None)
+    tools = [{"name": "a"}]
+    raw1 = json.dumps(
+        {
+            "tools": tools,
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+                {"role": "user", "content": "how are you"},
+            ],
+        }
+    ).encode()
+    raw2 = json.dumps(
+        {
+            "tools": tools,
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+                {"role": "user", "content": "how are you"},
+                {"role": "assistant", "content": "good, thanks"},
+                {"role": "user", "content": "great, tell me more"},
+            ],
+        }
+    ).encode()
+
+    with caplog.at_level(logging.WARNING, logger="memo.proxy.server"):
+        rewrite_body(raw1, ctx, transforms=[])
+        rewrite_body(raw2, ctx, transforms=[])
+
+    assert not any("prefix" in r.message.lower() for r in caplog.records)
+
+
+def test_prefix_drift_warning_fires_when_tools_change_mid_session(tmp_path, caplog):
+    """The complementary positive case, restated for the split fingerprint:
+    a real change to the cached head (tools, here) — not just history growth
+    — must still fire the warning. Same message count both turns, so
+    `frozen_messages` is identical (empty, under live_turns=2); only `tools`
+    differs."""
+    ctx = Context(state_dir=tmp_path, session_key="tools-change-sess", project=None)
+    raw1 = json.dumps(
+        {"tools": [{"name": "a"}], "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+    raw2 = json.dumps(
+        {"tools": [{"name": "a"}, {"name": "b"}], "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+
+    with caplog.at_level(logging.WARNING, logger="memo.proxy.server"):
+        rewrite_body(raw1, ctx, transforms=[])
+        rewrite_body(raw2, ctx, transforms=[])
+
+    assert any("prefix" in r.message.lower() for r in caplog.records)
+
+
 def test_prefix_drift_check_is_fail_open(tmp_path, monkeypatch):
     """A failure inside the drift check itself (fingerprinting blows up) must
     not raise into rewrite_body's caller — it's a diagnostic side effect, not
@@ -179,7 +253,7 @@ def test_prefix_drift_check_is_fail_open(tmp_path, monkeypatch):
     def _boom(*_args, **_kwargs):
         raise RuntimeError("fingerprint exploded")
 
-    monkeypatch.setattr(server_mod, "prefix_fingerprint", _boom)
+    monkeypatch.setattr(server_mod, "stable_head_fingerprint", _boom)
     ctx = Context(state_dir=tmp_path, session_key="boom-sess", project=None)
     raw = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
 
@@ -265,9 +339,7 @@ def test_usage_is_sniffed_out_of_a_streaming_response():
         b'event: message_start\ndata: {"message":{"usage":{"input_tokens":100}}}\n\n',
         captured,
     )
-    sniff_usage(
-        b'event: message_delta\ndata: {"usage":{"output_tokens":42}}\n\n', captured
-    )
+    sniff_usage(b'event: message_delta\ndata: {"usage":{"output_tokens":42}}\n\n', captured)
     assert captured["input_tokens"] == 100
     assert captured["output_tokens"] == 42
 
@@ -298,7 +370,9 @@ def test_sniffing_a_top_level_json_array_does_not_raise():
 
 
 def _payload_with_tool_use(*names):
-    content = [{"type": "tool_use", "id": f"t{i}", "name": n, "input": {}} for i, n in enumerate(names)]
+    content = [
+        {"type": "tool_use", "id": f"t{i}", "name": n, "input": {}} for i, n in enumerate(names)
+    ]
     return json.dumps(
         {
             "messages": [
