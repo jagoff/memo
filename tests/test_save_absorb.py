@@ -66,9 +66,16 @@ def test_absorb_is_versioned_and_rollbackable(mem_const, monkeypatch):
     assert versions  # pre-update snapshot exists → memo version rollback works
 
 
-def test_absorb_on_by_default_rewrites_existing_record(mem_const):
-    """No monkeypatch.setenv here — proves the flag's own default (now True)
-    drives the absorb, not just an explicit override."""
+def test_absorb_on_by_default_rewrites_existing_record(mem_const, monkeypatch):
+    """Deleting the var (rather than setting it) proves the flag's own default
+    (True) drives the absorb, not just an explicit override.
+
+    `conftest` hard-pins MEMO_SAVE_ABSORB=0 process-wide — the stub embedders
+    make every pair a near-duplicate, which on Apple Silicon fired a real 30B
+    merge in unrelated tests — so this file's default-behaviour test has to
+    unset it explicitly.
+    """
+    monkeypatch.delenv("MEMO_SAVE_ABSORB", raising=False)
     mem_const._chat = _AbsorbChat()
     r1 = mem_const.save(content="El dashboard corre en el puerto 8765", title="Dashboard port")
     r2 = mem_const.save(content="Confirmado: dashboard en 8765", title="Dashboard port check")
@@ -137,3 +144,64 @@ def test_absorb_warns_when_target_vanishes_mid_flight(mem_const, monkeypatch, ca
     assert r2.id != r1.id  # target vanished mid-absorb — falls back to a new record
     assert mem_const.get(r1.id) is None  # confirms the delete actually landed first
     assert "vanished before update()" in caplog.text  # the race is now logged, not silent
+
+
+class _ClippedMergeChat:
+    """LLM merge that comes back far shorter than the note it replaces —
+    what a real 1024-token generation does to a long body."""
+
+    def chat(self, model, messages, options=None):
+        return {"message": {"content": "MERGED: nota corta"}}
+
+
+def test_absorb_rejects_a_merge_that_lost_most_of_the_body(mem_const, monkeypatch, caplog):
+    """A clipped merge must never replace a long canonical body."""
+    import logging
+
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "1")
+    long_body = "".join(f"dato importante numero {i}\n" for i in range(200))
+    r1 = mem_const.save(content=long_body, title="Nota larga")
+    mem_const._chat = _ClippedMergeChat()
+
+    with caplog.at_level(logging.WARNING, logger="memo.memory.record"):
+        r2 = mem_const.save(content="dato importante numero 200", title="Nota larga bis")
+
+    assert r2.id != r1.id  # absorb refused → new record, nothing lost
+    assert mem_const.get(r1.id).body == long_body.strip()  # original body intact
+    assert "absorb rejected" in caplog.text
+
+
+def test_absorbed_record_is_marked_as_such(mem_const, monkeypatch):
+    """The caller can tell its content was folded into another record."""
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "1")
+    mem_const._chat = _AbsorbChat()
+    r1 = mem_const.save(content="El dashboard corre en el puerto 8765", title="Dashboard port")
+    r2 = mem_const.save(content="Confirmado: dashboard en 8765", title="Dashboard port check")
+
+    assert r2.id == r1.id
+    assert r2.action == "absorbed"
+    assert r2.to_dict()["action"] == "absorbed"
+
+
+def test_absorb_never_crosses_project_namespaces(mem_const, monkeypatch):
+    """A save tagged project:B must not be folded into a project:A memory.
+
+    The dedup vec search is corpus-wide, and absorb keeps the TARGET's tags —
+    so without a namespace guard project B's content vanished into project A.
+    """
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "1")
+    mem_const._chat = _AbsorbChat()
+    a = mem_const.save(
+        content="El dashboard corre en el puerto 8765",
+        title="Dashboard port",
+        tags=["project:alpha"],
+    )
+    b = mem_const.save(
+        content="Confirmado: dashboard en 8765",
+        title="Dashboard port check",
+        tags=["project:beta"],
+    )
+
+    assert b.id != a.id  # different project → separate record, nothing absorbed
+    assert mem_const.get(a.id).body == "El dashboard corre en el puerto 8765"
+    assert "project:beta" in mem_const.get(b.id).tags

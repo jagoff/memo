@@ -218,6 +218,10 @@ class ContradictionStore:
         # current journal mode, so setting WAL afterwards leaves the cold-open
         # schema in rollback-journal mode.
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # Bound the WAL: long-lived readers (daemons, MCP sessions) pin
+        # snapshots, so a passive checkpoint never truncates on its own
+        # (graph.db-wal was found at 80MB against a 127MB database).
+        self._conn.execute("PRAGMA journal_size_limit=16777216")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         # Migrate pre-rename DBs (memoria_id_a/b -> memory_id_a/b) BEFORE the
         # IF NOT EXISTS DDL, which would otherwise skip the existing `pairs`

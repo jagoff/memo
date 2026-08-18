@@ -43,9 +43,30 @@ NETWORK_WRITE: dict[str, Any] = {
 }
 
 
+# Names of every tool registered with a NON read-only annotation. Populated at
+# registration time so the response-budget middleware can tell a mutation from a
+# query: a write commits BEFORE the middleware sizes its payload, so replacing
+# an over-cap write result with an error tells the caller the write failed when
+# it actually landed.
+MUTATING_TOOL_NAMES: set[str] = set()
+
+
 def annotated_tool(server: Any, **hints: Any) -> Any:
     """`server.tool(annotations=hints)` with graceful zero-arg fallback."""
+    mutating = hints.get("readOnlyHint") is False
+
+    def _record(fn: Any) -> Any:
+        name = getattr(fn, "__name__", "")
+        if mutating and name:
+            MUTATING_TOOL_NAMES.add(name)
+        return fn
+
     try:
-        return server.tool(annotations=dict(hints))
+        inner = server.tool(annotations=dict(hints))
     except TypeError:
-        return server.tool()
+        inner = server.tool()
+
+    def _decorator(fn: Any) -> Any:
+        return inner(_record(fn))
+
+    return _decorator

@@ -157,9 +157,22 @@ class VecStore(
 
     # -- tantivy wiring --------------------------------------------------------
 
+    def _tantivy_dirty_marker(self) -> Path:
+        """Path of the on-disk "this index diverged from FTS5" marker."""
+        return self.tantivy_index_dir / ".dirty"
+
     def _mark_tantivy_unhealthy(self) -> None:
-        """Mark the tantivy index as stale so search falls back to FTS5."""
+        """Mark the tantivy index as stale so search falls back to FTS5.
+
+        The in-memory flag only covers THIS process, but the divergence is on
+        disk and outlives it: the next process would open the stale index, find
+        `exists()` true, skip the rebuild, and serve a BM25 leg missing the
+        failed write forever. The marker makes the next startup rebuild.
+        """
         self._tantivy_healthy = False
+        with contextlib.suppress(OSError):
+            self.tantivy_index_dir.mkdir(parents=True, exist_ok=True)
+            self._tantivy_dirty_marker().touch()
 
     def close(self) -> None:
         """Close sqlite connection and tantivy index."""
@@ -217,12 +230,18 @@ class VecStore(
             return
         if not _tantivy_available() or flag_str("MEMO_FTS_BACKEND") == "fts5":
             return
-        if TantivyFTSIndex.exists(self.tantivy_index_dir):
+        dirty = self._tantivy_dirty_marker().exists()
+        if TantivyFTSIndex.exists(self.tantivy_index_dir) and not dirty:
             return
+        if dirty:
+            _log.warning("tantivy index marked dirty by a failed write — rebuilding from FTS5")
         try:
             self._rebuild_tantivy_from_sqlite()
         except Exception as exc:
             _log.warning("tantivy initial rebuild failed, FTS5 stays primary: %s", exc)
+        else:
+            with contextlib.suppress(OSError):
+                self._tantivy_dirty_marker().unlink(missing_ok=True)
 
     def _rebuild_tantivy_from_sqlite(self) -> None:
         """Bulk-rebuild the tantivy index from the current FTS5 table."""

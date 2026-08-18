@@ -23,6 +23,9 @@ _log = logging.getLogger(__name__)
 # (e.g. one type out of a dense, diverse top-K) can drop most candidates, so the
 # multiplier is generous to avoid silently under-filling below `limit`.
 _TYPE_FILTER_CANDIDATE_MULT = 20
+# Mirrors `queries.py`'s `k_fetch` widening for the same reason: a post-filter
+# that can drop rows needs a bigger candidate pool than `limit`.
+_VALIDITY_CANDIDATE_MULT = 4
 
 _META_SELECT_COLUMNS = (
     "id, path, title, type, tags, created, updated, body_hash, extra_json, "
@@ -204,6 +207,38 @@ class _BM25QueriesMixin(_StoreBase):
             as_of=as_of,
         )
 
+    def _tantivy_candidate_k(
+        self,
+        limit: int,
+        *,
+        type_: str | None,
+        exclude_types: set[str] | None,
+        include_invalid: bool,
+        as_of: str | None,
+    ) -> int:
+        """Candidate pool for the tantivy legs, widened per post-filter.
+
+        Type filters were already handled; validity was not. `update_validity` /
+        supersede never touch the tantivy index, so superseded rows stay in it,
+        take up the `limit` slots, and are then dropped by `_validity_filter` on
+        the meta join — returning a thinner BM25 leg than the corpus actually
+        holds, with no signal to the caller. (FTS5 has no such problem: its
+        validity filter is inside the SQL, before LIMIT.)
+        """
+        if type_ or exclude_types:
+            return limit * _TYPE_FILTER_CANDIDATE_MULT
+        # Same predicate (and same `idx_meta_invalid_at` partial index) as
+        # `_QueriesMixin._index_has_invalid`, inlined here for the same reason
+        # `_deleted_filter_sql` is duplicated: this mixin only sees
+        # `_StoreBase`.
+        has_invalid = bool(
+            self._conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM meta WHERE invalid_at IS NOT NULL)"
+            ).fetchone()[0]
+        )
+        validity_can_drop = (not include_invalid) and (as_of is not None or has_invalid)
+        return limit * _VALIDITY_CANDIDATE_MULT if validity_can_drop else limit
+
     def _search_bm25_tantivy(
         self,
         query: str,
@@ -214,9 +249,15 @@ class _BM25QueriesMixin(_StoreBase):
         include_invalid: bool = False,
         as_of: str | None = None,
     ) -> list[dict[str, Any]]:
-        # Fetch more candidates when filtering by type so we can honour `limit`
-        # after post-filtering against the meta table.
-        candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
+        # Fetch more candidates when a post-filter can drop rows, so we can
+        # still honour `limit` after the meta-table join.
+        candidate_k = self._tantivy_candidate_k(
+            limit,
+            type_=type_,
+            exclude_types=exclude_types,
+            include_invalid=include_invalid,
+            as_of=as_of,
+        )
         hits = t.search_bm25(query, candidate_k)
         if not hits:
             return []
@@ -387,7 +428,13 @@ class _BM25QueriesMixin(_StoreBase):
                 include_invalid=include_invalid,
                 as_of=as_of,
             )
-        candidate_k = limit * _TYPE_FILTER_CANDIDATE_MULT if (type_ or exclude_types) else limit
+        candidate_k = self._tantivy_candidate_k(
+            limit,
+            type_=type_,
+            exclude_types=exclude_types,
+            include_invalid=include_invalid,
+            as_of=as_of,
+        )
         hits = t.search_fuzzy(query, candidate_k)
         if not hits:
             return []

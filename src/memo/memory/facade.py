@@ -608,13 +608,18 @@ class Memory(
         # (dream-only path, but still not unbounded).
         max_candidates = max(limit * 4, 20)
         out: list[tuple[str, str]] = []
+        # One pair per memory: the déjà-vu nudge id is derived from the memo id,
+        # so two patterns resolving to the same top hit would collide on the
+        # candidates primary key.
+        seen: set[str] = set()
         for candidates, (query, count) in enumerate(counts.most_common()):
             if len(out) >= limit or candidates >= max_candidates:
                 break
             if count < min_count:
                 break
             hits = self.search(query, limit=1, disable_reranker=True)
-            if hits:
+            if hits and hits[0].id not in seen:
+                seen.add(hits[0].id)
                 out.append((hits[0].id, query))
         return out
 

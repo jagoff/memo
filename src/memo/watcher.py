@@ -23,13 +23,13 @@ actually changed.
 
 from __future__ import annotations
 
-import os
 import signal
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape
 
 
 class _DebouncedReindex:
@@ -197,10 +197,18 @@ def render_plist(memo_bin: str) -> str:
     log_dir = _log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
     # Forward MEMO_* env vars from the user's interactive shell so the
-    # daemon uses the same vault/state dir as `memo` in a terminal.
-    env_vars = {k: v for k, v in os.environ.items() if k.startswith("MEMO_")}
+    # daemon uses the same vault/state dir as `memo` in a terminal — minus the
+    # session-scoped ones, which must not outlive the installing terminal.
+    from memo.ops_launchd import daemon_env
+
+    env_vars = daemon_env()
+    # Escape every interpolated value: an unescaped MEMO_* value containing
+    # `</string></dict>` could otherwise close the dict early and inject its own
+    # <key>ProgramArguments</key> — persistent code execution under launchd.
+    # (`ops_launchd.render_chat_plist` already escapes; this clone did not.)
     env_keys = "".join(
-        f"        <key>{k}</key>\n        <string>{v}</string>\n" for k, v in env_vars.items()
+        f"        <key>{escape(k)}</key>\n        <string>{escape(v)}</string>\n"
+        for k, v in env_vars.items()
     )
     env_block = (
         f"    <key>EnvironmentVariables</key>\n    <dict>\n{env_keys}    </dict>\n"
@@ -216,7 +224,7 @@ def render_plist(memo_bin: str) -> str:
     <string>{_PLIST_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{memo_bin}</string>
+        <string>{escape(memo_bin)}</string>
         <string>watch</string>
     </array>
     <key>RunAtLoad</key>
@@ -224,9 +232,9 @@ def render_plist(memo_bin: str) -> str:
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>{log_dir}/watch.out.log</string>
+    <string>{escape(str(log_dir))}/watch.out.log</string>
     <key>StandardErrorPath</key>
-    <string>{log_dir}/watch.err.log</string>
+    <string>{escape(str(log_dir))}/watch.err.log</string>
 {env_block}</dict>
 </plist>
 """
@@ -238,6 +246,7 @@ def install_plist(memo_bin: str) -> Path:
     p = _plist_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(render_plist(memo_bin), encoding="utf-8")
+    p.chmod(0o600)  # carries the daemon's MEMO_* environment
     return p
 
 

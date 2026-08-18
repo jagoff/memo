@@ -9,6 +9,80 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.13.0] - 2026-08-18
+
+A full-project QA sweep (24 adversarially verified findings, measured
+against the live corpus).
+
+### Fixed
+
+- **Recall injected one memory where three qualified.** The post-rank
+  gap-trim compared an absolute 0.10 delta against `h.score`, which is not
+  a bounded cosine — `search_scoring_ops` stacks three multiplicative
+  boosts and the live range reaches ~6.8 — so it fired on 18 of 30
+  multi-hit prompts and dropped a relevant rank-2 hit in 15 of them (one
+  scoring 96.5% of rank-1). The gap is now RELATIVE to rank-1
+  (`MEMO_RECALL_GAP_THRESHOLD` default 0.10 → 0.50, new semantics).
+  Measured with `memo eval recall --config L --force --against
+  origin/master`: precision@5 0.550 vs 0.370, noise@5 0.000 unchanged.
+- **The nightly tuner could not fail.** `dream_tune`'s label sets dropped
+  `relevant_terms`, so 34 of the 46 curated prompts could never score as
+  relevant while still counting in the denominator: gate precision was
+  pinned near 0.015 and every candidate auto-applied — which is how
+  `MEMO_RECALL_MIN_SIM=0.8033` reached the live overlay. `_regressed` now
+  also rejects a drop in `recall@k`/`canonical_hit_at_k` (the shipped
+  receipt halved the latter while the gate said "ok"), and
+  `estimate_noise_floor` calibrates on query-side encodings — the
+  distribution the floor is actually compared against.
+- **Data loss on the canonical Markdown.** `update(append=)` overwrote the
+  `.md` with just the appended fragment when the file was unreadable and
+  `fts.body` was NULL (the version snapshot recorded an empty body too, so
+  rollback could not recover it); a metadata-only `update()` re-applied
+  `max_content_chars` to a body it had not been asked to change, truncating
+  notes hand-extended in Obsidian; absorb-on-recurrence committed a merge
+  clipped by its 1024-token budget over a long note, and could fold a
+  `project:B` save into a `project:A` memory. `gc(fix=True)` — run
+  unattended by `sync_pull` — deleted index rows when an unmounted volume
+  or an iCloud-evicted vault merely made existence unverifiable.
+- **Silent partial results.** `reindex()` counted parse/embed failures as
+  benign skips (new `errors` counter, non-zero CLI exit); hybrid search
+  returned BM25-only results without marking `degraded` when the embedder
+  raised; an absorbed save returned no `action`; `list()` filtered forgotten
+  rows after the SQL LIMIT and returned a short page; a failed tantivy write
+  left the on-disk index stale for every later process; the proactive
+  refresh aborted on a duplicate nudge id and kept the previous night's
+  candidates; a rolled-back hard delete re-opened a superseded fact.
+- **MCP surface.** `memo_save` over the response budget returned
+  `response_budget_exceeded` with no id although the record had committed
+  (writes now return a reduced payload keeping `id`/`path`/`action`);
+  `memo_history(limit=-1)` materialized the whole events table (SQLite reads
+  a negative LIMIT as unbounded) — limits are clamped at the tool boundary;
+  the write coordinator masked caller-input errors as storage failures;
+  `memo_delete` skipped its irreversible-delete confirmation whenever the
+  pre-read raised; `memo_event_bus_publish` always reported success and
+  `memo_event_poll` re-delivered every event; the shipped mandate and server
+  instructions named tools absent from the `agent`/`core` profiles.
+- **Ops and runtime.** `watcher.render_plist` interpolated MEMO_* values
+  into launchd XML unescaped (ProgramArguments injection); both plist
+  renderers froze the installing terminal's `MEMO_AGENT_TTY` and copied
+  `MEMO_HTTP_API_TOKEN` into a world-readable file (now filtered, plists
+  written 0600); `MLXChat.chat()` held the machine-wide GPU flock for a
+  whole generation, starving recall (per-token guard now), and
+  `_ensure_model` raced unload/eviction into a KeyError;
+  `memo-nightly.sh` stamped its 20h due-guard before running, so a killed
+  run burned the day (stamp moved to the end, portable mkdir lock, log
+  rotation added, dream moved to 03:30); sidecar sqlite stores bounded
+  their WAL (graph.db-wal had reached 80MB); the two process-local caches
+  are locked; `capture-tick`'s `no_pair` path never advanced the throttle;
+  `MEMO_AUTO_UPDATE_REPO` is restricted to https.
+- **Test isolation.** `MEMO_SAVE_ABSORB` and `MEMO_AUTO_PROJECT_TAG` are
+  hard-pinned process-wide: with absorb on, the suite's stub embedders made
+  every pair a near-duplicate and fired real MLX generations on Apple
+  Silicon — 5 tests failed there while Linux CI stayed green.
+- **Documentation drift**, including a recall-hook wiring pointer that named
+  the wrong file, mixin/type/flag/route counts, `/memo` router subcommands
+  that do not exist, and the Docker tag list.
+
 ## [4.12.2] - 2026-08-17
 
 ### Fixed

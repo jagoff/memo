@@ -185,6 +185,39 @@ def budget_exceeded_payload(tool: str, tokens: int, cap: int, hint: str = "") ->
     }
 
 
+# Identity fields a caller needs to keep working with a record it just wrote.
+_WRITE_IDENTITY_KEYS = (
+    "id",
+    "path",
+    "action",
+    "title",
+    "type",
+    "index_pending",
+    "deleted",
+    "updated",
+)
+
+
+def reduced_write_payload(result: Any, tool: str, tokens: int, cap: int) -> dict[str, Any] | None:
+    """An over-cap MUTATION's result, shrunk to its identity fields.
+
+    A write has already committed by the time the middleware sizes its payload,
+    so substituting `budget_exceeded_payload` reports a failure for a record
+    that is on disk and indexed — `memo_save` of a 25k-char note came back with
+    no `id` at all. Keep the identity, drop the elastic body.
+    Returns None when the result has no recognisable identity to preserve.
+    """
+    structured = getattr(result, "structured_content", None)
+    if not isinstance(structured, dict):
+        structured = result if isinstance(result, dict) else None
+    if not isinstance(structured, dict) or not structured.get("id"):
+        return None
+    payload: dict[str, Any] = {k: structured[k] for k in _WRITE_IDENTITY_KEYS if k in structured}
+    payload["body_omitted"] = True
+    payload["response_budget"] = {"tool": tool, "tokens": tokens, "cap": cap}
+    return payload
+
+
 def result_text(result: Any) -> str:
     """Textual projection of a tool result, for measurement only.
 
@@ -296,6 +329,16 @@ def make_response_budget_middleware() -> Any:
             # the caller actually receives. Whatever apply_ledger staged for
             # `result`'s bodies describes content that never reached them --
             # discard rather than commit.
+            from memo.server_annotations import MUTATING_TOOL_NAMES
+
+            if name in MUTATING_TOOL_NAMES:
+                reduced = reduced_write_payload(result, name, tokens, cap)
+                if reduced is not None:
+                    # The write COMMITTED — the caller must learn the id, not an
+                    # error. The bodies the ledger staged still never reached
+                    # them, so the stage is discarded either way.
+                    discard_ledger_stage(token)
+                    return ToolResult(structured_content=reduced, meta={})
             discard_ledger_stage(token)
             payload = budget_exceeded_payload(name, tokens, cap)
             # meta={} (not is_error=True): every other refusal on this MCP

@@ -192,6 +192,14 @@ class GraphStore:
         # transaction". drop_for_memoria runs on the hot Memory.delete() path.
         with suppress(sqlite3.Error):
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # Long-lived holders (watch daemon, recall daemon, every memo-mcp
+            # session) keep read snapshots open, so a passive checkpoint can
+            # never truncate: graph.db-wal was measured at 80MB against a 127MB
+            # database, replayed by every new connection on first read. The
+            # limit makes sqlite truncate the WAL back down at the next
+            # successful checkpoint.
+            self._conn.execute("PRAGMA journal_size_limit=16777216")
+            self._conn.execute("PRAGMA busy_timeout=10000")
         self._tx_lock = threading.Lock()
         with self._conn:
             # Migrate a pre-rename DB BEFORE the IF NOT EXISTS DDL. Two cases:

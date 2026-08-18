@@ -16,32 +16,43 @@ under test.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 
 class RagContextCache:
+    # Read-only MCP tools run on FastMCP's worker threadpool, so `get`/`put`
+    # are called concurrently on ONE shared instance. Unguarded, the
+    # check-then-evict in `put` raced (`min(...)` over a dict another thread was
+    # popping from → KeyError, reproduced) and `get`'s expiry pop could drop an
+    # entry a peer had just replaced. A plain lock is enough: every critical
+    # section is a couple of dict ops.
     def __init__(self, *, ttl_s: float = 300.0, max_entries: int = 128) -> None:
         self._ttl = float(ttl_s)
         self._max = int(max_entries)
         # key -> (expires_at, corpus_version, value)
         self._store: dict[str, tuple[float, str, Any]] = {}
+        self._lock = threading.Lock()
 
     def get(self, key: str, *, corpus_version: str, now: float) -> Any | None:
-        entry = self._store.get(key)
-        if entry is None:
-            return None
-        expires_at, cached_version, value = entry
-        if now >= expires_at or cached_version != corpus_version:
-            self._store.pop(key, None)
-            return None
-        return value
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            expires_at, cached_version, value = entry
+            if now >= expires_at or cached_version != corpus_version:
+                self._store.pop(key, None)
+                return None
+            return value
 
     def put(self, key: str, value: Any, *, corpus_version: str, now: float) -> None:
-        if key not in self._store and len(self._store) >= self._max:
-            # Evict the entry closest to expiry (oldest write under a fixed TTL).
-            oldest = min(self._store, key=lambda k: self._store[k][0])
-            self._store.pop(oldest, None)
-        self._store[key] = (now + self._ttl, corpus_version, value)
+        with self._lock:
+            if key not in self._store and len(self._store) >= self._max:
+                # Evict the entry closest to expiry (oldest write under a fixed TTL).
+                oldest = min(self._store, key=lambda k: self._store[k][0])
+                self._store.pop(oldest, None)
+            self._store[key] = (now + self._ttl, corpus_version, value)
 
     def clear(self) -> None:
-        self._store.clear()
+        with self._lock:
+            self._store.clear()

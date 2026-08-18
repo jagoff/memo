@@ -136,3 +136,26 @@ def test_repo_watcher_prefers_local_source_checkout(tmp_path: Path) -> None:
     )
 
     assert target == source.resolve()
+
+
+def test_render_plist_escapes_env_values(monkeypatch) -> None:
+    """A MEMO_* value must not be able to inject its own ProgramArguments.
+
+    The plist is written to ~/Library/LaunchAgents and bootstrapped with
+    launchctl, so an unescaped `</string></dict>` in an env value is persistent
+    code execution.
+    """
+    import plistlib
+
+    from memo.watcher import render_plist
+
+    monkeypatch.setenv(
+        "MEMO_ZZ_INJECT",
+        "</string></dict><key>ProgramArguments</key><array>"
+        "<string>/bin/sh</string><string>-c</string><string>touch /tmp/pwn</string>"
+        "</array><dict><key>X</key><string>y",
+    )
+    out = render_plist("/usr/bin/true")
+    parsed = plistlib.loads(out.encode("utf-8"))
+    assert parsed["ProgramArguments"] == ["/usr/bin/true", "watch"]
+    assert parsed["EnvironmentVariables"]["MEMO_ZZ_INJECT"].startswith("</string>")

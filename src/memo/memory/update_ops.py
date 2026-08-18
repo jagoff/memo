@@ -92,6 +92,25 @@ def _resolve_updated_body(
     return content if content is not None else old_body
 
 
+def _cap_updated_body(new_body: str, *, cap: int, body_edit: bool, id_: str) -> str:
+    """Cap the body only when the caller actually edited it.
+
+    A metadata-only update (tags, extra, feedback flags, forget/unforget,
+    absorb's proof bump) must never shrink the canonical `.md`: markdown is the
+    source of truth, `reindex()` folds a hand-edit of any length, and truncating
+    here silently destroyed everything past the cap on the next tag write.
+    """
+    if not body_edit or len(new_body) <= cap:
+        return new_body
+    _log.warning(
+        "update(%s): content truncated from %d to %d chars",
+        id_[:8],
+        len(new_body),
+        cap,
+    )
+    return new_body[:cap]
+
+
 def _normalized_update_extra(
     extra: dict[str, Any] | None,
     existing_extra: dict[str, Any] | None,
@@ -279,14 +298,26 @@ class _UpdateOpsMixin(_MemoryBase):
         new_title = (title.strip() if title else row["title"]) or row["title"]
         new_tags = _normalise_tags(tags) if tags is not None else row["tags"]
         new_extra = extra if extra is not None else dict(row.get("extra") or {})
-        old_body = self._read_body(row["path"])
-        new_body = _resolve_updated_body(
-            old_body,
-            resolved,
-            content=content,
-            replace=replace,
-            append=append,
-        )[: self.cfg.max_content_chars]
+        # `replace=`/`append=` derive the new body FROM the old one, so an
+        # unreadable canonical file must fail loudly instead of silently
+        # collapsing the note to the fragment being appended.
+        old_body = (
+            self._read_body_strict(row["path"])
+            if (replace is not None or append is not None)
+            else self._read_body(row["path"])
+        )
+        new_body = _cap_updated_body(
+            _resolve_updated_body(
+                old_body,
+                resolved,
+                content=content,
+                replace=replace,
+                append=append,
+            ),
+            cap=self.cfg.max_content_chars,
+            body_edit=any(x is not None for x in (content, replace, append)),
+            id_=resolved,
+        )
 
         from memo.flags import flag_bool
         from memo.redact import sanitize_memory_input
@@ -363,15 +394,23 @@ class _UpdateOpsMixin(_MemoryBase):
         now_iso = _now_iso()
 
         # Body resolution: provided > on-disk > empty.
-        old_body = self._read_body(r["path"])
-        new_body = _resolve_updated_body(
-            old_body,
-            id_,
-            content=content,
-            replace=replace,
-            append=append,
+        old_body = (
+            self._read_body_strict(r["path"])
+            if (replace is not None or append is not None)
+            else self._read_body(r["path"])
         )
-        new_body = new_body[: self.cfg.max_content_chars]
+        new_body = _cap_updated_body(
+            _resolve_updated_body(
+                old_body,
+                id_,
+                content=content,
+                replace=replace,
+                append=append,
+            ),
+            cap=self.cfg.max_content_chars,
+            body_edit=any(x is not None for x in (content, replace, append)),
+            id_=id_,
+        )
 
         # Sanitize the COMPLETE prospective record, not just explicitly passed
         # fields. That also scrubs a legacy secret when a metadata-only edit

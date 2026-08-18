@@ -254,6 +254,10 @@ class CoordinationStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), timeout=timeout_s, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # Bound the WAL: long-lived readers (daemons, MCP sessions) pin
+        # snapshots, so a passive checkpoint never truncates on its own
+        # (graph.db-wal was found at 80MB against a 127MB database).
+        self._conn.execute("PRAGMA journal_size_limit=16777216")
         self._conn.execute(f"PRAGMA busy_timeout={int(timeout_s * 1000)}")
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_DDL)

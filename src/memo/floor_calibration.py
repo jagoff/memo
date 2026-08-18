@@ -25,12 +25,26 @@ def _cosine(a: list[float], b: list[float]) -> float:
 def estimate_noise_floor(
     embedder: Any, *, probes: list[str], quantile: float = 0.95, dims: int | None = None
 ) -> float | None:
-    """High-quantile pairwise cosine among unrelated probe embeddings = the null
-    ceiling. Returns None when there are too few probes to form a pair."""
+    """High-quantile similarity between UNRELATED query/document pairs = the
+    null ceiling. Returns None when there are too few probes to form a pair.
+
+    The pairs are asymmetric on purpose — each probe is encoded once as a QUERY
+    (`embed_query`, with the retrieval instruction prefix) and once as a
+    DOCUMENT (`embed`, without it), and only cross pairs `i != j` are scored.
+    That is the geometry the floor is actually compared against in
+    `rank_hits._passes`. Scoring document-document pairs instead put the null
+    ceiling in a different region of the space entirely and proposed 0.8033 on
+    a live corpus whose real query-doc scores sit far lower — a floor that
+    buried most of recall.
+    """
     if len(probes) < 2:
         return None
-    vecs = embedder.embed(list(probes))  # Sequence[str] — never a bare str
-    sims = sorted(_cosine(vecs[i], vecs[j]) for i, j in itertools.combinations(range(len(vecs)), 2))
+    doc_vecs = embedder.embed(list(probes))  # Sequence[str] — never a bare str
+    query_vecs = [embedder.embed_query(p) for p in probes]
+    sims = sorted(
+        _cosine(query_vecs[i], doc_vecs[j])
+        for i, j in itertools.permutations(range(len(probes)), 2)
+    )
     if not sims:
         return None
     idx = min(len(sims) - 1, round(quantile * (len(sims) - 1)))

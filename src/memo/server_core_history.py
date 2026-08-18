@@ -8,6 +8,17 @@ from pydantic import Field
 from memo.memory import AmbiguousIdError, Memory
 from memo.server_annotations import READ_ONLY, annotated_tool
 
+# SQLite treats a NEGATIVE `LIMIT ?` as unbounded, and these values bind
+# straight into the query — one `memo_history(limit=-1)` materialized the whole
+# events table (~15MB, 3.8M tokens) before the response-budget middleware could
+# reject it. Clamp at the tool boundary, like `server_verbatim` does.
+MAX_HISTORY_EVENTS = 500
+MAX_SESSIONS = 200
+
+
+def _clamp(limit: int, cap: int) -> int:
+    return max(1, min(int(limit), cap))
+
 
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **READ_ONLY)
@@ -41,7 +52,8 @@ def register(server: Any, memory: Memory) -> None:
         limit: Annotated[
             int,
             Field(
-                description="Maximum history events to return (no clamp). The newest "
+                description="Maximum history events to return, clamped to "
+                f"1..{MAX_HISTORY_EVENTS}. The newest "
                 "`limit` events are fetched and returned oldest-first; `has_more` is "
                 "true when the record has at least `limit` events."
             ),
@@ -60,6 +72,7 @@ def register(server: Any, memory: Memory) -> None:
             except AmbiguousIdError as exc:
                 return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
         r = memory.get(resolved_id)
+        limit = _clamp(limit, MAX_HISTORY_EVENTS)
         events = memory.history.list_recent(limit=limit, record_id=resolved_id)
         events = list(reversed(events))
         return {
@@ -75,7 +88,10 @@ def register(server: Any, memory: Memory) -> None:
     def memo_history(
         limit: Annotated[
             int,
-            Field(description="Maximum events to return, newest first (no clamp)."),
+            Field(
+                description="Maximum events to return, newest first. "
+                f"Clamped to 1..{MAX_HISTORY_EVENTS}."
+            ),
         ] = 20,
         op: Annotated[
             str | None,
@@ -109,7 +125,9 @@ def register(server: Any, memory: Memory) -> None:
             if resolved is None:
                 return []
             record_id = resolved
-        return memory.history.list_recent(limit=limit, op=op, record_id=record_id)
+        return memory.history.list_recent(
+            limit=_clamp(limit, MAX_HISTORY_EVENTS), op=op, record_id=record_id
+        )
 
     @annotated_tool(server, **READ_ONLY)
     def memo_session_list(
@@ -117,7 +135,7 @@ def register(server: Any, memory: Memory) -> None:
             int,
             Field(
                 description="Maximum sessions to return, sorted by most recently "
-                "updated first (no clamp)."
+                f"updated first. Clamped to 1..{MAX_SESSIONS}."
             ),
         ] = 10,
         project: Annotated[
@@ -137,7 +155,9 @@ def register(server: Any, memory: Memory) -> None:
         """
         from memo.session import list_sessions
 
-        return list_sessions(memory.cfg.state_dir, limit=limit, project=project)
+        return list_sessions(
+            memory.cfg.state_dir, limit=_clamp(limit, MAX_SESSIONS), project=project
+        )
 
     @annotated_tool(server, **READ_ONLY)
     def memo_session_get(

@@ -37,6 +37,10 @@ class ProactiveStore:
         # inside the 5s default, and a future threaded holder can't raise.
         self._conn = sqlite3.connect(str(db_path), timeout=10.0, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # Bound the WAL: long-lived readers (daemons, MCP sessions) pin
+        # snapshots, so a passive checkpoint never truncates on its own
+        # (graph.db-wal was found at 80MB against a 127MB database).
+        self._conn.execute("PRAGMA journal_size_limit=16777216")
         self._conn.execute("PRAGMA busy_timeout=10000")
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_DDL)
@@ -45,7 +49,10 @@ class ProactiveStore:
         with self._conn:
             self._conn.execute("DELETE FROM proactive_candidates")
             self._conn.executemany(
-                "INSERT INTO proactive_candidates VALUES (?,?,?,?,?,?,?,?,?,?)",
+                # OR REPLACE: `id` is a content hash of (kind, subject_id), so a
+                # duplicate in one batch must not abort the refresh — the caller
+                # already dedups, this keeps the write itself total.
+                "INSERT OR REPLACE INTO proactive_candidates VALUES (?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         n.id,

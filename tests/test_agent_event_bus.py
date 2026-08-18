@@ -29,3 +29,31 @@ def test_agent_event_bus_publish_subscribe() -> None:
 
         # Subsequent poll returns 0 new events (cursor offset maintained)
         assert len(bus_b.poll_new_events()) == 0
+
+
+def test_publish_reports_failure_when_the_bus_is_disabled(tmp_path, monkeypatch):
+    """`published: True` must mean the event actually reached the journal."""
+    from memo.agent_event_bus import AgentEventBus
+
+    monkeypatch.setenv("MEMO_EVENT_BUS_ENABLED", "0")
+    bus = AgentEventBus(tmp_path, agent_id="test")
+    bus.publish("sync.completed", {})
+    assert bus.enabled is False
+    assert bus.last_publish_ok is False
+
+    monkeypatch.setenv("MEMO_EVENT_BUS_ENABLED", "1")
+    live = AgentEventBus(tmp_path, agent_id="test")
+    live.publish("sync.completed", {"n": 1})
+    assert live.enabled is True
+    assert live.last_publish_ok is True
+
+
+def test_mcp_event_bus_is_reused_so_poll_stays_idempotent(tmp_cfg):
+    """A fresh bus per call reset the delivered-once cursor."""
+    from memo.mcp_tools import _mcp_event_bus
+
+    class _Mem:
+        cfg = tmp_cfg
+
+    mem = _Mem()
+    assert _mcp_event_bus(mem) is _mcp_event_bus(mem)

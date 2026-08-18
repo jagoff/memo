@@ -62,6 +62,10 @@ class AgentEventBus:
         # Seen event_ids (journal entry ids) so repeated polls are idempotent —
         # the journal is append-only and list_events has no per-consumer cursor.
         self._seen_ids: set[str] = set()
+        # Whether the LAST publish() actually reached the shared journal. The
+        # MCP tool reports this instead of a hard-coded True — a flag-off bus
+        # and a failed journal write both used to be reported as success.
+        self.last_publish_ok = False
 
     def publish(self, event_type: str, data: dict[str, Any] | None = None) -> AgentEvent:
         """Publish a state event locally and to the shared event journal."""
@@ -73,6 +77,7 @@ class AgentEventBus:
             data=data or {},
             timestamp=time.time(),
         )
+        self.last_publish_ok = False
         if not self._enabled:
             return event
 
@@ -100,10 +105,16 @@ class AgentEventBus:
                 state_dir=self.state_dir,
             )
             self._seen_ids.add(eid)
+            self.last_publish_ok = True
         except Exception as exc:
-            _logger.debug("Failed to write agent event to journal: %s", exc)
+            _logger.warning("Failed to write agent event to journal: %s", exc)
 
         return event
+
+    @property
+    def enabled(self) -> bool:
+        """Whether MEMO_EVENT_BUS_ENABLED was on when this bus was built."""
+        return self._enabled
 
     def subscribe(self, callback: Callable[[AgentEvent], None]) -> None:
         """Subscribe to in-process events."""

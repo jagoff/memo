@@ -1614,9 +1614,20 @@ def apply_injection_filters(qualifying: list[Any]) -> list[Any]:
         and len(qualifying) > 1
         and qualifying[0].score is not None
         and qualifying[1].score is not None
-        and (qualifying[0].score - qualifying[1].score) > gap_threshold
     ):
-        return qualifying[:1]
+        top = qualifying[0].score
+        second = qualifying[1].score
+        # RELATIVE gap. `score` is NOT a bounded cosine: search_scoring_ops
+        # stacks multiplicative boosts (curatorial, confidence*roi, recency),
+        # so live scores reach ~6.8 and an ABSOLUTE 0.10 gap fires almost
+        # always — it trimmed a rank-2 hit sitting at 96% of rank-1 exactly
+        # like a true outlier. Comparing the drop as a FRACTION of rank-1 is
+        # invariant to the boost stack. Measured on eval/regression_labels.json
+        # (k=5, live 11k-memory index): the absolute trim fired on 18 of 30
+        # multi-hit prompts and discarded a RELEVANT rank-2 in 15 of them,
+        # costing prec@5 0.225 vs 0.415 with the trim off.
+        if top > 0 and (top - second) / top > gap_threshold:
+            return qualifying[:1]
     return qualifying
 
 
