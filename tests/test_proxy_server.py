@@ -639,6 +639,25 @@ def test_record_tool_usage_extracts_names_from_tool_use_blocks(tmp_path):
     assert isinstance(data["sessions"]["sess-1"]["ts"], float)
 
 
+def test_record_tool_usage_records_non_memo_tool_names_too(tmp_path):
+    """`ToolSchemas` (memo.proxy.transforms.toolschemas) now prunes tools
+    regardless of owner by default (MEMO_PROXY_TOOL_SCHEMAS_SCOPE=all), so
+    its usage-history keep-set needs every tool actually called, not just
+    memo_*'s — `record_tool_usage` was already unfiltered by name on the
+    write side; this pins that down explicitly rather than relying on it
+    being incidentally true."""
+    from memo.proxy.server import record_tool_usage, tool_usage_path
+
+    record_tool_usage(
+        tmp_path, "sess-1", _payload_with_tool_use("Read", "mcp__octocode__localSearchCode")
+    )
+    data = json.loads(tool_usage_path(tmp_path).read_text())
+    assert sorted(data["sessions"]["sess-1"]["tools"]) == [
+        "Read",
+        "mcp__octocode__localSearchCode",
+    ]
+
+
 def test_record_tool_usage_merges_across_calls_in_the_same_session(tmp_path):
     from memo.proxy.server import record_tool_usage, tool_usage_path
 

@@ -61,3 +61,58 @@ async def test_memo_tool_docs_is_itself_registered_and_reachable(docs_server: An
     result = await docs_server.call_tool("memo_tool_docs", {"name": "memo_tool_docs"})
     doc = _payload(result)
     assert doc["found"] is True
+
+
+@pytest.mark.asyncio
+async def test_memo_tool_docs_hydrates_a_non_memo_tool_from_the_proxy_cache(
+    docs_server: Any, tmp_cfg: Config
+) -> None:
+    """`ToolSchemas` (memo.proxy.transforms.toolschemas) now prunes tools it
+    does not own, not just memo_* ones (MEMO_PROXY_TOOL_SCHEMAS_SCOPE=all).
+    `server.get_tool()` can only resolve tools registered on THIS FastMCP
+    server, so for a tool like an octocode MCP tool, `memo_tool_docs` must
+    fall back to the proxy's on-disk schema cache — the same file the proxy
+    (a different process) wrote to when it pruned that tool from the wire.
+    """
+    from memo.proxy.tool_schema_cache import remember
+
+    remember(
+        tmp_cfg.state_dir,
+        [
+            {
+                "name": "mcp__octocode__localSearchCode",
+                "description": "Search code locally in a given path.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                },
+            }
+        ],
+    )
+    result = await docs_server.call_tool(
+        "memo_tool_docs", {"name": "mcp__octocode__localSearchCode"}
+    )
+    doc = _payload(result)
+    assert doc["found"] is True
+    assert doc["name"] == "mcp__octocode__localSearchCode"
+    assert doc["description"] == "Search code locally in a given path."
+    assert doc["parameters"]["properties"]["query"]["type"] == "string"
+
+
+@pytest.mark.asyncio
+async def test_memo_tool_docs_prefers_the_live_server_over_a_stale_cache_entry(
+    docs_server: Any, tmp_cfg: Config
+) -> None:
+    """A memo_* tool is always resolved live via `server.get_tool()` first —
+    that's the authoritative, always-fresh source for memo's own tools — the
+    schema cache is only ever a fallback for tools memo doesn't register."""
+    from memo.proxy.tool_schema_cache import remember
+
+    remember(
+        tmp_cfg.state_dir,
+        [{"name": "memo_search", "description": "stale/wrong", "input_schema": {}}],
+    )
+    result = await docs_server.call_tool("memo_tool_docs", {"name": "memo_search"})
+    doc = _payload(result)
+    assert doc["found"] is True
+    assert doc["description"] != "stale/wrong"

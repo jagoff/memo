@@ -55,6 +55,18 @@ SPECS: tuple[FlagSpec, ...] = (
         min_val=1,
     ),
     _spec(
+        "MEMO_PROXY_TOOL_SCHEMAS_SCOPE",
+        "str",
+        "all",
+        "proxy",
+        "Which tool schemas MEMO_PROXY_TOOL_SCHEMAS is allowed to prune: 'all' "
+        "(every tool on the wire, not just memo's — the aggressive default; "
+        "measured live traffic showed memo_* tools are 0% of a real payload's "
+        "schema cost) or 'memo' (only memo_* tools, the original conservative "
+        "scope, kept as a one-flag-away fallback).",
+        choices=("all", "memo"),
+    ),
+    _spec(
         "MEMO_PROXY_TOOL_RESULTS",
         "bool",
         True,

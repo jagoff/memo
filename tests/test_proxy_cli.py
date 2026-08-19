@@ -1,4 +1,5 @@
 # tests/test_proxy_cli.py
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -100,6 +101,53 @@ def test_off_never_touches_the_real_config_home(tmp_path):
 
     after = _snapshot(real_home)
     assert before == after, "proxy off must never write to the real config home"
+
+
+def _tool(name: str) -> dict:
+    return {
+        "name": name,
+        "description": f"description of {name} " * 10,
+        "input_schema": {"type": "object", "properties": {}},
+    }
+
+
+def _write_payload(path: Path, tool_names: list[str]) -> None:
+    payload = {
+        "model": "claude-x",
+        "tools": [_tool(n) for n in tool_names],
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_tool_savings_reports_how_many_tools_a_payload_would_lose(tmp_path):
+    """The predictive counterpart to `memo tokens` (which reports what a
+    proxy already measured from real traffic): this answers "what would
+    ToolSchemas do to THIS payload" without sending anything anywhere."""
+    payload_path = tmp_path / "payload.json"
+    _write_payload(payload_path, ["Read", "Bash", "memo_search", "mcp__octocode__ghSearchCode"])
+    env = _env(tmp_path)
+    result = CliRunner().invoke(proxy_group, ["tool-savings", str(payload_path)], env=env)
+    assert result.exit_code == 0, result.output
+    assert "4" in result.output  # total tools
+    assert "kept" in result.output.lower()
+    assert "saved" in result.output.lower()
+
+
+def test_tool_savings_never_makes_the_payload_more_expensive(tmp_path):
+    payload_path = tmp_path / "payload.json"
+    _write_payload(payload_path, ["Read", "Bash", "memo_search"])
+    env = _env(tmp_path)
+    result = CliRunner().invoke(proxy_group, ["tool-savings", str(payload_path)], env=env)
+    assert result.exit_code == 0, result.output
+    assert "-" not in result.output.split("saved")[-1].split("\n")[0]
+
+
+def test_tool_savings_on_a_missing_file_is_a_clean_cli_error(tmp_path):
+    env = _env(tmp_path)
+    result = CliRunner().invoke(proxy_group, ["tool-savings", str(tmp_path / "nope.json")], env=env)
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
 
 
 def test_serve_without_the_http_extra_is_a_clean_cli_error(tmp_path, monkeypatch):

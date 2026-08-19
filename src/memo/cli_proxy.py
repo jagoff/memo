@@ -9,6 +9,7 @@ an export reaches background sessions unpredictably.
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 
 import click
 
@@ -53,6 +54,52 @@ def proxy_on() -> None:
 
     set_value("proxy.enabled", "true")
     console.print("proxy.enabled = true")
+
+
+@proxy_group.command("tool-savings")
+@click.argument("payload_path", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--session",
+    default="tool-savings-report",
+    show_default=True,
+    help="Session key to freeze the keep-set under (report-only; no real traffic).",
+)
+def proxy_tool_savings(payload_path: str, session: str) -> None:
+    """Report what ToolSchemas would prune from a captured request body.
+
+    PAYLOAD_PATH is a JSON file shaped like an Anthropic Messages API
+    request (a `tools` array, optionally `system`/`messages`) — e.g. a
+    request captured from real traffic. Runs the real pruning transform
+    against it and prints tools kept/pruned and the schema token cost
+    before/after. Makes no network calls.
+    """
+    import json
+
+    from memo.config import Config
+    from memo.mcp_budget import est_tokens
+    from memo.proxy.plan import Context
+    from memo.proxy.transforms.toolschemas import ToolSchemas
+    from memo.proxy.zones import split
+
+    try:
+        payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise click.ClickException(f"could not read {payload_path} as JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise click.ClickException(f"{payload_path} is not a JSON object")
+
+    zones = split(payload)
+    total = len(zones.tools)
+    before = est_tokens(json.dumps(zones.tools, separators=(",", ":"), ensure_ascii=False))
+
+    cfg = Config.from_env()
+    ctx = Context(state_dir=cfg.state_dir, session_key=session, project=None)
+    ToolSchemas().apply(zones, ctx)
+
+    kept = len(zones.tools)
+    after = est_tokens(json.dumps(zones.tools, separators=(",", ":"), ensure_ascii=False))
+    console.print(f"tools: {total} total, {kept} kept, {total - kept} pruned")
+    console.print(f"schema tokens: {before} before -> {after} after (saved {before - after})")
 
 
 @proxy_group.command("status")

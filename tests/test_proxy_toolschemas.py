@@ -32,17 +32,119 @@ def test_the_docs_tool_is_always_kept(tmp_path, monkeypatch):
     assert DOCS_TOOL_NAME in {t["name"] for t in zones.tools}
 
 
-def test_non_memo_tools_are_never_pruned(tmp_path, monkeypatch):
-    """Pruning another server's schema would break tools memo does not own."""
+def test_scope_memo_never_prunes_tools_memo_does_not_own(tmp_path, monkeypatch):
+    """The original, conservative scope: pruning another server's schema
+    would break tools memo does not own, so with MEMO_PROXY_TOOL_SCHEMAS_SCOPE
+    set to 'memo', anything not named `memo_*` passes through untouched —
+    exactly the pre-widening behavior, kept one flag away."""
+    monkeypatch.setenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", "memo")
     monkeypatch.setattr(
         "memo.proxy.transforms.toolschemas.recent_tool_names",
         lambda state_dir, window: set(),
     )
-    zones = make_zones(["Read", "Bash", "memo_rename"])
+    zones = make_zones(["Read", "Bash", "mcp__octocode__localSearchCode", "memo_rename"])
     ToolSchemas().apply(zones, _ctx(tmp_path))
     names = {t["name"] for t in zones.tools}
-    assert {"Read", "Bash"} <= names
+    assert {"Read", "Bash", "mcp__octocode__localSearchCode"} <= names
     assert "memo_rename" not in names
+
+
+def test_scope_all_prunes_unused_non_memo_tools_too(tmp_path, monkeypatch):
+    """The widened default: measured live traffic showed memo_* tools are 0%
+    of a real payload's schema cost, so the aggressive default scope ('all')
+    must actually touch the tools that make up the other 100% — an unused,
+    non-memo, non-builtin tool is pruned just like an unused memo_* tool
+    always was."""
+    monkeypatch.delenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", raising=False)
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(),
+    )
+    zones = make_zones(["mcp__octocode__localSearchCode", "memo_rename", "DesignSync"])
+    saved = ToolSchemas().apply(zones, _ctx(tmp_path))
+    names = {t["name"] for t in zones.tools}
+    assert "mcp__octocode__localSearchCode" not in names
+    assert "memo_rename" not in names
+    assert "DesignSync" not in names
+    assert saved > 0
+
+
+def test_scope_all_still_keeps_a_non_memo_tool_used_recently(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", raising=False)
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: {"mcp__octocode__localSearchCode"},
+    )
+    zones = make_zones(["mcp__octocode__localSearchCode", "mcp__octocode__ghSearchCode"])
+    ToolSchemas().apply(zones, _ctx(tmp_path))
+    names = {t["name"] for t in zones.tools}
+    assert "mcp__octocode__localSearchCode" in names
+    assert "mcp__octocode__ghSearchCode" not in names
+
+
+def test_builtins_survive_scope_all_even_on_a_cold_start(tmp_path, monkeypatch):
+    """A brand-new session with no usage history at all must not lose the
+    tools the agent cannot function without: the keep-set freeze means a
+    tool dropped on turn 1 stays dropped for the WHOLE session, so a cold
+    start is exactly the case that could otherwise stripped Read/Write/Edit/
+    Bash/Glob/Grep/Task for an entire conversation."""
+    monkeypatch.delenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", raising=False)
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(),
+    )
+    builtins = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Task", "Agent", "ToolSearch"]
+    zones = make_zones([*builtins, "memo_rename", "mcp__octocode__localSearchCode"])
+    ToolSchemas().apply(zones, _ctx(tmp_path))
+    names = {t["name"] for t in zones.tools}
+    assert set(builtins) <= names
+    assert "memo_rename" not in names
+    assert "mcp__octocode__localSearchCode" not in names
+
+
+def test_scope_is_frozen_alongside_the_keep_set_mid_session(tmp_path, monkeypatch):
+    """A mid-session flip of MEMO_PROXY_TOOL_SCHEMAS_SCOPE (an operator
+    editing the env, or `memo config set` on a live proxy process) must not
+    reshuffle an already-frozen session — the cached prefix would otherwise
+    change turn to turn for a reason that has nothing to do with usage
+    history, exactly what the freeze exists to prevent."""
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(),
+    )
+    ctx = _ctx(tmp_path)
+
+    monkeypatch.setenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", "memo")
+    zones1 = make_zones(["Read", "mcp__octocode__localSearchCode", "memo_rename"])
+    ToolSchemas().apply(zones1, ctx)
+    kept_turn1 = {t["name"] for t in zones1.tools}
+    assert "mcp__octocode__localSearchCode" in kept_turn1  # scope=memo passthrough
+
+    monkeypatch.setenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", "all")
+    zones2 = make_zones(["Read", "mcp__octocode__localSearchCode", "memo_rename"])
+    ToolSchemas().apply(zones2, ctx)
+    kept_turn2 = {t["name"] for t in zones2.tools}
+    assert kept_turn2 == kept_turn1
+
+
+def test_pruned_tool_schemas_are_cached_for_hydration(tmp_path, monkeypatch):
+    """`memo_tool_docs` runs in a different process (the MCP server, not the
+    proxy) and can only hydrate a non-memo tool's schema if the proxy wrote
+    it somewhere both processes can read — this is that write happening."""
+    from memo.proxy.tool_schema_cache import lookup
+
+    monkeypatch.delenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", raising=False)
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(),
+    )
+    zones = make_zones(["mcp__octocode__localSearchCode", "memo_search"])
+    ctx = _ctx(tmp_path)
+    ToolSchemas().apply(zones, ctx)
+    entry = lookup(ctx.state_dir, "mcp__octocode__localSearchCode")
+    assert entry is not None
+    assert entry["description"]
+    assert entry["input_schema"]["type"] == "object"
 
 
 def test_pruning_is_stable_across_turns_in_a_session(tmp_path, monkeypatch):
@@ -230,19 +332,33 @@ def test_recent_tool_names_only_considers_the_window_most_recent_sessions(tmp_pa
     assert recent_tool_names(tmp_path, 1) == {"memo_search"}
 
 
-def test_recent_tool_names_ignores_non_memo_names(tmp_path):
+def test_recent_tool_names_returns_every_name_not_just_memos(tmp_path):
+    """Widened scope: `recent_tool_names` is scope-agnostic now — it reports
+    every tool name `record_tool_usage` ever saw called, memo-owned or not.
+    Scoping down to memo_*-only (MEMO_PROXY_TOOL_SCHEMAS_SCOPE=memo) happens
+    one layer up, in ToolSchemas itself, not here — see
+    test_scope_memo_never_prunes_tools_memo_does_not_own."""
     path = tmp_path / "proxy" / "tool_usage.json"
     path.parent.mkdir(parents=True)
     path.write_text(
         json.dumps(
             {
                 "schema": "memo.proxy.tool_usage.v1",
-                "sessions": {"s1": {"tools": ["memo_search", "Read", "Bash"], "ts": 1.0}},
+                "sessions": {
+                    "s1": {
+                        "tools": ["memo_search", "Read", "mcp__octocode__localSearchCode"],
+                        "ts": 1.0,
+                    }
+                },
             }
         ),
         encoding="utf-8",
     )
-    assert recent_tool_names(tmp_path, 20) == {"memo_search"}
+    assert recent_tool_names(tmp_path, 20) == {
+        "memo_search",
+        "Read",
+        "mcp__octocode__localSearchCode",
+    }
 
 
 def test_recent_tool_names_survives_corrupt_json(tmp_path):
