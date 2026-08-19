@@ -60,3 +60,26 @@ def test_checkpoint_skips_small_wals(tmp_path: Path) -> None:
 
 def test_checkpoint_ignores_a_directory_without_databases(tmp_path: Path) -> None:
     assert checkpoint_wal(tmp_path, min_bytes=1)["checkpointed"] == []
+
+
+def test_checkpoint_reports_busy_instead_of_raising(tmp_path: Path) -> None:
+    """A database whose readers never release must be REPORTED, not raised."""
+    db = tmp_path / "corrupt.db"
+    con = _db_with_wal(db, 400)
+    con.close()
+    # A -wal without a usable database: opening or checkpointing it fails, and
+    # the command has to keep going through the rest of the state dir.
+    db.write_bytes(b"not a database at all")
+    wal = db.with_name("corrupt.db-wal")
+    wal.write_bytes(b"x" * 2_000_000)
+
+    result = checkpoint_wal(tmp_path, min_bytes=1_000_000)
+
+    assert [entry["db"] for entry in result["checkpointed"]] == ["corrupt.db"]
+    assert result["checkpointed"][0]["busy"] is True
+
+
+def test_checkpoint_skips_a_wal_it_cannot_stat(tmp_path: Path) -> None:
+    """No -wal at all is not an error — it is the common case."""
+    (tmp_path / "quiet.db").write_bytes(b"")
+    assert checkpoint_wal(tmp_path, min_bytes=1)["checkpointed"] == []

@@ -119,3 +119,64 @@ def test_ops_install_chat_resolves_relative_dist_to_absolute_path(monkeypatch, t
     result = CliRunner().invoke(ops_group, ["install", "chat", "--dist", "dist"])
     assert result.exit_code == 0, result.output
     assert captured["dist"] == str(dist_dir.resolve())
+
+
+def test_ops_checkpoint_wal_reports_what_it_reclaimed(tmp_path, monkeypatch) -> None:
+    """The nightly pass calls this; its output is the only record it ran."""
+    import json as _json
+    import sqlite3
+
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    state = tmp_path / "state"
+    state.mkdir()
+    db = state / "big.db"
+    con = sqlite3.connect(str(db))
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, blob TEXT)")
+    con.executemany("INSERT INTO t (blob) VALUES (?)", [("x" * 4096,) for _ in range(800)])
+    con.commit()
+    try:
+        env = {
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_STATE_DIR": str(state),
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+        }
+        result = CliRunner().invoke(
+            cli, ["ops", "checkpoint-wal", "--min-mb", "1", "--json"], env=env
+        )
+        assert result.exit_code == 0, result.output
+        payload = _json.loads(result.stdout)
+        assert [entry["db"] for entry in payload["checkpointed"]] == ["big.db"]
+        assert payload["freed_mb"] > 0
+
+        # Second run: nothing above the threshold any more.
+        again = CliRunner().invoke(
+            cli, ["ops", "checkpoint-wal", "--min-mb", "1", "--json"], env=env
+        )
+        assert again.exit_code == 0, again.output
+        assert _json.loads(again.stdout)["checkpointed"] == []
+    finally:
+        con.close()
+
+
+def test_ops_checkpoint_wal_says_so_when_there_is_nothing_to_do(tmp_path) -> None:
+    from click.testing import CliRunner
+
+    from memo.cli import cli
+
+    state = tmp_path / "state"
+    state.mkdir()
+    result = CliRunner().invoke(
+        cli,
+        ["ops", "checkpoint-wal"],
+        env={
+            "MEMO_NONINTERACTIVE": "1",
+            "MEMO_STATE_DIR": str(state),
+            "MEMO_DATA_DIR": str(tmp_path / "data"),
+        },
+    )
+    assert result.exit_code == 0, result.output
+    assert "no WAL above" in result.output
