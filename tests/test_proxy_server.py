@@ -281,33 +281,45 @@ def test_build_registry_includes_toolschemas():
     the third; the registry is no longer empty (see the superseded test this
     replaced, `..._returns_an_empty_list_today`). Task 12 adds StructMap and
     Delta, positioned BEFORE JsonCrush/ToolResults -- see the ordering
-    rationale in `registry.build_registry`'s docstring."""
+    rationale in `registry.build_registry`'s docstring. Task 13 adds Pixel
+    LAST of all -- it is the most generic, least-proven transform in the
+    plan and must only ever see what nothing text-based upstream could
+    shrink further (same docstring)."""
     from memo.proxy.registry import build_registry
     from memo.proxy.transforms.delta import Delta
     from memo.proxy.transforms.jsoncrush import JsonCrush
+    from memo.proxy.transforms.pixel import Pixel
     from memo.proxy.transforms.structmap import StructMap
     from memo.proxy.transforms.toolresults import ToolResults
     from memo.proxy.transforms.toolschemas import ToolSchemas
 
     registry = build_registry()
-    assert len(registry) == 5
+    assert len(registry) == 6
     assert isinstance(registry[0], ToolSchemas)
     assert isinstance(registry[1], StructMap)
     assert isinstance(registry[2], Delta)
     assert isinstance(registry[3], JsonCrush)
     assert isinstance(registry[4], ToolResults)
+    assert isinstance(registry[5], Pixel)
 
 
 def test_rewrite_body_with_no_explicit_transforms_runs_the_real_registry(tmp_path):
     """No `tools` key and no tool_result blocks on this payload means none of
-    the five registered transforms has anything to rewrite, so the body is
+    the six registered transforms has anything to rewrite, so the body is
     unchanged — but the default path (transforms=None) now runs the real
-    registry's transforms, not an empty one, so all five still report
+    registry's transforms, not an empty one, so all six still report
     applied."""
     raw = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
     out, plan = rewrite_body(raw, _ctx(tmp_path))
     assert out == raw
-    assert plan.applied == ["toolschemas", "structmap", "delta", "jsoncrush", "toolresults"]
+    assert plan.applied == [
+        "toolschemas",
+        "structmap",
+        "delta",
+        "jsoncrush",
+        "toolresults",
+        "pixel",
+    ]
 
 
 def test_rewrite_body_default_transforms_come_from_build_registry(tmp_path, monkeypatch):
