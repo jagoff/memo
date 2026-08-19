@@ -117,6 +117,35 @@ def test_summarize_reports_no_data_rather_than_a_zero(tmp_path):
     assert summarize(tmp_path)["measured_saving_frac"] is None
 
 
+def test_a_passthrough_row_counts_toward_neither_arm(tmp_path):
+    """Defect 3: `MEMO_PROXY_ENABLED=0` (what `memo proxy off` sets) makes
+    every non-holdout request byte-identical to a control request -- it must
+    not silently inflate `n_treated`, or the measured saving drifts toward
+    zero for a reason that has nothing to do with the transforms. A Record
+    that was never actually rewritten (`rewritten=False`) is neither treated
+    nor holdout."""
+    append(
+        tmp_path,
+        Record(request_key="p0", holdout=False, rewritten=False, input_tokens=500),
+    )
+    s = summarize(tmp_path)
+    assert s["n_treated"] == 0
+    assert s["n_holdout"] == 0
+    assert s["mean_input_treated"] is None
+    assert s["n_passthrough"] == 1
+
+
+def test_rewritten_defaults_to_true_so_existing_treated_rows_still_count(tmp_path):
+    """Every caller that constructs a Record for a genuinely-treated request
+    (the overwhelming majority, including every other test in this file)
+    never has to say `rewritten=True` explicitly -- only the one production
+    call site that can produce a passthrough row needs to say `False`."""
+    append(tmp_path, Record(request_key="t0", holdout=False, input_tokens=500))
+    s = summarize(tmp_path)
+    assert s["n_treated"] == 1
+    assert s["n_passthrough"] == 0
+
+
 def test_summarize_survives_a_corrupt_line(tmp_path):
     (tmp_path / "proxy").mkdir()
     (tmp_path / "proxy" / "requests.jsonl").write_text("{not json\n")

@@ -157,6 +157,11 @@ def _proxy_panel(proxy: dict) -> Panel:
         )
     if proxy.get("retrieved"):
         body += f"\n[dim]{proxy['retrieved']} recovered originals (cost their tokens twice)[/dim]"
+    if proxy.get("n_passthrough"):
+        body += (
+            f"\n[dim]{proxy['n_passthrough']} passthrough request(s) excluded from both arms "
+            "(proxy was disabled for them, so nothing was rewritten)[/dim]"
+        )
     return Panel(
         Text.from_markup(body),
         title="[bold]memo · proxy (real holdout A/B)[/bold]",

@@ -341,7 +341,7 @@ def test_marker_never_claims_full_original_when_a_crush_reference_is_nested(tmp_
     this whole task exists for -- ToolResults' own recovery marker wraps
     text JsonCrush ALREADY crushed. `ccr.stash` in that path stores the
     crushed intermediate, not the true original, so a marker literally
-    saying "Full original: memo_retrieve(key=...)" is false: the key
+    saying "Full original: memo_crush_retrieve(hash_marker=...)" is false: the key
     recovers text that itself still carries JsonCrush's own
     `<<memo-crush:HASH>>` reference one hop further out.
 
@@ -379,7 +379,7 @@ def test_marker_never_claims_full_original_when_a_crush_reference_is_nested(tmp_
 
     final_text = json.loads(out)["messages"][0]["content"][0]["content"]
 
-    match = re.search(r'memo_retrieve\(key="([0-9a-f]+)"\)', final_text)
+    match = re.search(r'memo_crush_retrieve\(hash_marker="([0-9a-f]+)"\)', final_text)
     assert match, f"expected a ToolResults recovery marker in: {final_text!r}"
 
     from memo.proxy import ccr
@@ -471,10 +471,10 @@ def test_marker_never_claims_full_original_when_a_structmap_reference_is_nested(
     # and ToolResults' own (outer, appended last -- the one that describes
     # what is DIRECTLY retrievable from the text as it stands right now).
     # `re.search`/`.finditer()`'s first match would grab the INNER marker by
-    # accident (both share the same `memo_retrieve(key="...")` shape) and
-    # silently validate the wrong one -- the outer marker is always the LAST
-    # one appended, so anchor on that specifically.
-    matches = list(re.finditer(r'memo_retrieve\(key="([0-9a-f]+)"\)', final_text))
+    # accident (both share the same `memo_crush_retrieve(hash_marker="...")`
+    # shape) and silently validate the wrong one -- the outer marker is
+    # always the LAST one appended, so anchor on that specifically.
+    matches = list(re.finditer(r'memo_crush_retrieve\(hash_marker="([0-9a-f]+)"\)', final_text))
     assert matches, f"expected at least one recovery marker in: {final_text!r}"
     outer_key = matches[-1].group(1)
 
@@ -661,6 +661,24 @@ def _make_upstream_app(captured: dict):
     return Starlette(routes=[Route("/v1/messages", upstream_endpoint, methods=["POST"])])
 
 
+def _make_non_sse_upstream_app(captured: dict):
+    """A 400 with a plain JSON error body -- no `data: ` lines at all, so
+    `sniff_usage` finds nothing. Exactly the shape a transform corrupting a
+    payload into a bad request produces (also stands in for a non-streaming
+    200, which `sniff_usage` equally can't parse)."""
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def upstream_endpoint(request):
+        captured["body"] = await request.body()
+        return JSONResponse(
+            {"error": {"type": "invalid_request_error", "message": "bad"}}, status_code=400
+        )
+
+    return Starlette(routes=[Route("/v1/messages", upstream_endpoint, methods=["POST"])])
+
+
 @pytest.fixture
 def proxy_env(tmp_path, monkeypatch):
     """Isolated Config.from_env() resolution for the request handler, which
@@ -671,7 +689,14 @@ def proxy_env(tmp_path, monkeypatch):
     return tmp_path / "state"
 
 
-async def _round_trip(monkeypatch, *, path_and_query: str, body: bytes, headers: dict):
+async def _round_trip(
+    monkeypatch,
+    *,
+    path_and_query: str,
+    body: bytes,
+    headers: dict,
+    make_upstream_app=_make_upstream_app,
+):
     """POST `body` through a real build_app() instance to a fake upstream ASGI
     app, both wired via httpx.ASGITransport — no real network call anywhere.
     Returns (response, captured-by-upstream dict)."""
@@ -680,7 +705,7 @@ async def _round_trip(monkeypatch, *, path_and_query: str, body: bytes, headers:
     from memo.proxy import server
 
     captured: dict = {}
-    upstream_app = _make_upstream_app(captured)
+    upstream_app = make_upstream_app(captured)
     real_async_client = httpx.AsyncClient
 
     class _PatchedAsyncClient(real_async_client):  # type: ignore[misc]
@@ -760,6 +785,64 @@ async def test_usage_counters_are_recorded_after_a_streamed_response(proxy_env, 
     await resp.aread()
     summary = meter.summarize(proxy_env)
     assert summary["n_treated"] + summary["n_holdout"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_non_sse_error_response_leaves_no_measurement_row(proxy_env, monkeypatch):
+    """Defect 2: a 4xx (or any non-SSE body) has no `data: ` lines for
+    `sniff_usage` to find, so `captured` stays empty. Appending a row anyway
+    would fabricate an all-zero-usage measurement on the very ledger the
+    savings ratio is computed from -- and this is exactly the failure mode
+    (a transform corrupting a payload into a bad request) that would make
+    the proxy look artificially BEST if it were counted."""
+    from memo.proxy import meter
+
+    body = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
+    resp, _ = await _round_trip(
+        monkeypatch,
+        path_and_query="/v1/messages",
+        body=body,
+        headers={"x-api-key": "k"},
+        make_upstream_app=_make_non_sse_upstream_app,
+    )
+    assert resp.status_code == 400
+    await resp.aread()
+
+    assert not meter.ledger_path(proxy_env).exists()
+    summary = meter.summarize(proxy_env)
+    assert summary["n_treated"] == 0
+    assert summary["n_holdout"] == 0
+    assert summary["n_passthrough"] == 0
+
+
+@pytest.mark.asyncio
+async def test_disabled_proxy_records_a_passthrough_row_not_a_treated_one(proxy_env, monkeypatch):
+    """Defect 3: `MEMO_PROXY_ENABLED=0` (what `memo proxy off` sets) makes
+    `rewrite_body` never run, so the forwarded body is byte-identical to a
+    control request. The persisted row must say so (`rewritten: false`) so
+    `meter.summarize` doesn't fold it into the treated arm -- the measured
+    saving must not drift toward zero for a reason that has nothing to do
+    with the transforms."""
+    from memo.proxy import meter
+
+    monkeypatch.setenv("MEMO_PROXY_ENABLED", "0")
+    body = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
+    resp, _ = await _round_trip(
+        monkeypatch,
+        path_and_query="/v1/messages",
+        body=body,
+        headers={"x-api-key": "k"},
+    )
+    assert resp.status_code == 200
+    await resp.aread()
+
+    line = meter.ledger_path(proxy_env).read_text(encoding="utf-8").strip().splitlines()[-1]
+    row = json.loads(line)
+    assert row["rewritten"] is False
+
+    summary = meter.summarize(proxy_env)
+    assert summary["n_treated"] == 0
+    assert summary["n_passthrough"] == 1
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,14 @@ class Record:
     # `transforms` alone cannot support an honest split: it lists every
     # ENABLED transform that ran, whether or not it saved anything.
     saved_by: dict[str, int] = field(default_factory=dict)
+    # False marks a request that reached the measurement path without its
+    # body actually being rewritten -- e.g. a passthrough recorded while
+    # MEMO_PROXY_ENABLED=0 (what `memo proxy off` sets). Such a request is
+    # byte-identical to a control request but is NOT part of the holdout
+    # sampling scheme either, so it must count toward neither arm (see
+    # `summarize`). Defaults to True so the overwhelming majority of
+    # callers -- every genuinely-treated request -- never need to say so.
+    rewritten: bool = True
 
 
 def is_holdout(request_key: str, frac: float) -> bool:
@@ -88,6 +96,7 @@ def summarize(state_dir: Path) -> dict:
     """Treated vs holdout on real provider counters. None means 'no data yet'."""
     treated: list[dict] = []
     holdout: list[dict] = []
+    passthrough = 0
     skipped = 0
     path = ledger_path(state_dir)
     if path.is_file():
@@ -103,7 +112,15 @@ def summarize(state_dir: Path) -> dict:
                 if not isinstance(row, dict):
                     skipped += 1
                     continue
-                (holdout if row.get("holdout") else treated).append(row)
+                if row.get("holdout"):
+                    holdout.append(row)
+                elif row.get("rewritten", True):
+                    treated.append(row)
+                else:
+                    # Recorded but never actually rewritten (proxy disabled)
+                    # -- byte-identical to a control request yet not part of
+                    # the holdout sample either; belongs to neither arm.
+                    passthrough += 1
             except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
                 skipped += 1
                 continue
@@ -156,6 +173,7 @@ def summarize(state_dir: Path) -> dict:
     return {
         "n_treated": len(treated),
         "n_holdout": len(holdout),
+        "n_passthrough": passthrough,
         "mean_input_treated": mean_t,
         "mean_input_holdout": mean_h,
         "measured_saving_frac": saving,

@@ -330,7 +330,13 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
 
         plan = TransformPlan()
         body = raw
-        if not holdout and flag_bool("MEMO_PROXY_ENABLED"):
+        # Recorded on the ledger row below so `summarize` can tell a genuinely
+        # treated request apart from a passthrough one: with
+        # MEMO_PROXY_ENABLED=0 (what `memo proxy off` sets) this is False and
+        # `body` never diverges from `raw` — byte-identical to a control
+        # request, so it must not be counted as treated either.
+        rewrite_ran = not holdout and flag_bool("MEMO_PROXY_ENABLED")
+        if rewrite_ran:
             # session_key (the real Claude Code session id, or the stable
             # per-process fallback above) — NOT request_key, which hashes the
             # raw body and is different on every single turn. A per-turn
@@ -362,19 +368,31 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
                     await response.aclose()
                 except Exception:
                     _log.warning("proxy: error closing upstream response")
-                usage = meter.usage_from_response({})
-                usage.update(captured)
-                meter.append(
-                    state_dir,
-                    meter.Record(
-                        request_key=request_key,
-                        holdout=holdout,
-                        transforms=plan.applied,
-                        est_saved_tokens=plan.est_saved_tokens,
-                        saved_by=plan.saved_by,
-                        **usage,
-                    ),
-                )
+                # Only record a row when a real measurement was actually
+                # observed: a successful response (2xx) that `sniff_usage`
+                # actually found at least one usage counter in. Anything
+                # else -- a 4xx from a payload a transform corrupted, a 5xx
+                # overload, a non-streaming body `sniff_usage` can't parse --
+                # has no honest usage numbers, and appending an all-zero row
+                # would corrupt the very ledger the savings ratio is computed
+                # from (worst case: it makes the failure mode that produced
+                # it look like the BEST result). `captured` already carries
+                # all four counters once any chunk was sniffed successfully
+                # (`sniff_usage` always merges the full four-key dict), so
+                # it doubles as both the presence check and the payload.
+                if captured and 200 <= response.status_code < 300:
+                    meter.append(
+                        state_dir,
+                        meter.Record(
+                            request_key=request_key,
+                            holdout=holdout,
+                            rewritten=rewrite_ran,
+                            transforms=plan.applied,
+                            est_saved_tokens=plan.est_saved_tokens,
+                            saved_by=plan.saved_by,
+                            **captured,
+                        ),
+                    )
 
         return StreamingResponse(
             _body(),

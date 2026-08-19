@@ -93,6 +93,25 @@ def test_measured_panel_reports_treated_vs_holdout_when_data_exists(tmp_path):
     assert "cost" not in result.output.lower()
 
 
+def test_passthrough_rows_are_reported_but_excluded_from_the_treated_count(tmp_path):
+    """Defect 3 fix, surfaced: a row recorded while the proxy was disabled
+    (`rewritten=False`) must not inflate n=treated, but it also must not
+    just silently vanish — the panel says how many were excluded and why."""
+    state_dir = tmp_path / "state"
+    for i in range(10):
+        _seed(state_dir, [_record(f"t{i}", holdout=False, input_tokens=500)])
+    for i in range(10):
+        _seed(state_dir, [_record(f"h{i}", holdout=True, input_tokens=1000)])
+    _seed(
+        state_dir,
+        [_record("p0", holdout=False, input_tokens=999, rewritten=False)],
+    )
+    result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert "n=10 treated / 10 holdout" in result.output
+    assert "1 passthrough request" in result.output
+
+
 def test_equal_arms_reads_as_saved_not_cost(tmp_path):
     """Sibling to the above (item 7): a real 0% delta is a neutral result,
     not a loss — today's `verb = "saved" if frac > 0 else "cost"` renders an
