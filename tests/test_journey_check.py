@@ -299,6 +299,18 @@ def test_check_token_savings_runs_body(seeded_ctx):
     assert res.evidence["delta"] > 0
 
 
+def test_check_token_savings_detail_does_not_call_recalls_grounded(seeded_ctx):
+    """Defect 4: this check's own docstring says its recalls land in
+    `recall.log` as consults, never `grounding.log`, and so "can never be
+    'grounded'" — but the human-readable `detail` string called them
+    "grounded recalls" anyway. `grounded` is a load-bearing, distinctly
+    defined term elsewhere in the ledger; this check must not use it for
+    something that structurally cannot be grounded."""
+    res = jc.check_token_savings(seeded_ctx)
+    assert "grounded" not in res.detail.lower()
+    assert "recalls logged" in res.detail.lower()
+
+
 def test_check_ux_messages_warn_when_all_channels_deliver(seeded_ctx, monkeypatch):
     parsed = {
         "hookSpecificOutput": {"additionalContext": "<memo-recall>seeded ctx</memo-recall>"},

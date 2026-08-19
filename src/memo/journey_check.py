@@ -436,7 +436,7 @@ def check_token_savings(ctx: JourneyContext) -> CheckResult:
 
     ok = delta > 0
     status = PASS if ok else FAIL
-    detail = f"Δ +{delta:,} consults / {logged} grounded recalls"
+    detail = f"Δ +{delta:,} consults / {logged} recalls logged"
     return CheckResult(
         "token-savings",
         status,
