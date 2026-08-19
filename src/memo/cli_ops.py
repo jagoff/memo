@@ -175,6 +175,49 @@ def gc_emitted_ledgers_cmd(max_age_hours: int, dry_run: bool, as_json: bool) -> 
     )
 
 
+@ops_group.command(name="checkpoint-wal")
+@click.option(
+    "--min-mb",
+    default=8,
+    show_default=True,
+    type=int,
+    help="Only checkpoint databases whose -wal exceeds this size.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def checkpoint_wal_cmd(min_mb: int, as_json: bool) -> None:
+    """Truncate the write-ahead logs of memo's sqlite stores.
+
+    WAL only shrinks at a checkpoint, and a checkpoint can only advance past
+    the oldest reader — memo keeps several long-lived ones (the recall daemon,
+    the watcher, every memo-mcp session), so a passive checkpoint never
+    truncates and the file grows without bound. Measured on this machine:
+    graph.db-wal at 74MB against a 127MB database, and back to 68MB a few hours
+    after a manual truncate. `PRAGMA journal_size_limit` (set on every store)
+    caps the file only AFTER a successful checkpoint, so something has to run
+    one: that is this command, called from the nightly pass.
+
+    Safe by construction: a checkpoint moves committed pages into the database
+    and rewrites nothing. `TRUNCATE` blocks until readers release, and reports
+    `busy` rather than waiting forever.
+    """
+    from memo.store.wal import checkpoint_wal
+
+    cfg = Config.from_env()
+    result = checkpoint_wal(cfg.state_dir, min_bytes=min_mb * 1024 * 1024)
+    if as_json:
+        click.echo(json.dumps(result))
+        return
+    if not result["checkpointed"]:
+        console.print(f"[dim]no WAL above {min_mb}MB[/dim]")
+        return
+    for entry in result["checkpointed"]:
+        console.print(
+            f"[cyan]{entry['db']}[/cyan]: {entry['before_mb']:.1f}MB → "
+            f"{entry['after_mb']:.1f}MB{'  [yellow](busy)[/yellow]' if entry['busy'] else ''}"
+        )
+    console.print(f"freed: [green]{result['freed_mb']:.1f}MB[/green]")
+
+
 @ops_group.command(name="vault-ingest")
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
 def vault_ingest_cmd(as_json: bool) -> None:

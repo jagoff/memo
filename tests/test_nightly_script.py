@@ -49,3 +49,10 @@ def test_uses_a_portable_lock_not_flock() -> None:
 def test_rotates_its_own_logs() -> None:
     body = SCRIPT.read_text(encoding="utf-8")
     assert "log-rotate" in body
+
+
+def test_checkpoints_the_wal() -> None:
+    """A WAL only shrinks at a checkpoint, and memo's long-lived readers keep
+    the passive ones from ever advancing."""
+    body = SCRIPT.read_text(encoding="utf-8")
+    assert "ops checkpoint-wal" in body

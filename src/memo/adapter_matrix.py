@@ -9,9 +9,12 @@ here would only add a weaker second opinion that can disagree with the real one.
 What it covers is the drift `release check` does not see, and that fails
 *silently* when it happens:
 
-- **hook-commands-resolve** — `hooks/hooks.json` firing a `memo` subcommand the
-  CLI no longer registers. Every hook is soft-fail by design, so a rename stops
-  recall, capture or sync with no error anywhere.
+- **hook-commands-resolve** — `hooks/hooks.json` OR the nightly LaunchAgent
+  script firing a `memo` subcommand the CLI does not register. Every hook is
+  soft-fail by design, so a rename stops recall, capture or sync with no error
+  anywhere; the nightly script logs `Error: No such command` into a file nobody
+  reads and skips that pass (observed for four consecutive nights when
+  `ops gc-emitted-ledgers` shipped in the template before the binary).
 - **embedder-dims-parity** — an `.mcp.json` pinning `MEMO_EMBEDDER_MODEL` whose
   `MEMO_EMBEDDER_DIMS` does not match the model size. That is MLX invariant 3:
   a mismatch corrupts the vec0 table on first write.
@@ -82,6 +85,22 @@ def _hook_commands(data: Any) -> list[str]:
     return found
 
 
+def _script_memo_commands(script: str) -> list[str]:
+    """Every `memo <subcommand>` invocation in a shell script.
+
+    The nightly template calls the binary through a `__MEMO_BIN__` placeholder
+    (rendered at install time), so match that form as well as a literal `memo`.
+    """
+    found: list[str] = []
+    for raw in script.splitlines():
+        line = raw.strip()
+        if line.startswith("#"):
+            continue
+        for match in re.finditer(r'"?(?:__MEMO_BIN__|\bmemo)"?\s+([a-z][\w -]*)', line):
+            found.append(f"memo {match.group(1).strip()}")
+    return found
+
+
 def _invoked_path(command: str) -> list[str]:
     """The `memo` subcommand path in a hook command, minus env prefix and flags."""
     # Last match: env assignments are uppercase, so a lowercase `memo` is the
@@ -104,11 +123,20 @@ def check_hook_commands(root: Path) -> Check:
         description="every memo subcommand a hook fires is registered in the CLI",
     )
     hooks_path = root / "hooks" / "hooks.json"
-    if not hooks_path.is_file():
-        # No hook graph means no commands to resolve — vacuously clean, the same
-        # way the other checks no-op on an absent surface. Whether the repo
-        # *should* ship a hook graph is not this check's question, and treating
-        # absence as drift makes the gate fire on every partial tree.
+    nightly_path = root / "launchd" / "memo-nightly.sh"
+    invoked: list[tuple[str, str]] = []
+    if hooks_path.is_file():
+        invoked += [("hooks/hooks.json", c) for c in _hook_commands(_read_json(hooks_path))]
+    if nightly_path.is_file():
+        invoked += [
+            ("launchd/memo-nightly.sh", c)
+            for c in _script_memo_commands(nightly_path.read_text(encoding="utf-8"))
+        ]
+    if not invoked:
+        # Nothing to resolve — vacuously clean, the same way the other checks
+        # no-op on an absent surface. Whether the repo *should* ship these files
+        # is not this check's question, and treating absence as drift makes the
+        # gate fire on every partial tree.
         return check
 
     try:
@@ -119,7 +147,7 @@ def check_hook_commands(root: Path) -> Check:
         check.findings.append(f"memo package not importable, CLI not verified: {exc}")
         return check
 
-    for command in sorted(set(_hook_commands(_read_json(hooks_path)))):
+    for surface, command in sorted(set(invoked)):
         path = _invoked_path(command)
         if not path:
             continue
@@ -131,7 +159,10 @@ def check_hook_commands(root: Path) -> Check:
             child = get_command(None, token)
             if child is None:
                 resolved = " ".join(path[:depth]) or "memo"
-                check.fail(f"`memo {' '.join(path)}` — {token!r} is not a command of `{resolved}`")
+                check.fail(
+                    f"{surface}: `memo {' '.join(path)}` — "
+                    f"{token!r} is not a command of `{resolved}`"
+                )
                 break
             node = child
     return check
