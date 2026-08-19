@@ -1309,22 +1309,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "tune --rollback`. Default off.",
     ),
     _spec(
-        "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
-        "bool",
-        False,
-        "misc",
-        "Deprecated inert compatibility switch. The graph-injection/expansion tuner was "
-        "removed; MEMO_DREAM_TUNE_ENABLED now evaluates only the curated graph signal.",
-    ),
-    _spec(
-        "MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS",
-        "float",
-        2500.0,
-        "misc",
-        "Deprecated inert compatibility value retained for old configuration files.",
-        min_val=0.0,
-    ),
-    _spec(
         "MEMO_DREAM_FLAG_GRADUATION_ENABLED",
         "bool",
         True,

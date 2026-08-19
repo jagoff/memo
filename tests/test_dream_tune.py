@@ -128,8 +128,9 @@ def test_graph_signal_candidates_only_use_curated_signal_flags():
         {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.15},
         {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.25},
     ]
-    assert all("MEMO_GRAPH_RETRIEVAL_ENABLED" not in item for item in candidates)
-    assert all("MEMO_GRAPH_EXPANSION_ENABLED" not in item for item in candidates)
+    # The graph-only retrieval/expansion switches were retired in 4.13.3 — the
+    # tuner must still never propose a key outside the curated signal pair.
+    assert all(set(item) <= set(dt._MANAGED_GRAPH_SIGNAL_KEYS) for item in candidates)
 
 
 def test_search_graph_signal_selects_max(monkeypatch):

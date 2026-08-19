@@ -746,7 +746,6 @@ ledger health.
 | `graph.dream_bridges_enabled` (`MEMO_DREAM_BRIDGES_ENABLED`) | `0` | Save evidence-bearing articulation-bridge syntheses during dream. |
 | `graph.hub_max_doc_freq_ratio` (`MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO`) | `0.25` | Treat entities above this corpus document-frequency ratio as hubs. |
 | `graph.min_entity_idf` (`MEMO_GRAPH_MIN_ENTITY_IDF`) | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
-| `graph.outcome_signal_enabled` (`MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`) | `0` | Modulate graph-touched boosts by outcome `roi_score`. |
 | `graph.outcome_weight` (`MEMO_GRAPH_OUTCOME_WEIGHT`) | `0.05` | Strength of optional outcome modulation on graph boosts. |
 | `MEMO_REPO_SIGNAL_MAX_COMMITS` | `300` | Bound Git-history co-change/cross-service signal collection. |
 | `MEMO_INGEST_VIA_DAEMON` | `0` | Route repo index jobs through the serialized ingest worker. |
@@ -801,9 +800,13 @@ bridges, and returns the exact projected edges and memory IDs behind each
 candidate. The dream community/bridge passes consume this packet and store its
 projection version and edge evidence with every synthesis.
 
-`MEMO_GRAPH_RETRIEVAL_ENABLED`, `MEMO_GRAPH_EXPANSION_ENABLED`, and the old
-recall graph-proximity weight remain accepted only for configuration
-compatibility. They no longer change serving or nightly tuning behavior.
+`MEMO_GRAPH_RETRIEVAL_ENABLED`, `MEMO_GRAPH_EXPANSION_ENABLED`, the graph
+outcome-signal switch and weight, the graph fallback/density values and the
+retrieval-tune switch were RETIRED in 4.13.3. They had been accepted for
+configuration compatibility long after the serving paths that read them were
+removed, so every one of them was an inert knob a reader could reasonably
+believe did something. An old value left in a Markdown config or tuned overlay
+is ignored and cleaned up, not an error.
 
 The MCP `memo_graph` tool exposes the same explanation with
 `verb="why", a="mlx", b="daemon"`. It returns the weighted path, per-hop edge
