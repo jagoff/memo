@@ -74,6 +74,17 @@ def test_append_writes_one_json_line_per_record(tmp_path):
 
 
 def test_summarize_compares_treated_against_holdout(tmp_path):
+    """Defect 1: real Claude Code traffic bills almost the entire prompt
+    through the two cache counters (`input_tokens` is 1-2 tokens/request on
+    this machine's live traffic, per the design doc's measurement), so this
+    fixture carries realistic non-zero `cache_creation_tokens` /
+    `cache_read_tokens` on BOTH arms -- not the old all-zero fixture, which
+    made the metric pass by construction in a no-caching world that never
+    occurs behind `ANTHROPIC_BASE_URL`. `measured_saving_frac` is a weighted
+    prompt-cost ratio (`CACHE_CREATION_WEIGHT` / `CACHE_READ_WEIGHT`), not
+    the bare `input_tokens` ratio the old test asserted."""
+    from memo.proxy.meter import CACHE_CREATION_WEIGHT, CACHE_READ_WEIGHT
+
     for i in range(10):
         append(
             tmp_path,
@@ -82,10 +93,10 @@ def test_summarize_compares_treated_against_holdout(tmp_path):
                 holdout=False,
                 transforms=["x"],
                 est_saved_tokens=50,
-                input_tokens=500,
+                input_tokens=2,
                 output_tokens=10,
-                cache_creation_tokens=0,
-                cache_read_tokens=0,
+                cache_creation_tokens=1000,
+                cache_read_tokens=50_000,
                 retrieved=0,
             ),
         )
@@ -97,19 +108,115 @@ def test_summarize_compares_treated_against_holdout(tmp_path):
                 holdout=True,
                 transforms=[],
                 est_saved_tokens=0,
-                input_tokens=1000,
+                input_tokens=2,
                 output_tokens=10,
-                cache_creation_tokens=0,
-                cache_read_tokens=0,
+                cache_creation_tokens=2000,
+                cache_read_tokens=50_000,
                 retrieved=0,
             ),
         )
     s = summarize(tmp_path)
     assert s["n_treated"] == 10
     assert s["n_holdout"] == 10
-    assert s["mean_input_treated"] == 500
-    assert s["mean_input_holdout"] == 1000
-    assert s["measured_saving_frac"] == 0.5
+    assert s["mean_input_treated"] == 2
+    assert s["mean_input_holdout"] == 2
+    assert s["mean_cache_creation_treated"] == 1000
+    assert s["mean_cache_creation_holdout"] == 2000
+    assert s["mean_cache_read_treated"] == 50_000
+    assert s["mean_cache_read_holdout"] == 50_000
+
+    cost_t = 2 + CACHE_CREATION_WEIGHT * 1000 + CACHE_READ_WEIGHT * 50_000
+    cost_h = 2 + CACHE_CREATION_WEIGHT * 2000 + CACHE_READ_WEIGHT * 50_000
+    assert s["mean_prompt_cost_treated"] == cost_t
+    assert s["mean_prompt_cost_holdout"] == cost_h
+    assert s["measured_saving_frac"] == round((cost_h - cost_t) / cost_h, 6)
+    # The raw input_tokens-only ratio is exactly zero here (both arms are
+    # billed 2 input_tokens) -- proving the headline now comes from the
+    # weighted cost, not the uncached remainder.
+    assert s["measured_saving_frac"] > 0
+
+
+def test_a_prefix_only_saving_is_actually_reported(tmp_path):
+    """Defect 1 reproduction: `toolschemas` (zone=ZONE_PREFIX) edits the
+    CACHED prefix, so its entire effect lands in `cache_read_tokens` --
+    never in `input_tokens`, which is identical (2 tokens/request) on both
+    arms, matching real traffic. Measured against this exact shape before
+    the fix: true prompt saving 3.23%, `measured_saving_frac` reported 0.0.
+    A fabricated percentage printed beside a measured cost -- or the reverse,
+    a real saving reported as none -- is the sin this proxy exists to
+    delete."""
+    for i in range(10):
+        append(
+            tmp_path,
+            Record(
+                request_key=f"t{i}",
+                holdout=False,
+                transforms=["toolschemas"],
+                est_saved_tokens=11_640,
+                saved_by={"toolschemas": 11_640},
+                input_tokens=2,
+                output_tokens=10,
+                cache_creation_tokens=0,
+                cache_read_tokens=348_360,
+            ),
+        )
+    for i in range(10):
+        append(
+            tmp_path,
+            Record(
+                request_key=f"h{i}",
+                holdout=True,
+                transforms=[],
+                est_saved_tokens=0,
+                input_tokens=2,
+                output_tokens=10,
+                cache_creation_tokens=0,
+                cache_read_tokens=360_000,
+            ),
+        )
+    s = summarize(tmp_path)
+    assert s["mean_input_treated"] == s["mean_input_holdout"] == 2
+    assert s["measured_saving_frac"] is not None
+    assert 0.03 < s["measured_saving_frac"] < 0.035
+
+
+def test_summarize_counts_distinct_sessions_per_arm(tmp_path):
+    """Defect 2: once holdout assignment is per-session (server.py), a row's
+    `n_treated`/`n_holdout` (request counts) overstate the effective sample
+    size -- every request in one holdout session lands in the same arm, so
+    they are correlated, not independent draws. `summarize` must also report
+    how many DISTINCT sessions each arm actually represents."""
+    for i in range(5):
+        append(
+            tmp_path,
+            Record(request_key=f"t{i}", holdout=False, session_key="sess-a", input_tokens=2),
+        )
+    for i in range(3):
+        append(
+            tmp_path,
+            Record(request_key=f"t2-{i}", holdout=False, session_key="sess-b", input_tokens=2),
+        )
+    for i in range(4):
+        append(
+            tmp_path,
+            Record(request_key=f"h{i}", holdout=True, session_key="sess-c", input_tokens=2),
+        )
+    s = summarize(tmp_path)
+    assert s["n_treated"] == 8  # 5 + 3 requests
+    assert s["n_treated_sessions"] == 2  # sess-a, sess-b
+    assert s["n_holdout"] == 4  # requests, all one session
+    assert s["n_holdout_sessions"] == 1  # sess-c
+
+
+def test_summarize_session_counts_ignore_blank_session_key(tmp_path):
+    """Rows with no session identity (the common shape in hand-built test
+    Records, or a ledger row written before this field existed) must not be
+    folded into a fake shared session."""
+    append(tmp_path, Record(request_key="t0", holdout=False, input_tokens=2))
+    append(tmp_path, Record(request_key="t1", holdout=False, input_tokens=2))
+    s = summarize(tmp_path)
+    assert s["n_treated"] == 2
+    assert s["n_treated_sessions"] == 0
 
 
 def test_summarize_reports_no_data_rather_than_a_zero(tmp_path):

@@ -637,6 +637,153 @@ def test_record_tool_usage_never_raises_on_non_dict_payload(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _count_new_retrievals — Defect 3: wiring for Record.retrieved
+# ---------------------------------------------------------------------------
+
+
+def _payload_with_retrieve(*ids: str) -> bytes:
+    content = [
+        {"type": "tool_use", "id": i, "name": "memo_crush_retrieve", "input": {"hash_marker": "x"}}
+        for i in ids
+    ]
+    return json.dumps(
+        {"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": content}]}
+    ).encode()
+
+
+def test_count_new_retrievals_counts_each_id_once(tmp_path):
+    from memo.proxy.server import _count_new_retrievals
+
+    assert _count_new_retrievals("sess-1", _payload_with_retrieve("r1", "r2")) == 2
+
+
+def test_count_new_retrievals_does_not_double_count_a_repeat_turn(tmp_path):
+    """Defect 3: `_extract_tool_names`-style scans see the ENTIRE message
+    history, so a `memo_crush_retrieve` block from turn 1 reappears
+    byte-for-byte in turn 2's payload (Claude Code resends full history).
+    Counting it again would multiply the real "recovered originals" count by
+    however many turns have elapsed since the call -- dedupe by tool_use id
+    in a per-session set, exactly like `record_tool_usage` dedupes tool
+    NAMES into a per-session set."""
+    from memo.proxy.server import _count_new_retrievals
+
+    turn1 = _payload_with_retrieve("r1")
+    assert _count_new_retrievals("sess-dedupe", turn1) == 1
+    # Turn 2: same session, r1 still present (full history resent) plus one
+    # genuinely new retrieval, r2.
+    turn2 = _payload_with_retrieve("r1", "r2")
+    assert _count_new_retrievals("sess-dedupe", turn2) == 1  # only r2 is new
+    # Turn 3: nothing new at all.
+    turn3 = _payload_with_retrieve("r1", "r2")
+    assert _count_new_retrievals("sess-dedupe", turn3) == 0
+
+
+def test_count_new_retrievals_is_scoped_per_session(tmp_path):
+    from memo.proxy.server import _count_new_retrievals
+
+    assert _count_new_retrievals("sess-a", _payload_with_retrieve("shared-id")) == 1
+    # A different session happening to reuse the same block id still counts
+    # it -- the dedupe set must not leak across sessions.
+    assert _count_new_retrievals("sess-b", _payload_with_retrieve("shared-id")) == 1
+
+
+def test_count_new_retrievals_ignores_non_retrieve_tool_use(tmp_path):
+    from memo.proxy.server import _count_new_retrievals
+
+    payload = json.dumps(
+        {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "t1", "name": "memo_search", "input": {}}
+                    ],
+                }
+            ]
+        }
+    ).encode()
+    assert _count_new_retrievals("sess-x", payload) == 0
+
+
+def test_count_new_retrievals_never_raises_on_malformed_json(tmp_path):
+    from memo.proxy.server import _count_new_retrievals
+
+    assert _count_new_retrievals("sess-1", b"not json") == 0
+
+
+@pytest.mark.asyncio
+async def test_retrieved_is_recorded_and_not_double_counted_on_a_repeat_turn(
+    proxy_env, monkeypatch
+):
+    """Defect 3 end-to-end: `Record.retrieved` had no writer anywhere -- the
+    sole construction site passed only `**captured` (the four usage keys).
+    Wire it from real `memo_crush_retrieve` tool_use blocks, deduped by id
+    per session, so a repeat turn (which resends the whole message history)
+    does not double-count an already-seen recovery."""
+    from memo.proxy import meter
+
+    headers = {"x-api-key": "k", "x-claude-code-session-id": "sess-retrieve"}
+
+    def _retrieve_block(block_id: str) -> dict:
+        return {
+            "type": "tool_use",
+            "id": block_id,
+            "name": "memo_crush_retrieve",
+            "input": {"hash_marker": "abc"},
+        }
+
+    body1 = json.dumps(
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": [_retrieve_block("r1")]},
+            ]
+        }
+    ).encode()
+    # Separate MonkeyPatch scopes per round trip -- see
+    # test_session_key_comes_from_the_header_and_freezes_across_real_requests
+    # above for why a shared monkeypatch across two `_round_trip` calls
+    # silently misroutes (or, as here, entirely bypasses the proxy on) the
+    # second request.
+    mp1 = pytest.MonkeyPatch()
+    try:
+        resp1, _ = await _round_trip(
+            mp1, path_and_query="/v1/messages", body=body1, headers=headers
+        )
+    finally:
+        mp1.undo()
+    assert resp1.status_code == 200
+    await resp1.aread()
+
+    # Turn 2: same session, full history resent (r1 still there) -- no new
+    # retrieval this turn.
+    body2 = json.dumps(
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": [_retrieve_block("r1")]},
+                {"role": "user", "content": "thanks"},
+            ]
+        }
+    ).encode()
+    mp2 = pytest.MonkeyPatch()
+    try:
+        resp2, _ = await _round_trip(
+            mp2, path_and_query="/v1/messages", body=body2, headers=headers
+        )
+    finally:
+        mp2.undo()
+    assert resp2.status_code == 200
+    await resp2.aread()
+
+    lines = meter.ledger_path(proxy_env).read_text(encoding="utf-8").strip().splitlines()
+    rows = [json.loads(line) for line in lines]
+    assert len(rows) == 2
+    assert rows[0]["retrieved"] == 1
+    assert rows[1]["retrieved"] == 0  # r1 already counted on turn 1
+
+
+# ---------------------------------------------------------------------------
 # build_app — full round trip over a double ASGI transport (no real network)
 # ---------------------------------------------------------------------------
 
@@ -986,3 +1133,64 @@ async def test_session_key_comes_from_the_header_and_freezes_across_real_request
     # Frozen: turn 2's wire tool list must match turn 1's, not the
     # now-updated tool_usage.json this same request just wrote.
     assert names2 == names1
+
+
+@pytest.mark.asyncio
+async def test_holdout_is_assigned_per_session_not_per_request_body(proxy_env, monkeypatch):
+    """Defect 2 (Critical, must land with defect 1): `request_key` is a
+    sha256 of the WHOLE request body -- a fresh coin flip every single turn.
+    Once the meter sums the cache counters (defect 1), that per-turn coin
+    becomes actively misleading in the OPPOSITE direction: an isolated
+    holdout turn is a cold full-prefix write with no warm sibling in that
+    session to amortise against (a genuine no-proxy baseline would have been
+    warm), systematically inflating the holdout arm for reasons unrelated to
+    pruning. The arm must be decided on the stable session id, not a hash of
+    a body that changes on every turn."""
+    from memo.proxy import meter
+
+    seen_keys: list[str] = []
+    real_is_holdout = meter.is_holdout
+
+    def _spy(key: str, frac: float) -> bool:
+        seen_keys.append(key)
+        return real_is_holdout(key, frac)
+
+    monkeypatch.setattr("memo.proxy.server.meter.is_holdout", _spy)
+    monkeypatch.setenv("MEMO_PROXY_HOLDOUT_FRAC", "0.5")
+
+    headers = {"x-api-key": "k", "x-claude-code-session-id": "session-xyz"}
+
+    mp1 = pytest.MonkeyPatch()
+    try:
+        body1 = json.dumps({"messages": [{"role": "user", "content": "turn one"}]}).encode()
+        resp1, _ = await _round_trip(
+            mp1, path_and_query="/v1/messages", body=body1, headers=headers
+        )
+    finally:
+        mp1.undo()
+    assert resp1.status_code == 200
+    await resp1.aread()
+
+    mp2 = pytest.MonkeyPatch()
+    try:
+        body2 = json.dumps(
+            {"messages": [{"role": "user", "content": "turn two, a longer body"}]}
+        ).encode()
+        resp2, _ = await _round_trip(
+            mp2, path_and_query="/v1/messages", body=body2, headers=headers
+        )
+    finally:
+        mp2.undo()
+    assert resp2.status_code == 200
+    await resp2.aread()
+
+    # Same session both turns -> is_holdout must be asked about the SAME
+    # key both times, even though the two request bodies (and therefore
+    # their request_key hashes) differ.
+    assert seen_keys == ["session-xyz", "session-xyz"]
+
+    # And the ledger row actually persists that session identity, so
+    # `meter.summarize` can count distinct sessions per arm.
+    lines = meter.ledger_path(proxy_env).read_text(encoding="utf-8").strip().splitlines()
+    rows = [json.loads(line) for line in lines]
+    assert all(row["session_key"] == "session-xyz" for row in rows)

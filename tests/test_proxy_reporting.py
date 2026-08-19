@@ -90,7 +90,11 @@ def test_measured_panel_reports_treated_vs_holdout_when_data_exists(tmp_path):
     assert "50.0% saved" in result.output
     assert "treated 500 vs holdout 1000" in result.output
     assert "n=10 treated / 10 holdout" in result.output
-    assert "cost" not in result.output.lower()
+    # The panel label is "on prompt cost" unconditionally now (defect 1's
+    # relabel), so a bare "cost" substring check would trip on the noun in
+    # every panel, saved or not -- assert the VERB specifically stayed
+    # "saved", not "cost".
+    assert "% cost" not in result.output.lower()
 
 
 def test_passthrough_rows_are_reported_but_excluded_from_the_treated_count(tmp_path):
@@ -124,7 +128,9 @@ def test_equal_arms_reads_as_saved_not_cost(tmp_path):
         _seed(state_dir, [_record(f"h{i}", holdout=True, input_tokens=500)])
     result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
     assert result.exit_code == 0, result.output
-    assert "cost" not in result.output.lower()
+    # See the sibling test above for why this checks the VERB, not the bare
+    # "cost" substring (the panel label is "on prompt cost" unconditionally).
+    assert "% cost" not in result.output.lower()
     assert "0.0% saved" in result.output
 
 

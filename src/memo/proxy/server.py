@@ -243,6 +243,72 @@ def _extract_tool_names(raw: bytes) -> list[str]:
     return names
 
 
+# The MCP tool `server_crush.py` registers for CCR (`memo.proxy.ccr`)
+# recovery -- see that module's docstring for why it's the SAME tool the
+# ingest-time SmartCrusher uses, reused rather than duplicated.
+_RETRIEVE_TOOL_NAME = "memo_crush_retrieve"
+
+# Per-session dedupe set for `_count_new_retrievals`, bounded exactly like
+# `_last_head_fingerprint` above (a long-lived proxy process must not leak
+# memory) and for the same reason `record_tool_usage` dedupes tool NAMES:
+# the request's `messages` carries the ENTIRE history, so a `tool_use`
+# block from turn 1 reappears byte-for-byte in every later turn.
+_MAX_TRACKED_RETRIEVE_SESSIONS = 1000
+_seen_retrieve_ids: OrderedDict[str, set[str]] = OrderedDict()
+
+
+def _count_new_retrievals(session_key: str, raw: bytes) -> int:
+    """How many NEW `memo_crush_retrieve` tool_use blocks this request's
+    message history carries -- i.e. `Record.retrieved`, the one cost-side
+    counter the report has (a recovered original costs its tokens twice).
+
+    Scans every `tool_use` block named `memo_crush_retrieve`, exactly like
+    `_extract_tool_names` scans every `tool_use` block for its name -- and
+    inherits the same problem: the request carries the FULL message history,
+    so an already-counted block's id would otherwise be counted again on
+    every later turn, inflating the real count by however many turns have
+    elapsed since the recovery call. Dedupe by tool_use `id` in a per-session
+    set (see `_seen_retrieve_ids` above). Never raises: any parsing failure
+    resolves to 0 new retrievals, matching every other function in this
+    module.
+    """
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            return 0
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return 0
+        seen = _seen_retrieve_ids.get(session_key)
+        if seen is None:
+            seen = set()
+        new_count = 0
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                if block.get("name") != _RETRIEVE_TOOL_NAME:
+                    continue
+                block_id = block.get("id")
+                if not isinstance(block_id, str) or not block_id or block_id in seen:
+                    continue
+                seen.add(block_id)
+                new_count += 1
+        _seen_retrieve_ids[session_key] = seen
+        _seen_retrieve_ids.move_to_end(session_key)
+        while len(_seen_retrieve_ids) > _MAX_TRACKED_RETRIEVE_SESSIONS:
+            _seen_retrieve_ids.popitem(last=False)
+        return new_count
+    except Exception:
+        _log.warning("proxy: could not count retrieved blocks")
+        return 0
+
+
 def _read_tool_usage(path: Path) -> dict[str, Any]:
     sessions: dict[str, Any] = {}
     if path.is_file():
@@ -324,9 +390,21 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
 
         session_key = request.headers.get(_SESSION_HEADER) or _NO_SESSION_HEADER_FALLBACK
         record_tool_usage(state_dir, session_key, raw)
+        retrieved = _count_new_retrievals(session_key, raw)
 
         request_key = _request_key(raw)
-        holdout = meter.is_holdout(request_key, flag_float("MEMO_PROXY_HOLDOUT_FRAC") or 0.0)
+        # Assigned on session_key, NOT request_key: request_key hashes the
+        # whole body and is a fresh coin flip every turn. Once the meter
+        # sums the cache counters (defect 1), a per-turn coin is actively
+        # misleading in the opposite direction -- an isolated holdout turn
+        # becomes a cold full-prefix write with no warm sibling in that
+        # session to amortise against, unlike a genuine no-proxy baseline,
+        # which would have been warm. session_key is stable for the whole
+        # session (see its own definition above), so the arm — and the
+        # cache-warmth that comes with staying on one arm — is decided once
+        # per session, not once per turn. request_key stays reserved for the
+        # ledger row's own identity below.
+        holdout = meter.is_holdout(session_key, flag_float("MEMO_PROXY_HOLDOUT_FRAC") or 0.0)
 
         plan = TransformPlan()
         body = raw
@@ -386,10 +464,12 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
                         meter.Record(
                             request_key=request_key,
                             holdout=holdout,
+                            session_key=session_key,
                             rewritten=rewrite_ran,
                             transforms=plan.applied,
                             est_saved_tokens=plan.est_saved_tokens,
                             saved_by=plan.saved_by,
+                            retrieved=retrieved,
                             **captured,
                         ),
                     )

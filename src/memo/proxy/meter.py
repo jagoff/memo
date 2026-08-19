@@ -20,11 +20,33 @@ LEDGER_SCHEMA = "memo.proxy.requests.v1"
 _log = logging.getLogger(__name__)
 _HOLDOUT_BUCKETS = 10_000
 
+# Weights that turn the three Messages-API usage counters into one
+# "prompt cost" in token-equivalents, from Anthropic's prompt-caching
+# pricing (https://docs.claude.com/en/docs/build-with-claude/prompt-caching,
+# 5-minute cache tier, the default): an uncached input token bills at the
+# base rate (1x); writing a new block into the cache costs a one-time
+# CACHE_CREATION_WEIGHT premium; reading a block already in the cache costs
+# only CACHE_READ_WEIGHT. `input_tokens` alone is the UNCACHED REMAINDER
+# ONLY -- on this machine's real Claude Code traffic (4,938 requests) it
+# takes only the values 1 or 2, mean 1.96, about 0.001% of the real prompt
+# (total prompt = input_tokens + cache_creation_tokens + cache_read_tokens).
+# A ratio over `input_tokens` alone is a ratio of noise: a prefix transform
+# (e.g. `toolschemas`, zone=ZONE_PREFIX) edits the cached HEAD and so its
+# entire effect lands in the two counters that ratio ignores.
+CACHE_CREATION_WEIGHT = 1.25
+CACHE_READ_WEIGHT = 0.1
+
 
 @dataclass
 class Record:
     request_key: str
     holdout: bool
+    # The real Claude Code session id (or the per-process fallback) the arm
+    # was actually assigned on -- see `is_holdout` callers. Optional/blank
+    # for older rows and for hand-built test Records that don't care about
+    # session identity; `summarize` only counts non-blank values toward the
+    # session-level counts below.
+    session_key: str = ""
     transforms: list[str] = field(default_factory=list)
     est_saved_tokens: int = 0
     input_tokens: int = 0
@@ -135,11 +157,41 @@ def summarize(state_dir: Path) -> dict:
                 total += val
         return total / len(rows)
 
+    def _prompt_cost(row: dict) -> float:
+        """One row's whole prompt, in token-equivalents -- see the module's
+        weight constants for where CACHE_CREATION_WEIGHT/CACHE_READ_WEIGHT
+        come from."""
+
+        def _num(key: str) -> int:
+            val = row.get(key)
+            return val if isinstance(val, int) else 0
+
+        return (
+            _num("input_tokens")
+            + CACHE_CREATION_WEIGHT * _num("cache_creation_tokens")
+            + CACHE_READ_WEIGHT * _num("cache_read_tokens")
+        )
+
+    def _mean_cost(rows: list[dict]) -> float | None:
+        if not rows:
+            return None
+        return sum(_prompt_cost(r) for r in rows) / len(rows)
+
     mean_t = _mean(treated, "input_tokens")
     mean_h = _mean(holdout, "input_tokens")
+    mean_cache_creation_t = _mean(treated, "cache_creation_tokens")
+    mean_cache_creation_h = _mean(holdout, "cache_creation_tokens")
+    mean_cache_read_t = _mean(treated, "cache_read_tokens")
+    mean_cache_read_h = _mean(holdout, "cache_read_tokens")
+    mean_cost_t = _mean_cost(treated)
+    mean_cost_h = _mean_cost(holdout)
+
+    # The headline: a cost ratio over the WHOLE prompt (input + weighted
+    # cache creation/read), not `input_tokens` alone -- see the module
+    # docstring for why the latter is a ratio of noise.
     saving = None
-    if mean_t is not None and mean_h not in (None, 0):
-        saving = round((mean_h - mean_t) / mean_h, 6)
+    if mean_cost_t is not None and mean_cost_h not in (None, 0):
+        saving = round((mean_cost_h - mean_cost_t) / mean_cost_h, 6)
 
     # Per-transform breakdown. `transforms` lists every ENABLED transform a
     # row ran, whether or not it actually saved anything — crediting the
@@ -170,12 +222,36 @@ def summarize(state_dir: Path) -> dict:
         if isinstance(val, int):
             retrieved += val
 
+    def _distinct_sessions(rows: list[dict]) -> int:
+        """How many DISTINCT sessions an arm represents. Since holdout
+        assignment is per-session (defect 2 -- `server.py` calls
+        `meter.is_holdout(session_key, ...)`), every request in one holdout
+        session lands in the same arm: `len(rows)` (a request count)
+        overstates the effective, independent sample size. Rows with no
+        `session_key` (hand-built test Records, or a row written before this
+        field existed) are excluded rather than folded into a fake shared
+        session."""
+        return len({r.get("session_key") for r in rows if r.get("session_key")})
+
     return {
         "n_treated": len(treated),
         "n_holdout": len(holdout),
+        "n_treated_sessions": _distinct_sessions(treated),
+        "n_holdout_sessions": _distinct_sessions(holdout),
         "n_passthrough": passthrough,
         "mean_input_treated": mean_t,
         "mean_input_holdout": mean_h,
+        # Per-arm cache counters. The design doc's cache rule is
+        # unfalsifiable without them: they are what actually moved when a
+        # prefix transform ran, and `measured_saving_frac` folds them into
+        # one ratio (see the module-level weight constants) rather than
+        # leaving them invisible.
+        "mean_cache_creation_treated": mean_cache_creation_t,
+        "mean_cache_creation_holdout": mean_cache_creation_h,
+        "mean_cache_read_treated": mean_cache_read_t,
+        "mean_cache_read_holdout": mean_cache_read_h,
+        "mean_prompt_cost_treated": mean_cost_t,
+        "mean_prompt_cost_holdout": mean_cost_h,
         "measured_saving_frac": saving,
         "by_transform": by_transform,
         "retrieved": retrieved,

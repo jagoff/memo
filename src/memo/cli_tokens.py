@@ -146,13 +146,30 @@ def _proxy_panel(proxy: dict) -> Panel:
         # negative frac (treated arm costs MORE than holdout) is "cost".
         colour = "green" if frac >= 0 else "red"
         verb = "saved" if frac >= 0 else "cost"
-        mean_t = proxy["mean_input_treated"]
-        mean_h = proxy["mean_input_holdout"]
+        # The headline is now a weighted PROMPT COST ratio (input_tokens +
+        # 1.25x cache-creation + 0.1x cache-read — see meter.py's weight
+        # constants), not a bare input_tokens ratio: real traffic bills
+        # almost the whole prompt through the two cache counters, so
+        # input_tokens alone is a ratio of noise. The raw input_tokens
+        # means stay visible alongside it.
+        cost_t = proxy["mean_prompt_cost_treated"]
+        cost_h = proxy["mean_prompt_cost_holdout"]
+        mean_in_t = proxy["mean_input_treated"]
+        mean_in_h = proxy["mean_input_holdout"]
         thin = min(n_t, n_h) < _MIN_PROXY_SAMPLE
+        # Defect 2: holdout is now assigned per SESSION, not per request, so
+        # n_t/n_h (request counts) overstate the effective sample size —
+        # every request in one holdout session is correlated, not an
+        # independent draw. Report the distinct-session count beside the
+        # request count rather than hiding that the unit changed.
+        n_ts = proxy.get("n_treated_sessions") or 0
+        n_hs = proxy.get("n_holdout_sessions") or 0
+        sessions_note = f", {n_ts}/{n_hs} sessions" if (n_ts or n_hs) else ""
         body = (
-            f"[bold {colour}]{abs(frac) * 100:.1f}% {verb}[/bold {colour}] on input tokens "
-            f"(treated {mean_t:.0f} vs holdout {mean_h:.0f} tok/request) "
-            f"[dim](n={n_t} treated / {n_h} holdout requests"
+            f"[bold {colour}]{abs(frac) * 100:.1f}% {verb}[/bold {colour}] on prompt cost "
+            f"(treated {cost_t:.0f} vs holdout {cost_h:.0f} tok-equiv/request; "
+            f"raw input_tokens {mean_in_t:.0f} vs {mean_in_h:.0f}) "
+            f"[dim](n={n_t} treated / {n_h} holdout requests{sessions_note}"
             f"{' · provisional, thin sample' if thin else ''})[/dim]"
         )
     if proxy.get("retrieved"):
