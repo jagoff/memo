@@ -404,3 +404,17 @@ def test_consult_trend_today_survives_trimmed_recall_log(tmp_path: Path):
     bucket = next(d for d in trend if d["date"] == today)
     assert bucket["consultas"] == 796  # persisted total, not the 3 surviving rows
     assert bucket["activado"] == 31
+
+
+def test_html_template_has_no_fabricated_token_savings_section():
+    """Round-2 fix: the 'Ahorro de tokens' panel + its KPI tile rendered the
+    retired MEMO_ROI_TOKENS_PER_* estimate as a literal fabricated 0 behind
+    `|| 0` JS fallbacks — deleted, not gated, so no code path can regress into
+    printing a fake savings number again."""
+    from memo import web_build
+
+    html = web_build._render_html({"generated_at": "x", "memo_version": "x"})
+    assert "Ahorro de tokens" not in html
+    assert "Ahorro neto de tokens hoy" not in html
+    assert "tok-total" not in html
+    assert "Estimación con supuestos explícitos" not in html

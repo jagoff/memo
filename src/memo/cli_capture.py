@@ -200,18 +200,6 @@ def capture_stop() -> None:
         if debug:
             print(f"# memo token-meter rollup failed: {exc}", file=_sys.stderr)
 
-    try:
-        from memo import presence
-        from memo import token_ledger as _tl
-        from memo.config import Config
-
-        _state = Config.from_env().state_dir
-        _summary = _tl.summarize(_state, days_back=1, months_back=1)
-        presence.set_tokens(_state, int(_summary["today"]["tokens"]))
-    except Exception as exc:
-        if debug:
-            print(f"# memo presence set_tokens failed: {exc}", file=_sys.stderr)
-
     # Episodic memory: index this session's prompt-arc so `memo resume` can find
     # it by meaning. Content-hash-skip makes most Stops a no-op; never fails the hook.
     try:

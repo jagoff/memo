@@ -692,19 +692,6 @@ def doctor(
                 "`memo install-mcp --profile core` for 59 tools / ~13.1k tokens — "
                 "for constrained clients)[/dim]"
             )
-        try:
-            from memo.cli_roi import compute_roi
-
-            _roi = compute_roi(cfg.state_dir, limit=200)
-            _saved = _roi.get("tokens_saved_human") or "0"
-            _grounded = _roi.get("grounded") or 0
-            if _grounded > 0:
-                console.print(
-                    f"[green]✓[/green] tokens saved: ~{_saved} "
-                    f"(from {_grounded} grounded recalls — run `memo roi` for details)"
-                )
-        except Exception:  # noqa: S110
-            pass
         with contextlib.suppress(Exception):
             _report_derived_storage(cfg)
         with contextlib.suppress(Exception):

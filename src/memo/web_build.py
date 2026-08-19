@@ -1105,22 +1105,6 @@ _HTML_TEMPLATE = r"""<!doctype html>
                   background: rgba(251,113,133,.08); border: 1px solid rgba(251,113,133,.25); color: #ffb3c0; line-height: 1.5; }
   .badge-silent.ok { background: rgba(46,230,166,.07); border-color: rgba(46,230,166,.22); color: #9af0d0; }
 
-  /* ── token savings detail ── */
-  .tok-top { display: grid; grid-template-columns: 220px 1fr; gap: 26px; align-items: center; }
-  @media (max-width: 620px) { .tok-top { grid-template-columns: 1fr; gap: 16px; } }
-  .tok-total .tnum { font-size: 3rem; font-weight: 800; letter-spacing: -1.5px; line-height: 1; color: var(--green); }
-  .tok-total .tcap { color: var(--fg); font-size: 13px; font-weight: 600; margin-top: 8px; }
-  .tok-total .tassump { color: var(--fg-dim); font-size: 11px; margin-top: 6px; line-height: 1.5; }
-  .tok-compbar { height: 30px; background: var(--panel-soft); border-radius: 9px; overflow: hidden; display: flex; }
-  .tok-compbar > div { height: 100%; transition: width .6s cubic-bezier(.16,1,.3,1); }
-  #tok-seg-grounded { background: var(--green); }
-  #tok-seg-reask { background: var(--blue); }
-  .tok-legend { display: flex; gap: 22px; margin-top: 12px; flex-wrap: wrap; font-size: 13px; color: var(--fg-mute); }
-  .tok-legend b { color: var(--fg); }
-  .tok-legend small { color: var(--fg-dim); }
-  .tok-legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
-  .tok-subh { margin: 22px 0 6px; font-size: 12px; font-weight: 600; color: var(--fg-mute); }
-
   /* ── knowledge gaps ── */
   .gap-row { display: grid; grid-template-columns: 44px 1fr auto; align-items: center;
              gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
@@ -1166,31 +1150,6 @@ _HTML_TEMPLATE = r"""<!doctype html>
 
   <!-- KPIs -->
   <section class="kpis" id="kpis"></section>
-
-  <!-- AHORRO DE TOKENS (detalle) -->
-  <section class="panel">
-    <h2>Ahorro de tokens — detalle</h2>
-    <p class="hint">Tokens que el modelo NO tuvo que gastar porque la respuesta usó información que memo ya tenía, en vez de re-generarla o repreguntar. Estimación con supuestos explícitos.</p>
-    <div class="tok-top">
-      <div class="tok-total">
-        <div class="tnum" id="tok-total">—</div>
-        <div class="tcap">tokens ahorrados (acumulado)</div>
-        <div class="tassump" id="tok-assump">—</div>
-      </div>
-      <div class="tok-comp">
-        <div class="tok-compbar">
-          <div id="tok-seg-grounded" title="hechos reutilizados"></div>
-          <div id="tok-seg-reask" title="repreguntas evitadas"></div>
-        </div>
-        <div class="tok-legend">
-          <span><span class="sw" style="background:var(--green)"></span><b id="tok-leg-grounded">—</b> hechos reutilizados <small id="tok-leg-grounded-n"></small></span>
-          <span><span class="sw" style="background:var(--blue)"></span><b id="tok-leg-reask">—</b> repreguntas evitadas <small id="tok-leg-reask-n"></small></span>
-        </div>
-      </div>
-    </div>
-    <h3 class="tok-subh">Por día — tokens ahorrados por hechos reutilizados (14 días)</h3>
-    <div id="token-trend" style="height: 220px;"></div>
-  </section>
 
   <!-- QUIÉN USA MEMO -->
   <section class="panel">
@@ -1388,8 +1347,6 @@ _HTML_TEMPLATE = r"""<!doctype html>
     const covColor = (G.coverage_rate ?? 0) >= 0.7 ? "var(--green)" : "var(--yellow)";
     const groundedColor = G.grounded_rate == null ? "var(--fg-mute)"
       : G.grounded_rate >= 0.1 ? "var(--green)" : "var(--yellow)";
-    const fmtTok = n => n == null ? "—" : (Math.abs(n) < 1000 ? String(n)
-      : Math.abs(n) < 1e6 ? (n/1000).toFixed(1) + "k" : (n/1e6).toFixed(2) + "M");
     const consultsSampled = G.consults_sampled ?? 0;
     const consultsTotal = G.consults_total ?? G.consults ?? 0;
     const kpis = [
@@ -1408,8 +1365,6 @@ _HTML_TEMPLATE = r"""<!doctype html>
         sub: G.used_total ? `${G.used_grounded}/${G.used_total} respuestas medidas` : "aún sin medir" },
       { num: asPct(G.measurement_coverage), accent: "var(--yellow)", cap: "Cobertura de medición",
         sub: G.surfaced_turns ? `${G.measured_turns || 0}/${G.surfaced_turns} turnos con grounding` : "sin turnos correlatables" },
-      { num: G.tokens_net_today_human || "—", accent: (G.tokens_net_today || 0) >= 0 ? "var(--blue)" : "var(--red)", cap: "Ahorro neto de tokens hoy",
-        sub: `${fmtTok(G.tokens_saved_today || 0)} evitados - ${fmtTok(G.context_tokens_today || 0)} inyectados` },
     ];
     const kEl = document.getElementById("kpis");
     kEl.innerHTML = "";
@@ -1421,32 +1376,6 @@ _HTML_TEMPLATE = r"""<!doctype html>
                      <div class="kcap">${esc(k.cap)}</div><div class="ksub">${esc(k.sub)}</div>`;
       kEl.appendChild(d);
     }
-
-    // ── AHORRO DE TOKENS (detalle) ──
-    const td = G.token_detail || {};
-    const gTok = td.grounded_tokens || 0, rTok = td.reask_tokens || 0, tTot = td.total || 0;
-    // Headline = GROSS saved, which is exactly what the composition bar (green +
-    // blue) sums to — so the big number is never smaller than one of its own
-    // segments. The net (after subtracting injected-context cost) is stated
-    // explicitly in the assumptions line so the bottom line stays honest.
-    document.getElementById("tok-total").textContent = fmtTok(tTot);
-    document.getElementById("tok-assump").textContent =
-      `${td.tok_grounded || 0} tok/hecho · ${td.tok_reask || 0} tok/repregunta`
-      + ` · -${fmtTok(td.context_tokens || 0)} contexto → neto ${fmtTok(td.net || 0)}`
-      + (td.avg_answer_tokens ? ` · ~${td.avg_answer_tokens} tok/respuesta medido` : "");
-    const segG = tTot > 0 ? (gTok / tTot * 100) : 0;
-    document.getElementById("tok-seg-grounded").style.width = segG.toFixed(1) + "%";
-    document.getElementById("tok-seg-reask").style.width = (100 - segG).toFixed(1) + "%";
-    document.getElementById("tok-leg-grounded").textContent = fmtTok(gTok);
-    document.getElementById("tok-leg-reask").textContent = fmtTok(rTok);
-    document.getElementById("tok-leg-grounded-n").textContent = `(${td.grounded || 0} hechos)`;
-    document.getElementById("tok-leg-reask-n").textContent = `(${td.reask_avoided || 0} evitadas)`;
-    const tdaily = td.daily || [];
-    renderBarChart(
-      "token-trend",
-      tdaily.map(d => d.date.slice(5)),
-      [{ name: "tokens netos", values: tdaily.map(d => d.net_tokens), color: "#2ee6a6" }],
-    );
 
     // ── QUIÉN USA MEMO ──
     const consumers = (uf.consumers || []).slice().sort((a,b) => b.consults - a.consults);

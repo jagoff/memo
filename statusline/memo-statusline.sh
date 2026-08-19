@@ -50,15 +50,10 @@ if [ "${MEMO_STATUSLINE_ACTIVITY:-1}" != "0" ] && [ -n "$MEMO_BADGE" ]; then
     }
     PDATE=$(printf '%s' "$P" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')
     if [ "$PDATE" = "$(date +%Y-%m-%d)" ]; then
-      R=$(_pnum recalls); S=$(_pnum saves); T=$(_pnum tokens_saved)
+      R=$(_pnum recalls); S=$(_pnum saves)
       ACT=""
       [ -n "$R" ] && [ "$R" != "0" ] && ACT="🧠$R"
       [ -n "$S" ] && [ "$S" != "0" ] && ACT="${ACT:+$ACT · }💾$S"
-      if [ -n "$T" ] && [ "$T" -ge 1000 ] 2>/dev/null; then
-        ACT="${ACT:+$ACT · }~$((T / 1000))k tok"
-      elif [ -n "$T" ] && [ "$T" != "0" ]; then
-        ACT="${ACT:+$ACT · }~$T tok"
-      fi
       [ -n "$ACT" ] && MEMO_BADGE="[Memo $MEMO_VER · $ACT]"
     fi
   fi

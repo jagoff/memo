@@ -286,9 +286,17 @@ def test_check_uses_memory_fail_when_value_absent(seeded_ctx):
 
 
 def test_check_token_savings_runs_body(seeded_ctx):
+    """Round-2 regression: the round-1 fix repointed this check at
+    `historic["grounded"]`, but journey-check's `_recall()` writes
+    `recall.log` with `client="journey-check"` (consults), never
+    `grounding.log` — `grounded` can never move, so the check was a
+    permanent, silent FAIL. `_assert_ran` alone doesn't catch this since it
+    accepts FAIL; assert PASS + a real positive delta explicitly."""
     res = jc.check_token_savings(seeded_ctx)
     _assert_ran(res, "token-savings")
     assert {"before", "after", "delta", "recalls_logged"} <= set(res.evidence)
+    assert res.status == PASS
+    assert res.evidence["delta"] > 0
 
 
 def test_check_ux_messages_warn_when_all_channels_deliver(seeded_ctx, monkeypatch):
