@@ -69,11 +69,11 @@ Most memory servers *add* context. memo is built to remove it.
 
 | Profile | Tools | Schema tokens |
 |---|---:|---:|
-| `agent` (default) | 42 | ~9.6k |
-| `core` / `slim` | 59 | ~13.1k |
+| `agent` (default) | 43 | ~9.7k |
+| `core` / `slim` | 60 | ~13.2k |
 | `full` / `default` | 165 | ~30.6k |
 
-The default MCP surface is 42 tools, not 165 — 75% fewer tools, and about 69% less schema context: **42 tools / ~9.6k schema tokens** versus **165 tools / ~30.6k tokens** on the full surface — overhead paid every session, in every client.
+The default MCP surface is 43 tools, not 165 — 74% fewer tools, and about 68% less schema context: **43 tools / ~9.7k schema tokens** versus **165 tools / ~30.6k tokens** on the full surface — overhead paid every session, in every client.
 
 Ambient recall injects one relevant memory before the model answers. The bundled Claude Code hook caps that injection at ~160 tokens. `memo roi` reads the real grounding and re-ask ledgers, then estimates accumulated savings with disclosed defaults (350 tokens per grounded recall and 900 per avoided re-ask).
 

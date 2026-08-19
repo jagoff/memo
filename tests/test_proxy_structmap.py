@@ -291,11 +291,11 @@ def test_apply_marker_lets_the_original_be_recovered(tmp_path):
     zones = _read_zones("src/pkg/mod.py", BIG_SRC)
     StructMap().apply(zones, _ctx(tmp_path))
     new_text = zones.live_messages[1]["content"][0]["content"]
-    assert "memo_retrieve" in new_text
+    assert "memo_crush_retrieve" in new_text
 
     from memo.proxy import ccr
 
-    key = new_text.split('key="')[1].split('"')[0]
+    key = new_text.split('hash_marker="')[1].split('"')[0]
     assert ccr.recover(tmp_path, key) == BIG_SRC
 
 

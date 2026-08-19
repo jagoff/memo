@@ -335,7 +335,6 @@ def _build_server(
         # transaction-time reconstruction tools above; route through the live
         # index with as_of=.
         _srv_asof_valid.register(server, memory)
-        _srv_crush.register(server, memory)
         # Episodic memory: search past sessions by meaning (Phase 2)
         _srv_episodes.register(server, memory)
         # Session patterns: session-aware, topic keys, conflict detection
@@ -370,6 +369,12 @@ def _build_server(
     # from context on every profile it runs against, so the escape hatch back
     # to a pruned tool's schema must be registered unconditionally too.
     _srv_tool_docs.register(server, memory)
+    # The proxy's CCR (cut/recover) transforms stamp every cut with a
+    # `memo_crush_retrieve(hash_marker=...)` recovery marker regardless of
+    # which profile is active, so the recovery tool must be reachable from
+    # every profile too — not just the advanced surface it used to be gated
+    # behind. See memo.proxy.ccr.marker().
+    _srv_crush.register(server, memory)
 
     from memo.surface import mcp_tools_to_remove
 

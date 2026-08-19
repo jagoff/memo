@@ -330,7 +330,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 42 tools) | core/slim (59 stable-core tools) | full/default (165 tools).",
+        "MCP surface profile: agent (default, 43 tools) | core/slim (60 stable-core tools) | full/default (165 tools).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(

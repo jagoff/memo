@@ -48,11 +48,11 @@ _NESTED_CRUSH_MARKER = "<<memo-crush:"
 # contains the UN-RENDERED template text below, with literal
 # `{dropped_chars}`/`{kept_chars}` placeholders, never digits in their
 # place. Anchoring on a digit sequence (not just the literal
-# `memo_retrieve(key="` substring, which this module's own source also
-# contains as plain code) is what tells an ALREADY-cut block's own prior,
-# rendered marker apart from this module's source text merely containing
-# the same literal fragments as CODE, not as evidence of an earlier cut --
-# see test_marker_does_not_false_positive_on_its_own_template_source.
+# `memo_crush_retrieve(hash_marker="` substring, which this module's own
+# source also contains as plain code) is what tells an ALREADY-cut block's
+# own prior, rendered marker apart from this module's source text merely
+# containing the same literal fragments as CODE, not as evidence of an
+# earlier cut -- see test_marker_does_not_false_positive_on_its_own_template_source.
 _NESTED_CCR_MARKER_RE = re.compile(r"\[memo: \d+ chars elided, \d+ kept\. ")
 
 
@@ -75,23 +75,31 @@ def marker(key: str, *, kept_chars: int, dropped_chars: int, stashed: str = "") 
     hop too early; omitting `stashed` (or passing content with no nested
     reference) keeps the stronger, still-true "Full original" claim for the
     common case where this really is the first and only cut.
+
+    The recovery call is `memo_crush_retrieve(hash_marker=...)` -- the SAME
+    MCP tool `server_crush.py` registers for the ingest-time SmartCrusher,
+    reused rather than duplicated (see this module's own docstring). It is
+    registered unconditionally on every MCP surface profile (`server.py`),
+    not just the advanced one, and accepts a bare hex `key` exactly like
+    this in addition to the SmartCrusher's own `<<memo-crush:HASH>>`-wrapped
+    form -- both read the one shared `CrushCache`.
     """
     if _NESTED_CRUSH_MARKER in stashed:
         return (
             f"\n[memo: {dropped_chars} chars elided, {kept_chars} kept. "
-            f'Not the full original -- memo_retrieve(key="{key}") recovers this '
-            f"filter's input, which itself still contains a further "
+            f'Not the full original -- memo_crush_retrieve(hash_marker="{key}") recovers '
+            f"this filter's input, which itself still contains a further "
             f"memo-crush reference; retrieve that one too for the true original.]"
         )
     if _NESTED_CCR_MARKER_RE.search(stashed):
         return (
             f"\n[memo: {dropped_chars} chars elided, {kept_chars} kept. "
-            f'Not the full original -- memo_retrieve(key="{key}") recovers this '
-            f"filter's input, which itself still contains a further "
+            f'Not the full original -- memo_crush_retrieve(hash_marker="{key}") recovers '
+            f"this filter's input, which itself still contains a further "
             f"recovery marker from an earlier cut; retrieve that one too "
             f"for the true original.]"
         )
     return (
         f"\n[memo: {dropped_chars} chars elided, {kept_chars} kept. "
-        f'Full original: memo_retrieve(key="{key}")]'
+        f'Full original: memo_crush_retrieve(hash_marker="{key}")]'
     )

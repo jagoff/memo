@@ -137,8 +137,8 @@ def test_mcp_full_profile_registers_every_decorated_server_tool(
 @pytest.mark.parametrize(
     ("profile", "expected_count"),
     [
-        ("agent", 42),
-        ("core", 59),
+        ("agent", 43),
+        ("core", 60),
         ("full", 165),
     ],
 )

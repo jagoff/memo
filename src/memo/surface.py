@@ -104,6 +104,11 @@ AGENT_MCP_TOOLS: frozenset[str] = (
             # escape hatch back to a pruned tool's schema, so it is
             # registered unconditionally and never removed.
             "memo_tool_docs",
+            # The proxy's CCR (cut/recover) transforms stamp every cut with a
+            # `memo_crush_retrieve(hash_marker=...)` recovery marker regardless
+            # of profile, so it is registered unconditionally and never
+            # removed — same reasoning as memo_tool_docs above.
+            "memo_crush_retrieve",
         }
     )
     | _OPERATIONAL_MCP_TOOLS
@@ -191,9 +196,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("42", "~9.6k"),
-    "core": ("59", "~13.1k"),
-    "slim": ("59", "~13.1k"),
+    "agent": ("43", "~9.7k"),
+    "core": ("60", "~13.2k"),
+    "slim": ("60", "~13.2k"),
 }
 
 

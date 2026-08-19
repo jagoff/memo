@@ -116,12 +116,12 @@ def test_apply_fires_on_dense_content_above_the_threshold_and_the_original_is_re
     image_bytes = base64.b64decode(content[0]["source"]["data"])
     assert image_bytes[:8] == b"\x89PNG\r\n\x1a\n"
     assert content[1]["type"] == "text"
-    assert "memo_retrieve" in content[1]["text"]
+    assert "memo_crush_retrieve" in content[1]["text"]
     assert saved > 0
 
     from memo.proxy import ccr
 
-    key = content[1]["text"].split('key="')[1].split('"')[0]
+    key = content[1]["text"].split('hash_marker="')[1].split('"')[0]
     assert ccr.recover(tmp_path, key) == output
 
 
