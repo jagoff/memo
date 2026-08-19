@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.13.2] - 2026-08-18
+
+### Fixed
+
+- `memo ops checkpoint-wal` (new, called by the nightly pass) actually reclaims
+  the sqlite write-ahead logs. `PRAGMA journal_size_limit`, added in 4.13.0,
+  caps a WAL only after a successful checkpoint — and a checkpoint cannot
+  advance past the oldest open reader, of which memo keeps several permanently
+  (recall daemon, watcher, every memo-mcp session). Measured: graph.db-wal at
+  74MB against a 127MB database, and back to 68MB hours after a manual
+  truncate.
+- The `hook-commands-resolve` release gate now also resolves the `memo`
+  subcommands fired by `launchd/memo-nightly.sh`, not just `hooks/hooks.json`.
+  That is the surface that actually drifted: `ops gc-emitted-ledgers` shipped in
+  the template before the binary registered it, and for four nights the pass
+  logged `Error: No such command` into a file nobody reads.
+
 ## [4.13.1] - 2026-08-18
 
 ### Fixed
