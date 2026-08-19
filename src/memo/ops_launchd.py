@@ -192,8 +192,7 @@ def install_proxy(memo_bin: str, home: Path, *, port: int = 8768) -> Path:
     owner = _port_owner(port)
     if owner and not _label_loaded(PROXY_LABEL):
         raise click.ClickException(
-            f"port {port} is already in use by {owner} — "
-            "free the port or pick another with --port"
+            f"port {port} is already in use by {owner} — free the port or pick another with --port"
         )
     (home / "Library" / "Logs" / "memo").mkdir(parents=True, exist_ok=True)
     path = _proxy_plist_path(home)

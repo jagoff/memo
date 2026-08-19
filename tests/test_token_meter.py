@@ -356,12 +356,8 @@ def test_prompt_side_dedups_streaming_rows(tmp_path):
         _assistant("m1", 20, model="claude-opus-5", input_tok=900, cache_read=500),
         _assistant("m1", 20, model="claude-opus-5", input_tok=900, cache_read=500),
         _assistant("m1", 20, model="claude-opus-5", input_tok=900, cache_read=500),
-        _assistant(
-            "m2", 10, tool=True, model="claude-sonnet-5", input_tok=800, cache_read=700
-        ),
-        _assistant(
-            "m2", 10, tool=True, model="claude-sonnet-5", input_tok=800, cache_read=700
-        ),
+        _assistant("m2", 10, tool=True, model="claude-sonnet-5", input_tok=800, cache_read=700),
+        _assistant("m2", 10, tool=True, model="claude-sonnet-5", input_tok=800, cache_read=700),
     ]
     p = tmp_path / "dup.jsonl"
     _write_jsonl(p, rows)
@@ -379,9 +375,7 @@ def test_prompt_side_ignores_degenerate_input_tokens(tmp_path):
     rows = [
         _human(),
         _assistant("m1", 20, model="claude-opus-5", input_tok=2, cache_read=21420),
-        _assistant(
-            "m2", 10, tool=True, model="claude-sonnet-5", input_tok=2, cache_read=98078
-        ),
+        _assistant("m2", 10, tool=True, model="claude-sonnet-5", input_tok=2, cache_read=98078),
     ]
     p = tmp_path / "deg.jsonl"
     _write_jsonl(p, rows)

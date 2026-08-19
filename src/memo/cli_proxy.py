@@ -65,6 +65,4 @@ def proxy_status(port: int | None) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
         listening = sock.connect_ex(("127.0.0.1", port)) == 0
-    console.print(
-        f"proxy on 127.0.0.1:{port}: {'listening' if listening else 'not running'}"
-    )
+    console.print(f"proxy on 127.0.0.1:{port}: {'listening' if listening else 'not running'}")
