@@ -438,7 +438,18 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
 
         async def _body() -> AsyncIterator[bytes]:
             try:
-                async for chunk in _relay_chunks(response.aiter_raw()):
+                # aiter_bytes(), not aiter_raw(): the live API sends
+                # Content-Encoding: gzip on streaming responses (br on
+                # non-streaming), and the headers below already strip that
+                # header from what reaches the client. Relaying aiter_raw()
+                # (still-compressed bytes) under a stripped content-encoding
+                # sends the client bytes it has no way to know need
+                # decompressing -- every proxied response breaks, and
+                # sniff_usage silently finds no `data: ` lines in the
+                # compressed bytes, so the measurement ledger goes quiet too.
+                # httpx decodes incrementally per raw chunk (streaming
+                # zlib/brotli decompressors), so this does not buffer.
+                async for chunk in _relay_chunks(response.aiter_bytes()):
                     sniff_usage(chunk, captured)
                     yield chunk
             finally:

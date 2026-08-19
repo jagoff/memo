@@ -515,6 +515,63 @@ async def test_streams_reach_the_client_incrementally():
     assert seen == [b"event: a\n", b"data: 1\n\n", b"event: b\n"]
 
 
+@pytest.mark.asyncio
+async def test_gzip_decoding_via_aiter_bytes_still_streams_incrementally():
+    """The live API sends `Content-Encoding: gzip` on streaming responses.
+    `response.aiter_bytes()` must decode it chunk-by-chunk as raw bytes
+    arrive, not buffer the whole compressed body before producing any
+    output -- that would defeat the point of streaming and let the 180s
+    byte watchdog trip on a slow upstream. Feeds a real `httpx.Response` a
+    gzip body one raw chunk at a time (bypassing the ASGI test double, whose
+    transport fully drains an app before returning) and asserts decoded
+    output appears well before every raw chunk has been pulled from the
+    source.
+    """
+    import gzip
+
+    import httpx
+
+    from memo.proxy.server import _relay_chunks
+
+    plaintext = b"".join(
+        f'event: message_delta\ndata: {{"usage":{{"output_tokens":{i}}}}}\n\n'.encode()
+        for i in range(500)
+    )
+    compressed = gzip.compress(plaintext)
+    chunk_size = 200
+    raw_chunks = [compressed[i : i + chunk_size] for i in range(0, len(compressed), chunk_size)]
+    assert len(raw_chunks) > 3, "test needs multiple raw chunks to prove incrementality"
+
+    pulled = 0
+
+    class _TrackedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            nonlocal pulled
+            for chunk in raw_chunks:
+                pulled += 1
+                yield chunk
+
+    response = httpx.Response(
+        200,
+        headers={"content-encoding": "gzip"},
+        stream=_TrackedStream(),
+    )
+
+    pulled_at_first_yield = None
+    out = bytearray()
+    async for chunk in _relay_chunks(response.aiter_bytes()):
+        if pulled_at_first_yield is None:
+            pulled_at_first_yield = pulled
+        out += chunk
+
+    assert bytes(out) == plaintext
+    assert pulled_at_first_yield is not None
+    assert pulled_at_first_yield < len(raw_chunks), (
+        "decoded output only appeared after the entire compressed body was "
+        "pulled from the source -- that is buffering, not streaming"
+    )
+
+
 # ---------------------------------------------------------------------------
 # sniff_usage
 # ---------------------------------------------------------------------------
@@ -826,6 +883,37 @@ def _make_non_sse_upstream_app(captured: dict):
     return Starlette(routes=[Route("/v1/messages", upstream_endpoint, methods=["POST"])])
 
 
+def _make_gzip_upstream_app(captured: dict):
+    """Simulates what the real Anthropic API sends on a streaming response:
+    an SSE body compressed with `Content-Encoding: gzip`. This is the exact
+    shape that broke every proxied response -- the fake upstream in the
+    original test suite never compressed, so nothing caught it. A realistic
+    upstream also sets `content-length` to the COMPRESSED size (Starlette
+    computes it from the bytes handed to `Response`), which is wrong once
+    the body is decoded and must not reach the client either."""
+    import gzip
+
+    from starlette.applications import Starlette
+    from starlette.responses import Response
+    from starlette.routing import Route
+
+    plaintext = (
+        b'event: message_start\ndata: {"message":{"usage":{"input_tokens":5}}}\n\n'
+        b'event: message_delta\ndata: {"usage":{"output_tokens":2}}\n\n'
+    )
+    compressed = gzip.compress(plaintext)
+
+    async def upstream_endpoint(request):
+        captured["body"] = await request.body()
+        return Response(
+            content=compressed,
+            media_type="text/event-stream",
+            headers={"content-encoding": "gzip"},
+        )
+
+    return Starlette(routes=[Route("/v1/messages", upstream_endpoint, methods=["POST"])])
+
+
 @pytest.fixture
 def proxy_env(tmp_path, monkeypatch):
     """Isolated Config.from_env() resolution for the request handler, which
@@ -929,6 +1017,60 @@ async def test_usage_counters_are_recorded_after_a_streamed_response(proxy_env, 
     assert resp.status_code == 200
     # Consume the stream fully so the generator's `finally` (which appends the
     # measurement row) has actually run.
+    await resp.aread()
+    summary = meter.summarize(proxy_env)
+    assert summary["n_treated"] + summary["n_holdout"] == 1
+
+
+@pytest.mark.asyncio
+async def test_gzip_encoded_response_reaches_the_client_decoded(proxy_env, monkeypatch):
+    """The live API returns `Content-Encoding: gzip` on streaming responses.
+    Before the `aiter_raw` -> `aiter_bytes` fix, `content-encoding` was
+    stripped from the headers while the RAW compressed bytes were still
+    relayed -- a client had no way to know the body needed decompressing,
+    and every proxied response broke (`API Error: Failed to parse JSON`,
+    reproduced 14/14 against the real API). This asserts the client-visible
+    bytes are valid, already-decoded SSE, and that no stale encoding/length
+    header survives to lie about them."""
+    body = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
+    resp, _ = await _round_trip(
+        monkeypatch,
+        path_and_query="/v1/messages?beta=true",
+        body=body,
+        headers={"x-api-key": "k"},
+        make_upstream_app=_make_gzip_upstream_app,
+    )
+    assert resp.status_code == 200
+    assert "content-encoding" not in resp.headers
+    assert "content-length" not in resp.headers
+    raw = await resp.aread()
+    text = raw.decode("utf-8", errors="replace")
+    assert text.startswith("event: message_start\n"), (
+        f"client received bytes that are not decoded SSE: {text[:80]!r}"
+    )
+    assert '"input_tokens":5' in text
+    assert '"output_tokens":2' in text
+
+
+@pytest.mark.asyncio
+async def test_usage_counters_are_recorded_through_a_gzip_encoded_response(proxy_env, monkeypatch):
+    """The half of the bug that went unnoticed: `sniff_usage` scans raw
+    bytes for `data: ` SSE lines, so scanning still-compressed gzip bytes
+    silently finds nothing -- `captured` stays empty, the row-append gate
+    never fires, and the ledger looks idle while the proxy is in fact
+    serving (and corrupting) every request. Once the body is decoded before
+    sniffing, a real measurement row must land."""
+    from memo.proxy import meter
+
+    body = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
+    resp, _ = await _round_trip(
+        monkeypatch,
+        path_and_query="/v1/messages?beta=true",
+        body=body,
+        headers={"x-api-key": "k"},
+        make_upstream_app=_make_gzip_upstream_app,
+    )
+    assert resp.status_code == 200
     await resp.aread()
     summary = meter.summarize(proxy_env)
     assert summary["n_treated"] + summary["n_holdout"] == 1
