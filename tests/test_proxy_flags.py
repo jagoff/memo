@@ -31,3 +31,18 @@ def test_tool_schemas_scope_only_accepts_all_or_memo():
 def test_tool_schemas_scope_can_be_set_to_the_conservative_fallback(monkeypatch):
     monkeypatch.setenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", "memo")
     assert flag_str("MEMO_PROXY_TOOL_SCHEMAS_SCOPE") == "memo"
+
+
+def test_content_scope_defaults_to_all(monkeypatch):
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    assert flag_str("MEMO_PROXY_CONTENT_SCOPE") == "all"
+
+
+def test_content_scope_only_accepts_all_or_tail():
+    spec = next(s for s in SPECS if s.name == "MEMO_PROXY_CONTENT_SCOPE")
+    assert spec.choices == ("all", "tail")
+
+
+def test_content_scope_can_be_set_to_the_tail_only_fallback(monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    assert flag_str("MEMO_PROXY_CONTENT_SCOPE") == "tail"

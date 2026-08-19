@@ -26,8 +26,14 @@ from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
 from memo.proxy import ccr
 from memo.proxy.plan import ZONE_LIVE, Context
-from memo.proxy.transforms.delta import _block_text, _read_tool_paths, _set_block_text, seen_files
-from memo.proxy.zones import Zones
+from memo.proxy.transforms.delta import (
+    _block_text,
+    _read_tool_paths,
+    _set_block_text,
+    read_occurrences,
+    seen_files,
+)
+from memo.proxy.zones import Zones, whole_history_scope
 
 _log = logging.getLogger(__name__)
 
@@ -127,6 +133,10 @@ class StructMap:
 
     def apply(self, zones: Zones, ctx: Context) -> int:
         try:
+            if whole_history_scope():
+                if not zones.frozen_messages and not zones.live_messages:
+                    return 0
+                return self._apply_whole_history(zones, ctx)
             if not zones.live_messages:
                 return 0
             seen = seen_files(zones)
@@ -143,6 +153,20 @@ class StructMap:
             return saved
         except Exception:
             return 0
+
+    def _apply_whole_history(self, zones: Zones, ctx: Context) -> int:
+        """`MEMO_PROXY_CONTENT_SCOPE=all` (default): a single ordered pass
+        over the WHOLE conversation via `read_occurrences` -- see that
+        function's docstring (delta.py) for why this stays deterministic and
+        therefore safe to run over the frozen zone too."""
+        saved = 0
+        for block, path, text, previous in read_occurrences(
+            [*zones.frozen_messages, *zones.live_messages]
+        ):
+            if previous is not None:
+                continue  # re-read -- Delta's case, not ours
+            saved += self._rewrite(block, text, path, ctx)
+        return saved
 
     def _rewrite_block(
         self,
@@ -164,6 +188,15 @@ class StructMap:
             if not text:
                 return 0
 
+            return self._rewrite(block, text, path, ctx)
+        except Exception:
+            return 0
+
+    def _rewrite(self, block: dict, text: str, path: str, ctx: Context) -> int:
+        """Shared final step once (block, its raw text, its file path) are
+        known -- identical for the tail-only and whole-history scopes; only
+        how a block gets classified as a "first read" differs."""
+        try:
             new_text = signatures(text, _language_for(path))
             if not isinstance(new_text, str) or len(new_text) >= len(text):
                 return 0

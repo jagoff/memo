@@ -39,13 +39,30 @@ def build_registry() -> list[Transform]:
     to produce on a parse failure -- so they must not be handed a mangled
     input in the first place.
 
-    StructMap before Delta (rather than the reverse) is not load-bearing:
-    the two are mutually exclusive by construction (`seen_files()` in
-    delta.py splits blocks into "first read" and "re-read", and each
-    transform only acts on its own case), so which one is asked first cannot
-    change which blocks either one touches. The order here follows the pair's
-    natural reading order -- first read, then re-read -- for the module list
-    to read the same way a person reasons about the two cases.
+    Delta runs BEFORE StructMap, and unlike the "not load-bearing" ordering
+    within most other pairs here, this ONE direction is load-bearing under
+    `MEMO_PROXY_CONTENT_SCOPE=all` (task 21's whole-history widening). Under
+    the original tail-only scope the two really were interchangeable: each
+    reads `zones.frozen_messages` for "seen" and writes only
+    `zones.live_messages`, so neither could ever observe the other's
+    mutation. Whole-history scope breaks that separation -- both now read
+    AND write across the same combined `frozen_messages + live_messages`
+    list (`delta.read_occurrences`), so a first read and its later re-read
+    can sit in the SAME scanned list. If StructMap ran first, it would mutate
+    a first-read block's text in place (raw source -> signature map) BEFORE
+    Delta's own `read_occurrences` call ever ran -- and that call reads
+    `_block_text` fresh, so it would see the ALREADY-COMPRESSED signature
+    map as the re-read's "previous", producing a huge, useless diff against
+    text the model was never actually shown as a full read (reproduced:
+    saved dropped from ~1,600 tok to 2 tok on a 40-function fixture; see
+    task-21-measure.py). Delta first means its own `read_occurrences` call
+    always captures every block's RAW text before StructMap can touch
+    anything, and StructMap running second is safe because it only acts on
+    `previous is None` blocks (first reads) -- the exact set Delta itself
+    never mutates (Delta only writes `previous is not None` blocks) -- so
+    neither transform can corrupt the other regardless of scope. The
+    original "not load-bearing" claim was true only for the scope that
+    existed when it was written.
 
     JsonCrush still runs before ToolResults for task 11's original reason:
     it only fires on a block that still parses as a clean JSON array, and
@@ -75,4 +92,4 @@ def build_registry() -> list[Transform]:
     leftover worst case, never a block another transform hasn't had its
     chance at yet.
     """
-    return [ToolSchemas(), StructMap(), Delta(), JsonCrush(), ToolResults(), Pixel()]
+    return [ToolSchemas(), Delta(), StructMap(), JsonCrush(), ToolResults(), Pixel()]

@@ -284,7 +284,11 @@ def test_build_registry_includes_toolschemas():
     rationale in `registry.build_registry`'s docstring. Task 13 adds Pixel
     LAST of all -- it is the most generic, least-proven transform in the
     plan and must only ever see what nothing text-based upstream could
-    shrink further (same docstring)."""
+    shrink further (same docstring). Task 21 swaps Delta before StructMap:
+    load-bearing only under the whole-history content scope it introduces
+    (see the docstring's task-21 addendum) -- StructMap mutating a first
+    read in place before Delta's own read_occurrences call would otherwise
+    corrupt Delta's "previous" reference for that path's later re-read."""
     from memo.proxy.registry import build_registry
     from memo.proxy.transforms.delta import Delta
     from memo.proxy.transforms.jsoncrush import JsonCrush
@@ -296,8 +300,8 @@ def test_build_registry_includes_toolschemas():
     registry = build_registry()
     assert len(registry) == 6
     assert isinstance(registry[0], ToolSchemas)
-    assert isinstance(registry[1], StructMap)
-    assert isinstance(registry[2], Delta)
+    assert isinstance(registry[1], Delta)
+    assert isinstance(registry[2], StructMap)
     assert isinstance(registry[3], JsonCrush)
     assert isinstance(registry[4], ToolResults)
     assert isinstance(registry[5], Pixel)
@@ -314,8 +318,8 @@ def test_rewrite_body_with_no_explicit_transforms_runs_the_real_registry(tmp_pat
     assert out == raw
     assert plan.applied == [
         "toolschemas",
-        "structmap",
         "delta",
+        "structmap",
         "jsoncrush",
         "toolresults",
         "pixel",
@@ -495,6 +499,85 @@ def test_marker_never_claims_full_original_when_a_structmap_reference_is_nested(
         f"inside it: {outer_marker_text!r}"
     )
     assert "Not the full original" in outer_marker_text
+
+
+def test_delta_diffs_against_the_raw_first_read_not_structmaps_compressed_output(
+    tmp_path, monkeypatch
+):
+    """Task 21 regression: under MEMO_PROXY_CONTENT_SCOPE=all, a first read
+    and its later re-read of the SAME path can both be reachable in one
+    combined `read_occurrences` pass. If StructMap ran before Delta in the
+    registry, StructMap would mutate the first read's block in place (raw
+    source -> signature map) before Delta's own `read_occurrences` call ever
+    ran, so Delta would diff the re-read against the signature map instead
+    of the real prior content -- a huge, useless diff. Reproduced directly
+    against the pre-fix registry order (structmap saved ~1087 tok, delta
+    saved only 2 tok on this fixture); Delta-before-StructMap fixes it."""
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "config-home"))
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)  # default: all
+
+    src = "import os\n\n\n" + "\n\n".join(
+        f'def func_{i}(a: int, b: str = "x") -> bool:\n'
+        f'    """Docstring for func_{i}."""\n'
+        f"    total = 0\n"
+        f"    for j in range(100):\n"
+        f"        total += j * {i}\n"
+        f"    return bool(total)\n"
+        for i in range(40)
+    )
+    changed = src.replace("func_0", "func_0_RENAMED")
+
+    raw = json.dumps(
+        {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "r1",
+                            "name": "Read",
+                            "input": {"file_path": "a.py"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "r1", "content": src}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "r2",
+                            "name": "Read",
+                            "input": {"file_path": "a.py"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "r2", "content": changed}],
+                },
+            ]
+        }
+    ).encode()
+
+    ctx = _ctx(tmp_path)
+    out, plan = rewrite_body(raw, ctx)
+
+    assert "delta" in plan.saved_by, f"delta produced no net saving at all: {plan.saved_by}"
+    # Setup check: prove the diff really is small (proportional to the ONE
+    # renamed function), not a near-total rewrite of the whole file the way
+    # diffing against StructMap's elided signature map would produce.
+    r2_text = json.loads(out)["messages"][3]["content"][0]["content"]
+    assert len(r2_text) < len(changed) * 0.5
+    assert "func_0_RENAMED" in r2_text
+    # A diff against the signature map would show almost every function's
+    # "..." elision line as removed -- that many hits means Delta read the
+    # WRONG previous content.
+    assert r2_text.count("-    ...") < 3
 
 
 # ---------------------------------------------------------------------------

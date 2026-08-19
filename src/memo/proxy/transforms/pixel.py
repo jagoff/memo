@@ -65,6 +65,19 @@ and nothing in this module or its test suite measures it. A green
 profitability gate proves the transform is estimated to be CHEAPER; it does
 not prove the model understands the image as well as it would have
 understood the text. That risk is real and unmeasured; see task-13-report.md.
+
+**Scope.** `render`/`is_profitable` are pure, content-only functions of one
+block's text -- no session state, no clock, no counter, just deterministic
+PNG bytes for the same input every time (a fixed bundled bitmap font, no
+`pnginfo` timestamp chunk). That determinism is what lets `apply` run over
+`zones.scan_scope(zones)` -- the whole conversation under the default
+`MEMO_PROXY_CONTENT_SCOPE=all`, not just `live_messages` -- without risking
+the cache-prefix instability `zones.py`'s module docstring warns about: a
+frozen block converts to the identical image bytes on every turn. Widening
+scope does NOT change the comprehension risk above; it scales how much of
+the conversation carries that unmeasured risk, since a long session under
+`all` can turn many more historical blocks into images than a `tail`-scoped
+run ever would.
 """
 
 from __future__ import annotations
@@ -76,7 +89,7 @@ from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
 from memo.proxy import ccr
 from memo.proxy.plan import ZONE_LIVE, Context
-from memo.proxy.zones import Zones
+from memo.proxy.zones import Zones, scan_scope
 
 _log = logging.getLogger(__name__)
 
@@ -224,10 +237,11 @@ class Pixel:
 
     def apply(self, zones: Zones, ctx: Context) -> int:
         try:
-            if not zones.live_messages:
+            messages = scan_scope(zones)
+            if not messages:
                 return 0
             saved = 0
-            for message in zones.live_messages:
+            for message in messages:
                 if not isinstance(message, dict):
                     continue
                 content = message.get("content")

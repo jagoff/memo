@@ -327,9 +327,13 @@ def test_apply_leaves_a_non_read_tool_result_untouched(tmp_path):
     assert zones.live_messages[1]["content"][0]["content"] == SRC
 
 
-def test_apply_leaves_a_re_read_of_a_seen_file_untouched(tmp_path):
-    """A second read of a path already in frozen_messages is Delta's case,
-    not StructMap's -- StructMap must not also compress it."""
+def test_apply_leaves_a_re_read_of_a_seen_file_untouched_tail_only(tmp_path, monkeypatch):
+    """Tail-only scope (MEMO_PROXY_CONTENT_SCOPE=tail): a second read of a
+    path already in frozen_messages is Delta's case, not StructMap's --
+    StructMap must not also compress it. Under this scope StructMap never
+    scans frozen_messages as a compression TARGET (only as the source of
+    `seen`), so the first-read frozen block stays untouched too."""
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
     zones = _read_zones("src/pkg/mod.py", SRC, tool_use_id="r2")
     zones.frozen_messages = [
         {
@@ -351,6 +355,43 @@ def test_apply_leaves_a_re_read_of_a_seen_file_untouched(tmp_path):
     saved = StructMap().apply(zones, _ctx(tmp_path))
     assert saved == 0
     assert zones.live_messages[1]["content"][0]["content"] == SRC
+    assert zones.frozen_messages[1]["content"][0]["content"] == SRC
+
+
+def test_apply_compresses_the_frozen_first_read_but_not_the_live_reread_under_whole_history(
+    tmp_path, monkeypatch
+):
+    """Default scope (MEMO_PROXY_CONTENT_SCOPE=all): the FROZEN block is a
+    legitimate first read and IS StructMap's to compress -- being in the
+    frozen zone must not grandfather a block out of compression. The live
+    re-read of the same path stays Delta's case, not StructMap's, exactly as
+    under tail-only scope."""
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    zones = _read_zones("src/pkg/mod.py", BIG_SRC, tool_use_id="r2")
+    zones.frozen_messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "r1",
+                    "name": "Read",
+                    "input": {"file_path": "src/pkg/mod.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "r1", "content": BIG_SRC}],
+        },
+    ]
+    saved = StructMap().apply(zones, _ctx(tmp_path))
+    assert saved > 0
+    frozen_text = zones.frozen_messages[1]["content"][0]["content"]
+    assert len(frozen_text) < len(BIG_SRC)
+    assert "total += j" not in frozen_text
+    # the live re-read is untouched by StructMap -- Delta's case
+    assert zones.live_messages[1]["content"][0]["content"] == BIG_SRC
 
 
 def test_apply_never_cuts_without_a_recovery_path(tmp_path, monkeypatch):

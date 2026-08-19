@@ -23,6 +23,21 @@ Two fingerprints, two different questions:
   drift check) — `prefix_fingerprint` compared across turns would false-
   positive on every single turn of a real conversation, since
   `frozen_messages` legitimately differs turn to turn.
+
+`whole_history_scope`/`scan_scope` govern a related but distinct question:
+which MESSAGES a content transform (structmap, delta, jsoncrush, toolresults,
+pixel — not `ToolSchemas`, which always scans the whole prefix) is allowed to
+scan. The cache rule above says a transform touching the prefix must be
+deterministic; it does NOT say the prefix is off-limits. A transform that
+maps the same block to the same bytes every time — independent of anything
+outside that block, or (for structmap/delta) dependent only on the blocks
+that precede it — produces a byte-identical prefix turn after turn even when
+it runs over `frozen_messages` too, so `MEMO_PROXY_CONTENT_SCOPE=all`
+(default) widens these five past the live zone. The one-time cost is a single
+re-cache the first time a transform starts touching an already-cached block;
+after that the wider prefix is exactly as stable as the narrower one was.
+`MEMO_PROXY_CONTENT_SCOPE=tail` restricts back to `live_messages` only, the
+original scope, one flag away.
 """
 
 from __future__ import annotations
@@ -91,6 +106,48 @@ def prefix_fingerprint(zones: Zones) -> str:
         default=str,
     )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+_CONTENT_SCOPE_FLAG = "MEMO_PROXY_CONTENT_SCOPE"
+
+
+def whole_history_scope() -> bool:
+    """True unless `MEMO_PROXY_CONTENT_SCOPE` (`flags_proxy.py`) is explicitly
+    `"tail"`. Never raises — an unreadable flag falls back to the aggressive
+    default, matching every other proxy flag's fail-open convention.
+
+    This governs the five DETERMINISTIC content transforms (structmap, delta,
+    jsoncrush, toolresults, pixel — see `scan_scope` below and each
+    transform's own module docstring for its determinism argument), never
+    `ToolSchemas`, which already scans the whole prefix (`system`/`tools`)
+    regardless of this flag.
+    """
+    try:
+        from memo.flags import flag_str
+
+        return flag_str(_CONTENT_SCOPE_FLAG) != "tail"
+    except Exception:
+        return True
+
+
+def scan_scope(zones: Zones) -> list[dict]:
+    """Messages a deterministic content transform may scan and rewrite.
+
+    Whole-history (default, `MEMO_PROXY_CONTENT_SCOPE=all`): the full
+    conversation, frozen zone included. This is safe ONLY because the five
+    transforms that call this are deterministic, content-only functions of a
+    block and (for structmap/delta) the blocks that precede it — the same
+    input therefore produces byte-identical output turn after turn, so a
+    block already inside the provider's cached prefix is never rewritten to
+    something different once cached. See the module docstring's cache rule
+    and each transform's own docstring for why it qualifies.
+
+    Tail-only (`MEMO_PROXY_CONTENT_SCOPE=tail`): just `zones.live_messages`,
+    the original conservative scope, kept as a one-flag-away rollback.
+    """
+    if whole_history_scope():
+        return [*zones.frozen_messages, *zones.live_messages]
+    return zones.live_messages
 
 
 def stable_head_fingerprint(zones: Zones) -> str:

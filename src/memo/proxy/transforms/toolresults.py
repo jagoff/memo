@@ -2,8 +2,17 @@
 
 Measured 2026-08-18: 15.15M tokens of tool-loop output against 1.25M tokens of
 answer output across memo's own usage — 92% of output spend is tool results,
-and nothing upstream of this transform touches them. Live zone, so unlike a
-prefix transform this carries no prompt-cache risk (see `zones.py`).
+and nothing upstream of this transform touches them.
+
+`_rewrite_block` is a pure, content-only function of one `tool_result` block:
+the same block always produces the same rewritten bytes, independent of its
+position or of any other message in the conversation (the loaded filter
+catalog is a static on-disk resource, not per-request state). That is what
+makes it safe to run over the WHOLE conversation, not just the live zone — see
+`zones.scan_scope`/`MEMO_PROXY_CONTENT_SCOPE`: a block already inside the
+provider's cached prefix is rewritten to the exact same bytes every turn, so
+widening past `live_messages` carries no prompt-cache risk (see `zones.py`'s
+module docstring for the cache rule this satisfies).
 
 Coverage is total from day one: a command with no matching filter still gets
 `generic_fallback` (head + tail + an elision count), never a pass-through of
@@ -38,7 +47,7 @@ from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
 from memo.proxy import ccr
 from memo.proxy.plan import ZONE_LIVE, Context
-from memo.proxy.zones import Zones
+from memo.proxy.zones import Zones, scan_scope
 
 _log = logging.getLogger(__name__)
 
@@ -484,12 +493,13 @@ class ToolResults:
 
     def apply(self, zones: Zones, ctx: Context) -> int:
         try:
-            if not zones.live_messages:
+            messages = scan_scope(zones)
+            if not messages:
                 return 0
             filters = load_filters(DEFAULT_FILTERS_DIR)
-            commands = _tool_use_commands(zones.live_messages)
+            commands = _tool_use_commands(messages)
             saved = 0
-            for message in zones.live_messages:
+            for message in messages:
                 if not isinstance(message, dict):
                     continue
                 content = message.get("content")

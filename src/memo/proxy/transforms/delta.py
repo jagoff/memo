@@ -47,7 +47,7 @@ from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
 from memo.proxy import ccr
 from memo.proxy.plan import ZONE_LIVE, Context
-from memo.proxy.zones import Zones
+from memo.proxy.zones import Zones, whole_history_scope
 
 _log = logging.getLogger(__name__)
 
@@ -134,6 +134,53 @@ def seen_files(zones: Zones) -> dict[str, str]:
     return seen
 
 
+def read_occurrences(messages: list) -> list[tuple[dict, str, str, str | None]]:
+    """`(block, path, text, previous_or_none)` for every Read `tool_result`
+    block across `messages`, IN ORDER. `previous_or_none` is the most recent
+    PRIOR occurrence's raw text for the same path within THIS SAME list
+    (`None` on a path's first occurrence).
+
+    This is what makes StructMap/Delta safe to widen past the live zone
+    (`MEMO_PROXY_CONTENT_SCOPE=all`, `zones.scan_scope`): classifying
+    occurrence i (first read vs. re-read, and what to diff a re-read
+    against) depends only on messages 0..i, a pure function of blocks that
+    PRECEDE it in `messages` -- never on anything that comes after. Since the
+    client resends its own conversation raw and unmodified (see the module
+    docstring above), messages 0..i-1 are byte-identical on every later turn,
+    so occurrence i's classification and diff target can never change once
+    an earlier turn has already fixed them on the wire -- exactly the
+    determinism the cache rule in `zones.py`'s module docstring requires of
+    anything that touches the frozen zone.
+
+    StructMap's case is `previous is None`; Delta's is `previous is not
+    None` -- see each transform's `apply()`, which filters this shared walk
+    down to its own half rather than duplicating the ordering logic."""
+    seen: dict[str, str] = {}
+    out: list[tuple[dict, str, str, str | None]] = []
+    try:
+        paths = _read_tool_paths(messages)
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                path = paths.get(block.get("tool_use_id", ""))
+                if not path:
+                    continue
+                text = _block_text(block)
+                if not text:
+                    continue
+                out.append((block, path, text, seen.get(path)))
+                seen[path] = text
+    except Exception:
+        return []
+    return out
+
+
 def diff_against(previous: str, current: str) -> str:
     """`current` collapsed to just what changed since `previous`.
 
@@ -176,6 +223,10 @@ class Delta:
 
     def apply(self, zones: Zones, ctx: Context) -> int:
         try:
+            if whole_history_scope():
+                if not zones.frozen_messages and not zones.live_messages:
+                    return 0
+                return self._apply_whole_history(zones, ctx)
             if not zones.live_messages:
                 return 0
             seen = seen_files(zones)
@@ -192,6 +243,20 @@ class Delta:
             return saved
         except Exception:
             return 0
+
+    def _apply_whole_history(self, zones: Zones, ctx: Context) -> int:
+        """`MEMO_PROXY_CONTENT_SCOPE=all` (default): a single ordered pass
+        over the WHOLE conversation via `read_occurrences` -- see that
+        function's docstring for why this stays deterministic and therefore
+        safe to run over the frozen zone too."""
+        saved = 0
+        for block, _path, text, previous in read_occurrences(
+            [*zones.frozen_messages, *zones.live_messages]
+        ):
+            if previous is None:
+                continue  # first occurrence -- StructMap's case, not ours
+            saved += self._rewrite(block, text, previous, ctx)
+        return saved
 
     def _rewrite_block(
         self,
@@ -214,6 +279,15 @@ class Delta:
             if not text:
                 return 0
 
+            return self._rewrite(block, text, previous, ctx)
+        except Exception:
+            return 0
+
+    def _rewrite(self, block: dict, text: str, previous: str, ctx: Context) -> int:
+        """Shared final step once (block, its raw text, the prior version to
+        diff against) are known -- identical for the tail-only and
+        whole-history scopes; only how `previous` is discovered differs."""
+        try:
             new_text = diff_against(previous, text)
             if not isinstance(new_text, str) or len(new_text) >= len(text):
                 return 0

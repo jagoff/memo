@@ -87,3 +87,28 @@ def test_an_explicit_capture_flag_off_is_never_overridden(tmp_path, monkeypatch)
     saved = JsonCrush().apply(zones, Context(state_dir=tmp_path, session_key="s"))
     assert saved == 0
     assert zones.live_messages[0]["content"][0]["content"] == big
+
+
+# --- MEMO_PROXY_CONTENT_SCOPE: whole-history (default) vs tail-only ----------
+
+
+def test_apply_crushes_a_frozen_block_under_the_default_whole_history_scope(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    monkeypatch.delenv("MEMO_CRUSHER_ENABLED", raising=False)
+    big = json.dumps([{"id": i, "text": "row " * 20} for i in range(200)])
+    zones = _zones(big)
+    zones.frozen_messages, zones.live_messages = zones.live_messages, []
+    saved = JsonCrush().apply(zones, Context(state_dir=tmp_path, session_key="s"))
+    assert saved > 0
+    assert len(zones.frozen_messages[0]["content"][0]["content"]) < len(big)
+
+
+def test_apply_leaves_a_frozen_block_untouched_under_tail_only_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    monkeypatch.delenv("MEMO_CRUSHER_ENABLED", raising=False)
+    big = json.dumps([{"id": i, "text": "row " * 20} for i in range(200)])
+    zones = _zones(big)
+    zones.frozen_messages, zones.live_messages = zones.live_messages, []
+    saved = JsonCrush().apply(zones, Context(state_dir=tmp_path, session_key="s"))
+    assert saved == 0
+    assert zones.frozen_messages[0]["content"][0]["content"] == big

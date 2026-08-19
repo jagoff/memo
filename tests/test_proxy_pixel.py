@@ -217,3 +217,28 @@ def test_apply_ignores_non_tool_result_blocks(tmp_path):
     saved = Pixel().apply(zones, _ctx(tmp_path))
     assert saved == 0
     assert zones.live_messages[0]["content"][0]["type"] == "text"
+
+
+# --- MEMO_PROXY_CONTENT_SCOPE: whole-history (default) vs tail-only ----------
+
+
+def test_apply_renders_a_frozen_block_under_the_default_whole_history_scope(tmp_path, monkeypatch):
+    pytest.importorskip("PIL")
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    output = "x" * 10_000
+    zones = _zones_with_tool_result(output)
+    zones.frozen_messages, zones.live_messages = zones.live_messages, []
+    saved = Pixel().apply(zones, _ctx(tmp_path))
+    assert saved > 0
+    assert zones.frozen_messages[0]["content"][0]["content"][0]["type"] == "image"
+
+
+def test_apply_leaves_a_frozen_block_untouched_under_tail_only_scope(tmp_path, monkeypatch):
+    pytest.importorskip("PIL")
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    output = "x" * 10_000
+    zones = _zones_with_tool_result(output)
+    zones.frozen_messages, zones.live_messages = zones.live_messages, []
+    saved = Pixel().apply(zones, _ctx(tmp_path))
+    assert saved == 0
+    assert zones.frozen_messages[0]["content"][0]["content"] == output

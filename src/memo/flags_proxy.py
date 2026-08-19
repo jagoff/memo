@@ -95,4 +95,19 @@ SPECS: tuple[FlagSpec, ...] = (
         "Render dense text blocks to PNG when the per-block profitability gate "
         "says the image costs fewer tokens. No-op without the [http] extra.",
     ),
+    _spec(
+        "MEMO_PROXY_CONTENT_SCOPE",
+        "str",
+        "all",
+        "proxy",
+        "Which messages structmap/delta/jsoncrush/toolresults/pixel are "
+        "allowed to scan and rewrite: 'all' (the whole conversation, frozen "
+        "zone included -- the aggressive default; each of these five "
+        "transforms maps a block to byte-identical output on every turn, so "
+        "widening past the live zone never rewrites what the provider already "
+        "cached) or 'tail' (only the live window -- the original conservative "
+        "scope, kept as a one-flag-away rollback). Does not affect "
+        "MEMO_PROXY_TOOL_SCHEMAS, which already scans the whole prefix.",
+        choices=("all", "tail"),
+    ),
 )

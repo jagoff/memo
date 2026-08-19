@@ -1,6 +1,13 @@
 import pytest
 
-from memo.proxy.zones import prefix_fingerprint, split, stable_head_fingerprint
+from memo.proxy.zones import (
+    Zones,
+    prefix_fingerprint,
+    scan_scope,
+    split,
+    stable_head_fingerprint,
+    whole_history_scope,
+)
 
 
 def _payload(n_messages: int) -> dict:
@@ -85,3 +92,43 @@ def test_split_never_raises_on_a_malformed_payload(bad):
     assert z.tools == []
     assert z.frozen_messages == []
     assert z.live_messages == []
+
+
+# ---------------------------------------------------------------------------
+# whole_history_scope / scan_scope
+# ---------------------------------------------------------------------------
+
+
+def test_whole_history_scope_defaults_to_true(monkeypatch):
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    assert whole_history_scope() is True
+
+
+def test_whole_history_scope_is_false_when_flag_is_tail(monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    assert whole_history_scope() is False
+
+
+def test_whole_history_scope_never_raises(monkeypatch):
+    monkeypatch.setattr(
+        "memo.flags.flag_str",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    assert whole_history_scope() is True
+
+
+def test_scan_scope_returns_only_live_messages_under_tail(monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    zones = Zones(
+        frozen_messages=[{"role": "user", "content": "old"}],
+        live_messages=[{"role": "user", "content": "new"}],
+    )
+    assert scan_scope(zones) == [{"role": "user", "content": "new"}]
+
+
+def test_scan_scope_returns_frozen_then_live_under_all(monkeypatch):
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    frozen = [{"role": "user", "content": "old"}]
+    live = [{"role": "user", "content": "new"}]
+    zones = Zones(frozen_messages=frozen, live_messages=live)
+    assert scan_scope(zones) == [*frozen, *live]

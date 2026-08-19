@@ -6,7 +6,12 @@ Measured (see `CLAUDE.md`, capture-plane): L1 SmartCrusher
 size +44.4% on the committed token-quality gate. It is a fully general
 JSON-array reducer -- score rows by IDF-weighted distinctiveness, keep the
 top-K, offload the rest to cache -- and this transform reuses it EXACTLY as
-capture does, over live tool_result blocks instead of capture content.
+capture does, over tool_result blocks instead of capture content.
+`_score_rows_by_relevance` (`capture_core.py`) is documented "pure,
+deterministic" and position-blind, so the same block always crushes to the
+same bytes -- that is what lets this run over the WHOLE conversation, not
+just the newest turns, under `MEMO_PROXY_CONTENT_SCOPE=all` (default; see
+`zones.scan_scope`).
 Originals land in the SAME crush cache `memo retrieve` already reads
 (`maybe_crush_json_capture` writes it itself, keyed by a truncated sha256
 embedded as a marker row in the returned array), so there is exactly one
@@ -66,7 +71,7 @@ from typing import Any
 from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
 from memo.proxy.plan import ZONE_LIVE, Context
-from memo.proxy.zones import Zones
+from memo.proxy.zones import Zones, scan_scope
 
 _log = logging.getLogger(__name__)
 
@@ -142,7 +147,8 @@ class JsonCrush:
 
     def apply(self, zones: Zones, ctx: Context) -> int:
         try:
-            if not zones.live_messages or not flag_bool("MEMO_PROXY_JSONCRUSH"):
+            messages = scan_scope(zones)
+            if not messages or not flag_bool("MEMO_PROXY_JSONCRUSH"):
                 return 0
             from memo.config import Config
 
@@ -154,7 +160,7 @@ class JsonCrush:
             config = Config.from_env(state_dir=ctx.state_dir)
 
             saved = 0
-            for message in zones.live_messages:
+            for message in messages:
                 if not isinstance(message, dict):
                     continue
                 content = message.get("content")

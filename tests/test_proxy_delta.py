@@ -1,5 +1,5 @@
 from memo.proxy.plan import Context
-from memo.proxy.transforms.delta import Delta, diff_against, seen_files
+from memo.proxy.transforms.delta import Delta, diff_against, read_occurrences, seen_files
 from memo.proxy.zones import Zones
 
 
@@ -244,6 +244,60 @@ def test_apply_never_raises_on_a_non_string_tool_result_content(tmp_path):
     assert saved == 0
 
 
+# --- read_occurrences: the whole-history ordered pass -----------------------
+
+
+def test_read_occurrences_marks_the_first_occurrence_of_a_path_as_none():
+    messages = _read_pair("r1", "a.py", "v1")
+    out = read_occurrences(messages)
+    assert len(out) == 1
+    _block, path, text, previous = out[0]
+    assert path == "a.py"
+    assert text == "v1"
+    assert previous is None
+
+
+def test_read_occurrences_pairs_a_reread_with_the_most_recent_prior_text():
+    messages = [*_read_pair("r1", "a.py", "v1"), *_read_pair("r2", "a.py", "v2")]
+    out = read_occurrences(messages)
+    assert len(out) == 2
+    assert out[0][3] is None  # first occurrence
+    assert out[1][2] == "v2"
+    assert out[1][3] == "v1"  # diffs against the immediately preceding occurrence
+
+
+def test_read_occurrences_is_a_pure_function_of_a_stable_prefix():
+    """The property the whole-history widening depends on: classifying
+    occurrence i must depend only on messages 0..i, never on what comes
+    after -- so appending more messages can never change an EARLIER
+    occurrence's classification or diff target."""
+    prefix = [*_read_pair("r1", "a.py", "v1"), *_read_pair("r2", "a.py", "v2")]
+    out_short = read_occurrences(prefix)
+    out_long = read_occurrences([*prefix, *_read_pair("r3", "a.py", "v3")])
+    assert out_short[0][1:] == out_long[0][1:]
+    assert out_short[1][1:] == out_long[1][1:]
+
+
+def test_read_occurrences_ignores_non_read_tools():
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "ls"}}
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "b1", "content": "file.txt"}],
+        },
+    ]
+    assert read_occurrences(messages) == []
+
+
+def test_read_occurrences_never_raises_on_malformed_messages():
+    assert read_occurrences([None, {"content": "not a list"}, {"content": [None, 42]}]) == []
+
+
 def test_apply_never_stores_a_net_larger_block_than_the_original(tmp_path):
     """A change small enough that the diff plus the recovery marker's own
     overhead (~130 bytes) is net-larger than the original re-read must be
@@ -257,3 +311,39 @@ def test_apply_never_stores_a_net_larger_block_than_the_original(tmp_path):
     assert len(stored) <= len(after)
     assert stored == after
     assert saved == 0
+
+
+# --- MEMO_PROXY_CONTENT_SCOPE: whole-history (default) vs tail-only ----------
+
+
+def test_apply_diffs_a_second_reread_entirely_within_the_frozen_zone_under_whole_history(
+    tmp_path, monkeypatch
+):
+    """Both reads of the SAME path sit in frozen_messages -- a shape the
+    tail-only scope never even looks at (it only ever touches live_messages),
+    so this is only reachable under the default whole-history scope."""
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    before = "\n".join(f"line{i}" for i in range(200))
+    after = before.replace("line100", "line100-CHANGED")
+    zones = Zones(
+        frozen_messages=[*_read_pair("r1", "a.py", before), *_read_pair("r2", "a.py", after)]
+    )
+    saved = Delta().apply(zones, _ctx(tmp_path))
+    new_text = zones.frozen_messages[3]["content"][0]["content"]
+    assert saved > 0
+    assert "line100-CHANGED" in new_text
+    assert len(new_text) < len(after)
+    # the FIRST occurrence (r1) is untouched by Delta -- StructMap's case
+    assert zones.frozen_messages[1]["content"][0]["content"] == before
+
+
+def test_apply_leaves_a_frozen_only_reread_untouched_under_tail_only_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    before = "\n".join(f"line{i}" for i in range(200))
+    after = before.replace("line100", "line100-CHANGED")
+    zones = Zones(
+        frozen_messages=[*_read_pair("r1", "a.py", before), *_read_pair("r2", "a.py", after)]
+    )
+    saved = Delta().apply(zones, _ctx(tmp_path))
+    assert saved == 0
+    assert zones.frozen_messages[3]["content"][0]["content"] == after

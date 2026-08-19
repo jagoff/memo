@@ -211,6 +211,31 @@ def test_apply_disabled_flag_skips_everything(tmp_path, monkeypatch):
     assert ToolResults().enabled() is False
 
 
+# --- MEMO_PROXY_CONTENT_SCOPE: whole-history (default) vs tail-only ----------
+
+
+def test_apply_rewrites_a_frozen_block_under_the_default_whole_history_scope(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    output = "\n".join(str(i) for i in range(2000))
+    zones = _zones_with_tool_result("some-random-cli --verbose", output)
+    zones.frozen_messages, zones.live_messages = zones.live_messages, []
+    saved = ToolResults().apply(zones, _ctx(tmp_path))
+    new_text = zones.frozen_messages[1]["content"][0]["content"]
+    assert saved > 0
+    assert "elided" in new_text
+    assert len(new_text) < len(output)
+
+
+def test_apply_leaves_a_frozen_block_untouched_under_tail_only_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    output = "\n".join(str(i) for i in range(2000))
+    zones = _zones_with_tool_result("some-random-cli --verbose", output)
+    zones.frozen_messages, zones.live_messages = zones.live_messages, []
+    saved = ToolResults().apply(zones, _ctx(tmp_path))
+    assert saved == 0
+    assert zones.frozen_messages[1]["content"][0]["content"] == output
+
+
 def test_apply_never_raises_on_malformed_live_messages(tmp_path):
     zones = Zones(
         live_messages=[None, {"role": "user", "content": "not a list"}, {"content": [None, 42]}]
