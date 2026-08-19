@@ -432,6 +432,77 @@ def test_summarize_older_ledger_rows_stay_readable(tmp_path):
     assert s["models"] == {}
 
 
+def test_roll_advances_the_on_disk_schema_of_a_pre_existing_v1_ledger(tmp_path):
+    """Part B finding 3: `LEDGER_SCHEMA` was bumped v1 -> v2 (per-model +
+    prompt-side accounting added), but `_read_ledger` returns the stored doc
+    verbatim and `roll()` never stamped the current schema back onto it -- a
+    pre-existing v1 ledger file kept claiming `schema: v1` in its own
+    `token_meter.json` forever, even once `roll()` had folded in new,
+    v2-shaped rows (`input_tok`/`cache_read_tok`/`cache_creation_tok`/
+    `models`) beside the old ones. `roll()` must stamp the ledger it writes
+    with the CURRENT `LEDGER_SCHEMA` -- the file is now unambiguously at
+    least v2-capable (every row `summarize()` reads tolerates the newer
+    keys), so its own header should say so."""
+    import json
+
+    state = tmp_path / "state"
+    state.mkdir()
+    v1_ledger = {
+        "schema": "memo.token_meter.sessions.v1",
+        "sessions": {
+            "OLD": {
+                "ts": "2026-07-01T00:00:00+00:00",
+                "n_turns": 3,
+                "answer_tok": 60,
+                "tool_tok": 40,
+                "injected_chars": 800,
+                "grounded": 1,
+            }
+        },
+    }
+    ledger_path = state / "token_meter.json"
+    ledger_path.write_text(json.dumps(v1_ledger), encoding="utf-8")
+
+    rows = [_human(), _assistant("m1", 20, model="claude-opus-5", input_tok=600)]
+    tp = tmp_path / "NEW.jsonl"
+    _write_jsonl(tp, rows)
+    tm.roll(state, "NEW", tp)
+
+    on_disk = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert on_disk["schema"] == tm.LEDGER_SCHEMA
+    assert set(on_disk["sessions"]) == {"OLD", "NEW"}  # old row survives untouched
+
+
+def test_tokens_cmd_shows_cache_lines_even_when_input_tok_is_degenerate(tmp_path):
+    """Part B finding 1: `_transcript_side_line` nested the cache-read/
+    cache-written lines inside the `input_tok > 0` gate. A build that stamps a
+    degenerate `input_tokens` (fixed 1-2/call -- `_transcript_input_side`
+    zeroes anything under 100) still has REAL cache_read/cache_creation
+    volumes; those must render regardless of whether the (separately, validly
+    zeroed) input-footprint line shows."""
+    from memo.cli import cli
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    rows = [
+        _human(),
+        _assistant(
+            "m1", 20, model="claude-opus-5", input_tok=2, cache_read=5000, cache_creation=200
+        ),
+    ]
+    tp = tmp_path / "S4.jsonl"
+    _write_jsonl(tp, rows)
+    tm.roll(state, "S4", tp)
+    assert tm.summarize(state)["input_tok"] == 0  # degenerate input_tokens zeroed, as designed
+
+    runner = CliRunner()
+    res = runner.invoke(cli, ["tokens"], env=_cli_env(tmp_path))
+    assert res.exit_code == 0
+    assert "input footprint" not in res.output  # honest zero: no footprint claim
+    assert "cache-read" in res.output
+    assert "cache-written" in res.output
+
+
 def test_tokens_cmd_shows_prompt_side_line(tmp_path):
     from memo.cli import cli
 

@@ -390,6 +390,14 @@ def roll(state_dir: Path, session_id: str, transcript_path: str | Path | None) -
         ledger = _read_ledger(state_dir)
         from datetime import UTC, datetime
 
+        # `_read_ledger` returns the on-disk doc verbatim, including a
+        # `schema` field that may predate this code (e.g. a v1 ledger written
+        # before the per-model/prompt-side fields below existed). The row
+        # this call is about to write is always CURRENT-schema-shaped, so the
+        # file as a whole is now at least that capable -- stamp the header
+        # accordingly rather than leaving it to claim a stale version while
+        # its rows have already moved on.
+        ledger["schema"] = LEDGER_SCHEMA
         ledger.setdefault("sessions", {})[session_id] = {
             "ts": datetime.now(UTC).isoformat(timespec="seconds"),
             "n_turns": su.n_turns,

@@ -57,19 +57,33 @@ def _fmt_tokens(tokens: float) -> str:
 def _transcript_side_line(measured: dict) -> str:
     """The measured prompt-side surface (ccusage accounting): input footprint,
     cache-read/created volumes, and per-model output spend. Empty when the
-    transcripts never carried the richer `usage` fields."""
+    transcripts never carried the richer `usage` fields.
+
+    The three `*_tok` fields are independent measurements and must be gated
+    independently: `input_tok` is `token_meter._transcript_input_side`'s
+    per-session PEAK of the Messages API's `input_tokens` field, summed
+    across sessions by `summarize()` -- and `input_tokens` itself is the
+    UNCACHED remainder of a call's prompt, not its full size (real, billed
+    volume either way, but not "the prompt"; see the identical finding
+    already fixed on the proxy A/B side, `proxy/meter.py`'s prompt-cost
+    weighting). `cache_read_tok`/`cache_creation_tok` are the two counters
+    that actually carry a cache-heavy session's real prompt volume, and used
+    to be nested inside `input_tok > 0` -- so a session with a legitimately
+    (or a `_transcript_input_side`-zeroed, degenerate-build) small
+    `input_tok` hid real, non-zero cache volumes entirely.
+    """
     parts = []
     if int(measured.get("input_tok", 0)) > 0:
         parts.append(
             f"[bold]{_fmt_tokens(measured['input_tok'])}[/bold] tok input footprint "
-            f"([dim]max prompt[/dim])"
+            f"([dim]uncached only, summed peaks -- not full prompt[/dim])"
         )
-        if int(measured.get("cache_read_tok", 0)) > 0:
-            parts.append(f"[bold]{_fmt_tokens(measured['cache_read_tok'])}[/bold] tok cache-read")
-        if int(measured.get("cache_creation_tok", 0)) > 0:
-            parts.append(
-                f"[bold]{_fmt_tokens(measured['cache_creation_tok'])}[/bold] tok cache-written"
-            )
+    if int(measured.get("cache_read_tok", 0)) > 0:
+        parts.append(f"[bold]{_fmt_tokens(measured['cache_read_tok'])}[/bold] tok cache-read")
+    if int(measured.get("cache_creation_tok", 0)) > 0:
+        parts.append(
+            f"[bold]{_fmt_tokens(measured['cache_creation_tok'])}[/bold] tok cache-written"
+        )
     models = measured.get("models") or {}
     if models:
         parts.append(
