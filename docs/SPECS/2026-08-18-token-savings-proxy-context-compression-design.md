@@ -15,7 +15,7 @@ installed 4.12.2 binary and this machine's live logs.
 
 | # | Finding | Evidence |
 |---|---|---|
-| 1 | memo's own MCP tool schemas are its largest token cost | 41 tools, 46,562 B ≈ **11,640 tok in every request** — 5.8% of a 200k window, paid whether or not a tool is called. Largest: `memo_save` 785, `memo_graph` 754, `memo_search` 678 |
+| 1 | memo's own MCP tool schemas are its largest token cost | 43 tools ≈ **9.8k tok in every request** (wire-format Anthropic `tools` array; an earlier measurement of 41 tools, 46,562 B ≈ 11,640 tok counted the full MCP `Tool` protocol object incl. `outputSchema`, ~19% heavier than what's actually on the wire, and is corrected here) — 4.9% of a 200k window, paid whether or not a tool is called. Largest: `memo_save` 785, `memo_graph` 754, `memo_search` 678 |
 | 2 | The recall injection is cheap and is not the problem | `context_cost.log`, n=1281: mean 889 chars ≈ **222 tok/turn** |
 | 3 | 92% of output spend is the tool loop, where memo has no presence | memo's own meter: `1.25M tok answer` vs `15.15M tok tool-loops`. `hooks/hooks.json` registers SessionStart, UserPromptSubmit, Stop, PreCompact — **no `PreToolUse`, no `PostToolUse`** |
 | 4 | `memo tokens` contradicts itself on one screen | Measured panel: `1,608 tok/turn cost` (memo costs). Estimated panel: `2.00M tokens saved`. The latter is `grounded × 350 + consults × 200` from `MEMO_ROI_TOKENS_PER_GROUNDED` / `_PER_CONSULT` — hardcoded constants, not measurement |
@@ -157,7 +157,8 @@ unit-testable against a fixture payload with no proxy running.
 
 Ordered by expected saving, each grounded in a measured number where one exists.
 
-**1. Tool-schema pruning** — the measured 11,640 tok/request. The proxy keeps in
+**1. Tool-schema pruning** — the measured ~9.8k tok/request (43 tools, wire-format
+`tools` array; see the corrected finding #1 above). The proxy keeps in
 the payload only tools called at least once in the current project's last
 `MEMO_PROXY_TOOL_WINDOW_SESSIONS` sessions (default 20), plus a small
 always-present `memo_tool_docs(name)` that hydrates a pruned schema on demand.

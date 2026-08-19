@@ -1,9 +1,14 @@
 """Prune memo's own MCP tool schemas to the ones this project actually uses.
 
-Measured 2026-08-18: 41 memo tools cost 46,562 B ~= 11,640 tokens in *every*
-request, paid whether or not a tool is called. Only memo's own tools are
-pruned — pruning another server's schema would break a tool memo does not
-own, so anything not named `memo_*` passes through untouched.
+Measured 2026-08-18: 43 memo tools cost ~9.8k tokens in *every* request, paid
+whether or not a tool is called. That figure is the wire-format Anthropic
+`tools` array actually sent to the provider — an earlier measurement (41
+tools, 46,562 B ~= 11,640 tokens) counted the full MCP `Tool` protocol object
+including `outputSchema`, which is ~19% heavier than what's really on the
+wire; that inflated number is corrected here so nobody quotes an inflated
+saving. Only memo's own tools are pruned — pruning another server's schema
+would break a tool memo does not own, so anything not named `memo_*` passes
+through untouched.
 
 The retained set is derived from usage history and is FROZEN at the first
 request of a session, then reused byte-identically for the rest of it — the

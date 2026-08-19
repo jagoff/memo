@@ -1634,7 +1634,10 @@ Each transform is one task, added to `REGISTRY`, measured against the holdout Ph
 
 ### Task 9: Tool-schema pruning
 
-The measured 11,640 tokens per request. Prefix zone, so session-stability is mandatory.
+The measured ~9.8k tokens per request (43 tools, wire-format `tools` array — see
+the design doc's corrected finding #1; an earlier measurement of 11,640 tokens
+double-counted the full MCP `Tool` protocol object's `outputSchema`). Prefix
+zone, so session-stability is mandatory.
 
 **Files:**
 - Create: `src/memo/proxy/transforms/__init__.py`, `src/memo/proxy/transforms/toolschemas.py`
@@ -1751,9 +1754,13 @@ def make_zones(tool_names: list[str]) -> Zones:
 # src/memo/proxy/transforms/toolschemas.py
 """Prune memo's own MCP tool schemas to the ones this project actually uses.
 
-Measured 2026-08-18: 41 memo tools cost 46,562 B ~= 11,640 tokens in *every*
-request, paid whether or not a tool is called. Only memo's own tools are pruned
-— pruning another server's schema would break a tool memo does not own.
+Measured 2026-08-18: 43 memo tools cost ~9.8k tokens in *every* request (the
+wire-format Anthropic `tools` array), paid whether or not a tool is called.
+An earlier measurement (41 tools, 46,562 B ~= 11,640 tokens) counted the
+full MCP `Tool` protocol object including `outputSchema`, ~19% heavier than
+what's actually sent — corrected here so nobody quotes the inflated figure.
+Only memo's own tools are pruned — pruning another server's schema would
+break a tool memo does not own.
 
 The retained set is derived from usage history and is stable for a whole
 session, so the cached prefix changes once rather than every turn.
