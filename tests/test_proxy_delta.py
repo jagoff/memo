@@ -1,5 +1,12 @@
 from memo.proxy.plan import Context
-from memo.proxy.transforms.delta import Delta, diff_against, read_occurrences, seen_files
+from memo.proxy.transforms.delta import (
+    Delta,
+    _extract_bash_read_path,
+    _read_tool_paths,
+    diff_against,
+    read_occurrences,
+    seen_files,
+)
 from memo.proxy.zones import Zones
 
 
@@ -29,6 +36,149 @@ def test_diff_against_never_raises_on_non_string_current():
     """`current` reaching `.splitlines()` as a non-string (a malformed
     upstream block) must fall back to returning it as-is, not propagate."""
     assert diff_against("previous text", None) is None  # type: ignore[arg-type]
+
+
+# --- _extract_bash_read_path: identity for a plain single-file Bash read -----
+#
+# Ground truth: a real captured payload where the model read a source file
+# via `Bash` (`cat -n <path>`), never `Read` -- `_read_tool_paths` was blind
+# to it entirely, so neither Delta nor StructMap ever saw a path for that
+# block. This only ever supplies IDENTITY; it never decides what to DO with
+# the content (that's `structmap.sniff_signatures`'s job, content-shape
+# based, not tool-name based).
+
+
+def test_extract_bash_read_path_handles_plain_cat():
+    assert _extract_bash_read_path("cat src/memo/proxy/server.py") == "src/memo/proxy/server.py"
+
+
+def test_extract_bash_read_path_handles_cat_dash_n():
+    """The exact shape from the real captured payload."""
+    assert _extract_bash_read_path("cat -n src/memo/proxy/server.py") == "src/memo/proxy/server.py"
+
+
+def test_extract_bash_read_path_handles_head():
+    assert _extract_bash_read_path("head file.py") == "file.py"
+
+
+def test_extract_bash_read_path_handles_head_dash_n():
+    assert _extract_bash_read_path("head -n 50 file.py") == "file.py"
+
+
+def test_extract_bash_read_path_handles_tail():
+    assert _extract_bash_read_path("tail file.py") == "file.py"
+
+
+def test_extract_bash_read_path_handles_tail_dash_n():
+    assert _extract_bash_read_path("tail -n 50 file.py") == "file.py"
+
+
+def test_extract_bash_read_path_handles_sed_dash_n():
+    assert _extract_bash_read_path("sed -n '10,50p' file.py") == "file.py"
+
+
+def test_extract_bash_read_path_tolerates_a_binary_path_prefix():
+    assert _extract_bash_read_path("/bin/cat file.py") == "file.py"
+
+
+def test_extract_bash_read_path_rejects_a_pipe():
+    assert _extract_bash_read_path("cat file.py | head") is None
+
+
+def test_extract_bash_read_path_rejects_a_redirect():
+    assert _extract_bash_read_path("cat file.py > out.txt") is None
+
+
+def test_extract_bash_read_path_rejects_a_glob():
+    assert _extract_bash_read_path("cat *.py") is None
+
+
+def test_extract_bash_read_path_rejects_multiple_files():
+    assert _extract_bash_read_path("cat a.py b.py") is None
+
+
+def test_extract_bash_read_path_rejects_multiple_files_with_flag():
+    assert _extract_bash_read_path("cat -n a.py b.py") is None
+
+
+def test_extract_bash_read_path_rejects_command_substitution():
+    assert _extract_bash_read_path("cat $(echo file.py)") is None
+
+
+def test_extract_bash_read_path_rejects_an_unrelated_command():
+    assert _extract_bash_read_path("ls") is None
+    assert _extract_bash_read_path("wc -l src/memo/proxy/*.py") is None
+    assert _extract_bash_read_path("grep -n class file.py") is None
+
+
+def test_extract_bash_read_path_rejects_bare_cat_with_no_args():
+    assert _extract_bash_read_path("cat") is None
+
+
+def test_extract_bash_read_path_never_raises_on_malformed_input():
+    assert _extract_bash_read_path("") is None
+    assert _extract_bash_read_path("cat 'unterminated") is None
+    assert _extract_bash_read_path(None) is None  # type: ignore[arg-type]
+
+
+def test_read_tool_paths_maps_a_bash_cat_n_tool_use():
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "b1",
+                    "name": "Bash",
+                    "input": {"command": "cat -n src/memo/proxy/server.py"},
+                }
+            ],
+        }
+    ]
+    assert _read_tool_paths(messages) == {"b1": "src/memo/proxy/server.py"}
+
+
+def test_read_tool_paths_ignores_a_bash_command_it_cannot_parse():
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "b1",
+                    "name": "Bash",
+                    "input": {"command": "wc -l src/memo/proxy/*.py"},
+                }
+            ],
+        }
+    ]
+    assert _read_tool_paths(messages) == {}
+
+
+def test_seen_files_recognizes_a_bash_cat_read_by_path():
+    """Delta's identity now comes from the SAME map regardless of whether
+    the read happened via `Read` or `Bash cat` -- a re-read via either tool
+    of a path already seen via the other is still a re-read."""
+    zones = Zones(
+        frozen_messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "b1",
+                        "name": "Bash",
+                        "input": {"command": "cat -n a.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "b1", "content": "v1"}],
+            },
+        ]
+    )
+    assert seen_files(zones) == {"a.py": "v1"}
 
 
 # --- seen_files: scoped to frozen_messages only -------------------------------

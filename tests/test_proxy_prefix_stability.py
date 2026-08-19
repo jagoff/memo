@@ -26,6 +26,17 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _REAL_SOURCE = (_REPO_ROOT / "src/memo/proxy/meter.py").read_text(encoding="utf-8")
 _CHANGED_SOURCE = _REAL_SOURCE.replace("def append(", "def append_CHANGED(", 1)
 
+# A second, distinct real file, read the way the ground-truth captured
+# payload actually showed the model reading source: `Bash cat -n`, never
+# `Read` (see structmap.py's module docstring). Rendered numbered exactly
+# like `_strip_line_numbers` expects to de-number.
+_SNIFF_SOURCE = (_REPO_ROOT / "src/memo/proxy/tool_schema_cache.py").read_text(encoding="utf-8")
+
+
+def _numbered(text: str) -> str:
+    return "\n".join(f"{i:>6}\t{line}" for i, line in enumerate(text.splitlines(), start=1))
+
+
 _SYSTEM = [{"type": "text", "text": "You are a careful coding assistant."}]
 _TOOLS = [
     {
@@ -167,7 +178,36 @@ def _turn_5() -> list[dict]:
     ]
 
 
-_TURN_CHUNKS = [_turn_1(), _turn_2(), _turn_3(), _turn_4(), _turn_5()]
+def _turn_6() -> list[dict]:
+    """A real file read via `Bash cat -n`, never `Read` -- the ground-truth
+    shape (structmap.py's module docstring) that path-extraction + shape
+    sniffing exists for. No `Read` tool_use anywhere in this turn, so any
+    compression here can only come from `_extract_bash_read_path` +
+    `signatures()`'s de-numbering fallback."""
+    return [
+        {"role": "assistant", "content": "Fetched the data file."},
+        {"role": "user", "content": "Now show me the tool schema cache module."},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "c1",
+                    "name": "Bash",
+                    "input": {"command": "cat -n src/memo/proxy/tool_schema_cache.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": _numbered(_SNIFF_SOURCE)}
+            ],
+        },
+    ]
+
+
+_TURN_CHUNKS = [_turn_1(), _turn_2(), _turn_3(), _turn_4(), _turn_5(), _turn_6()]
 
 
 def _payload(turn: int) -> bytes:
@@ -215,6 +255,16 @@ def test_the_emitted_prefix_is_byte_identical_for_every_earlier_turn(tmp_path, m
     final_first_read = outputs[-1]["messages"][2]["content"][0]["content"]
     assert len(final_first_read) < len(_REAL_SOURCE)
     assert "memo_crush_retrieve" in final_first_read
+
+    # Same check for turn 6's Bash `cat -n` read -- no `Read` tool_use
+    # anywhere in that turn, so this only compresses via
+    # `_extract_bash_read_path` + `signatures()`'s de-numbering fallback.
+    # It becomes the live tail on the very turn it's introduced (turn 6 of
+    # 6), so this doubles as proof it compresses on first sight too, not
+    # only once frozen.
+    bash_read = outputs[-1]["messages"][-1]["content"][0]["content"]
+    assert len(bash_read) < len(_numbered(_SNIFF_SOURCE))
+    assert "memo_crush_retrieve" in bash_read
 
 
 def test_tail_only_scope_reverts_a_block_to_raw_once_it_leaves_the_live_window(

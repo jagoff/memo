@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import difflib
 import logging
+import re
+import shlex
 
 from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
@@ -52,10 +54,67 @@ from memo.proxy.zones import Zones, whole_history_scope
 _log = logging.getLogger(__name__)
 
 _READ_TOOL_NAME = "Read"
+_BASH_TOOL_NAME = "Bash"
 # Kept intentionally short: this replaces a full re-read, and needs to stay
 # cheaper than the file even when the file itself is tiny (see
 # test_an_unchanged_reread_collapses_to_a_notice in test_proxy_delta.py).
 _UNCHANGED_NOTICE = "[memo: unchanged]"
+
+# Anywhere in the raw command text, any of these means "not an unambiguous
+# single-file read" -- a pipe, redirect, glob, substitution, or subshell.
+# `_extract_bash_read_path` skips rather than guesses: extracting the WRONG
+# path would hand Delta a false identity, diffing unrelated content against
+# each other under one path.
+_UNSAFE_COMMAND_CHARS = frozenset("|&;<>*?$`(){}[]~\n")
+
+_LINE_COUNT_RE = re.compile(r"^-?\d+$")
+
+
+def _extract_bash_read_path(command: str) -> str | None:
+    """The single file argument of an unambiguous, single-file Bash read --
+    `cat X`, `cat -n X`, `head [-n N] X`, `tail [-n N] X`, `sed -n SCRIPT X`.
+
+    None for anything else: a pipe, a redirect, a glob, more than one path,
+    an unrecognized command, or a command `shlex` cannot even tokenize. This
+    is not a shell interpreter and never guesses -- ground truth for why it
+    exists: a real captured payload showed the model reading a source file
+    via `cat -n <path>`, never `Read`, so `_read_tool_paths` (below) was
+    blind to it and neither Delta nor StructMap ever saw a path for that
+    block.
+    """
+    try:
+        if not isinstance(command, str) or not command.strip():
+            return None
+        if any(ch in command for ch in _UNSAFE_COMMAND_CHARS):
+            return None
+        tokens = shlex.split(command)
+    except Exception:
+        return None
+    if len(tokens) < 2:
+        return None
+    prog = tokens[0].rsplit("/", 1)[-1]
+    rest = tokens[1:]
+
+    if prog == "cat":
+        if len(rest) == 1:
+            return rest[0]
+        if len(rest) == 2 and rest[0] == "-n":
+            return rest[1]
+        return None
+
+    if prog in ("head", "tail"):
+        if len(rest) == 1:
+            return rest[0]
+        if len(rest) == 3 and rest[0] == "-n" and _LINE_COUNT_RE.match(rest[1]):
+            return rest[2]
+        return None
+
+    if prog == "sed":
+        if len(rest) == 3 and rest[0] == "-n":
+            return rest[2]
+        return None
+
+    return None
 
 
 def _block_text(block: dict) -> str:
@@ -80,7 +139,17 @@ def _set_block_text(block: dict, text: str) -> None:
 
 
 def _read_tool_paths(messages: list) -> dict[str, str]:
-    """Map `tool_use_id -> file_path` for every `Read` tool_use block."""
+    """Map `tool_use_id -> file_path` for every `Read` tool_use block, plus
+    every `Bash` tool_use block whose command is an unambiguous single-file
+    read (`_extract_bash_read_path`).
+
+    The tool's name only ever supplies IDENTITY here -- whether a block's
+    CONTENT is actually worth treating as source is a separate, content-shape
+    question (`structmap.sniff_signatures`), independent of how (or whether)
+    a path was found. A path found here is strictly better evidence than a
+    sniff when both are available: `_language_for` on a real extension, and
+    Delta's diff identity, both need it.
+    """
     out: dict[str, str] = {}
     try:
         for message in messages:
@@ -92,14 +161,21 @@ def _read_tool_paths(messages: list) -> dict[str, str]:
             for block in content:
                 if not isinstance(block, dict) or block.get("type") != "tool_use":
                     continue
-                if block.get("name") != _READ_TOOL_NAME:
-                    continue
                 tool_id = block.get("id")
                 block_input = block.get("input")
                 if not isinstance(tool_id, str) or not isinstance(block_input, dict):
                     continue
-                path = block_input.get("file_path")
-                if isinstance(path, str) and path:
+                name = block.get("name")
+                path: str | None = None
+                if name == _READ_TOOL_NAME:
+                    candidate = block_input.get("file_path")
+                    if isinstance(candidate, str) and candidate:
+                        path = candidate
+                elif name == _BASH_TOOL_NAME:
+                    command = block_input.get("command")
+                    if isinstance(command, str):
+                        path = _extract_bash_read_path(command)
+                if path:
                     out[tool_id] = path
     except Exception:
         return {}

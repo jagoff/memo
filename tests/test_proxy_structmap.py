@@ -1,5 +1,11 @@
 from memo.proxy.plan import Context
-from memo.proxy.transforms.structmap import StructMap, _language_for, signatures
+from memo.proxy.transforms.structmap import (
+    StructMap,
+    _language_for,
+    _strip_line_numbers,
+    signatures,
+    sniff_signatures,
+)
 from memo.proxy.zones import Zones
 
 SRC = '''
@@ -225,6 +231,121 @@ def test_an_async_decorated_one_liner_keeps_its_def_line():
     assert "async def fetch(url: str) -> str:" in out
 
 
+# --- _strip_line_numbers / de-numbered ast.parse fallback --------------------
+#
+# Ground truth: a real captured payload showed the model reading a source
+# file via `Bash` (`cat -n <path>`) -- its output is "<n> <line>" per line,
+# which `ast.parse` rejects outright. Stripping the numbering back off (only
+# when EVERY line has it -- never a partial/coincidental match) lets a
+# `cat -n` read parse exactly as if it had been read clean.
+
+
+def _numbered(text: str) -> str:
+    """A `cat -n`-shaped rendering of `text` (4-wide right-justified line
+    number + one space + content), matching the real captured payload's own
+    format byte-for-byte in spirit, though not in exact width -- the
+    stripping regex is deliberately width-agnostic."""
+    return "\n".join(f"{i:>4} {line}" for i, line in enumerate(text.splitlines(), start=1))
+
+
+def test_strip_line_numbers_recovers_the_original_when_every_line_is_numbered():
+    # `_numbered`/`_strip_line_numbers` both go through `splitlines()`, which
+    # discards information about a final trailing newline on either side of
+    # the round trip -- irrelevant to `ast.parse`, so compared with it
+    # stripped from both sides here.
+    assert _strip_line_numbers(_numbered(SRC)) == SRC.rstrip("\n")
+
+
+def test_strip_line_numbers_bails_when_any_line_lacks_a_number():
+    """A single non-numbered line is enough to call this "not actually
+    numbered output" and refuse to touch it, rather than mangling arbitrary
+    text that happens to start some OTHER line with a digit."""
+    text = "def f():\n    return 1\n"
+    assert _strip_line_numbers(text) is None
+
+
+def test_strip_line_numbers_returns_none_for_empty_text():
+    assert _strip_line_numbers("") is None
+
+
+def test_signatures_parses_a_cat_n_numbered_python_file():
+    """The exact shape from the real captured payload: `signatures()` must
+    transparently de-number and still produce the same reduction it would
+    have for a clean read."""
+    out = signatures(_numbered(BIG_SRC), "python")
+    assert out == signatures(BIG_SRC, "python")
+    assert len(out) < len(_numbered(BIG_SRC))
+    assert "total += j" not in out
+
+
+def test_signatures_leaves_genuinely_unparseable_numbered_looking_text_unchanged():
+    """De-numbering is a FALLBACK, not a license to mangle text that merely
+    starts some lines with digits -- if even the stripped candidate doesn't
+    parse, fall open exactly as the plain case does."""
+    text = "1 not python(:\n2 still broken\n"
+    assert signatures(text, "python") == text
+
+
+# --- sniff_signatures: content-shape detection, no path required -------------
+#
+# `delta._read_tool_paths` only ever gives IDENTITY for a `Read` or a Bash
+# command matching `_extract_bash_read_path`'s narrow grammar. Everything
+# else -- `Grep -A`, a piped Bash command, any future tool -- has no path at
+# all. `sniff_signatures` is the fallback: the content's own SHAPE, not the
+# tool that produced it, decides whether it is source.
+
+
+def test_sniff_signatures_compresses_a_large_pathless_python_blob():
+    big = "import os\n\n\n" + BIG_SRC  # comfortably over the size floor
+    out = sniff_signatures(big)
+    assert out is not None
+    assert len(out) < len(big)
+    assert "total += j" not in out
+
+
+def test_sniff_signatures_returns_none_below_the_size_floor():
+    """A tiny Python-shaped blob is real source but not worth the extra
+    false-positive risk of sniffing without a known path -- the size floor
+    exists for exactly this shape, not just genuinely non-source content."""
+    tiny = "def f():\n    return 1\n"
+    assert sniff_signatures(tiny) is None
+
+
+def test_sniff_signatures_returns_none_for_unparseable_prose():
+    prose = ("This is a long line of ordinary English prose, not code. " * 50) + "\n"
+    assert len(prose) > 2000
+    assert sniff_signatures(prose) is None
+
+
+def test_sniff_signatures_returns_none_for_a_large_json_object():
+    """A JSON object is also a valid Python dict-literal EXPRESSION --
+    `ast.parse` accepts it -- but it has no import/def/class, so
+    `signatures()`'s own emptiness guard already refuses it. This is exactly
+    the "log/config/JSON that happens to be valid Python" risk the brief
+    warns about."""
+    import json
+
+    blob = json.dumps({f"key_{i}": "value " * 10 for i in range(200)})
+    assert len(blob) > 2000
+    assert sniff_signatures(blob) is None
+
+
+def test_sniff_signatures_returns_none_when_the_reduction_is_not_material():
+    """Parses, and genuinely has one real function -- but it's dwarfed by
+    verbatim-kept import lines, so the overall reduction barely moves the
+    needle. Without a known path/extension as corroborating evidence, that's
+    too thin to trust."""
+    imports = "\n".join(f"import module_{i}_with_a_fairly_long_name" for i in range(150))
+    src = imports + "\n\n\ndef f():\n    return 1\n"
+    assert len(src) > 2000
+    assert sniff_signatures(src) is None
+
+
+def test_sniff_signatures_never_raises_on_non_string_input():
+    assert sniff_signatures(None) is None  # type: ignore[arg-type]
+    assert sniff_signatures(12345) is None  # type: ignore[arg-type]
+
+
 def test_language_for_maps_py_extension_to_python():
     assert _language_for("src/memo/foo.py") == "python"
     assert _language_for("README.md") == ""
@@ -413,6 +534,138 @@ def test_apply_never_raises_on_malformed_live_messages(tmp_path):
     )
     saved = StructMap().apply(zones, _ctx(tmp_path))
     assert saved == 0
+
+
+# --- StructMap transform: shape-based detection, no `Read` required ----------
+
+
+def _bash_cat_n_zones(file_path: str, content: str, tool_use_id: str = "b1") -> Zones:
+    return Zones(
+        live_messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_use_id,
+                        "name": "Bash",
+                        "input": {"command": f"cat -n {file_path}"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": _numbered(content),
+                    }
+                ],
+            },
+        ]
+    )
+
+
+def _pathless_zones(content: str, tool_use_id: str = "g1") -> Zones:
+    """A tool_result with no extractable identity at all -- e.g. `Grep`, or
+    a Bash command outside `_extract_bash_read_path`'s narrow grammar."""
+    return Zones(
+        live_messages=[
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_use_id,
+                        "name": "Grep",
+                        "input": {"pattern": "def ", "output_mode": "content"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
+                ],
+            },
+        ]
+    )
+
+
+def test_apply_compresses_a_bash_cat_n_read_of_a_python_file_tail_scope(tmp_path, monkeypatch):
+    """Ground truth: a real captured payload showed the model reading a
+    source file via `cat -n <path>`, never `Read`. Path extraction
+    (`delta._extract_bash_read_path`) plus de-numbered parsing
+    (`_strip_line_numbers`) together must compress it exactly like a `Read`
+    of the same file would have."""
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    zones = _bash_cat_n_zones("src/pkg/mod.py", BIG_SRC)
+    saved = StructMap().apply(zones, _ctx(tmp_path))
+    new_text = zones.live_messages[1]["content"][0]["content"]
+    assert saved > 0
+    assert len(new_text) < len(_numbered(BIG_SRC))
+    assert "total += j" not in new_text
+
+
+def test_apply_compresses_a_bash_cat_n_read_of_a_python_file_whole_history_scope(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    zones = _bash_cat_n_zones("src/pkg/mod.py", BIG_SRC)
+    saved = StructMap().apply(zones, _ctx(tmp_path))
+    new_text = zones.live_messages[1]["content"][0]["content"]
+    assert saved > 0
+    assert len(new_text) < len(_numbered(BIG_SRC))
+    assert "total += j" not in new_text
+
+
+def test_apply_sniffs_a_pathless_large_python_blob_tail_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_CONTENT_SCOPE", "tail")
+    big = "import os\n\n\n" + BIG_SRC
+    zones = _pathless_zones(big)
+    saved = StructMap().apply(zones, _ctx(tmp_path))
+    new_text = zones.live_messages[1]["content"][0]["content"]
+    assert saved > 0
+    assert len(new_text) < len(big)
+    assert "total += j" not in new_text
+
+
+def test_apply_sniffs_a_pathless_large_python_blob_whole_history_scope(tmp_path, monkeypatch):
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    big = "import os\n\n\n" + BIG_SRC
+    zones = _pathless_zones(big)
+    saved = StructMap().apply(zones, _ctx(tmp_path))
+    new_text = zones.live_messages[1]["content"][0]["content"]
+    assert saved > 0
+    assert len(new_text) < len(big)
+    assert "total += j" not in new_text
+
+
+def test_apply_leaves_a_pathless_small_python_snippet_untouched(tmp_path, monkeypatch):
+    """Below the sniff size floor -- real source, but not worth the
+    false-positive risk without a known path."""
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    tiny = "def f():\n    return 1\n"
+    zones = _pathless_zones(tiny)
+    saved = StructMap().apply(zones, _ctx(tmp_path))
+    new_text = zones.live_messages[1]["content"][0]["content"]
+    assert saved == 0
+    assert new_text == tiny
+
+
+def test_apply_leaves_a_pathless_large_json_blob_untouched(tmp_path, monkeypatch):
+    """A JSON object also parses as a Python dict-literal expression, but
+    has no import/def/class -- must never be mistaken for source."""
+    import json
+
+    monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
+    blob = json.dumps({f"key_{i}": "value " * 10 for i in range(200)})
+    zones = _pathless_zones(blob)
+    saved = StructMap().apply(zones, _ctx(tmp_path))
+    new_text = zones.live_messages[1]["content"][0]["content"]
+    assert saved == 0
+    assert new_text == blob
 
 
 def test_apply_never_stores_a_net_larger_block_than_the_original(tmp_path):
