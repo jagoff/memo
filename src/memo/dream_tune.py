@@ -63,6 +63,10 @@ _GRAPH_ENABLED = "MEMO_GRAPH_SIGNAL_ENABLED"
 _GRAPH_ALPHA = "MEMO_GRAPH_SIGNAL_ALPHA"
 _GRAPH_BASELINE = "dream_graph_baseline.json"
 _MANAGED_GRAPH_SIGNAL_KEYS = (_GRAPH_ENABLED, _GRAPH_ALPHA)
+# Names a PREVIOUS version wrote into the tuned overlay. They are no longer
+# registered flags (retired in 4.13.3 — every one was an inert compatibility
+# switch), but an overlay written before that upgrade can still carry them, and
+# leaving them there would make `memo config validate` report unknown vars.
 _LEGACY_GRAPH_OVERLAY_KEYS = (
     "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT",
     "MEMO_GRAPH_RETRIEVAL_ENABLED",

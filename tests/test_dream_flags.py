@@ -387,3 +387,41 @@ def test_measure_flag_pins_env_through_eval(monkeypatch, enabled):
     assert seen["pins"][_FLAG] == ("1" if enabled else "0")
     assert ("MEMO_TEST_EXTRA" in seen["pins"]) is enabled
     assert os.environ.get(_FLAG) is None  # pins restored after the run
+
+
+def test_retired_compatibility_flags_are_gone() -> None:
+    """Inert switches were accepted "for compatibility" long after the serving
+    paths that read them were deleted — a knob a reader could reasonably
+    believe did something. Retired in 4.13.3; nothing may reintroduce them.
+    """
+    from memo.flags import REGISTRY
+
+    retired = {
+        "MEMO_GRAPH_RETRIEVAL_ENABLED",
+        "MEMO_GRAPH_EXPANSION_ENABLED",
+        "MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED",
+        "MEMO_GRAPH_OUTCOME_WEIGHT",
+        "MEMO_GRAPH_DENSITY_BOOST",
+        "MEMO_GRAPH_FALLBACK_MIN_HITS",
+        "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
+        "MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS",
+    }
+    assert not (retired & set(REGISTRY)), "a retired compatibility flag came back"
+    assert not (retired & set(df.GATES)), "a retired flag still declares a graduation gate"
+
+
+def test_a_stale_retired_flag_is_not_reported_as_a_typo(monkeypatch) -> None:
+    """An upgrade must not turn memo's own retired names into a scary error.
+
+    `unknown_memo_vars` exists to catch typos. A retired flag in an old config
+    or tuned overlay is stale, not mistyped — and memo shipped the name.
+    """
+    from memo.flags import unknown_memo_vars
+
+    env = {"MEMO_GRAPH_RETRIEVAL_ENABLED": "1", "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED": "1"}
+    assert unknown_memo_vars(env) == []
+
+    # A real typo of the same name is still reported.
+    assert unknown_memo_vars({"MEMO_GRAPH_RETRIVAL_ENABLED": "1"}) == [
+        "MEMO_GRAPH_RETRIVAL_ENABLED"
+    ]

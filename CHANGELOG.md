@@ -9,6 +9,26 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.13.3] - 2026-08-18
+
+### Removed
+
+- Eight inert compatibility flags, each advertising behaviour whose serving path
+  had already been deleted: `MEMO_GRAPH_RETRIEVAL_ENABLED`,
+  `MEMO_GRAPH_EXPANSION_ENABLED`, `MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`,
+  `MEMO_GRAPH_OUTCOME_WEIGHT`, `MEMO_GRAPH_DENSITY_BOOST`,
+  `MEMO_GRAPH_FALLBACK_MIN_HITS`, `MEMO_DREAM_RETRIEVAL_TUNE_ENABLED` and
+  `MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS`. A knob that appears in `memo config
+  flags`, accepts a value and does nothing is worse than no knob. Registry:
+  483 → 475 flags, and their graduation gates are gone with them.
+
+### Fixed
+
+- A stale retired flag in a Markdown config, a tuned overlay or the environment
+  is now ignored instead of reported by `memo config validate` as `unknown
+  MEMO_* var (typo?)` — these are names memo itself shipped. A real typo of the
+  same name is still caught.
+
 ## [4.13.2] - 2026-08-18
 
 ### Fixed
