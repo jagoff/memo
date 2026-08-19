@@ -392,9 +392,9 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_RECALL_GAP_THRESHOLD",
         "float",
-        0.10,
+        0.50,
         "recall",
-        "If >0, reduce injected memories to the top-1 when the score gap between rank-1 and rank-2 exceeds this value. Prevents a strong top hit from dragging in 2 weak tail hits. 0 = disabled.",
+        "If >0, reduce injected memories to the top-1 when rank-2 falls this FRACTION of rank-1 below it ((s1-s2)/s1). 0.5 = trim only when rank-2 scores under half of rank-1. Relative, not absolute: the score carries multiplicative boosts and is not a cosine. 0 = disabled.",
         min_val=0.0,
         max_val=1.0,
     ),

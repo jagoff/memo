@@ -4,7 +4,7 @@ Docker image runs memo's **CPU-only backend** — ideal for Linux, testing, or c
 
 > For full memo (reranking + LLM verbs), use native install on Apple Silicon Mac:
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | bash
+> curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | bash
 > ```
 
 ## Quick start (10 seconds)
@@ -181,14 +181,17 @@ docker compose up -d
 
 **Search returns no results:**
 - Verify memories were saved: `memo list`
-- Check search mode: `memo config validate | grep SEARCH_MODE`
+- Check the resolved flags: `memo config show` (`memo config validate` only reports typos/unknown vars, it prints no values)
 - Try `memo reindex` to rebuild the index
 
 ## Image tags
 
 - `latest` — latest release (stable)
-- `vX.Y.Z` — pinned release
-- `dev` — bleeding edge (master branch, unstable)
+- `X.Y.Z` — pinned release (semver, no `v` prefix — the workflow's
+  `type=semver,pattern={{version}}` strips it)
+- `sha-<short>` — the exact commit a release was built from
+
+Publishing is tag-triggered (`v*`), so there is no `dev`/master tag.
 
 Pull images from `ghcr.io/jagoff/memo:<tag>`.
 

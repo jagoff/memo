@@ -58,6 +58,10 @@ _MAX_SEARCH_LIMIT = 500
 # window, so retrieve this many times `limit` and let the collapse refill the
 # result with the next distinct documents.
 _CHUNK_PARENT_POOL_FACTOR = 4
+# Ceiling for `list()`'s over-fetch when soft-forgotten rows have to be filtered
+# out in Python: without a cap, a corpus that is mostly forgotten would walk
+# every row to fill one page.
+_LIST_MAX_OVERFETCH = 2000
 
 if TYPE_CHECKING:
     from memo.store.hype_store import HypeStore
@@ -599,6 +603,14 @@ class _SearchOpsMixin(_MemoryBase):
                 exc,
                 exc_info=True,
             )
+            # Mark it degraded exactly like the budget path above: `degraded`
+            # is the ONLY machine-readable signal that a "hybrid" result was
+            # actually BM25-only, and both the MCP payload and the CLI notice
+            # render it solely when non-empty. Without this, an embedder
+            # outage looks like an ordinary search with worse answers.
+            emit(trace, "embed_skip", mode="hybrid", reason="embedder_error")
+            if degraded is not None:
+                degraded.append("embed_failed_bm25_only")
             return [], None
 
     def _chunk_parent_pool_limit(
@@ -1639,9 +1651,23 @@ class _SearchOpsMixin(_MemoryBase):
         procedure candidates) immediately discard. Default stays True so
         no existing caller changes semantics.
         """
-        rows = self.store.list_recent(limit=limit, type_=type_, updated_since=updated_since)
-        if not include_forgotten:
-            rows = [r for r in rows if not (r.get("extra") or {}).get(IS_FORGOTTEN_KEY)]
+        if include_forgotten:
+            rows = self.store.list_recent(limit=limit, type_=type_, updated_since=updated_since)
+        else:
+            # The forgotten filter runs in Python, AFTER the SQL LIMIT, so a page
+            # holding forgotten rows used to come back short with no signal
+            # ("returned 12 of the 20 you asked for" reads as "the corpus only
+            # has 12"). Over-fetch and re-slice: refill from below the cut until
+            # `limit` live rows are found or the corpus runs out.
+            rows = []
+            fetch = limit
+            while True:
+                page = self.store.list_recent(limit=fetch, type_=type_, updated_since=updated_since)
+                rows = [r for r in page if not (r.get("extra") or {}).get(IS_FORGOTTEN_KEY)]
+                if len(rows) >= limit or len(page) < fetch or fetch >= _LIST_MAX_OVERFETCH:
+                    break
+                fetch = min(fetch * 4, _LIST_MAX_OVERFETCH)
+            rows = rows[:limit]
         if not with_bodies:
             return [record_from_row(r) for r in rows]
         return [record_from_row(r, body=self._read_body(r["path"])) for r in rows]

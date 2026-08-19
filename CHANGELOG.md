@@ -9,6 +9,25 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- `memo proxy` — a loopback context-compression proxy on `127.0.0.1:8768`,
+  reached by pointing `ANTHROPIC_BASE_URL` at it. It rewrites the outbound
+  request through six transforms — tool-schema pruning with on-demand
+  hydration, structure maps, re-read deltas, the L1 JSON crusher, declarative
+  tool-result filters, and pixel mode — stashes every cut content-addressed so
+  `memo_crush_retrieve` can recover it, and relays the response stream
+  untouched. Failure is fail-open at every layer: any transform that raises
+  forwards the original body.
+- Measured against the provider's own usage counters on live traffic:
+  **10.6% saved on prompt cost** (treated 82,046 vs holdout 91,749
+  tok-equiv/request, 4/4 sessions), with tool-schema pruning accounting for all
+  of it. That figure is a floor, not a ceiling — the treated arm paid a cold
+  cache write on a freshly pruned prefix while the control enjoyed a warm read
+  of the standard one. Warm and multi-turn behaviour is not yet measured and is
+  not claimed. On a captured payload the tool block alone dropped from 52,190 to
+  2,290 tokens (141 tools, 5 kept).
+
 ### Removed
 
 - The "tokens saved (estimated)" panel in `memo tokens` and the three flags
@@ -28,6 +47,151 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   physical grounded/re-ask/context-cost counts. `memo eval baseline`'s
   online window dropped its derived "tokens" figure for the same reason —
   only the real grounded count remains.
+
+## [4.13.3] - 2026-08-18
+
+### Removed
+
+- Eight inert compatibility flags, each advertising behaviour whose serving path
+  had already been deleted: `MEMO_GRAPH_RETRIEVAL_ENABLED`,
+  `MEMO_GRAPH_EXPANSION_ENABLED`, `MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`,
+  `MEMO_GRAPH_OUTCOME_WEIGHT`, `MEMO_GRAPH_DENSITY_BOOST`,
+  `MEMO_GRAPH_FALLBACK_MIN_HITS`, `MEMO_DREAM_RETRIEVAL_TUNE_ENABLED` and
+  `MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS`. A knob that appears in `memo config
+  flags`, accepts a value and does nothing is worse than no knob. Registry:
+  483 → 475 flags, and their graduation gates are gone with them.
+
+### Fixed
+
+- A stale retired flag in a Markdown config, a tuned overlay or the environment
+  is now ignored instead of reported by `memo config validate` as `unknown
+  MEMO_* var (typo?)` — these are names memo itself shipped. A real typo of the
+  same name is still caught.
+
+## [4.13.2] - 2026-08-18
+
+### Fixed
+
+- `memo ops checkpoint-wal` (new, called by the nightly pass) actually reclaims
+  the sqlite write-ahead logs. `PRAGMA journal_size_limit`, added in 4.13.0,
+  caps a WAL only after a successful checkpoint — and a checkpoint cannot
+  advance past the oldest open reader, of which memo keeps several permanently
+  (recall daemon, watcher, every memo-mcp session). Measured: graph.db-wal at
+  74MB against a 127MB database, and back to 68MB hours after a manual
+  truncate.
+- The `hook-commands-resolve` release gate now also resolves the `memo`
+  subcommands fired by `launchd/memo-nightly.sh`, not just `hooks/hooks.json`.
+  That is the surface that actually drifted: `ops gc-emitted-ledgers` shipped in
+  the template before the binary registered it, and for four nights the pass
+  logged `Error: No such command` into a file nobody reads.
+
+## [4.13.1] - 2026-08-18
+
+### Fixed
+
+Follow-up to the 4.13.0 QA sweep — the MEDIUM findings that release left on the
+table.
+
+- `Config.ensure_dirs` raised a bare `RuntimeError` on an unwritable
+  data/state dir; `cli.main` only catches `MemoError`, so the clean "cannot
+  create <dir>" message was replaced by a ~40-line chained traceback.
+- `memo mcp-command --client codex` emitted `MEMO_MCP_PROFILE=agent` while
+  `memo setup codex` wrote `core` and `memo doctor --agent codex` asserted
+  `core`: the profile now comes from the agent registry unless explicitly set.
+- The graph/contradiction/crossref sidecars share one sqlite connection across
+  the FastMCP worker threadpool but locked only their writes; reads now take the
+  same (re-entrant) lock and no cursor outlives it.
+- `memo_graph verb="communities"` returned a silently truncated page (no
+  `total`) with every community's full entity list — 4,327 communities and 156
+  entities in the largest, ~12k tokens at the default limit.
+- `consolidate` classified clusters from a prompt capped at 24k chars while
+  returning the full member list; a truncated cluster now reports
+  `members_seen_by_llm` and refuses to classify.
+- The lifecycle metadata writers read the legacy vault copy and wrote to
+  `memory_dir`, leaving two `.md` files with the same canonical id.
+- The eval cache key omitted every inherited ranking knob, so an A/B run could
+  return the other arm's cached rows.
+- The nightly dream receipt blended curated and auto-harvested labels into one
+  `prec@k` headline; both partitions are now recorded, curated first.
+- The chat SPA's delete action hit an endpoint answering `501 "deferred to plan
+  2"`; it now explains the refusal and names the CLI command instead.
+- `eval/regression_labels.json` gains three project-tagged prompts: every prompt
+  carried `project=null`, so the three project/global boost tiers were dead code
+  for the entire regression gate.
+
+## [4.13.0] - 2026-08-18
+
+A full-project QA sweep (24 adversarially verified findings, measured
+against the live corpus).
+
+### Fixed
+
+- **Recall injected one memory where three qualified.** The post-rank
+  gap-trim compared an absolute 0.10 delta against `h.score`, which is not
+  a bounded cosine — `search_scoring_ops` stacks three multiplicative
+  boosts and the live range reaches ~6.8 — so it fired on 18 of 30
+  multi-hit prompts and dropped a relevant rank-2 hit in 15 of them (one
+  scoring 96.5% of rank-1). The gap is now RELATIVE to rank-1
+  (`MEMO_RECALL_GAP_THRESHOLD` default 0.10 → 0.50, new semantics).
+  Measured with `memo eval recall --config L --force --against
+  origin/master`: precision@5 0.550 vs 0.370, noise@5 0.000 unchanged.
+- **The nightly tuner could not fail.** `dream_tune`'s label sets dropped
+  `relevant_terms`, so 34 of the 46 curated prompts could never score as
+  relevant while still counting in the denominator: gate precision was
+  pinned near 0.015 and every candidate auto-applied — which is how
+  `MEMO_RECALL_MIN_SIM=0.8033` reached the live overlay. `_regressed` now
+  also rejects a drop in `recall@k`/`canonical_hit_at_k` (the shipped
+  receipt halved the latter while the gate said "ok"), and
+  `estimate_noise_floor` calibrates on query-side encodings — the
+  distribution the floor is actually compared against.
+- **Data loss on the canonical Markdown.** `update(append=)` overwrote the
+  `.md` with just the appended fragment when the file was unreadable and
+  `fts.body` was NULL (the version snapshot recorded an empty body too, so
+  rollback could not recover it); a metadata-only `update()` re-applied
+  `max_content_chars` to a body it had not been asked to change, truncating
+  notes hand-extended in Obsidian; absorb-on-recurrence committed a merge
+  clipped by its 1024-token budget over a long note, and could fold a
+  `project:B` save into a `project:A` memory. `gc(fix=True)` — run
+  unattended by `sync_pull` — deleted index rows when an unmounted volume
+  or an iCloud-evicted vault merely made existence unverifiable.
+- **Silent partial results.** `reindex()` counted parse/embed failures as
+  benign skips (new `errors` counter, non-zero CLI exit); hybrid search
+  returned BM25-only results without marking `degraded` when the embedder
+  raised; an absorbed save returned no `action`; `list()` filtered forgotten
+  rows after the SQL LIMIT and returned a short page; a failed tantivy write
+  left the on-disk index stale for every later process; the proactive
+  refresh aborted on a duplicate nudge id and kept the previous night's
+  candidates; a rolled-back hard delete re-opened a superseded fact.
+- **MCP surface.** `memo_save` over the response budget returned
+  `response_budget_exceeded` with no id although the record had committed
+  (writes now return a reduced payload keeping `id`/`path`/`action`);
+  `memo_history(limit=-1)` materialized the whole events table (SQLite reads
+  a negative LIMIT as unbounded) — limits are clamped at the tool boundary;
+  the write coordinator masked caller-input errors as storage failures;
+  `memo_delete` skipped its irreversible-delete confirmation whenever the
+  pre-read raised; `memo_event_bus_publish` always reported success and
+  `memo_event_poll` re-delivered every event; the shipped mandate and server
+  instructions named tools absent from the `agent`/`core` profiles.
+- **Ops and runtime.** `watcher.render_plist` interpolated MEMO_* values
+  into launchd XML unescaped (ProgramArguments injection); both plist
+  renderers froze the installing terminal's `MEMO_AGENT_TTY` and copied
+  `MEMO_HTTP_API_TOKEN` into a world-readable file (now filtered, plists
+  written 0600); `MLXChat.chat()` held the machine-wide GPU flock for a
+  whole generation, starving recall (per-token guard now), and
+  `_ensure_model` raced unload/eviction into a KeyError;
+  `memo-nightly.sh` stamped its 20h due-guard before running, so a killed
+  run burned the day (stamp moved to the end, portable mkdir lock, log
+  rotation added, dream moved to 03:30); sidecar sqlite stores bounded
+  their WAL (graph.db-wal had reached 80MB); the two process-local caches
+  are locked; `capture-tick`'s `no_pair` path never advanced the throttle;
+  `MEMO_AUTO_UPDATE_REPO` is restricted to https.
+- **Test isolation.** `MEMO_SAVE_ABSORB` and `MEMO_AUTO_PROJECT_TAG` are
+  hard-pinned process-wide: with absorb on, the suite's stub embedders made
+  every pair a near-duplicate and fired real MLX generations on Apple
+  Silicon — 5 tests failed there while Linux CI stayed green.
+- **Documentation drift**, including a recall-hook wiring pointer that named
+  the wrong file, mixin/type/flag/route counts, `/memo` router subcommands
+  that do not exist, and the Docker tag list.
 
 ## [4.12.2] - 2026-08-17
 

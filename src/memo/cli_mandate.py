@@ -31,9 +31,9 @@ consult memo FIRST:
 - Start with `memo_unified_briefing` (or `memo_search` / `memo_ask`) to
   pull durable facts, decisions, and preferences.
 - Already hold a memory id or a named entity and want what's connected to
-  it? Reach for `memo_graph` / `memo_related` (cheap graph traversal —
-  id/title only) before firing a fresh `memo_search`/`memo_ask` (full
-  retrieval) for the same thing.
+  it? Reach for `memo_graph` (cheap graph traversal — id/title only) before
+  firing a fresh `memo_search`/`memo_ask` (full retrieval) for the same
+  thing.
 - Pass `source="<this-client>"` on the read tools so usage is attributed
   (e.g. `source="codex"`). A client that never appears in memo's consult log is
   flagged as a silent gap by `memo usefulness`.
@@ -41,9 +41,9 @@ consult memo FIRST:
   them. memo is the source of truth for what is *known*; build on it, and
   contradict a surfaced memory only explicitly.
 - Keep it honest: when a surfaced memory is stale or contradicted, correct it
-  instead of silently working around it — `memo_feedback_flag(kind="outdated")`
-  to retire it, or `kind="wrong"` (with `superseded_by` when a replacement
-  exists). Both archive reversibly, never hard-delete.
+  instead of silently working around it — `memo_invalidate` closes its validity
+  interval, and `memo_supersede` points it at the replacement. Both are
+  reversible and never hard-delete.
 {_END_MARKER}
 """
 

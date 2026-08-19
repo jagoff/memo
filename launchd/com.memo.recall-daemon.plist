@@ -34,12 +34,8 @@
     <string>mlx-community/Qwen3-Embedding-4B-4bit-DWQ</string>
     <key>MEMO_HELPER_MODEL</key>
     <string>mlx-community/Qwen3-4B-4bit</string>
-    <key>MEMO_HIT_DOSSIER</key>
-    <string>1</string>
     <key>MEMO_LLM_MODEL</key>
     <string>mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit-DWQ</string>
-    <key>MEMO_RECALL_EPISTEMIC_LABELS</key>
-    <string>1</string>
     <key>MEMO_RERANKER_ENABLED</key>
     <string>0</string>
     <key>MEMO_RERANKER_MODEL</key>

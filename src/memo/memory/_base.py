@@ -125,6 +125,7 @@ class _MemoryBase:
     def _normalize_chat_history(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _normalize_rating(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _read_body(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
+    def _read_body_strict(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _record_access(self, *a: Any, **k: Any) -> Any: ...
     def _repo_corpus(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]
     def _repo_replay_payload(self, *a: Any, **k: Any) -> Any: ...  # type: ignore[empty-body]

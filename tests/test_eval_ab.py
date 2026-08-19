@@ -553,3 +553,18 @@ def test_cli_eval_ab_errors_when_no_answerable_prompts(tmp_path, monkeypatch):
     res = CliRunner().invoke(eval_group, ["ab", "--labels", str(path)])
     assert res.exit_code != 0
     assert "no answerable prompts" in res.output
+
+
+def test_eval_cache_key_tracks_the_live_ranking_knobs(monkeypatch, tmp_cfg) -> None:
+    """A config NAME carries only mode + floor, so two runs that differ in any
+    other inherited knob shared a cache entry and one silently replayed the
+    other's rows."""
+    from memo.cli_eval import _live_knob_fingerprint
+
+    monkeypatch.setenv("MEMO_RECALL_PROJECT_BOOST", "0.25")
+    before = _live_knob_fingerprint(tmp_cfg)
+
+    monkeypatch.setenv("MEMO_RECALL_PROJECT_BOOST", "0.35")
+    after = _live_knob_fingerprint(tmp_cfg)
+
+    assert before != after

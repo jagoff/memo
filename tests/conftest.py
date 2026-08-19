@@ -134,6 +134,22 @@ os.environ["MEMO_SUPERSEDE_SUPPORT_GATE"] = "0"
 # pytest. Tests that exercise the updater opt back in explicitly.
 os.environ["MEMO_AUTO_UPDATE"] = "0"
 
+# Disable auto-project tagging so tests asserting exact tag sets aren't polluted
+# by the cwd-derived `project:<repo>` tag. Hard-set at MODULE scope, like every
+# other neutralisation here: the old `setdefault` inside the `tmp_cfg` fixture
+# body lost to a developer's exported `=1` (4 confirmed failures) and, being
+# applied lazily on first `tmp_cfg` use, made the value order-dependent for
+# tests that don't use that fixture. Tests exercising the auto-tag flow opt back
+# in via monkeypatch.setenv("MEMO_AUTO_PROJECT_TAG", "1").
+os.environ["MEMO_AUTO_PROJECT_TAG"] = "0"
+
+# Same class: `MEMO_SAVE_ABSORB` defaults ON, and the stub embedders used across
+# the suite make every pair a cosine-1.0 near-duplicate — so on Apple Silicon a
+# second save fires a REAL MLXChat generation (~6s) that folds the two records
+# into one. Linux CI never sees it (MLX raises, absorb falls back to
+# warn-and-create). Hard-set off; tests/test_save_absorb.py opts back in.
+os.environ["MEMO_SAVE_ABSORB"] = "0"
+
 # Trust & belief-revision program flags (memo v3.0.0+). A machine running the
 # *activated* trust program exports these via ~/.claude/settings.json `env` (and
 # the launchd fleet), and Claude Code passes them down to a `pytest` subprocess —
@@ -212,6 +228,12 @@ def mem_with_stub(tmp_cfg: Config, monkeypatch):
         return out
 
     monkeypatch.setattr("memo.embedder.MLXEmbedder.embed", _stub_embed)
+    # Same trap as `memory_with_memories` below: the 4-bucket stub makes many
+    # pairs cosine-1.0 near-duplicates, so default-ON MEMO_SAVE_ABSORB fires a
+    # REAL 30B LLM merge on Apple Silicon (minutes per test) and folds the
+    # second save INTO the first — tests asserting two distinct records then
+    # fail here while staying green on a CI box with no MLX models.
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     mem = Memory(cfg)
     yield mem
     mem.close()
@@ -316,11 +338,6 @@ def tmp_cfg(tmp_path: Path) -> Config:
     data.mkdir()
     (vault / "Obsidian" / "AI" / "memory").mkdir(parents=True)
     state.mkdir()
-    # Disable auto-project tagging in the default test fixture so tests
-    # that assert exact tag sets aren't polluted by the cwd-derived
-    # `project:<repo>` tag. Tests that exercise the auto-tag flow opt
-    # back in explicitly via monkeypatch.setenv("MEMO_AUTO_PROJECT_TAG", "1").
-    os.environ.setdefault("MEMO_AUTO_PROJECT_TAG", "0")
     return Config(data_dir=data, vault_path=vault, state_dir=state, reranker_enabled=False)
 
 

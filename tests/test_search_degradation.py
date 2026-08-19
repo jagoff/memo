@@ -371,12 +371,15 @@ def test_the_embed_is_shed_onto_the_bm25_only_path(mem, monkeypatch: pytest.Monk
     assert hits, "shedding the embed must fall back to BM25, not to nothing"
 
 
-def test_an_embedder_failure_is_not_reported_as_a_budget_shed(
+def test_an_embedder_failure_is_reported_distinctly_from_a_budget_shed(
     mem, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The accidental BM25-only path (the embedder blew up) and the deliberate
-    one (the budget shed it) must be distinguishable: only the deliberate one
-    reports itself."""
+    one (the budget shed it) must be DISTINGUISHABLE — and both must be
+    reported. `degraded` is the only machine-readable signal that a "hybrid"
+    result was BM25-only; leaving the crash path empty made an embedder outage
+    look like an ordinary search with worse answers (the dominant failure mode
+    on a machine whose recall daemon is down)."""
 
     def _boom(query: str) -> list[float]:
         raise RuntimeError("embedder unavailable")
@@ -388,7 +391,9 @@ def test_an_embedder_failure_is_not_reported_as_a_budget_shed(
         "ladder budget marker", mode="hybrid", _budget_ms=_GENEROUS, _degraded=degraded
     )
 
-    assert degraded == [], "an embedder crash was mislabelled as a budget shed"
+    assert degraded == ["embed_failed_bm25_only"]
+    assert "embed_skipped_bm25_only" not in degraded, "a crash is not a budget shed"
+    assert hits, "an embedder crash must still fall back to BM25, not to nothing"
     assert hits, "the accidental BM25-only fallback should still answer"
 
 

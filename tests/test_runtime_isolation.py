@@ -13,6 +13,7 @@ import memo.runtime.install as install_mod
 import memo.runtime.mcp as mcp_mod
 import memo.runtime.shims as shims_mod
 from memo.cli import cli
+from memo.runtime.agent_registry import AGENT_REGISTRY
 
 
 @pytest.fixture(autouse=True)
@@ -302,7 +303,11 @@ def test_mcp_command_codex(monkeypatch):
     assert result.exit_code == 0
     assert "codex mcp add memo" in result.output
     assert "--env MEMO_NONINTERACTIVE=1" in result.output
-    assert "--env MEMO_MCP_PROFILE=agent" in result.output
+    # The REGISTRY owns each client's profile. This used to assert "agent" — the
+    # hardcoded fallback — while `memo setup codex` wrote the adapter's "core"
+    # and `memo doctor --agent codex` asserted "core", so a config produced by
+    # one command failed the other's check.
+    assert f"--env MEMO_MCP_PROFILE={AGENT_REGISTRY['codex'].mcp_profile}" in result.output
     assert "--env MEMO_SOURCE=codex" in result.output
     assert result.output.rstrip().endswith("/opt/test-pipx/venvs/mlx-memo/bin/memo-mcp")
 

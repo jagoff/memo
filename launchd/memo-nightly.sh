@@ -28,7 +28,26 @@ if [ "${1:-}" != "--force" ] && [ "${MEMO_NIGHTLY_FORCE:-0}" != "1" ] && [ -f "$
     exit 0
   fi
 fi
-mkdir -p "$(dirname "$_stamp")" && date +%s > "$_stamp"
+mkdir -p "$(dirname "$_stamp")"
+
+# One run at a time. The hourly StartInterval ticks while a 30-minute pass is
+# still going; without this the tick would see a stale stamp (the stamp is now
+# written at the END, see below) and start a second, GPU-contending run.
+# mkdir, not flock: macOS ships no flock(1), so a `command -v flock` guard would
+# silently no-op on the exact machine this protects.
+_lockdir="${HOME}/.local/share/memo/.nightly.lock.d"
+if ! mkdir "$_lockdir" 2>/dev/null; then
+  # Take over a lock left behind by a killed run (older than 6h).
+  if [ -n "$(find "$_lockdir" -maxdepth 0 -mmin +360 2>/dev/null)" ]; then
+    log "removing stale lock $_lockdir"
+    rmdir "$_lockdir" 2>/dev/null || true
+    mkdir "$_lockdir" 2>/dev/null || { log "could not take the lock — exiting"; exit 0; }
+  else
+    log "another nightly run holds the lock — exiting"
+    exit 0
+  fi
+fi
+trap 'rmdir "$_lockdir" 2>/dev/null || true' EXIT HUP INT TERM
 
 # Only repos that still exist: memflow was archived to ~/repos/_archived on the
 # 2026-07-30 trinity deprecation, and syncing it printed
@@ -69,5 +88,39 @@ log "start gc-emitted-ledgers"
 # [y/N]:" followed by "memo-consolidate FAILED (exit 1)" in nightly.log.
 log "start memo-consolidate"
 "__MEMO_BIN__" consolidate apply --force --yes --auto-threshold 0.95 --max-clusters 15 || log "memo-consolidate FAILED (exit $?)"
+
+# Log rotation. Nothing else rotates ~/Library/Logs/memo/* or the state_dir
+# logs: watch.err.log was found at 13MB/211k lines, and a KeepAlive crash loop
+# adds ~1MB/hour. Truncate in place (`cat >` keeps the inode, so a daemon
+# holding the fd keeps appending) and keep the newest 1MB.
+# WAL truncation. A checkpoint cannot advance past the oldest open reader, and
+# memo keeps several (recall daemon, watcher, every memo-mcp session), so the
+# passive checkpoints sqlite runs on its own never reclaim anything:
+# graph.db-wal was measured at 74MB against a 127MB database, and back to 68MB
+# hours after a manual truncate. Nightly is the one moment worth spending the
+# blocking call on.
+log "start checkpoint-wal"
+"__MEMO_BIN__" ops checkpoint-wal --json || log "checkpoint-wal FAILED (exit $?)"
+
+log "start log-rotate"
+for _f in "$HOME"/Library/Logs/memo/*.log "$HOME"/Library/Logs/memo/*.err.log \
+          "$HOME"/.local/share/memo/*.log; do
+  [ -f "$_f" ] || continue
+  _size=$(wc -c < "$_f" 2>/dev/null || echo 0)
+  [ "$_size" -gt 4194304 ] || continue
+  _tmp="$_f.rotating"
+  if tail -c 1048576 "$_f" > "$_tmp" 2>/dev/null && cat "$_tmp" > "$_f"; then
+    log "log-rotate: $_f truncated from $_size bytes"
+  else
+    log "log-rotate: FAILED for $_f"
+  fi
+  rm -f "$_tmp"
+done
+
+# Stamp LAST, not first: written up front, a run killed halfway (macOS sleep,
+# OOM, a crashing pass) burned the whole 20h slot with no retry — observed
+# 2026-08-17, where the pass stopped after contradict-resolve and gc/consolidate
+# simply never ran that day.
+date +%s > "$_stamp"
 
 log "done"

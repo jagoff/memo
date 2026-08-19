@@ -4,7 +4,13 @@ import subprocess
 
 import pytest
 
-from memo.ops_launchd import install_chat, parse_launchctl_list, render_chat_plist, uninstall_chat
+from memo.ops_launchd import (
+    daemon_env,
+    install_chat,
+    parse_launchctl_list,
+    render_chat_plist,
+    uninstall_chat,
+)
 
 
 def test_render_chat_plist_contents() -> None:
@@ -19,6 +25,33 @@ def test_render_chat_plist_contents() -> None:
 def test_render_without_dist_omits_flag() -> None:
     plist = render_chat_plist("/bin/memo", "/Users/t", port=8765, dist=None)
     assert "--dist" not in plist
+
+
+def test_daemon_env_drops_session_scoped_vars(monkeypatch) -> None:
+    """A LaunchAgent must not inherit the installing terminal's identity.
+
+    MEMO_AGENT_TTY is the sharp one: it was frozen into the installed watch and
+    chat plists as /dev/ttys000, a device that belongs to some later session by
+    the time the daemon writes to it.
+    """
+    monkeypatch.setenv("MEMO_AGENT_TTY", "/dev/ttys000")
+    monkeypatch.setenv("MEMO_TERMINAL_ID", "term-abc")
+    monkeypatch.setenv("MEMO_SESSION_ID", "sess-abc")
+    monkeypatch.setenv("MEMO_EMBEDDER_DIMS", "2560")
+    monkeypatch.setenv("NOT_MEMO", "x")
+
+    env = daemon_env()
+    assert env["MEMO_EMBEDDER_DIMS"] == "2560"  # real config still forwarded
+    assert "MEMO_AGENT_TTY" not in env
+    assert "MEMO_TERMINAL_ID" not in env
+    assert "MEMO_SESSION_ID" not in env
+    assert "NOT_MEMO" not in env
+
+
+def test_render_chat_plist_omits_session_scoped_env(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_AGENT_TTY", "/dev/ttys001")
+    plist = render_chat_plist("/bin/memo", "/Users/t", port=8767, dist=None)
+    assert "MEMO_AGENT_TTY" not in plist
 
 
 def test_parse_launchctl_list() -> None:
@@ -131,3 +164,10 @@ def test_uninstall_chat_removes_file_and_returns_bool(tmp_path, monkeypatch) -> 
     assert calls[0][:3] == ["launchctl", "bootout", "gui/501"]
 
     assert uninstall_chat(tmp_path) is False
+
+
+def test_daemon_env_never_leaks_the_http_api_token(monkeypatch) -> None:
+    """The bearer token lives in a 0600 file; a plist is 0644 by default."""
+    monkeypatch.setenv("MEMO_HTTP_API_TOKEN", "s3cret-token-value-0123456789")
+    assert "MEMO_HTTP_API_TOKEN" not in daemon_env()
+    assert "s3cret-token-value" not in render_chat_plist("/bin/memo", "/Users/t", port=8767)

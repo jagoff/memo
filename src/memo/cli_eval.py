@@ -89,6 +89,29 @@ def _atomic_write_json(path: Path, payload: object) -> None:
     os.replace(tmp, path)
 
 
+def _live_knob_fingerprint(cfg: Any) -> str:
+    """Short hash of the ranking knobs the run will actually inherit.
+
+    Covers the tuned overlay (via its own version helper) plus the resolved
+    `RankKnobs`, so a cached row can never belong to a different configuration
+    than the one being asked for.
+    """
+    import hashlib
+    import json as _json
+
+    from memo.recall_logic import knobs_from_flags
+    from memo.tuned_overlay import params_version
+
+    knobs = knobs_from_flags()
+    payload = _json.dumps(
+        {k: v for k, v in vars(knobs).items() if not k.startswith("_")},
+        sort_keys=True,
+        default=str,
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+    return f"{params_version(cfg.state_dir)}:{digest}"
+
+
 def _load_cache(cfg: Config) -> dict:
     p = _cache_path(cfg)
     if not p.exists():
@@ -701,7 +724,12 @@ def eval_recall_cmd(
     mem = _get_memory(cfg)
     corpus_fp = eval_recall.fingerprint_corpus(mem)
     configs_fp = ",".join(c.name for c in selected_configs)
-    cache_key = f"{corpus_fp}:{labels.fingerprint()}:{configs_fp}:{k}"
+    # The config NAME only carries mode + floor ("L live/vec/0.5"); every other
+    # knob that governs ranking — the boosts, skip_below, gap_threshold,
+    # dedup_collapse, mmr_lambda … — is inherited from the env/overlay chain and
+    # would otherwise be invisible to the key, so an A/B that changed one of
+    # them silently replayed the other arm's cached rows.
+    cache_key = f"{corpus_fp}:{labels.fingerprint()}:{configs_fp}:{k}:{_live_knob_fingerprint(cfg)}"
 
     rows = None
     cached = False

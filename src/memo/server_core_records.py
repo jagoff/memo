@@ -187,6 +187,17 @@ def _bounded_consolidate(
     return result
 
 
+def _mark_partial(counts: dict[str, int]) -> dict[str, int]:
+    """Flag a reindex that could not index everything it was handed.
+
+    `errors` is the subset of `skipped` that FAILED (parse error, embed
+    failure, refused path) rather than being deliberately passed over.
+    """
+    if counts.get("errors"):
+        counts["partial"] = 1
+    return counts
+
+
 def register(server: Any, memory: Memory) -> None:
     @annotated_tool(server, **WRITE)
     def memo_save(
@@ -517,8 +528,13 @@ def register(server: Any, memory: Memory) -> None:
         Writes only derived index state; markdown remains the source of truth.
         Use after hand-editing vault files or changing indexing behavior.
         `force` reprocesses records even if memo thinks they are current.
+
+        `errors` counts files that FAILED to index (parse error, embed failure,
+        refused path) — a subset of `skipped`, which also counts deliberate
+        skips (archives, chronicle, secrets). A non-zero `errors` means the
+        index is incomplete: fix the cause and re-run.
         """
-        return memory.reindex(force=force)
+        return _mark_partial(memory.reindex(force=force))
 
     @annotated_tool(server, **DESTRUCTIVE)
     async def memo_delete(
@@ -542,27 +558,38 @@ def register(server: Any, memory: Memory) -> None:
         from memo.flags import flag_bool
         from memo.server_elicit import abort_result, confirm_destructive, sanitize_fragment
 
+        read_failed = False
         try:
             rec = memory.get(id)
         except AmbiguousIdError as exc:
             return {"error": "ambiguous", "prefix": exc.prefix, "matches": exc.matches}
         except Exception:
+            # "Could not read" is NOT "does not exist" — see the gate below.
             rec = None
+            read_failed = True
         referenced_by: list[str] = []
         if rec is not None and flag_bool("MEMO_CROSSREF_INDEX"):
             try:
                 referenced_by = [b.source_id for b in memory.crossref.referencing_sources(rec.id)]
             except Exception:
                 referenced_by = []
-        if rec is not None:
-            # Titles are untrusted (auto-capture, LLM derivation) — sanitize
-            # so a hostile title can't rewrite the confirmation prompt.
-            target = f"'{sanitize_fragment(rec.title)}' ({rec.type})"
-            linked = (
-                f" {len(referenced_by)} memories link to it; their typed edges will dangle."
-                if referenced_by
-                else ""
-            )
+        # Confirm whenever there may be something to delete. A genuinely
+        # missing id (`get` returned None) is a no-op and keeps skipping the
+        # gate, but a FAILED read (locked DB, transient storage error) used to
+        # take the same branch and delete irreversibly with no prompt at all.
+        # Titles are untrusted (auto-capture, LLM derivation) — sanitize so a
+        # hostile title can't rewrite the confirmation prompt.
+        target = (
+            f"'{sanitize_fragment(rec.title)}' ({rec.type})"
+            if rec is not None
+            else f"id={sanitize_fragment(id)} (could not be read before deleting)"
+        )
+        linked = (
+            f" {len(referenced_by)} memories link to it; their typed edges will dangle."
+            if referenced_by
+            else ""
+        )
+        if rec is not None or read_failed:
             gate = await confirm_destructive(
                 ctx,
                 action="delete",
@@ -577,7 +604,7 @@ def register(server: Any, memory: Memory) -> None:
                     memory,
                     tool="memo_delete",
                     action="delete",
-                    target=f"{target} id={rec.id}",
+                    target=f"{target} id={rec.id if rec is not None else id}",
                 )
         try:
             out: dict[str, Any] = {"deleted": memory.delete(id)}

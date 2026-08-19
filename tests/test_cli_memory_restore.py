@@ -207,3 +207,18 @@ def test_restore_rejects_invalid_sqlite_without_replacing_existing_db(tmp_path: 
     assert "invalid SQLite database" in result.output
     with closing(sqlite3.connect(existing)) as connection:
         assert connection.execute("SELECT value FROM preserved").fetchone() == ("safe",)
+
+
+def test_cli_type_choices_track_the_durable_registry() -> None:
+    """The CLI must not drift from `tiers.DURABLE_TYPES`.
+
+    The list was hardcoded in three places and silently lacked `procedure` and
+    `failure_pattern` — `memo save --type failure_pattern` was rejected for a
+    type the store accepts and CLAUDE.md documents.
+    """
+    from memo.cli_memory import _USER_SETTABLE_TYPES
+    from memo.tiers import DURABLE_TYPES
+
+    assert set(_USER_SETTABLE_TYPES) == DURABLE_TYPES - {"synthesis"}
+    assert "failure_pattern" in _USER_SETTABLE_TYPES
+    assert "procedure" in _USER_SETTABLE_TYPES

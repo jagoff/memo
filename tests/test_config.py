@@ -556,3 +556,28 @@ def test_device_id_lost_race_empty_winner_falls_back_transient(tmp_path: Path, m
     with caplog.at_level(logging.WARNING, logger="memo.config"):
         device_id = cfg.device_id
     assert device_id.startswith("transient-")
+
+
+def test_unwritable_dirs_raise_a_catchable_setup_error(tmp_path, monkeypatch) -> None:
+    """`cli.main` only catches MemoError, so a bare RuntimeError here meant the
+    clean 'not writable' message was replaced by a ~40-line traceback."""
+    import pytest
+
+    from memo.errors import MemoError, SetupError
+
+    cfg = Config(
+        data_dir=tmp_path / "data",
+        state_dir=tmp_path / "state",
+        vault_path=tmp_path / "vault",
+    )
+
+    def _boom(*_a, **_k):
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr(Path, "mkdir", _boom)
+    with pytest.raises(SetupError) as excinfo:
+        cfg.ensure_dirs()
+
+    assert isinstance(excinfo.value, MemoError)  # cli.main can catch it
+    assert isinstance(excinfo.value, RuntimeError)  # legacy handlers still match
+    assert "cannot create" in str(excinfo.value)

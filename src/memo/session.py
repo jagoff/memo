@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import Any
 
 from memo.atomic_io import atomic_write_text, authority_write_lock
+from memo.errors import ValidationError
 from memo.flags import flag_int
 from memo.session_sources import (
     _COMMAND_WRAPPER_PREFIXES,
@@ -112,7 +113,13 @@ def validate_session_id(session_id: str) -> str:
     metacharacters, dot segments, control characters, and oversized names.
     """
     if not isinstance(session_id, str) or not _SESSION_ID_RE.fullmatch(session_id):
-        raise ValueError("session_id must be 1-128 ASCII letters, digits, underscores, or hyphens")
+        # ValidationError is a MemoError AND a ValueError: existing
+        # `except ValueError` callers keep working, and the MCP write
+        # coordinator stops masking a caller-input error as a storage
+        # failure with the diagnostic deleted.
+        raise ValidationError(
+            "session_id must be 1-128 ASCII letters, digits, underscores, or hyphens"
+        )
     return session_id
 
 

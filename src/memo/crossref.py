@@ -141,7 +141,10 @@ class CrossReferenceIndex:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._tx_lock = threading.Lock()
+        # RLock, not Lock: reads take the same lock as writes (one shared
+        # connection across the FastMCP threadpool), and a read issued
+        # from inside a _tx() block on this thread must not self-deadlock.
+        self._tx_lock = threading.RLock()
         # Open one shared connection eagerly (check_same_thread=False so it
         # survives the FastMCP worker threadpool). Eager init + _tx_lock kills
         # the lazy-init race where two threads each opened a connection, and
@@ -150,6 +153,10 @@ class CrossReferenceIndex:
         self._conn.row_factory = sqlite3.Row
         with suppress(sqlite3.Error):
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # Bound the WAL: long-lived readers (daemons, MCP sessions) pin
+            # snapshots, so a passive checkpoint never truncates on its own
+            # (graph.db-wal was found at 80MB against a 127MB database).
+            self._conn.execute("PRAGMA journal_size_limit=16777216")
         try:
             self._init_schema()
         except Exception:

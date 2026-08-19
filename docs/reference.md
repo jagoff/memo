@@ -57,7 +57,7 @@ sqlite state, and CLI should move together as one subsystem.
 ```bash
 # One-line installer (uv/pipx under the hood, pins the matching release,
 # and configures Claude Code + Codex + OpenCode + Devin Desktop when available)
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | bash
 # or install the latest published PyPI release explicitly
 pipx install mlx-memo
 # or
@@ -89,22 +89,22 @@ memo --version
 
 ```bash
 # Install the latest published PyPI release instead of GitHub master.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
 
 # Pin a published PyPI version.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | MEMO_VERSION=0.6.0 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | MEMO_VERSION=0.6.0 bash
 
 # Install from an explicit pipx spec (local checkout, git ref, wheel, etc.).
 MEMO_INSTALL_SPEC=/path/to/memo ./install.sh
 
 # Skip agent-client configuration during install.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
 
 # Force-skip the MLX model download (models load lazily on first use).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
 
 # Force-yes the MLX model download (skip the interactive confirmation).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
 ```
 
 **Model download** is part of memo's structure (embedder + reranker + chat
@@ -145,7 +145,7 @@ the corpus. On **Linux / Ubuntu**, use the CPU-index install command in
 [ubuntu.md](ubuntu.md).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.12.2/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | bash
 memo doctor --strict-runtime
 memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
 ```
@@ -368,18 +368,14 @@ are intentionally absent from the default agent profile:
 |---|---|
 | `/memo <query>` | semantic search (k=5, snippet body) |
 | `/memo` | smart capture — distills the turn's insight and saves it |
-| `/memo list [n]` | recent memories |
 | `/memo save <text>` | save with auto-derived type/tags |
 | `/memo get <id\|prefix>` | full record (prefix ≥4 chars) |
-| `/memo update <id\|prefix> [flags] [body]` | patch metadata or body |
-| `/memo delete <id\|prefix>` | delete (asks confirmation) |
 | `/memo ask <question>` | RAG synthesis with citations |
-| `/memo stats` | totals + paths + models |
-| `/memo reindex` | absorb edits made directly in Obsidian |
-| `/memo history [op] [id]` | audit log of save/update/delete |
-| `/memo consolidate [threshold]` | cluster near-duplicates + merge proposals |
-| `/memo map [--output FILE]` | generate 2D semantic canvas HTML |
 | `/memo doctor [--gc] [--fix]` | self-check + orphan detect |
+
+Anything else routes to search. Administrative verbs (`list`, `update`,
+`delete`, `reindex`, `stats`, `history`, `consolidate`) are not router
+subcommands — run them as `memo <command>` on the CLI.
 
 ---
 
@@ -497,8 +493,10 @@ Core tool behavior:
 
 ### Local HTTP API
 
-Non-MCP clients can use `memo http-api`, which serves the same operations as a
-localhost REST API with plain JSON. Every `/api/*` route requires
+Non-MCP clients can use `memo http-api`, a localhost REST API with plain JSON.
+It exposes a SUBSET of the MCP surface — 11 routes (`/health`, `/api/memory`
+create/get/list/delete, `/api/search`, `/api/session`, `/api/stats`,
+`/api/contradict/scan`, `/api/backup` create/list), not the full tool set. Every `/api/*` route requires
 `Authorization: Bearer <token>`; only `/health` is public. The first run creates
 a private token at `$MEMO_STATE_DIR/http-api-token` (normally
 `~/.local/share/memo/http-api-token`), or you can provide a 32+ character
@@ -748,7 +746,6 @@ ledger health.
 | `graph.dream_bridges_enabled` (`MEMO_DREAM_BRIDGES_ENABLED`) | `0` | Save evidence-bearing articulation-bridge syntheses during dream. |
 | `graph.hub_max_doc_freq_ratio` (`MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO`) | `0.25` | Treat entities above this corpus document-frequency ratio as hubs. |
 | `graph.min_entity_idf` (`MEMO_GRAPH_MIN_ENTITY_IDF`) | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
-| `graph.outcome_signal_enabled` (`MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`) | `0` | Modulate graph-touched boosts by outcome `roi_score`. |
 | `graph.outcome_weight` (`MEMO_GRAPH_OUTCOME_WEIGHT`) | `0.05` | Strength of optional outcome modulation on graph boosts. |
 | `MEMO_REPO_SIGNAL_MAX_COMMITS` | `300` | Bound Git-history co-change/cross-service signal collection. |
 | `MEMO_INGEST_VIA_DAEMON` | `0` | Route repo index jobs through the serialized ingest worker. |
@@ -803,9 +800,13 @@ bridges, and returns the exact projected edges and memory IDs behind each
 candidate. The dream community/bridge passes consume this packet and store its
 projection version and edge evidence with every synthesis.
 
-`MEMO_GRAPH_RETRIEVAL_ENABLED`, `MEMO_GRAPH_EXPANSION_ENABLED`, and the old
-recall graph-proximity weight remain accepted only for configuration
-compatibility. They no longer change serving or nightly tuning behavior.
+`MEMO_GRAPH_RETRIEVAL_ENABLED`, `MEMO_GRAPH_EXPANSION_ENABLED`, the graph
+outcome-signal switch and weight, the graph fallback/density values and the
+retrieval-tune switch were RETIRED in 4.13.3. They had been accepted for
+configuration compatibility long after the serving paths that read them were
+removed, so every one of them was an inert knob a reader could reasonably
+believe did something. An old value left in a Markdown config or tuned overlay
+is ignored and cleaned up, not an error.
 
 The MCP `memo_graph` tool exposes the same explanation with
 `verb="why", a="mlx", b="daemon"`. It returns the weighted path, per-hop edge
@@ -1274,7 +1275,8 @@ memo extract-entities --all       # populate the entity graph (Qwen 3B, batch)
 memo graph neighbors "MLX"        # direct related entities
 memo graph path "MLX" "daemon"    # shortest entity path
 memo graph why "MLX" "daemon"     # weighted path + evidence memory ids
-memo consolidate                  # cluster near-duplicates + merge proposals
+memo consolidate propose          # cluster near-duplicates + merge proposals
+memo consolidate apply --force --yes   # apply them (archives the originals)
 
 # ── Backfill & watching ────────────────────────────────────────────────────
 memo mine-history --since 30      # backfill memories from past Claude Code chats
@@ -1481,7 +1483,9 @@ queries can be noisy. For the 200–2000 memories range, swap to a larger varian
 
 ```bash
 hf download mlx-community/Qwen3-Embedding-4B-4bit-DWQ   # 1) pre-download
-export MEMO_MODEL_PROFILE=quality                       # 2) point memo at it
+memo config set models.model_profile quality            # 2) point memo at it
+                                                        #    (an `export` never
+                                                        #    reaches daemons/MCP)
 memo backup --out memo-pre-4b.zip                       # 3) backup before re-embed
 memo reindex --rebuild                                  # 4) rebuild derived vectors
 memo doctor --strict-runtime

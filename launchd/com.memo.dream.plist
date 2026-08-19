@@ -34,12 +34,15 @@
     03:00 slot when the machine happens to be awake; the interval guarantees
     the pass is picked up within an hour of the machine next being awake.
   -->
+  <!-- 03:30, not 03:00: com.memo.nightly owns 03:00 and both passes are
+       MLX/GPU-heavy. Two concurrent cold model loads on one box is the
+       documented exit-144 failure. -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
     <integer>3</integer>
     <key>Minute</key>
-    <integer>0</integer>
+    <integer>30</integer>
   </dict>
   <key>StartInterval</key>
   <integer>3600</integer>
@@ -54,6 +57,9 @@
     <!-- Self-improving recall tuner: min_sim + graph-weight (offline-gated + online-verified)
          and the online-only project-boost explorer. Every applied change is proven against
          real grounding and reverted if it regresses, so enabling by default is safe. -->
+    <!-- MEMO_DREAM_FLAG_GRADUATION_ENABLED is absent on purpose: it has
+         defaulted to ON since v4.3.0, so the graduation pass already runs.
+         Set it to 0 here to turn it off. -->
     <key>MEMO_DREAM_TUNE_ENABLED</key>
     <string>1</string>
     <key>MEMO_DREAM_TUNE_BOOST_ENABLED</key>

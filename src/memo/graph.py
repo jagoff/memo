@@ -192,7 +192,18 @@ class GraphStore:
         # transaction". drop_for_memoria runs on the hot Memory.delete() path.
         with suppress(sqlite3.Error):
             self._conn.execute("PRAGMA journal_mode=WAL")
-        self._tx_lock = threading.Lock()
+            # Long-lived holders (watch daemon, recall daemon, every memo-mcp
+            # session) keep read snapshots open, so a passive checkpoint can
+            # never truncate: graph.db-wal was measured at 80MB against a 127MB
+            # database, replayed by every new connection on first read. The
+            # limit makes sqlite truncate the WAL back down at the next
+            # successful checkpoint.
+            self._conn.execute("PRAGMA journal_size_limit=16777216")
+            self._conn.execute("PRAGMA busy_timeout=10000")
+        # RLock, not Lock: reads take the same lock as writes (one shared
+        # connection across the FastMCP threadpool), and a read issued
+        # from inside a _tx() block on this thread must not self-deadlock.
+        self._tx_lock = threading.RLock()
         with self._conn:
             # Migrate a pre-rename DB BEFORE the IF NOT EXISTS DDL. Two cases:
             #  1. only legacy `entity_memoria` exists -> rename it (+ its
@@ -396,10 +407,13 @@ class GraphStore:
 
     def prune_memory_links(self, live_memory_ids: set[str]) -> int:
         """Remove graph memberships whose source memory is no longer indexed."""
-        linked_ids = {
-            str(row["memory_id"])
-            for row in self._conn.execute("SELECT DISTINCT memory_id FROM entity_memory")
-        }
+        with self._tx_lock:
+            linked_ids = {
+                str(row["memory_id"])
+                for row in self._conn.execute(
+                    "SELECT DISTINCT memory_id FROM entity_memory"
+                ).fetchall()
+            }
         orphan_ids = sorted(linked_ids - live_memory_ids)
         if not orphan_ids:
             return 0
@@ -582,23 +596,29 @@ class GraphStore:
 
     def weighted_neighbors(self, name: str) -> dict[str, float]:
         name = name.strip().lower()
-        rows = self._conn.execute("SELECT id FROM entities WHERE name = ?", (name,)).fetchall()
-        if not rows:
-            return {}
-        eids = [int(r["id"]) for r in rows]
-        out: dict[str, float] = {}
-        for eid in eids:
-            for r in self._conn.execute(
-                "SELECT CASE WHEN a_id = ? THEN b_id ELSE a_id END AS other, weight "
-                "FROM entity_edges WHERE a_id = ? OR b_id = ?",
-                (eid, eid, eid),
-            ):
-                nm = self._conn.execute(
-                    "SELECT name FROM entities WHERE id = ?", (r["other"],)
-                ).fetchone()
-                if nm is not None:
-                    out[nm["name"]] = max(float(r["weight"]), out.get(nm["name"], 0.0))
-        return out
+        # Whole read under the lock, and every cursor materialised before the
+        # next statement: the outer cursor used to stay OPEN across an inner
+        # execute() on the SAME shared connection while another thread could be
+        # committing — the interleaving sqlite makes no promises about.
+        with self._tx_lock:
+            rows = self._conn.execute("SELECT id FROM entities WHERE name = ?", (name,)).fetchall()
+            if not rows:
+                return {}
+            eids = [int(r["id"]) for r in rows]
+            out: dict[str, float] = {}
+            for eid in eids:
+                neighbors = self._conn.execute(
+                    "SELECT CASE WHEN a_id = ? THEN b_id ELSE a_id END AS other, weight "
+                    "FROM entity_edges WHERE a_id = ? OR b_id = ?",
+                    (eid, eid, eid),
+                ).fetchall()
+                for r in neighbors:
+                    nm = self._conn.execute(
+                        "SELECT name FROM entities WHERE id = ?", (r["other"],)
+                    ).fetchone()
+                    if nm is not None:
+                        out[nm["name"]] = max(float(r["weight"]), out.get(nm["name"], 0.0))
+            return out
 
     def entity_names(self) -> set[str]:
         """All entity names (already lower-cased) — the graph's vocabulary, used

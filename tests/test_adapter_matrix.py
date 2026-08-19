@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from memo.adapter_matrix import adapter_issues, run
+from memo.adapter_matrix import adapter_issues, check_hook_commands, run
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -330,3 +330,29 @@ def test_a_check_that_could_not_run_is_reported_as_an_issue(
     assert issues == [
         "hook-commands-resolve did not run: memo package not importable, CLI not verified: boom"
     ]
+
+
+def test_hook_commands_check_covers_the_nightly_script(tmp_path: Path) -> None:
+    """The nightly LaunchAgent script is the OTHER surface that fires `memo`
+    subcommands, and it broke exactly this way: `ops gc-emitted-ledgers` shipped
+    in the template before the binary registered it, so the pass logged
+    `Error: No such command` into a file nobody reads for four nights.
+    """
+    (tmp_path / "launchd").mkdir()
+    (tmp_path / "launchd" / "memo-nightly.sh").write_text(
+        '#!/bin/sh\n"__MEMO_BIN__" ops gc-nonexistent --json\n', encoding="utf-8"
+    )
+
+    check = check_hook_commands(tmp_path)
+
+    assert check.findings, "a nightly script calling an unknown subcommand must fail the gate"
+    assert "memo-nightly.sh" in check.findings[0]
+    assert "gc-nonexistent" in check.findings[0]
+
+
+def test_hook_commands_check_passes_on_the_shipped_nightly_script() -> None:
+    """…and the shipped script must actually resolve."""
+    check = check_hook_commands(Path(__file__).resolve().parents[1])
+
+    assert not check.findings, check.findings
+    assert not check.skipped

@@ -191,7 +191,7 @@ def build_setup_plan(
     for slug in _expand_targets(targets, detect=detect):
         adapter = AGENT_REGISTRY[slug]
         env = {
-            **_mcp_server_env(),
+            **_mcp_server_env(slug),
             "MEMO_SOURCE": slug,
             "MEMO_MCP_PROFILE": adapter.mcp_profile,
         }

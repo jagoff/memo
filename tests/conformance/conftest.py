@@ -49,6 +49,36 @@ def _vector(topic: int, i: int) -> list[float]:
     return [v / norm for v in out]
 
 
+def _query_vector(text: str) -> list[float]:
+    """Deterministic DIMS-dim vector for an arbitrary query string."""
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    out = [((digest[d % len(digest)] / 255.0) * 2.0) - 1.0 for d in range(DIMS)]
+    norm = math.sqrt(sum(v * v for v in out)) or 1.0
+    return [v / norm for v in out]
+
+
+@pytest.fixture(autouse=True)
+def _stub_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the lane MLX-free on the QUERY side too.
+
+    The corpus is seeded with `_vector()` blobs at DIMS, but a CLI search
+    embeds its query through the REAL `MLXEmbedder`, which returns the
+    configured model's dims — so the dims guard raised and every conformance
+    search silently lost its vec leg and ran BM25-only. That was invisible
+    until the hybrid exception path started reporting itself in `degraded`;
+    the module docstring already promised stub vectors, this makes it true on
+    both sides.
+    """
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [_query_vector(t) for t in inputs],
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed_query",
+        lambda self, query: _query_vector(query),
+    )
+
+
 def _env(cfg) -> dict[str, str]:
     """Env for a CliRunner invocation against a conformance corpus config.
 

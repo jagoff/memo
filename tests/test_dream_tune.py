@@ -128,8 +128,9 @@ def test_graph_signal_candidates_only_use_curated_signal_flags():
         {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.15},
         {"MEMO_GRAPH_SIGNAL_ENABLED": True, "MEMO_GRAPH_SIGNAL_ALPHA": 0.25},
     ]
-    assert all("MEMO_GRAPH_RETRIEVAL_ENABLED" not in item for item in candidates)
-    assert all("MEMO_GRAPH_EXPANSION_ENABLED" not in item for item in candidates)
+    # The graph-only retrieval/expansion switches were retired in 4.13.3 — the
+    # tuner must still never propose a key outside the curated signal pair.
+    assert all(set(item) <= set(dt._MANAGED_GRAPH_SIGNAL_KEYS) for item in candidates)
 
 
 def test_search_graph_signal_selects_max(monkeypatch):
@@ -246,3 +247,31 @@ def test_build_labels_merges_negative_verdicts(tmp_cfg) -> None:
     labels, _ = build_labels(SimpleNamespace(state_dir=tmp_cfg.state_dir))
     neg = [p for p in labels.prompts if p.avoid_ids]
     assert neg and neg[0].avoid_ids == ["aaaabbbb"]
+
+
+def test_curated_label_set_carries_relevant_terms(tmp_cfg) -> None:
+    """A gate whose precision cannot move is worse than no gate.
+
+    Only 12 of the 46 curated prompts carry `expect_ids`; the other 34 are
+    judged by `relevant_terms`. Dropping the terms pinned gate precision at a
+    vacuous ~0.015 for every candidate, so `_regressed` was always False and
+    the nightly floor calibration auto-applied MEMO_RECALL_MIN_SIM=0.8033.
+    """
+    labels = dt._curated_label_set(tmp_cfg.state_dir)
+    if labels is None:  # no corpus resolvable in this environment
+        import pytest
+
+        pytest.skip("curated regression corpus not resolvable here")
+    assert labels.relevant_terms, "curated gate would score a vacuous precision"
+
+
+def test_regressed_rejects_a_canonical_hit_drop() -> None:
+    """precision/noise alone let a candidate through that halved canonical_hit.
+
+    Reproduces the 2026-08-17 floor-calibration receipt: precision and noise
+    identical before/after, canonical_hit_at_k 0.065 -> 0.022, gate said 'ok'.
+    """
+    before = {"precision_at_k": 0.2, "noise_at_k": 0.0, "canonical_hit_at_k": 0.065}
+    after = {"precision_at_k": 0.2, "noise_at_k": 0.0, "canonical_hit_at_k": 0.022}
+    assert dt._regressed(after, before) is True
+    assert dt._regressed(before, before) is False

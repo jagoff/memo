@@ -36,7 +36,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from memo.errors import MemoError
+from memo.errors import MemoError, SetupError
 from memo.model_pins import PINNED_MODEL_REVISIONS, ModelPinError, default_revision, model_spec
 from memo.platform_detect import is_apple_silicon
 
@@ -928,7 +928,12 @@ class Config(BaseModel):
                     # by other local users and expose daemon sockets as well.
                     path.chmod(0o700)
             except OSError as exc:
-                raise RuntimeError(
+                # SetupError, not bare RuntimeError: `cli.main` only catches
+                # MemoError, so the clean one-line message this raise exists to
+                # produce was never printed — the user got a ~40-line chained
+                # traceback instead. SetupError subclasses RuntimeError too, so
+                # any `except RuntimeError` caller is unaffected.
+                raise SetupError(
                     f"memo: cannot create {attr} at {path}: {exc}\n"
                     f"Check filesystem permissions or set MEMO_DATA_DIR / MEMO_STATE_DIR "
                     f"to a writable location."

@@ -227,10 +227,16 @@ class MLXChat:
 
             load_path = resolve_model_snapshot(model, self._model_revisions.get(model))
             loaded = _mlx_load(load_path)
-            self._loaded[model] = (loaded[0], loaded[1])
+            entry = (loaded[0], loaded[1])
+            self._loaded[model] = entry
         finally:
             self._load_lock.release()
-        return self._loaded[model]
+        # Return the LOCAL entry, not another dict lookup: between the release
+        # above and the lookup, a concurrent unload() or an LRU eviction
+        # (_MAX_LOADED_MODELS = 2) can drop the key and hand the caller a bare
+        # KeyError. Same `_snapshot_loaded()` contract the embedders already
+        # follow.
+        return entry
 
     # -- public -------------------------------------------------------------
 
@@ -252,7 +258,7 @@ class MLXChat:
         for trivial drop-in compatibility with existing call sites.
         """
         suppress_swig_deprecation_warnings()
-        from mlx_lm import generate as _mlx_generate
+        from mlx_lm import stream_generate as _mlx_stream
         from mlx_lm.sample_utils import make_sampler
 
         opts = options or {}
@@ -301,20 +307,28 @@ class MLXChat:
                 gen_tokens: list[int] = []
                 committed = False
                 try:
-                    with gpu_guard():
-                        for resp in _mlx_stream(
-                            m,
-                            tok,
-                            feed,
-                            max_tokens=max_tokens,
-                            sampler=sampler,
-                            prompt_cache=cache,
-                        ):
-                            if getattr(resp, "finish_reason", None) is None:
-                                tk = getattr(resp, "token", None)
-                                if tk is not None:
-                                    gen_tokens.append(int(tk))
-                            parts.append(getattr(resp, "text", "") or "")
+                    # Per-token guard: one guard around the whole loop holds the
+                    # machine-wide GPU flock for the full decode (see the
+                    # non-cached branch below).
+                    _sentinel = object()
+                    _stream = _mlx_stream(
+                        m,
+                        tok,
+                        feed,
+                        max_tokens=max_tokens,
+                        sampler=sampler,
+                        prompt_cache=cache,
+                    )
+                    while True:
+                        with gpu_guard():
+                            resp = next(_stream, _sentinel)
+                        if resp is _sentinel:
+                            break
+                        if getattr(resp, "finish_reason", None) is None:
+                            tk = getattr(resp, "token", None)
+                            if tk is not None:
+                                gen_tokens.append(int(tk))
+                        parts.append(getattr(resp, "text", "") or "")
                     self._prompt_cache_commit(
                         model,
                         m,
@@ -337,20 +351,25 @@ class MLXChat:
             add_generation_prompt=True,
             enable_thinking=thinking,
         )
-        with gpu_guard():
-            text = _mlx_generate(
-                m,
-                tok,
-                prompt,
-                max_tokens=max_tokens,
-                sampler=sampler,
-                verbose=False,
-            )
-        # `mlx_lm.generate` returns either a bare str (newer versions)
-        # or an object with `.text`. Normalise both.
-        content = text if isinstance(text, str) else getattr(text, "text", str(text))
-        self._last_use[model] = time.time()
-        return {"message": {"content": (content or "").strip()}}
+        # Stream and take the GPU lock PER TOKEN instead of wrapping the whole
+        # generation in one `gpu_guard()`. `mlx_gpu`'s priority lane only
+        # reorders ACQUISITIONS — it cannot preempt a hold — so a single guard
+        # around a full 30B decode pinned the machine-wide flock for the entire
+        # generation and starved every recall on the box. Same shape as
+        # `chat_stream` below; the caller still gets one joined string.
+        _sentinel = object()
+        stream = _mlx_stream(m, tok, prompt, max_tokens=max_tokens, sampler=sampler)
+        chunks: list[str] = []
+        try:
+            while True:
+                with gpu_guard():
+                    resp = next(stream, _sentinel)
+                if resp is _sentinel:
+                    break
+                chunks.append(getattr(resp, "text", "") or "")
+        finally:
+            self._last_use[model] = time.time()
+        return {"message": {"content": ("".join(chunks) or "").strip()}}
 
     def chat_stream(
         self,

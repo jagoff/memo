@@ -82,8 +82,11 @@ def test_unknown_replacement_rejected(mem_with_stub: Memory):
         mem_with_stub.feedback_flag(rec.id, kind="wrong", superseded_by="nope0000nope0000")
 
 
-def test_mandate_text_mentions_flag_verb():
-    # T4: the cross-client mandate now tells non-hook agents to correct stale
-    # memories via the typed-feedback verb rather than working around them.
-    assert "memo_feedback_flag" in cli_mandate.MANDATE_TEXT
-    assert "outdated" in cli_mandate.MANDATE_TEXT
+def test_mandate_text_mentions_a_correction_verb_that_exists_on_the_surface():
+    # T4: the cross-client mandate tells non-hook agents to correct stale
+    # memories rather than work around them. The verb it names must exist on
+    # the profile those clients are installed at — `memo_feedback_flag` is
+    # registered only on full/default, so the mandate names the lifecycle
+    # tools instead (see tests/test_instruction_tool_names.py).
+    assert "memo_invalidate" in cli_mandate.MANDATE_TEXT
+    assert "memo_supersede" in cli_mandate.MANDATE_TEXT

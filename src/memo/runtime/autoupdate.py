@@ -108,6 +108,23 @@ def is_newer(remote: str, local: str) -> bool:
     return r > lo
 
 
+_ALLOWED_REPO_SCHEMES = ("https://", "git+https://")
+
+
+def _is_safe_repo_url(repo_url: str) -> bool:
+    """Whether `repo_url` is safe to hand to `git`.
+
+    `MEMO_AUTO_UPDATE_REPO` is operator-settable and flows straight into a
+    subprocess, so restrict it to https (no `ext::`/`file://` transports, which
+    git can turn into arbitrary command execution) and reject a leading dash so
+    it can never be parsed as an option.
+    """
+    url = (repo_url or "").strip()
+    if not url or url.startswith("-"):
+        return False
+    return url.startswith(_ALLOWED_REPO_SCHEMES)
+
+
 def latest_remote_tag(repo_url: str, *, timeout: int = 10) -> str | None:
     """Highest ``vX.Y.Z`` tag in the remote repo, or None on any failure.
 
@@ -115,9 +132,12 @@ def latest_remote_tag(repo_url: str, *, timeout: int = 10) -> str | None:
     probe stays cheap. Dereferenced (``--refs``) so peeled ``^{}`` lines are
     excluded.
     """
+    if not _is_safe_repo_url(repo_url):
+        _log.warning("auto-update: refusing unsafe repo URL %r", repo_url)
+        return None
     try:
         cp = subprocess.run(
-            ["git", "ls-remote", "--tags", "--refs", repo_url],
+            ["git", "ls-remote", "--tags", "--refs", "--", repo_url],
             capture_output=True,
             text=True,
             timeout=timeout,

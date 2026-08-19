@@ -33,6 +33,29 @@ if TYPE_CHECKING:
     from memo.memory.facade import Memory
 
 
+# The LLM prompt for one cluster is capped so a 50-member cluster can't blow the
+# helper's context window. The cap can DROP members, and the verdict built from
+# that prompt is what archives records — so the caller is told how many the model
+# actually saw.
+_MAX_CONSOLIDATION_PROMPT_CHARS = 24_000
+
+
+def _cluster_prompt(members: list[dict[str, Any]]) -> tuple[str, int]:
+    """`(prompt, members_included)` for one candidate cluster."""
+    chars = 0
+    included: list[str] = []
+    for member in members:
+        line = (
+            f"[{member['id_short']}] title: {member['title']}  |  "
+            f"updated: {member['updated']}\n{member['body_preview']}"
+        )
+        if chars + len(line) > _MAX_CONSOLIDATION_PROMPT_CHARS:
+            break
+        included.append(line)
+        chars += len(line) + 5  # 5 for the "\n---\n" separator
+    return "Cluster:\n\n" + "\n---\n".join(included), len(included)
+
+
 def _sort_updated_utc(value: Any) -> _dt.datetime:
     if not value:
         return _dt.datetime.min.replace(tzinfo=_dt.UTC)
@@ -802,20 +825,7 @@ class _ConsolidateOpsMixin(_MemoryBase):
 
             # Build LLM prompt with all members, capped to avoid blowing the
             # context window on large clusters (50+ items × 600 chars each).
-            _MAX_CONSOLIDATION_PROMPT_CHARS = 24_000
-            member_lines = [
-                f"[{m['id_short']}] title: {m['title']}  |  updated: {m['updated']}\n"
-                f"{m['body_preview']}"
-                for m in members
-            ]
-            _chars = 0
-            _included = []
-            for _line in member_lines:
-                if _chars + len(_line) > _MAX_CONSOLIDATION_PROMPT_CHARS:
-                    break
-                _included.append(_line)
-                _chars += len(_line) + 5  # 5 for "\n---\n" separator
-            prompt = "Cluster:\n\n" + "\n---\n".join(_included)
+            prompt, _seen = _cluster_prompt(members)
             try:
                 chat = self._ensure_chat()
                 from memo.flags import flag_int
@@ -848,13 +858,32 @@ class _ConsolidateOpsMixin(_MemoryBase):
                 data = json.loads(text) if text else {}
             except (ValueError, TypeError):
                 data = {}
+            # The prompt cap above can drop members, but the verdict below is
+            # what `_apply` archives whole clusters on. Classifying N members
+            # from a prompt that only saw some of them is a merge decision made
+            # on evidence the model never got — so a truncated cluster is
+            # reported, and left `unrelated` (the one verdict that archives
+            # nothing).
+            _truncated = _seen < len(members)
+            if _truncated:
+                _log.warning(
+                    "consolidate: cluster %d truncated for the LLM (%d of %d members) — "
+                    "refusing to classify it",
+                    ci,
+                    _seen,
+                    len(members),
+                )
             out.append(
                 {
                     "cluster_id": ci,
                     "size": len(members),
                     "members": members,
+                    "members_seen_by_llm": _seen,
+                    "truncated_for_llm": _truncated,
                     "summary": (data.get("summary") or "").strip(),
-                    "relationship": data.get("relationship")
+                    "relationship": "unrelated"
+                    if _truncated
+                    else data.get("relationship")
                     if data.get("relationship") in ("duplicate", "evolution", "facets", "unrelated")
                     else "unrelated",
                     "rationale": (data.get("rationale") or "").strip(),

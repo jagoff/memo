@@ -99,9 +99,6 @@ def test_search_graph_signal_never_injects_outside_candidate_set(
     monkeypatch,
 ) -> None:
     _enable_graph(monkeypatch)
-    # Deprecated compatibility switches must be accepted but inert.
-    monkeypatch.setenv("MEMO_GRAPH_RETRIEVAL_ENABLED", "1")
-    monkeypatch.setenv("MEMO_GRAPH_EXPANSION_ENABLED", "1")
     mem = mem_with_stub
     eligible = mem.save(content="eligible marker", title="Eligible")
     adjacent = mem.save(content="not returned by lexical retrieval", title="Adjacent")

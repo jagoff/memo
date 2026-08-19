@@ -276,6 +276,19 @@ def unknown_memo_vars(env: dict[str, str] | None = None) -> list[str]:
         "MEMO_SEARCH_DEFAULT_LIMIT",
         "MEMO_CONFIG_DIR",
         "MEMO_CONFIG_FILE",
+        # RETIRED in 4.13.3. Every one was an inert compatibility switch whose
+        # serving path had already been deleted, and memo itself shipped them —
+        # so a config or overlay carrying one is stale, NOT a typo. Reporting
+        # them as "unknown MEMO_* var (typo?)" would hand every upgrading user a
+        # scary error for a name they got from this project.
+        "MEMO_GRAPH_RETRIEVAL_ENABLED",
+        "MEMO_GRAPH_EXPANSION_ENABLED",
+        "MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED",
+        "MEMO_GRAPH_OUTCOME_WEIGHT",
+        "MEMO_GRAPH_DENSITY_BOOST",
+        "MEMO_GRAPH_FALLBACK_MIN_HITS",
+        "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
+        "MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS",
         # Credential consumed by http_auth.py. Keep it out of the behavioral
         # registry so `memo config show` / active_flags never expose its value.
         "MEMO_HTTP_API_TOKEN",

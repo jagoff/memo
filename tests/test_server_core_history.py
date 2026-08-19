@@ -438,3 +438,22 @@ def test_memo_stats_vault_path_none_when_not_set(tmp_cfg) -> None:
     result = tools["memo_stats"]()
 
     assert result["vault_path"] is None
+
+
+def test_memo_history_clamps_hostile_limits(tmp_cfg) -> None:
+    """A negative LIMIT is UNBOUNDED in SQLite — one call would materialize the
+    whole events table (measured: 3.8M tokens) before the response budget could
+    reject it. Clamp at the tool boundary."""
+    from memo.server_core_history import MAX_HISTORY_EVENTS, register
+
+    mem = _make_mem(tmp_cfg)
+    mem.history.list_recent.return_value = []
+
+    server, tools = _make_server_and_tools()
+    register(server, mem)
+
+    tools["memo_history"](limit=-1)
+    mem.history.list_recent.assert_called_with(limit=1, op=None, record_id=None)
+
+    tools["memo_history"](limit=10_000_000)
+    mem.history.list_recent.assert_called_with(limit=MAX_HISTORY_EVENTS, op=None, record_id=None)

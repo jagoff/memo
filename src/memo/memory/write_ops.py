@@ -28,7 +28,7 @@ from memo.contracts import (
     ActorIdentity,
     normalize_provenance,
 )
-from memo.errors import IdentityConflictError, StorageError
+from memo.errors import IdentityConflictError, StorageError, ValidationError
 from memo.fact_extraction import upsert_declared_fact_edges
 from memo.flags import flag_bool
 from memo.identity import (
@@ -39,6 +39,7 @@ from memo.identity import (
 )
 from memo.memory._base import _MemoryBase
 from memo.memory.record import (
+    _ABSORB_MIN_KEEP_RATIO,
     _DERIVE_SYSTEM_PROMPT,
     _VALID_TYPES,
     MemoryRecord,
@@ -457,7 +458,7 @@ class _WriteOpsMixin(_MemoryBase):
           separate paths.
         """
         if not content or not content.strip():
-            raise ValueError("`content` must be non-empty")
+            raise ValidationError("`content` must be non-empty")
 
         # Canonicalise transport provenance at the boundary. Legacy flat keys
         # are accepted for one-way import but are never persisted by new writes.
@@ -502,10 +503,10 @@ class _WriteOpsMixin(_MemoryBase):
         if type is not None:
             _log.warning("save: `type=` is deprecated, use `type_=`")
             if type_ != "note" and type_ != type:
-                raise ValueError("Pass either `type_` or `type`, not conflicting values")
+                raise ValidationError("Pass either `type_` or `type`, not conflicting values")
             type_ = type
         if type_ not in _VALID_TYPES:
-            raise ValueError(
+            raise ValidationError(
                 f"`type_={type_!r}` not in valid set {sorted(_VALID_TYPES)}",
             )
 
@@ -515,7 +516,7 @@ class _WriteOpsMixin(_MemoryBase):
         # preferences are legitimate. Mirrors the repo/vault ingest filter so
         # this junk cannot re-enter through `memo_save`.
         if type_ in REFERENCE_TYPES and is_reference_noise(content):
-            raise ValueError(
+            raise ValidationError(
                 "reference content is near-empty noise (no heading/link, "
                 f"<{60} chars); refusing to index",
             )
@@ -625,8 +626,10 @@ class _WriteOpsMixin(_MemoryBase):
 
         now_iso = _now_iso()
         created_iso = created or now_iso
-        # Truncate content for embedding (vec store doesn't truncate;
-        # disk file keeps full content). 64KB is the default cap.
+        # Cap oversized content once, before it is both embedded and written to
+        # disk (the `.md` carries the same truncated body). 64KB is the default
+        # cap. A later hand-edit past the cap wins — `update()` only re-caps
+        # when the caller actually edits the body.
         if len(content) > self.cfg.max_content_chars:
             _log.warning(
                 "save: content truncated from %d to %d chars (title=%r)",
@@ -704,6 +707,7 @@ class _WriteOpsMixin(_MemoryBase):
                             # re-asserted by an independent save. Count it —
                             # this signal used to be discarded with the warning.
                             defer_to_identity = False
+                            candidate_identity = None
                             if _dh.get("id"):
                                 candidate_identity = self.store.get_identity_keys(_dh["id"])
                                 defer_to_identity = bool(
@@ -722,7 +726,18 @@ class _WriteOpsMixin(_MemoryBase):
                                         )
                                     )
                                 )
-                            if _dh.get("id") and not defer_to_identity:
+                            # The vec search above is corpus-wide: a hit may
+                            # belong to a DIFFERENT project. Neither
+                            # corroboration nor absorb may cross that line —
+                            # `_absorb_into_existing` rewrites the target's body
+                            # and keeps the TARGET's tags, so a `project:A` save
+                            # folded into a `project:B` memory disappears from
+                            # project A entirely.
+                            _same_namespace = bool(
+                                candidate_identity
+                                and candidate_identity.get("namespace") == namespace
+                            )
+                            if _dh.get("id") and not defer_to_identity and _same_namespace:
                                 bump_support_if_enabled(self.store, [_dh["id"]])
                             # C3: absorb-on-recurrence (flag-gated, default on).
                             # Never in derived-save scope — dream/consolidation
@@ -739,6 +754,7 @@ class _WriteOpsMixin(_MemoryBase):
                                 and not in_derived_save_scope()
                                 and _dh.get("id")
                                 and _dh.get("type") == type_
+                                and _same_namespace
                             ):
                                 _absorbed = self._absorb_into_existing(_dh["id"], title, content)
                                 if _absorbed is not None:
@@ -1578,7 +1594,17 @@ class _WriteOpsMixin(_MemoryBase):
                 ):
                     continue
                 candidates.append((candidate, candidate_post, candidate_tags))
-            except (OSError, ValueError, TypeError):
+            except (OSError, ValueError, TypeError) as exc:
+                # An unreadable candidate may be the very file holding the
+                # disk-only reservation: dropping it silently makes this return
+                # "no reservation", the save creates a second .md with the same
+                # topic identity, and the reservation insert then fails. Loud
+                # enough to diagnose that sequence after the fact.
+                _log.warning(
+                    "save: topic-reservation scan skipped %s (%s)",
+                    candidate.name,
+                    exc,
+                )
                 continue
         if len(candidates) > 1:
             return [
@@ -1701,6 +1727,20 @@ class _WriteOpsMixin(_MemoryBase):
             merged = ((out.get("message") or {}).get("content") or "").strip()
             if not merged:
                 return None
+            # The merge is one bounded generation (max_tokens above), so a body
+            # longer than that budget comes back clipped mid-sentence. Absorb
+            # REPLACES the existing canonical body, so committing a clipped
+            # merge would silently gut a long note. Refuse it — the caller falls
+            # back to creating a separate record, which loses nothing.
+            if len(merged) < _ABSORB_MIN_KEEP_RATIO * len(existing.body):
+                _log.warning(
+                    "save: absorb rejected for %s — merge is %d chars vs %d existing "
+                    "(likely clipped by the token budget); creating a new record instead",
+                    existing_id[:8],
+                    len(merged),
+                    len(existing.body),
+                )
+                return None
             new_extra = dict(existing.extra or {})
             new_extra["proof_count"] = int(new_extra.get("proof_count") or 1) + 1
             new_extra["last_absorbed_at"] = _now_iso()
@@ -1711,6 +1751,18 @@ class _WriteOpsMixin(_MemoryBase):
                     existing_id[:8],
                     new_extra["proof_count"],
                 )
+                # Stamp the outcome: update() leaves action=None, and to_dict()
+                # then omits the field entirely, so an MCP/CLI caller could not
+                # tell its content was folded into another record by an LLM
+                # rewrite rather than stored verbatim. The relation gate
+                # (attach_post_save_relations) deliberately still skips
+                # "absorbed" — the target already ran detection when created.
+                updated = replace(
+                    updated,
+                    action="absorbed",
+                    index_pending=not self.store.has_vector(existing_id),
+                )
+                self._emit_save_receipt(updated, deferred=updated.index_pending)
             else:
                 # update() resolves the id fresh and returns None if it no
                 # longer exists — most likely the target was archived+deleted
@@ -1818,7 +1870,15 @@ class _WriteOpsMixin(_MemoryBase):
         Returns the new-layout path even when the file doesn't exist on
         either branch — callers that need to CREATE a file always write
         to the new layout.
+
+        A reference-tier chunk row carries an index-only fragment
+        (`<file>#chunk-N`, minted by `cli_ingest`); it is not part of any
+        filesystem name, so it is stripped here — every filesystem sink goes
+        through this method, and leaving it in made the nightly
+        contradiction-resolve pass die with FileNotFoundError on those rows
+        (exit 1 every night, pairs never resolving).
         """
+        rel_path = rel_path.split("#chunk-", 1)[0]
         new_path = self._safe_path_under(self.cfg.memory_dir, rel_path)
         if new_path.is_file():
             return new_path
@@ -1827,6 +1887,36 @@ class _WriteOpsMixin(_MemoryBase):
             if legacy.is_file():
                 return legacy
         return new_path
+
+    def _read_body_strict(self, rel_path: str) -> str:
+        """`_read_body` for the EDIT path: refuses to guess the old body.
+
+        The lenient reader falls back to the derived FTS body and then to `""`
+        — right for a search snippet, catastrophic for `append=`/`replace=`,
+        which resolve the new body FROM the old one: an unreadable (or
+        moved/deleted) `.md` whose `fts.body` is NULL turned an append into a
+        full overwrite of the canonical file with just the appended fragment,
+        and the pre-update snapshot recorded `body=''` so `memo version
+        rollback` could not recover it either.
+        """
+        abs_path = self._resolve_existing(rel_path)
+        if abs_path.is_file():
+            try:
+                return markdown_body(frontmatter.loads(abs_path.read_text(encoding="utf-8")))
+            except (OSError, UnicodeDecodeError) as exc:
+                raise StorageError(
+                    f"cannot read the canonical body of {rel_path} to edit it: {exc}"
+                ) from exc
+        indexed = ""
+        with contextlib.suppress(Exception):
+            indexed = str(self.store.get_fts_body_by_path(rel_path) or "")
+        if indexed:
+            return indexed
+        raise StorageError(
+            f"canonical file for {rel_path} is missing and the index holds no body — "
+            "refusing to rewrite the memory from an empty base "
+            "(restore the .md, or run `memo reindex`)"
+        )
 
     def _read_body(self, rel_path: str) -> str:
         # Fast path: curated memories live on disk under memory_dir / vault_path.

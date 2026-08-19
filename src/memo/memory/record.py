@@ -103,6 +103,12 @@ _VALID_TYPES = DURABLE_TYPES | REFERENCE_TYPES | {"temp"}
 # only — short durable facts/preferences ("User prefers dark mode") are kept.
 MIN_REFERENCE_CHARS = 60
 
+# Absorb (`_absorb_into_existing`) replaces the existing canonical body with one
+# bounded LLM generation. A merge that comes back materially shorter than what
+# it replaces was clipped by the token budget, not summarised on purpose — the
+# write path refuses it rather than gutting the note.
+_ABSORB_MIN_KEEP_RATIO = 0.8
+
 
 def _contains_reference_link(s: str) -> bool:
     """Whether `s` holds a wikilink, a markdown link, or a URL.

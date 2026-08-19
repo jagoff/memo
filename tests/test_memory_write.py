@@ -749,6 +749,42 @@ def test_save_truncates_huge_body(tmp_cfg: Config, monkeypatch):
     assert on_disk.count("x") <= 110
 
 
+def test_metadata_only_update_keeps_oversized_hand_edited_body(tmp_cfg: Config, monkeypatch):
+    """A tag/extra patch must not rewrite the canonical .md truncated.
+
+    Markdown is the source of truth: a note hand-extended in Obsidian past
+    `max_content_chars` indexes fine via reindex(), so the next metadata-only
+    update (feedback flag, forget/unforget, MCP tag write) used to silently
+    destroy everything past the cap.
+    """
+    cfg = Config(
+        data_dir=tmp_cfg.data_dir,
+        vault_path=tmp_cfg.vault_path,
+        state_dir=tmp_cfg.state_dir,
+        embedder_dims=4,
+        max_content_chars=100,
+    )
+    monkeypatch.setattr(
+        "memo.embedder.MLXEmbedder.embed",
+        lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
+    )
+    mem = Memory(cfg)
+    rec = mem.save(content="short body", title="handedit")
+    path = cfg.memory_dir / rec.path
+
+    post = frontmatter.load(path)
+    post.content = "y" * 300
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+    mem.reindex()
+
+    mem.update(rec.id, extra={"proof_count": 2})
+    assert frontmatter.load(path).content.count("y") == 300
+
+    # An actual body edit still respects the cap.
+    mem.update(rec.id, append="z" * 50)
+    assert len(frontmatter.load(path).content) <= 100
+
+
 def test_save_rejects_wrong_dim_embedding(tmp_cfg: Config, monkeypatch):
     cfg = Config(
         data_dir=tmp_cfg.data_dir,

@@ -4,12 +4,44 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 PROXY_LABEL = "com.memo.proxy"
 
 CHAT_LABEL = "com.memo.chat"
+
+# MEMO_* vars that belong to the terminal running the install, never to a
+# long-lived daemon (superset of `tui.config.catalog.RUNTIME_ONLY_ENV_NAMES`,
+# duplicated here so plist rendering doesn't import the TUI). MEMO_AGENT_TTY is
+# the sharp one: runtime/codex_notify.py writes escape sequences to that path,
+# and by the next boot /dev/ttysNNN belongs to an unrelated session.
+_SESSION_SCOPED_ENV = frozenset(
+    {
+        # A bearer token belongs in the 0600 token file, not in a plist that
+        # lands 0644 under ~/Library/LaunchAgents. `http_auth` reads the file
+        # when the env var is absent, so dropping it here loses nothing.
+        "MEMO_HTTP_API_TOKEN",
+        "MEMO_AGENT_TTY",
+        "MEMO_CODEX_BADGE_SHOWN",
+        "MEMO_NONINTERACTIVE",
+        "MEMO_SESSION_ID",
+        "MEMO_STARTUP_BANNER_SHOWN",
+        "MEMO_TERMINAL_ID",
+        "MEMO_TERMINAL_REGISTRATION_ATTEMPTED",
+    }
+)
+
+
+def daemon_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The MEMO_* vars it is safe to freeze into a LaunchAgent plist."""
+    src = os.environ if environ is None else environ
+    return {
+        k: v
+        for k, v in sorted(src.items())
+        if k.startswith("MEMO_") and k not in _SESSION_SCOPED_ENV
+    }
 
 
 def render_chat_plist(
@@ -24,7 +56,7 @@ def render_chat_plist(
     # launchd agents don't inherit the shell env — forward MEMO_* vars from the
     # installing shell so the daemon uses the same embedder/vault/state config
     # as `memo` in a terminal (mirrors watcher.py's render_plist).
-    memo_env = {k: v for k, v in sorted(os.environ.items()) if k.startswith("MEMO_")}
+    memo_env = daemon_env()
     memo_env_xml = "".join(
         f"      <key>{escape(k)}</key>\n      <string>{escape(v)}</string>\n"
         for k, v in memo_env.items()
@@ -122,6 +154,8 @@ def install_chat(memo_bin: str, home: Path, *, port: int = 8765, dist: str | Non
     path = _plist_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_chat_plist(memo_bin, str(home), port=port, dist=dist), encoding="utf-8")
+    # The plist carries the daemon's whole MEMO_* environment — not world-readable.
+    path.chmod(0o600)
     uid = os.getuid()
     subprocess.run(
         ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False

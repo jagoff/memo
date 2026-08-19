@@ -63,6 +63,10 @@ _GRAPH_ENABLED = "MEMO_GRAPH_SIGNAL_ENABLED"
 _GRAPH_ALPHA = "MEMO_GRAPH_SIGNAL_ALPHA"
 _GRAPH_BASELINE = "dream_graph_baseline.json"
 _MANAGED_GRAPH_SIGNAL_KEYS = (_GRAPH_ENABLED, _GRAPH_ALPHA)
+# Names a PREVIOUS version wrote into the tuned overlay. They are no longer
+# registered flags (retired in 4.13.3 — every one was an inert compatibility
+# switch), but an overlay written before that upgrade can still carry them, and
+# leaving them there would make `memo config validate` report unknown vars.
 _LEGACY_GRAPH_OVERLAY_KEYS = (
     "MEMO_RECALL_GRAPH_PROXIMITY_WEIGHT",
     "MEMO_GRAPH_RETRIEVAL_ENABLED",
@@ -230,10 +234,16 @@ def build_labels(
         if p.get("text")
     ]
     # Same noise pass-through as _curated_label_set — without it the tuner's
-    # noise@K objective is a vacuous 0.0 (see the curated-gate fix).
+    # noise@K objective is a vacuous 0.0 (see the curated-gate fix). The SAME
+    # omission applied to `relevant_terms` and made the PRECISION dimension
+    # vacuous: only 12 of the 46 curated prompts carry expect_ids, so without
+    # the terms `_is_relevant` is False for the other 34 while the denominator
+    # still counts them — precision pinned near 0.015, `_regressed` always
+    # False, and every candidate auto-applied.
     raw = curated_labels_document(cfg.state_dir) if curated else {}
     return LabelSet(
         prompts=prompts,
+        relevant_terms={str(t).lower() for t in (raw.get("relevant_terms") or [])},
         noise_tags={str(t).lower() for t in (raw.get("noise_tags") or [])},
         noise_path_fragments=tuple(str(f) for f in (raw.get("noise_path_fragments") or [])),
     ), bool(curated)
@@ -269,10 +279,20 @@ def search_min_sim(
     return best_floor, before, best
 
 
+# Metrics the auto-apply gate refuses to trade away. precision/noise alone let
+# a candidate through that halved `canonical_hit_at_k` (0.065 -> 0.022 in the
+# 2026-08-17 floor-calibration receipt) while both watched numbers stayed flat.
+_GATE_HIGHER_IS_BETTER = ("precision_at_k", "recall_at_k", "canonical_hit_at_k")
+_GATE_LOWER_IS_BETTER = ("noise_at_k", "stale_at_k")
+
+
 def _regressed(live: dict[str, float], baseline: dict[str, float]) -> bool:
-    return (
-        live["precision_at_k"] < baseline["precision_at_k"] - 1e-9
-        or live["noise_at_k"] > baseline["noise_at_k"] + 1e-9
+    for key in _GATE_HIGHER_IS_BETTER:
+        if key in live and key in baseline and live[key] < baseline[key] - 1e-9:
+            return True
+    return any(
+        key in live and key in baseline and live[key] > baseline[key] + 1e-9
+        for key in _GATE_LOWER_IS_BETTER
     )
 
 
@@ -675,10 +695,12 @@ def _curated_label_set(state_dir: Path) -> LabelSet | None:
     """The curated regression prompts as a LabelSet (same resolution as
     ``build_labels``: state_dir first, repo file second). None when absent.
 
-    The document-level ``noise_tags``/``noise_path_fragments`` are passed
-    through (same parsing as ``eval_recall.load_labels``) so the gate's
-    noise@K dimension measures real noise instead of a vacuous 0.0 —
-    ``_regressed`` then rejects a candidate that RAISES curated noise."""
+    The document-level ``relevant_terms``/``noise_tags``/
+    ``noise_path_fragments`` are passed through (same parsing as
+    ``eval_recall.load_labels``) so the gate's precision@K and noise@K
+    dimensions measure something real instead of a vacuous constant —
+    ``_regressed`` then rejects a candidate that LOWERS curated precision or
+    RAISES curated noise."""
     prompts = [
         Prompt(
             text=str(p["text"]),
@@ -693,6 +715,7 @@ def _curated_label_set(state_dir: Path) -> LabelSet | None:
     raw = curated_labels_document(state_dir)
     return LabelSet(
         prompts=prompts,
+        relevant_terms={str(t).lower() for t in (raw.get("relevant_terms") or [])},
         noise_tags={str(t).lower() for t in (raw.get("noise_tags") or [])},
         noise_path_fragments=tuple(str(f) for f in (raw.get("noise_path_fragments") or [])),
     )

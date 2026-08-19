@@ -203,3 +203,22 @@ def test_injection_filters_gap_trims_to_top_hit(monkeypatch) -> None:
     monkeypatch.setenv("MEMO_RECALL_GAP_THRESHOLD", "0.2")
     hits = _hits(0.9, 0.5, 0.4)
     assert apply_injection_filters(hits) == hits[:1]
+
+
+def test_injection_filters_gap_is_relative_to_rank1(monkeypatch) -> None:
+    """The gap is a FRACTION of rank-1, not an absolute score delta.
+
+    `score` carries multiplicative boosts (live range ~6.8), so an absolute
+    threshold fired on nearly every prompt and discarded rank-2 hits sitting at
+    96% of rank-1 — measured at prec@5 0.225 vs 0.415 with the trim off.
+    """
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+    monkeypatch.setenv("MEMO_RECALL_GAP_THRESHOLD", "0.5")
+    # Boosted scale: a 3.3-point drop is still 48.6% of rank-1 → keep both
+    # (the absolute test would have trimmed on any delta over 0.5).
+    close = _hits(6.815, 3.5)
+    assert apply_injection_filters(close) == close
+    # Small scale: a 0.4 drop is 67% of rank-1 → trim (the absolute test would
+    # have kept it, since 0.4 < 0.5).
+    far = _hits(0.6, 0.2)
+    assert apply_injection_filters(far) == far[:1]
