@@ -120,10 +120,27 @@ def summarize(state_dir: Path) -> dict:
     if mean_t is not None and mean_h not in (None, 0):
         saving = round((mean_h - mean_t) / mean_h, 6)
 
-    by_transform: dict[str, int] = {}
+    # Per-transform breakdown. A request can carry several transforms (each
+    # zone's transform runs independently), so a row's `retrieved` and
+    # `est_saved_tokens` are attributed to every transform it applied — an
+    # approximation, not an exact per-transform split, when transforms overlap.
+    by_transform: dict[str, dict] = {}
     for row in treated:
-        for name in row.get("transforms") or []:
-            by_transform[name] = by_transform.get(name, 0) + 1
+        names = row.get("transforms") or []
+        saved = row.get("est_saved_tokens")
+        saved = saved if isinstance(saved, int) else 0
+        row_retrieved = row.get("retrieved")
+        row_retrieved = row_retrieved if isinstance(row_retrieved, int) else 0
+        for name in names:
+            agg = by_transform.setdefault(name, {"n": 0, "retrieved": 0, "est_saved_tokens": 0})
+            agg["n"] += 1
+            agg["retrieved"] += row_retrieved
+            agg["est_saved_tokens"] += saved
+
+    total_saved = sum(v["est_saved_tokens"] for v in by_transform.values())
+    for v in by_transform.values():
+        v["retrieval_rate"] = round(v["retrieved"] / v["n"], 4) if v["n"] else None
+        v["share"] = round(v["est_saved_tokens"] / total_saved, 4) if total_saved else None
 
     retrieved = 0
     for r in treated:

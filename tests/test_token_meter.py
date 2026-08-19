@@ -296,10 +296,10 @@ def test_tokens_json_preserves_ledger_schema(tmp_path):
     res = runner.invoke(cli, ["tokens", "--json"], env=_cli_env(tmp_path))
     assert res.exit_code == 0
     payload = _json.loads(res.output)
-    # frozen token_ledger keys must all remain present
-    for key in ("today", "month", "historic", "daily", "monthly", "growth", "tpg", "ledger_path"):
-        assert key in payload
-    assert "measured" in payload  # additive key must actually be written
+    # frozen keys: the two real-measurement surfaces, no fabricated estimate.
+    assert payload["measured"]["schema"] == tm.LEDGER_SCHEMA
+    assert "proxy" in payload
+    assert payload["proxy"]["measured_saving_frac"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -53,9 +53,20 @@ def test_usage_of_a_bodyless_response_is_all_zeroes():
 
 
 def test_append_writes_one_json_line_per_record(tmp_path):
-    append(tmp_path, Record(request_key="k1", holdout=False, transforms=["toolschemas"],
-                            est_saved_tokens=100, input_tokens=1, output_tokens=2,
-                            cache_creation_tokens=3, cache_read_tokens=4, retrieved=0))
+    append(
+        tmp_path,
+        Record(
+            request_key="k1",
+            holdout=False,
+            transforms=["toolschemas"],
+            est_saved_tokens=100,
+            input_tokens=1,
+            output_tokens=2,
+            cache_creation_tokens=3,
+            cache_read_tokens=4,
+            retrieved=0,
+        ),
+    )
     lines = (tmp_path / "proxy" / "requests.jsonl").read_text().strip().splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["request_key"] == "k1"
@@ -63,13 +74,35 @@ def test_append_writes_one_json_line_per_record(tmp_path):
 
 def test_summarize_compares_treated_against_holdout(tmp_path):
     for i in range(10):
-        append(tmp_path, Record(request_key=f"t{i}", holdout=False, transforms=["x"],
-                                est_saved_tokens=50, input_tokens=500, output_tokens=10,
-                                cache_creation_tokens=0, cache_read_tokens=0, retrieved=0))
+        append(
+            tmp_path,
+            Record(
+                request_key=f"t{i}",
+                holdout=False,
+                transforms=["x"],
+                est_saved_tokens=50,
+                input_tokens=500,
+                output_tokens=10,
+                cache_creation_tokens=0,
+                cache_read_tokens=0,
+                retrieved=0,
+            ),
+        )
     for i in range(10):
-        append(tmp_path, Record(request_key=f"h{i}", holdout=True, transforms=[],
-                                est_saved_tokens=0, input_tokens=1000, output_tokens=10,
-                                cache_creation_tokens=0, cache_read_tokens=0, retrieved=0))
+        append(
+            tmp_path,
+            Record(
+                request_key=f"h{i}",
+                holdout=True,
+                transforms=[],
+                est_saved_tokens=0,
+                input_tokens=1000,
+                output_tokens=10,
+                cache_creation_tokens=0,
+                cache_read_tokens=0,
+                retrieved=0,
+            ),
+        )
     s = summarize(tmp_path)
     assert s["n_treated"] == 10
     assert s["n_holdout"] == 10
@@ -108,3 +141,58 @@ def test_summarize_skips_a_row_whose_counter_is_not_a_number(tmp_path):
         '{"holdout": false, "input_tokens": "abc"}\n'
     )
     assert summarize(tmp_path)["measured_saving_frac"] is None
+
+
+def test_by_transform_reports_counts_retrieval_rate_and_savings_share(tmp_path):
+    for i in range(10):
+        append(
+            tmp_path,
+            Record(
+                request_key=f"a{i}",
+                holdout=False,
+                transforms=["toolschemas"],
+                est_saved_tokens=100,
+                input_tokens=500,
+                output_tokens=10,
+                retrieved=0,
+            ),
+        )
+    for i in range(10):
+        append(
+            tmp_path,
+            Record(
+                request_key=f"b{i}",
+                holdout=False,
+                transforms=["jsoncrush"],
+                est_saved_tokens=20,
+                input_tokens=500,
+                output_tokens=10,
+                retrieved=1 if i < 6 else 0,
+            ),
+        )
+    by = summarize(tmp_path)["by_transform"]
+    assert by["toolschemas"]["n"] == 10
+    assert by["toolschemas"]["retrieved"] == 0
+    assert by["toolschemas"]["retrieval_rate"] == 0.0
+    # total est_saved_tokens = 10*100 + 10*20 = 1200; toolschemas share = 1000/1200
+    assert by["toolschemas"]["share"] == round(1000 / 1200, 4)
+    assert by["jsoncrush"]["n"] == 10
+    assert by["jsoncrush"]["retrieved"] == 6
+    assert by["jsoncrush"]["retrieval_rate"] == 0.6
+    assert by["jsoncrush"]["share"] == round(200 / 1200, 4)
+
+
+def test_by_transform_share_is_none_without_any_savings(tmp_path):
+    append(
+        tmp_path,
+        Record(
+            request_key="a",
+            holdout=False,
+            transforms=["delta"],
+            est_saved_tokens=0,
+            input_tokens=500,
+            output_tokens=10,
+        ),
+    )
+    by = summarize(tmp_path)["by_transform"]
+    assert by["delta"]["share"] is None

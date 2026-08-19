@@ -9,6 +9,26 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Removed
+
+- The "tokens saved (estimated)" panel in `memo tokens` and the three flags
+  that fed it (`MEMO_ROI_TOKENS_PER_GROUNDED`, `MEMO_ROI_TOKENS_PER_REASK`,
+  `MEMO_ROI_TOKENS_PER_CONSULT`). That panel printed `grounded × 350 +
+  consults × 200` — hardcoded constants with no control arm — right beside a
+  real measured cost (`memo tokens`'s transcript-based panel), which read as
+  a savings claim memo could not support. `memo tokens` now reports the
+  local context-compression proxy's real treated-vs-holdout measurement
+  (`memo.proxy.meter.summarize`: mean input tokens, measured saving
+  fraction, sample counts, per-transform retrieval rate via
+  `--by-transform`) alongside the existing transcript-measured panel — no
+  fabricated number, and "no measured data yet" is reported as such rather
+  than as a zero. The same estimate is gone from `memo roi`'s "estimated
+  tokens" line and from the dashboard's token-savings KPI/daily series
+  (`memo.web_build._token_savings`), which now report only the real,
+  physical grounded/re-ask/context-cost counts. `memo eval baseline`'s
+  online window dropped its derived "tokens" figure for the same reason —
+  only the real grounded count remains.
+
 ## [4.12.2] - 2026-08-17
 
 ### Fixed

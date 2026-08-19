@@ -1193,7 +1193,7 @@ def eval_ab_cmd(
 def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
     """Freeze a baseline snapshot for self-improvement comparison.
 
-    Captures offline prec@K / noise@K, online grounded + tokens (7d / 30d), and
+    Captures offline prec@K / noise@K, online grounded count (7d / 30d), and
     the active tuned-params version, to state_dir/eval/baseline_snapshot.json.
     """
     cfg = Config.from_env()
@@ -1223,7 +1223,7 @@ def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
             f"[green]✓[/green] baseline snapshot → {path}\n"
             f"  offline prec@{k} {snap['offline']['precision_at_k']} / "
             f"noise@{k} {snap['offline']['noise_at_k']}\n"
-            f"  online 7d grounded {w7['grounded']} (~{w7['tokens']} tok) · "
+            f"  online 7d grounded {w7['grounded']} · "
             f"params {snap['params_version']}"
         )
 
