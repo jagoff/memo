@@ -350,9 +350,21 @@ def test_marker_never_claims_full_original_when_a_crush_reference_is_nested(tmp_
     conftest.py already defaults it, since this test exercises the exact
     config_md/tuned_overlay read path the capture-flag scoping in
     JsonCrush consults.
+
+    Pixel (task 13) is disabled here: it runs last in the real registry and,
+    after its fix-round-1 correction, DOES legitimately fire on a dense
+    single-line JSON-crushed block like this test's fixture -- correctly
+    converting it to an image block whose own marker also detects the
+    nested crush reference (the same `ccr.marker` nested-detection this
+    test checks, one hop further out). That is desired behavior, but it is
+    Pixel's behavior, not the JsonCrush-before-ToolResults interaction this
+    test exists to isolate, so scoping it out keeps this test's assertions
+    about `final_text` (a plain string) meaningful regardless of Pixel's own
+    profitability threshold.
     """
     monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "config-home"))
     monkeypatch.delenv("MEMO_CRUSHER_ENABLED", raising=False)
+    monkeypatch.setenv("MEMO_PROXY_PIXEL", "0")
 
     big = json.dumps([{"id": i, "text": "row " * 20} for i in range(400)])
     raw = json.dumps(
@@ -404,9 +416,14 @@ def test_marker_never_claims_full_original_when_a_structmap_reference_is_nested(
     must catch it too.
 
     Config isolation for the same reason as the JsonCrush test above: this
-    runs the real registry end to end.
+    runs the real registry end to end. Pixel (task 13) is disabled for the
+    same reason as the JsonCrush test above -- this test isolates the
+    StructMap-before-ToolResults interaction, not Pixel's own profitability
+    threshold, which could in principle also fire on a sufficiently dense
+    signature map and turn `final_text` into a non-string content list.
     """
     monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "config-home"))
+    monkeypatch.setenv("MEMO_PROXY_PIXEL", "0")
 
     repo_root = Path(__file__).resolve().parent.parent
     big_python_source = (repo_root / "src/memo/memory/search_ops.py").read_text(encoding="utf-8")

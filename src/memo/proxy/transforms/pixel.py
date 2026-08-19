@@ -5,37 +5,71 @@ accounting can be cheaper than text tokens for very dense content.
 The most speculative transform in this plan (see the task-13 brief). The
 profitability gate is the point, not the renderer -- see `is_profitable`
 below and the numbers in this module's own test coverage / the task-13
-report. A transform that never fires on real content is a correct, reportable
-outcome, not a bug to paper over (rule 7 of the brief).
+report.
 
-Two INDEPENDENT gates, in order, and both must pass before anything is
-written back:
+**Fix round 1 correction.** An earlier version of this module gated the
+write-back on comparing the FINAL byte-serialized payload (base64 image +
+marker) against the original text's byte length -- the same discipline the
+five TEXT transforms in this package correctly use. That discipline is wrong
+here: Anthropic does not bill an image by its base64 payload size, it bills
+by PIXEL DIMENSIONS (`tokens ~= width * height / 750`, this module's
+documented approximation -- see `est_image_tokens`). Base64 always inflates
+bytes by ~33% on top of a PNG that (unlike a solid-color image) carries real
+per-glyph entropy DEFLATE cannot fully erase, so a byte-size gate vetoed
+every case measured, closing the exact door this transform exists to walk
+through: a payload that is LARGER in bytes can still be CHEAPER in the units
+the provider actually charges. Firing is governed by the TOKEN comparison
+alone (`is_profitable`); see task-13-report.md for the corrected numbers and
+what changed.
+
+Two things must both hold before anything is written back:
 
 1. `is_profitable(text)` -- a pure token-ESTIMATE comparison, no Pillow, no
    rendering. It computes the same page geometry `render()` would actually
    lay out (`_page_geometry`, shared by both functions so the estimate can
-   never diverge from what actually gets drawn) and asks whether the
-   Anthropic-documented image-token approximation
-   (`tokens ~= width * height / 750`) comes in meaningfully under the text's
-   own token estimate. This is the gate described in the brief's item 4.
-2. The FINAL-payload byte guard in `_rewrite_block` -- once an image is
-   actually rendered and base64-encoded, the REAL comparison is the
-   marker-and-image-included payload against the original text, in bytes
-   (brief item 6). Base64 inflates bytes by ~33% on top of a PNG that (unlike
-   a solid-color image) carries real per-glyph entropy DEFLATE cannot erase,
-   so in practice this second gate is the one that decides: measured across
-   inputs from 17 chars to 200,000 chars of maximally-compressible content,
-   the base64 image + marker payload was LARGER in bytes than the plain text
-   it would replace in every case tried (see task-13-report.md). Gate 1 can
-   say "fewer tokens" while gate 2 correctly says "more bytes to transmit for
-   it" -- both are honest, about different units, and gate 2 is the one that
-   actually decides whether this transform ever writes back.
+   never diverge from what actually gets drawn), rejects anything whose
+   geometry would exceed `_MAX_IMAGE_DIM_PX` (see below), and otherwise asks
+   whether the estimated image-token cost comes in under
+   `_PROFITABLE_FRACTION` of the text's own token estimate -- "meaningfully
+   below," per the brief, not just numerically less.
+2. An absolute dimension ceiling, `_MAX_IMAGE_DIM_PX = 8000`: Anthropic's
+   Messages API documents a hard per-image maximum of 8000x8000 pixels --
+   requests with a larger image are rejected outright
+   (https://platform.claude.com/docs/en/build-with-claude/vision, "Image
+   limits and costs", fetched 2026-08-19), independent of file size. This is
+   the ceiling to enforce, not a self-imposed byte cap: this module's own
+   page geometry has UNBOUNDED height for a sufficiently long single line or
+   a sufficiently line-dense block (width saturates at `_CHARS_PER_LINE`,
+   height does not), and the token-ratio math in (1) does not naturally bound
+   it -- a maximally dense, highly repetitive block can stay profitable by
+   the token estimate at any scale. A byte-size cap was considered and
+   rejected as the primary bound: a single very long line of a repeated
+   character compresses so well under PNG/DEFLATE that its encoded size
+   stays small even once its HEIGHT has blown past 8000px (measured: a
+   single-line block reaches 8000px height at roughly 87,000 characters,
+   where its PNG is still well under 200KB) -- so a byte ceiling generous
+   enough not to reject ordinary dense content would not have caught this
+   case, while the dimension ceiling catches it exactly, because it is the
+   real failure mode. Checked in both `is_profitable` (so a pathological
+   block is rejected before any rendering is attempted) and `render` itself
+   (defense in depth, in case `render` is ever called directly).
+
+**What this module cannot verify.** `est_image_tokens` is Anthropic's
+documented *approximation*; provider-side accounting for very large or
+unusually shaped images, and any resizing the provider applies before
+billing, are not something a local formula or a unit test can confirm.
+Separately, and more importantly: whether a model reads rendered text as
+reliably as it reads plain text -- at this font, this density, this
+line-wrap -- is a comprehension question, not a token-accounting question,
+and nothing in this module or its test suite measures it. A green
+profitability gate proves the transform is estimated to be CHEAPER; it does
+not prove the model understands the image as well as it would have
+understood the text. That risk is real and unmeasured; see task-13-report.md.
 """
 
 from __future__ import annotations
 
 import base64
-import json
 import logging
 
 from memo.flags import flag_bool
@@ -48,21 +82,32 @@ _log = logging.getLogger(__name__)
 
 # --- shared page-geometry model ---------------------------------------------
 # Used by BOTH is_profitable (estimate, Pillow-free) and render (actual
-# layout) -- see module docstring. Metrics are measured against Pillow's own
-# bundled `ImageFont.load_default()` bitmap font (9px glyph width, ~11px line
-# pitch at 2px top bearing -- verified via `ImageDraw.textbbox`), which is
-# what `render()` uses: no external font file, no platform dependency, works
-# identically in CI as on a dev machine.
-_CHARS_PER_LINE = 120
+# layout) -- see module docstring. Font metrics (9px glyph width, ~11px line
+# pitch) are measured against Pillow's own bundled `ImageFont.load_default()`
+# bitmap font via `ImageDraw.textbbox`, which is what `render()` uses: no
+# external font file, no platform dependency, works identically in CI as on
+# a dev machine. The wrap width (350 chars/line) is a layout choice, not a
+# font metric: wide enough that a 200,000-character dense single-line block
+# renders at ~6,300px tall -- comfortably under the 8000px ceiling below --
+# while still reading as a single reasonably-proportioned page rather than a
+# needle-thin column.
+_CHARS_PER_LINE = 350
 _CHAR_W_PX = 9
 _LINE_H_PX = 11
 _PAD_PX = 20
 
 # Only fire when the image is estimated to cost less than this fraction of
-# the text-token cost -- a marginal win isn't worth shifting a block from
-# plain text to an image (still recoverable via ccr, but strictly more
-# machinery) for a rounding error.
+# the text-token cost -- "meaningfully below" per the brief, not just
+# numerically less: a marginal win isn't worth shifting a block from plain
+# text to an image (still recoverable via ccr, but strictly more machinery,
+# and see the module docstring's comprehension caveat) for a rounding error.
 _PROFITABLE_FRACTION = 0.8
+
+# Anthropic's documented hard per-image maximum (Messages API): a larger
+# image is rejected outright, independent of its encoded byte size. See the
+# module docstring for why this -- not a byte-size cap -- is the ceiling
+# that actually bounds the pathological case.
+_MAX_IMAGE_DIM_PX = 8000
 
 
 def _page_geometry(text: str) -> tuple[int, int]:
@@ -92,10 +137,11 @@ def est_image_tokens(width: int, height: int) -> int:
 
 
 def is_profitable(text: str) -> bool:
-    """True only when the image `render()` WOULD produce is estimated to
-    cost under `_PROFITABLE_FRACTION` of the text-token cost. Pure
-    arithmetic on the shared geometry model -- no Pillow import, no
-    rendering, so this is cheap to call on every candidate block before
+    """True only when (a) the page `render()` would produce stays within
+    Anthropic's hard 8000x8000px per-image limit, AND (b) the image is
+    estimated to cost under `_PROFITABLE_FRACTION` of the text-token cost.
+    Pure arithmetic on the shared geometry model -- no Pillow import, no
+    rendering -- so this is cheap to call on every candidate block before
     deciding whether rendering is even worth attempting."""
     try:
         if not isinstance(text, str) or not text:
@@ -104,6 +150,8 @@ def is_profitable(text: str) -> bool:
         if text_cost <= 0:
             return False
         width, height = _page_geometry(text)
+        if width > _MAX_IMAGE_DIM_PX or height > _MAX_IMAGE_DIM_PX:
+            return False
         image_cost = est_image_tokens(width, height)
         return image_cost < _PROFITABLE_FRACTION * text_cost
     except Exception:
@@ -112,8 +160,11 @@ def is_profitable(text: str) -> bool:
 
 def render(text: str) -> bytes | None:
     """PNG bytes for `text`, or None. Missing Pillow (no `[http]` extra),
-    empty input, and any rendering failure are all the same "did not
-    produce an image" outcome to the caller -- this function never raises."""
+    empty input, a page that would exceed `_MAX_IMAGE_DIM_PX` (defense in
+    depth -- `is_profitable` already checks this, but `render` must not
+    depend on being called through it), and any rendering failure are all
+    the same "did not produce an image" outcome to the caller -- this
+    function never raises."""
     if not isinstance(text, str) or not text:
         return None
     try:
@@ -124,6 +175,8 @@ def render(text: str) -> bytes | None:
         import io
 
         width, height = _page_geometry(text)
+        if width > _MAX_IMAGE_DIM_PX or height > _MAX_IMAGE_DIM_PX:
+            return None
         image = Image.new("RGB", (width, height), color="white")
         draw = ImageDraw.Draw(image)
         font = ImageFont.load_default()
@@ -191,8 +244,9 @@ class Pixel:
             if not isinstance(block, dict) or block.get("type") != "tool_result":
                 return 0
             text = _block_text(block)
-            # Gate 1 (brief item 4): cheap, Pillow-free -- run BEFORE any
-            # rendering is even attempted.
+            # The governing gate: token estimate + absolute dimension
+            # ceiling, both inside is_profitable. Cheap, Pillow-free -- runs
+            # BEFORE any rendering is even attempted.
             if not text or not is_profitable(text):
                 return 0
 
@@ -208,7 +262,18 @@ class Pixel:
                 return 0
 
             marker = ccr.marker(key, kept_chars=0, dropped_chars=len(text), stashed=text)
-            new_content = [
+
+            # Final re-check in the SAME unit is_profitable used (tokens, not
+            # bytes): the marker itself costs a few tokens on top of the bare
+            # image estimate, so re-derive the real total and refuse the
+            # write-back on the rare case that pushes it to parity or worse.
+            width, height = _page_geometry(text)
+            new_cost = est_image_tokens(width, height) + est_tokens(marker)
+            text_cost = est_tokens(text)
+            if new_cost >= text_cost:
+                return 0
+
+            block["content"] = [
                 {
                     "type": "image",
                     "source": {
@@ -219,19 +284,6 @@ class Pixel:
                 },
                 {"type": "text", "text": marker},
             ]
-
-            # Gate 2 (brief item 6): the REAL comparison. Base64 inflates
-            # bytes by ~33% on top of a PNG that (unlike a solid-color image)
-            # carries real per-glyph entropy -- only the FINAL, marker- and
-            # image-included payload decides whether this write-back is
-            # genuinely smaller than the text it replaces.
-            new_bytes = len(json.dumps(new_content, ensure_ascii=False).encode("utf-8"))
-            if new_bytes >= len(text.encode("utf-8")):
-                return 0
-
-            block["content"] = new_content
-            width, height = _page_geometry(text)
-            new_cost = est_image_tokens(width, height) + est_tokens(marker)
-            return max(0, est_tokens(text) - new_cost)
+            return text_cost - new_cost
         except Exception:
             return 0
