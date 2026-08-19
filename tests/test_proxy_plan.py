@@ -63,6 +63,33 @@ def test_a_disabled_transform_never_runs(tmp_path):
     assert result.est_saved_tokens == 0
 
 
+def test_saved_by_attributes_savings_to_the_transform_that_earned_them(tmp_path):
+    """Round-2 fix: `--by-transform`'s 'share of savings' was a constant 1/N
+    because meter.py credited the whole scalar `est_saved_tokens` to every
+    transform in `applied`, even ones that saved 0. The plan itself must
+    carry a per-transform breakdown so the split can be honest downstream."""
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_Good(), _Off()])
+    assert result.saved_by == {"good": 42}
+
+
+def test_saved_by_sums_when_two_transforms_both_save(tmp_path):
+    class _AlsoGood:
+        name = "also_good"
+        zone = "live"
+
+        def enabled(self) -> bool:
+            return True
+
+        def apply(self, zones, ctx) -> int:
+            return 8
+
+    zones = split({"messages": [{"role": "user", "content": "x"}]})
+    result = apply_all(zones, _ctx(tmp_path), [_Good(), _AlsoGood()])
+    assert result.saved_by == {"good": 42, "also_good": 8}
+    assert result.est_saved_tokens == 50
+
+
 class _Garbage:
     name = "garbage"
     zone = "live"

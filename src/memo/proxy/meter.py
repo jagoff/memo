@@ -32,6 +32,10 @@ class Record:
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     retrieved: int = 0
+    # Per-transform share of est_saved_tokens (from TransformPlan.saved_by) —
+    # `transforms` alone cannot support an honest split: it lists every
+    # ENABLED transform that ran, whether or not it saved anything.
+    saved_by: dict[str, int] = field(default_factory=dict)
 
 
 def is_holdout(request_key: str, frac: float) -> bool:
@@ -120,26 +124,27 @@ def summarize(state_dir: Path) -> dict:
     if mean_t is not None and mean_h not in (None, 0):
         saving = round((mean_h - mean_t) / mean_h, 6)
 
-    # Per-transform breakdown. A request can carry several transforms (each
-    # zone's transform runs independently), so a row's `retrieved` and
-    # `est_saved_tokens` are attributed to every transform it applied — an
-    # approximation, not an exact per-transform split, when transforms overlap.
+    # Per-transform breakdown. `transforms` lists every ENABLED transform a
+    # row ran, whether or not it actually saved anything — crediting the
+    # row's whole `est_saved_tokens` scalar to every name in that list would
+    # inflate `total_saved` by however many transforms ran and report a flat
+    # 1/N share for each, real or not. `saved_by` (from TransformPlan) is the
+    # honest per-transform split; a name absent from a row's `saved_by`
+    # earned nothing from that row, full stop.
     by_transform: dict[str, dict] = {}
     for row in treated:
         names = row.get("transforms") or []
-        saved = row.get("est_saved_tokens")
-        saved = saved if isinstance(saved, int) else 0
-        row_retrieved = row.get("retrieved")
-        row_retrieved = row_retrieved if isinstance(row_retrieved, int) else 0
+        saved_by = row.get("saved_by")
+        saved_by = saved_by if isinstance(saved_by, dict) else {}
         for name in names:
-            agg = by_transform.setdefault(name, {"n": 0, "retrieved": 0, "est_saved_tokens": 0})
+            agg = by_transform.setdefault(name, {"n": 0, "est_saved_tokens": 0})
             agg["n"] += 1
-            agg["retrieved"] += row_retrieved
-            agg["est_saved_tokens"] += saved
+            contrib = saved_by.get(name)
+            if isinstance(contrib, int):
+                agg["est_saved_tokens"] += contrib
 
     total_saved = sum(v["est_saved_tokens"] for v in by_transform.values())
     for v in by_transform.values():
-        v["retrieval_rate"] = round(v["retrieved"] / v["n"], 4) if v["n"] else None
         v["share"] = round(v["est_saved_tokens"] / total_saved, 4) if total_saved else None
 
     retrieved = 0

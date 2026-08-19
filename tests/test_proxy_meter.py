@@ -7,6 +7,7 @@ from memo.proxy.meter import (
     summarize,
     usage_from_response,
 )
+from memo.proxy.plan import Context
 
 
 def test_holdout_assignment_is_stable_for_a_key():
@@ -143,7 +144,39 @@ def test_summarize_skips_a_row_whose_counter_is_not_a_number(tmp_path):
     assert summarize(tmp_path)["measured_saving_frac"] is None
 
 
-def test_by_transform_reports_counts_retrieval_rate_and_savings_share(tmp_path):
+def test_by_transform_share_reflects_real_per_transform_savings_not_a_flat_split(tmp_path):
+    """Round-2 regression: `plan.apply_all` appends every ENABLED transform's
+    name to `transforms` regardless of whether it saved anything, and the old
+    meter.py credited the row's whole scalar `est_saved_tokens` to every name
+    in that list — so a row where 5 transforms ran but only 1 actually saved
+    anything reported a flat 1/5 share for each. Verified on a real payload
+    shape: jsoncrush saved 100%, the other four saved 0 — all five used to
+    print 20%. `saved_by` (from `TransformPlan`) is the real per-transform
+    breakdown; shares must reflect it, not `len(transforms)`."""
+    for i in range(10):
+        append(
+            tmp_path,
+            Record(
+                request_key=f"a{i}",
+                holdout=False,
+                transforms=["toolschemas", "structmap", "delta", "jsoncrush", "toolresults"],
+                est_saved_tokens=100,
+                saved_by={"jsoncrush": 100},
+                input_tokens=500,
+                output_tokens=10,
+            ),
+        )
+    by = summarize(tmp_path)["by_transform"]
+    assert by["jsoncrush"]["share"] == 1.0
+    assert by["jsoncrush"]["est_saved_tokens"] == 1000
+    for name in ("toolschemas", "structmap", "delta", "toolresults"):
+        assert by[name]["est_saved_tokens"] == 0
+        assert by[name]["share"] in (0.0, None)
+        # still shows it ran on all 10 requests, just earned nothing
+        assert by[name]["n"] == 10
+
+
+def test_by_transform_splits_savings_honestly_across_two_earners(tmp_path):
     for i in range(10):
         append(
             tmp_path,
@@ -152,9 +185,9 @@ def test_by_transform_reports_counts_retrieval_rate_and_savings_share(tmp_path):
                 holdout=False,
                 transforms=["toolschemas"],
                 est_saved_tokens=100,
+                saved_by={"toolschemas": 100},
                 input_tokens=500,
                 output_tokens=10,
-                retrieved=0,
             ),
         )
     for i in range(10):
@@ -165,20 +198,17 @@ def test_by_transform_reports_counts_retrieval_rate_and_savings_share(tmp_path):
                 holdout=False,
                 transforms=["jsoncrush"],
                 est_saved_tokens=20,
+                saved_by={"jsoncrush": 20},
                 input_tokens=500,
                 output_tokens=10,
-                retrieved=1 if i < 6 else 0,
             ),
         )
     by = summarize(tmp_path)["by_transform"]
     assert by["toolschemas"]["n"] == 10
-    assert by["toolschemas"]["retrieved"] == 0
-    assert by["toolschemas"]["retrieval_rate"] == 0.0
-    # total est_saved_tokens = 10*100 + 10*20 = 1200; toolschemas share = 1000/1200
+    assert by["toolschemas"]["est_saved_tokens"] == 1000
     assert by["toolschemas"]["share"] == round(1000 / 1200, 4)
     assert by["jsoncrush"]["n"] == 10
-    assert by["jsoncrush"]["retrieved"] == 6
-    assert by["jsoncrush"]["retrieval_rate"] == 0.6
+    assert by["jsoncrush"]["est_saved_tokens"] == 200
     assert by["jsoncrush"]["share"] == round(200 / 1200, 4)
 
 
@@ -196,3 +226,75 @@ def test_by_transform_share_is_none_without_any_savings(tmp_path):
     )
     by = summarize(tmp_path)["by_transform"]
     assert by["delta"]["share"] is None
+
+
+def test_by_transform_has_no_dead_retrieval_columns(tmp_path):
+    """Round-2: `retrieved`/`retrieval_rate` per transform had no writer
+    anywhere (`retrieved` is never set on a real Record) — a rate that is
+    always 0.0 and an alarm that can never fire is the same banned "prints a
+    literal 0" shape this task exists to remove. Dropped, not faked."""
+    append(
+        tmp_path,
+        Record(
+            request_key="a",
+            holdout=False,
+            transforms=["delta"],
+            est_saved_tokens=10,
+            saved_by={"delta": 10},
+            input_tokens=500,
+            output_tokens=10,
+        ),
+    )
+    by = summarize(tmp_path)["by_transform"]
+    assert "retrieved" not in by["delta"]
+    assert "retrieval_rate" not in by["delta"]
+
+
+def test_by_transform_against_a_real_registry_plan_not_a_hand_written_row(tmp_path, monkeypatch):
+    """The hand-written single-transform Records above prove the aggregation
+    math, but production never produces that shape: `rewrite_body` runs the
+    real 5-transform registry, and `plan.applied` lists every one that's
+    enabled whether or not it rewrote anything. Run the real pipeline over a
+    payload only one transform can act on, and confirm `by_transform` credits
+    only the real earner — not a flat 1/5 split across all five."""
+    import json as _json
+
+    from memo.proxy.server import rewrite_body
+
+    monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
+    big_array = _json.dumps([{"id": i, "text": "row " * 20} for i in range(200)])
+    raw = _json.dumps(
+        {"messages": [{"role": "user", "content": [{"type": "tool_result", "content": big_array}]}]}
+    ).encode()
+    ctx = Context(state_dir=tmp_path, session_key="s1", project=None)
+    _out, plan = rewrite_body(raw, ctx)
+
+    # Production shape: several transforms are "enabled" and applied, but not
+    # all of them touched this payload.
+    assert len(plan.applied) >= 2
+    assert plan.saved_by, "at least one real transform must have earned credit"
+    assert set(plan.saved_by) < set(plan.applied), (
+        "at least one applied transform must have earned nothing"
+    )
+    assert sum(plan.saved_by.values()) == plan.est_saved_tokens
+
+    append(
+        tmp_path,
+        Record(
+            request_key="prod1",
+            holdout=False,
+            transforms=plan.applied,
+            est_saved_tokens=plan.est_saved_tokens,
+            saved_by=plan.saved_by,
+            input_tokens=500,
+            output_tokens=10,
+        ),
+    )
+    by = summarize(tmp_path)["by_transform"]
+    shares = {name: v["share"] for name, v in by.items()}
+    # The old bug: every applied transform reports the identical flat share.
+    assert len(set(shares.values())) > 1, f"flat share across all transforms: {shares}"
+    for name in plan.applied:
+        if name not in plan.saved_by:
+            assert by[name]["est_saved_tokens"] == 0
+            assert by[name]["share"] in (0.0, None)

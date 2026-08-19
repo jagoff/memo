@@ -83,14 +83,4 @@ SPECS: tuple[FlagSpec, ...] = (
         "Render dense text blocks to PNG when the per-block profitability gate "
         "says the image costs fewer tokens. No-op without the [http] extra.",
     ),
-    _spec(
-        "MEMO_PROXY_RETRIEVE_ALARM_FRAC",
-        "float",
-        0.05,
-        "proxy",
-        "Retrieval rate above which a transform is reported as over-cutting — a "
-        "recovered original costs its tokens twice.",
-        min_val=0.0,
-        max_val=1.0,
-    ),
 )

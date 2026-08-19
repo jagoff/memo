@@ -40,6 +40,10 @@ class Transform(Protocol):
 class TransformPlan:
     applied: list[str] = field(default_factory=list)
     est_saved_tokens: int = 0
+    # Per-transform breakdown of est_saved_tokens — lets a downstream reporter
+    # (e.g. `memo tokens --by-transform`) attribute savings honestly instead of
+    # crediting the whole scalar to every transform that merely ran.
+    saved_by: dict[str, int] = field(default_factory=dict)
 
 
 def apply_all(zones: Zones, ctx: Context, transforms: list[Transform]) -> TransformPlan:
@@ -57,6 +61,8 @@ def apply_all(zones: Zones, ctx: Context, transforms: list[Transform]) -> Transf
                 saved_int = 0
             plan.applied.append(transform.name)
             plan.est_saved_tokens += saved_int
+            if saved_int:
+                plan.saved_by[transform.name] = plan.saved_by.get(transform.name, 0) + saved_int
         except Exception:
             # Guard access to transform.name in case it raises
             try:

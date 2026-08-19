@@ -734,6 +734,39 @@ async def test_usage_counters_are_recorded_after_a_streamed_response(proxy_env, 
 
 
 @pytest.mark.asyncio
+async def test_saved_by_reaches_the_persisted_ledger_row(proxy_env, monkeypatch):
+    """Round-2 regression: server.py built the meter.Record from `plan.applied`
+    + `plan.est_saved_tokens` but never `plan.saved_by`, so every real
+    request landed with an empty `saved_by` and `memo tokens --by-transform`
+    could never attribute savings honestly in production, no matter what
+    meter.py's aggregation does with hand-fed test rows."""
+    from memo.proxy import meter
+
+    proxy_env.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
+    big_array = json.dumps([{"id": i, "text": "row " * 20} for i in range(200)])
+    body = json.dumps(
+        {"messages": [{"role": "user", "content": [{"type": "tool_result", "content": big_array}]}]}
+    ).encode()
+    resp, _ = await _round_trip(
+        monkeypatch,
+        path_and_query="/v1/messages",
+        body=body,
+        headers={"x-api-key": "k"},
+    )
+    assert resp.status_code == 200
+    await resp.aread()
+
+    line = meter.ledger_path(proxy_env).read_text(encoding="utf-8").strip().splitlines()[-1]
+    row = json.loads(line)
+    assert row["saved_by"], "the persisted row must carry the real per-transform split"
+    assert sum(row["saved_by"].values()) == row["est_saved_tokens"]
+    # Not every applied transform earned credit — proves this isn't a flat
+    # split re-derived at read time.
+    assert set(row["saved_by"]) < set(row["transforms"])
+
+
+@pytest.mark.asyncio
 async def test_tool_usage_is_recorded_during_a_real_request(proxy_env, monkeypatch):
     from memo.proxy.server import tool_usage_path
 

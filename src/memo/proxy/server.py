@@ -371,6 +371,7 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
                         holdout=holdout,
                         transforms=plan.applied,
                         est_saved_tokens=plan.est_saved_tokens,
+                        saved_by=plan.saved_by,
                         **usage,
                     ),
                 )

@@ -37,6 +37,13 @@ from memo.config import Config
 # recall off on purpose — so a handful of ungrounded turns can swing the sign.
 _MIN_COHORT_TURNS = 30
 
+# Requests needed in BOTH the treated and holdout arms before the proxy's
+# saving fraction reads as evidence rather than noise — same floor as the
+# transcript panel's cohort, for the same reason: a handful of requests can
+# swing a ratio wildly (n=1 vs n=1 can print a two-digit swing in bold colour
+# with nothing marking it as unproven).
+_MIN_PROXY_SAMPLE = 30
+
 
 def _fmt_tokens(tokens: float) -> str:
     tokens = int(tokens)
@@ -134,14 +141,19 @@ def _proxy_panel(proxy: dict) -> Panel:
         else:
             body = "[dim]no measured data yet — the proxy has not logged any requests[/dim]"
     else:
-        colour = "green" if frac > 0 else "red"
-        verb = "saved" if frac > 0 else "cost"
+        # frac >= 0 reads as "saved": an exact-zero delta is a null result
+        # (nothing lost, nothing gained), not a regression — only a real
+        # negative frac (treated arm costs MORE than holdout) is "cost".
+        colour = "green" if frac >= 0 else "red"
+        verb = "saved" if frac >= 0 else "cost"
         mean_t = proxy["mean_input_treated"]
         mean_h = proxy["mean_input_holdout"]
+        thin = min(n_t, n_h) < _MIN_PROXY_SAMPLE
         body = (
             f"[bold {colour}]{abs(frac) * 100:.1f}% {verb}[/bold {colour}] on input tokens "
             f"(treated {mean_t:.0f} vs holdout {mean_h:.0f} tok/request) "
-            f"[dim](n={n_t} treated / {n_h} holdout requests)[/dim]"
+            f"[dim](n={n_t} treated / {n_h} holdout requests"
+            f"{' · provisional, thin sample' if thin else ''})[/dim]"
         )
     if proxy.get("retrieved"):
         body += f"\n[dim]{proxy['retrieved']} recovered originals (cost their tokens twice)[/dim]"
@@ -153,23 +165,17 @@ def _proxy_panel(proxy: dict) -> Panel:
     )
 
 
-def _by_transform_table(proxy: dict, alarm_frac: float) -> Table:
+def _by_transform_table(proxy: dict) -> Table:
     tbl = Table(title="by transform", show_lines=False)
     tbl.add_column("transform")
     tbl.add_column("requests", justify="right")
     tbl.add_column("share of savings", justify="right")
-    tbl.add_column("retrieval rate", justify="right")
-    tbl.add_column("")
     for name, stats in sorted(
         proxy["by_transform"].items(), key=lambda kv: kv[1]["n"], reverse=True
     ):
         share = stats.get("share")
         share_s = f"{share * 100:.0f}%" if share is not None else "—"
-        rate = stats.get("retrieval_rate")
-        rate_s = f"{rate * 100:.0f}%" if rate is not None else "—"
-        flagged = rate is not None and rate > alarm_frac
-        flag_s = "[bold red]over-cutting[/bold red]" if flagged else ""
-        tbl.add_row(name, str(stats["n"]), share_s, rate_s, flag_s)
+        tbl.add_row(name, str(stats["n"]), share_s)
     return tbl
 
 
@@ -184,7 +190,6 @@ def _by_transform_table(proxy: dict, alarm_frac: float) -> Table:
 def tokens_cmd(*, by_transform: bool = False, as_json: bool = False) -> None:
     """Show memo's measured token cost/savings — real transcript + real proxy holdout."""
     from memo import token_meter
-    from memo.flags import flag_float
     from memo.proxy import meter as proxy_meter
 
     cfg = Config.from_env()
@@ -214,9 +219,6 @@ def tokens_cmd(*, by_transform: bool = False, as_json: bool = False) -> None:
 
     if by_transform:
         if proxy["by_transform"]:
-            alarm_frac = flag_float("MEMO_PROXY_RETRIEVE_ALARM_FRAC")
-            console.print(
-                _by_transform_table(proxy, alarm_frac if alarm_frac is not None else 0.05)
-            )
+            console.print(_by_transform_table(proxy))
         else:
             console.print("[dim]no per-transform data yet[/dim]")
