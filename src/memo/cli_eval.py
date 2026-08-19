@@ -1035,10 +1035,17 @@ def eval_tokens_cmd(
         prompts=labels.prompts, search=_search, corpus=corpus, crush_fn=_crush, k=k
     )
     metrics = eval_tokens.gate_metrics(rows)
+    # `_search` above always measures with the reranker disabled (deterministic,
+    # can't hang on the GPU flock) -- stamp that mode onto the baseline so a
+    # later --gate comparing against a baseline measured under a DIFFERENT
+    # mode (e.g. one predating that determinism fix) can be caught rather than
+    # silently compared apples-to-oranges. Mirrors `_reject_foreign_baseline`'s
+    # `gate_command` stamp above.
+    gate_meta = {"disable_reranker": True}
 
     if update_baseline:
         bp = _tokens_baseline_path(cfg)
-        _atomic_write_json(bp, metrics)
+        _atomic_write_json(bp, {**metrics, "_gate_meta": gate_meta})
         console.print(f"[green]✓[/green] token baseline saved → {bp}")
         return
 
@@ -1050,6 +1057,22 @@ def eval_tokens_cmd(
                 "`memo eval tokens --update-baseline`"
             )
         baseline = json.loads(bp.read_text(encoding="utf-8"))
+        stored_meta = baseline.get("_gate_meta")
+        # Absent stamp = written before this field existed -- accept it rather
+        # than force a re-seed on every pre-existing install (same leniency as
+        # `_reject_foreign_baseline`'s missing `gate_command`). A PRESENT stamp
+        # that disagrees means the two runs are not comparable and the gate's
+        # pass/fail would mean nothing.
+        if (
+            isinstance(stored_meta, dict)
+            and stored_meta.get("disable_reranker") != gate_meta["disable_reranker"]
+        ):
+            raise click.ClickException(
+                f"baseline at {bp} was measured with disable_reranker="
+                f"{stored_meta.get('disable_reranker')!r}, this run measures with "
+                f"disable_reranker={gate_meta['disable_reranker']!r} — not a valid "
+                "comparison. Re-seed with `memo eval tokens --update-baseline`."
+            )
         result = eval_tokens.check_gate(rows, baseline)
         if as_json:
             click.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
