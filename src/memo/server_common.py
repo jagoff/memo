@@ -13,10 +13,12 @@ if TYPE_CHECKING:
     from memo import emitted_ledger as el
 
     # Fourth element is a counters delta for `emitted_ledger.bump` (see
-    # `stage_counters` below); empty for a batch that only carries entries,
-    # and vice versa -- kept as one tuple shape (rather than two) so a single
-    # `_LEDGER_STAGE` list and a single commit/discard pass covers both.
-    _LedgerBatch = tuple[Path, str, list[el.Entry], dict[str, int]]
+    # `stage_counters` below); fifth is ids to record as digested via
+    # `emitted_ledger.record_digested` (see `stage_digested`). All three
+    # payload slots are independently optional -- kept as one tuple shape
+    # (rather than three) so a single `_LEDGER_STAGE` list and a single
+    # commit/discard pass covers all of them.
+    _LedgerBatch = tuple[Path, str, list[el.Entry], dict[str, int], list[str]]
 
 _log = logging.getLogger("memo.server")
 
@@ -162,23 +164,27 @@ def commit_ledger_stage(token: contextvars.Token[list[_LedgerBatch] | None]) -> 
     """Write every batch staged since the matching ``open_ledger_stage`` to
     disk, then close the stage.
 
-    Each batch carries entries and/or a counters delta (see ``_LedgerBatch``
-    above) -- both are written here, on the SAME commit, so a counter bump
-    describing a saving or a recovery cost shares its fate with the ledger
-    entries staged alongside it: neither survives past a discard.
+    Each batch carries entries, a counters delta, and/or digested ids (see
+    ``_LedgerBatch`` above) -- all written here, on the SAME commit, so a
+    counter bump or a digest record describing a saving or a recovery cost
+    shares its fate with the ledger entries staged alongside it: none of them
+    survives past a discard.
 
-    No extra guarding needed around each write: ``emitted_ledger.append`` and
-    ``emitted_ledger.bump`` are already fail-open internally (a write either
-    cannot make costs tokens, never correctness), so a bad batch here already
-    can't raise into the middleware calling this.
+    No extra guarding needed around each write: ``emitted_ledger.append``,
+    ``emitted_ledger.bump``, and ``emitted_ledger.record_digested`` are already
+    fail-open internally (a write either cannot make costs tokens, never
+    correctness), so a bad batch here already can't raise into the middleware
+    calling this.
     """
     from memo import emitted_ledger as el
 
-    for state_dir, session_id, entries, counters in _LEDGER_STAGE.get() or []:
+    for state_dir, session_id, entries, counters, digested in _LEDGER_STAGE.get() or []:
         if entries:
             el.append(state_dir, session_id, entries)
         if counters:
             el.bump(state_dir, session_id, **counters)
+        if digested:
+            el.record_digested(state_dir, session_id, digested)
     _LEDGER_STAGE.reset(token)
 
 
@@ -227,7 +233,35 @@ def stage_counters(state_dir: Path, session_id: str, **counters: int) -> None:
 
             el.bump(state_dir, session_id, **counters)
         else:
-            pending.append((state_dir, session_id, [], counters))
+            pending.append((state_dir, session_id, [], counters, []))
+    except Exception:
+        return
+
+
+def stage_digested(state_dir: Path, session_id: str, ids: list[str]) -> None:
+    """Record ids rendered as an ``already_in_context`` digest pointer through
+    the SAME request-scoped stage ``apply_ledger``'s entries and
+    ``stage_counters``' counters use, so a digest the response-budget
+    middleware discarded (never actually reached the caller) is never recorded
+    as something the model saw -- mirrors ``stage_counters``' reasoning
+    exactly. See ``emitted_ledger.record_digested`` for why this must be
+    tracked separately from ``append``'s emission entries: `read()` alone
+    cannot distinguish "digested" from "merely emitted in full".
+
+    Own try/except, same envelope as ``stage_counters``: a bug here must
+    degrade to "this digest went unmeasured", never touch the suppression
+    ``apply_ledger`` already computed and is about to return.
+    """
+    if not ids:
+        return
+    try:
+        pending = _LEDGER_STAGE.get()
+        if pending is None:
+            from memo import emitted_ledger as el
+
+            el.record_digested(state_dir, session_id, ids)
+        else:
+            pending.append((state_dir, session_id, [], {}, list(ids)))
     except Exception:
         return
 
@@ -319,10 +353,10 @@ def apply_ledger(
                 # function's pre-staging behavior.
                 el.append(state_dir, session_id, entries)
             else:
-                pending.append((state_dir, session_id, entries, {}))
+                pending.append((state_dir, session_id, entries, {}, []))
 
-        digested_ids = {id(h) for h in part.digest}
-        out = [h for h in hits if id(h) not in digested_ids]
+        digested_object_ids = {id(h) for h in part.digest}
+        out = [h for h in hits if id(h) not in digested_object_ids]
         if not part.digest:
             return out, {}
 
@@ -342,6 +376,15 @@ def apply_ledger(
         }
         if ref is not None:
             extra["cache_ref"] = ref
+
+        # A hit that made it into `part.digest` IS what gets rendered into
+        # `already_in_context` above -- record those ids as digested so a
+        # later `memo_get` on one of them counts as a real recovery (see
+        # `stage_digested` / `emitted_ledger.record_digested`). Staged on the
+        # same request-scoped stage as the entries/counters above, so a
+        # response the middleware ultimately discards records no digest
+        # either.
+        stage_digested(state_dir, session_id, [id_of(h) for h in part.digest])
 
         # F1 (task-8 review): tokens_suppressed must charge the whole
         # serialized row a digested hit would have cost on the wire, not

@@ -511,47 +511,63 @@ async def test_tool_body_exception_leaves_the_ledger_empty(memory_with_memories,
 
 def test_hook_emission_suppresses_a_later_search(memory_with_memories, call_tool, ledger_env):
     """The largest real overlap: the recall hook injected it at turn 2, so
-    memo_search must not re-send the same body at turn 3."""
+    memo_search must not re-send the same body at turn 3.
+
+    Drives the REAL hook renderer (`recall_logic.render_by_format` with
+    `emitted_sink` -- the same call `cli_recall_hook.py` makes, exercised
+    directly in `test_emitted_ledger_hook.py`) against REAL search hits,
+    rather than fabricating a ledger entry from `memo_search`'s own `body`
+    field. The two renderers do NOT agree: `render_recall_context` strips
+    newlines and truncates to a 400-char default (`_effective_body_chars`),
+    while `memo_search`'s own `body_chars` truncates independently at a
+    280-char default (`server_core_search.py`). A ledger entry fabricated
+    from `memo_search`'s rendering could hash-match in this test while the
+    REAL hook's rendering would never actually produce that same text (or
+    vice-versa) -- proving nothing about the real hook<->MCP overlap this
+    test's docstring claims to cover."""
     from memo import emitted_ledger as el
+    from memo import recall_logic as rl
 
     state_dir = memory_with_memories.cfg.state_dir
-    first = call_tool("memo_search", query="chat", limit=5)
-    target = first["hits"][0]
-    el.reset(state_dir, "sess-int")
 
-    # Simulate the hook having injected exactly this rendering.
-    body = target["body"]
+    # Same query/limit `memo_search` below uses, so the two calls see the
+    # same underlying candidate set (2 fixture memories, both matching
+    # "chat" -- see `memory_with_memories`'s docstring).
+    relevant = memory_with_memories.search("chat", limit=5, quality_rerank=True)
+    assert relevant, "fixture must return at least one hit"
+    sink: list[tuple[str, str]] = []
+    rl.render_by_format(
+        "full", relevant, [], turn=1, body_chars=400, token_budget=0, emitted_sink=sink
+    )
+    assert sink, "the real renderer must have emitted at least one body"
+    target_id, target_body = sink[0]
+    assert target_body, "fixture body must survive the real renderer"
+
+    # Mirrors cli_recall_hook.py's own ledger write: Entry.for_text over the
+    # ACTUALLY-emitted text, src="hook".
     el.append(
         state_dir,
         "sess-int",
-        [
-            el.Entry(
-                id=target["id"],
-                h=el.emitted_hash(body),
-                n=len(body),
-                ref="memo-h/abc123",
-                t=1,
-                src="hook",
-            )
-        ],
+        [el.Entry.for_text(target_id, target_body, "memo-h/abc123", 1, "hook")],
     )
 
     second = call_tool("memo_search", query="chat", limit=5)
     digested = {e["id"]: e for e in second.get("already_in_context", [])}
-    assert target["id"] in digested
-    assert digested[target["id"]]["ref"] == "memo-h/abc123"
-
-    assert el.read(memory_with_memories.cfg.state_dir, "sess-raise") == {}
+    assert target_id in digested
+    assert digested[target_id]["ref"] == "memo-h/abc123"
 
 
 # -- Task 8: memo_get's recovery counter -------------------------------------
 #
 # `memo_get` is deliberately absent from MEMO_EMITTED_LEDGER_TOOLS (it is the
 # digest's own escape hatch), so it never consults `apply_ledger`. What it
-# does instead: if the id it was asked for already has an entry in this
-# session's ledger -- meaning some earlier call already put a rendering of it
-# into the window -- a memo_get for it counts as a RECOVERY against the
-# feature's own saving, per the spec's conservative-attribution rule.
+# does instead: if the id it was asked for was actually DIGESTED earlier this
+# session -- rendered as an `already_in_context` pointer, not merely emitted
+# once -- a memo_get for it counts as a RECOVERY against the feature's own
+# saving, per the spec's conservative-attribution rule. An id that only has a
+# plain emission (the hook injected it, or one MCP call sent it in full and
+# nothing has digested it since) must NOT count: there is no digest for the
+# model to be "recovering" from.
 
 
 def test_memo_get_after_digest_bumps_the_recovery_counter(
@@ -560,7 +576,12 @@ def test_memo_get_after_digest_bumps_the_recovery_counter(
     from memo.mcp_budget import est_tokens
 
     first = call_tool("memo_search", query="chat", limit=5)
-    target_id = first["hits"][0]["id"]  # memo_search's own call already ledgers this id
+    target_id = first["hits"][0]["id"]  # first call: full emission, not yet digested
+    second = call_tool("memo_search", query="chat", limit=5)  # repeat -> this id digests
+    assert target_id in {e["id"] for e in second["already_in_context"]}
+
+    pre = el.stats(memory_with_memories.cfg.state_dir, "sess-int")
+    assert pre["memo_get_after_digest"] == 0  # nothing has recovered yet
 
     fetched = call_tool("memo_get", id=target_id)
     assert fetched is not None
@@ -573,10 +594,29 @@ def test_memo_get_after_digest_bumps_the_recovery_counter(
     expected_tokens_recovered = est_tokens(json.dumps(fetched, separators=(",", ":"), default=str))
     body_only = est_tokens(str(fetched.get("body") or ""))
     assert expected_tokens_recovered > body_only * 3  # proves the fix, not a coincidence
-    # Nothing was suppressed/digested by memo_search itself in this test (it
-    # was the first call), so the only term left is the recovery cost --
-    # net_saved_est must go negative by exactly that amount.
-    assert stats["net_saved_est"] == -expected_tokens_recovered
+    # The recovery must cost net_saved_est exactly its own tokens, on top of
+    # whatever the digesting search already banked.
+    assert stats["net_saved_est"] == pre["net_saved_est"] - expected_tokens_recovered
+
+
+def test_memo_get_on_a_merely_emitted_id_does_not_bump_the_recovery_counter(
+    memory_with_memories, call_tool, ledger_env
+):
+    """The over-counting bug this file's other test used to encode: a single
+    `memo_search` call ledgers the id as a plain (full) emission -- nothing has
+    digested it yet, since there has been no repeat call. A `memo_get` right
+    after must not be charged as recovering from a digest that never
+    happened."""
+    first = call_tool("memo_search", query="chat", limit=5)
+    assert "already_in_context" not in first
+    target_id = first["hits"][0]["id"]
+
+    fetched = call_tool("memo_get", id=target_id)
+    assert fetched is not None
+
+    stats = el.stats(memory_with_memories.cfg.state_dir, "sess-int")
+    assert stats["memo_get_after_digest"] == 0
+    assert stats["net_saved_est"] == 0
 
 
 def test_memo_get_recovery_survives_a_broken_flag_read(
@@ -619,14 +659,20 @@ def test_memo_get_with_a_prefix_still_counts_as_a_recovery(
     docstring says so, and it's the normal way an agent calls it, not the
     exception. `_record_ledger_recovery` must check the ledger against the
     RESOLVED full id (`rec.id`), not the caller's raw `id` argument, or a
-    prefix lookup on a previously-emitted memory silently fails the
-    `memory_id not in el.read(...)` check and is never counted. Every other
-    recovery test in this file passes a full id (taken straight from
+    prefix lookup on a previously-digested memory silently fails the
+    `memory_id not in el.digested_ids(...)` check and is never counted. Every
+    other recovery test in this file passes a full id (taken straight from
     memo_search's hits), so none of them exercise this path -- confirmed by
     mutation: swapping `rec.id` for the raw `id` parameter in
-    `_record_ledger_recovery` keeps every OTHER test in this file green."""
+    `_record_ledger_recovery` keeps every OTHER test in this file green.
+
+    Needs a real digest (two identical searches), not just one emission --
+    see `test_memo_get_on_a_merely_emitted_id_does_not_bump_the_recovery_counter`
+    for why a single search must NOT count."""
     first = call_tool("memo_search", query="chat", limit=5)
     target_id = first["hits"][0]["id"]
+    second = call_tool("memo_search", query="chat", limit=5)  # repeat -> this id digests
+    assert target_id in {e["id"] for e in second["already_in_context"]}
     prefix = target_id[:8]
 
     fetched = call_tool("memo_get", id=prefix)
@@ -657,8 +703,13 @@ def test_memo_get_on_a_never_ledgered_id_does_not_bump_the_recovery_counter(
 def test_memo_get_recovery_counter_stays_off_with_the_flag_off(
     memory_with_memories, call_tool, ledger_env, monkeypatch
 ):
+    """A digested (not just emitted) id, so this is a genuine differential
+    test: with the flag left on, this exact scenario is
+    `test_memo_get_after_digest_bumps_the_recovery_counter` and counts 1."""
     first = call_tool("memo_search", query="chat", limit=5)
     target_id = first["hits"][0]["id"]
+    second = call_tool("memo_search", query="chat", limit=5)  # repeat -> this id digests
+    assert target_id in {e["id"] for e in second["already_in_context"]}
 
     monkeypatch.setenv("MEMO_EMITTED_LEDGER", "0")
     fetched = call_tool("memo_get", id=target_id)

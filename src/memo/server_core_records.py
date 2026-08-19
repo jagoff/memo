@@ -39,16 +39,26 @@ def _safe_mcp_extra(extra: dict[str, Any] | None) -> dict[str, Any]:
 
 def _record_ledger_recovery(memory: Memory, memory_id: str, record: dict[str, Any]) -> None:
     """Count a `memo_get` against the emission ledger's net-saving estimate
-    when `memory_id` already has an entry in this session's ledger -- some
-    earlier call already put a rendering of it into the context window.
+    when `memory_id` was actually DIGESTED earlier in this session -- rendered
+    as an `already_in_context` pointer some caller had to follow up on, per the
+    design doc's definition of `memo_get_after_digest`.
+
+    Deliberately narrower than "has any entry in this session's ledger":
+    `emitted_ledger.read()` also holds ids the recall hook merely injected, or
+    a prior MCP call sent in FULL (never suppressed to a pointer) -- a
+    `memo_get` on either of those is an ordinary first read, not a recovery
+    from a digest, and counting it would inflate `memo_get_after_digest` by
+    construction (over the numerator of the very ratio that decides whether to
+    promote the feature). `emitted_ledger.digested_ids()` answers the narrower
+    question this counter actually needs.
 
     Conservative attribution, not proof of cause: per the spec, ANY memo_get
-    on a previously-emitted id counts against the feature, including one the
+    on a previously-DIGESTED id counts against the feature, including one the
     model would have issued anyway (e.g. to double-check exact current
     content) rather than specifically because it followed a digest
     `{id, title, ref}` pointer. This module has no record of WHY a memo_get
-    happened, only that the id was already in the window -- see
-    task-8-report.md for what this does and does not prove.
+    happened, only that the id was digested earlier -- see task-8-report.md
+    for what this does and does not prove.
 
     Fail-open, and on its own try/except separate from `memo_get`'s own
     logic: a counter failure must never affect the record this tool actually
@@ -69,7 +79,7 @@ def _record_ledger_recovery(memory: Memory, memory_id: str, record: dict[str, An
 
         state_dir = memory.cfg.state_dir
         session_id = _effective_session_id()
-        if memory_id not in el.read(state_dir, session_id):
+        if memory_id not in el.digested_ids(state_dir, session_id):
             return
         # F1 (task-8 review): charge the whole record `memo_get` actually
         # returns (the full `rec.to_dict()` -- id/path/title/type/tags/
