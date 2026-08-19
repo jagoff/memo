@@ -142,7 +142,11 @@ def _stale_emitted_count(state_dir: Path, max_age_s: int) -> int:
     "--max-age-hours",
     default=48,
     show_default=True,
-    type=int,
+    # min=1: `prune`'s check is `now - mtime > max_age_s` -- 0 or a negative
+    # value makes that true for essentially every file on disk, including a
+    # live session's ledger written a moment ago. Reject before it ever
+    # reaches `prune` rather than silently wipe live sessions' counters.
+    type=click.IntRange(min=1),
     help="Remove emission ledgers untouched for longer than this.",
 )
 @click.option("--dry-run", is_flag=True, help="Count would-be removals without deleting.")
