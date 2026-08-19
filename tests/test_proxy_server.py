@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from pathlib import Path
 
 import pytest
 
@@ -370,6 +371,101 @@ def test_marker_never_claims_full_original_when_a_crush_reference_is_nested(tmp_
         "key actually recovers is itself only an intermediate with a "
         "further memo-crush reference nested inside it"
     )
+
+
+def test_marker_never_claims_full_original_when_a_structmap_reference_is_nested(
+    tmp_path, monkeypatch
+):
+    """Task 12, fix round 2, Critical 3: the exact same false-claim bug as
+    the JsonCrush case above, one hop earlier in the pipeline. StructMap
+    runs before ToolResults, and its own signature map for a large real
+    file can still clear ToolResults' 4000-char fallback threshold --
+    measured against this repo's own `src/memo/memory/search_ops.py`
+    (80KB raw source -> 8855-char signature map, still 2x over the
+    threshold). ToolResults then cuts THAT signature map a second time and
+    stashes it -- so `key` recovers StructMap's intermediate, which itself
+    still carries StructMap's own `[memo: N chars elided, M kept. ...]`
+    marker, not the true original file. A marker saying "Full original" in
+    that case is false for the identical reason the JsonCrush case above
+    is false -- just via `ccr.marker`'s OWN rendered shape instead of
+    JsonCrush's `<<memo-crush:` shape, so the SAME nested-reference check
+    must catch it too.
+
+    Config isolation for the same reason as the JsonCrush test above: this
+    runs the real registry end to end.
+    """
+    monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "config-home"))
+
+    repo_root = Path(__file__).resolve().parent.parent
+    big_python_source = (repo_root / "src/memo/memory/search_ops.py").read_text(encoding="utf-8")
+    raw = json.dumps(
+        {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "r1",
+                            "name": "Read",
+                            "input": {"file_path": "src/memo/memory/search_ops.py"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "r1",
+                            "content": big_python_source,
+                        }
+                    ],
+                },
+            ]
+        }
+    ).encode()
+
+    ctx = _ctx(tmp_path)
+    out, plan = rewrite_body(raw, ctx)
+
+    assert "structmap" in plan.applied
+    assert "toolresults" in plan.applied
+
+    final_text = json.loads(out)["messages"][1]["content"][0]["content"]
+
+    # ToolResults' generic_fallback keeps a HEAD and a TAIL of whatever it
+    # was handed -- and StructMap's own marker (appended to the very END of
+    # its output) lands inside that kept tail, so the final text legitimately
+    # carries TWO markers back to back: StructMap's own (inner, correctly
+    # still "Full original" -- its own stash really is the pristine source)
+    # and ToolResults' own (outer, appended last -- the one that describes
+    # what is DIRECTLY retrievable from the text as it stands right now).
+    # `re.search`/`.finditer()`'s first match would grab the INNER marker by
+    # accident (both share the same `memo_retrieve(key="...")` shape) and
+    # silently validate the wrong one -- the outer marker is always the LAST
+    # one appended, so anchor on that specifically.
+    matches = list(re.finditer(r'memo_retrieve\(key="([0-9a-f]+)"\)', final_text))
+    assert matches, f"expected at least one recovery marker in: {final_text!r}"
+    outer_key = matches[-1].group(1)
+
+    from memo.proxy import ccr
+
+    recovered = ccr.recover(ctx.state_dir, outer_key)
+    assert recovered is not None
+    assert re.search(r"\[memo: \d+ chars elided, \d+ kept\. ", recovered), (
+        "setup check: the content ToolResults stashed should still carry "
+        "StructMap's own nested marker, or this test isn't reproducing the bug"
+    )
+
+    outer_marker_text = final_text[final_text.rfind("[memo:") :]
+    assert "Full original" not in outer_marker_text, (
+        "the OUTER marker must not claim to hold the full original when what "
+        "its own key actually recovers is itself only StructMap's "
+        "intermediate signature map, with its own recovery marker nested "
+        f"inside it: {outer_marker_text!r}"
+    )
+    assert "Not the full original" in outer_marker_text
 
 
 # ---------------------------------------------------------------------------

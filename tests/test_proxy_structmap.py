@@ -121,6 +121,110 @@ def test_async_function_signatures_are_kept():
     assert "return await get" not in out
 
 
+# --- Fix round 1 regressions: `_header_lines` boundary calculation -----------
+#
+# The original `_header_lines` derived a node's header END from the NEXT
+# body statement's raw `.lineno` (`body[0].lineno - 1`). Two shapes break
+# that: (1) a one-liner, where the body sits on the SAME line as the
+# header, one line short of where `.lineno` actually needs to land; (2) a
+# body[0] that is ITSELF decorated, where `.lineno` points past its own
+# decorators -- pulling them into the WRONG node's header instead of its
+# own. `ast.parse` succeeds in every one of these, so the fail-open path
+# never fires -- exactly the "confidently wrong" class the brief warns is
+# worse than no compression.
+
+
+def test_a_decorated_one_liner_keeps_its_def_line():
+    """Critical 1 repro: a decorated one-line stub/property previously lost
+    its `def` line entirely."""
+    src = "@overload\ndef foo(x: int) -> int: ...\n"
+    out = signatures(src, "python")
+    assert "@overload" in out
+    assert "def foo(x: int) -> int:" in out
+
+
+def test_a_decorated_one_liner_property_keeps_its_def_line():
+    src = "class Widget:\n    @property\n    def name(self) -> str: return self._name\n"
+    out = signatures(src, "python")
+    assert "@property" in out
+    assert "def name(self) -> str:" in out
+
+
+def test_a_class_whose_first_member_is_decorated_does_not_duplicate_the_decorator():
+    """Critical 2 repro: the class's own header previously absorbed its
+    first member's decorator line -- an orphaned decorator under the class
+    header with no signature under it, duplicated again under the member's
+    own (correct) header. `gamma` being the class's ONLY member means a
+    purely positional check ("is `@property` right after `class Beta:`?")
+    can't tell the bug apart from the fix -- both put it there, since
+    gamma's own (correct) header follows immediately either way. The count
+    check is what actually discriminates: buggy code emits it twice (once
+    wrongly absorbed into Beta's header, once correctly as gamma's own);
+    the fix emits it exactly once, attributed only to gamma."""
+    src = "class Beta:\n    @property\n    def gamma(self) -> int:\n        return 1\n"
+    out = signatures(src, "python")
+    assert out.count("@property") == 1
+    assert out.splitlines() == [
+        "class Beta:",
+        "    @property",
+        "    def gamma(self) -> int:",
+        "        ...",
+    ]
+
+
+def test_a_class_with_a_later_decorated_member_attributes_the_decorator_correctly():
+    """A second, more discriminating shape than the single-member case
+    above: two methods, only the SECOND decorated. Each node's header is
+    now computed purely from ITS OWN start/body, independent of any
+    sibling, so this must come out identical in structure regardless of
+    how many undecorated members precede the decorated one."""
+    src = (
+        "class Beta:\n"
+        "    def first(self) -> int:\n"
+        "        return 1\n"
+        "    @cached_property\n"
+        "    def second(self) -> int:\n"
+        "        return 2\n"
+    )
+    out = signatures(src, "python")
+    assert out.count("@cached_property") == 1
+    assert out.splitlines() == [
+        "class Beta:",
+        "    def first(self) -> int:",
+        "        ...",
+        "    @cached_property",
+        "    def second(self) -> int:",
+        "        ...",
+    ]
+
+
+def test_a_nested_function_with_a_decorated_inner_def_does_not_leak_into_the_outer_header():
+    """Same boundary bug, a third shape: a decorated function nested INSIDE
+    another function. The outer function's header must not absorb the
+    inner function's decorator line either."""
+    src = "def outer():\n    @cache\n    def inner():\n        return 1\n    return inner\n"
+    out = signatures(src, "python")
+    assert "def outer():" in out
+    lines = out.splitlines()
+    outer_idx = lines.index("def outer():")
+    assert lines[outer_idx + 1] != "    @cache", (
+        "the nested function's decorator leaked into outer()'s own header"
+    )
+
+
+def test_stacked_decorators_are_all_kept_in_order():
+    src = "@a\n@b\n@c\ndef foo():\n    pass\n"
+    out = signatures(src, "python")
+    assert "@a\n@b\n@c\ndef foo():" in out
+
+
+def test_an_async_decorated_one_liner_keeps_its_def_line():
+    src = "@overload\nasync def fetch(url: str) -> str: ...\n"
+    out = signatures(src, "python")
+    assert "@overload" in out
+    assert "async def fetch(url: str) -> str:" in out
+
+
 def test_language_for_maps_py_extension_to_python():
     assert _language_for("src/memo/foo.py") == "python"
     assert _language_for("README.md") == ""

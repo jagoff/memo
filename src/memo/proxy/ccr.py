@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
@@ -41,6 +42,19 @@ def recover(state_dir: Path, key: str) -> str | None:
 
 _NESTED_CRUSH_MARKER = "<<memo-crush:"
 
+# A REAL prior `marker()` call always substitutes actual digit counts for
+# `{dropped_chars}`/`{kept_chars}`. This module's OWN source code -- read and
+# compressed like any other file by, say, `StructMap`/`Delta` -- only ever
+# contains the UN-RENDERED template text below, with literal
+# `{dropped_chars}`/`{kept_chars}` placeholders, never digits in their
+# place. Anchoring on a digit sequence (not just the literal
+# `memo_retrieve(key="` substring, which this module's own source also
+# contains as plain code) is what tells an ALREADY-cut block's own prior,
+# rendered marker apart from this module's source text merely containing
+# the same literal fragments as CODE, not as evidence of an earlier cut --
+# see test_marker_does_not_false_positive_on_its_own_template_source.
+_NESTED_CCR_MARKER_RE = re.compile(r"\[memo: \d+ chars elided, \d+ kept\. ")
+
 
 def marker(key: str, *, kept_chars: int, dropped_chars: int, stashed: str = "") -> str:
     """The text that replaces what was cut. Tells the model how to get it back.
@@ -48,14 +62,19 @@ def marker(key: str, *, kept_chars: int, dropped_chars: int, stashed: str = "") 
     `stashed` is the exact content stored under `key` (the same string passed
     to `stash()`) — pass it so the wording can be checked against what `key`
     ACTUALLY recovers, not just what the caller hopes it recovers. When a
-    transform (e.g. `ToolResults`) runs on a block an EARLIER transform (e.g.
-    `JsonCrush`) already crushed, `key` recovers that earlier transform's
-    output — an intermediate that still carries its own
-    `<<memo-crush:HASH>>` reference — not the true original. Saying "Full
-    original" in that case is false and would make a model reading the
-    marker stop one hop too early; omitting `stashed` (or passing content
-    with no nested reference) keeps the stronger, still-true "Full original"
-    claim for the common case where this really is the first and only cut.
+    transform (e.g. `ToolResults`) runs on a block an EARLIER transform
+    already cut -- `JsonCrush`, or `StructMap`/`Delta` compressing a large
+    file whose reduced output STILL clears the next transform's own
+    threshold (measured: this repo's own `search_ops.py` reduces to an
+    8855-char signature map, still over `ToolResults`' 4000-char fallback
+    cap) -- `key` recovers that earlier transform's output: an intermediate
+    that still carries its own recovery reference, either JsonCrush's inline
+    `<<memo-crush:HASH>>` marker or this module's own rendered
+    `[memo: N chars elided, M kept. ...]` marker. Saying "Full original" in
+    either case is false and would make a model reading the marker stop one
+    hop too early; omitting `stashed` (or passing content with no nested
+    reference) keeps the stronger, still-true "Full original" claim for the
+    common case where this really is the first and only cut.
     """
     if _NESTED_CRUSH_MARKER in stashed:
         return (
@@ -63,6 +82,14 @@ def marker(key: str, *, kept_chars: int, dropped_chars: int, stashed: str = "") 
             f'Not the full original -- memo_retrieve(key="{key}") recovers this '
             f"filter's input, which itself still contains a further "
             f"memo-crush reference; retrieve that one too for the true original.]"
+        )
+    if _NESTED_CCR_MARKER_RE.search(stashed):
+        return (
+            f"\n[memo: {dropped_chars} chars elided, {kept_chars} kept. "
+            f'Not the full original -- memo_retrieve(key="{key}") recovers this '
+            f"filter's input, which itself still contains a further "
+            f"recovery marker from an earlier cut; retrieve that one too "
+            f"for the true original.]"
         )
     return (
         f"\n[memo: {dropped_chars} chars elided, {kept_chars} kept. "

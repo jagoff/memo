@@ -48,9 +48,9 @@ def signatures(source: str, language: str) -> str:
     out empty (a file with no imports/defs/classes at all still deserves a
     real read, not nothing).
     """
-    if language not in _SUPPORTED_LANGUAGES:
-        return source
     try:
+        if language not in _SUPPORTED_LANGUAGES:
+            return source
         tree = ast.parse(source)
         lines = source.splitlines()
         out: list[str] = []
@@ -75,17 +75,36 @@ def _emit_body(stmts: list[ast.stmt], lines: list[str], out: list[str], source: 
             _emit_body(node.body, lines, out, source)
 
 
+def _node_start_line(node: ast.stmt) -> int:
+    """The first source line `node` occupies, INCLUDING its own decorators
+    (if any) — not just `node.lineno`, which for a decorated def/class
+    points only at the `def`/`class` keyword itself, one or more lines after
+    where the node actually starts on the page."""
+    decorators = getattr(node, "decorator_list", [])
+    return min((d.lineno for d in decorators), default=node.lineno)
+
+
 def _header_lines(node: ast.stmt, lines: list[str]) -> list[str]:
     """Source lines spanning `node`'s decorators (if any) through the line
     its signature ends on — the literal original text, so wrapped
     parameters, type hints, and decorators all come through byte-for-byte
-    rather than a reformatted approximation."""
-    decorators = getattr(node, "decorator_list", [])
-    start = min((d.lineno for d in decorators), default=node.lineno)
-    start = min(start, node.lineno)
+    rather than a reformatted approximation.
+
+    The end boundary is derived from `node.body[0]`'s OWN start line (via
+    `_node_start_line`, so a decorated first body statement's decorators are
+    correctly attributed to THAT statement, never mistaken for part of
+    `node`'s own header) — never from `body[0].lineno` alone, which for a
+    decorated child points past its own decorators and would pull them into
+    the WRONG node's header (the parent class, or an enclosing function, in
+    the case of a nested decorated `def`). A one-line body (the whole
+    `def f(): return 1` sitting on the same physical line as the header) has
+    `body[0]`'s own start line equal to `node`'s own start line, in which
+    case the header correctly extends THROUGH that shared line instead of
+    being clipped one line short of the `def`/`class` line itself.
+    """
+    start = _node_start_line(node)
     body = getattr(node, "body", None)
-    end = body[0].lineno - 1 if body else node.lineno
-    end = max(end, start)
+    end = max(node.lineno, _node_start_line(body[0]) - 1) if body else node.lineno
     return lines[start - 1 : end]
 
 
