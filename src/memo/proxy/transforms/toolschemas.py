@@ -64,8 +64,10 @@ scope), so it keeps returning the exact set `record_tool_usage` wrote.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -126,6 +128,101 @@ _MAX_CACHED_SESSIONS = 1000
 _session_keep_cache: OrderedDict[tuple[str, str], tuple[str, frozenset[str]]] = OrderedDict()
 
 
+# The in-process freeze above dies with the process. `com.memo.proxy` runs
+# under launchd KeepAlive, so a crash, a `launchctl kickstart`, or a reinstall
+# silently re-derives the keep-set for a session that is still going -- and by
+# then `tool_usage.json` has grown, so the new keep-set is a SUPERSET and the
+# tools array changes shape mid-session. Because `tools` sits in front of
+# `system` in the cached prefix, that single change invalidates the provider
+# cache for the ENTIRE conversation: measured on this machine, a 700k-token
+# re-cache at the 1.25x creation premium, which is worth far more than
+# everything this transform saves. Persisting the freeze makes the keep-set
+# survive the restart, which is the whole point of freezing it.
+_KEEP_SETS_SCHEMA = "memo.proxy.keep_sets.v1"
+_MAX_PERSISTED_SESSIONS = 200
+
+
+def keep_sets_path(state_dir: Path) -> Path:
+    return Path(state_dir) / "proxy" / "keep_sets.json"
+
+
+def _read_keep_sets(path: Path) -> dict[str, Any]:
+    """Parse the store, or an empty one. Never raises."""
+    empty: dict[str, Any] = {"schema": _KEEP_SETS_SCHEMA, "sessions": {}}
+    try:
+        if not path.is_file():
+            return empty
+        text = path.read_text(encoding="utf-8", errors="replace")
+        data = json.loads(text) if text.strip() else {}
+        if not isinstance(data, dict) or not isinstance(data.get("sessions"), dict):
+            return empty
+        data.setdefault("schema", _KEEP_SETS_SCHEMA)
+        return data
+    except Exception:
+        return empty
+
+
+def _load_persisted(state_dir: Path, session_key: str) -> tuple[str, frozenset[str]] | None:
+    """The keep-set this session was frozen under in an earlier process, if
+    any. Returns None -- never raises -- when there is nothing usable, so the
+    caller computes fresh exactly as it did before."""
+    try:
+        entry = _read_keep_sets(keep_sets_path(state_dir)).get("sessions", {}).get(session_key)
+        if not isinstance(entry, dict):
+            return None
+        scope = entry.get("scope")
+        tools = entry.get("tools")
+        if not isinstance(scope, str) or not isinstance(tools, list):
+            return None
+        names = frozenset(t for t in tools if isinstance(t, str) and t)
+        if not names:
+            return None
+        return (scope, names)
+    except Exception:
+        _log.debug("proxy: persisted keep-set read failed; computing fresh", exc_info=True)
+        return None
+
+
+def _persist(state_dir: Path, session_key: str, result: tuple[str, frozenset[str]]) -> None:
+    """Write this session's frozen keep-set so a restart reuses it verbatim.
+
+    Sorted on the way out because the value is compared for equality across
+    processes, and because a stable order keeps the file diffable. Bounded by
+    oldest-`ts` eviction so a long-lived machine cannot grow it without limit.
+    Never raises: an unwritable state dir degrades to today's in-process-only
+    behavior rather than failing a request."""
+    scope, names = result
+    try:
+        path = keep_sets_path(state_dir)
+        lock_path = path.with_suffix(".json.lock")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lockfile:
+            fcntl.flock(lockfile.fileno(), fcntl.LOCK_EX)
+            try:
+                data = _read_keep_sets(path)
+                sessions = data["sessions"]
+                sessions[session_key] = {
+                    "scope": scope,
+                    "tools": sorted(names),
+                    "ts": time.time(),
+                }
+                if len(sessions) > _MAX_PERSISTED_SESSIONS:
+
+                    def _ts(item: tuple[str, Any]) -> float:
+                        value = item[1].get("ts") if isinstance(item[1], dict) else None
+                        return value if isinstance(value, (int, float)) else 0.0
+
+                    keep = sorted(sessions.items(), key=_ts, reverse=True)[:_MAX_PERSISTED_SESSIONS]
+                    data["sessions"] = dict(keep)
+                tmp_path = path.with_suffix(".json.tmp")
+                tmp_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                tmp_path.replace(path)
+            finally:
+                fcntl.flock(lockfile.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        _log.debug("proxy: persisted keep-set write failed; continuing", exc_info=True)
+
+
 def _frozen_keep_set(ctx: Context, window: int, scope: str) -> tuple[str, frozenset[str]]:
     """The (scope, keep-set) for this session, computed once and reused for
     every later request in it — see the module docstring for why
@@ -152,10 +249,15 @@ def _frozen_keep_set(ctx: Context, window: int, scope: str) -> tuple[str, frozen
     except Exception:
         _log.debug("proxy: session keep-set cache read failed; computing fresh", exc_info=True)
 
-    names = recent_tool_names(ctx.state_dir, window)
-    if scope == "memo":
-        names = {n for n in names if n.startswith(_OWNED_PREFIX)}
-    result = (scope, frozenset(names) | _ALWAYS_KEEP)
+    persisted = _load_persisted(ctx.state_dir, ctx.session_key)
+    if persisted is not None:
+        result = persisted
+    else:
+        names = recent_tool_names(ctx.state_dir, window)
+        if scope == "memo":
+            names = {n for n in names if n.startswith(_OWNED_PREFIX)}
+        result = (scope, frozenset(names) | _ALWAYS_KEEP)
+        _persist(ctx.state_dir, ctx.session_key, result)
 
     try:
         _session_keep_cache[key] = result

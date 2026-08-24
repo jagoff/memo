@@ -366,3 +366,83 @@ def test_recent_tool_names_survives_corrupt_json(tmp_path):
     path.parent.mkdir(parents=True)
     path.write_text("{not json", encoding="utf-8")
     assert recent_tool_names(tmp_path, 20) == set()
+
+
+def test_keep_set_survives_a_proxy_restart(tmp_path, monkeypatch):
+    """The freeze must outlive the process, not just the request.
+
+    `com.memo.proxy` runs under launchd KeepAlive. Before the keep-set was
+    persisted, a restart mid-session re-derived it from a `tool_usage.json`
+    that had grown in the meantime, so the `tools` array changed shape while
+    the session was still going. `tools` sits in front of `system` in the
+    cached prefix, so that one change re-caches the WHOLE conversation at the
+    1.25x creation premium — measured at ~700k tokens on a real session,
+    dwarfing everything this transform saves.
+    """
+    from memo.proxy.transforms import toolschemas
+
+    usage = {"memo_search"}
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(usage),
+    )
+
+    zones = make_zones(["memo_search", "memo_graph", "memo_rename"])
+    ToolSchemas().apply(zones, _ctx(tmp_path))
+    before = sorted(t["name"] for t in zones.tools)
+
+    # The restart: in-process freeze gone, and the session has since called a
+    # tool it had not called when the keep-set was first frozen.
+    toolschemas._session_keep_cache.clear()
+    usage.add("memo_graph")
+
+    zones = make_zones(["memo_search", "memo_graph", "memo_rename"])
+    ToolSchemas().apply(zones, _ctx(tmp_path))
+    after = sorted(t["name"] for t in zones.tools)
+
+    assert after == before, "keep-set moved across a restart; prefix re-cache"
+    assert "memo_graph" not in after
+
+
+def test_a_different_session_is_frozen_independently(tmp_path, monkeypatch):
+    """Persistence is per session, not global: a NEW session must still get
+    an up-to-date keep-set, otherwise the first session on a machine would
+    pin every later one to its own cold-start tool history forever."""
+    from memo.proxy.transforms import toolschemas
+
+    usage = {"memo_search"}
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(usage),
+    )
+
+    zones = make_zones(["memo_search", "memo_graph"])
+    ToolSchemas().apply(zones, Context(state_dir=tmp_path, session_key="s1", project="memo"))
+    assert "memo_graph" not in {t["name"] for t in zones.tools}
+
+    toolschemas._session_keep_cache.clear()
+    usage.add("memo_graph")
+
+    zones = make_zones(["memo_search", "memo_graph"])
+    ToolSchemas().apply(zones, Context(state_dir=tmp_path, session_key="s2", project="memo"))
+    assert "memo_graph" in {t["name"] for t in zones.tools}
+
+
+def test_persisting_the_keep_set_never_raises(tmp_path, monkeypatch):
+    """Fail-open contract: an unwritable state dir degrades to the old
+    in-process-only freeze, it does not fail the user's request."""
+    from memo.proxy.transforms import toolschemas
+
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: {"memo_search"},
+    )
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.keep_sets_path",
+        lambda state_dir: tmp_path / "no" / "such" / "dir" / "x.json",
+    )
+    monkeypatch.setattr(
+        toolschemas.Path, "mkdir", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only"))
+    )
+    zones = make_zones(["memo_search", "memo_graph"])
+    assert ToolSchemas().apply(zones, _ctx(tmp_path)) > 0

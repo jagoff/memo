@@ -110,4 +110,14 @@ SPECS: tuple[FlagSpec, ...] = (
         "MEMO_PROXY_TOOL_SCHEMAS, which already scans the whole prefix.",
         choices=("all", "tail"),
     ),
+    _spec(
+        "MEMO_PROXY_CAPTURE",
+        "int",
+        0,
+        "proxy",
+        "Diagnostic: dump this many raw request/rewrite pairs to "
+        "<state_dir>/proxy/capture/ and then stop. 0 (default) captures "
+        "nothing. Payloads contain the full conversation -- enable only "
+        "when investigating, on a machine you trust with your own prompts.",
+    ),
 )

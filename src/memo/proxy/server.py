@@ -134,6 +134,31 @@ def forward_headers(headers: dict[str, str]) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in HOP_BY_HOP}
 
 
+def capture(state_dir: Path, raw: bytes, body: bytes) -> None:
+    """Dump one raw/rewritten pair for offline inspection. Never raises.
+
+    Gated on MEMO_PROXY_CAPTURE (a count, default 0). The cap is enforced by
+    counting files already on disk rather than by an in-process counter, so a
+    KeepAlive restart mid-investigation does not silently double the dump.
+    """
+    try:
+        from memo.flags import flag_int
+
+        limit = flag_int("MEMO_PROXY_CAPTURE") or 0
+        if limit <= 0:
+            return
+        out = state_dir / "proxy" / "capture"
+        out.mkdir(parents=True, exist_ok=True)
+        existing = sorted(out.glob("*.raw.json"))
+        if len(existing) >= limit:
+            return
+        stem = out / f"{len(existing):04d}-{uuid.uuid4().hex[:8]}"
+        stem.with_suffix(".raw.json").write_bytes(raw)
+        stem.with_suffix(".out.json").write_bytes(body)
+    except Exception:
+        _log.debug("proxy: capture failed", exc_info=True)
+
+
 def rewrite_body(
     raw: bytes, ctx: Context, transforms: list[Any] | None = None
 ) -> tuple[bytes, TransformPlan]:
@@ -425,6 +450,7 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
             # per-request identity is exactly what's wanted.
             ctx = Context(state_dir=state_dir, session_key=session_key, project=None)
             body, plan = rewrite_body(raw, ctx)
+            capture(state_dir, raw, body)
 
         upstream_req = client.build_request(
             "POST",
