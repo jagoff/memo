@@ -165,8 +165,38 @@ def _fold_synthesis_errors(receipt: dict[str, Any]) -> None:
             receipt["errors"].append(f"synthesize: {item['error']}")
 
 
+def _record_pair_failure(receipt: dict[str, Any], pair_id: Any, exc: BaseException) -> None:
+    """File one pair's failure as either SKIPPED or an ERROR.
+
+    A vault-ingested row stores its path relative to the Obsidian vault root
+    (`notes/...`, `work/...`). `_resolve_existing` can only fall back to
+    `vault_path`, which `Config.from_env()` leaves unset, so those files are
+    unreachable and the pair raises FileNotFoundError. Thousands of rows are
+    in that state, permanently: the source lives in a vault memo does not own.
+
+    That is a pair this pass cannot act on, not a pass that failed. Folding it
+    into `errors` made `_fail_on_pass_errors` exit 1, so the nightly
+    contradict-resolve reported FAILED every single night while actually doing
+    all of its work. An exit code that is always red teaches the operator to
+    stop reading it, which is strictly worse than not having one -- and it
+    masks the real failures it exists to surface.
+
+    Skipped pairs stay in the receipt, under their own key, so the condition
+    is visible and countable rather than silently swallowed.
+    """
+    label = f"pair {pair_id}: {type(exc).__name__}: {exc}"
+    if isinstance(exc, FileNotFoundError):
+        receipt.setdefault("skipped", []).append(label)
+        return
+    receipt["errors"].append(label)
+
+
 def _fail_on_pass_errors(receipt: dict[str, Any], *, dry_run: bool) -> None:
-    """Exit non-zero when a pass failed. A dry run changed nothing, so it does not."""
+    """Exit non-zero when a pass failed. A dry run changed nothing, so it does not.
+
+    Reads `errors` only: `skipped` is reported but deliberately does not turn
+    the run red -- see `_record_pair_failure`.
+    """
     if receipt["errors"] and not dry_run:
         raise SystemExit(1)
 
@@ -326,6 +356,7 @@ def maintain_cmd(
         "dead_archived": [],  # surfaced-never-grounded memories soft-forgotten
         "vacuumed": 0,  # successful hard deletes (dry-run: eligible candidates)
         "errors": [],
+        "skipped": [],  # pairs this pass could not act on (vanished source file)
         "cascade_warnings": [],
     }
 
@@ -507,8 +538,10 @@ def maintain_cmd(
                     # One unreadable record must not abandon every other
                     # pair in the run: the pass used to abort on the first
                     # pair whose .md had gone missing, leaving ~100
-                    # actionable pairs untouched every night.
-                    receipt["errors"].append(f"pair {pair.pair_id}: {type(exc).__name__}: {exc}")
+                    # actionable pairs untouched every night. A vanished
+                    # source is filed as SKIPPED, not as a run failure --
+                    # see `_record_pair_failure`.
+                    _record_pair_failure(receipt, pair.pair_id, exc)
                     continue
         except Exception as exc:
             receipt["errors"].append(f"contradict: {type(exc).__name__}: {exc}")
