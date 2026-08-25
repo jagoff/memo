@@ -330,7 +330,6 @@
     "src/memo/outcome.py::detect_gaps": 14,
     "src/memo/outcome.py::reconcile_negative_recall": 13,
     "src/memo/outcome.py::reconcile_source_feedback": 18,
-    "src/memo/proxy/meter.py::summarize": 25,
     "src/memo/proxy/server.py::_count_new_retrievals": 13,
     "src/memo/proxy/transforms/delta.py::_extract_bash_read_path": 13,
     "src/memo/proxy/transforms/delta.py::_read_tool_paths": 13,
