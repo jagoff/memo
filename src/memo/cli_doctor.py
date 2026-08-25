@@ -183,6 +183,77 @@ def _check_codegraph() -> None:
         console.print(f"[green]✓[/green] codegraph: CLI v{'.'.join(str(p) for p in cg_version)}")
 
 
+def _check_proxy() -> None:
+    """Proxy health — WARN-only, never flips doctor's `ok`.
+
+    The failure that matters here is silent: ANTHROPIC_BASE_URL pointed at
+    this machine's loopback while no proxy listens there. Claude Code then
+    fails exactly like a dead network, because from the CLI's side there is
+    no proxy between here and there — just connection refused. Agent load
+    state and the listening probe are context for that diagnosis.
+    """
+    import os as _os
+    import socket as _sock
+    import subprocess as _sp
+    from urllib.parse import urlparse
+
+    from memo.flags import flag_int
+    from memo.ops_launchd import PROXY_LABEL, parse_launchctl_list
+
+    port = flag_int("MEMO_PROXY_PORT") or 8768
+
+    def _listening(p: int) -> bool:
+        try:
+            with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as sock:
+                sock.settimeout(0.25)
+                return sock.connect_ex(("127.0.0.1", p)) == 0
+        except OSError:
+            return False
+
+    listening = _listening(port)
+    loaded = False
+    try:
+        out = _sp.run(
+            ["launchctl", "list"], capture_output=True, text=True, timeout=5, check=False
+        ).stdout
+        loaded = any(row["label"] == PROXY_LABEL for row in parse_launchctl_list(out))
+    except Exception:  # noqa: S110  # launchctl probing must never fail doctor
+        pass
+
+    pointed_url = ""
+    pointed_port: int | None = None
+    base_url = _os.environ.get("ANTHROPIC_BASE_URL", "").strip().rstrip("/")
+    if base_url:
+        try:
+            parsed = urlparse(base_url)
+            host = (parsed.hostname or "").lower()
+            bport = parsed.port or (443 if parsed.scheme == "https" else 80)
+            if host in ("127.0.0.1", "localhost", "::1"):
+                pointed_url = base_url
+                pointed_port = bport
+        except ValueError:
+            pass
+
+    if listening:
+        state = "loaded (launchd)" if loaded else "not loaded in launchd"
+        console.print(
+            f"[green]✓[/green] proxy: {PROXY_LABEL} {state} — listening on 127.0.0.1:{port}"
+        )
+        return
+    if not (pointed_url and pointed_port is not None):
+        console.print(
+            "[dim]•[/dim] proxy: not running "
+            "[dim](`memo proxy serve`, or `memo ops install proxy` for a launchd agent)[/dim]"
+        )
+        return
+    console.print(
+        f"[yellow]![/yellow] proxy: ANTHROPIC_BASE_URL={pointed_url} is set, but "
+        f"nothing is listening on 127.0.0.1:{pointed_port} — Claude Code fails "
+        "as if the network were down. Run `memo proxy serve` (foreground) or "
+        "`memo ops install proxy` (launchd agent)."
+    )
+
+
 def _report_mcp_store_env() -> bool:
     """Print MCP client store-path findings; return False when any is broken.
 
@@ -502,6 +573,8 @@ def doctor(
 
     _check_codegraph()
 
+    _check_proxy()
+
     if check_db:
         for db in _db_health_report(cfg):
             marker = "[green]✓[/green]" if db["ok"] else "[red]✗[/red]"
@@ -615,23 +688,10 @@ def doctor(
             console.print(
                 f"[yellow]![/yellow] token cost: {_profile_label}  {_tool_count} tools "
                 f"({_tok_cost} tokens/connection)  "
-                "[dim](set MEMO_MCP_PROFILE=agent for 41 tools / ~9.4k tokens, or "
-                "`memo install-mcp --profile core` for 58 tools / ~12.9k tokens — "
+                "[dim](set MEMO_MCP_PROFILE=agent for 43 tools / ~9.7k tokens, or "
+                "`memo install-mcp --profile core` for 60 tools / ~13.2k tokens — "
                 "for constrained clients)[/dim]"
             )
-        try:
-            from memo.cli_roi import compute_roi
-
-            _roi = compute_roi(cfg.state_dir, limit=200)
-            _saved = _roi.get("tokens_saved_human") or "0"
-            _grounded = _roi.get("grounded") or 0
-            if _grounded > 0:
-                console.print(
-                    f"[green]✓[/green] tokens saved: ~{_saved} "
-                    f"(from {_grounded} grounded recalls — run `memo roi` for details)"
-                )
-        except Exception:  # noqa: S110
-            pass
         with contextlib.suppress(Exception):
             _report_derived_storage(cfg)
         with contextlib.suppress(Exception):

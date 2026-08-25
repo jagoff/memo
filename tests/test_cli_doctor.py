@@ -32,6 +32,45 @@ def _agent_report(*, ok: bool) -> dict:
     }
 
 
+def test_doctor_never_prints_a_fabricated_tokens_saved_line(tmp_path):
+    """Round-2 regression: `compute_roi()` no longer returns `tokens_saved_human`
+    (round-1 removed the field), but doctor read it via `.get(...) or "0"`,
+    printing a literal fabricated "✓ tokens saved: ~0" precisely when there
+    WAS grounded data (the `_grounded > 0` gate)."""
+    from memo.cli import cli
+    from memo.dashboard import append_grounding_log, append_recall_log
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    append_recall_log(
+        state,
+        prompt="how do I configure the deploy pipeline",
+        via="subprocess",
+        session_id="s",
+        turn=1,
+        client="claude-code",
+        hits=[{"id": "a" * 8, "score": 0.8, "title": "t", "snippet": "x"}],
+    )
+    append_grounding_log(
+        state,
+        session_id="s",
+        turn=1,
+        recall_id="a" * 8,
+        used_score=0.9,
+        method="lexical",
+        client="claude-code",
+    )
+
+    (tmp_path / "memorias").mkdir()
+    env = {
+        "MEMO_NONINTERACTIVE": "1",
+        "MEMO_DATA_DIR": str(tmp_path / "memorias"),
+        "MEMO_STATE_DIR": str(state),
+    }
+    r = CliRunner().invoke(cli, ["doctor"], env=env)
+    assert "tokens saved" not in r.output.lower()
+
+
 def test_doctor_off_hint_points_at_sync_setup(tmp_path):
     from memo.cli import cli
 

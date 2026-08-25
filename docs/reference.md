@@ -57,7 +57,7 @@ sqlite state, and CLI should move together as one subsystem.
 ```bash
 # One-line installer (uv/pipx under the hood, pins the matching release,
 # and configures Claude Code + Codex + OpenCode + Devin Desktop when available)
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.0/install.sh | bash
 # or install the latest published PyPI release explicitly
 pipx install mlx-memo
 # or
@@ -89,22 +89,22 @@ memo --version
 
 ```bash
 # Install the latest published PyPI release instead of GitHub master.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.1/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.0/install.sh | MEMO_INSTALL_FROM_PYPI=1 bash
 
 # Pin a published PyPI version.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.1/install.sh | MEMO_VERSION=0.6.0 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.0/install.sh | MEMO_VERSION=0.6.0 bash
 
 # Install from an explicit pipx spec (local checkout, git ref, wheel, etc.).
 MEMO_INSTALL_SPEC=/path/to/memo ./install.sh
 
 # Skip agent-client configuration during install.
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.1/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.0/install.sh | MEMO_INSTALL_SKIP_AGENT_CONFIG=1 bash
 
 # Force-skip the MLX model download (models load lazily on first use).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.1/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.0/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=no bash
 
 # Force-yes the MLX model download (skip the interactive confirmation).
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.1/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.0/install.sh | MEMO_INSTALL_DOWNLOAD_MODELS=yes bash
 ```
 
 **Model download** is part of memo's structure (embedder + reranker + chat
@@ -145,7 +145,7 @@ the corpus. On **Linux / Ubuntu**, use the CPU-index install command in
 [ubuntu.md](ubuntu.md).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.0/install.sh | bash
 memo doctor --strict-runtime
 memo install-slash --client claude-code --client codex --client opencode --client devin-desktop
 ```
@@ -746,7 +746,6 @@ ledger health.
 | `graph.dream_bridges_enabled` (`MEMO_DREAM_BRIDGES_ENABLED`) | `0` | Save evidence-bearing articulation-bridge syntheses during dream. |
 | `graph.hub_max_doc_freq_ratio` (`MEMO_GRAPH_HUB_MAX_DOC_FREQ_RATIO`) | `0.25` | Treat entities above this corpus document-frequency ratio as hubs. |
 | `graph.min_entity_idf` (`MEMO_GRAPH_MIN_ENTITY_IDF`) | `0.5` | Minimum query entity IDF before graph signal can affect ranking. |
-| `graph.outcome_signal_enabled` (`MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`) | `0` | Modulate graph-touched boosts by outcome `roi_score`. |
 | `graph.outcome_weight` (`MEMO_GRAPH_OUTCOME_WEIGHT`) | `0.05` | Strength of optional outcome modulation on graph boosts. |
 | `MEMO_REPO_SIGNAL_MAX_COMMITS` | `300` | Bound Git-history co-change/cross-service signal collection. |
 | `MEMO_INGEST_VIA_DAEMON` | `0` | Route repo index jobs through the serialized ingest worker. |
@@ -801,9 +800,13 @@ bridges, and returns the exact projected edges and memory IDs behind each
 candidate. The dream community/bridge passes consume this packet and store its
 projection version and edge evidence with every synthesis.
 
-`MEMO_GRAPH_RETRIEVAL_ENABLED`, `MEMO_GRAPH_EXPANSION_ENABLED`, and the old
-recall graph-proximity weight remain accepted only for configuration
-compatibility. They no longer change serving or nightly tuning behavior.
+`MEMO_GRAPH_RETRIEVAL_ENABLED`, `MEMO_GRAPH_EXPANSION_ENABLED`, the graph
+outcome-signal switch and weight, the graph fallback/density values and the
+retrieval-tune switch were RETIRED in 4.13.3. They had been accepted for
+configuration compatibility long after the serving paths that read them were
+removed, so every one of them was an inert knob a reader could reasonably
+believe did something. An old value left in a Markdown config or tuned overlay
+is ignored and cleaned up, not an error.
 
 The MCP `memo_graph` tool exposes the same explanation with
 `verb="why", a="mlx", b="daemon"`. It returns the weighted path, per-hop edge
@@ -1387,13 +1390,17 @@ runtime default remains 600 tokens for clients that do not use that hook.
 | Context file compression | `memo compress-context CLAUDE.md` | Rule-based removal of redundant context; supports `--dry-run` and `--backup` |
 
 `memo roi` does not infer value from corpus size. It reads the actual
-recall/grounding/re-ask ledgers and reports accumulated estimates using
-disclosed, configurable defaults: 350 tokens per grounded recall and 900 tokens
-per avoided re-ask (`MEMO_ROI_TOKENS_PER_GROUNDED` and
-`MEMO_ROI_TOKENS_PER_REASK`). `memo tokens` reports the separate usage-savings
-ledger.
+recall/grounding/re-ask ledgers and reports the real, measured counts (grounded
+recalls, re-asks avoided, average answer size) plus an estimated *time* saved
+(`MEMO_ROI_SECS_PER_GROUNDED` / `MEMO_ROI_SECS_PER_REASK`, clearly labeled an
+estimate). It does not report a token-savings figure — `memo tokens` is the
+measured token cost/savings surface, sourced from the real Claude Code
+transcript and the local proxy's treated-vs-holdout A/B, never a hardcoded
+per-event constant (an earlier version multiplied grounded/consult counts by
+`MEMO_ROI_TOKENS_PER_GROUNDED`/`_PER_CONSULT`; that estimate had no control arm
+and was retired — see CHANGELOG).
 
-![memo tokens usage-savings ledger](tokens-screenshot.png)
+![memo tokens measured panel](tokens-screenshot.png)
 
 **Storage & paths**
 

@@ -34,6 +34,11 @@ def mem(tmp_cfg: Config, monkeypatch) -> Memory:
         "memo.embedder.MLXEmbedder.embed",
         lambda self, inputs: [[1.0, 0.0, 0.0, 0.0] for _ in inputs],
     )
+    # Default-ON MEMO_SAVE_ABSORB would run a REAL LLM absorb on near-duplicate
+    # seeds (constant-vector stub => cosine 1.0) on Apple Silicon, consuming
+    # uuid4 calls that fixed-iterator tests budget (StopIteration) and slowing
+    # every save with a live chat. Same guard pattern as memory_with_memories.
+    monkeypatch.setenv("MEMO_SAVE_ABSORB", "0")
     mem = Memory(cfg)
     yield mem
     mem.close()

@@ -1,0 +1,11 @@
+name: npm-install
+match:
+  command: npm
+  subcommand: install
+pipeline:
+  - action: remove_lines
+    pattern: "^npm warn deprecated"
+  - action: keep_lines
+    pattern: "(added|removed|changed|audited|vulnerabilit|error|ERR!)"
+  - action: tail
+    n: 30

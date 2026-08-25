@@ -109,6 +109,9 @@ def test_built_distributions_only_ship_release_allowlist(tmp_path: Path) -> None
         # silently fails open on the installed runtime.
         "eval",
         "hooks",
+        # snip's MIT attribution (see toolresults.py's module docstring) —
+        # a licensing requirement, must ship alongside LICENSE.
+        "NOTICE",
         "plugins",
         "pyproject.toml",
         "server.json",

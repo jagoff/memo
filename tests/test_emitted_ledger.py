@@ -217,6 +217,56 @@ def test_entry_for_text_derives_h_and_n_from_the_same_string():
     assert entry.hp == el.emitted_hash("hello world"[: el._PREFIX_CHARS])
 
 
+def test_digested_ids_empty_when_nothing_recorded(tmp_path: Path):
+    assert el.digested_ids(tmp_path, "s") == set()
+
+
+def test_record_digested_then_digested_ids_roundtrip(tmp_path: Path):
+    el.record_digested(tmp_path, "s", ["mem_a", "mem_b"])
+    assert el.digested_ids(tmp_path, "s") == {"mem_a", "mem_b"}
+
+
+def test_digested_ids_is_scoped_per_session(tmp_path: Path):
+    el.record_digested(tmp_path, "s1", ["mem_a"])
+    el.record_digested(tmp_path, "s2", ["mem_b"])
+    assert el.digested_ids(tmp_path, "s1") == {"mem_a"}
+    assert el.digested_ids(tmp_path, "s2") == {"mem_b"}
+
+
+def test_emitted_but_never_digested_id_is_not_in_digested_ids(tmp_path: Path):
+    """The bug this module exists to prevent: an id can have a `read()` entry
+    (the recall hook injected it, or an MCP tool sent it in full) without ever
+    having been rendered as an `already_in_context` digest pointer.
+    `digested_ids` must not conflate the two."""
+    el.append(tmp_path, "s", [_entry("mem_a", "hello")])
+    assert "mem_a" in el.read(tmp_path, "s")
+    assert el.digested_ids(tmp_path, "s") == set()
+
+
+def test_reset_also_clears_digested_ids(tmp_path: Path):
+    """A digest's `already_in_context` claim expires at compaction exactly
+    like the main ledger's does -- see `reset`'s docstring. A `memo_get` on an
+    id digested BEFORE a compaction must not count as a recovery from a digest
+    the model can no longer see afterward."""
+    el.append(tmp_path, "s", [_entry("mem_a", "a")])
+    el.record_digested(tmp_path, "s", ["mem_a"])
+    assert el.digested_ids(tmp_path, "s") == {"mem_a"}
+
+    assert el.reset(tmp_path, "s") is True
+    assert el.digested_ids(tmp_path, "s") == set()
+    assert el.read(tmp_path, "s") == {}
+
+
+def test_reset_returns_true_when_only_digested_ids_exist(tmp_path: Path):
+    """`reset` must report a removal even when there's no `.jsonl` ledger
+    file left to remove -- e.g. the digest sidecar survived a partial write
+    but the main ledger was already gone."""
+    el.record_digested(tmp_path, "s", ["mem_a"])
+    assert not el.ledger_path(tmp_path, "s").exists()
+    assert el.reset(tmp_path, "s") is True
+    assert el.digested_ids(tmp_path, "s") == set()
+
+
 def test_read_survives_corrupt_config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """_cap() resolves MEMO_EMITTED_LEDGER_MAX from memo's Markdown config on
     disk (memo.config_md). A corrupt config file (non-UTF-8 bytes) must not

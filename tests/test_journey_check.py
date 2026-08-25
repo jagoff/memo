@@ -286,9 +286,29 @@ def test_check_uses_memory_fail_when_value_absent(seeded_ctx):
 
 
 def test_check_token_savings_runs_body(seeded_ctx):
+    """Round-2 regression: the round-1 fix repointed this check at
+    `historic["grounded"]`, but journey-check's `_recall()` writes
+    `recall.log` with `client="journey-check"` (consults), never
+    `grounding.log` — `grounded` can never move, so the check was a
+    permanent, silent FAIL. `_assert_ran` alone doesn't catch this since it
+    accepts FAIL; assert PASS + a real positive delta explicitly."""
     res = jc.check_token_savings(seeded_ctx)
     _assert_ran(res, "token-savings")
     assert {"before", "after", "delta", "recalls_logged"} <= set(res.evidence)
+    assert res.status == PASS
+    assert res.evidence["delta"] > 0
+
+
+def test_check_token_savings_detail_does_not_call_recalls_grounded(seeded_ctx):
+    """Defect 4: this check's own docstring says its recalls land in
+    `recall.log` as consults, never `grounding.log`, and so "can never be
+    'grounded'" — but the human-readable `detail` string called them
+    "grounded recalls" anyway. `grounded` is a load-bearing, distinctly
+    defined term elsewhere in the ledger; this check must not use it for
+    something that structurally cannot be grounded."""
+    res = jc.check_token_savings(seeded_ctx)
+    assert "grounded" not in res.detail.lower()
+    assert "recalls logged" in res.detail.lower()
 
 
 def test_check_ux_messages_warn_when_all_channels_deliver(seeded_ctx, monkeypatch):

@@ -322,7 +322,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "mcp",
-        "Select the 58-tool core MCP surface (skip advanced domain modules) "
+        "Select the 59-tool core MCP surface (skip advanced domain modules) "
         "for local/constrained LLMs.",
     ),
     _spec(
@@ -330,7 +330,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 41 tools) | core/slim (58 stable-core tools) | full/default (164 tools).",
+        "MCP surface profile: agent (default, 43 tools) | core/slim (60 stable-core tools) | full/default (165 tools).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(
@@ -876,38 +876,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "Roll up measured per-session token usage from the transcript in the Stop hook.",
         opt_out=True,
     ),
-    _spec(
-        "MEMO_ROI_TOKENS_PER_GROUNDED",
-        "int",
-        350,
-        "roi",
-        "Estimated model tokens saved per grounded answer — the tokens the model "
-        "would have spent re-deriving the fact memo surfaced instead of being "
-        "given it directly.",
-        min_val=0,
-    ),
-    _spec(
-        "MEMO_ROI_TOKENS_PER_REASK",
-        "int",
-        900,
-        "roi",
-        "Estimated model tokens saved per re-ask avoided — a full answer "
-        "regeneration round-trip the user did NOT have to repeat.",
-        min_val=0,
-    ),
-    _spec(
-        "MEMO_ROI_TOKENS_PER_CONSULT",
-        "int",
-        200,
-        "roi",
-        "Estimated model tokens saved per PRODUCTIVE memo consult (a search that "
-        "returned >=1 hit) by a non-Claude-Code agent (codex/opencode/devin/"
-        "other agents). These agents read memo over MCP/CLI/socket, so we "
-        "log the consult but never see their answer — we can't ground it like a "
-        "Claude Code turn. Priced BELOW MEMO_ROI_TOKENS_PER_GROUNDED (350) because "
-        "the signal is weaker: memo returned relevant memory, use is unverified.",
-        min_val=0,
-    ),
     # Git sync (memo-sync repo ↔ GitHub)
     _spec(
         "MEMO_SYNC_AUTO",
@@ -1307,22 +1275,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "the latency headroom, AND the live recall mode is not hybrid (HyDE in "
         "the hook path would blow the 5s budget). Reversible via `memo dream "
         "tune --rollback`. Default off.",
-    ),
-    _spec(
-        "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
-        "bool",
-        False,
-        "misc",
-        "Deprecated inert compatibility switch. The graph-injection/expansion tuner was "
-        "removed; MEMO_DREAM_TUNE_ENABLED now evaluates only the curated graph signal.",
-    ),
-    _spec(
-        "MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS",
-        "float",
-        2500.0,
-        "misc",
-        "Deprecated inert compatibility value retained for old configuration files.",
-        min_val=0.0,
     ),
     _spec(
         "MEMO_DREAM_FLAG_GRADUATION_ENABLED",

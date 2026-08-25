@@ -230,21 +230,20 @@ def test_summarize_buckets_today_month_historic(tmp_path: Path) -> None:
         },
     )
     s = token_ledger.summarize(tmp_path, today=date(2026, 6, 30))
-    tpg = s["tpg"]
     assert s["today"]["grounded"] == 4
-    assert s["today"]["tokens"] == 4 * tpg
     assert s["month"]["grounded"] == 10  # 4 + 6
-    assert s["month"]["tokens"] == 10 * tpg
     assert s["historic"]["grounded"] == 23  # 4 + 6 + 10 + 3
-    assert s["historic"]["tokens"] == 23 * tpg
+    # No fabricated token estimate — only the raw, physical counts.
+    assert "tokens" not in s["today"]
+    assert "tpg" not in s
 
 
 def test_summarize_growth_compares_months(tmp_path: Path) -> None:
     _seed_ledger(tmp_path, {"2026-06-10": 20, "2026-05-10": 10})
     s = token_ledger.summarize(tmp_path, today=date(2026, 6, 30))
     g = s["growth"]
-    assert g["this_month_tokens"] == 20 * s["tpg"]
-    assert g["prev_month_tokens"] == 10 * s["tpg"]
+    assert g["this_month_events"] == 20
+    assert g["prev_month_events"] == 10
     assert g["up"] is True
     assert g["pct"] == 100.0  # doubled
 
@@ -264,8 +263,8 @@ def test_summarize_daily_series_is_continuous_and_ends_today(tmp_path: Path) -> 
 
 def test_summarize_empty_ledger(tmp_path: Path) -> None:
     s = token_ledger.summarize(tmp_path, today=date(2026, 6, 30))
-    assert s["today"]["tokens"] == 0
-    assert s["historic"]["tokens"] == 0
+    assert s["today"]["grounded"] == 0
+    assert s["historic"]["grounded"] == 0
     assert s["growth"]["up"] is None
     assert all(d["grounded"] == 0 for d in s["daily"])
 
@@ -292,7 +291,9 @@ def _seed_grounding(state_dir: Path, n: int) -> None:
     )
 
 
-def test_tokens_cmd_json_rolls_up_and_reports(tmp_path: Path) -> None:
+def test_tokens_cmd_json_reports_measured_and_proxy_surfaces(tmp_path: Path) -> None:
+    """`memo tokens --json` no longer rolls up the estimated token_ledger — it
+    reports the two REAL-measurement surfaces (transcript + proxy holdout)."""
     from click.testing import CliRunner
 
     from memo.cli import cli
@@ -304,10 +305,12 @@ def test_tokens_cmd_json_rolls_up_and_reports(tmp_path: Path) -> None:
     import json
 
     s = json.loads(r.output)
-    assert s["historic"]["grounded"] == 3
-    assert s["historic"]["tokens"] == 3 * s["tpg"]
-    # Durable ledger was written by the roll_up inside the command.
-    assert token_ledger.ledger_path(state).is_file()
+    assert "measured" in s
+    assert "proxy" in s
+    assert s["proxy"]["measured_saving_frac"] is None  # honest "no data", not 0
+    # The old token_ledger-derived keys are gone from the CLI's reporting contract.
+    assert "tpg" not in s
+    assert "historic" not in s
 
 
 def test_roll_up_merges_cohort_turn_counts(tmp_path: Path) -> None:
@@ -337,10 +340,13 @@ def test_tokens_cmd_empty_is_graceful(tmp_path: Path) -> None:
 
     r = CliRunner().invoke(cli, ["tokens"], env=_cli_env(tmp_path))
     assert r.exit_code == 0, r.output
-    assert "No savings recorded yet" in r.output
+    assert "no measured data" in r.output.lower()
 
 
-def test_tokens_cmd_renders_numbers_and_bars(tmp_path: Path) -> None:
+def test_tokens_cmd_grounding_log_alone_no_longer_feeds_the_report(tmp_path: Path) -> None:
+    """grounding.log/token_ledger no longer back `memo tokens` — the old estimated
+    panel it fed is gone. Only the real transcript ledger (token_meter) and the
+    real proxy holdout ledger (proxy.meter) do."""
     from click.testing import CliRunner
 
     from memo.cli import cli
@@ -348,8 +354,8 @@ def test_tokens_cmd_renders_numbers_and_bars(tmp_path: Path) -> None:
     _seed_grounding(tmp_path / "s", 5)
     r = CliRunner().invoke(cli, ["tokens"], env=_cli_env(tmp_path))
     assert r.exit_code == 0, r.output
-    assert "ALL-TIME" in r.output
-    assert "tokens saved" in r.output
+    assert "no measured data" in r.output.lower()
+    assert "ALL-TIME" not in r.output
 
 
 def test_summarize_exposes_ablation_totals(tmp_path) -> None:
@@ -434,7 +440,7 @@ def test_roll_up_consults_are_monotonic_across_rotation(tmp_path: Path) -> None:
     assert second["days"]["2026-06-05"]["consults"] == {"codex": 3}
 
 
-def test_summarize_prices_consults_and_breaks_down_by_client(tmp_path: Path) -> None:
+def test_summarize_counts_consults_and_breaks_down_by_client(tmp_path: Path) -> None:
     token_ledger.write_ledger(
         tmp_path,
         {
@@ -445,19 +451,18 @@ def test_summarize_prices_consults_and_breaks_down_by_client(tmp_path: Path) -> 
         },
     )
     s = token_ledger.summarize(tmp_path, today=date(2026, 6, 30))
-    tpg, tpc = s["tpg"], s["tpc"]
     assert s["today"]["grounded"] == 2
     assert s["today"]["consults"] == 5
-    assert s["today"]["tokens"] == 2 * tpg + 5 * tpc
-    # Per-agent breakdown: grounded → claude-code, consults → codex.
+    # Per-agent breakdown: grounded → claude-code, consults → codex. Raw event
+    # counts only — no fabricated per-unit token price.
     bc = s["by_client"]["today"]
-    assert bc["claude-code"]["tokens"] == 2 * tpg
-    assert bc["codex"]["tokens"] == 5 * tpc
+    assert bc["claude-code"] == {"grounded": 2, "consults": 0}
+    assert bc["codex"] == {"grounded": 0, "consults": 5}
 
 
 def test_summarize_today_nonzero_from_consults_when_no_grounding(tmp_path: Path) -> None:
     """The exact bug: another agent used memo today but no Claude Stop fired yet.
-    `today` must reflect the consult savings instead of showing 0."""
+    `today` must reflect the consult count instead of showing 0."""
     token_ledger.write_ledger(
         tmp_path,
         {
@@ -467,5 +472,4 @@ def test_summarize_today_nonzero_from_consults_when_no_grounding(tmp_path: Path)
     )
     s = token_ledger.summarize(tmp_path, today=date(2026, 6, 30))
     assert s["today"]["grounded"] == 0
-    assert s["today"]["tokens"] == 5 * s["tpc"]
-    assert s["today"]["tokens"] > 0
+    assert s["today"]["consults"] == 5

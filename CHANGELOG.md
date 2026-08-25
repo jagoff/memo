@@ -9,6 +9,118 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.0] - 2026-08-25
+
+### Fixed
+
+- The proxy's tool-schema keep-set is now persisted to
+  `<state_dir>/proxy/keep_sets.json` instead of living only in process memory.
+  Under launchd `KeepAlive` every restart re-derived it from a grown
+  `tool_usage.json`, reshaping the `tools` array mid-session and invalidating
+  the whole conversation's prompt cache at the 1.25× creation premium — which
+  is how an earlier revision cut prompt size by 66% and still cost 9.5% *more*
+  per request.
+- `memo ops install proxy` honours `--port`. It was silently ignored, while
+  the port-in-use error told the user to "pick another with `--port`". The
+  shared `--port` default of 8765 was the chat port, wrong for the proxy's
+  8768; it is now unset and resolved per service.
+
+### Added
+
+- `memo proxy` — a loopback context-compression proxy on `127.0.0.1:8768`,
+  installed and pointed at by `install.sh` **by default**: a saving you have
+  to opt into is a saving most people never get. `MEMO_INSTALL_SKIP_PROXY=1`
+  opts out, and `memo ops uninstall proxy` reverses it completely.
+
+  The wiring is gated, because `ANTHROPIC_BASE_URL` is a hard dependency:
+  pointed at a loopback port where nothing listens, Claude Code fails exactly
+  like a dead network. So the variable is written only after the agent answers,
+  removal un-points the client before the agent goes away, and a non-loopback
+  base URL — a corporate gateway, a staging endpoint — is never overwritten or
+  deleted, because it is somebody's deliberate routing decision and not
+  memo's to touch. It rewrites the outbound
+  request through tool-schema pruning with on-demand hydration, structure maps,
+  re-read deltas and declarative tool-result filters, stashes every cut
+  content-addressed so `memo_crush_retrieve` can recover it, and relays the
+  response stream untouched. Failure is fail-open at every layer: any transform
+  that raises forwards the original body. Two further transforms ship disabled
+  and are one env var away — the L1 JSON crusher (`MEMO_PROXY_JSONCRUSH`) and
+  pixel mode (`MEMO_PROXY_PIXEL`).
+- Measured against the provider's own usage counters on live traffic:
+  **73.5% cut in billed prompt cost** (58,402 → 15,447 tok-equiv/request),
+  where billed-equivalent is `input + 1.25×cache_creation + 0.1×cache_read`.
+  Tool-schema pruning accounts for 99.1% of it; on a captured payload the tool
+  block alone dropped from ~164,000 to 12,202 tokens.
+
+  The number to distrust is prompt SIZE. An earlier revision cut it by 66% and
+  still cost 9.5% *more* per request, because rewriting the cached prefix
+  mid-session invalidates the whole conversation's cache at the 1.25× creation
+  premium. What makes the saving real is that the prefix is byte-stable in
+  production: `cache_creation[i]` equals the delta in `cache_read[i+1]`, turn
+  after turn, so only genuinely new content is ever written.
+
+  Limits, stated rather than smoothed over: the figure is n=28 from a single
+  session, so the mechanism is confirmed while the exact percentage is not yet
+  robust; the treated-vs-holdout A/B still lacks the sessions to conclude,
+  since holdout assignment is per-session.
+
+### Removed
+
+- The "tokens saved (estimated)" panel in `memo tokens` and the three flags
+  that fed it (`MEMO_ROI_TOKENS_PER_GROUNDED`, `MEMO_ROI_TOKENS_PER_REASK`,
+  `MEMO_ROI_TOKENS_PER_CONSULT`). That panel printed `grounded × 350 +
+  consults × 200` — hardcoded constants with no control arm — right beside a
+  real measured cost (`memo tokens`'s transcript-based panel), which read as
+  a savings claim memo could not support. `memo tokens` now reports the
+  local context-compression proxy's real treated-vs-holdout measurement
+  (`memo.proxy.meter.summarize`: mean input tokens, measured saving
+  fraction, sample counts, per-transform retrieval rate via
+  `--by-transform`) alongside the existing transcript-measured panel — no
+  fabricated number, and "no measured data yet" is reported as such rather
+  than as a zero. The same estimate is gone from `memo roi`'s "estimated
+  tokens" line and from the dashboard's token-savings KPI/daily series
+  (`memo.web_build._token_savings`), which now report only the real,
+  physical grounded/re-ask/context-cost counts. `memo eval baseline`'s
+  online window dropped its derived "tokens" figure for the same reason —
+  only the real grounded count remains.
+
+## [4.13.3] - 2026-08-18
+
+### Removed
+
+- Eight inert compatibility flags, each advertising behaviour whose serving path
+  had already been deleted: `MEMO_GRAPH_RETRIEVAL_ENABLED`,
+  `MEMO_GRAPH_EXPANSION_ENABLED`, `MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED`,
+  `MEMO_GRAPH_OUTCOME_WEIGHT`, `MEMO_GRAPH_DENSITY_BOOST`,
+  `MEMO_GRAPH_FALLBACK_MIN_HITS`, `MEMO_DREAM_RETRIEVAL_TUNE_ENABLED` and
+  `MEMO_DREAM_RETRIEVAL_LATENCY_BUDGET_MS`. A knob that appears in `memo config
+  flags`, accepts a value and does nothing is worse than no knob. Registry:
+  483 → 475 flags, and their graduation gates are gone with them.
+
+### Fixed
+
+- A stale retired flag in a Markdown config, a tuned overlay or the environment
+  is now ignored instead of reported by `memo config validate` as `unknown
+  MEMO_* var (typo?)` — these are names memo itself shipped. A real typo of the
+  same name is still caught.
+
+## [4.13.2] - 2026-08-18
+
+### Fixed
+
+- `memo ops checkpoint-wal` (new, called by the nightly pass) actually reclaims
+  the sqlite write-ahead logs. `PRAGMA journal_size_limit`, added in 4.13.0,
+  caps a WAL only after a successful checkpoint — and a checkpoint cannot
+  advance past the oldest open reader, of which memo keeps several permanently
+  (recall daemon, watcher, every memo-mcp session). Measured: graph.db-wal at
+  74MB against a 127MB database, and back to 68MB hours after a manual
+  truncate.
+- The `hook-commands-resolve` release gate now also resolves the `memo`
+  subcommands fired by `launchd/memo-nightly.sh`, not just `hooks/hooks.json`.
+  That is the surface that actually drifted: `ops gc-emitted-ledgers` shipped in
+  the template before the binary registered it, and for four nights the pass
+  logged `Error: No such command` into a file nobody reads.
+
 ## [4.13.1] - 2026-08-18
 
 ### Fixed

@@ -6,7 +6,7 @@
 # only the PyPI distribution moved. Back-compat: existing users on
 # `memo-mcp ≤ 0.4.3` keep working; new installs use `pip install mlx-memo`.
 name = "mlx-memo"
-version = "4.13.1"
+version = "4.14.0"
 description = "Local-first semantic memory for AI agents — time-travel, contradiction radar, automatic synthesis. MLX (Apple Silicon) or CPU sentence-transformers (Linux) embeddings + sqlite-vec, MCP server. No cloud, no API keys."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -112,6 +112,8 @@ multimodal = [
 ]
 # Optional REST API server (`memo http-api`).
 http = [
+    "httpx>=0.27,<1",
+    "pillow>=10.0",
     "fastapi>=0.115",
     "uvicorn>=0.34",
 ]
@@ -220,14 +222,17 @@ python_version = "3.13"
 module = ["frontmatter", "sqlite_vec", "Quartz", "Vision", "Foundation",
           "mlx", "mlx.*", "mlx_lm", "mlx_lm.*", "mlx_vlm", "mlx_vlm.*", "huggingface_hub",
           "numpy", "tantivy",
-          # Optional REST API server dependencies, absent unless [http] is used.
-          "fastapi", "fastapi.*", "uvicorn", "uvicorn.*",
           # sentence-transformers (+torch) — Linux platform dependency; the ST
           # embedder import remains deferred.
           "sentence_transformers", "sentence_transformers.*", "torch", "torch.*",
           # fastapi + uvicorn — optional [http] extra for the standalone HTTP API
           # (server_http/cli_http), not installed in the default [dev] CI runtime.
-          "fastapi", "fastapi.*", "uvicorn", "uvicorn.*"]
+          "fastapi", "fastapi.*", "uvicorn", "uvicorn.*",
+          # Pillow — same [http] extra. The proxy's Pixel transform imports it
+          # inside a try/except ImportError and returns None when it is absent
+          # ("No-op without the [http] extra", see transforms/pixel.py), so a
+          # runtime without it is a supported configuration, not a broken one.
+          "PIL", "PIL.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

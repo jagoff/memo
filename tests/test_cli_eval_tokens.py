@@ -71,6 +71,63 @@ def test_tokens_gate_fails_on_regression(tmp_path, monkeypatch):
     assert "FAIL" in r.output
 
 
+def test_tokens_gate_rejects_a_baseline_measured_under_a_different_reranker_mode(
+    tmp_path, monkeypatch
+):
+    """Part B finding 4: `eval_tokens_cmd`'s `_search` closure always passes
+    `disable_reranker=True` (deterministic gate measurement), but the
+    baseline it writes/reads carried no record of that -- a baseline
+    measured under a different search mode (e.g. reranker ON, before that
+    determinism fix existed) would silently compare against a reranker-OFF
+    run with nothing to flag the mismatch. The gate must refuse rather than
+    report a false pass/fail off an apples-to-oranges comparison."""
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: object())
+    good = [eval_tokens.LeverRow("recall_format_compact", "recall_output", 100, 80, 1.0, 1.0)]
+    monkeypatch.setattr(eval_tokens, "run_all", lambda **kw: good)
+
+    baseline_path = tmp_path / "state" / "eval" / "token_baseline.json"
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "recall_format_compact": {
+                    "saved_frac": 0.2,
+                    "quality_delta": 0.0,
+                    "passed": True,
+                },
+                "_gate_meta": {"disable_reranker": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    r = CliRunner().invoke(cli, ["eval", "tokens", "--gate"], env=_env(tmp_path))
+    assert r.exit_code != 0
+    assert "disable_reranker" in r.output
+    assert "--update-baseline" in r.output
+
+
+def test_tokens_gate_accepts_a_legacy_baseline_with_no_meta_stamp(tmp_path, monkeypatch):
+    """A baseline written before this stamp existed carries no `_gate_meta`
+    at all -- absent must not be treated the same as mismatched, or every
+    pre-existing installed baseline would break on upgrade for no reason."""
+    monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: object())
+    good = [eval_tokens.LeverRow("recall_format_compact", "recall_output", 100, 80, 1.0, 1.0)]
+    monkeypatch.setattr(eval_tokens, "run_all", lambda **kw: good)
+
+    baseline_path = tmp_path / "state" / "eval" / "token_baseline.json"
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    baseline_path.write_text(
+        json.dumps(
+            {"recall_format_compact": {"saved_frac": 0.2, "quality_delta": 0.0, "passed": True}}
+        ),
+        encoding="utf-8",
+    )
+
+    r = CliRunner().invoke(cli, ["eval", "tokens", "--gate"], env=_env(tmp_path))
+    assert r.exit_code == 0, r.output
+
+
 def test_tokens_gate_without_baseline_errors(tmp_path, monkeypatch):
     monkeypatch.setattr("memo.cli_eval._get_memory", lambda cfg: object())
     monkeypatch.setattr(eval_tokens, "run_all", lambda **kw: [])

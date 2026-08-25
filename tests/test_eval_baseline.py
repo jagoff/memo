@@ -12,7 +12,7 @@ def test_snapshot_shape_and_param_version_base(tmp_path):
     assert snap["ts"] == "2026-07-01T00:00:00+00:00"
     assert snap["params_version"] == "base"
     assert snap["offline"] == {"precision_at_k": 0.2, "noise_at_k": 0.0}
-    assert snap["online"]["window_7d"] == {"grounded": 0, "tokens": 0}
+    assert snap["online"]["window_7d"] == {"grounded": 0}
 
 
 def test_snapshot_online_reads_durable_ledger(tmp_path):
@@ -22,4 +22,3 @@ def test_snapshot_online_reads_durable_ledger(tmp_path):
     )
     snap = build_baseline_snapshot(tmp_path, {"precision_at_k": 0.0, "noise_at_k": 0.0})
     assert snap["online"]["window_7d"]["grounded"] == 3
-    assert snap["online"]["window_7d"]["tokens"] > 0  # 3 * tokens-per-grounded

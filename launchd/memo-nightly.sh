@@ -93,6 +93,15 @@ log "start memo-consolidate"
 # logs: watch.err.log was found at 13MB/211k lines, and a KeepAlive crash loop
 # adds ~1MB/hour. Truncate in place (`cat >` keeps the inode, so a daemon
 # holding the fd keeps appending) and keep the newest 1MB.
+# WAL truncation. A checkpoint cannot advance past the oldest open reader, and
+# memo keeps several (recall daemon, watcher, every memo-mcp session), so the
+# passive checkpoints sqlite runs on its own never reclaim anything:
+# graph.db-wal was measured at 74MB against a 127MB database, and back to 68MB
+# hours after a manual truncate. Nightly is the one moment worth spending the
+# blocking call on.
+log "start checkpoint-wal"
+"__MEMO_BIN__" ops checkpoint-wal --json || log "checkpoint-wal FAILED (exit $?)"
+
 log "start log-rotate"
 for _f in "$HOME"/Library/Logs/memo/*.log "$HOME"/Library/Logs/memo/*.err.log \
           "$HOME"/.local/share/memo/*.log; do

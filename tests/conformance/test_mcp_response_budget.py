@@ -192,6 +192,7 @@ ARGS: dict[str, dict[str, object]] = {
     "memo_synthesize_delete": {"id": "nonexistent-synth"},
     "memo_temporal_contradictions": {"entity": _TOPIC_A},
     "memo_temporal_timeline": {"entity": _TOPIC_A},
+    "memo_tool_docs": {"name": "memo_graph"},
     "memo_unforget": {
         "id": seeded_id(21)
     },  # same id memo_forget targets -- forget < unforget alphabetically

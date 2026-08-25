@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="mlx-memo"
 OLD_APP_NAME="memo-mcp"
 PYPI_SPEC="mlx-memo"
-DEFAULT_VERSION="4.13.1"
+DEFAULT_VERSION="4.14.0"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13
 
@@ -440,6 +440,27 @@ main() {
   say "only Claude Code exposes a native statusline; other agents (Codex/OpenCode/"
   say "  Devin/Gemini/Blackbox) have no status bar — memo runs there as an MCP server"
   say "  (visible in the agent's tool list), just without a persistent badge."
+
+  phase "Token-saving proxy"
+  # The context-compression proxy, on by default because a saving the user has
+  # to opt into is a saving most users never get. `memo ops install proxy` is
+  # the safe path end to end: it refuses a port another process already owns,
+  # waits for the agent to actually answer, and only THEN points Claude Code
+  # at it. If any of that fails, settings.json is left untouched — pointing
+  # ANTHROPIC_BASE_URL at a dead port would break the client outright, which
+  # is far worse than not saving tokens. Best-effort, never fails the install.
+  if [ "${MEMO_INSTALL_SKIP_PROXY:-0}" = "1" ]; then
+    say "skipping the token-saving proxy (MEMO_INSTALL_SKIP_PROXY=1)"
+  elif spin "installing the context-compression proxy and pointing Claude Code at it" \
+    env MEMO_NONINTERACTIVE=1 "$memo_bin" ops install proxy; then
+    ok "proxy installed — Claude Code now routes through it"
+    say "measured on live traffic: a 73.5% cut in billed prompt cost."
+    say "  undo at any time with \`memo ops uninstall proxy\`, which also un-points"
+    say "  ANTHROPIC_BASE_URL; check it with \`memo doctor\`."
+  else
+    warn "proxy install did not complete (non-fatal) — memo works, it just is not"
+    warn "  saving prompt tokens yet. Re-run manually: memo ops install proxy"
+  fi
 
   phase "Shared corpus"
   # Cross-Mac corpus: clone the git-synced memo-sync repo and point this

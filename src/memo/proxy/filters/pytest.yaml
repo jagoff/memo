@@ -1,0 +1,21 @@
+name: pytest
+match:
+  command: pytest
+pipeline:
+  # `=+[^=]*=+` (not `=+ .* =+`): the negated-class middle makes this
+  # unambiguous to match -- `[^=]*` can only ever stop right where `=+`
+  # picks back up, so there is exactly one way to parse "run of =, non-=
+  # middle, run of =" and nothing to backtrack. The original `.* ` (with a
+  # required literal space anchoring each side) forced the leading `=+` to
+  # backtrack hunting for a space that might not exist anywhere in the line,
+  # which is O(line_length^2) against a long adversarial line with no
+  # closing structure (a large diff, a printed data structure, a stray
+  # separator in captured output -- no malice required). See
+  # transforms/toolresults.py's `_MAX_REGEX_LINE_CHARS` guard for the
+  # general-purpose backstop this specific rewrite is layered on top of.
+  - action: keep_lines
+    pattern: "(FAILED|ERROR|error:|assert|=+[^=]*=+)"
+  - action: truncate_lines
+    max: 200
+  - action: tail
+    n: 40

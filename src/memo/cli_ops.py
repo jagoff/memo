@@ -142,7 +142,11 @@ def _stale_emitted_count(state_dir: Path, max_age_s: int) -> int:
     "--max-age-hours",
     default=48,
     show_default=True,
-    type=int,
+    # min=1: `prune`'s check is `now - mtime > max_age_s` -- 0 or a negative
+    # value makes that true for essentially every file on disk, including a
+    # live session's ledger written a moment ago. Reject before it ever
+    # reaches `prune` rather than silently wipe live sessions' counters.
+    type=click.IntRange(min=1),
     help="Remove emission ledgers untouched for longer than this.",
 )
 @click.option("--dry-run", is_flag=True, help="Count would-be removals without deleting.")
@@ -173,6 +177,49 @@ def gc_emitted_ledgers_cmd(max_age_hours: int, dry_run: bool, as_json: bool) -> 
     console.print(
         f"removed: [green]{removed}[/green] file(s){'  [dim](dry-run)[/dim]' if dry_run else ''}"
     )
+
+
+@ops_group.command(name="checkpoint-wal")
+@click.option(
+    "--min-mb",
+    default=8,
+    show_default=True,
+    type=int,
+    help="Only checkpoint databases whose -wal exceeds this size.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output raw JSON.")
+def checkpoint_wal_cmd(min_mb: int, as_json: bool) -> None:
+    """Truncate the write-ahead logs of memo's sqlite stores.
+
+    WAL only shrinks at a checkpoint, and a checkpoint can only advance past
+    the oldest reader — memo keeps several long-lived ones (the recall daemon,
+    the watcher, every memo-mcp session), so a passive checkpoint never
+    truncates and the file grows without bound. Measured on this machine:
+    graph.db-wal at 74MB against a 127MB database, and back to 68MB a few hours
+    after a manual truncate. `PRAGMA journal_size_limit` (set on every store)
+    caps the file only AFTER a successful checkpoint, so something has to run
+    one: that is this command, called from the nightly pass.
+
+    Safe by construction: a checkpoint moves committed pages into the database
+    and rewrites nothing. `TRUNCATE` blocks until readers release, and reports
+    `busy` rather than waiting forever.
+    """
+    from memo.store.wal import checkpoint_wal
+
+    cfg = Config.from_env()
+    result = checkpoint_wal(cfg.state_dir, min_bytes=min_mb * 1024 * 1024)
+    if as_json:
+        click.echo(json.dumps(result))
+        return
+    if not result["checkpointed"]:
+        console.print(f"[dim]no WAL above {min_mb}MB[/dim]")
+        return
+    for entry in result["checkpointed"]:
+        console.print(
+            f"[cyan]{entry['db']}[/cyan]: {entry['before_mb']:.1f}MB → "
+            f"{entry['after_mb']:.1f}MB{'  [yellow](busy)[/yellow]' if entry['busy'] else ''}"
+        )
+    console.print(f"freed: [green]{result['freed_mb']:.1f}MB[/green]")
 
 
 @ops_group.command(name="vault-ingest")
@@ -238,38 +285,47 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
 
 
 @ops_group.command(name="install")
-@click.argument("service", type=click.Choice(["chat"]))
-@click.option("--port", default=8765, show_default=True, type=int)
+@click.argument("service", type=click.Choice(["chat", "proxy"]))
+# No shared default: chat and the proxy listen on different ports (8765 vs
+# 8768), and one number cannot be right for both. Unset means "use whichever
+# this service's own default is", so `--port` stays meaningful for each.
+@click.option("--port", default=None, type=int, help="[default: 8765 chat, 8768 proxy]")
 @click.option(
     "--dist",
     default=None,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="Directorio dist de la SPA (opcional).",
 )
-def ops_install(service: str, port: int, dist: Path | None) -> None:
-    """Install a memo launchd agent (currently: chat)."""
+def ops_install(service: str, port: int | None, dist: Path | None) -> None:
+    """Install a memo launchd agent (chat or proxy)."""
     import shutil
 
-    from memo.ops_launchd import install_chat
+    import memo.ops_launchd as _launchd
+
+    install_chat, install_proxy = _launchd.install_chat, _launchd.install_proxy
 
     memo_bin = shutil.which("memo")
     if not memo_bin:
         raise click.ClickException("no encuentro el binario `memo` en PATH")
-    resolved_dist = str(dist.expanduser().resolve()) if dist else None
     try:
-        path = install_chat(memo_bin, Path.home(), port=port, dist=resolved_dist)
+        if service == "chat":
+            resolved_dist = str(dist.expanduser().resolve()) if dist else None
+            path = install_chat(memo_bin, Path.home(), port=port or 8765, dist=resolved_dist)
+        else:
+            path = install_proxy(memo_bin, Path.home(), port=port or 8768)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"installed {path}")
 
 
 @ops_group.command(name="uninstall")
-@click.argument("service", type=click.Choice(["chat"]))
+@click.argument("service", type=click.Choice(["chat", "proxy"]))
 def ops_uninstall(service: str) -> None:
     """Uninstall a memo launchd agent."""
-    from memo.ops_launchd import uninstall_chat
+    from memo.ops_launchd import uninstall_chat, uninstall_proxy
 
-    click.echo("removed" if uninstall_chat(Path.home()) else "not installed")
+    ok = uninstall_chat(Path.home()) if service == "chat" else uninstall_proxy(Path.home())
+    click.echo("removed" if ok else "not installed")
 
 
 @ops_group.command(name="status")

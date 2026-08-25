@@ -116,24 +116,8 @@ GATES: dict[str, GateSpec] = dict(
             "code-proximity additive boost (dark float, 0.0 = OFF); recall A/B "
             "via the eval flag_overrides seam — the ON pin '1' measures boost=1.0",
         ),
-        _g(
-            "MEMO_GRAPH_OUTCOME_SIGNAL_ENABLED",
-            "recall",
-            "roi modulation of graph boosts; needs the graph signal on",
-            extra_flags=(("MEMO_GRAPH_SIGNAL_ENABLED", "1"),),
-        ),
         # --- tuner: an existing nightly pass owns the flip --------------------
         _g("MEMO_HYDE_ENABLED", "tuner", "owned by dream_tune.run_hyde_pass"),
-        _g(
-            "MEMO_GRAPH_RETRIEVAL_ENABLED",
-            "manual",
-            "deprecated inert compatibility switch; no serving path consumes it",
-        ),
-        _g(
-            "MEMO_GRAPH_EXPANSION_ENABLED",
-            "manual",
-            "deprecated inert compatibility switch; no serving path consumes it",
-        ),
         # --- manual: not recall-measurable; human flips via env/config set ----
         _g(
             "MEMO_GRAPH_PROJECTION_ENABLED",
@@ -242,11 +226,6 @@ GATES: dict[str, GateSpec] = dict(
         _g("MEMO_DREAM_TUNE_ENABLED", "manual", "meta: gates the tuner pass; op cost decision"),
         _g("MEMO_DREAM_TUNE_BOOST_ENABLED", "manual", "meta: gates the boost explorer"),
         _g("MEMO_DREAM_HYDE_TUNE_ENABLED", "manual", "meta: gates the HyDE A/B pass"),
-        _g(
-            "MEMO_DREAM_RETRIEVAL_TUNE_ENABLED",
-            "manual",
-            "deprecated inert compatibility switch; tuner invocation was removed",
-        ),
         _g("MEMO_DREAM_ANTICIPATE_ENABLED", "manual", "meta: gates the anticipate pass"),
         _g("MEMO_DREAM_HYPE_ENABLED", "manual", "meta: gates the nightly HyPE indexer"),
         _g(

@@ -1013,6 +1013,14 @@ def eval_tokens_cmd(
             has_var_kw = any(
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
             )
+            # Retrieval-only, same rationale as eval_recall._search_for_eval:
+            # this gate measures the rendered block (tokens + id survival)
+            # over the fused candidate pool, NOT the cross-encoder. Disabling
+            # it keeps the measurement deterministic and cannot hang the
+            # gate on the machine-global GPU flock while a batch MLX job
+            # (capture-stop, another test suite) holds it.
+            if "disable_reranker" in sig.parameters or has_var_kw:
+                search_kwargs["disable_reranker"] = True
             if "_track_usage" in sig.parameters or has_var_kw:
                 search_kwargs["_track_usage"] = False
         return list(mem.search(text, **search_kwargs))
@@ -1027,10 +1035,17 @@ def eval_tokens_cmd(
         prompts=labels.prompts, search=_search, corpus=corpus, crush_fn=_crush, k=k
     )
     metrics = eval_tokens.gate_metrics(rows)
+    # `_search` above always measures with the reranker disabled (deterministic,
+    # can't hang on the GPU flock) -- stamp that mode onto the baseline so a
+    # later --gate comparing against a baseline measured under a DIFFERENT
+    # mode (e.g. one predating that determinism fix) can be caught rather than
+    # silently compared apples-to-oranges. Mirrors `_reject_foreign_baseline`'s
+    # `gate_command` stamp above.
+    gate_meta = {"disable_reranker": True}
 
     if update_baseline:
         bp = _tokens_baseline_path(cfg)
-        _atomic_write_json(bp, metrics)
+        _atomic_write_json(bp, {**metrics, "_gate_meta": gate_meta})
         console.print(f"[green]✓[/green] token baseline saved → {bp}")
         return
 
@@ -1042,6 +1057,22 @@ def eval_tokens_cmd(
                 "`memo eval tokens --update-baseline`"
             )
         baseline = json.loads(bp.read_text(encoding="utf-8"))
+        stored_meta = baseline.get("_gate_meta")
+        # Absent stamp = written before this field existed -- accept it rather
+        # than force a re-seed on every pre-existing install (same leniency as
+        # `_reject_foreign_baseline`'s missing `gate_command`). A PRESENT stamp
+        # that disagrees means the two runs are not comparable and the gate's
+        # pass/fail would mean nothing.
+        if (
+            isinstance(stored_meta, dict)
+            and stored_meta.get("disable_reranker") != gate_meta["disable_reranker"]
+        ):
+            raise click.ClickException(
+                f"baseline at {bp} was measured with disable_reranker="
+                f"{stored_meta.get('disable_reranker')!r}, this run measures with "
+                f"disable_reranker={gate_meta['disable_reranker']!r} — not a valid "
+                "comparison. Re-seed with `memo eval tokens --update-baseline`."
+            )
         result = eval_tokens.check_gate(rows, baseline)
         if as_json:
             click.echo(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
@@ -1213,7 +1244,7 @@ def eval_ab_cmd(
 def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
     """Freeze a baseline snapshot for self-improvement comparison.
 
-    Captures offline prec@K / noise@K, online grounded + tokens (7d / 30d), and
+    Captures offline prec@K / noise@K, online grounded count (7d / 30d), and
     the active tuned-params version, to state_dir/eval/baseline_snapshot.json.
     """
     cfg = Config.from_env()
@@ -1243,7 +1274,7 @@ def eval_baseline_cmd(k: int, labels_path: str, as_json: bool) -> None:
             f"[green]✓[/green] baseline snapshot → {path}\n"
             f"  offline prec@{k} {snap['offline']['precision_at_k']} / "
             f"noise@{k} {snap['offline']['noise_at_k']}\n"
-            f"  online 7d grounded {w7['grounded']} (~{w7['tokens']} tok) · "
+            f"  online 7d grounded {w7['grounded']} · "
             f"params {snap['params_version']}"
         )
 

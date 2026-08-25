@@ -21,8 +21,8 @@ class MlxMemo < Formula
 
   desc "Local MCP memory for AI agents — MLX-native, sqlite-vec, markdown vault"
   homepage "https://github.com/jagoff/memo"
-  url "https://files.pythonhosted.org/packages/e6/fe/a85f14d6fc05ddf2c27c6042ed665e705b96560e6c69509ae737361bd33f/mlx_memo-4.12.2.tar.gz"
-  sha256 "588a5b5c1adfca70bf8b6cd79dde114fdb7491d9edc4e7bc50be62e77a5ed045"
+  url "https://files.pythonhosted.org/packages/59/65/89b55788a24de89a6df841f2b3a984e8b85ea90b2ba85f2166564f92c077/mlx_memo-4.14.0.tar.gz"
+  sha256 "5e991e9707fe1c5e1b03700ab84d809cab0f7c26fc15118b26a84d2769b293cd"
   license "MIT"
 
   depends_on arch: :arm64

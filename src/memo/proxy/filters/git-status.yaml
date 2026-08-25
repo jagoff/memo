@@ -1,0 +1,11 @@
+name: git-status
+match:
+  command: git
+  subcommand: status
+pipeline:
+  - action: keep_lines
+    pattern: "\\S"
+  - action: truncate_lines
+    max: 200
+  - action: head
+    n: 50

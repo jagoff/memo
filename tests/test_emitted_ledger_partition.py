@@ -77,8 +77,10 @@ def test_shorter_emission_of_same_prefix_is_digested():
     assert [h["id"] for h in out.digest] == ["a"]
     # Pin to the CHARS ACTUALLY SUPPRESSED (len(shorter)), not prior.n (900).
     # The two only diverge in this truncation scenario; a suppressed_chars that
-    # reported prior.n here would over-claim the saving by 2.25x to Task 8/10,
-    # which use this number to decide whether the feature ships.
+    # reported prior.n here would over-claim what this call actually digested,
+    # even though nothing outside this test module currently reads the field
+    # (see Partition's docstring -- the real gate numerator is computed
+    # independently in server_common.apply_ledger).
     assert out.suppressed_chars == 400
 
 

@@ -705,6 +705,40 @@ def test_capture_stop_no_notification_when_nothing_saved(tmp_path: Path, monkeyp
     assert not (state / "pending_idle_notification.txt").exists()
 
 
+def test_capture_stop_presence_write_does_not_raise(tmp_path: Path, monkeypatch) -> None:
+    """Round-2 regression: the Stop hook's presence-write block read
+    ``token_ledger.summarize(...)["today"]["tokens"]``, a key the ledger no
+    longer produces after the round-1 estimate removal — raising
+    ``KeyError: 'tokens'`` on every Stop, silently swallowed except under
+    ``MEMO_CAPTURE_DEBUG``. Assert debug mode shows no such failure."""
+    from click.testing import CliRunner
+
+    import memo.capture as capture_mod
+    from memo.cli_capture import capture_stop
+
+    state = tmp_path / "state"
+    state.mkdir()
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setenv("MEMO_STATE_DIR", str(state))
+    monkeypatch.setenv("MEMO_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MEMO_NONINTERACTIVE", "1")
+    monkeypatch.setenv("MEMO_CAPTURE_DEBUG", "1")
+    monkeypatch.setattr(
+        capture_mod,
+        "run_capture",
+        lambda *a, **k: {"status": "ok", "saved": [], "saved_titles": []},
+    )
+
+    payload = json.dumps({"transcript_path": str(transcript), "session_id": "s1"})
+    result = CliRunner().invoke(capture_stop, input=payload)
+
+    assert result.exit_code == 0
+    assert "presence" not in result.output.lower()
+    assert "KeyError" not in result.output
+
+
 def test_capture_stop_recovers_transcript_path_from_session_id(tmp_path: Path, monkeypatch) -> None:
     """Regression: 2026-06-27 onward some Stop-hook payloads omit
     transcript_path outright, so capture-stop used to no-op — including its
