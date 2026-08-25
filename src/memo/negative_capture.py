@@ -157,8 +157,8 @@ def capture_from_supersede(
     (the caller's responsibility) so both bodies are still resolvable.
 
     Returns ``{"status", "captured_id"?, "error"?}`` where ``status`` is one of
-    ``disabled`` / ``unresolved`` / ``skipped_dup`` / ``dry_run`` / ``captured``
-    / ``error``.
+    ``disabled`` / ``unresolved`` / ``skipped_origin`` / ``skipped_dup`` /
+    ``dry_run`` / ``captured`` / ``error``.
     """
     if not flag_bool(_CAPTURE_FLAG):
         return {"status": "disabled", "captured_id": None}
@@ -167,6 +167,15 @@ def capture_from_supersede(
         superseding = mem.get(superseding_id)
         if superseded is None or superseding is None:
             return {"status": "unresolved", "captured_id": None}
+        # Same gate the avoid-verdict path applies -- this door never had it.
+        # An anti-memory OF an anti-memory is nonsense (it minted memories
+        # literally titled "Avoid reverting to: Avoid reverting to: X"), and a
+        # reference chunk is not a lesson: two sections of one ingested
+        # document read as a contradiction to the pair scanner, so a single CV
+        # produced a "failure pattern" whose Wrong and Right were two jobs in
+        # the same work history.
+        if superseded.type in _SKIP_ORIGIN_TYPES or superseding.type in _SKIP_ORIGIN_TYPES:
+            return {"status": "skipped_origin", "captured_id": None}
         payload = derive_failure_pattern_from_supersede(superseded, superseding)
         prov_hash = _provenance_hash(payload["extra"])
         if prov_hash in _existing_provenance_hashes(mem):

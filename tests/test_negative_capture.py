@@ -503,3 +503,68 @@ def test_avoid_verdict_persist_error_is_surfaced(mem_with_stub, enabled, monkeyp
     assert res["captured"] == []
     assert res["errors"]
     assert "disk full" in res["errors"][0]
+
+
+def test_supersede_never_mints_an_anti_memory_of_an_anti_memory(mem_with_stub, enabled):
+    """`_SKIP_ORIGIN_TYPES` must gate BOTH entry paths, not just one.
+
+    The avoid-verdict path checks `memrec.type in _SKIP_ORIGIN_TYPES`;
+    `capture_from_supersede` never looked at `.type` at all. So superseding one
+    failure_pattern with another minted a failure_pattern *about* failure
+    patterns — observed live as memories literally titled "Avoid reverting to:
+    Avoid reverting to: X". The module's own comment already calls that
+    nonsense; only one of its two doors enforced it.
+    """
+    mem = mem_with_stub
+    a = mem.save(
+        content="Pattern: a prior approach was reversed: use a global singleton for the pool.",
+        title="Avoid reverting to: global singleton",
+        type_=FAILURE_PATTERN_TYPE,
+    )
+    b = mem.save(
+        content="Pattern: a prior approach was reversed: use one connection per thread.",
+        title="Avoid reverting to: thread-local connection",
+        type_=FAILURE_PATTERN_TYPE,
+    )
+
+    before = len(_failure_patterns(mem))
+    res = negative_capture.capture_from_supersede(mem, superseded_id=a.id, superseding_id=b.id)
+
+    assert res["status"] == "skipped_origin"
+    assert res["captured_id"] is None
+    assert len(_failure_patterns(mem)) == before
+
+
+def test_supersede_never_mints_a_lesson_out_of_a_reference_chunk(mem_with_stub, enabled):
+    """Bulk reference chunks are not lessons.
+
+    Two sections of one ingested document routinely look like a contradiction
+    to the pair scanner. Observed live: a failure_pattern whose "Wrong" and
+    "Right" were two different jobs in the same person's work history, minted
+    from `#chunk-N` rows of a single ingested CV.
+    """
+    mem = mem_with_stub
+    a = mem.save(
+        content=(
+            "Server and network administrator, 2015 to 2016. Set up Linux servers from "
+            "scratch, virtualization with KVM and Proxmox, Zabbix monitoring, Apache and "
+            "Nginx, MySQL and PostgreSQL, public DNS with Bind9, backups with Bacula."
+        ),
+        title="Curriculum (4/13)",
+        type_="reference",
+    )
+    b = mem.save(
+        content=(
+            "Infrastructure lead, 2020 to 2024. Upgraded Proxmox platforms, migrated "
+            "Postfix and Dovecot mail servers, moved applications into Docker, migrated "
+            "servers to Huawei Cloud, centralized automation with Ansible AWX."
+        ),
+        title="Curriculum (7/13)",
+        type_="reference",
+    )
+
+    before = len(_failure_patterns(mem))
+    res = negative_capture.capture_from_supersede(mem, superseded_id=a.id, superseding_id=b.id)
+
+    assert res["status"] == "skipped_origin"
+    assert len(_failure_patterns(mem)) == before
