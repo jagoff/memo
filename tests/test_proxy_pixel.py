@@ -196,8 +196,13 @@ def test_apply_disabled_flag_reports_not_enabled(monkeypatch):
     assert Pixel().enabled() is False
 
 
-def test_apply_enabled_by_default():
-    assert Pixel().enabled() is True
+def test_apply_disabled_by_default():
+    """Pixel ships off. It saved a measured 89 tokens per request (0.1% of the
+    proxy's total) while its profitability gate is an estimate, not billed
+    truth, and the cost of handing the model an image instead of text was
+    never measured -- see MEMO_PROXY_PIXEL's flag description. Everything
+    below still tests the transform with the flag explicitly on."""
+    assert Pixel().enabled() is False
 
 
 def test_apply_never_raises_on_malformed_live_messages(tmp_path):

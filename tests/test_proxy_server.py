@@ -309,10 +309,27 @@ def test_build_registry_includes_toolschemas():
 
 def test_rewrite_body_with_no_explicit_transforms_runs_the_real_registry(tmp_path):
     """No `tools` key and no tool_result blocks on this payload means none of
-    the six registered transforms has anything to rewrite, so the body is
-    unchanged — but the default path (transforms=None) now runs the real
-    registry's transforms, not an empty one, so all six still report
-    applied."""
+    the registered transforms has anything to rewrite, so the body is
+    unchanged — but the default path (transforms=None) runs the real
+    registry's transforms, not an empty one, so the ENABLED ones still report
+    applied. JsonCrush and Pixel are absent because they now ship off; see
+    `test_registry_order_is_unchanged_by_the_default_flags` directly below,
+    which turns them on and proves the registry itself is untouched."""
+    raw = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
+    out, plan = rewrite_body(raw, _ctx(tmp_path))
+    assert out == raw
+    assert plan.applied == ["toolschemas", "delta", "structmap", "toolresults"]
+
+
+def test_registry_order_is_unchanged_by_the_default_flags(tmp_path, monkeypatch):
+    """Flipping JsonCrush and Pixel off is a DEFAULT change, not a removal:
+    both stay in `build_registry()` in their original positions, and one env
+    var each puts them back in the applied list. Guards against a future
+    cleanup quietly deleting them and silently changing transform ORDER for
+    anyone who had turned them back on — the ordering `build_registry`'s
+    docstring calls load-bearing."""
+    monkeypatch.setenv("MEMO_PROXY_JSONCRUSH", "1")
+    monkeypatch.setenv("MEMO_PROXY_PIXEL", "1")
     raw = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
     out, plan = rewrite_body(raw, _ctx(tmp_path))
     assert out == raw
@@ -369,6 +386,7 @@ def test_marker_never_claims_full_original_when_a_crush_reference_is_nested(tmp_
     monkeypatch.setenv("MEMO_CONFIG_DIR", str(tmp_path / "config-home"))
     monkeypatch.delenv("MEMO_CRUSHER_ENABLED", raising=False)
     monkeypatch.setenv("MEMO_PROXY_PIXEL", "0")
+    monkeypatch.setenv("MEMO_PROXY_JSONCRUSH", "1")
 
     big = json.dumps([{"id": i, "text": "row " * 20} for i in range(400)])
     raw = json.dumps(

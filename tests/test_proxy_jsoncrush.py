@@ -17,6 +17,7 @@ def _zones(text: str) -> Zones:
 
 
 def test_a_large_json_array_is_crushed(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_JSONCRUSH", "1")
     monkeypatch.setenv("MEMO_CRUSHER_ENABLED", "1")
     big = json.dumps([{"id": i, "text": "row " * 20} for i in range(200)])
     zones = _zones(big)
@@ -56,6 +57,7 @@ def test_crusher_runs_without_the_capture_flag_explicitly_set(tmp_path, monkeypa
     gates memo's own ingest) but the proxy must still be able to run the
     crusher when MEMO_PROXY_JSONCRUSH is on, without the caller having to
     set the capture-plane flag itself."""
+    monkeypatch.setenv("MEMO_PROXY_JSONCRUSH", "1")
     monkeypatch.delenv("MEMO_CRUSHER_ENABLED", raising=False)
     big = json.dumps([{"id": i, "text": "row " * 20} for i in range(200)])
     zones = _zones(big)
@@ -93,6 +95,7 @@ def test_an_explicit_capture_flag_off_is_never_overridden(tmp_path, monkeypatch)
 
 
 def test_apply_crushes_a_frozen_block_under_the_default_whole_history_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMO_PROXY_JSONCRUSH", "1")
     monkeypatch.delenv("MEMO_PROXY_CONTENT_SCOPE", raising=False)
     monkeypatch.delenv("MEMO_CRUSHER_ENABLED", raising=False)
     big = json.dumps([{"id": i, "text": "row " * 20} for i in range(200)])

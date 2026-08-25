@@ -83,17 +83,26 @@ SPECS: tuple[FlagSpec, ...] = (
     _spec(
         "MEMO_PROXY_JSONCRUSH",
         "bool",
-        True,
+        False,
         "proxy",
-        "Run the existing L1 JSON crusher over large JSON tool results.",
+        "Run the existing L1 JSON crusher over large JSON tool results. Off by "
+        "default: across 37 measured real requests it never fired once, so it "
+        "shipped as pure per-request cost. A workload with denser JSON tool "
+        "results than memo's own may still want it -- hence the flag, not a "
+        "deletion.",
     ),
     _spec(
         "MEMO_PROXY_PIXEL",
         "bool",
-        True,
+        False,
         "proxy",
         "Render dense text blocks to PNG when the per-block profitability gate "
-        "says the image costs fewer tokens. No-op without the [http] extra.",
+        "says the image costs fewer tokens. No-op without the [http] extra. Off "
+        "by default: measured at 89 tokens saved per request (0.1% of the "
+        "proxy's total) against a comprehension cost that was never measured, "
+        "and its own profitability gate is an ESTIMATE (width * height / 750), "
+        "not billed truth. Trading an unmeasured risk for a measured 0.1% is "
+        "the wrong side of that bet; turn it back on to re-open it.",
     ),
     _spec(
         "MEMO_PROXY_CONTENT_SCOPE",
