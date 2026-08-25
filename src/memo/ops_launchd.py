@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from memo import proxy_wiring
+
 PROXY_LABEL = "com.memo.proxy"
 
 CHAT_LABEL = "com.memo.chat"
@@ -246,7 +248,35 @@ def install_proxy(memo_bin: str, home: Path, *, port: int = 8768) -> Path:
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         raise RuntimeError(f"launchctl bootstrap failed: {stderr or exc}") from exc
+    if wait_until_listening(port):
+        proxy_wiring.wire(home / ".claude", port)
     return path
+
+
+def wait_until_listening(port: int, timeout_s: float = 10.0, interval_s: float = 0.25) -> bool:
+    """Block until something answers on 127.0.0.1:port, or give up.
+
+    The gate in front of `proxy_wiring.wire`. ANTHROPIC_BASE_URL is a hard
+    dependency -- pointed at a dead port, Claude Code fails like a dead
+    network -- so the variable is only ever written once the listener is real.
+    A bootstrap that succeeded but whose process then exited (a port stolen
+    between the check and the bind, a broken runtime) therefore leaves the
+    user's settings.json untouched instead of silently breaking their client.
+    """
+    import socket
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(interval_s)
+                if sock.connect_ex(("127.0.0.1", port)) == 0:
+                    return True
+        except OSError:
+            pass
+        time.sleep(interval_s)
+    return False
 
 
 def uninstall_proxy(home: Path) -> bool:
@@ -255,6 +285,10 @@ def uninstall_proxy(home: Path) -> bool:
     subprocess.run(
         ["launchctl", "bootout", f"gui/{uid}", str(path)], capture_output=True, check=False
     )
+    # Un-point the client BEFORE the agent is gone for good: a settings.json
+    # still naming a port nothing listens on is the outage this whole module
+    # is careful about.
+    proxy_wiring.unwire(home / ".claude")
     if path.exists():
         path.unlink()
         return True

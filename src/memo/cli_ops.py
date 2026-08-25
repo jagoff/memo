@@ -286,18 +286,23 @@ def exclude_remove_cmd(vault_label: str, rel_path: str) -> None:
 
 @ops_group.command(name="install")
 @click.argument("service", type=click.Choice(["chat", "proxy"]))
-@click.option("--port", default=8765, show_default=True, type=int)
+# No shared default: chat and the proxy listen on different ports (8765 vs
+# 8768), and one number cannot be right for both. Unset means "use whichever
+# this service's own default is", so `--port` stays meaningful for each.
+@click.option("--port", default=None, type=int, help="[default: 8765 chat, 8768 proxy]")
 @click.option(
     "--dist",
     default=None,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="Directorio dist de la SPA (opcional).",
 )
-def ops_install(service: str, port: int, dist: Path | None) -> None:
+def ops_install(service: str, port: int | None, dist: Path | None) -> None:
     """Install a memo launchd agent (chat or proxy)."""
     import shutil
 
-    from memo.ops_launchd import install_chat, install_proxy
+    import memo.ops_launchd as _launchd
+
+    install_chat, install_proxy = _launchd.install_chat, _launchd.install_proxy
 
     memo_bin = shutil.which("memo")
     if not memo_bin:
@@ -305,9 +310,9 @@ def ops_install(service: str, port: int, dist: Path | None) -> None:
     try:
         if service == "chat":
             resolved_dist = str(dist.expanduser().resolve()) if dist else None
-            path = install_chat(memo_bin, Path.home(), port=port, dist=resolved_dist)
+            path = install_chat(memo_bin, Path.home(), port=port or 8765, dist=resolved_dist)
         else:
-            path = install_proxy(memo_bin, Path.home())
+            path = install_proxy(memo_bin, Path.home(), port=port or 8768)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(f"installed {path}")

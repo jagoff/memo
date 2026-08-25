@@ -13,20 +13,30 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 - `memo proxy` — a loopback context-compression proxy on `127.0.0.1:8768`,
   reached by pointing `ANTHROPIC_BASE_URL` at it. It rewrites the outbound
-  request through six transforms — tool-schema pruning with on-demand
-  hydration, structure maps, re-read deltas, the L1 JSON crusher, declarative
-  tool-result filters, and pixel mode — stashes every cut content-addressed so
-  `memo_crush_retrieve` can recover it, and relays the response stream
-  untouched. Failure is fail-open at every layer: any transform that raises
-  forwards the original body.
+  request through tool-schema pruning with on-demand hydration, structure maps,
+  re-read deltas and declarative tool-result filters, stashes every cut
+  content-addressed so `memo_crush_retrieve` can recover it, and relays the
+  response stream untouched. Failure is fail-open at every layer: any transform
+  that raises forwards the original body. Two further transforms ship disabled
+  and are one env var away — the L1 JSON crusher (`MEMO_PROXY_JSONCRUSH`) and
+  pixel mode (`MEMO_PROXY_PIXEL`).
 - Measured against the provider's own usage counters on live traffic:
-  **10.6% saved on prompt cost** (treated 82,046 vs holdout 91,749
-  tok-equiv/request, 4/4 sessions), with tool-schema pruning accounting for all
-  of it. That figure is a floor, not a ceiling — the treated arm paid a cold
-  cache write on a freshly pruned prefix while the control enjoyed a warm read
-  of the standard one. Warm and multi-turn behaviour is not yet measured and is
-  not claimed. On a captured payload the tool block alone dropped from 52,190 to
-  2,290 tokens (141 tools, 5 kept).
+  **73.5% cut in billed prompt cost** (58,402 → 15,447 tok-equiv/request),
+  where billed-equivalent is `input + 1.25×cache_creation + 0.1×cache_read`.
+  Tool-schema pruning accounts for 99.1% of it; on a captured payload the tool
+  block alone dropped from ~164,000 to 12,202 tokens.
+
+  The number to distrust is prompt SIZE. An earlier revision cut it by 66% and
+  still cost 9.5% *more* per request, because rewriting the cached prefix
+  mid-session invalidates the whole conversation's cache at the 1.25× creation
+  premium. What makes the saving real is that the prefix is byte-stable in
+  production: `cache_creation[i]` equals the delta in `cache_read[i+1]`, turn
+  after turn, so only genuinely new content is ever written.
+
+  Limits, stated rather than smoothed over: the figure is n=28 from a single
+  session, so the mechanism is confirmed while the exact percentage is not yet
+  robust; the treated-vs-holdout A/B still lacks the sessions to conclude,
+  since holdout assignment is per-session.
 
 ### Removed
 

@@ -114,75 +114,120 @@ def append(state_dir: Path, record: Record) -> None:
         _log.warning("proxy: could not append measurement row")
 
 
-def summarize(state_dir: Path) -> dict:
-    """Treated vs holdout on real provider counters. None means 'no data yet'."""
+def _num(row: dict, key: str) -> int:
+    """One usage counter, coerced. A row written by an older schema, or a
+    provider response that omitted a counter, reads as 0 rather than raising."""
+    val = row.get(key)
+    return val if isinstance(val, int) else 0
+
+
+def _partition_rows(path: Path) -> tuple[list[dict], list[dict], int, int]:
+    """Split the ledger into the two arms, plus the two things that are neither.
+
+    Returns `(treated, holdout, passthrough, skipped)`. A passthrough row was
+    recorded but never actually rewritten (the proxy was disabled): it is
+    byte-identical to a control request yet was not drawn into the holdout
+    sample either, so counting it in either arm would bias that arm toward
+    the untransformed baseline. A skipped row is one this function could not
+    parse at all -- a torn write, or a line from a future schema.
+
+    A ledger that cannot be read at all is indistinguishable from an empty
+    one here, deliberately: measurement is never allowed to fail a caller.
+    """
     treated: list[dict] = []
     holdout: list[dict] = []
     passthrough = 0
     skipped = 0
-    path = ledger_path(state_dir)
-    if path.is_file():
+    if not path.is_file():
+        return treated, holdout, passthrough, skipped
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return treated, holdout, passthrough, skipped
+    for line in text.splitlines():
+        if not line.strip():
+            continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            text = ""
-        for line in text.splitlines():
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-                if not isinstance(row, dict):
-                    skipped += 1
-                    continue
-                if row.get("holdout"):
-                    holdout.append(row)
-                elif row.get("rewritten", True):
-                    treated.append(row)
-                else:
-                    # Recorded but never actually rewritten (proxy disabled)
-                    # -- byte-identical to a control request yet not part of
-                    # the holdout sample either; belongs to neither arm.
-                    passthrough += 1
-            except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
-                skipped += 1
-                continue
+            row = json.loads(line)
+        except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
+            skipped += 1
+            continue
+        if not isinstance(row, dict):
+            skipped += 1
+        elif row.get("holdout"):
+            holdout.append(row)
+        elif row.get("rewritten", True):
+            treated.append(row)
+        else:
+            passthrough += 1
+    return treated, holdout, passthrough, skipped
 
-    def _mean(rows: list[dict], key: str) -> float | None:
-        if not rows:
-            return None
-        total = 0
-        for r in rows:
-            val = r.get(key)
-            if isinstance(val, int):
-                total += val
-        return total / len(rows)
 
-    def _prompt_cost(row: dict) -> float:
-        """One row's whole prompt, in token-equivalents -- see the module's
-        weight constants for where CACHE_CREATION_WEIGHT/CACHE_READ_WEIGHT
-        come from."""
+def _mean(rows: list[dict], key: str) -> float | None:
+    """Mean of one counter over an arm. None means 'no data yet', which is a
+    different statement from 0 and is reported as such."""
+    if not rows:
+        return None
+    return sum(_num(r, key) for r in rows) / len(rows)
 
-        def _num(key: str) -> int:
-            val = row.get(key)
-            return val if isinstance(val, int) else 0
 
-        return (
-            _num("input_tokens")
-            + CACHE_CREATION_WEIGHT * _num("cache_creation_tokens")
-            + CACHE_READ_WEIGHT * _num("cache_read_tokens")
-        )
+def _prompt_cost(row: dict) -> float:
+    """One row's whole prompt, in token-equivalents -- see the module's weight
+    constants for where CACHE_CREATION_WEIGHT/CACHE_READ_WEIGHT come from."""
+    return (
+        _num(row, "input_tokens")
+        + CACHE_CREATION_WEIGHT * _num(row, "cache_creation_tokens")
+        + CACHE_READ_WEIGHT * _num(row, "cache_read_tokens")
+    )
 
-    def _mean_cost(rows: list[dict]) -> float | None:
-        if not rows:
-            return None
-        return sum(_prompt_cost(r) for r in rows) / len(rows)
 
-    mean_t = _mean(treated, "input_tokens")
-    mean_h = _mean(holdout, "input_tokens")
-    mean_cache_creation_t = _mean(treated, "cache_creation_tokens")
-    mean_cache_creation_h = _mean(holdout, "cache_creation_tokens")
-    mean_cache_read_t = _mean(treated, "cache_read_tokens")
-    mean_cache_read_h = _mean(holdout, "cache_read_tokens")
+def _mean_cost(rows: list[dict]) -> float | None:
+    if not rows:
+        return None
+    return sum(_prompt_cost(r) for r in rows) / len(rows)
+
+
+def _by_transform(treated: list[dict]) -> dict[str, dict]:
+    """Per-transform breakdown, credited honestly.
+
+    `transforms` lists every ENABLED transform a row ran, whether or not it
+    actually saved anything -- crediting the row's whole `est_saved_tokens`
+    scalar to every name in that list would inflate `total_saved` by however
+    many transforms ran and report a flat 1/N share for each, real or not.
+    `saved_by` (from TransformPlan) is the honest per-transform split; a name
+    absent from a row's `saved_by` earned nothing from that row, full stop.
+    """
+    by_transform: dict[str, dict] = {}
+    for row in treated:
+        saved_by = row.get("saved_by")
+        saved_by = saved_by if isinstance(saved_by, dict) else {}
+        for name in row.get("transforms") or []:
+            agg = by_transform.setdefault(name, {"n": 0, "est_saved_tokens": 0})
+            agg["n"] += 1
+            contrib = saved_by.get(name)
+            if isinstance(contrib, int):
+                agg["est_saved_tokens"] += contrib
+    total_saved = sum(v["est_saved_tokens"] for v in by_transform.values())
+    for v in by_transform.values():
+        v["share"] = round(v["est_saved_tokens"] / total_saved, 4) if total_saved else None
+    return by_transform
+
+
+def _distinct_sessions(rows: list[dict]) -> int:
+    """How many DISTINCT sessions an arm represents. Since holdout assignment
+    is per-session (`server.py` calls `meter.is_holdout(session_key, ...)`),
+    every request in one holdout session lands in the same arm: `len(rows)`
+    (a request count) overstates the effective, independent sample size. Rows
+    with no `session_key` (hand-built test Records, or a row written before
+    this field existed) are excluded rather than folded into a fake shared
+    session."""
+    return len({r.get("session_key") for r in rows if r.get("session_key")})
+
+
+def summarize(state_dir: Path) -> dict:
+    """Treated vs holdout on real provider counters. None means 'no data yet'."""
+    treated, holdout, passthrough, skipped = _partition_rows(ledger_path(state_dir))
+
     mean_cost_t = _mean_cost(treated)
     mean_cost_h = _mean_cost(holdout)
 
@@ -193,67 +238,27 @@ def summarize(state_dir: Path) -> dict:
     if mean_cost_t is not None and mean_cost_h not in (None, 0):
         saving = round((mean_cost_h - mean_cost_t) / mean_cost_h, 6)
 
-    # Per-transform breakdown. `transforms` lists every ENABLED transform a
-    # row ran, whether or not it actually saved anything — crediting the
-    # row's whole `est_saved_tokens` scalar to every name in that list would
-    # inflate `total_saved` by however many transforms ran and report a flat
-    # 1/N share for each, real or not. `saved_by` (from TransformPlan) is the
-    # honest per-transform split; a name absent from a row's `saved_by`
-    # earned nothing from that row, full stop.
-    by_transform: dict[str, dict] = {}
-    for row in treated:
-        names = row.get("transforms") or []
-        saved_by = row.get("saved_by")
-        saved_by = saved_by if isinstance(saved_by, dict) else {}
-        for name in names:
-            agg = by_transform.setdefault(name, {"n": 0, "est_saved_tokens": 0})
-            agg["n"] += 1
-            contrib = saved_by.get(name)
-            if isinstance(contrib, int):
-                agg["est_saved_tokens"] += contrib
-
-    total_saved = sum(v["est_saved_tokens"] for v in by_transform.values())
-    for v in by_transform.values():
-        v["share"] = round(v["est_saved_tokens"] / total_saved, 4) if total_saved else None
-
-    retrieved = 0
-    for r in treated:
-        val = r.get("retrieved")
-        if isinstance(val, int):
-            retrieved += val
-
-    def _distinct_sessions(rows: list[dict]) -> int:
-        """How many DISTINCT sessions an arm represents. Since holdout
-        assignment is per-session (defect 2 -- `server.py` calls
-        `meter.is_holdout(session_key, ...)`), every request in one holdout
-        session lands in the same arm: `len(rows)` (a request count)
-        overstates the effective, independent sample size. Rows with no
-        `session_key` (hand-built test Records, or a row written before this
-        field existed) are excluded rather than folded into a fake shared
-        session."""
-        return len({r.get("session_key") for r in rows if r.get("session_key")})
-
     return {
         "n_treated": len(treated),
         "n_holdout": len(holdout),
         "n_treated_sessions": _distinct_sessions(treated),
         "n_holdout_sessions": _distinct_sessions(holdout),
         "n_passthrough": passthrough,
-        "mean_input_treated": mean_t,
-        "mean_input_holdout": mean_h,
+        "mean_input_treated": _mean(treated, "input_tokens"),
+        "mean_input_holdout": _mean(holdout, "input_tokens"),
         # Per-arm cache counters. The design doc's cache rule is
         # unfalsifiable without them: they are what actually moved when a
         # prefix transform ran, and `measured_saving_frac` folds them into
         # one ratio (see the module-level weight constants) rather than
         # leaving them invisible.
-        "mean_cache_creation_treated": mean_cache_creation_t,
-        "mean_cache_creation_holdout": mean_cache_creation_h,
-        "mean_cache_read_treated": mean_cache_read_t,
-        "mean_cache_read_holdout": mean_cache_read_h,
+        "mean_cache_creation_treated": _mean(treated, "cache_creation_tokens"),
+        "mean_cache_creation_holdout": _mean(holdout, "cache_creation_tokens"),
+        "mean_cache_read_treated": _mean(treated, "cache_read_tokens"),
+        "mean_cache_read_holdout": _mean(holdout, "cache_read_tokens"),
         "mean_prompt_cost_treated": mean_cost_t,
         "mean_prompt_cost_holdout": mean_cost_h,
         "measured_saving_frac": saving,
-        "by_transform": by_transform,
-        "retrieved": retrieved,
+        "by_transform": _by_transform(treated),
+        "retrieved": sum(_num(r, "retrieved") for r in treated),
         "skipped": skipped,
     }
