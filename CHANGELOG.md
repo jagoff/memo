@@ -9,6 +9,50 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.1] - 2026-08-25
+
+### Fixed
+
+- **The proxy 4.14.0 installs by default could not actually run.** `install.sh`
+  installed `mlx-memo` with no extras, but `fastapi` lives only in `[http]`. A
+  bare install resolves uvicorn and httpx transitively via fastmcp, so fastapi
+  was the single missing piece — enough for the launchd agent to die at startup
+  and crashloop. `PYPI_SPEC` now carries the extra. If you installed 4.14.0,
+  reinstall with `mlx-memo[http]` or re-run `install.sh`.
+
+  Claude Code was never broken by this: the listener gate added in the same
+  release refuses to write `ANTHROPIC_BASE_URL` at a port nothing answers on,
+  so the failure mode was a dead feature, not a dead client.
+
+- `memo proxy serve` reports the missing `[http]` extra as a clean CLI error
+  instead of a raw `ModuleNotFoundError`. The guard existed but called
+  `build_app()` outside its own `try`, and `build_app` is where fastapi is
+  imported — so the message could never fire for the one dependency that is
+  ever actually absent.
+
+- `memo ops install proxy` fails loudly when the agent never answers. It
+  previously exited 0, so the installer announced "proxy installed — Claude
+  Code now routes through it" over a crashlooping agent.
+
+- `memo maintain` no longer exits 1 because a pair's source file is gone.
+  Vault-ingested rows store a path relative to the Obsidian vault root that the
+  resolver cannot reach — 4119 rows are permanently in that state — so the
+  nightly contradict-resolve pass reported FAILED every night while doing all
+  of its work. Those pairs are now reported under `skipped`; real errors still
+  fail the run.
+
+- `capture_from_supersede` applies `_SKIP_ORIGIN_TYPES`, which only its sibling
+  entry path enforced. Superseding one failure_pattern with another was minting
+  memories titled "Avoid reverting to: Avoid reverting to: X", and two sections
+  of a single ingested document read as a contradiction, so one CV produced a
+  "failure pattern" whose Wrong and Right were two jobs in the same work
+  history. These surface in the negative-recall block, where a future session
+  reads them as lessons to obey.
+
+- The mutation-tests workflow accepts mutmut 3.7's `hash_by_function_name`
+  metadata key. Every scheduled run since 2026-08-09 crashed on it while the
+  mutation signal itself was perfect (1377/1377 killed).
+
 ## [4.14.0] - 2026-08-25
 
 ### Fixed
