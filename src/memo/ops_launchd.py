@@ -248,8 +248,18 @@ def install_proxy(memo_bin: str, home: Path, *, port: int = 8768) -> Path:
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         raise RuntimeError(f"launchctl bootstrap failed: {stderr or exc}") from exc
-    if wait_until_listening(port):
-        proxy_wiring.wire(home / ".claude", port)
+    if not wait_until_listening(port):
+        # The gate below already protects the CLIENT -- ANTHROPIC_BASE_URL is
+        # never written at a dead port -- but silence protected nobody else:
+        # `memo ops install proxy` exited 0 and install.sh announced "Claude
+        # Code now routes through it" over a crashlooping agent. Say it out
+        # loud; the caller decides what to do about it.
+        raise RuntimeError(
+            f"proxy agent bootstrapped but never answered on 127.0.0.1:{port} — "
+            f"check ~/Library/Logs/memo/proxy.log (a missing [http] extra is the "
+            f"usual cause: pip install 'mlx-memo[http]')"
+        )
+    proxy_wiring.wire(home / ".claude", port)
     return path
 
 

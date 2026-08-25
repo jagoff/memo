@@ -6,6 +6,9 @@ that from happening by accident."""
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from memo.proxy_wiring import settings_path, unwire, wire, wired_port
 
@@ -141,3 +144,50 @@ def test_ops_install_proxy_defaults_to_the_proxy_port_not_the_chat_one(monkeypat
     res = click.testing.CliRunner().invoke(cli_ops.ops_group, ["install", "proxy"])
     assert res.exit_code == 0, res.output
     assert seen["port"] == 8768
+
+
+def test_ops_install_proxy_reports_failure_when_the_agent_never_answers(monkeypatch):
+    """The installer must not claim success for a proxy that did not start.
+
+    `install_proxy` bootstraps the agent and then gates the settings.json
+    wiring on `wait_until_listening`. That gate correctly protects the client
+    -- ANTHROPIC_BASE_URL is never written at a dead port -- but nothing told
+    the CALLER, so `memo ops install proxy` exited 0 and install.sh printed
+    "proxy installed — Claude Code now routes through it" over a launchd agent
+    that was crashlooping. A silent half-failure is worse than a loud one: the
+    user has no reason to look.
+    """
+    import click.testing
+
+    from memo import cli_ops
+
+    monkeypatch.setattr(
+        "memo.ops_launchd.install_proxy",
+        lambda *a, **k: (_ for _ in ()).throw(
+            RuntimeError("proxy agent bootstrapped but never answered on 127.0.0.1:8768")
+        ),
+    )
+    monkeypatch.setattr("shutil.which", lambda _n: "/usr/bin/memo")
+    res = click.testing.CliRunner().invoke(cli_ops.ops_group, ["install", "proxy"])
+    assert res.exit_code != 0
+    assert "never answered" in res.output
+    assert "Traceback" not in res.output
+
+
+def test_install_proxy_raises_when_the_listener_never_comes_up(tmp_path, monkeypatch):
+    """The unit behind it: a bootstrap that 'succeeded' but produced no
+    listener is a failed install, not a quiet one."""
+    import memo.ops_launchd as launchd
+
+    monkeypatch.setattr(launchd, "_port_owner", lambda _p: None)
+    monkeypatch.setattr(launchd, "_label_loaded", lambda _l: False)
+    monkeypatch.setattr(
+        launchd.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stderr="")
+    )
+    monkeypatch.setattr(launchd, "wait_until_listening", lambda *a, **k: False)
+    wired = []
+    monkeypatch.setattr(launchd.proxy_wiring, "wire", lambda *a, **k: wired.append(a) or True)
+
+    with pytest.raises(RuntimeError, match="never answered"):
+        launchd.install_proxy("/usr/bin/memo", tmp_path, port=8768)
+    assert wired == [], "settings.json must not be touched when the proxy never came up"
