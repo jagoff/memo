@@ -191,3 +191,58 @@ def test_install_proxy_raises_when_the_listener_never_comes_up(tmp_path, monkeyp
     with pytest.raises(RuntimeError, match="never answered"):
         launchd.install_proxy("/usr/bin/memo", tmp_path, port=8768)
     assert wired == [], "settings.json must not be touched when the proxy never came up"
+
+
+def test_install_proxy_wires_the_client_once_the_listener_answers(tmp_path, monkeypatch):
+    """The success half of the gate: a proxy that came up DOES get wired,
+    and at the port it was actually installed on."""
+    import memo.ops_launchd as launchd
+
+    monkeypatch.setattr(launchd, "_port_owner", lambda _p: None)
+    monkeypatch.setattr(launchd, "_label_loaded", lambda _l: False)
+    monkeypatch.setattr(
+        launchd.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stderr="")
+    )
+    monkeypatch.setattr(launchd, "wait_until_listening", lambda *a, **k: True)
+    seen: dict = {}
+    monkeypatch.setattr(
+        launchd.proxy_wiring,
+        "wire",
+        lambda claude_dir, port: seen.update(dir=claude_dir, port=port),
+    )
+
+    path = launchd.install_proxy("/usr/bin/memo", tmp_path, port=9123)
+
+    assert path.exists()
+    assert seen["port"] == 9123
+    assert seen["dir"] == tmp_path / ".claude"
+
+
+def test_proxy_serve_serves_the_app_build_app_returned(tmp_path, monkeypatch):
+    """`uvicorn.run` must receive the object `build_app` produced.
+
+    This is the line the fix moved: `build_app(upstream)` used to be
+    evaluated in the argument list, outside the ImportError guard. Pinning
+    that uvicorn is handed exactly that object keeps the guard from being
+    "fixed" back into an inline call.
+    """
+    import sys
+
+    import click.testing
+
+    from memo import cli_proxy
+
+    sentinel = object()
+    calls: dict = {}
+
+    fake_uvicorn = SimpleNamespace(run=lambda app, **kw: calls.update(app=app, **kw))
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    monkeypatch.setattr("memo.proxy.server.build_app", lambda upstream: sentinel)
+
+    res = click.testing.CliRunner().invoke(
+        cli_proxy.proxy_group, ["serve", "--port", "9124"], env={"MEMO_NONINTERACTIVE": "1"}
+    )
+
+    assert res.exit_code == 0, res.output
+    assert calls["app"] is sentinel
+    assert calls["port"] == 9124
