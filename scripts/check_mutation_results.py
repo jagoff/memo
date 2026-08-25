@@ -38,7 +38,13 @@ _REQUIRED_METADATA_KEYS = {
     "estimated_durations_by_key",
     "exit_code_by_key",
 }
-_OPTIONAL_METADATA_KEYS = {"type_check_error_by_key"}
+# `hash_by_function_name` arrived with mutmut 3.7 (its incremental-run support);
+# a dependabot lockfile bump to 3.7.0 on 2026-08-05 made every scheduled run
+# since crash with "malformed mutmut metadata" while the mutation signal itself
+# was perfect (1377/1377 killed). A gate that dies on an unknown-but-legitimate
+# key reads exactly like a real regression, which is how three weeks of red went
+# unexamined.
+_OPTIONAL_METADATA_KEYS = {"type_check_error_by_key", "hash_by_function_name"}
 _ALLOWED_METADATA_KEYS = _REQUIRED_METADATA_KEYS | _OPTIONAL_METADATA_KEYS
 _BASELINE_SCHEMA_VERSION = 1
 _BASELINE_KEYS = {
