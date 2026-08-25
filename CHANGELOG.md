@@ -9,10 +9,36 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.0] - 2026-08-25
+
+### Fixed
+
+- The proxy's tool-schema keep-set is now persisted to
+  `<state_dir>/proxy/keep_sets.json` instead of living only in process memory.
+  Under launchd `KeepAlive` every restart re-derived it from a grown
+  `tool_usage.json`, reshaping the `tools` array mid-session and invalidating
+  the whole conversation's prompt cache at the 1.25× creation premium — which
+  is how an earlier revision cut prompt size by 66% and still cost 9.5% *more*
+  per request.
+- `memo ops install proxy` honours `--port`. It was silently ignored, while
+  the port-in-use error told the user to "pick another with `--port`". The
+  shared `--port` default of 8765 was the chat port, wrong for the proxy's
+  8768; it is now unset and resolved per service.
+
 ### Added
 
 - `memo proxy` — a loopback context-compression proxy on `127.0.0.1:8768`,
-  reached by pointing `ANTHROPIC_BASE_URL` at it. It rewrites the outbound
+  installed and pointed at by `install.sh` **by default**: a saving you have
+  to opt into is a saving most people never get. `MEMO_INSTALL_SKIP_PROXY=1`
+  opts out, and `memo ops uninstall proxy` reverses it completely.
+
+  The wiring is gated, because `ANTHROPIC_BASE_URL` is a hard dependency:
+  pointed at a loopback port where nothing listens, Claude Code fails exactly
+  like a dead network. So the variable is written only after the agent answers,
+  removal un-points the client before the agent goes away, and a non-loopback
+  base URL — a corporate gateway, a staging endpoint — is never overwritten or
+  deleted, because it is somebody's deliberate routing decision and not
+  memo's to touch. It rewrites the outbound
   request through tool-schema pruning with on-demand hydration, structure maps,
   re-read deltas and declarative tool-result filters, stashes every cut
   content-addressed so `memo_crush_retrieve` can recover it, and relays the

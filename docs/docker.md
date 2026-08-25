@@ -4,7 +4,7 @@ Docker image runs memo's **CPU-only backend** — ideal for Linux, testing, or c
 
 > For full memo (reranking + LLM verbs), use native install on Apple Silicon Mac:
 > ```bash
-> curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.13.3/install.sh | bash
+> curl -fsSL https://raw.githubusercontent.com/jagoff/memo/v4.14.0/install.sh | bash
 > ```
 
 ## Quick start (10 seconds)
