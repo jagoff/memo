@@ -9,6 +9,45 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Added
+
+- `memo proxy` — a loopback context-compression proxy on `127.0.0.1:8768`,
+  reached by pointing `ANTHROPIC_BASE_URL` at it. It rewrites the outbound
+  request through six transforms — tool-schema pruning with on-demand
+  hydration, structure maps, re-read deltas, the L1 JSON crusher, declarative
+  tool-result filters, and pixel mode — stashes every cut content-addressed so
+  `memo_crush_retrieve` can recover it, and relays the response stream
+  untouched. Failure is fail-open at every layer: any transform that raises
+  forwards the original body.
+- Measured against the provider's own usage counters on live traffic:
+  **10.6% saved on prompt cost** (treated 82,046 vs holdout 91,749
+  tok-equiv/request, 4/4 sessions), with tool-schema pruning accounting for all
+  of it. That figure is a floor, not a ceiling — the treated arm paid a cold
+  cache write on a freshly pruned prefix while the control enjoyed a warm read
+  of the standard one. Warm and multi-turn behaviour is not yet measured and is
+  not claimed. On a captured payload the tool block alone dropped from 52,190 to
+  2,290 tokens (141 tools, 5 kept).
+
+### Removed
+
+- The "tokens saved (estimated)" panel in `memo tokens` and the three flags
+  that fed it (`MEMO_ROI_TOKENS_PER_GROUNDED`, `MEMO_ROI_TOKENS_PER_REASK`,
+  `MEMO_ROI_TOKENS_PER_CONSULT`). That panel printed `grounded × 350 +
+  consults × 200` — hardcoded constants with no control arm — right beside a
+  real measured cost (`memo tokens`'s transcript-based panel), which read as
+  a savings claim memo could not support. `memo tokens` now reports the
+  local context-compression proxy's real treated-vs-holdout measurement
+  (`memo.proxy.meter.summarize`: mean input tokens, measured saving
+  fraction, sample counts, per-transform retrieval rate via
+  `--by-transform`) alongside the existing transcript-measured panel — no
+  fabricated number, and "no measured data yet" is reported as such rather
+  than as a zero. The same estimate is gone from `memo roi`'s "estimated
+  tokens" line and from the dashboard's token-savings KPI/daily series
+  (`memo.web_build._token_savings`), which now report only the real,
+  physical grounded/re-ask/context-cost counts. `memo eval baseline`'s
+  online window dropped its derived "tokens" figure for the same reason —
+  only the real grounded count remains.
+
 ## [4.13.3] - 2026-08-18
 
 ### Removed

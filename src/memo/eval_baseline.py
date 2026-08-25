@@ -1,8 +1,12 @@
 """Phase-0 baseline snapshot.
 
-Freezes {offline recall metrics, online grounded/tokens over 7d + 30d, active
+Freezes {offline recall metrics, online grounded count over 7d + 30d, active
 tuned-params version} so later self-improvement changes can be attributed to a
 config and compared against a known-good point. Written by `memo eval baseline`.
+
+The online window used to also carry a "tokens" figure derived from
+``grounded × MEMO_ROI_TOKENS_PER_GROUNDED`` — that hardcoded-constant estimate
+was retired (see CHANGELOG); only the real, physical grounded count remains.
 """
 
 from __future__ import annotations
@@ -23,10 +27,7 @@ def snapshot_path(state_dir: Path) -> Path:
 
 def _window(daily: list[dict[str, Any]], days: int) -> dict[str, int]:
     recent = daily[-days:] if days < len(daily) else daily
-    return {
-        "grounded": sum(int(d.get("grounded", 0)) for d in recent),
-        "tokens": sum(int(d.get("tokens", 0)) for d in recent),
-    }
+    return {"grounded": sum(int(d.get("grounded", 0)) for d in recent)}
 
 
 def build_baseline_snapshot(

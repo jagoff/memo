@@ -406,15 +406,23 @@ def check_uses_memory(ctx: JourneyContext) -> CheckResult:
 
 
 def check_token_savings(ctx: JourneyContext) -> CheckResult:
-    """Token-savings: N grounded recalls move the durable token ledger by Δ > 0
-    (measured against the ledger, never estimated)."""
+    """Token-savings: N recalls move the durable ledger's consults count by
+    Δ > 0 (a real, physical count — memo no longer converts it to a "tokens
+    saved" estimate; see CHANGELOG).
+
+    `_recall()` runs in-process with ``client="journey-check"``, which lands
+    in recall.log as a *consult* (not `grounding.log` — there is no live LLM
+    here to score whether an answer used the recall, so it can never be
+    "grounded"). The durable ledger's `consults` bucket is the count that
+    signal actually feeds; `grounded` cannot move from this check.
+    """
     if not ctx.mlx or ctx.mem is None:
         return _skip_no_mlx("token-savings")
 
     from memo.token_ledger import roll_up, summarize
 
     roll_up(ctx.cfg.state_dir)
-    before = int(summarize(ctx.cfg.state_dir)["historic"]["tokens"])
+    before = int(summarize(ctx.cfg.state_dir)["historic"]["consults"])
 
     logged = 0
     for _ in range(_TOKEN_SAVINGS_RECALLS):
@@ -423,12 +431,12 @@ def check_token_savings(ctx: JourneyContext) -> CheckResult:
             logged += 1
 
     roll_up(ctx.cfg.state_dir)
-    after = int(summarize(ctx.cfg.state_dir)["historic"]["tokens"])
+    after = int(summarize(ctx.cfg.state_dir)["historic"]["consults"])
     delta = after - before
 
     ok = delta > 0
     status = PASS if ok else FAIL
-    detail = f"Δ +{delta:,} tok / {logged} grounded recalls"
+    detail = f"Δ +{delta:,} consults / {logged} recalls logged"
     return CheckResult(
         "token-savings",
         status,

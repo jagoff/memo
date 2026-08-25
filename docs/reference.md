@@ -1390,13 +1390,17 @@ runtime default remains 600 tokens for clients that do not use that hook.
 | Context file compression | `memo compress-context CLAUDE.md` | Rule-based removal of redundant context; supports `--dry-run` and `--backup` |
 
 `memo roi` does not infer value from corpus size. It reads the actual
-recall/grounding/re-ask ledgers and reports accumulated estimates using
-disclosed, configurable defaults: 350 tokens per grounded recall and 900 tokens
-per avoided re-ask (`MEMO_ROI_TOKENS_PER_GROUNDED` and
-`MEMO_ROI_TOKENS_PER_REASK`). `memo tokens` reports the separate usage-savings
-ledger.
+recall/grounding/re-ask ledgers and reports the real, measured counts (grounded
+recalls, re-asks avoided, average answer size) plus an estimated *time* saved
+(`MEMO_ROI_SECS_PER_GROUNDED` / `MEMO_ROI_SECS_PER_REASK`, clearly labeled an
+estimate). It does not report a token-savings figure — `memo tokens` is the
+measured token cost/savings surface, sourced from the real Claude Code
+transcript and the local proxy's treated-vs-holdout A/B, never a hardcoded
+per-event constant (an earlier version multiplied grounded/consult counts by
+`MEMO_ROI_TOKENS_PER_GROUNDED`/`_PER_CONSULT`; that estimate had no control arm
+and was retired — see CHANGELOG).
 
-![memo tokens usage-savings ledger](tokens-screenshot.png)
+![memo tokens measured panel](tokens-screenshot.png)
 
 **Storage & paths**
 

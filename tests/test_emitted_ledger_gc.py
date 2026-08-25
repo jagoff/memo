@@ -73,6 +73,25 @@ def test_gc_emitted_ledgers_missing_dir_is_success(monkeypatch, tmp_path: Path) 
     assert "0" in result.output
 
 
+def test_gc_emitted_ledgers_rejects_max_age_hours_below_one(monkeypatch, tmp_path: Path) -> None:
+    """Part B finding 5: `--max-age-hours` was a bare `int` with no lower
+    bound. `0` (or a negative value) turns `max_age_s` into 0-or-negative,
+    and `emitted_ledger.prune`'s `now - mtime > max_age_s` check is then true
+    for essentially every file on disk -- including a session's ledger from a
+    moment ago. The CLI must reject an out-of-range value before it ever
+    reaches `prune`, not silently wipe live sessions' counters."""
+    monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
+    el.append(
+        tmp_path,
+        "just-written",
+        [el.Entry(id="a", h="deadbeef", n=1, ref="memo-r/a", t=1, src="mcp")],
+    )
+
+    result = CliRunner().invoke(ops_group, ["gc-emitted-ledgers", "--max-age-hours", "0"])
+    assert result.exit_code != 0
+    assert el.ledger_path(tmp_path, "just-written").exists()
+
+
 def test_gc_emitted_ledgers_max_age_hours_option(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path))
     el.append(

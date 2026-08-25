@@ -322,7 +322,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "bool",
         False,
         "mcp",
-        "Select the 58-tool core MCP surface (skip advanced domain modules) "
+        "Select the 59-tool core MCP surface (skip advanced domain modules) "
         "for local/constrained LLMs.",
     ),
     _spec(
@@ -330,7 +330,7 @@ SPECS: tuple[FlagSpec, ...] = (
         "str",
         "agent",
         "mcp",
-        "MCP surface profile: agent (default, 41 tools) | core/slim (58 stable-core tools) | full/default (164 tools).",
+        "MCP surface profile: agent (default, 43 tools) | core/slim (60 stable-core tools) | full/default (165 tools).",
         choices=("agent", "core", "slim", "full", "default"),
     ),
     _spec(
@@ -875,38 +875,6 @@ SPECS: tuple[FlagSpec, ...] = (
         "misc",
         "Roll up measured per-session token usage from the transcript in the Stop hook.",
         opt_out=True,
-    ),
-    _spec(
-        "MEMO_ROI_TOKENS_PER_GROUNDED",
-        "int",
-        350,
-        "roi",
-        "Estimated model tokens saved per grounded answer — the tokens the model "
-        "would have spent re-deriving the fact memo surfaced instead of being "
-        "given it directly.",
-        min_val=0,
-    ),
-    _spec(
-        "MEMO_ROI_TOKENS_PER_REASK",
-        "int",
-        900,
-        "roi",
-        "Estimated model tokens saved per re-ask avoided — a full answer "
-        "regeneration round-trip the user did NOT have to repeat.",
-        min_val=0,
-    ),
-    _spec(
-        "MEMO_ROI_TOKENS_PER_CONSULT",
-        "int",
-        200,
-        "roi",
-        "Estimated model tokens saved per PRODUCTIVE memo consult (a search that "
-        "returned >=1 hit) by a non-Claude-Code agent (codex/opencode/devin/"
-        "other agents). These agents read memo over MCP/CLI/socket, so we "
-        "log the consult but never see their answer — we can't ground it like a "
-        "Claude Code turn. Priced BELOW MEMO_ROI_TOKENS_PER_GROUNDED (350) because "
-        "the signal is weaker: memo returned relevant memory, use is unverified.",
-        min_val=0,
     ),
     # Git sync (memo-sync repo ↔ GitHub)
     _spec(

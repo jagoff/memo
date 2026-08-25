@@ -1,11 +1,17 @@
 """Human-visible activity counters for the statusline badge.
 
 ``state_dir/presence_today.json`` — ``{"date": "YYYY-MM-DD", "recalls": N,
-"saves": N, "tokens_saved": N}``. Written atomically (tmp + os.replace),
-rolled over when the local date changes, regenerated from zero when corrupt.
-Read by ``statusline/memo-statusline.sh`` (bash, jq/grep) — keys stay flat
-and values numeric. Writers never raise: presence is decoration; it must
-never break a save, the recall hook, or capture-stop.
+"saves": N}``. Written atomically (tmp + os.replace), rolled over when the
+local date changes, regenerated from zero when corrupt. Read by
+``statusline/memo-statusline.sh`` (bash, jq/grep) — keys stay flat and values
+numeric. Writers never raise: presence is decoration; it must never break a
+save, the recall hook, or capture-stop.
+
+A ``tokens_saved`` counter used to live here too, written from
+``grounded*MEMO_ROI_TOKENS_PER_GROUNDED + consults*MEMO_ROI_TOKENS_PER_CONSULT``
+— a hardcoded-constant estimate, not a measurement. It was removed along with
+that estimate (see CHANGELOG); it was NOT repointed at a real count, since a
+raw event count re-labelled "tok" would be its own dishonesty.
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ def presence_path(state_dir: Path) -> Path:
 
 
 def _empty(today: str) -> dict:
-    return {"date": today, "recalls": 0, "saves": 0, "tokens_saved": 0}
+    return {"date": today, "recalls": 0, "saves": 0}
 
 
 def read_today(state_dir: Path) -> dict:
@@ -35,7 +41,6 @@ def read_today(state_dir: Path) -> dict:
             "date": today,
             "recalls": int(data.get("recalls", 0) or 0),
             "saves": int(data.get("saves", 0) or 0),
-            "tokens_saved": int(data.get("tokens_saved", 0) or 0),
         }
     except Exception:
         return _empty(today)
@@ -60,16 +65,6 @@ def bump(state_dir: Path, *, recalls: int = 0, saves: int = 0) -> None:
         pass
 
 
-def set_tokens(state_dir: Path, tokens_saved: int) -> None:
-    """Overwrite today's tokens-saved figure (from the token ledger rollup)."""
-    try:
-        data = read_today(state_dir)
-        data["tokens_saved"] = max(0, int(tokens_saved))
-        _write(state_dir, data)
-    except Exception:  # noqa: S110  # decoration — never break the caller
-        pass
-
-
 def summary_line(data: dict) -> str:
     """One-line plain-text activity summary for cross-agent surfaces.
 
@@ -81,16 +76,11 @@ def summary_line(data: dict) -> str:
     """
     recalls = int(data.get("recalls", 0) or 0)
     saves = int(data.get("saves", 0) or 0)
-    tokens = int(data.get("tokens_saved", 0) or 0)
     parts: list[str] = []
     if recalls:
         parts.append(f"🧠 {recalls} recalled")
     if saves:
         parts.append(f"💾 {saves} saved")
-    if tokens >= 1000:
-        parts.append(f"~{tokens // 1000}k tok")
-    elif tokens:
-        parts.append(f"~{tokens} tok")
     if not parts:
         return ""
     return "※ memo today · " + " · ".join(parts)

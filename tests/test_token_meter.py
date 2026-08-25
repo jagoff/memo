@@ -5,18 +5,37 @@ from click.testing import CliRunner
 from memo import token_meter as tm
 
 
-def _assistant(mid: str, out: int, *, tool: bool = False) -> dict:
+def _assistant(
+    mid: str,
+    out: int,
+    *,
+    tool: bool = False,
+    model: str | None = None,
+    input_tok: int | None = None,
+    cache_read: int | None = None,
+    cache_creation: int | None = None,
+) -> dict:
     content = [{"type": "text", "text": "x"}]
     if tool:
         content.append({"type": "tool_use", "name": "Read", "input": {}})
+    usage = {"output_tokens": out}
+    if cache_read is not None:
+        usage["cache_read_input_tokens"] = cache_read
+    if cache_creation is not None:
+        usage["cache_creation_input_tokens"] = cache_creation
+    if input_tok is not None:
+        usage["input_tokens"] = input_tok
+    message: dict = {
+        "role": "assistant",
+        "id": mid,
+        "usage": usage,
+        "content": content,
+    }
+    if model:
+        message["model"] = model
     return {
         "type": "assistant",
-        "message": {
-            "role": "assistant",
-            "id": mid,
-            "usage": {"output_tokens": out},
-            "content": content,
-        },
+        "message": message,
     }
 
 
@@ -277,7 +296,231 @@ def test_tokens_json_preserves_ledger_schema(tmp_path):
     res = runner.invoke(cli, ["tokens", "--json"], env=_cli_env(tmp_path))
     assert res.exit_code == 0
     payload = _json.loads(res.output)
-    # frozen token_ledger keys must all remain present
-    for key in ("today", "month", "historic", "daily", "monthly", "growth", "tpg", "ledger_path"):
-        assert key in payload
-    assert "measured" in payload  # additive key must actually be written
+    # frozen keys: the two real-measurement surfaces, no fabricated estimate.
+    assert payload["measured"]["schema"] == tm.LEDGER_SCHEMA
+    assert "proxy" in payload
+    assert payload["proxy"]["measured_saving_frac"] is None
+
+
+# ---------------------------------------------------------------------------
+# ccusage-style prompt-side accounting: 4-field usage + per-model breakdown
+# ---------------------------------------------------------------------------
+
+
+def test_session_usage_aggregates_input_cache_and_models(tmp_path):
+    """input_tokens is a per-call footprint (take the MAX); the cache splits
+    are billed per-call volumes (SUM); models tally output spend by name.
+    ``<synthetic>`` rows (internal generations) stay out of the prompt-side
+    aggregation — nothing user-facing bills them."""
+    rows = [
+        _human(),
+        _assistant(
+            "m1",
+            30,
+            tool=True,
+            model="claude-opus-5",
+            input_tok=500,
+            cache_read=300,
+            cache_creation=200,
+        ),
+        _tool_result(),
+        _assistant(
+            "m2",
+            10,
+            model="claude-opus-5",
+            input_tok=900,
+            cache_read=700,
+            cache_creation=0,
+        ),
+        _human(),
+        _assistant("m3", 5, model="claude-sonnet-5", input_tok=400, cache_read=400),
+        # synthetic rows must not pollute footprint/cache/model accounting
+        _assistant("m4", 999, model="<synthetic>", input_tok=1),
+    ]
+    p = tmp_path / "s.jsonl"
+    _write_jsonl(p, rows)
+    su = tm.session_usage(p)
+    assert su is not None
+    assert su.output_tok == 1044  # answer/tool turns stay inclusive (v1 behavior)
+    assert su.input_tok == 900  # MAX, not sum (footprint of the last call)
+    assert su.cache_read_tok == 1400  # 300 + 700 + 400
+    assert su.cache_creation_tok == 200
+    assert su.models == {"claude-opus-5": 40, "claude-sonnet-5": 5}
+
+
+def test_prompt_side_dedups_streaming_rows(tmp_path):
+    """The JSONL repeats one message across streaming rows; the prompt-side
+    pass must count each unique message once (mirroring iter_prompt_turns)."""
+    rows = [
+        _human(),
+        _assistant("m1", 20, model="claude-opus-5", input_tok=900, cache_read=500),
+        _assistant("m1", 20, model="claude-opus-5", input_tok=900, cache_read=500),
+        _assistant("m1", 20, model="claude-opus-5", input_tok=900, cache_read=500),
+        _assistant("m2", 10, tool=True, model="claude-sonnet-5", input_tok=800, cache_read=700),
+        _assistant("m2", 10, tool=True, model="claude-sonnet-5", input_tok=800, cache_read=700),
+    ]
+    p = tmp_path / "dup.jsonl"
+    _write_jsonl(p, rows)
+    su = tm.session_usage(p)
+    assert su is not None
+    assert su.input_tok == 900  # max over unique messages
+    assert su.cache_read_tok == 1200  # 500 + 700, NOT 500*3 + 700*2
+    assert su.models == {"claude-opus-5": 20, "claude-sonnet-5": 10}
+
+
+def test_prompt_side_ignores_degenerate_input_tokens(tmp_path):
+    """Some Claude Code builds stamp input_tokens=1..2 on every call. The
+    footprint must read as unknown (0) then, while the cache splits (real
+    billed volumes) and the model tally still land."""
+    rows = [
+        _human(),
+        _assistant("m1", 20, model="claude-opus-5", input_tok=2, cache_read=21420),
+        _assistant("m2", 10, tool=True, model="claude-sonnet-5", input_tok=2, cache_read=98078),
+    ]
+    p = tmp_path / "deg.jsonl"
+    _write_jsonl(p, rows)
+    su = tm.session_usage(p)
+    assert su is not None
+    assert su.input_tok == 0
+    assert su.cache_read_tok == 119498
+    assert su.models == {"claude-opus-5": 20, "claude-sonnet-5": 10}
+
+
+def test_roll_persists_prompt_side_and_summarize_exposes_it(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    rows = [
+        _human(),
+        _assistant(
+            "m1", 20, model="claude-opus-5", input_tok=600, cache_read=500, cache_creation=60
+        ),
+    ]
+    tp = tmp_path / "S2.jsonl"
+    _write_jsonl(tp, rows)
+    tm.roll(state, "S2", tp)
+    s = tm.summarize(state)
+    assert s["input_tok"] == 600
+    assert s["cache_read_tok"] == 500
+    assert s["cache_creation_tok"] == 60
+    assert s["models"] == {"claude-opus-5": 20}
+
+
+def test_summarize_older_ledger_rows_stay_readable(tmp_path):
+    """v1 ledger rows (no prompt-side keys) must not break summarize."""
+    import json
+
+    state = tmp_path / "state"
+    state.mkdir()
+    ledger = {
+        "schema": "memo.token_meter.sessions.v1",
+        "sessions": {
+            "OLD": {
+                "ts": "2026-07-01T00:00:00+00:00",
+                "n_turns": 3,
+                "answer_tok": 60,
+                "tool_tok": 40,
+                "injected_chars": 800,
+                "grounded": 1,
+            }
+        },
+    }
+    (state / "token_meter.json").write_text(json.dumps(ledger), encoding="utf-8")
+    s = tm.summarize(state)
+    assert s["sessions"] == 1
+    assert s["answer_tok"] == 60
+    assert s["input_tok"] == 0
+    assert s["models"] == {}
+
+
+def test_roll_advances_the_on_disk_schema_of_a_pre_existing_v1_ledger(tmp_path):
+    """Part B finding 3: `LEDGER_SCHEMA` was bumped v1 -> v2 (per-model +
+    prompt-side accounting added), but `_read_ledger` returns the stored doc
+    verbatim and `roll()` never stamped the current schema back onto it -- a
+    pre-existing v1 ledger file kept claiming `schema: v1` in its own
+    `token_meter.json` forever, even once `roll()` had folded in new,
+    v2-shaped rows (`input_tok`/`cache_read_tok`/`cache_creation_tok`/
+    `models`) beside the old ones. `roll()` must stamp the ledger it writes
+    with the CURRENT `LEDGER_SCHEMA` -- the file is now unambiguously at
+    least v2-capable (every row `summarize()` reads tolerates the newer
+    keys), so its own header should say so."""
+    import json
+
+    state = tmp_path / "state"
+    state.mkdir()
+    v1_ledger = {
+        "schema": "memo.token_meter.sessions.v1",
+        "sessions": {
+            "OLD": {
+                "ts": "2026-07-01T00:00:00+00:00",
+                "n_turns": 3,
+                "answer_tok": 60,
+                "tool_tok": 40,
+                "injected_chars": 800,
+                "grounded": 1,
+            }
+        },
+    }
+    ledger_path = state / "token_meter.json"
+    ledger_path.write_text(json.dumps(v1_ledger), encoding="utf-8")
+
+    rows = [_human(), _assistant("m1", 20, model="claude-opus-5", input_tok=600)]
+    tp = tmp_path / "NEW.jsonl"
+    _write_jsonl(tp, rows)
+    tm.roll(state, "NEW", tp)
+
+    on_disk = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert on_disk["schema"] == tm.LEDGER_SCHEMA
+    assert set(on_disk["sessions"]) == {"OLD", "NEW"}  # old row survives untouched
+
+
+def test_tokens_cmd_shows_cache_lines_even_when_input_tok_is_degenerate(tmp_path):
+    """Part B finding 1: `_transcript_side_line` nested the cache-read/
+    cache-written lines inside the `input_tok > 0` gate. A build that stamps a
+    degenerate `input_tokens` (fixed 1-2/call -- `_transcript_input_side`
+    zeroes anything under 100) still has REAL cache_read/cache_creation
+    volumes; those must render regardless of whether the (separately, validly
+    zeroed) input-footprint line shows."""
+    from memo.cli import cli
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    rows = [
+        _human(),
+        _assistant(
+            "m1", 20, model="claude-opus-5", input_tok=2, cache_read=5000, cache_creation=200
+        ),
+    ]
+    tp = tmp_path / "S4.jsonl"
+    _write_jsonl(tp, rows)
+    tm.roll(state, "S4", tp)
+    assert tm.summarize(state)["input_tok"] == 0  # degenerate input_tokens zeroed, as designed
+
+    runner = CliRunner()
+    res = runner.invoke(cli, ["tokens"], env=_cli_env(tmp_path))
+    assert res.exit_code == 0
+    assert "input footprint" not in res.output  # honest zero: no footprint claim
+    assert "cache-read" in res.output
+    assert "cache-written" in res.output
+
+
+def test_tokens_cmd_shows_prompt_side_line(tmp_path):
+    from memo.cli import cli
+
+    state = tmp_path / "state"
+    state.mkdir(parents=True)
+    rows = [
+        _human(),
+        _assistant(
+            "m1", 20, model="claude-opus-5", input_tok=600, cache_read=500, cache_creation=60
+        ),
+    ]
+    tp = tmp_path / "S3.jsonl"
+    _write_jsonl(tp, rows)
+    tm.roll(state, "S3", tp)
+    runner = CliRunner()
+    res = runner.invoke(cli, ["tokens"], env=_cli_env(tmp_path))
+    assert res.exit_code == 0
+    assert "input footprint" in res.output
+    assert "cache-read" in res.output
+    assert "by model" in res.output
+    assert "claude-opus-5" in res.output

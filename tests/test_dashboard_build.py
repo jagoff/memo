@@ -60,16 +60,16 @@ def test_poll_mode_includes_gerencial_block(tmp_cfg: Config):
     assert g["consults_sampled"] == 0
     assert g["grounded_rate"] is None
     assert g["referenced_rate"] is None
-    # detailed token-savings: daily series + composition, KPI consistent with panel
+    # grounded-usage breakdown: daily series of raw counts, no fabricated
+    # "tokens saved" figure (see CHANGELOG: MEMO_ROI_TOKENS_PER_* retired).
     td = g["token_detail"]
     assert len(td["daily"]) == 14
-    assert all({"date", "grounded", "tokens"} <= d.keys() for d in td["daily"])
-    assert td["total"] == td["grounded_tokens"] + td["reask_tokens"]
-    assert g["tokens_saved"] == td["total"]
+    assert all({"date", "grounded", "context_tokens"} <= d.keys() for d in td["daily"])
+    assert "tokens_saved" not in g
+    assert "tokens" not in td["daily"][0]
 
 
-def test_gerencial_tokens_saved_kpi_is_daily_not_accumulated(tmp_cfg: Config, monkeypatch):
-    monkeypatch.setenv("MEMO_ROI_TOKENS_PER_GROUNDED", "100")
+def test_gerencial_grounded_kpi_reflects_new_events_across_days(tmp_cfg: Config):
     state_dir = tmp_cfg.state_dir
     state_dir.mkdir(parents=True, exist_ok=True)
     today = datetime.now(UTC)
@@ -101,18 +101,15 @@ def test_gerencial_tokens_saved_kpi_is_daily_not_accumulated(tmp_cfg: Config, mo
 
     g = data["gerencial"]
     td = g["token_detail"]
-    assert g["tokens_saved_today"] == 100
-    assert g["tokens_saved_today_human"] == "100"
-    assert td["today_tokens"] == 100
-    assert td["total"] == 200
-    assert g["tokens_saved"] == 200
+    assert td["grounded"] == 2
+    today_key = today.date().isoformat()
+    assert next(d["grounded"] for d in td["daily"] if d["date"] == today_key) == 1
 
 
-def test_gerencial_historic_survives_grounding_log_rotation(tmp_cfg: Config, monkeypatch):
-    """The historic tokens-saved headline must come from the durable ledger, so
-    it does not shrink when old grounded rows scroll out of the capped
+def test_gerencial_historic_survives_grounding_log_rotation(tmp_cfg: Config):
+    """The historic grounded headline must come from the durable ledger, so it
+    does not shrink when old grounded rows scroll out of the capped
     grounding.log. Seed a ledger with more history than the log holds."""
-    monkeypatch.setenv("MEMO_ROI_TOKENS_PER_GROUNDED", "100")
     from memo import token_ledger
 
     state_dir = tmp_cfg.state_dir
@@ -146,11 +143,9 @@ def test_gerencial_historic_survives_grounding_log_rotation(tmp_cfg: Config, mon
 
     # Historic = durable 50 + the fresh 1 (rolled up), not just the 1 in the log.
     assert g["token_detail"]["grounded"] == 51
-    assert g["tokens_saved"] == 51 * 100
 
 
-def test_gerencial_reports_context_cost_and_net_tokens(tmp_cfg: Config, monkeypatch):
-    monkeypatch.setenv("MEMO_ROI_TOKENS_PER_GROUNDED", "100")
+def test_gerencial_reports_real_context_cost_not_a_fabricated_estimate(tmp_cfg: Config):
     state_dir = tmp_cfg.state_dir
     state_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(UTC).isoformat(timespec="seconds")
@@ -182,18 +177,16 @@ def test_gerencial_reports_context_cost_and_net_tokens(tmp_cfg: Config, monkeypa
 
     g = build.collect_data(tmp_cfg, include_projection=False)["gerencial"]
 
-    # Gross components are reported as-is for transparency...
-    assert g["tokens_saved_today"] == 100
+    # Context cost is real (from context_cost.log) — reported as-is.
     assert g["context_tokens_today"] == 150
     assert g["token_detail"]["context_costs"] == {"briefing": 100, "recall": 50}
-    # ...but "ahorro neto" floors at 0: savings are measurement-gated (only
-    # grounded recalls) while context cost counts every injection, so a raw
-    # net of 100 - 150 = -50 is a coverage artifact, not a real loss. A day
-    # that saved nothing nets 0, never negative.
-    assert g["tokens_net_today"] == 0
-    assert g["tokens_net"] == 0
-    assert g["token_detail"]["today_net"] == 0
-    assert g["token_detail"]["net"] == 0
+    # The old "tokens saved" / "net" KPIs (grounded * hardcoded constant, minus
+    # context cost) are gone — no fabricated savings figure to net against.
+    assert "tokens_saved_today" not in g
+    assert "tokens_net_today" not in g
+    assert "tokens_net" not in g
+    assert "today_net" not in g["token_detail"]
+    assert "net" not in g["token_detail"]
 
 
 def test_gerencial_consults_uses_daily_trend_total(tmp_cfg: Config):
@@ -411,3 +404,17 @@ def test_consult_trend_today_survives_trimmed_recall_log(tmp_path: Path):
     bucket = next(d for d in trend if d["date"] == today)
     assert bucket["consultas"] == 796  # persisted total, not the 3 surviving rows
     assert bucket["activado"] == 31
+
+
+def test_html_template_has_no_fabricated_token_savings_section():
+    """Round-2 fix: the 'Ahorro de tokens' panel + its KPI tile rendered the
+    retired MEMO_ROI_TOKENS_PER_* estimate as a literal fabricated 0 behind
+    `|| 0` JS fallbacks — deleted, not gated, so no code path can regress into
+    printing a fake savings number again."""
+    from memo import web_build
+
+    html = web_build._render_html({"generated_at": "x", "memo_version": "x"})
+    assert "Ahorro de tokens" not in html
+    assert "Ahorro neto de tokens hoy" not in html
+    assert "tok-total" not in html
+    assert "Estimación con supuestos explícitos" not in html

@@ -24,12 +24,14 @@ Two physical signals feed the ledger, one per agent class:
     never see their answer, so we cannot ground them; a productive consult is the
     honest proxy for "a re-derivation memo prevented". Weaker signal.
 
-Tokens saved are derived at read time:
-``grounded × MEMO_ROI_TOKENS_PER_GROUNDED (350) + consults × MEMO_ROI_TOKENS_PER_CONSULT (200)``.
-Storing the raw counts (not the token product) keeps the durable signal physical
-and lets the tunable rates re-price history without rewriting the ledger. Consults
-are attributed per-source and exclude ``claude-code`` (already counted by its
-grounding), so no agent is double-counted.
+This ledger stores only the raw, physical event counts — it does NOT convert
+them into a "tokens saved" estimate. An earlier version multiplied grounded ×
+a hardcoded per-unit constant, which produced a headline number that read as
+measured savings but was never validated against a control arm; that estimate
+was retired (see CHANGELOG). For an actual measured cost comparison, see
+``memo.proxy.meter.summarize`` (treated vs. holdout, real provider `usage`).
+Consults are attributed per-source and exclude ``claude-code`` (already
+counted by its grounding), so no agent is double-counted.
 
 Pure stdlib + `memo.dashboard` (leaf log readers) + `memo.flags` — no MLX, no
 `memo.memory` import, so it is cheap enough to roll up on every Stop hook.
@@ -52,11 +54,8 @@ from .dashboard import (
     read_recall_hook_log,
     read_recall_log,
 )
-from .flags import flag_int
 
 LEDGER_SCHEMA = "memo.token_savings.daily.v1"
-_DEFAULT_TOKENS_PER_GROUNDED = 350
-_DEFAULT_TOKENS_PER_CONSULT = 200
 
 # Grounded rows are attributed to Claude Code — grounding runs only from Claude
 # Code's Stop hook over its transcript, and every grounding.log row confirms
@@ -79,16 +78,6 @@ def _ledger_lock_path(state_dir: Path) -> Path:
     excluding the moment a writer replaced the file.
     """
     return state_dir / "token_savings_daily.json.lock"
-
-
-def _tokens_per_grounded() -> int:
-    v = flag_int("MEMO_ROI_TOKENS_PER_GROUNDED")
-    return _DEFAULT_TOKENS_PER_GROUNDED if v is None else v
-
-
-def _tokens_per_consult() -> int:
-    v = flag_int("MEMO_ROI_TOKENS_PER_CONSULT")
-    return _DEFAULT_TOKENS_PER_CONSULT if v is None else v
 
 
 def _consult_source(row: dict) -> str | None:
@@ -297,8 +286,6 @@ def summarize(
     """
     ledger = read_ledger(state_dir)
     days: dict[str, dict] = ledger.get("days", {})
-    tpg = _tokens_per_grounded()
-    tpc = _tokens_per_consult()
     today = today or datetime.now().astimezone().date()
     today_key = today.isoformat()
     month_prefix = today.strftime("%Y-%m")
@@ -313,19 +300,12 @@ def summarize(
     def _consults_total(day_key: str) -> int:
         return sum(int(n) for n in _consults(day_key).values())
 
-    def _tokens(grounded: int, consults: int) -> int:
-        return grounded * tpg + consults * tpc
-
     def _bucket(grounded: int, consults: int) -> dict:
-        return {
-            "grounded": grounded,
-            "consults": consults,
-            "tokens": _tokens(grounded, consults),
-        }
+        return {"grounded": grounded, "consults": consults}
 
     def _by_client(day_keys: list[str]) -> dict[str, dict]:
-        """Per-agent savings over ``day_keys``: grounded → Claude Code (its Stop
-        hook is the only grounding path), consults → each consulting agent."""
+        """Per-agent event counts over ``day_keys``: grounded → Claude Code (its
+        Stop hook is the only grounding path), consults → each consulting agent."""
         agg: dict[str, dict[str, int]] = {}
         g = sum(_grounded(k) for k in day_keys)
         if g:
@@ -334,8 +314,9 @@ def summarize(
             for src, n in _consults(k).items():
                 e = agg.setdefault(src, {"grounded": 0, "consults": 0})
                 e["consults"] += int(n)
-        out = {c: {**v, "tokens": _tokens(v["grounded"], v["consults"])} for c, v in agg.items()}
-        return dict(sorted(out.items(), key=lambda kv: kv[1]["tokens"], reverse=True))
+        return dict(
+            sorted(agg.items(), key=lambda kv: kv[1]["grounded"] + kv[1]["consults"], reverse=True)
+        )
 
     month_keys = [k for k in days if k.startswith(month_prefix)]
     all_keys = list(days)
@@ -364,21 +345,22 @@ def summarize(
         for m in sorted(months)[-months_back:]
     ]
 
-    # Growth: this month's total savings vs the preceding calendar month.
+    # Growth: this month's total measured activity (grounded + consults) vs the
+    # preceding calendar month. Event counts, not a token estimate.
     prev_month = (today.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
     prev = months.get(prev_month, {"grounded": 0, "consults": 0})
     this = months.get(month_prefix, {"grounded": 0, "consults": 0})
-    prev_tok = _tokens(prev["grounded"], prev["consults"])
-    this_tok = _tokens(this["grounded"], this["consults"])
-    if prev_tok > 0:
-        pct = round((this_tok - prev_tok) / prev_tok * 100, 1)
-        up: bool | None = this_tok >= prev_tok
+    prev_events = prev["grounded"] + prev["consults"]
+    this_events = this["grounded"] + this["consults"]
+    if prev_events > 0:
+        pct = round((this_events - prev_events) / prev_events * 100, 1)
+        up: bool | None = this_events >= prev_events
     else:
         pct = None
         up = None
     growth = {
-        "this_month_tokens": this_tok,
-        "prev_month_tokens": prev_tok,
+        "this_month_events": this_events,
+        "prev_month_events": prev_events,
         "pct": pct,
         "up": up,
     }
@@ -389,8 +371,6 @@ def summarize(
     }
 
     return {
-        "tpg": tpg,
-        "tpc": tpc,
         "today": {"date": today_key, **_bucket(today_g, today_c)},
         "month": {"month": month_prefix, **_bucket(month_g, month_c)},
         "historic": _bucket(historic_g, historic_c),

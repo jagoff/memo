@@ -205,6 +205,13 @@ def reset(state_dir: Path, session_id: str) -> bool:
     longer claim anything is in it. Idempotent — PreCompact double-fires against
     the plugin copy.
 
+    Also drops the digested-ids sidecar (`record_digested`/`digested_ids`): a
+    digest pointer's claim ("this body is already up there") expires at
+    compaction exactly like the main ledger's does, so a `memo_get` after
+    compaction on an id digested BEFORE it must not still count as a recovery
+    from a digest the model can no longer see. Keeping the two files' lifetimes
+    tied here is the correctness argument, not just consistency.
+
     Deliberately does NOT touch the counters sidecar (`bump`/`stats`, see
     `_counters_path`) — reviewed and confirmed in task-8-findings-r1.md F2.
     The ledger's claim expires at compaction, but the counters are the
@@ -212,21 +219,40 @@ def reset(state_dir: Path, session_id: str) -> bool:
     `prune`'s age-based GC may remove them, once the session itself is gone.
     Do not "fix" this asymmetry.
     """
+    removed = False
     try:
         path = ledger_path(state_dir, session_id)
         if path.is_file():
             path.unlink()
-            return True
+            removed = True
     except Exception:  # noqa: S110  # fail-open: a removal failure just leaves the file
         pass
-    return False
+    try:
+        digested_path = _digested_path(state_dir, session_id)
+        if digested_path.is_file():
+            digested_path.unlink()
+            removed = True
+    except Exception:  # noqa: S110  # fail-open: a removal failure just leaves the file
+        pass
+    return removed
 
 
 @dataclass(frozen=True)
 class Partition:
     """``full`` keeps its hits verbatim; ``digest`` are hits the caller should
-    render as {id, title, ref}. ``suppressed_chars`` is what was not sent, the
-    numerator of the saving the gate measures."""
+    render as {id, title, ref}. ``suppressed_chars`` is the character count of
+    the digested hits' text (``text_of(hit)`` only, not the whole serialized
+    row).
+
+    NOT the promotion gate's numerator, despite an earlier version of this
+    docstring's claim: the gate's real ``tokens_suppressed`` is computed
+    independently in ``server_common.apply_ledger``, over the whole
+    serialized hit (id/title/tags/timestamps/extra/... included), because
+    charging only the text field undercounted the real saving by roughly 16x
+    on a real payload (see ``apply_ledger``'s own F1 comment). Nothing in this
+    codebase currently reads ``suppressed_chars`` outside this module's own
+    tests -- kept as a cheap, informational figure for a caller that wants a
+    body-text-only view, not as a wired-up measurement."""
 
     full: list[Any]
     digest: list[Any]
@@ -296,6 +322,66 @@ def partition(
         else:
             full.append(hit)
     return Partition(full=full, digest=digest, suppressed_chars=suppressed)
+
+
+def _digested_path(state_dir: Path, session_id: str) -> Path:
+    return Path(state_dir) / _DIRNAME / f"{_safe(session_id)}.digested.jsonl"
+
+
+def record_digested(state_dir: Path, session_id: str, ids: Sequence[str]) -> None:
+    """Record ids actually rendered as an ``already_in_context`` pointer in some
+    tool response this session -- i.e. ``partition`` put them in ``digest``, not
+    ``full``.
+
+    Deliberately separate from ``append``/``read``: those record every EMISSION
+    (a body actually sent, whether by the recall hook or an MCP tool sending it
+    in full), not which of those emissions were later suppressed to a pointer.
+    An id can sit in ``read()``'s result because the hook injected it, or
+    because a tool sent it in full, without the model ever having seen a digest
+    for it -- a `memo_get` on such an id is an ordinary first read, not a
+    recovery from a digest, and must not be counted as one (see
+    `server_core_records._record_ledger_recovery`).
+
+    Same fail-open envelope as `append`: a counter that cannot be written costs
+    the promotion gate a measurement, never a caller's response.
+    """
+    if not ids:
+        return
+    try:
+        path = _digested_path(state_dir, session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        now = int(time.time())
+        with path.open("a", encoding="utf-8") as fh:
+            for memory_id in ids:
+                fh.write(json.dumps({"id": memory_id, "t": now}, separators=(",", ":")) + "\n")
+        _trim(path)
+    except Exception:
+        return
+
+
+def digested_ids(state_dir: Path, session_id: str) -> set[str]:
+    """Ids that have been rendered as a digest pointer (an ``already_in_context``
+    entry) at least once this session -- the correct membership test for
+    "was this id ever digested", unlike `read()` (see `record_digested`).
+
+    Unparseable lines are skipped, matching `read()`'s tolerance of a torn tail
+    from a concurrent writer."""
+    out: set[str] = set()
+    try:
+        raw = _digested_path(state_dir, session_id).read_text(encoding="utf-8")
+    except Exception:
+        return out
+    cap = _cap()
+    lines = raw.splitlines()
+    if cap > 0:
+        lines = lines[-cap:]
+    for line in lines:
+        try:
+            obj = json.loads(line)
+            out.add(str(obj["id"]))
+        except Exception:  # noqa: S112  # torn/malformed line -- skip it, keep reading
+            continue
+    return out
 
 
 def _counters_path(state_dir: Path, session_id: str) -> Path:

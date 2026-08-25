@@ -1,10 +1,23 @@
-"""`memo tokens` — TUI showing tokens saved by memo (today / month / historic).
+"""`memo tokens` — memo's real, measured token cost/savings. No estimates.
 
-Rolls up the durable token-savings ledger (see :mod:`memo.token_ledger`) then
-renders the headline numbers plus a daily and a monthly bar chart. The signal is
-*grounded* recalls — surfaced memories the answer actually USED, i.e.
-re-derivations memo prevented — so the total rises as memo accumulates more
-useful memories. Read-only; `--json` for machine output.
+Two independently measured surfaces, both sourced from real provider `usage`
+(never a hardcoded per-event constant):
+
+  * **transcript** (:mod:`memo.token_meter`) — per-session accounting read
+    from the Claude Code transcript: answer/tool-loop token spend, grounded
+    vs ungrounded tool-loop delta, and the context memo injects to earn it.
+  * **proxy holdout** (:mod:`memo.proxy.meter`) — the local context-compression
+    proxy assigns each request to a treated or an uncompressed holdout arm and
+    records the real `input_tokens` the provider billed, so the saving
+    fraction is a measured A/B result, not an estimate.
+
+An earlier version of this command additionally printed a "tokens saved
+(estimated)" panel — `grounded × MEMO_ROI_TOKENS_PER_GROUNDED (350) +
+consults × MEMO_ROI_TOKENS_PER_CONSULT (200)`, hardcoded constants with no
+control arm. That panel stood beside the measured cost and read as a savings
+claim memo could not support, so it was removed (see CHANGELOG). "No
+measured data yet" and "measured zero savings" are different claims — this
+command never prints a zero in place of missing data.
 """
 
 from __future__ import annotations
@@ -16,16 +29,20 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from memo import token_ledger
 from memo.cli_common import console
 from memo.config import Config
-
-_BLOCKS = "▏▎▍▌▋▊▉█"
 
 # Turns needed in BOTH cohorts before the measured net reads as evidence rather
 # than as noise. Neither cohort is assigned — a user does not run sessions with
 # recall off on purpose — so a handful of ungrounded turns can swing the sign.
 _MIN_COHORT_TURNS = 30
+
+# Requests needed in BOTH the treated and holdout arms before the proxy's
+# saving fraction reads as evidence rather than noise — same floor as the
+# transcript panel's cohort, for the same reason: a handful of requests can
+# swing a ratio wildly (n=1 vs n=1 can print a two-digit swing in bold colour
+# with nothing marking it as unproven).
+_MIN_PROXY_SAMPLE = 30
 
 
 def _fmt_tokens(tokens: float) -> str:
@@ -37,220 +54,207 @@ def _fmt_tokens(tokens: float) -> str:
     return f"{tokens / 1_000_000:.2f}M"
 
 
-def _bar(value: float, vmax: float, width: int = 22) -> str:
-    """Eighth-block horizontal bar scaled to ``vmax``."""
-    if vmax <= 0 or value <= 0:
-        return ""
-    units = value / vmax * width
-    full = int(units)
-    bar = "█" * min(full, width)
-    rem = units - full
-    if rem > 0 and full < width:
-        bar += _BLOCKS[min(7, int(rem * 8))]
-    return bar
+def _transcript_side_line(measured: dict) -> str:
+    """The measured prompt-side surface (ccusage accounting): input footprint,
+    cache-read/created volumes, and per-model output spend. Empty when the
+    transcripts never carried the richer `usage` fields.
+
+    The three `*_tok` fields are independent measurements and must be gated
+    independently: `input_tok` is `token_meter._transcript_input_side`'s
+    per-session PEAK of the Messages API's `input_tokens` field, summed
+    across sessions by `summarize()` -- and `input_tokens` itself is the
+    UNCACHED remainder of a call's prompt, not its full size (real, billed
+    volume either way, but not "the prompt"; see the identical finding
+    already fixed on the proxy A/B side, `proxy/meter.py`'s prompt-cost
+    weighting). `cache_read_tok`/`cache_creation_tok` are the two counters
+    that actually carry a cache-heavy session's real prompt volume, and used
+    to be nested inside `input_tok > 0` -- so a session with a legitimately
+    (or a `_transcript_input_side`-zeroed, degenerate-build) small
+    `input_tok` hid real, non-zero cache volumes entirely.
+    """
+    parts = []
+    if int(measured.get("input_tok", 0)) > 0:
+        parts.append(
+            f"[bold]{_fmt_tokens(measured['input_tok'])}[/bold] tok input footprint "
+            f"([dim]uncached only, summed peaks -- not full prompt[/dim])"
+        )
+    if int(measured.get("cache_read_tok", 0)) > 0:
+        parts.append(f"[bold]{_fmt_tokens(measured['cache_read_tok'])}[/bold] tok cache-read")
+    if int(measured.get("cache_creation_tok", 0)) > 0:
+        parts.append(
+            f"[bold]{_fmt_tokens(measured['cache_creation_tok'])}[/bold] tok cache-written"
+        )
+    models = measured.get("models") or {}
+    if models:
+        parts.append(
+            "by model: "
+            + " · ".join(f"[bold]{name}[/bold] {_fmt_tokens(out)}" for name, out in models.items())
+        )
+    return "\n" + " · ".join(parts) if parts else ""
 
 
-def _header_panel(s: dict) -> Panel:
-    grid = Table.grid(expand=True)
-    grid.add_column(justify="center", ratio=1)
-    grid.add_column(justify="center", ratio=1)
-    grid.add_column(justify="center", ratio=1)
-
-    def cell(label: str, bucket: dict, color: str) -> Text:
-        t = Text(justify="center")
-        t.append(f"{label}\n", style="dim")
-        t.append(f"{_fmt_tokens(bucket['tokens'])}\n", style=f"bold {color}")
-        t.append("tokens saved (est.)\n", style="dim")
-        used = f"{bucket['grounded']} used"
-        consults = int(bucket.get("consults", 0))
-        if consults:
-            used += f" · {consults} consults"
-        t.append(used, style="dim")
-        return t
-
-    grid.add_row(
-        cell("TODAY", s["today"], "cyan"),
-        cell(f"MONTH · {s['month']['month']}", s["month"], "magenta"),
-        cell("ALL-TIME", s["historic"], "green"),
+def _transcript_panel(measured: dict) -> Panel:
+    p = measured["proxy"]
+    delta = p["delta"]
+    net = p["net_tok_per_turn"]
+    have_both = (
+        p["grounded_tool_tok_per_turn"] is not None
+        and p["ungrounded_tool_tok_per_turn"] is not None
     )
-    return Panel(
-        grid,
-        title="[bold]memo · tokens saved (estimated)[/bold]",
-        subtitle=(
-            "[dim]per-grounded-recall estimate — the measured net is in the panel above[/dim]"
-        ),
-        border_style="bright_blue",
-        padding=(1, 2),
+    proxy_line = (
+        f"tool-spend grounded {p['grounded_tool_tok_per_turn']} vs "
+        f"ungrounded {p['ungrounded_tool_tok_per_turn']} tok/turn"
+        + (f"  (Δ {delta:+.0f})" if delta is not None else "")
+        + f"  -{p['injected_tok_per_turn']:g} injected"
+        if have_both
+        else "proxy: no grounded+ungrounded sessions to compare yet"
     )
-
-
-def _chart(rows: list[tuple[str, int, int]], color: str, title: str) -> Panel:
-    """rows = [(label, grounded, tokens)]; bar scaled to the max tokens."""
-    vmax = max((tok for _, _, tok in rows), default=0)
-    tbl = Table.grid(padding=(0, 1))
-    tbl.add_column(justify="right", style="dim")  # label
-    tbl.add_column()  # bar
-    tbl.add_column(justify="right")  # number
-    for label, _g, tok in rows:
-        bar = Text(_bar(tok, vmax), style=color)
-        num = Text(_fmt_tokens(tok) if tok else "·", style="" if tok else "dim")
-        tbl.add_row(label, bar, num)
-    return Panel(tbl, title=f"[bold {color}]{title}[/bold {color}]", border_style=color)
-
-
-def _by_client_panel(s: dict) -> Panel | None:
-    """All-time savings attributed to each agent that reads memo — Claude Code
-    (grounded) plus every other LLM (codex/opencode/devin/other agents)
-    measured by its productive consults."""
-    bc = s.get("by_client", {}).get("historic", {})
-    if not bc:
-        return None
-    tbl = Table.grid(padding=(0, 2))
-    tbl.add_column(style="bold")  # agent
-    tbl.add_column(justify="right")  # tokens
-    tbl.add_column(justify="left", style="dim")  # signal
-    for client, rec in bc.items():
-        signal = []
-        if rec.get("grounded"):
-            signal.append(f"{rec['grounded']} grounded")
-        if rec.get("consults"):
-            signal.append(f"{rec['consults']} consults")
-        tbl.add_row(
-            client,
-            Text(_fmt_tokens(rec["tokens"]) + " tok", style="green"),
-            " · ".join(signal),
+    # The net line leads because it is the only measured answer to "does
+    # memo save tokens" — tool-spend delta alone ignores the context memo
+    # injects to earn it. Negative means memo cost more than it saved; that
+    # is a real result and it is reported as one.
+    if net is None:
+        net_line = "[dim]net: needs grounded and ungrounded sessions to compare[/dim]"
+    else:
+        colour = "green" if net > 0 else "red"
+        verb = "saved" if net > 0 else "cost"
+        # Both cohorts are observational, not assigned: a thin one means the
+        # sign is not yet evidence. Say so rather than let the number stand
+        # unqualified.
+        thin = min(p["grounded_turns"], p["ungrounded_turns"]) < _MIN_COHORT_TURNS
+        net_line = (
+            f"[bold {colour}]{abs(net):,.0f} tok/turn {verb}[/bold {colour}] net of injection "
+            f"[dim](n={p['grounded_turns']} grounded / {p['ungrounded_turns']} ungrounded "
+            f"turns{' · provisional, thin cohort' if thin else ''})[/dim]"
         )
     return Panel(
-        tbl,
-        title="[bold]by agent · all-time[/bold]",
-        subtitle="[dim]every LLM that reads memo — grounded (Claude Code) + consults (others)[/dim]",
+        Text.from_markup(
+            f"{net_line}\n"
+            f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok answer · "
+            f"[bold]{_fmt_tokens(measured['tool_tok'])}[/bold] tok tool-loops · "
+            f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok injected "
+            f"([dim]{measured['sessions']} measured sessions[/dim])"
+            + _transcript_side_line(measured)
+            + f"\n[dim]{proxy_line}[/dim]"
+        ),
+        title="[bold]memo · measured (real transcript)[/bold]",
+        border_style="green",
+        padding=(0, 2),
+    )
+
+
+def _proxy_panel(proxy: dict) -> Panel:
+    frac = proxy["measured_saving_frac"]
+    n_t, n_h = proxy["n_treated"], proxy["n_holdout"]
+    if frac is None:
+        if n_t or n_h:
+            body = (
+                f"[dim]not enough data to compare arms yet[/dim] "
+                f"([dim]{n_t} treated / {n_h} holdout requests[/dim])"
+            )
+        else:
+            body = "[dim]no measured data yet — the proxy has not logged any requests[/dim]"
+    else:
+        # frac >= 0 reads as "saved": an exact-zero delta is a null result
+        # (nothing lost, nothing gained), not a regression — only a real
+        # negative frac (treated arm costs MORE than holdout) is "cost".
+        colour = "green" if frac >= 0 else "red"
+        verb = "saved" if frac >= 0 else "cost"
+        # The headline is now a weighted PROMPT COST ratio (input_tokens +
+        # 1.25x cache-creation + 0.1x cache-read — see meter.py's weight
+        # constants), not a bare input_tokens ratio: real traffic bills
+        # almost the whole prompt through the two cache counters, so
+        # input_tokens alone is a ratio of noise. The raw input_tokens
+        # means stay visible alongside it.
+        cost_t = proxy["mean_prompt_cost_treated"]
+        cost_h = proxy["mean_prompt_cost_holdout"]
+        mean_in_t = proxy["mean_input_treated"]
+        mean_in_h = proxy["mean_input_holdout"]
+        thin = min(n_t, n_h) < _MIN_PROXY_SAMPLE
+        # Defect 2: holdout is now assigned per SESSION, not per request, so
+        # n_t/n_h (request counts) overstate the effective sample size —
+        # every request in one holdout session is correlated, not an
+        # independent draw. Report the distinct-session count beside the
+        # request count rather than hiding that the unit changed.
+        n_ts = proxy.get("n_treated_sessions") or 0
+        n_hs = proxy.get("n_holdout_sessions") or 0
+        sessions_note = f", {n_ts}/{n_hs} sessions" if (n_ts or n_hs) else ""
+        body = (
+            f"[bold {colour}]{abs(frac) * 100:.1f}% {verb}[/bold {colour}] on prompt cost "
+            f"(treated {cost_t:.0f} vs holdout {cost_h:.0f} tok-equiv/request; "
+            f"raw input_tokens {mean_in_t:.0f} vs {mean_in_h:.0f}) "
+            f"[dim](n={n_t} treated / {n_h} holdout requests{sessions_note}"
+            f"{' · provisional, thin sample' if thin else ''})[/dim]"
+        )
+    if proxy.get("retrieved"):
+        body += f"\n[dim]{proxy['retrieved']} recovered originals (cost their tokens twice)[/dim]"
+    if proxy.get("n_passthrough"):
+        body += (
+            f"\n[dim]{proxy['n_passthrough']} passthrough request(s) excluded from both arms "
+            "(proxy was disabled for them, so nothing was rewritten)[/dim]"
+        )
+    return Panel(
+        Text.from_markup(body),
+        title="[bold]memo · proxy (real holdout A/B)[/bold]",
         border_style="blue",
         padding=(0, 2),
     )
 
 
-def _growth_text(s: dict) -> Text:
-    g = s["growth"]
-    t = Text()
-    if g["up"] is None:
-        t.append("growth: no prior month to compare yet", style="dim")
-    else:
-        arrow = "▲" if g["up"] else "▼"
-        style = "green" if g["up"] else "yellow"
-        pct = g["pct"]
-        t.append(f"{arrow} {abs(pct):.0f}% ", style=f"bold {style}")
-        t.append("vs prior month  ", style="dim")
-        t.append(
-            f"({_fmt_tokens(g['prev_month_tokens'])} → {_fmt_tokens(g['this_month_tokens'])} tok)",
-            style="dim",
-        )
-    return t
+def _by_transform_table(proxy: dict) -> Table:
+    tbl = Table(title="by transform", show_lines=False)
+    tbl.add_column("transform")
+    tbl.add_column("requests", justify="right")
+    tbl.add_column("share of savings", justify="right")
+    for name, stats in sorted(
+        proxy["by_transform"].items(), key=lambda kv: kv[1]["n"], reverse=True
+    ):
+        share = stats.get("share")
+        share_s = f"{share * 100:.0f}%" if share is not None else "—"
+        tbl.add_row(name, str(stats["n"]), share_s)
+    return tbl
 
 
 @click.command(name="tokens")
-@click.option("--days", default=14, show_default=True, help="Days in the daily chart.")
-@click.option("--months", default=6, show_default=True, help="Months in the monthly chart.")
+@click.option(
+    "--by-transform",
+    "by_transform",
+    is_flag=True,
+    help="Break the measured proxy saving down per transform.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
-def tokens_cmd(*, days: int = 14, months: int = 6, as_json: bool = False) -> None:
-    """Show how many tokens memo saved: today, this month, and all-time total."""
+def tokens_cmd(*, by_transform: bool = False, as_json: bool = False) -> None:
+    """Show memo's measured token cost/savings — real transcript + real proxy holdout."""
     from memo import token_meter
+    from memo.proxy import meter as proxy_meter
 
     cfg = Config.from_env()
-    token_ledger.roll_up(cfg.state_dir)
-    s = token_ledger.summarize(cfg.state_dir, days_back=days, months_back=months)
-
-    # Measured surface (additive; the token_ledger schema above stays frozen).
     measured = token_meter.summarize(cfg.state_dir)
+    proxy = proxy_meter.summarize(cfg.state_dir)
 
     if as_json:
-        s["measured"] = measured  # additive key; existing keys untouched
-        click.echo(_json.dumps(s, ensure_ascii=False, indent=2))
+        click.echo(
+            _json.dumps({"measured": measured, "proxy": proxy}, ensure_ascii=False, indent=2)
+        )
         return
 
-    # Print measured panel BEFORE the early-return guard so it shows even when
-    # token_ledger is empty (no grounding yet).
+    has_data = bool(measured["sessions"]) or proxy["n_treated"] or proxy["n_holdout"]
+    if not has_data:
+        console.print(
+            "[dim]No measured data yet (no Claude Code sessions rolled up, no proxy "
+            "requests logged). Run a few sessions through the proxy — each request it "
+            "sees, treated or held out, adds to the comparison. Check the hook with "
+            "[/dim][bold]memo doctor[/bold][dim].[/dim]"
+        )
+        return
+
     if measured["sessions"]:
-        p = measured["proxy"]
-        delta = p["delta"]
-        net = p["net_tok_per_turn"]
-        have_both = (
-            p["grounded_tool_tok_per_turn"] is not None
-            and p["ungrounded_tool_tok_per_turn"] is not None
-        )
-        proxy_line = (
-            f"tool-spend grounded {p['grounded_tool_tok_per_turn']} vs "
-            f"ungrounded {p['ungrounded_tool_tok_per_turn']} tok/turn"
-            + (f"  (Δ {delta:+.0f})" if delta is not None else "")
-            + f"  -{p['injected_tok_per_turn']:g} injected"
-            if have_both
-            else "proxy: no grounded+ungrounded sessions to compare yet"
-        )
-        # The net line leads because it is the only measured answer to "does
-        # memo save tokens" — tool-spend delta alone ignores the context memo
-        # injects to earn it. Negative means memo cost more than it saved; that
-        # is a real result and it is reported as one.
-        if net is None:
-            net_line = "[dim]net: needs grounded and ungrounded sessions to compare[/dim]"
+        console.print(_transcript_panel(measured))
+
+    console.print(_proxy_panel(proxy))
+
+    if by_transform:
+        if proxy["by_transform"]:
+            console.print(_by_transform_table(proxy))
         else:
-            colour = "green" if net > 0 else "red"
-            verb = "saved" if net > 0 else "cost"
-            # Both cohorts are observational, not assigned: a thin one means the
-            # sign is not yet evidence. Say so rather than let the number stand
-            # unqualified.
-            thin = min(p["grounded_turns"], p["ungrounded_turns"]) < _MIN_COHORT_TURNS
-            net_line = (
-                f"[bold {colour}]{abs(net):,.0f} tok/turn {verb}[/bold {colour}] net of injection "
-                f"[dim](n={p['grounded_turns']} grounded / {p['ungrounded_turns']} ungrounded "
-                f"turns{' · provisional, thin cohort' if thin else ''})[/dim]"
-            )
-        console.print(
-            Panel(
-                Text.from_markup(
-                    f"{net_line}\n"
-                    f"[bold]{_fmt_tokens(measured['answer_tok'])}[/bold] tok answer · "
-                    f"[bold]{_fmt_tokens(measured['tool_tok'])}[/bold] tok tool-loops · "
-                    f"[bold]{_fmt_tokens(measured['injected_tokens'])}[/bold] tok injected "
-                    f"([dim]{measured['sessions']} measured sessions[/dim])\n[dim]{proxy_line}[/dim]"
-                ),
-                title="[bold]memo · measured (real transcript)[/bold]",
-                border_style="green",
-                padding=(0, 2),
-            )
-        )
-
-    if s["historic"]["tokens"] == 0:
-        console.print(
-            "[dim]No savings recorded yet (no grounded Claude answers, no\n"
-            "productive consults from other agents). Run a few sessions —\n"
-            "each memory an answer uses, or each memo search another agent\n"
-            "makes, adds to the total. Check the hook with [/dim][bold]memo doctor[/bold][dim].[/dim]"
-        )
-        return
-
-    console.print(_header_panel(s))
-
-    agent_panel = _by_client_panel(s)
-    if agent_panel is not None:
-        console.print(agent_panel)
-
-    daily_rows = [
-        (d["date"][5:], d["grounded"], d["tokens"])
-        for d in s["daily"]  # MM-DD
-    ]
-    console.print(_chart(daily_rows, "cyan", f"last {days} days · tokens/day"))
-
-    if s["monthly"]:
-        monthly_rows = [(m["month"], m["grounded"], m["tokens"]) for m in s["monthly"]]
-        console.print(_chart(monthly_rows, "magenta", "by month · tokens/month"))
-
-    console.print(_growth_text(s))
-    abl = s.get("ablation") or {}
-    if abl.get("turns_off"):
-        console.print(
-            f"[dim]ablation: {abl['turns_on']} turns with memo · "
-            f"{abl['turns_off']} without memo (MEMO_RECALL_DISABLE) — see `memo roi`[/dim]"
-        )
-    console.print(
-        f"[dim]est: {s['tpg']} tok/memory-used (MEMO_ROI_TOKENS_PER_GROUNDED) · "
-        f"{s.get('tpc', 200)} tok/consult by other agents (MEMO_ROI_TOKENS_PER_CONSULT)[/dim]"
-    )
+            console.print("[dim]no per-transform data yet[/dim]")

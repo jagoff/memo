@@ -99,6 +99,16 @@ AGENT_MCP_TOOLS: frozenset[str] = (
             "memo_save_text",
             "memo_version",
             "memo_write_queue_status",
+            # The proxy's toolschemas transform prunes rarely-used memo_*
+            # schemas from the agent profile's own wire payload — this is the
+            # escape hatch back to a pruned tool's schema, so it is
+            # registered unconditionally and never removed.
+            "memo_tool_docs",
+            # The proxy's CCR (cut/recover) transforms stamp every cut with a
+            # `memo_crush_retrieve(hash_marker=...)` recovery marker regardless
+            # of profile, so it is registered unconditionally and never
+            # removed — same reasoning as memo_tool_docs above.
+            "memo_crush_retrieve",
         }
     )
     | _OPERATIONAL_MCP_TOOLS
@@ -169,7 +179,7 @@ def mcp_include_advanced_tools() -> bool:
 
 
 def mcp_profile() -> str:
-    """Resolve the MCP surface profile, defaulting agent clients to 41 tools."""
+    """Resolve the MCP surface profile, defaulting agent clients to 42 tools."""
     profile = _profile("MEMO_MCP_PROFILE", default="agent", strict=True)
     if flags.flag_bool("MEMO_MCP_SLIM"):
         return "core"
@@ -186,9 +196,9 @@ def mcp_tools_to_remove() -> frozenset[str]:
 # Per-profile token-cost estimates for the `memo doctor` advisory. Reduced
 # profiles (agent/core/slim) are cheap; only the full/default surface warns.
 _PROFILE_TOKEN_COST: dict[str, tuple[str, str]] = {
-    "agent": ("41", "~9.4k"),
-    "core": ("58", "~12.9k"),
-    "slim": ("58", "~12.9k"),
+    "agent": ("43", "~9.7k"),
+    "core": ("60", "~13.2k"),
+    "slim": ("60", "~13.2k"),
 }
 
 
@@ -197,5 +207,5 @@ def mcp_profile_token_cost(profile: str | None = None) -> tuple[str, str, bool]:
     (or the active profile when ``None``). ``is_reduced`` is False only for the
     full/default surface — the costly one doctor warns about."""
     resolved = profile if profile is not None else mcp_profile()
-    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("164", "~30.4k"))
+    count, cost = _PROFILE_TOKEN_COST.get(resolved, ("165", "~30.6k"))
     return count, cost, resolved in _PROFILE_TOKEN_COST
