@@ -51,21 +51,31 @@ import http.server, json, pathlib, socketserver
 
 OUT = pathlib.Path(__file__).with_name("probe_capture.jsonl")
 
+
 class H(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_POST(self):
         n = int(self.headers.get("content-length") or 0)
         body = self.rfile.read(n)
-        OUT.open("a").write(json.dumps({
-            "path": self.path,
-            "headers": {k.lower(): v for k, v in self.headers.items()
-                        if k.lower() not in ("authorization", "x-api-key")},
-            "has_auth": any(k.lower() in ("authorization", "x-api-key")
-                            for k in self.headers),
-            "anthropic_beta": self.headers.get("anthropic-beta"),
-            "body_bytes": len(body),
-        }) + "\n")
+        OUT.open("a").write(
+            json.dumps(
+                {
+                    "path": self.path,
+                    "headers": {
+                        k.lower(): v
+                        for k, v in self.headers.items()
+                        if k.lower() not in ("authorization", "x-api-key")
+                    },
+                    "has_auth": any(
+                        k.lower() in ("authorization", "x-api-key") for k in self.headers
+                    ),
+                    "anthropic_beta": self.headers.get("anthropic-beta"),
+                    "body_bytes": len(body),
+                }
+            )
+            + "\n"
+        )
         payload = b'{"error":{"type":"probe","message":"probe only"}}'
         self.send_response(400)
         self.send_header("content-type", "application/json")
@@ -73,7 +83,9 @@ class H(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def log_message(self, *a): pass
+    def log_message(self, *a):
+        pass
+
 
 with socketserver.TCPServer(("127.0.0.1", 8768), H) as s:
     s.serve_forever()
@@ -565,7 +577,7 @@ def marker(key: str, *, kept_chars: int, dropped_chars: int) -> str:
     """The text that replaces what was cut. Tells the model how to get it back."""
     return (
         f"\n[memo: {dropped_chars} chars elided, {kept_chars} kept. "
-        f"Full original: memo_retrieve(key=\"{key}\")]"
+        f'Full original: memo_retrieve(key="{key}")]'
     )
 ```
 
@@ -658,9 +670,20 @@ def test_usage_of_a_bodyless_response_is_all_zeroes():
 
 
 def test_append_writes_one_json_line_per_record(tmp_path):
-    append(tmp_path, Record(request_key="k1", holdout=False, transforms=["toolschemas"],
-                            est_saved_tokens=100, input_tokens=1, output_tokens=2,
-                            cache_creation_tokens=3, cache_read_tokens=4, retrieved=0))
+    append(
+        tmp_path,
+        Record(
+            request_key="k1",
+            holdout=False,
+            transforms=["toolschemas"],
+            est_saved_tokens=100,
+            input_tokens=1,
+            output_tokens=2,
+            cache_creation_tokens=3,
+            cache_read_tokens=4,
+            retrieved=0,
+        ),
+    )
     lines = (tmp_path / "proxy" / "requests.jsonl").read_text().strip().splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["request_key"] == "k1"
@@ -668,13 +691,35 @@ def test_append_writes_one_json_line_per_record(tmp_path):
 
 def test_summarize_compares_treated_against_holdout(tmp_path):
     for i in range(10):
-        append(tmp_path, Record(request_key=f"t{i}", holdout=False, transforms=["x"],
-                                est_saved_tokens=50, input_tokens=500, output_tokens=10,
-                                cache_creation_tokens=0, cache_read_tokens=0, retrieved=0))
+        append(
+            tmp_path,
+            Record(
+                request_key=f"t{i}",
+                holdout=False,
+                transforms=["x"],
+                est_saved_tokens=50,
+                input_tokens=500,
+                output_tokens=10,
+                cache_creation_tokens=0,
+                cache_read_tokens=0,
+                retrieved=0,
+            ),
+        )
     for i in range(10):
-        append(tmp_path, Record(request_key=f"h{i}", holdout=True, transforms=[],
-                                est_saved_tokens=0, input_tokens=1000, output_tokens=10,
-                                cache_creation_tokens=0, cache_read_tokens=0, retrieved=0))
+        append(
+            tmp_path,
+            Record(
+                request_key=f"h{i}",
+                holdout=True,
+                transforms=[],
+                est_saved_tokens=0,
+                input_tokens=1000,
+                output_tokens=10,
+                cache_creation_tokens=0,
+                cache_read_tokens=0,
+                retrieved=0,
+            ),
+        )
     s = summarize(tmp_path)
     assert s["n_treated"] == 10
     assert s["n_holdout"] == 10
@@ -1080,8 +1125,14 @@ def test_auth_headers_are_forwarded():
 
 
 def test_hop_by_hop_headers_are_dropped():
-    out = forward_headers({"host": "127.0.0.1:8768", "content-length": "12",
-                           "connection": "keep-alive", "x-api-key": "k"})
+    out = forward_headers(
+        {
+            "host": "127.0.0.1:8768",
+            "content-length": "12",
+            "connection": "keep-alive",
+            "x-api-key": "k",
+        }
+    )
     assert "host" not in out
     assert "content-length" not in out
     assert "connection" not in out
@@ -1214,9 +1265,7 @@ def rewrite_body(
     if not plan.applied:
         return raw, plan
     try:
-        return json.dumps(
-            zones.to_payload(payload), ensure_ascii=False
-        ).encode("utf-8"), plan
+        return json.dumps(zones.to_payload(payload), ensure_ascii=False).encode("utf-8"), plan
     except Exception:
         _log.warning("proxy: could not re-encode rewritten payload; forwarding original")
         return raw, TransformPlan()
@@ -1286,9 +1335,7 @@ def build_app(upstream: str = UPSTREAM_DEFAULT) -> Any:
             ctx = Context(state_dir=state_dir, session_key=request_key, project=None)
             body, plan = rewrite_body(raw, ctx)
 
-        upstream_req = client.build_request(
-            "POST", "/v1/messages", content=body, headers=headers
-        )
+        upstream_req = client.build_request("POST", "/v1/messages", content=body, headers=headers)
         response = await client.send(upstream_req, stream=True)
 
         captured: dict[str, int] = {}
@@ -1347,9 +1394,7 @@ def test_usage_is_sniffed_out_of_a_streaming_response():
         b'event: message_start\ndata: {"message":{"usage":{"input_tokens":100}}}\n\n',
         captured,
     )
-    sniff_usage(
-        b'event: message_delta\ndata: {"usage":{"output_tokens":42}}\n\n', captured
-    )
+    sniff_usage(b'event: message_delta\ndata: {"usage":{"output_tokens":42}}\n\n', captured)
     assert captured["input_tokens"] == 100
     assert captured["output_tokens"] == 42
 
@@ -1574,15 +1619,14 @@ def proxy_status(port: int) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.25)
         listening = sock.connect_ex(("127.0.0.1", port)) == 0
-    console.print(
-        f"proxy on 127.0.0.1:{port}: {'listening' if listening else 'not running'}"
-    )
+    console.print(f"proxy on 127.0.0.1:{port}: {'listening' if listening else 'not running'}")
 ```
 
 Register it in `src/memo/cli.py` beside the other groups:
 
 ```python
 from memo.cli_proxy import proxy_group
+
 cli.add_command(proxy_group)
 ```
 
@@ -1821,8 +1865,7 @@ class ToolSchemas:
         kept = [
             tool
             for tool in zones.tools
-            if not str(tool.get("name", "")).startswith(_OWNED_PREFIX)
-            or tool.get("name") in keep
+            if not str(tool.get("name", "")).startswith(_OWNED_PREFIX) or tool.get("name") in keep
         ]
         if len(kept) == len(zones.tools):
             return 0
@@ -2036,10 +2079,14 @@ from memo.proxy.zones import Zones
 
 
 def _zones(text: str) -> Zones:
-    return Zones(live_messages=[{
-        "role": "user",
-        "content": [{"type": "tool_result", "content": text}],
-    }])
+    return Zones(
+        live_messages=[
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "content": text}],
+            }
+        ]
+    )
 
 
 def test_a_large_json_array_is_crushed(tmp_path, monkeypatch):
@@ -2126,7 +2173,7 @@ class Beta:
 
 def test_signatures_keep_definitions_and_imports():
     out = signatures(SRC, "python")
-    assert "def alpha(a: int, b: str = \"x\") -> bool:" in out
+    assert 'def alpha(a: int, b: str = "x") -> bool:' in out
     assert "class Beta:" in out
     assert "def gamma(self) -> None:" in out
     assert "import os" in out
