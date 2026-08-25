@@ -3,7 +3,13 @@ set -euo pipefail
 
 APP_NAME="mlx-memo"
 OLD_APP_NAME="memo-mcp"
-PYPI_SPEC="mlx-memo"
+# The [http] extra is NOT optional for a default install: the
+# context-compression proxy installs and wires itself by default (see the
+# "Token-saving proxy" phase), and `memo proxy serve` needs fastapi from this
+# extra. A bare `mlx-memo` still pulls uvicorn and httpx transitively via
+# fastmcp, so fastapi is the single missing piece -- enough to make the launchd
+# agent crashloop while the installer reports success.
+PYPI_SPEC="mlx-memo[http]"
 DEFAULT_VERSION="4.14.0"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=13

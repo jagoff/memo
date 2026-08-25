@@ -65,7 +65,14 @@ def test_failed_uv_install_preserves_existing_tool_and_uses_release_pin(tmp_path
 
     assert result.returncode != 0
     assert sentinel.read_text(encoding="utf-8") == "keep"
-    assert f"tool install mlx-memo=={_pkg_version()} --force" in log.read_text(encoding="utf-8")
+    # The [http] extra is part of the DEFAULT spec, not an optional add-on:
+    # the proxy installs and wires itself by default and needs fastapi from
+    # it. A bare `mlx-memo` still resolves uvicorn and httpx transitively via
+    # fastmcp, so fastapi is the single missing piece — enough to make the
+    # launchd agent crashloop while the installer reported success.
+    assert f"tool install mlx-memo[http]=={_pkg_version()} --force" in log.read_text(
+        encoding="utf-8"
+    )
     assert "uninstall" not in log.read_text(encoding="utf-8")
 
 
@@ -94,7 +101,12 @@ def test_failed_pipx_install_preserves_existing_tool(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert sentinel.read_text(encoding="utf-8") == "keep"
     commands = log.read_text(encoding="utf-8")
-    assert f"install mlx-memo=={_pkg_version()} --force" in commands
+    # The [http] extra is part of the DEFAULT spec, not an optional add-on:
+    # the proxy installs and wires itself by default and needs fastapi from
+    # it. A bare `mlx-memo` still resolves uvicorn and httpx transitively via
+    # fastmcp, so fastapi is the single missing piece — enough to make the
+    # launchd agent crashloop while the installer reported success.
+    assert f"install mlx-memo[http]=={_pkg_version()} --force" in commands
     assert "uninstall" not in commands
 
 

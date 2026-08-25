@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from memo.cli import cli
@@ -815,3 +816,45 @@ def test_maintain_dry_run_reports_errors_without_failing(tmp_path):
 
     assert result.exit_code == 0, result.output
     assert "forget: RuntimeError: boom" in result.output
+
+
+def test_a_vanished_source_file_is_skipped_not_failed():
+    """A pair whose source .md is gone must not fail the whole run.
+
+    Vault-ingested rows carry a path relative to the Obsidian vault root
+    (`notes/...`, `work/...`), which `_resolve_existing` cannot resolve
+    because `Config.from_env()` leaves `vault_path` unset — so the file is
+    genuinely unreachable and the pair raises FileNotFoundError. That is an
+    expected, recurring, non-actionable condition affecting thousands of
+    rows, not a failure of the pass: the run still supersedes, merges and
+    synthesizes everything else.
+
+    Folding it into `errors` made `_fail_on_pass_errors` exit 1, so the
+    nightly `contradict-resolve` reported FAILED every night with the work
+    actually done. An exit code that is always red teaches the operator to
+    ignore it, which is worse than no exit code.
+    """
+    from memo.cli_maintain import _record_pair_failure
+
+    receipt = {"errors": [], "skipped": []}
+
+    _record_pair_failure(receipt, 42, FileNotFoundError(2, "No such file", "notes/gone.md"))
+    assert receipt["errors"] == []
+    assert len(receipt["skipped"]) == 1
+    assert "42" in receipt["skipped"][0]
+
+    _record_pair_failure(receipt, 43, RuntimeError("boom"))
+    assert len(receipt["errors"]) == 1
+    assert "RuntimeError" in receipt["errors"][0]
+    assert len(receipt["skipped"]) == 1
+
+
+def test_only_real_errors_fail_the_run():
+    """The exit code must mean something: skipped pairs are reported but do
+    not turn the run red; a genuine error still does."""
+    from memo.cli_maintain import _fail_on_pass_errors
+
+    _fail_on_pass_errors({"errors": [], "skipped": ["pair 42: source file gone"]}, dry_run=False)
+
+    with pytest.raises(SystemExit):
+        _fail_on_pass_errors({"errors": ["contradict: RuntimeError: boom"]}, dry_run=False)

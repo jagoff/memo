@@ -31,11 +31,18 @@ def proxy_serve(host: str, port: int, upstream: str) -> None:
         import uvicorn
 
         from memo.proxy.server import build_app
+
+        # build_app() must be INSIDE the guard: it imports fastapi lazily, and
+        # fastapi is the one [http] member a default `pip install mlx-memo`
+        # actually lacks -- uvicorn and httpx arrive transitively via fastmcp.
+        # Called outside, its ImportError escaped as a raw ModuleNotFoundError,
+        # so the launchd agent crashlooped instead of printing this message.
+        app = build_app(upstream)
     except ImportError as exc:  # missing [http] extra — a clean CLI error
         raise click.ClickException(
             "memo proxy needs the [http] extra: pip install 'mlx-memo[http]'"
         ) from exc
-    uvicorn.run(build_app(upstream), host=host, port=port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 @proxy_group.command("off")

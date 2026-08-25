@@ -165,3 +165,34 @@ def test_serve_without_the_http_extra_is_a_clean_cli_error(tmp_path, monkeypatch
     assert result.exit_code != 0
     assert "pip install" in result.output or "extra" in result.output.lower()
     assert "Traceback" not in result.output
+
+
+def test_serve_with_only_fastapi_missing_is_a_clean_cli_error(tmp_path, monkeypatch):
+    """The variant that actually happens on a default install.
+
+    `pip install mlx-memo` (no extras) still pulls uvicorn and httpx in
+    transitively via fastmcp — only `fastapi` is absent. The pre-existing
+    regression test blocks fastapi, uvicorn AND httpx, and blocking *uvicorn*
+    is what makes the guard fire, so it passed over a configuration that
+    cannot occur while the one that always occurs went untested.
+
+    `build_app` imports fastapi lazily and was called OUTSIDE the try, so the
+    ImportError escaped the guard: the launchd agent died with a raw
+    ModuleNotFoundError and crashlooped, while `install.sh` reported the proxy
+    as installed and working.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "fastapi" or name.startswith("fastapi."):
+            raise ImportError(f"No module named {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    result = CliRunner().invoke(proxy_group, ["serve"], env=_env(tmp_path))
+    assert result.exit_code != 0
+    assert "pip install" in result.output or "extra" in result.output.lower()
+    assert "Traceback" not in result.output
+    assert "ModuleNotFoundError" not in result.output
