@@ -278,6 +278,27 @@ def _signatures_typescript(source: str, lang: tree_sitter.Language | None) -> st
         return source
 
 
+def _emit_ts_export(node: Any, lines: list[str], out: list[str], source: str) -> None:
+    """Emit an `export ...` declaration. A re-export carries no declaration
+    and is skipped."""
+    decl = node.child_by_field_name("declaration")
+    if decl is None:
+        return
+    if decl.type in ("class_declaration", "class"):
+        # An exported class has to be WALKED, not just quoted: this used to
+        # emit the header and stop, so every `export class` -- which is most
+        # of them -- came back with no methods at all.
+        seg = _ts_header_segment(node, lines, source)
+        if seg:
+            out.append(seg)
+            _walk_ts_nodes(decl, lines, out, source)
+        return
+    if decl.type in ("function_declaration", "lexical_declaration", "variable_declaration"):
+        segment = _ts_source_segment(node, source)
+        if segment:
+            out.append(segment)
+
+
 def _walk_ts_nodes(node: Any, lines: list[str], out: list[str], source: str) -> None:
     """Walk AST and extract signatures for imports, exports, functions, classes."""
     for child in node.children:
@@ -287,28 +308,34 @@ def _walk_ts_nodes(node: Any, lines: list[str], out: list[str], source: str) -> 
             if segment:
                 out.append(segment)
         elif ctype == "export_statement":
-            # Only export declarations, not re-exports
-            if child.child_by_field_name("declaration"):
-                decl = child.child_by_field_name("declaration")
-                if decl and decl.type in (
-                    "function_declaration",
-                    "class_declaration",
-                    "lexical_declaration",
-                    "variable_declaration",
-                ):
-                    segment = _ts_source_segment(child, source)
-                    if segment:
-                        out.append(segment)
+            _emit_ts_export(child, lines, out, source)
         elif ctype in ("function_declaration", "function"):
             seg = _ts_header_segment(child, lines, source)
             if seg:
                 out.append(seg)
                 out.append(" " * (child.start_point[1] + 2) + _ELISION)
-        elif ctype in ("class_declaration", "class"):
+        elif ctype == "class_declaration" or (
+            # `"class"` also matches the bare KEYWORD token inside a class
+            # declaration, so matching on the type alone emitted the header a
+            # second time from inside the class's own children. A real class
+            # expression has a `body`; the keyword does not.
+            ctype == "class" and child.child_by_field_name("body") is not None
+        ):
             seg = _ts_header_segment(child, lines, source)
             if seg:
                 out.append(seg)
                 _walk_ts_nodes(child, lines, out, source)
+        elif ctype in ("method_definition", "method_signature"):
+            # Methods are the API surface. Without this branch a class reduced
+            # to its `class Foo {` line and nothing else -- the walker recursed
+            # past `method_definition` into the parameter list and body and
+            # emitted neither. The Python side has always emitted `def` headers
+            # (see `_emit_body`); this makes TypeScript match rather than hand
+            # the model a class with no methods.
+            seg = _ts_method_header(child, lines, source)
+            if seg:
+                out.append(seg)
+                out.append(" " * (child.start_point[1] + 2) + _ELISION)
         elif ctype in ("lexical_declaration", "variable_declaration"):
             # const foo = ... or let foo = ...
             seg = _ts_source_segment(child, source)
@@ -317,6 +344,24 @@ def _walk_ts_nodes(node: Any, lines: list[str], out: list[str], source: str) -> 
         else:
             # Recurse into nested structures
             _walk_ts_nodes(child, lines, out, source)
+
+
+def _ts_method_header(node: Any, lines: list[str], source: str) -> str:
+    """A method's signature without its body.
+
+    `_ts_header_segment` returns whole lines, which is right for a multi-line
+    declaration and wrong for `render(d: number): string { return "x"; }` --
+    that one line IS the body. Cut at the brace that opens the body, using the
+    node's own `body` field so a brace inside a type or default value is not
+    mistaken for it.
+    """
+    body = node.child_by_field_name("body")
+    if body is not None and body.start_byte > node.start_byte:
+        indent = " " * node.start_point[1]
+        head = source[node.start_byte : body.start_byte].strip()
+        if head:
+            return f"{indent}{head} {{"
+    return _ts_header_segment(node, lines, source)
 
 
 def _ts_source_segment(node: Any, source: str) -> str:

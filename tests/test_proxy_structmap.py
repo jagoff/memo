@@ -680,3 +680,99 @@ def test_apply_never_stores_a_net_larger_block_than_the_original(tmp_path):
     assert len(stored) <= len(tiny)
     assert stored == tiny
     assert saved == 0
+
+
+# ── TypeScript / JavaScript signature maps ───────────────────────────────────
+#
+# The tree-sitter walker shipped without tests. These cover the shapes it
+# actually meets in a `Read` of a real .ts/.tsx file.
+
+_TS_SOURCE = """\
+import { useState } from "react";
+import type { Foo } from "./foo";
+
+export interface Widget {
+  id: string;
+  label: string;
+}
+
+type Handler = (e: Event) => void;
+
+export class Panel extends Base implements Widget {
+  private count = 0;
+
+  constructor(private readonly name: string) {
+    super();
+    this.count = 1;
+  }
+
+  render(depth: number): string {
+    const parts = [];
+    for (let i = 0; i < depth; i++) {
+      parts.push(this.name);
+    }
+    return parts.join("/");
+  }
+}
+
+export function build(a: number, b: string): Widget {
+  const id = `${a}-${b}`;
+  return { id, label: b };
+}
+
+const arrow = (x: number) => x * 2;
+"""
+
+
+def test_typescript_keeps_declarations_and_drops_bodies():
+    from memo.proxy.transforms.structmap import signatures
+
+    out = signatures(_TS_SOURCE, "typescript")
+
+    # Declarations survive -- including METHOD signatures. A class reduced to
+    # just `class Panel {` loses the whole API surface, which is the one thing
+    # a signature map exists to show; the Python side emits `def render(...)`
+    # and TypeScript must match it.
+    for kept in ("import", "class Panel", "function build", "render", "constructor"):
+        assert kept in out, f"{kept!r} missing from:\n{out}"
+    # Bodies do not.
+    for dropped in ("parts.push", 'parts.join("/")', "this.count = 1"):
+        assert dropped not in out, f"{dropped!r} survived in:\n{out}"
+    assert len(out) < len(_TS_SOURCE)
+
+
+def test_javascript_uses_the_js_grammar_not_the_ts_one():
+    from memo.proxy.transforms.structmap import signatures
+
+    src = "export function go(a) {\n  const x = a + 1;\n  return x;\n}\n"
+    out = signatures(src, "javascript")
+    assert "function go" in out
+    assert "const x = a + 1" not in out
+
+
+def test_an_unsupported_language_is_returned_untouched():
+    from memo.proxy.transforms.structmap import signatures
+
+    src = "SELECT 1;\n"
+    assert signatures(src, "sql") == src
+
+
+def test_syntactically_broken_typescript_still_yields_its_declaration():
+    """tree-sitter is error-tolerant: a half-written file still parses to a
+    partial tree, so the declaration line survives rather than the map coming
+    back empty. What must NOT happen is a crash or a mangled result."""
+    from memo.proxy.transforms.structmap import signatures
+
+    out = signatures("export class {{{ broken\n", "typescript")
+    assert "export class" in out
+
+
+def test_language_is_chosen_by_extension():
+    from memo.proxy.transforms.structmap import _language_for
+
+    assert _language_for("/a/b/c.ts") == "typescript"
+    assert _language_for("/a/b/c.tsx") == "typescript"
+    assert _language_for("/a/b/c.js") == "javascript"
+    assert _language_for("/a/b/c.py") == "python"
+    assert _language_for("/a/b/c.md") == ""
+    assert _language_for("") == ""
