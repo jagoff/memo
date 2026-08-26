@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 from memo.proxy.plan import Context
 from memo.proxy.transforms.toolschemas import DOCS_TOOL_NAME, ToolSchemas, recent_tool_names
@@ -483,3 +484,40 @@ def test_the_keep_set_never_grows_mid_session(tmp_path, monkeypatch):
     zones2 = make_zones(["memo_search", "memo_graph"])
     ToolSchemas().apply(zones2, ctx)
     assert {t["name"] for t in zones2.tools} == first
+
+
+def test_builtin_discovery_shells_out_and_degrades_to_the_core_set(monkeypatch):
+    """`_discover_builtins` asks the real CLI, and must never depend on it.
+
+    Whatever this returns lands in the `tools` array, which sits at the front
+    of the cached prefix — so a discovery that answers on one turn and fails
+    on the next would reshape the prefix and re-cache the conversation. Every
+    failure mode therefore collapses to the same `_BUILTIN_CORE`: a non-zero
+    exit, empty stdout, a timeout, a missing binary.
+    """
+    import subprocess
+
+    import memo.proxy.transforms.toolschemas as ts
+
+    core = ts._BUILTIN_CORE
+
+    def _ok(*_a, **_k):
+        return SimpleNamespace(returncode=0, stdout="Bash  run a command\nGlob  find files\n")
+
+    monkeypatch.setattr(subprocess, "run", _ok)
+    ts._discover_builtins.cache_clear() if hasattr(ts._discover_builtins, "cache_clear") else None
+    found = ts._discover_builtins()
+    assert core <= found
+    assert {"Bash", "Glob"} <= found
+
+    for failure in (
+        lambda *_a, **_k: SimpleNamespace(returncode=1, stdout=""),
+        lambda *_a, **_k: SimpleNamespace(returncode=0, stdout="   \n"),
+        lambda *_a, **_k: (_ for _ in ()).throw(subprocess.TimeoutExpired("claude", 5)),
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("claude")),
+    ):
+        monkeypatch.setattr(subprocess, "run", failure)
+        ts._discover_builtins.cache_clear() if hasattr(
+            ts._discover_builtins, "cache_clear"
+        ) else None
+        assert ts._discover_builtins() == core

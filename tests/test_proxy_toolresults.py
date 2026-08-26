@@ -541,3 +541,23 @@ def test_a_string_content_block_is_still_replaced_wholesale(tmp_path):
     block = {"type": "tool_result", "content": "plain string"}
     _set_block_text(block, "cut")
     assert block["content"] == "cut"
+
+
+def test_an_unreadable_filter_dir_does_not_break_filter_loading(monkeypatch, tmp_path):
+    """The catalog is an optimisation, never a prerequisite.
+
+    Filters are cached against the newest mtime under `filters/`. If stat-ing
+    that directory raises -- a permissions change, a directory swapped out
+    mid-run -- the mtime falls back to 0.0 and loading continues rather than
+    taking the request down with it.
+    """
+    import memo.proxy.transforms.toolresults as tr
+
+    class _AngryDir(type(tmp_path)):
+        def glob(self, _pattern):
+            raise OSError("filters dir vanished")
+
+    monkeypatch.setattr(tr, "DEFAULT_FILTERS_DIR", _AngryDir(tmp_path))
+    monkeypatch.setattr(tr, "_cached_filters", None, raising=False)
+    filters = tr.load_filters(tmp_path)
+    assert isinstance(filters, list)
