@@ -9,6 +9,26 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.2] - 2026-08-26
+
+### Fixed
+
+- Contradiction detection no longer pairs reference-tier rows. A
+  `<file>#chunk-N` row is a fragment of an ingested document, and two sections
+  of one CV, spec or book are not a disagreement. Pairing them produced a
+  bogus "failure pattern" whose Wrong and Right were two jobs in the same work
+  history, and drove the nightly pass into a `FileNotFoundError` on the 4119
+  rows whose paths point inside an Obsidian vault the resolver cannot reach.
+  4.14.1 stopped those from failing the run; this stops them from being opened
+  at all. Measured on a real corpus: skipped pairs went from 1 to **0**, with
+  9 genuine contradictions still detected.
+
+- A test-only module-eviction bug that hung `test_cli_http` on roughly 12% of
+  nightly runs. `sys.modules.pop` left the parent package attribute bound to
+  the evicted module, so a `monkeypatch.setattr` on a dotted string patched a
+  stale object while the code under test re-imported a fresh one — and started
+  a real server instead of the stub.
+
 ## [4.14.1] - 2026-08-25
 
 ### Fixed
