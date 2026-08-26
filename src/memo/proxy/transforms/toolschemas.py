@@ -104,9 +104,9 @@ def _discover_builtins() -> frozenset[str]:
     Falls back to _BUILTIN_CORE if discovery fails."""
     try:
         import subprocess
+
         result = subprocess.run(
-            ["claude", "--list-tools"],
-            capture_output=True, text=True, timeout=5
+            ["claude", "--list-tools"], capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0 and result.stdout.strip():
             names = {line.strip().split()[0] for line in result.stdout.splitlines() if line.strip()}
@@ -382,7 +382,11 @@ class ToolSchemas:
             # prefix stability.
             try:
                 turn_count = getattr(ctx, "turn_count", None)
-                if isinstance(turn_count, int) and turn_count > 0 and turn_count % _SOFT_REFRESH_INTERVAL == 0:
+                if (
+                    isinstance(turn_count, int)
+                    and turn_count > 0
+                    and turn_count % _SOFT_REFRESH_INTERVAL == 0
+                ):
                     current_names = recent_tool_names(ctx.state_dir, window)
                     if frozen_scope == "memo":
                         current_names = {n for n in current_names if n.startswith(_OWNED_PREFIX)}
