@@ -53,11 +53,24 @@ import ast
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
 from memo.proxy import ccr
 from memo.proxy.plan import ZONE_LIVE, Context
+
+try:
+    import tree_sitter
+    import tree_sitter_javascript as ts_javascript
+    import tree_sitter_typescript as ts_typescript
+    _TS_LANG = tree_sitter.Language(ts_typescript.language_typescript())
+    _JS_LANG = tree_sitter.Language(ts_javascript.language())
+    _HAS_TREE_SITTER = True
+except ImportError:
+    _HAS_TREE_SITTER = False
+    _TS_LANG = None
+    _JS_LANG = None
 from memo.proxy.transforms.delta import (
     _block_text,
     _read_tool_paths,
@@ -69,7 +82,7 @@ from memo.proxy.zones import Zones, whole_history_scope
 
 _log = logging.getLogger(__name__)
 
-_SUPPORTED_LANGUAGES = frozenset({"python"})
+_SUPPORTED_LANGUAGES = frozenset({"python"} | ({"typescript", "javascript"} if _HAS_TREE_SITTER else set()))
 _ELISION = "..."
 
 # Extended as more languages grow an `ast`-equivalent parser. A path whose
@@ -80,7 +93,15 @@ _ELISION = "..."
 # language has no evidence behind it yet; adding one speculatively would be
 # exactly the "flexibility that wasn't requested" this codebase's own style
 # guide warns against.
-_LANGUAGE_BY_EXTENSION = {".py": "python"}
+_LANGUAGE_BY_EXTENSION = {
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".mts": "typescript",
+}
 
 # A `cat -n`/Read-style numbered line: leading whitespace, digits, then
 # whitespace before the real content. Deliberately loose on the exact
@@ -159,6 +180,9 @@ def signatures(source: str, language: str) -> str:
     try:
         if language not in _SUPPORTED_LANGUAGES:
             return source
+        if language in ("typescript", "javascript") and _HAS_TREE_SITTER:
+            lang = _TS_LANG if language == "typescript" else _JS_LANG
+            return _signatures_typescript(source, lang)
         parsed = _parseable_python(source)
         if parsed is None:
             return source
@@ -191,13 +215,24 @@ def sniff_signatures(text: str) -> str | None:
         if not isinstance(text, str) or len(text) < _SNIFF_MIN_CHARS:
             return None
         reduced = signatures(text, "python")
-        if not isinstance(reduced, str) or reduced == text:
-            return None
-        if len(reduced) > len(text) * _SNIFF_MAX_RATIO:
-            return None
-        return reduced
+        if isinstance(reduced, str) and reduced != text and len(reduced) <= len(text) * _SNIFF_MAX_RATIO:
+            return reduced
     except Exception:
-        return None
+        _log.debug("structmap: python sniff failed", exc_info=True)
+
+    # Also try TypeScript/JavaScript sniffing for blocks with no known path
+    if _HAS_TREE_SITTER:
+        for _lang_name, lang_obj in [("typescript", _TS_LANG), ("javascript", _JS_LANG)]:
+            if lang_obj is None:
+                continue
+            try:
+                reduced = _signatures_typescript(text, lang_obj)
+                if isinstance(reduced, str) and reduced != text and len(reduced) <= len(text) * _SNIFF_MAX_RATIO:
+                    return reduced
+            except Exception:
+                _log.debug("structmap: ts/js sniff failed for %s", _lang_name, exc_info=True)
+
+    return None
 
 
 def _emit_body(stmts: list[ast.stmt], lines: list[str], out: list[str], source: str) -> None:
@@ -212,6 +247,82 @@ def _emit_body(stmts: list[ast.stmt], lines: list[str], out: list[str], source: 
         elif isinstance(node, ast.ClassDef):
             out.extend(_header_lines(node, lines))
             _emit_body(node.body, lines, out, source)
+
+
+def _signatures_typescript(source: str, lang: tree_sitter.Language | None) -> str:
+    """Extract import/export/function/class signatures from TypeScript/JavaScript source."""
+    if lang is None or not _HAS_TREE_SITTER:
+        return source
+    try:
+        parser = tree_sitter.Parser(lang)
+        tree = parser.parse(bytes(source, "utf8"))
+        lines = source.splitlines()
+        out: list[str] = []
+        _walk_ts_nodes(tree.root_node, lines, out, source)
+        result = "\n".join(out)
+        return result if result.strip() else source
+    except Exception:
+        return source
+
+
+def _walk_ts_nodes(node: Any, lines: list[str], out: list[str], source: str) -> None:
+    """Walk AST and extract signatures for imports, exports, functions, classes."""
+    for child in node.children:
+        ctype = child.type
+        if ctype in ("import_statement", "import_clause"):
+            segment = _ts_source_segment(child, source)
+            if segment:
+                out.append(segment)
+        elif ctype == "export_statement":
+            # Only export declarations, not re-exports
+            if child.child_by_field_name("declaration"):
+                decl = child.child_by_field_name("declaration")
+                if decl and decl.type in (
+                    "function_declaration",
+                    "class_declaration",
+                    "lexical_declaration",
+                    "variable_declaration",
+                ):
+                    segment = _ts_source_segment(child, source)
+                    if segment:
+                        out.append(segment)
+        elif ctype in ("function_declaration", "function"):
+            seg = _ts_header_segment(child, lines, source)
+            if seg:
+                out.append(seg)
+                out.append(" " * (child.start_point[1] + 2) + _ELISION)
+        elif ctype in ("class_declaration", "class"):
+            seg = _ts_header_segment(child, lines, source)
+            if seg:
+                out.append(seg)
+                _walk_ts_nodes(child, lines, out, source)
+        elif ctype in ("lexical_declaration", "variable_declaration"):
+            # const foo = ... or let foo = ...
+            seg = _ts_source_segment(child, source)
+            if seg and len(seg) < 200:
+                out.append(seg)
+        else:
+            # Recurse into nested structures
+            _walk_ts_nodes(child, lines, out, source)
+
+
+def _ts_source_segment(node: Any, source: str) -> str:
+    """Extract source text for a node."""
+    start = node.start_byte
+    end = node.end_byte
+    try:
+        return source[start:end].split("\n")[0]  # first line only
+    except Exception:
+        return ""
+
+
+def _ts_header_segment(node: Any, lines: list[str], source: str) -> str:
+    """Extract the header line(s) of a function/class declaration."""
+    start_line = node.start_point[0]
+    # For now, just take the first line (the declaration line)
+    if start_line < len(lines):
+        return lines[start_line]
+    return _ts_source_segment(node, source)
 
 
 def _node_start_line(node: ast.stmt) -> int:

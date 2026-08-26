@@ -471,13 +471,7 @@ def recall_hook() -> None:
 
     payload_cwd = payload.get("cwd")
 
-    from memo.recall_logic import (
-        apply_injection_filters,
-        knobs_from_flags,
-        make_vec_cosine,
-        rank_hits,
-        uncertain_exclusion,
-    )
+    from memo.recall_logic import knobs_from_flags
 
     # Single-source knob resolution — the SAME builder the daemon path
     # (_recall_logic) uses, so the two paths cannot diverge on ranking
@@ -550,21 +544,8 @@ def recall_hook() -> None:
                 print("# memo recall-hook: cold start — downgrading to bm25", file=sys.stderr)
             knobs = replace(knobs, mode="bm25")
 
-    top_k = knobs.top_k
     mode = knobs.mode
-    search_k = top_k * 3 if (knobs.project_tag or knobs.contextual) else top_k
-    from memo.tiers import REFERENCE_TYPES
 
-    exclude_types = set(REFERENCE_TYPES) if flag_bool("MEMO_RECALL_EXCLUDE_REFERENCE") else None
-    # Negative Recall (daemon parity, recall_logic._recall_excluded_types): drop
-    # failure_pattern from normal recall so anti-memories surface only in the ⛔
-    # AVOID block below. OFF ⇒ they flow into normal recall exactly as today.
-    if flag_bool("MEMO_NEGATIVE_RECALL_ENABLED"):
-        from memo.negative_recall import FAILURE_PATTERN_TYPE
-
-        exclude_types = (exclude_types or set()) | {FAILURE_PATTERN_TYPE}
-    # '_uncertain' quarantine (default on) — daemon parity (recall_logic).
-    exclude_tags = uncertain_exclusion()
     # Budget guard for the fallback embed: a busy/warming daemon answers `ping`
     # (so `Memory` routes embeds through the socket) but not recall — cap the
     # client timeout to the residual budget and require the daemon, so a stalled
@@ -582,151 +563,19 @@ def recall_hook() -> None:
         _bail(f"search failed: {exc}")
         return
 
-    # Ranking pipeline — identical to the daemon path (_recall_logic):
-    # rank_hits with the hybrid cosine gate and preference boost, then the
-    # shared skip-below/gap injection filters. Graph ordering already ran in search.
-    _vec_cosine = make_vec_cosine(mem, prompt)
+    # Shared pipeline: search → rank → filter → dedup → format → render
+    from memo.recall_logic import run_recall_pipeline
 
-    _prefs: Any | None = None
-    if knobs.contextual:
-        with contextlib.suppress(Exception):
-            _prefs = mem.contextual.context.get_preferences()
-
-    # Epistemic gate for the empty marker: "memo has no record" may only be
-    # asserted after a search that RAN successfully and qualified nothing. A
-    # search exception (locked DB, store error) keeps the silent `{}` bail —
-    # parity with the daemon path, whose search except in recall_logic returns
-    # "{}" before the marker gate.
-    _search_ok = False
-
-    def _rank(
-        query_text: str,
-        *,
-        _knobs: RankKnobs = knobs,
-        _mode: str = mode,
-        _vc: Callable[[Any], float | None] | None = _vec_cosine,
-    ) -> list:
-        nonlocal _search_ok
+    _prev_recalled_ids: set[str] = set()
+    if _sid and _turn is not None:
         try:
-            hits = mem.search(
-                query_text,
-                limit=search_k,
-                mode=_mode,
-                recency=True,
-                budget_ms=recall_search_budget_ms(),
-                exclude_types=exclude_types,
-                exclude_tags=exclude_tags,
-            )
-        except Exception as exc:
-            # A vec/hybrid embed can stall on a busy daemon socket (capped to
-            # _FALLBACK_EMBED_TIMEOUT_S above). Downgrade to bm25 — no embed, no
-            # cold-load GPU fight — so recall stays within the hook budget
-            # instead of bailing to an empty result.
-            if _mode in ("vec", "hybrid"):
-                if flag_bool("MEMO_RECALL_DEBUG"):
-                    print(
-                        f"# memo recall-hook: {_mode} embed failed ({exc}); bm25 fallback",
-                        file=sys.stderr,
-                    )
-                return _rank(
-                    query_text, _knobs=replace(_knobs, mode="bm25"), _mode="bm25", _vc=None
-                )
-            if flag_bool("MEMO_RECALL_DEBUG"):
-                print(f"# memo recall-hook: search failed: {exc}", file=sys.stderr)
-            return []
-        _search_ok = True
-        # Recency band (daemon parity, recall_logic): re-fetch recent hits above
-        # the floor so freshness isn't lost to the similarity cut. Default OFF.
-        # Skipped on the bm25 downgrade — fetch_recency_band would re-embed and
-        # re-stall on the same busy daemon we just fell away from.
-        _band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
-        if _band_days > 0 and _mode != "bm25":
-            from memo.recall_logic import apply_recency_band, fetch_recency_band
+            from memo import session as _session_mod
 
-            hits = apply_recency_band(
-                hits,
-                fetch_recency_band(
-                    mem, days=_band_days, exclude_types=exclude_types, floor=_knobs.min_sim
-                ),
-            )
-        hits = _apply_chunk_parent_rollup(mem, query_text, _mode, hits)
-        # query=prompt (the original prompt, NOT query_text which may be the
-        # expanded context) matches every daemon-path rank_hits call
-        # (recall_logic._recall_logic): without it _is_broad_query(None) is
-        # always False, so altitude-boost's broad= gate never fires here →
-        # silent daemon/subprocess ranking divergence.
-        return rank_hits(hits, _knobs, vec_cosine=_vc, preferences=_prefs, query=prompt)
-
-    qualifying = _rank(prompt)
-
-    if not qualifying and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
-        from memo.recall_logic import _session_context
-
-        _ctx = _session_context(mem, exclude_types)
-        if _ctx:
-            qualifying = _rank(f"{_ctx}\n{prompt}")
-            if qualifying and flag_bool("MEMO_RECALL_DEBUG"):
-                print(
-                    f"# memo recall-hook: query expansion recovered {len(qualifying)} hits",
-                    file=sys.stderr,
-                )
-
-    # Negative Recall (⛔ AVOID) — daemon parity (recall_logic). A preemptive,
-    # high-precision pass over type=failure_pattern anti-memories, rendered as a
-    # distinct block and excluded from the normal section above. Reuses the
-    # cached query embedding; budget-gated; can_embed is False on the bm25
-    # downgrade so it never cold-loads MLX. Default OFF ⇒ "". An ⛔ can fire even
-    # when normal recall is empty, so it is computed before the empty returns.
-    from memo.recall_logic import _avoid_only_output, _negative_recall_block
-
-    _avoid_block = _negative_recall_block(
-        mem,
-        prompt,
-        exclude_tags=exclude_tags,
-        token_budget=token_budget,
-        can_embed=(mode in ("vec", "hybrid")),
-    )
-
-    pre_filter = qualifying
-    qualifying = apply_injection_filters(qualifying)
-    # Unmatched-term gate (daemon parity, recall_logic): drop the whole injection
-    # when no hit lexically covers the query's salient terms. Default OFF.
-    if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and qualifying:
-        from memo.recall_logic import unmatched_term_gate
-
-        if unmatched_term_gate(prompt, qualifying):
-            qualifying = []
-
-    _guard_banner: str | None = None
-    _guard_ids: list[str] = []
-    _guard_sim_threshold = flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
-    if flag_bool("MEMO_GUARD_ENABLED") and qualifying:
-        from memo.guard import guard_banner as _gb
-        from memo.guard import guard_candidates as _gc
-
-        _guard_banner = _gb(prompt, qualifying, sim_threshold=_guard_sim_threshold)
-        if _guard_banner:
-            _guard_ids = [
-                getattr(h, "id", "")
-                for h in _gc(prompt, qualifying, sim_threshold=_guard_sim_threshold)[:1]
-            ]
-
-    _interject_banner: str | None = None
-    if qualifying:
-        from memo import interject as _ij
-
-        _interject_banner = _ij.evaluate_and_render(
-            cfg,
-            mem,
-            prompt=prompt,
-            hits=qualifying,
-            sim_threshold=_guard_sim_threshold,
-        )
+            _prev_recalled_ids = set(_session_mod.get_recalled_ids(cfg.state_dir, _sid))
+        except Exception as e:
+            _log.debug("get_recalled_ids failed: %s", e)
 
     def _stamp_metrics(n_hits: int) -> None:
-        # ``hits`` is the POST-session-dedup injected count (0 on a bail) so
-        # the subprocess line is comparable with the daemon path, which counts
-        # the final rendered output. ``total_ms`` stays end-to-end from _t0.
         try:
             from memo import recall_metrics
 
@@ -739,208 +588,61 @@ def recall_hook() -> None:
         except Exception as exc:
             _log.debug("recall metrics stamp failed: %s", exc)
 
-    # Pre-top-K paraphrase collapse (daemon parity, recall_logic): drop lexical
-    # near-dups from the over-fetched pool BEFORE truncation so they don't crowd
-    # out distinct results. Default ON. Distinct from the post-top-K intra-dedup
-    # below (MEMO_RECALL_INTRA_DEDUP), which can't recover a crowded-out result.
-    if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(qualifying) > 1:
-        from memo.recall_logic import collapse_near_dups
-
-        qualifying = collapse_near_dups(
-            qualifying, threshold=flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8
-        )
-
-    relevant = qualifying[:top_k]
-
-    # Precision gate (Lever 3): suppress when the top hit's score falls in a
-    # band that has historically never been grounded.  Reads a small cached
-    # JSON — cheap for the 5 s recall-hook budget.  Default OFF.
-    # Decision: this suppresses an EXISTING record, so the empty-recall marker
-    # ("no recorded memories") would be epistemically false here — the gate
-    # stays a silent `{}` bail, same as the daemon path (recall_logic).
-    if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
-        try:
-            from memo.token_meter import load_precision_bands
-            from memo.token_meter import suppress_score as _pg_suppress
-
-            _pg_bands = load_precision_bands(cfg.state_dir)
-            if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
-                _stamp_metrics(0)
-                _bail("precision-gated (learned zero-grounding band)")
-                return
-        except Exception as _pg_exc:
-            _log.debug("precision gate check failed: %s", _pg_exc)
-
-    if flag_bool("MEMO_RECALL_INTRA_DEDUP") and len(relevant) > 1:
-        from memo.recall_logic import collapse_near_dups
-
-        _thr = flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD")
-        relevant = collapse_near_dups(relevant, threshold=0.8 if _thr is None else _thr)
-    # Rank-overflow nudge (the hits just below the top-K cut) — same split the
-    # daemon path renders, distinct from the graph-associative nudge below.
-    nudge = qualifying[top_k : top_k + 2]
-    # Omitted tail (rank-overflow beyond the nudge + injection-filtered hits),
-    # computed exactly like the daemon path (recall_logic) so
-    # MEMO_RECALL_OMISSIONS_TAIL counts identically across both paths.
-    omitted = _rank_overflow_omitted(qualifying, pre_filter, top_k)
-
-    if relevant and knobs.contextual:
-        with contextlib.suppress(Exception):
-            mem.contextual.record_search(prompt, [h.id for h in relevant])
-
-    _latency_ms_subprocess = int((time.time() - _t0) * 1000)
-    try:
-        from memo.dashboard import append_recall_log
-
-        append_recall_log(
-            cfg.state_dir,
-            prompt=prompt,
-            hits=[
-                {"id": h.id, "score": h.score, "title": h.title, "snippet": (h.body or "")[:240]}
-                for h in relevant
-            ],
-            mode=mode,
-            latency_ms=_latency_ms_subprocess,
-            via="subprocess",
-            session_id=_sid,
-            turn=_turn,
-            client=_client,
-        )
-    except Exception as exc:
-        _log.debug("subprocess recall-log write failed: %s", exc)
-
-    if not relevant:
-        _stamp_metrics(0)
-        # An ⛔ anti-memory can fire even when normal recall is empty — surface it
-        # alone (daemon parity: recall_logic returns _avoid_only_output here).
-        if _avoid_block:
-            _close_memory()
-            print(_avoid_only_output(_avoid_block))
-            sys.exit(0)
-        if not _search_ok:
-            # No search ran successfully — absence of record is UNPROVEN, so
-            # the epistemic marker must not fire. Silent `{}`, daemon parity.
-            _bail("search failed — absence unproven, no marker")
-            return
-        # Search ran, nothing qualified — in a real session, emit the one-line
-        # epistemic marker (MEMO_RECALL_EMPTY_MARKER, default on) instead of a
-        # silent bail, so "memo has no record" is distinguishable from "memo
-        # did not look". Pure formatting; the empty recall-log entry above
-        # already recorded the event.
-        if _sid:
-            from memo.recall_logic import render_empty_recall_output
-
-            _empty = render_empty_recall_output()
-            if _empty is not None:
-                if flag_bool("MEMO_RECALL_DEBUG"):
-                    print(
-                        f"# memo recall-hook: no hits above min_sim={knobs.min_sim}"
-                        " — emitting empty marker",
-                        file=sys.stderr,
-                    )
-                _close_memory()
-                print(_empty)
-                sys.exit(0)
-        _bail(f"no hits above min_sim={knobs.min_sim}")
-        return
-
-    # Session dedup: filter IDs already injected in earlier turns (already in context window).
-    _prev_recalled: dict[str, int] = {}
-    if _sid and _turn is not None:
-        try:
-            from memo import session as _session_mod
-
-            _prev_recalled = _session_mod.get_recalled_ids(cfg.state_dir, _sid)
-        except Exception as e:
-            _log.debug("get_recalled_ids failed: %s", e)
-            _prev_recalled = {}
-    if _prev_recalled:
-        relevant = [h for h in relevant if h.id not in _prev_recalled]
-    _stamp_metrics(len(relevant))
-    if not relevant:
-        # Normal hits were all already recalled this session; an ⛔ that fired
-        # this turn is still worth surfacing on its own (daemon parity).
-        if _avoid_block:
-            _close_memory()
-            print(_avoid_only_output(_avoid_block))
-            sys.exit(0)
-        _bail("all hits already recalled this session")
-        return
-
-    from memo.recall_logic import (
-        CITE_INSTRUCTION,
-        render_by_format,
-        resolve_recall_format,
-    )
-
-    def _est_tokens(s: str) -> int:
-        return max(1, len(s) // 4)
-
-    # Format steering — shared with the daemon path (recall_logic).
-    _recall_format = resolve_recall_format(token_budget, len(relevant))
-    # Compute associative nudge once for all formats — degrades to [] on any error.
-    from memo.recall_assoc import build_nudge, render_associative_line
-
-    try:
-        _nudge = build_nudge(mem, relevant)
-    except Exception:
-        _nudge = []
-
-    # Trust dossier (MEMO_HIT_DOSSIER, default off): one batched pairs_for_ids
-    # lookup over the top-K ids — never per-hit — so the hook stays cheap.
-    _disputed_by: dict[str, list[str]] = {}
-    if flag_bool("MEMO_HIT_DOSSIER"):
-        try:
-            _ids = [h.id for h in relevant]
-            for _p in mem.contradict_store.pairs_for_ids(
-                _ids, status="open"
-            ) + mem.contradict_store.pairs_for_ids(_ids, status="competing"):
-                _disputed_by.setdefault(_p.memory_id_a, []).append(_p.memory_id_b)
-                _disputed_by.setdefault(_p.memory_id_b, []).append(_p.memory_id_a)
-        except Exception:
-            _disputed_by = {}
-
-    _emitted: list[tuple[str, str]] = []
-    context = render_by_format(
-        _recall_format,
-        relevant,
-        nudge,  # rank-overflow nudge — mirrors the daemon path's top_k split
+    result = run_recall_pipeline(
+        mem=mem,
+        query_text=prompt,
+        knobs=knobs,
         turn=_turn,
-        body_chars=body_chars,
-        token_budget=token_budget,
-        omitted=omitted,  # daemon parity — MEMO_RECALL_OMISSIONS_TAIL count
-        disputed_by=_disputed_by,
+        session_id=_sid or "",
         state_dir=cfg.state_dir,
-        emitted_sink=_emitted,
+        previous_turn_ids=_prev_recalled_ids or None,
+        via="subprocess",
     )
-    context = render_associative_line(context, _nudge, token_budget=token_budget)
-    if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
-        context = f"{context}\n{CITE_INSTRUCTION}"
 
-    # Apply verbosity steering (L4 token savings) if enabled
-    from memo.flags_recall import flag_recall_verbosity_level
+    _stamp_metrics(len(result.get("relevant", [])))
 
-    verbosity_level = flag_recall_verbosity_level()
-    if verbosity_level > 0:
-        context = maybe_inject_verbosity_steering(context, verbosity_level)
+    if not result or "_status" in result:
+        # Pipeline returned empty or status-only: handle subprocess-specific bail cases.
+        _status = result.get("_status", "no_hits") if result else "no_hits"
+        if _status == "search_failed":
+            _bail("search failed — absence unproven, no marker")
+        elif _status == "all_recalled":
+            _bail("all hits already recalled this session")
+        else:
+            _bail(f"no hits above min_sim={knobs.min_sim}")
+        return
 
-    if token_budget > 0 and flag_bool("MEMO_RECALL_DEBUG"):
-        approx = _est_tokens(context)
-        print(f"# memo recall-hook: ~{approx} tokens (budget {token_budget})", file=sys.stderr)
+    context = result["additionalContext"]
+    relevant = result["relevant"]
 
-    try:
-        from memo.dashboard import append_context_cost_log
+    # Guard / interject banners — computed here (not in the pipeline) because
+    # the subprocess needs to control the exact prepend order:
+    # interject → guard → avoid → context.
+    _guard_banner: str | None = None
+    _guard_ids: list[str] = []
+    _guard_sim_threshold = flag_float("MEMO_GUARD_SIM_THRESHOLD") or 0.6
+    if flag_bool("MEMO_GUARD_ENABLED") and relevant:
+        from memo.guard import guard_banner as _gb
+        from memo.guard import guard_candidates as _gc
 
-        append_context_cost_log(
-            cfg.state_dir,
-            kind="recall",
-            chars=len(context),
-            client=_client,
-            session_id=_sid,
-            turn=_turn,
+        _guard_banner = _gb(prompt, relevant, sim_threshold=_guard_sim_threshold)
+        if _guard_banner:
+            _guard_ids = [
+                getattr(h, "id", "")
+                for h in _gc(prompt, relevant, sim_threshold=_guard_sim_threshold)[:1]
+            ]
+
+    _interject_banner: str | None = None
+    if relevant:
+        from memo import interject as _ij
+
+        _interject_banner = _ij.evaluate_and_render(
+            cfg,
+            mem,
+            prompt=prompt,
+            hits=relevant,
+            sim_threshold=_guard_sim_threshold,
         )
-    except Exception as exc:
-        _log.debug("context-cost log write failed: %s", exc)
 
     if _interject_banner:
         context = f"{_interject_banner}\n\n{context}"
@@ -949,12 +651,6 @@ def recall_hook() -> None:
 
         context = f"{_guard_banner}\n\n{context}"
         log_guard_fire(cfg.state_dir, prompt=prompt, ids=_guard_ids)
-
-    # ⛔ AVOID block sits at the very top — a distinct anti-memory warning above
-    # the normal recall. Prepended last so it wins the topmost position (daemon
-    # parity, recall_logic).
-    if _avoid_block:
-        context = f"{_avoid_block}\n\n{context}"
 
     # Cross-agent coordination directives (<memo-coordination>): pending
     # directives for this session, appended to the injected context so the
@@ -972,12 +668,7 @@ def recall_hook() -> None:
     # Human-visible presence line — decoration only, never blocks the recall.
     _sysmsg = ""
     if flag_bool("MEMO_RECALL_SYSTEM_MESSAGE"):
-        try:
-            from memo.recall_logic import build_system_message
-
-            _sysmsg = build_system_message(relevant)
-        except Exception as exc:
-            _log.debug("recall system-message build failed: %s", exc)
+        _sysmsg = result.get("systemMessage", "")
 
     # Cross-client "※ memo recap:" line (mirrors Claude Code's native recap).
     # Cheap cadence check (one JSON read + int compare) writing to the SAME
@@ -1031,6 +722,7 @@ def recall_hook() -> None:
     # writers key the same ledger file without coordination. A distinct
     # local (not _sid) so a client that exports no session env var can't
     # clobber the payload-derived _sid the rest of this function relies on.
+    _emitted = result.get("emitted_sink", [])
     if flag_bool("MEMO_EMITTED_LEDGER") and _emitted:
         try:
             from memo import emitted_ledger as _el
@@ -1054,16 +746,6 @@ def recall_hook() -> None:
                 )
         except Exception:  # noqa: S110  # fail-open: a ledger write failure just re-emits later
             pass
-
-    # Persist newly recalled IDs so future turns can dedup them
-    if _sid and _turn is not None and relevant:
-        try:
-            from memo import session as _session_mod
-
-            new_ids = {h.id: _turn for h in relevant if h.id not in _prev_recalled}
-            _session_mod.mark_ids_recalled(cfg.state_dir, _sid, new_ids)
-        except Exception as e:
-            _log.debug("mark_ids_recalled failed: %s", e)
 
     try:
         from memo import presence
