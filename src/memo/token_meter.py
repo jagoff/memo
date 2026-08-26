@@ -213,7 +213,7 @@ from memo.dashboard_metrics import GROUNDED_SCORE  # noqa: E402
 _CHARS_PER_TOKEN = 4
 
 try:
-    import tiktoken
+    import tiktoken  # type: ignore[import-not-found]
 
     _TIKTOKEN_ENC = tiktoken.get_encoding("cl100k_base")
 

@@ -131,7 +131,7 @@ def render_block(
     Applies L4 verbosity steering when MEMO_RECALL_VERBOSITY_LEVEL > 0, so the
     lever's true effect on the injected block size is measured.
     """
-    from memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from memo.recall_logic import maybe_inject_verbosity_steering
     from memo.flags_recall import flag_recall_verbosity_level
     from memo.recall_logic import render_recall_context
 
