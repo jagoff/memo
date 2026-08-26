@@ -65,8 +65,10 @@ try:
     import tree_sitter_javascript as ts_javascript
     import tree_sitter_typescript as ts_typescript
 
-    _TS_LANG = tree_sitter.Language(ts_typescript.language_typescript())
-    _JS_LANG = tree_sitter.Language(ts_javascript.language())
+    _TS_LANG: tree_sitter.Language | None = tree_sitter.Language(
+        ts_typescript.language_typescript()
+    )
+    _JS_LANG: tree_sitter.Language | None = tree_sitter.Language(ts_javascript.language())
     _HAS_TREE_SITTER = True
 except ImportError:
     _HAS_TREE_SITTER = False
