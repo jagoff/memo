@@ -637,3 +637,28 @@ def test_resolve_finds_a_pending_pair_the_unfiltered_window_omits(monkeypatch):
     assert len(opened) == 1
 
     assert store._row_for_pair_id(opened[0].pair_id) is not None
+
+
+def test_reference_rows_are_never_paired_as_contradictions():
+    """Two sections of one ingested document are not a disagreement.
+
+    Reference-tier rows are `<file>#chunk-N` fragments minted by ingest. The
+    scanner embedded them like any other memory, so a single CV produced a
+    "contradiction" between §4/13 and §7/13 — two jobs in the same work
+    history. That pair then fed `capture_from_supersede`, which minted a
+    failure_pattern whose Wrong and Right were both true.
+
+    The same rows also drove `memo maintain` to exit 1 every night: they store
+    a path relative to an Obsidian vault root that the resolver cannot reach,
+    so acting on the pair raises FileNotFoundError. 4119 rows are in that
+    state. Not opening the pair in the first place removes the cause rather
+    than the symptom.
+    """
+    from memo.contradict import _skip_as_contradiction_source
+
+    assert _skip_as_contradiction_source(SimpleNamespace(type="reference")) is True
+    assert _skip_as_contradiction_source(SimpleNamespace(type="secret")) is True
+    assert _skip_as_contradiction_source(SimpleNamespace(type="decision")) is False
+    assert _skip_as_contradiction_source(SimpleNamespace(type="fact")) is False
+    # A record with no type at all must not be silently dropped.
+    assert _skip_as_contradiction_source(SimpleNamespace()) is False

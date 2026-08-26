@@ -91,6 +91,25 @@ CREATE INDEX IF NOT EXISTS idx_pairs_b ON pairs(memory_id_b);
 """
 
 
+# Row types that can never be one side of a contradiction. A reference-tier
+# row is a `<file>#chunk-N` fragment of an ingested document: two sections of
+# one CV, one spec, one book are not a disagreement, and pairing them produced
+# both a bogus "failure pattern" (whose Wrong and Right were two jobs in the
+# same work history) and a nightly FileNotFoundError, because those rows store
+# a path relative to an Obsidian vault root the resolver cannot reach. Secrets
+# are excluded for the obvious reason: a contradiction rationale quotes both
+# bodies. Mirrors `negative_capture._SKIP_ORIGIN_TYPES`, minus failure_pattern
+# — an anti-memory CAN legitimately be superseded by a better one.
+_SKIP_AS_SOURCE_TYPES = frozenset({"reference", "secret"})
+
+
+def _skip_as_contradiction_source(rec: Any) -> bool:
+    """True when a record must never be paired. Never raises on a shape it
+    does not recognise: an untyped record is treated as eligible, the same as
+    before this filter existed."""
+    return getattr(rec, "type", None) in _SKIP_AS_SOURCE_TYPES
+
+
 def _canonical_pair(a: str, b: str) -> tuple[str, str]:
     """Order a pair so the same two ids always hash to the same row."""
     return (a, b) if a <= b else (b, a)
@@ -750,7 +769,7 @@ class ContradictionScanner:
                 break
 
             body = rec.body or rec.title
-            if not body.strip():
+            if not body.strip() or _skip_as_contradiction_source(rec):
                 continue
 
             try:
@@ -778,7 +797,7 @@ class ContradictionScanner:
                     continue
 
                 other = self.memory.get(nb["id"])
-                if other is None:
+                if other is None or _skip_as_contradiction_source(other):
                     continue
 
                 if not _enough_days_apart(rec.updated, other.updated, min_days_apart):
