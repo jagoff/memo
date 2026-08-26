@@ -36,10 +36,14 @@ def test_usage_reads_all_four_provider_fields():
             "cache_read_input_tokens": 40,
         }
     }
+    # The two tier keys read 0 here because this body has no `cache_creation`
+    # breakdown -- the flat total is all the provider gave us.
     assert usage_from_response(body) == {
         "input_tokens": 10,
         "output_tokens": 20,
         "cache_creation_tokens": 30,
+        "cache_creation_5m_tokens": 0,
+        "cache_creation_1h_tokens": 0,
         "cache_read_tokens": 40,
     }
 
@@ -49,6 +53,8 @@ def test_usage_of_a_bodyless_response_is_all_zeroes():
         "input_tokens": 0,
         "output_tokens": 0,
         "cache_creation_tokens": 0,
+        "cache_creation_5m_tokens": 0,
+        "cache_creation_1h_tokens": 0,
         "cache_read_tokens": 0,
     }
 
@@ -434,3 +440,53 @@ def test_by_transform_against_a_real_registry_plan_not_a_hand_written_row(tmp_pa
         if name not in plan.saved_by:
             assert by[name]["est_saved_tokens"] == 0
             assert by[name]["share"] in (0.0, None)
+
+
+def test_cache_write_tiers_are_weighted_separately():
+    """A 1h cache write bills at 2.0x base input, a 5m write at 1.25x.
+
+    `usage_from_response` read only the flat `cache_creation_input_tokens`
+    and every write was weighted 1.25. Measured on this machine's real
+    traffic: 15,543,652 tokens written at the 1h tier and **zero** at 5m —
+    so the constant was wrong for 100% of observed writes, not for an edge
+    case. The module comment claiming "5-minute cache tier, the default" is
+    a true statement about the API and a false one about this traffic.
+    """
+    from memo.proxy.meter import usage_from_response
+
+    tiered = usage_from_response(
+        {
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 7,
+                "cache_creation_input_tokens": 1000,
+                "cache_read_input_tokens": 50,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 400,
+                    "ephemeral_1h_input_tokens": 600,
+                },
+            }
+        }
+    )
+    assert tiered["cache_creation_tokens"] == 1000, "the flat total must still be recorded"
+    assert tiered["cache_creation_5m_tokens"] == 400
+    assert tiered["cache_creation_1h_tokens"] == 600
+
+    # No breakdown: the tier is unknown, and guessing one is what caused this.
+    flat = usage_from_response({"usage": {"cache_creation_input_tokens": 900}})
+    assert flat["cache_creation_tokens"] == 900
+    assert flat["cache_creation_5m_tokens"] == 0
+    assert flat["cache_creation_1h_tokens"] == 0
+
+
+def test_prompt_cost_bills_a_1h_write_at_double():
+    from memo.proxy.meter import _prompt_cost
+
+    row_1h = {"cache_creation_tokens": 100, "cache_creation_1h_tokens": 100}
+    row_5m = {"cache_creation_tokens": 100, "cache_creation_5m_tokens": 100}
+    untiered = {"cache_creation_tokens": 100}
+
+    assert _prompt_cost(row_1h) == 200.0
+    assert _prompt_cost(row_5m) == 125.0
+    # An untiered row keeps the old assumption rather than inventing a tier.
+    assert _prompt_cost(untiered) == 125.0
