@@ -24,6 +24,7 @@ class Context:
     state_dir: Path
     session_key: str
     project: str | None = None
+    turn_count: int = 0
 
 
 @runtime_checkable

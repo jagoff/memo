@@ -1,0 +1,9 @@
+name: bun-install
+match:
+  command: bun
+  subcommand: install
+pipeline:
+  - action: keep_lines
+    pattern: "(installed|error|ERR|packages|done)"
+  - action: tail
+    n: 30

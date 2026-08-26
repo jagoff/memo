@@ -1,0 +1,11 @@
+name: cargo-build
+match:
+  command: cargo
+  subcommand: build
+pipeline:
+  - action: remove_lines
+    pattern: "^\\s+Compiling\\s"
+  - action: keep_lines
+    pattern: "(error|warning\\[|FAILED|finished|running)"
+  - action: tail
+    n: 40

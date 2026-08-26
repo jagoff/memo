@@ -53,6 +53,28 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_FILTERS_DIR = Path(__file__).resolve().parent.parent / "filters"
 
+# Module-level filter cache. Invalidated on directory mtime change.
+_cached_filters: list[Filter] | None = None
+_cached_filters_mtime: float = 0.0
+
+
+def _get_cached_filters() -> list[Filter]:
+    """Load filters from disk, cached until directory mtime changes."""
+    global _cached_filters, _cached_filters_mtime
+    try:
+        current_mtime = max(
+            (p.stat().st_mtime for p in DEFAULT_FILTERS_DIR.glob("*.yaml")),
+            default=0.0,
+        )
+    except Exception:
+        current_mtime = 0.0
+    if _cached_filters is not None and current_mtime == _cached_filters_mtime:
+        return _cached_filters
+    _cached_filters = load_filters(DEFAULT_FILTERS_DIR)
+    _cached_filters_mtime = current_mtime
+    return _cached_filters
+
+
 # Below this, a tool result is already cheap enough that cutting it is not
 # worth spending a recovery-cache entry on.
 _FALLBACK_MAX_CHARS = 4000
@@ -496,7 +518,7 @@ class ToolResults:
             messages = scan_scope(zones)
             if not messages:
                 return 0
-            filters = load_filters(DEFAULT_FILTERS_DIR)
+            filters = _get_cached_filters()
             commands = _tool_use_commands(messages)
             saved = 0
             for message in messages:

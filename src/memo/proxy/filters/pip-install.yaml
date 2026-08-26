@@ -1,0 +1,11 @@
+name: pip-install
+match:
+  command: pip
+  subcommand: install
+pipeline:
+  - action: remove_lines
+    pattern: "^\\s+(Requirement|Collecting|Downloading|Using cached)"
+  - action: keep_lines
+    pattern: "(Successfully|ERROR|error|already satisfied)"
+  - action: tail
+    n: 30

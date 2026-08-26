@@ -1,0 +1,13 @@
+name: python-pytest
+match:
+  command: python
+  subcommand: "-m"
+pipeline:
+  # Matches `python -m pytest` and `python3 -m pytest` — the common case
+  # that the literal `pytest` filter misses. Same pipeline as pytest.yaml.
+  - action: keep_lines
+    pattern: "(FAILED|ERROR|error:|assert|=+[^=]*=+|passed|failed)"
+  - action: truncate_lines
+    max: 200
+  - action: tail
+    n: 40

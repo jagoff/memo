@@ -146,11 +146,17 @@ _SESSION_BUDGET_FLOOR = 150
 
 
 def session_budget_scale(cumulative: int, session_budget: int, base_budget: int) -> int:
-    """Decay the per-turn token budget once a session's cumulative recall spend
-    passes ``session_budget``. Conservative: halve, floored — never zero/bail."""
-    if session_budget <= 0 or cumulative < session_budget:
+    """Smooth continuous decay: budget scales linearly from 1.0 to 0.5 as
+    cumulative spend goes from 0 to 2×session_budget. Floor protects
+    against zero. Replaces the old step-function halving."""
+    if session_budget <= 0 or base_budget <= 0:
         return base_budget
-    return max(_SESSION_BUDGET_FLOOR, base_budget // 2)
+    if cumulative <= 0:
+        return base_budget
+    # Linear decay: at cumulative=session_budget → 0.75x, at 2×session_budget → 0.5x
+    ratio = min(1.0, cumulative / (2 * session_budget))
+    scale = 1.0 - 0.5 * ratio  # ranges from 1.0 down to 0.5
+    return max(_SESSION_BUDGET_FLOOR, int(base_budget * scale))
 
 
 def adaptive_token_budget(token_budget: int, prompt_length: int) -> int:
@@ -168,8 +174,20 @@ def detect_topic_shift(
     current_tokens: set[str],
     previous_tokens: set[str],
     sensitivity: float = 0.35,
+    current_embedding: list[float] | None = None,
+    previous_embedding: list[float] | None = None,
 ) -> bool:
-    """Detect if conversation shifted topics significantly between turns using token Jaccard distance."""
+    """Detect topic shift between turns. Uses cosine similarity when
+    embeddings are available (semantic), falls back to Jaccard (lexical)."""
+    # Prefer semantic similarity when embeddings are provided
+    if current_embedding and previous_embedding and len(current_embedding) == len(previous_embedding):
+        dot = sum(a * b for a, b in zip(current_embedding, previous_embedding, strict=True))
+        norm_a = sum(a * a for a in current_embedding) ** 0.5
+        norm_b = sum(b * b for b in previous_embedding) ** 0.5
+        if norm_a > 0 and norm_b > 0:
+            cosine_sim = dot / (norm_a * norm_b)
+            return (1.0 - cosine_sim) >= sensitivity
+    # Fallback: Jaccard distance on tokens
     if not current_tokens or not previous_tokens:
         return False
     intersection = current_tokens & previous_tokens

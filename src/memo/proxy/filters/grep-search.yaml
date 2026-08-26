@@ -1,0 +1,8 @@
+name: grep-search
+match:
+  command: grep
+pipeline:
+  - action: truncate_lines
+    max: 500
+  - action: tail
+    n: 100

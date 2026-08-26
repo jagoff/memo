@@ -29,10 +29,14 @@ QUALITY_EPS = 0.0  # precision must not drop; must-keep row must survive
 
 
 def count_tokens(text: str) -> int:
-    """Estimated tokens for `text` via the chars/4 heuristic (ceil)."""
+    """Token count: tiktoken (cl100k_base) when available, chars/4 fallback."""
     if not text:
         return 0
-    return (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+    try:
+        from memo.token_meter import count_tokens_accurate
+        return count_tokens_accurate(text)
+    except Exception:
+        return (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
 
 
 def surviving_ids(block_text: str, candidate_ids: list[str]) -> set[str]:
@@ -145,6 +149,9 @@ def render_block(
 RECALL_LEVERS: list[dict[str, Any]] = [
     {"name": "recall_format_compact", "env": {"MEMO_RECALL_FORMAT": "compact"}},
     {"name": "verbosity_steer_L2", "env": {"MEMO_RECALL_VERBOSITY_LEVEL": "2"}},
+    {"name": "body_chars_200", "env": {"MEMO_RECALL_BODY_CHARS": "200"}},
+    {"name": "top_k_2", "env": {"MEMO_RECALL_TOP_K": "2"}},
+    {"name": "intra_dedup_on", "env": {"MEMO_RECALL_INTRA_DEDUP": "1"}},
 ]
 
 
@@ -163,6 +170,8 @@ class P2Sample:
     tokens_off: int
     tokens_on: int
     survived: bool
+    rows_survived: int  # new: count of original rows that survived
+    rows_total: int     # new: total original rows
 
 
 def load_capture_corpus(path: Path) -> list[CaptureCase]:
@@ -182,17 +191,31 @@ def load_capture_corpus(path: Path) -> list[CaptureCase]:
     return cases
 
 
+def _count_rows_survived(original_rows: list[Any], crushed_content: str) -> int:
+    """Count how many of the original rows appear in the crushed output."""
+    try:
+        arr = json.loads(crushed_content)
+    except (json.JSONDecodeError, TypeError):
+        return 0
+    if not isinstance(arr, list):
+        return 0
+    return sum(1 for row in original_rows if row in arr)
+
+
 def measure_crush_case(
     case: CaptureCase, crush_fn: Callable[[str], tuple[str, str | None]]
 ) -> P2Sample:
-    """One capture case: token delta + whether the must-keep row survived."""
+    """One capture case: token delta + multi-row survival quality."""
     original = json.dumps(case.rows, ensure_ascii=False)
     crushed, _hash = crush_fn(original)
     survived = _row_survived(case.rows[case.must_keep_index], crushed)
+    rows_survived = _count_rows_survived(case.rows, crushed)
     return P2Sample(
         tokens_off=count_tokens(original),
         tokens_on=count_tokens(crushed),
         survived=survived,
+        rows_survived=rows_survived,
+        rows_total=len(case.rows),
     )
 
 
@@ -205,15 +228,17 @@ def _row_survived(row: Any, crushed_content: str) -> bool:
 
 
 def aggregate_capture(lever: str, samples: list[P2Sample]) -> LeverRow:
-    """Fold per-case P2 samples into one LeverRow (mean survival = quality)."""
+    """Fold per-case P2 samples into one LeverRow. Quality = mean row survival fraction."""
     n = len(samples) or 1
+    total_rows = sum(s.rows_total for s in samples) or 1
+    survived_rows = sum(s.rows_survived for s in samples)
     return LeverRow(
         lever=lever,
         plane="capture",
         tokens_off=sum(s.tokens_off for s in samples),
         tokens_on=sum(s.tokens_on for s in samples),
-        quality_off=1.0,  # uncrushed content always retains the must-keep row
-        quality_on=sum(1.0 if s.survived else 0.0 for s in samples) / n,
+        quality_off=1.0,
+        quality_on=survived_rows / total_rows,
     )
 
 

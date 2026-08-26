@@ -2,6 +2,8 @@ import json as _json
 from dataclasses import dataclass as _dc
 from pathlib import Path
 
+import pytest
+
 from memo import eval_tokens
 
 
@@ -130,8 +132,9 @@ def test_measure_crush_case_flags_dropped_answer():
 
     row = eval_tokens.aggregate_capture("crusher", [s])
     assert row.plane == "capture"
-    assert row.quality_on == 0.0
-    assert row.passed is False  # saved tokens but dropped the answer
+    # Multi-row quality: 10 of 12 rows survived (must_keep row dropped)
+    assert row.quality_on == pytest.approx(10 / 12)
+    assert row.passed is False  # saved tokens but quality degraded
 
 
 def test_gate_metrics_snapshots_each_lever():

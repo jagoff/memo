@@ -294,7 +294,9 @@ def build_context_pack(
             stale.append(row)
         elif row["quality_bucket"] == "supporting":
             supporting.append(row)
-        elif index == 0 or not current:
+        elif not current:
+            # First qualifying non-supporting/non-stale hit becomes current,
+            # regardless of position — score-based, not positional.
             current.append(row)
         else:
             supporting.append(row)

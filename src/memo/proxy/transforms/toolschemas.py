@@ -92,9 +92,32 @@ _OWNED_PREFIX = "memo_"
 # included for the same reason `memo_tool_docs` is: it is Claude Code's OWN
 # discovery-then-hydrate primitive for every other deferred/pruned tool, so
 # losing it breaks the recovery path for everything else, not just memo's.
-_BUILTIN_NEVER_PRUNE = frozenset(
+# Core built-ins that must never be pruned. These are the minimum set;
+# discover_builtins() extends this with any additional tools discovered at runtime.
+_BUILTIN_CORE = frozenset(
     {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "Task", "Agent", "ToolSearch"}
 )
+
+
+def _discover_builtins() -> frozenset[str]:
+    """Try to discover built-in tools from the Claude Code installation.
+    Falls back to _BUILTIN_CORE if discovery fails."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["claude", "--list-tools"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            names = {line.strip().split()[0] for line in result.stdout.splitlines() if line.strip()}
+            if names:
+                return _BUILTIN_CORE | names
+    except Exception:
+        pass
+    return _BUILTIN_CORE
+
+
+_BUILTIN_NEVER_PRUNE = _discover_builtins()
 # Kept regardless of usage or scope: without these the model cannot reach
 # memo, or the agent's own built-in tools, at all.
 _ALWAYS_KEEP = frozenset({DOCS_TOOL_NAME, "memo_search", "memo_save"}) | _BUILTIN_NEVER_PRUNE
@@ -272,6 +295,24 @@ def _frozen_keep_set(ctx: Context, window: int, scope: str) -> tuple[str, frozen
     return result
 
 
+_SOFT_REFRESH_INTERVAL = 10  # turns between soft refreshes
+
+
+def _soft_refresh_keep_set(
+    ctx: Context, current_tools: set[str], existing_keep: frozenset[str], scope: str
+) -> tuple[str, frozenset[str]]:
+    """Add newly-used tools to the frozen keep-set without removing any.
+    This adapts to workflow changes mid-session while preserving prefix
+    stability (adding tools never reshuffles existing kept schemas)."""
+    if scope == "memo":
+        current_tools = {n for n in current_tools if n.startswith(_OWNED_PREFIX)}
+    additions = current_tools - existing_keep
+    if not additions:
+        return (scope, existing_keep)
+    refreshed = existing_keep | additions
+    return (scope, refreshed)
+
+
 def recent_tool_names(state_dir: Path, window: int) -> set[str]:
     """Every tool name actually called in the last `window` sessions,
     regardless of which server owns it.
@@ -336,6 +377,20 @@ class ToolSchemas:
             # so a flag flip mid-session can't reshuffle an already-frozen
             # session (see `_session_keep_cache`'s comment).
             frozen_scope, keep = _frozen_keep_set(ctx, window, _scope())
+            # Soft refresh: every _SOFT_REFRESH_INTERVAL turns, add newly-used
+            # tools to the keep-set. Never removes — only additions preserve
+            # prefix stability.
+            try:
+                turn_count = getattr(ctx, "turn_count", None)
+                if isinstance(turn_count, int) and turn_count > 0 and turn_count % _SOFT_REFRESH_INTERVAL == 0:
+                    current_names = recent_tool_names(ctx.state_dir, window)
+                    if frozen_scope == "memo":
+                        current_names = {n for n in current_names if n.startswith(_OWNED_PREFIX)}
+                    additions = current_names - keep
+                    if additions:
+                        keep = keep | additions
+            except Exception:
+                pass
 
             def _keeps(tool: Any) -> bool:
                 if not isinstance(tool, dict):
