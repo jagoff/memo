@@ -23,7 +23,7 @@ _HOLDOUT_BUCKETS = 10_000
 # Weights that turn the three Messages-API usage counters into one
 # "prompt cost" in token-equivalents, from Anthropic's prompt-caching
 # pricing (https://docs.claude.com/en/docs/build-with-claude/prompt-caching,
-# 5-minute cache tier, the default): an uncached input token bills at the
+# by tier -- 5m writes at 1.25x, 1h writes at 2x): an uncached input token bills at the
 # base rate (1x); writing a new block into the cache costs a one-time
 # CACHE_CREATION_WEIGHT premium; reading a block already in the cache costs
 # only CACHE_READ_WEIGHT. `input_tokens` alone is the UNCACHED REMAINDER
@@ -34,6 +34,13 @@ _HOLDOUT_BUCKETS = 10_000
 # (e.g. `toolschemas`, zone=ZONE_PREFIX) edits the cached HEAD and so its
 # entire effect lands in the two counters that ratio ignores.
 CACHE_CREATION_WEIGHT = 1.25
+# A 1-hour cache write bills at 2x base input, not 1.25x. This is not an edge
+# case: measured on this machine's own traffic, 15,543,652 tokens were written
+# at the 1h tier and ZERO at 5m, so weighting every write at 1.25 understated
+# the cache-creation term for 100% of observed requests. The tier is the
+# CLIENT's choice (the proxy never touches cache_control), so both weights
+# have to exist and the row has to say which one applies.
+CACHE_CREATION_1H_WEIGHT = 2.0
 CACHE_READ_WEIGHT = 0.1
 
 
@@ -52,6 +59,11 @@ class Record:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_creation_tokens: int = 0
+    # Per-tier split of the write above. Absent (0/0) on rows written before
+    # the tiers were recorded -- `_prompt_cost` falls back to the 5m weight
+    # for those rather than inventing a tier for history it cannot see.
+    cache_creation_5m_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
     cache_read_tokens: int = 0
     retrieved: int = 0
     # Per-transform share of est_saved_tokens (from TransformPlan.saved_by) —
@@ -87,10 +99,23 @@ def usage_from_response(body: dict) -> dict[str, int]:
         value = usage.get(key)
         return value if isinstance(value, int) else 0
 
+    # The Messages API reports the cache-write total flat AND broken down by
+    # tier. Record both: the flat field stays the authoritative total (it is
+    # exactly the sum of the tiers), while the breakdown is what lets
+    # `_prompt_cost` bill a 1h write at 2x instead of assuming 1.25x.
+    breakdown = usage.get("cache_creation")
+    breakdown = breakdown if isinstance(breakdown, dict) else {}
+
+    def _tier(key: str) -> int:
+        value = breakdown.get(key)
+        return value if isinstance(value, int) else 0
+
     return {
         "input_tokens": _int("input_tokens"),
         "output_tokens": _int("output_tokens"),
         "cache_creation_tokens": _int("cache_creation_input_tokens"),
+        "cache_creation_5m_tokens": _tier("ephemeral_5m_input_tokens"),
+        "cache_creation_1h_tokens": _tier("ephemeral_1h_input_tokens"),
         "cache_read_tokens": _int("cache_read_input_tokens"),
     }
 
@@ -174,9 +199,18 @@ def _mean(rows: list[dict], key: str) -> float | None:
 def _prompt_cost(row: dict) -> float:
     """One row's whole prompt, in token-equivalents -- see the module's weight
     constants for where CACHE_CREATION_WEIGHT/CACHE_READ_WEIGHT come from."""
+    total_write = _num(row, "cache_creation_tokens")
+    tier_1h = _num(row, "cache_creation_1h_tokens")
+    tier_5m = _num(row, "cache_creation_5m_tokens")
+    # Anything the breakdown does not account for keeps the 5m weight: an
+    # older row has no tiers at all, and guessing one for it would turn a
+    # uniform bias into a time-dependent confound in the very arm comparison
+    # this ledger exists to compute.
+    untiered = max(0, total_write - tier_1h - tier_5m)
     return (
         _num(row, "input_tokens")
-        + CACHE_CREATION_WEIGHT * _num(row, "cache_creation_tokens")
+        + CACHE_CREATION_1H_WEIGHT * tier_1h
+        + CACHE_CREATION_WEIGHT * (tier_5m + untiered)
         + CACHE_READ_WEIGHT * _num(row, "cache_read_tokens")
     )
 
