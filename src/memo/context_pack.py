@@ -285,7 +285,7 @@ def build_context_pack(
     supporting: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
     sensitive_omitted = 0
-    for index, hit in enumerate(hits):
+    for _index, hit in enumerate(hits):
         row = build_context_row(hit, snippet_chars=snippet_chars)
         if row is None:
             sensitive_omitted += 1

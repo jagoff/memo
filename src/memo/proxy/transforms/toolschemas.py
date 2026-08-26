@@ -102,7 +102,9 @@ _BUILTIN_CORE = frozenset(
 def _discover_builtins() -> frozenset[str]:
     """Try to discover built-in tools from the Claude Code installation.
     Falls back to _BUILTIN_CORE if discovery fails."""
-    try:
+    import contextlib
+
+    with contextlib.suppress(Exception):
         import subprocess
 
         result = subprocess.run(
@@ -112,8 +114,6 @@ def _discover_builtins() -> frozenset[str]:
             names = {line.strip().split()[0] for line in result.stdout.splitlines() if line.strip()}
             if names:
                 return _BUILTIN_CORE | names
-    except Exception:
-        pass
     return _BUILTIN_CORE
 
 
@@ -380,7 +380,9 @@ class ToolSchemas:
             # Soft refresh: every _SOFT_REFRESH_INTERVAL turns, add newly-used
             # tools to the keep-set. Never removes — only additions preserve
             # prefix stability.
-            try:
+            import contextlib as _ctxlib
+
+            with _ctxlib.suppress(Exception):
                 turn_count = getattr(ctx, "turn_count", None)
                 if (
                     isinstance(turn_count, int)
@@ -393,8 +395,6 @@ class ToolSchemas:
                     additions = current_names - keep
                     if additions:
                         keep = keep | additions
-            except Exception:
-                pass
 
             def _keeps(tool: Any) -> bool:
                 if not isinstance(tool, dict):

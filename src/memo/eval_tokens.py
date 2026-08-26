@@ -230,7 +230,7 @@ def _row_survived(row: Any, crushed_content: str) -> bool:
 
 def aggregate_capture(lever: str, samples: list[P2Sample]) -> LeverRow:
     """Fold per-case P2 samples into one LeverRow. Quality = mean row survival fraction."""
-    n = len(samples) or 1
+    len(samples) or 1
     total_rows = sum(s.rows_total for s in samples) or 1
     survived_rows = sum(s.rows_survived for s in samples)
     return LeverRow(

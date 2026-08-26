@@ -24,8 +24,6 @@ from memo.flags import flag_bool, flag_float, flag_int, flag_str
 from memo.recall_logic import (
     RankKnobs,
     adaptive_token_budget,
-    maybe_inject_verbosity_steering,
-    recall_search_budget_ms,
     session_budget_scale,
 )
 
@@ -483,7 +481,6 @@ def recall_hook() -> None:
     knobs = apply_session_mode(knobs, _session_mode)
 
     _bc = flag_int("MEMO_RECALL_BODY_CHARS")
-    body_chars = 400 if _bc is None else _bc
     _tb = flag_int("MEMO_RECALL_TOKEN_BUDGET")
     token_budget = _tb or 0
 

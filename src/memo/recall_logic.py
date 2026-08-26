@@ -2071,9 +2071,12 @@ def run_recall_pipeline(
     # 4. Injection filters
     pre_filter = qualifying
     qualifying = apply_injection_filters(qualifying)
-    if flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE") and qualifying:
-        if unmatched_term_gate(query_text, qualifying):
-            qualifying = []
+    if (
+        flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE")
+        and qualifying
+        and unmatched_term_gate(query_text, qualifying)
+    ):
+        qualifying = []
 
     # 5. Pre-top-K dedup
     if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(qualifying) > 1:
@@ -2125,7 +2128,7 @@ def run_recall_pipeline(
 
     # 11. Session dedup
     if previous_turn_ids and relevant:
-        before = len(relevant)
+        len(relevant)
         relevant = [h for h in relevant if h.id not in previous_turn_ids]
         if not relevant:
             if avoid_block:
