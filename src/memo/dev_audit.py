@@ -85,6 +85,22 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     # degrades to the uncompacted relevant/nudge lists and must never break
     # the recall payload or blow the 5s hook budget.
     ("recall_logic.py", "_apply_graph_compact", 1),
+    # `run_recall_pipeline` is the unified recall path shared by the hook and
+    # the daemon. Every one of these degrades the ANSWER rather than failing
+    # the prompt, which is the only correct behaviour on a path with a 5s
+    # budget: a recall that raises would break the user's turn outright.
+    #   1: vec/hybrid embed can stall on a busy daemon socket -> plain search
+    #   2: the retry of that same search -> no hits
+    #   3: query expansion failed -> the unexpanded hit set
+    #   4: precision gate check failed -> do not gate
+    #   5: contradiction lookup failed -> no dispute markers
+    #   6: system-message build failed -> no system message
+    ("recall_logic.py", "run_recall_pipeline", 1),
+    ("recall_logic.py", "run_recall_pipeline", 2),
+    ("recall_logic.py", "run_recall_pipeline", 3),
+    ("recall_logic.py", "run_recall_pipeline", 4),
+    ("recall_logic.py", "run_recall_pipeline", 5),
+    ("recall_logic.py", "run_recall_pipeline", 6),
     ("cli_recall_hook.py", "recall_hook", 1),
     ("cli_recall_hook.py", "recall_hook._bail", 1),
     ("cli_recall_hook.py", "recall_hook", 2),
@@ -97,24 +113,16 @@ BROAD_EXCEPTION_ALLOWED: set[tuple[str, str, int]] = {
     ("cli_recall_hook.py", "recall_hook", 9),
     ("cli_recall_hook.py", "recall_hook", 10),
     ("cli_recall_hook.py", "recall_hook", 11),
-    ("cli_recall_hook.py", "recall_hook._rank", 1),
     ("cli_recall_hook.py", "recall_hook._stamp_metrics", 1),
     ("cli_recall_hook.py", "recall_hook", 12),
     ("cli_recall_hook.py", "recall_hook", 13),
     ("cli_recall_hook.py", "recall_hook", 14),
     ("cli_recall_hook.py", "recall_hook", 15),
-    ("cli_recall_hook.py", "recall_hook", 16),
-    ("cli_recall_hook.py", "recall_hook", 17),
-    ("cli_recall_hook.py", "recall_hook", 18),
-    ("cli_recall_hook.py", "recall_hook", 19),
-    ("cli_recall_hook.py", "recall_hook", 20),
-    ("cli_recall_hook.py", "recall_hook", 21),
     # Emission-ledger write recording what the hook just injected (see
     # emitted_ledger.py): fail-open by contract, same as every other site in
     # this function -- the recall hook has a 5s budget and a ledger write
     # failure must only cost a re-emitted body later, never break or slow
     # down the recall payload.
-    ("cli_recall_hook.py", "recall_hook", 22),
     # Proactive urgent rendering is optional hook-hot-path work. Store reads,
     # timestamp parsing, or rendering failures must degrade to no urgent line
     # and must never block the recall payload.

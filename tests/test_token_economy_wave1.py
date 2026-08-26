@@ -145,7 +145,7 @@ def test_crush_marker_with_different_dropped_counts():
 
 def test_maybe_inject_verbosity_steering_idempotent():
     """Verbosity steering is idempotent (doesn't double-inject)."""
-    from memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from memo.recall_logic import maybe_inject_verbosity_steering
 
     prompt = "You are a helpful assistant."
 
@@ -160,7 +160,7 @@ def test_maybe_inject_verbosity_steering_idempotent():
 
 def test_maybe_inject_verbosity_respects_level():
     """Verbosity levels produce correct steering text."""
-    from memo.cli_recall_hook import maybe_inject_verbosity_steering
+    from memo.recall_logic import maybe_inject_verbosity_steering
 
     prompt = "Base prompt."
 
@@ -539,8 +539,8 @@ def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
     monkeypatch.setenv("MEMO_RECALL_VERBOSITY_LEVEL", "2")
 
     from memo.capture_core import maybe_crush_json_capture
-    from memo.cli_recall_hook import maybe_inject_verbosity_steering
     from memo.config import Config
+    from memo.recall_logic import maybe_inject_verbosity_steering
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
@@ -596,10 +596,10 @@ def test_wave1_end_to_end_crusher_and_verbosity(monkeypatch):
 def test_wave1_flags_integration(monkeypatch):
     """Wave 1 flags work together (crusher + verbosity) and are independently disableable."""
     from memo.capture_core import maybe_crush_json_capture
-    from memo.cli_recall_hook import maybe_inject_verbosity_steering
     from memo.config import Config
     from memo.flags_capture import flag_crusher_enabled
     from memo.flags_recall import flag_recall_verbosity_level
+    from memo.recall_logic import maybe_inject_verbosity_steering
 
     with tempfile.TemporaryDirectory() as tmpdir:
         state_dir = Path(tmpdir) / "state"
