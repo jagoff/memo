@@ -1,0 +1,14 @@
+name: git-diff
+match:
+  command: git
+  subcommand: diff
+pipeline:
+  # Keep only diff headers and change lines; strip context lines that the
+  # model already has from the earlier Read of the same file.
+  - action: keep_lines
+    pattern: "^(diff --git|@@|\\+[^+]|-[^-]|index |---|\\+\\+\\+|new file|deleted file|Binary)"
+  - action: dedup
+  - action: truncate_lines
+    max: 500
+  - action: head
+    n: 200

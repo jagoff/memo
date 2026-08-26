@@ -212,19 +212,36 @@ from memo.dashboard_metrics import GROUNDED_SCORE  # noqa: E402
 
 _CHARS_PER_TOKEN = 4
 
+try:
+    import tiktoken  # type: ignore[import-not-found]
+
+    _TIKTOKEN_ENC = tiktoken.get_encoding("cl100k_base")
+
+    def count_tokens_accurate(text: str) -> int:
+        """Accurate token count using tiktoken (cl100k_base, matches Claude)."""
+        if not text:
+            return 0
+        return len(_TIKTOKEN_ENC.encode(text))
+except ImportError:
+    _TIKTOKEN_ENC = None
+
+    def count_tokens_accurate(text: str) -> int:
+        """Fallback to chars/4 when tiktoken is not installed."""
+        if not text:
+            return 0
+        return (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+
+
 # ---------------------------------------------------------------------------
 # Precision bands — learned score-band suppression (Task 9 / Lever 3)
 # ---------------------------------------------------------------------------
 
 
 def _band_key(score: float) -> str:
-    """0.05-wide bucket key for a recall top-score. E.g. 0.63 → '0.60', 0.65 → '0.65'.
-
-    Uses a small epsilon before floor to absorb FP rounding artifacts like
-    ``0.55 / 0.05 == 10.999…`` which would otherwise mis-bucket an exact boundary.
-    """
-    idx = math.floor(score / 0.05 + 1e-9)
-    return f"{round(idx * 0.05, 2):.2f}"
+    """0.10-wide bucket key for a recall top-score. E.g. 0.63 → '0.60', 0.75 → '0.70'.
+    Wider buckets than 0.05 give better statistical power for suppression decisions."""
+    idx = math.floor(score / 0.10 + 1e-9)
+    return f"{round(idx * 0.10, 2):.2f}"
 
 
 def suppress_score(top_score: float, bands: dict) -> bool:
@@ -280,7 +297,7 @@ def learn_precision_bands(state_dir: Path, *, min_samples: int = 20) -> dict:
     band_total: dict[str, int] = {}
     band_grounded_count: dict[str, int] = {}
 
-    for entry in read_recall_log(state_dir, limit=200):
+    for entry in read_recall_log(state_dir, limit=500):
         hits = entry.get("hits")
         if not hits:
             continue  # bail entries have hits=[]

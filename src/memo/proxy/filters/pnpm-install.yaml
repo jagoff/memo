@@ -1,0 +1,11 @@
+name: pnpm-install
+match:
+  command: pnpm
+  subcommand: install
+pipeline:
+  - action: remove_lines
+    pattern: "^(WARN|INFO)"
+  - action: keep_lines
+    pattern: "(Progress|added|removed|resolved|error|ERR)"
+  - action: tail
+    n: 30

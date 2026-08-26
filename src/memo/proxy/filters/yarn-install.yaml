@@ -1,0 +1,11 @@
+name: yarn-install
+match:
+  command: yarn
+  subcommand: install
+pipeline:
+  - action: remove_lines
+    pattern: "^(warning|info)"
+  - action: keep_lines
+    pattern: "(success|error|Done|added|removed|up-to-date)"
+  - action: tail
+    n: 30

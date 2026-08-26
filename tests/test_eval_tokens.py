@@ -2,6 +2,8 @@ import json as _json
 from dataclasses import dataclass as _dc
 from pathlib import Path
 
+import pytest
+
 from memo import eval_tokens
 
 
@@ -130,8 +132,9 @@ def test_measure_crush_case_flags_dropped_answer():
 
     row = eval_tokens.aggregate_capture("crusher", [s])
     assert row.plane == "capture"
-    assert row.quality_on == 0.0
-    assert row.passed is False  # saved tokens but dropped the answer
+    # Multi-row quality: 10 of 12 rows survived (must_keep row dropped)
+    assert row.quality_on == pytest.approx(10 / 12)
+    assert row.passed is False  # saved tokens but quality degraded
 
 
 def test_gate_metrics_snapshots_each_lever():
@@ -195,3 +198,35 @@ def test_run_all_measures_p1_and_p2_without_mlx(monkeypatch):
     # The crusher lever dropped the answer -> capture lever FAILs quality.
     cap = next(r for r in rows if r.plane == "capture")
     assert cap.passed is False
+
+
+def test_token_count_falls_back_when_the_encoder_raises(monkeypatch):
+    """A broken encoder must degrade to chars/4, not fail the measurement.
+
+    `eval_tokens` is a reporting path: an encoder that raises on some input
+    should cost accuracy, never the whole run.
+    """
+    import memo.eval_tokens as et
+
+    def _boom(_t):
+        raise RuntimeError("encoder exploded")
+
+    monkeypatch.setattr(et, "count_tokens_accurate", _boom, raising=False)
+    text = "x" * 41
+    assert et.count_tokens(text) == (len(text) + 4 - 1) // 4
+
+
+def test_crushed_rows_survived_counts_only_rows_still_present():
+    """How many original rows are still present in the crushed JSON."""
+    import json
+
+    from memo.eval_tokens import _count_rows_survived
+
+    rows = [{"id": 1}, {"id": 2}, {"id": 3}]
+    assert _count_rows_survived(rows, json.dumps([{"id": 1}, {"id": 3}])) == 2
+    assert _count_rows_survived(rows, json.dumps(rows)) == 3
+    # Anything that is not a JSON array of rows recovers nothing, and says so
+    # rather than raising.
+    assert _count_rows_survived(rows, "not json at all") == 0
+    assert _count_rows_survived(rows, json.dumps({"not": "a list"})) == 0
+    assert _count_rows_survived(rows, None) == 0

@@ -524,3 +524,29 @@ def test_tokens_cmd_shows_prompt_side_line(tmp_path):
     assert "cache-read" in res.output
     assert "by model" in res.output
     assert "claude-opus-5" in res.output
+
+
+def test_accurate_count_matches_tiktoken_when_present():
+    """`count_tokens_accurate` is the real encoder when tiktoken is
+    installed, and chars/4 when it is not. Both branches ship; only one is
+    ever importable in a given environment, so pin whichever this one has."""
+    from memo.token_meter import _TIKTOKEN_ENC, count_tokens_accurate
+
+    assert count_tokens_accurate("") == 0
+
+    text = "def build(a: int) -> str:\n    return str(a)\n"
+    got = count_tokens_accurate(text)
+    assert got > 0
+    if _TIKTOKEN_ENC is not None:
+        import tiktoken
+
+        assert got == len(tiktoken.get_encoding("cl100k_base").encode(text))
+    else:
+        assert got == (len(text) + 3) // 4
+
+
+def test_accurate_count_of_a_long_string_is_sane():
+    from memo.token_meter import count_tokens_accurate
+
+    n = count_tokens_accurate("palabra " * 500)
+    assert 200 < n < 2000, n

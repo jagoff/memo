@@ -92,9 +92,32 @@ _OWNED_PREFIX = "memo_"
 # included for the same reason `memo_tool_docs` is: it is Claude Code's OWN
 # discovery-then-hydrate primitive for every other deferred/pruned tool, so
 # losing it breaks the recovery path for everything else, not just memo's.
-_BUILTIN_NEVER_PRUNE = frozenset(
+# Core built-ins that must never be pruned. These are the minimum set;
+# discover_builtins() extends this with any additional tools discovered at runtime.
+_BUILTIN_CORE = frozenset(
     {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "Task", "Agent", "ToolSearch"}
 )
+
+
+def _discover_builtins() -> frozenset[str]:
+    """Try to discover built-in tools from the Claude Code installation.
+    Falls back to _BUILTIN_CORE if discovery fails."""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        import subprocess
+
+        result = subprocess.run(
+            ["claude", "--list-tools"], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            names = {line.strip().split()[0] for line in result.stdout.splitlines() if line.strip()}
+            if names:
+                return _BUILTIN_CORE | names
+    return _BUILTIN_CORE
+
+
+_BUILTIN_NEVER_PRUNE = _discover_builtins()
 # Kept regardless of usage or scope: without these the model cannot reach
 # memo, or the agent's own built-in tools, at all.
 _ALWAYS_KEEP = frozenset({DOCS_TOOL_NAME, "memo_search", "memo_save"}) | _BUILTIN_NEVER_PRUNE

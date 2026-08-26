@@ -53,6 +53,10 @@ dependencies = [
     # still calls at import — fresh installs crash on any embed. Lift the cap
     # once mlx-lm ships a release compatible with transformers >=5.13.
     "transformers<5.13; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # StructMap: AST-based signature extraction for TS/JS (proxy context compression).
+    "tree-sitter>=0.23,<1",
+    "tree-sitter-typescript>=0.23,<1",
+    "tree-sitter-javascript>=0.23,<1",
 ]
 
 [project.urls]

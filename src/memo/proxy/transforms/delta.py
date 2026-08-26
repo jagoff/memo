@@ -120,6 +120,12 @@ def _extract_bash_read_path(command: str) -> str | None:
             return rest[2]
         return None
 
+    # Pager viewers: `bat FILE`, `less FILE`, `batcat FILE`, `nl FILE`, `ccat FILE`
+    if prog in ("bat", "less", "batcat", "nl", "ccat"):
+        if len(rest) == 1:
+            return rest[0]
+        return None
+
     return None
 
 

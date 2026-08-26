@@ -497,3 +497,17 @@ def test_apply_leaves_a_frozen_only_reread_untouched_under_tail_only_scope(tmp_p
     saved = Delta().apply(zones, _ctx(tmp_path))
     assert saved == 0
     assert zones.frozen_messages[3]["content"][0]["content"] == after
+
+
+def test_pager_viewers_are_recognised_as_file_reads():
+    """`bat FILE`, `less FILE` and friends read a file just like `cat` does.
+
+    A single argument is the path; anything else is ambiguous (two files, or
+    flags this parser does not model) and must not be guessed at.
+    """
+    from memo.proxy.transforms.delta import _extract_bash_read_path
+
+    for prog in ("bat", "less", "batcat", "nl", "ccat"):
+        assert _extract_bash_read_path(f"{prog} /tmp/a.py") == "/tmp/a.py", prog
+        assert _extract_bash_read_path(f"{prog} /tmp/a.py /tmp/b.py") is None, prog
+        assert _extract_bash_read_path(prog) is None, prog

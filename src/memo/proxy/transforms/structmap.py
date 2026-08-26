@@ -53,11 +53,27 @@ import ast
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
 from memo.proxy import ccr
 from memo.proxy.plan import ZONE_LIVE, Context
+
+try:
+    import tree_sitter
+    import tree_sitter_javascript as ts_javascript
+    import tree_sitter_typescript as ts_typescript
+
+    _TS_LANG: tree_sitter.Language | None = tree_sitter.Language(
+        ts_typescript.language_typescript()
+    )
+    _JS_LANG: tree_sitter.Language | None = tree_sitter.Language(ts_javascript.language())
+    _HAS_TREE_SITTER = True
+except ImportError:
+    _HAS_TREE_SITTER = False
+    _TS_LANG = None
+    _JS_LANG = None
 from memo.proxy.transforms.delta import (
     _block_text,
     _read_tool_paths,
@@ -69,7 +85,9 @@ from memo.proxy.zones import Zones, whole_history_scope
 
 _log = logging.getLogger(__name__)
 
-_SUPPORTED_LANGUAGES = frozenset({"python"})
+_SUPPORTED_LANGUAGES = frozenset(
+    {"python"} | ({"typescript", "javascript"} if _HAS_TREE_SITTER else set())
+)
 _ELISION = "..."
 
 # Extended as more languages grow an `ast`-equivalent parser. A path whose
@@ -80,7 +98,15 @@ _ELISION = "..."
 # language has no evidence behind it yet; adding one speculatively would be
 # exactly the "flexibility that wasn't requested" this codebase's own style
 # guide warns against.
-_LANGUAGE_BY_EXTENSION = {".py": "python"}
+_LANGUAGE_BY_EXTENSION = {
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".mts": "typescript",
+}
 
 # A `cat -n`/Read-style numbered line: leading whitespace, digits, then
 # whitespace before the real content. Deliberately loose on the exact
@@ -159,6 +185,9 @@ def signatures(source: str, language: str) -> str:
     try:
         if language not in _SUPPORTED_LANGUAGES:
             return source
+        if language in ("typescript", "javascript") and _HAS_TREE_SITTER:
+            lang = _TS_LANG if language == "typescript" else _JS_LANG
+            return _signatures_typescript(source, lang)
         parsed = _parseable_python(source)
         if parsed is None:
             return source
@@ -191,13 +220,32 @@ def sniff_signatures(text: str) -> str | None:
         if not isinstance(text, str) or len(text) < _SNIFF_MIN_CHARS:
             return None
         reduced = signatures(text, "python")
-        if not isinstance(reduced, str) or reduced == text:
-            return None
-        if len(reduced) > len(text) * _SNIFF_MAX_RATIO:
-            return None
-        return reduced
+        if (
+            isinstance(reduced, str)
+            and reduced != text
+            and len(reduced) <= len(text) * _SNIFF_MAX_RATIO
+        ):
+            return reduced
     except Exception:
-        return None
+        _log.debug("structmap: python sniff failed", exc_info=True)
+
+    # Also try TypeScript/JavaScript sniffing for blocks with no known path
+    if _HAS_TREE_SITTER:
+        for _lang_name, lang_obj in [("typescript", _TS_LANG), ("javascript", _JS_LANG)]:
+            if lang_obj is None:
+                continue
+            try:
+                reduced = _signatures_typescript(text, lang_obj)
+                if (
+                    isinstance(reduced, str)
+                    and reduced != text
+                    and len(reduced) <= len(text) * _SNIFF_MAX_RATIO
+                ):
+                    return reduced
+            except Exception:
+                _log.debug("structmap: ts/js sniff failed for %s", _lang_name, exc_info=True)
+
+    return None
 
 
 def _emit_body(stmts: list[ast.stmt], lines: list[str], out: list[str], source: str) -> None:
@@ -212,6 +260,127 @@ def _emit_body(stmts: list[ast.stmt], lines: list[str], out: list[str], source: 
         elif isinstance(node, ast.ClassDef):
             out.extend(_header_lines(node, lines))
             _emit_body(node.body, lines, out, source)
+
+
+def _signatures_typescript(source: str, lang: tree_sitter.Language | None) -> str:
+    """Extract import/export/function/class signatures from TypeScript/JavaScript source."""
+    if lang is None or not _HAS_TREE_SITTER:
+        return source
+    try:
+        parser = tree_sitter.Parser(lang)
+        tree = parser.parse(bytes(source, "utf8"))
+        lines = source.splitlines()
+        out: list[str] = []
+        _walk_ts_nodes(tree.root_node, lines, out, source)
+        result = "\n".join(out)
+        return result if result.strip() else source
+    except Exception:
+        return source
+
+
+def _emit_ts_export(node: Any, lines: list[str], out: list[str], source: str) -> None:
+    """Emit an `export ...` declaration. A re-export carries no declaration
+    and is skipped."""
+    decl = node.child_by_field_name("declaration")
+    if decl is None:
+        return
+    if decl.type in ("class_declaration", "class"):
+        # An exported class has to be WALKED, not just quoted: this used to
+        # emit the header and stop, so every `export class` -- which is most
+        # of them -- came back with no methods at all.
+        seg = _ts_header_segment(node, lines, source)
+        if seg:
+            out.append(seg)
+            _walk_ts_nodes(decl, lines, out, source)
+        return
+    if decl.type in ("function_declaration", "lexical_declaration", "variable_declaration"):
+        segment = _ts_source_segment(node, source)
+        if segment:
+            out.append(segment)
+
+
+def _walk_ts_nodes(node: Any, lines: list[str], out: list[str], source: str) -> None:
+    """Walk AST and extract signatures for imports, exports, functions, classes."""
+    for child in node.children:
+        ctype = child.type
+        if ctype in ("import_statement", "import_clause"):
+            segment = _ts_source_segment(child, source)
+            if segment:
+                out.append(segment)
+        elif ctype == "export_statement":
+            _emit_ts_export(child, lines, out, source)
+        elif ctype in ("function_declaration", "function"):
+            seg = _ts_header_segment(child, lines, source)
+            if seg:
+                out.append(seg)
+                out.append(" " * (child.start_point[1] + 2) + _ELISION)
+        elif ctype == "class_declaration" or (
+            # `"class"` also matches the bare KEYWORD token inside a class
+            # declaration, so matching on the type alone emitted the header a
+            # second time from inside the class's own children. A real class
+            # expression has a `body`; the keyword does not.
+            ctype == "class" and child.child_by_field_name("body") is not None
+        ):
+            seg = _ts_header_segment(child, lines, source)
+            if seg:
+                out.append(seg)
+                _walk_ts_nodes(child, lines, out, source)
+        elif ctype in ("method_definition", "method_signature"):
+            # Methods are the API surface. Without this branch a class reduced
+            # to its `class Foo {` line and nothing else -- the walker recursed
+            # past `method_definition` into the parameter list and body and
+            # emitted neither. The Python side has always emitted `def` headers
+            # (see `_emit_body`); this makes TypeScript match rather than hand
+            # the model a class with no methods.
+            seg = _ts_method_header(child, lines, source)
+            if seg:
+                out.append(seg)
+                out.append(" " * (child.start_point[1] + 2) + _ELISION)
+        elif ctype in ("lexical_declaration", "variable_declaration"):
+            # const foo = ... or let foo = ...
+            seg = _ts_source_segment(child, source)
+            if seg and len(seg) < 200:
+                out.append(seg)
+        else:
+            # Recurse into nested structures
+            _walk_ts_nodes(child, lines, out, source)
+
+
+def _ts_method_header(node: Any, lines: list[str], source: str) -> str:
+    """A method's signature without its body.
+
+    `_ts_header_segment` returns whole lines, which is right for a multi-line
+    declaration and wrong for `render(d: number): string { return "x"; }` --
+    that one line IS the body. Cut at the brace that opens the body, using the
+    node's own `body` field so a brace inside a type or default value is not
+    mistaken for it.
+    """
+    body = node.child_by_field_name("body")
+    if body is not None and body.start_byte > node.start_byte:
+        indent = " " * node.start_point[1]
+        head = source[node.start_byte : body.start_byte].strip()
+        if head:
+            return f"{indent}{head} {{"
+    return _ts_header_segment(node, lines, source)
+
+
+def _ts_source_segment(node: Any, source: str) -> str:
+    """Extract source text for a node."""
+    start = node.start_byte
+    end = node.end_byte
+    try:
+        return source[start:end].split("\n")[0]  # first line only
+    except Exception:
+        return ""
+
+
+def _ts_header_segment(node: Any, lines: list[str], source: str) -> str:
+    """Extract the header line(s) of a function/class declaration."""
+    start_line = node.start_point[0]
+    # For now, just take the first line (the declaration line)
+    if start_line < len(lines):
+        return lines[start_line]
+    return _ts_source_segment(node, source)
 
 
 def _node_start_line(node: ast.stmt) -> int:

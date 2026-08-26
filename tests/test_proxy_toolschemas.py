@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 from memo.proxy.plan import Context
 from memo.proxy.transforms.toolschemas import DOCS_TOOL_NAME, ToolSchemas, recent_tool_names
@@ -446,3 +447,77 @@ def test_persisting_the_keep_set_never_raises(tmp_path, monkeypatch):
     )
     zones = make_zones(["memo_search", "memo_graph"])
     assert ToolSchemas().apply(zones, _ctx(tmp_path)) > 0
+
+
+def test_the_keep_set_never_grows_mid_session(tmp_path, monkeypatch):
+    """Adding a tool mid-session is NOT prefix-safe, whatever it feels like.
+
+    A "soft refresh" was added that, every 10 turns, folded newly-used tools
+    into the frozen keep-set, commented "Never removes -- only additions
+    preserve prefix stability". That is false. `tools` is serialized at the
+    very FRONT of the cached prefix, so appending one element changes those
+    bytes and the whole conversation re-caches at the 1.25x creation premium
+    -- the exact failure the keep-set freeze exists to prevent.
+
+    It never fired only because `Context.turn_count` was declared and never
+    assigned, so the `turn_count > 0` guard was always false. Dead code with a
+    live-looking call site is worse than either: one line elsewhere turns it
+    into a full re-cache every ten turns.
+    """
+    import memo.proxy.transforms.toolschemas as ts
+
+    assert not hasattr(ts, "_soft_refresh_keep_set")
+    assert not hasattr(ts, "_SOFT_REFRESH_INTERVAL")
+
+    used = {"memo_search"}
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(used),
+    )
+    ctx = _ctx(tmp_path)
+    zones = make_zones(["memo_search", "memo_graph"])
+    ToolSchemas().apply(zones, ctx)
+    first = {t["name"] for t in zones.tools}
+
+    # A later turn starts using memo_graph. The frozen set must not absorb it.
+    used.add("memo_graph")
+    zones2 = make_zones(["memo_search", "memo_graph"])
+    ToolSchemas().apply(zones2, ctx)
+    assert {t["name"] for t in zones2.tools} == first
+
+
+def test_builtin_discovery_shells_out_and_degrades_to_the_core_set(monkeypatch):
+    """`_discover_builtins` asks the real CLI, and must never depend on it.
+
+    Whatever this returns lands in the `tools` array, which sits at the front
+    of the cached prefix — so a discovery that answers on one turn and fails
+    on the next would reshape the prefix and re-cache the conversation. Every
+    failure mode therefore collapses to the same `_BUILTIN_CORE`: a non-zero
+    exit, empty stdout, a timeout, a missing binary.
+    """
+    import subprocess
+
+    import memo.proxy.transforms.toolschemas as ts
+
+    core = ts._BUILTIN_CORE
+
+    def _ok(*_a, **_k):
+        return SimpleNamespace(returncode=0, stdout="Bash  run a command\nGlob  find files\n")
+
+    monkeypatch.setattr(subprocess, "run", _ok)
+    ts._discover_builtins.cache_clear() if hasattr(ts._discover_builtins, "cache_clear") else None
+    found = ts._discover_builtins()
+    assert core <= found
+    assert {"Bash", "Glob"} <= found
+
+    for failure in (
+        lambda *_a, **_k: SimpleNamespace(returncode=1, stdout=""),
+        lambda *_a, **_k: SimpleNamespace(returncode=0, stdout="   \n"),
+        lambda *_a, **_k: (_ for _ in ()).throw(subprocess.TimeoutExpired("claude", 5)),
+        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("claude")),
+    ):
+        monkeypatch.setattr(subprocess, "run", failure)
+        ts._discover_builtins.cache_clear() if hasattr(
+            ts._discover_builtins, "cache_clear"
+        ) else None
+        assert ts._discover_builtins() == core

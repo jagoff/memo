@@ -24,14 +24,23 @@ from memo.token_meter import (
 # ---------------------------------------------------------------------------
 
 
-def test_band_key_buckets_by_0_05():
-    assert _band_key(0.63) == "0.60"
+def test_band_key_buckets_by_0_10():
+    """Buckets are 0.10 wide, not 0.05.
+
+    Widened deliberately -- `_band_key`'s docstring: "Wider buckets than 0.05
+    give better statistical power for suppression decisions." Halving the
+    number of bands doubles the samples in each, which is what the
+    min-samples gate needs to ever fire. The test is updated rather than the
+    code because the old 0.05 contract is the thing that was replaced.
+    """
     assert _band_key(0.60) == "0.60"
-    assert _band_key(0.64) == "0.60"
-    assert _band_key(0.65) == "0.65"
+    assert _band_key(0.63) == "0.60"
+    assert _band_key(0.65) == "0.60"  # was "0.65" under 0.05-wide bands
+    assert _band_key(0.69) == "0.60"
     assert _band_key(0.50) == "0.50"
-    assert _band_key(0.55) == "0.55"
-    assert _band_key(0.99) == "0.95"
+    assert _band_key(0.55) == "0.50"  # was "0.55"
+    assert _band_key(0.70) == "0.70"
+    assert _band_key(0.99) == "0.90"  # was "0.95"
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +152,8 @@ def test_learn_below_min_samples_not_suppressed(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
 
-    # Only 5 recalls in band 0.55 (score=0.57 → "0.55"), below min_samples=20
+    # Only 5 recalls in band 0.50 (score=0.57 → "0.50" with 0.10-wide
+    # buckets), below min_samples=20
     recall_entries = [
         {
             "session_id": f"S{i}",
@@ -157,8 +167,8 @@ def test_learn_below_min_samples_not_suppressed(tmp_path):
 
     bands = learn_precision_bands(state, min_samples=20)
 
-    assert "0.55" in bands
-    assert bands["0.55"]["suppress"] is False
+    assert "0.50" in bands, "0.55 collapsed into the 0.50 band when buckets widened"
+    assert bands["0.50"]["suppress"] is False
 
 
 def test_learn_skips_entries_without_hits(tmp_path):

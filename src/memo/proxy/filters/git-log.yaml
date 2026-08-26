@@ -1,0 +1,9 @@
+name: git-log
+match:
+  command: git
+  subcommand: log
+pipeline:
+  - action: truncate_lines
+    max: 200
+  - action: tail
+    n: 50

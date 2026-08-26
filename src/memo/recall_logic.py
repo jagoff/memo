@@ -146,11 +146,17 @@ _SESSION_BUDGET_FLOOR = 150
 
 
 def session_budget_scale(cumulative: int, session_budget: int, base_budget: int) -> int:
-    """Decay the per-turn token budget once a session's cumulative recall spend
-    passes ``session_budget``. Conservative: halve, floored — never zero/bail."""
-    if session_budget <= 0 or cumulative < session_budget:
+    """Smooth continuous decay: budget scales linearly from 1.0 to 0.5 as
+    cumulative spend goes from 0 to 2×session_budget. Floor protects
+    against zero. Replaces the old step-function halving."""
+    if session_budget <= 0 or base_budget <= 0:
         return base_budget
-    return max(_SESSION_BUDGET_FLOOR, base_budget // 2)
+    if cumulative <= 0:
+        return base_budget
+    # Linear decay: at cumulative=session_budget → 0.75x, at 2×session_budget → 0.5x
+    ratio = min(1.0, cumulative / (2 * session_budget))
+    scale = 1.0 - 0.5 * ratio  # ranges from 1.0 down to 0.5
+    return max(_SESSION_BUDGET_FLOOR, int(base_budget * scale))
 
 
 def adaptive_token_budget(token_budget: int, prompt_length: int) -> int:
@@ -168,8 +174,24 @@ def detect_topic_shift(
     current_tokens: set[str],
     previous_tokens: set[str],
     sensitivity: float = 0.35,
+    current_embedding: list[float] | None = None,
+    previous_embedding: list[float] | None = None,
 ) -> bool:
-    """Detect if conversation shifted topics significantly between turns using token Jaccard distance."""
+    """Detect topic shift between turns. Uses cosine similarity when
+    embeddings are available (semantic), falls back to Jaccard (lexical)."""
+    # Prefer semantic similarity when embeddings are provided
+    if (
+        current_embedding
+        and previous_embedding
+        and len(current_embedding) == len(previous_embedding)
+    ):
+        dot = sum(a * b for a, b in zip(current_embedding, previous_embedding, strict=True))
+        norm_a = sum(a * a for a in current_embedding) ** 0.5
+        norm_b = sum(b * b for b in previous_embedding) ** 0.5
+        if norm_a > 0 and norm_b > 0:
+            cosine_sim = dot / (norm_a * norm_b)
+            return (1.0 - cosine_sim) >= sensitivity
+    # Fallback: Jaccard distance on tokens
     if not current_tokens or not previous_tokens:
         return False
     intersection = current_tokens & previous_tokens
@@ -1881,6 +1903,359 @@ def _avoid_only_output(avoid_block: str) -> str:
         },
         ensure_ascii=False,
     )
+
+
+def run_recall_pipeline(
+    *,
+    mem: Any,
+    query_text: str,
+    knobs: RankKnobs,
+    turn: int | None,
+    session_id: str,
+    state_dir: Any,
+    previous_turn_ids: set[str] | None = None,
+    via: str = "subprocess",
+) -> dict[str, Any]:
+    """Shared recall pipeline: search → filter → dedup → format → render.
+
+    Called by both the daemon (``_recall_logic``) and the subprocess fallback
+    (``cli_recall_hook``).  Returns the complete hook output dict with keys
+    ``additionalContext``, ``systemMessage``, ``relevant``, ``avoid_block``,
+    and ``emitted_sink``.  An empty dict means "all recalled this session" or
+    "no hits, no avoid block" — the caller decides the envelope.
+
+    Subprocess-specific work (stdin parsing, daemon connection, cold-start
+    detection, Memory bootstrap, SIGALRM budget) stays in the caller.
+    """
+    from memo.recall_assoc import build_nudge, render_associative_line
+    from memo.recall_dedup import collapse_near_dups
+
+    # 1. Search
+    budget_ms = recall_search_budget_ms()
+    search_k = max(knobs.top_k * 3, 9)
+    mode = knobs.mode
+
+    exclude_types = _recall_excluded_types()
+    exclude_tags = uncertain_exclusion()
+
+    try:
+        qualifying = mem.search(
+            query_text,
+            limit=search_k,
+            mode=mode,
+            recency=True,
+            budget_ms=budget_ms,
+            exclude_types=exclude_types,
+            exclude_tags=exclude_tags,
+        )
+    except Exception as exc:
+        # A vec/hybrid embed can stall on a busy daemon socket. Downgrade
+        # to bm25 — no embed, no cold-load GPU fight — so recall stays
+        # within the hook budget instead of bailing to an empty result.
+        if mode in ("vec", "hybrid"):
+            if flag_bool("MEMO_RECALL_DEBUG"):
+                print(
+                    f"# memo recall-hook: {mode} embed failed ({exc}); bm25 fallback",
+                    file=sys.stderr,
+                )
+            mode = "bm25"
+            knobs = replace(knobs, mode="bm25")
+            search_k = max(knobs.top_k * 3, 9)
+            try:
+                qualifying = mem.search(
+                    query_text,
+                    limit=search_k,
+                    mode="bm25",
+                    recency=True,
+                    budget_ms=budget_ms,
+                    exclude_types=exclude_types,
+                    exclude_tags=exclude_tags,
+                )
+            except Exception as exc2:
+                if flag_bool("MEMO_RECALL_DEBUG"):
+                    print(f"# memo recall-hook: search failed: {exc2}", file=sys.stderr)
+                return {"_status": "search_failed"}
+        else:
+            if flag_bool("MEMO_RECALL_DEBUG"):
+                print(f"# memo recall-hook: search failed: {exc}", file=sys.stderr)
+            return {"_status": "search_failed"}
+
+    if not qualifying:
+        qualifying = []
+
+    # Recency band (daemon parity): re-fetch recent hits above the floor so
+    # freshness isn't lost to the similarity cut. Default OFF.
+    _band_days = flag_int("MEMO_RECALL_RECENCY_BAND_DAYS") or 0
+    if _band_days > 0 and mode != "bm25":
+        qualifying = apply_recency_band(
+            qualifying,
+            fetch_recency_band(
+                mem,
+                days=_band_days,
+                exclude_types=exclude_types,
+                floor=knobs.min_sim,
+            ),
+        )
+
+    # Chunk→parent rollup (MEMO_RECALL_CHUNK_PARENT, off by default).
+    if flag_bool("MEMO_RECALL_CHUNK_PARENT") and mode != "bm25":
+        qualifying = apply_recency_band(
+            qualifying,
+            fetch_chunk_parent_hits(
+                mem,
+                query_text,
+                mode=mode,
+                limit=5,
+                budget_ms=400.0,
+            ),
+        )
+
+    # 2. Ranking
+    _vec_cosine = make_vec_cosine(mem, query_text)
+    _prefs: Any | None = None
+    if knobs.contextual:
+        with contextlib.suppress(Exception):
+            _prefs = mem.contextual.context.get_preferences()
+
+    qualifying = rank_hits(
+        qualifying, knobs, vec_cosine=_vec_cosine, preferences=_prefs, query=query_text
+    )
+
+    # Context expansion — recover hits when the original query is too narrow.
+    if not qualifying and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
+        ctx = _session_context(mem, exclude_types)
+        if ctx:
+            try:
+                expanded = mem.search(
+                    f"{ctx}\n{query_text}",
+                    limit=search_k,
+                    mode=mode,
+                    recency=True,
+                    budget_ms=budget_ms,
+                    exclude_types=exclude_types,
+                    exclude_tags=exclude_tags,
+                )
+                qualifying = rank_hits(
+                    expanded,
+                    knobs,
+                    vec_cosine=_vec_cosine,
+                    preferences=_prefs,
+                    query=query_text,
+                )
+                if qualifying:
+                    _logger.debug(
+                        "recall pipeline: query expansion recovered %d hits",
+                        len(qualifying),
+                    )
+            except Exception as exc:
+                _logger.debug("recall pipeline: context expansion failed: %s", exc)
+
+    # Token budget (resolved once, used by precision gate and negative recall).
+    _token_budget = flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
+    token_budget = _token_budget
+    if flag_bool("MEMO_RECALL_ADAPTIVE_BUDGET") and token_budget > 0 and query_text:
+        token_budget = adaptive_token_budget(token_budget, len(query_text))
+    token_budget = _session_scaled_token_budget(
+        token_budget, session_id=session_id, state_dir=state_dir
+    )
+
+    # 3. Negative recall (⛔ AVOID)
+    avoid_block = _negative_recall_block(
+        mem,
+        query_text,
+        exclude_tags=exclude_tags,
+        token_budget=token_budget,
+        can_embed=(mode in ("vec", "hybrid")),
+    )
+
+    # 4. Injection filters
+    pre_filter = qualifying
+    qualifying = apply_injection_filters(qualifying)
+    if (
+        flag_bool("MEMO_RECALL_UNMATCHED_TERM_GATE")
+        and qualifying
+        and unmatched_term_gate(query_text, qualifying)
+    ):
+        qualifying = []
+
+    # 5. Pre-top-K dedup
+    if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(qualifying) > 1:
+        qualifying = collapse_near_dups(
+            qualifying,
+            threshold=flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8,
+        )
+
+    relevant = qualifying[: knobs.top_k]
+
+    # 7. Precision gate
+    if flag_bool("MEMO_RECALL_PRECISION_GATE") and relevant:
+        try:
+            from memo.token_meter import load_precision_bands
+            from memo.token_meter import suppress_score as _pg_suppress
+
+            _pg_bands = load_precision_bands(state_dir)
+            if _pg_bands and _pg_suppress(relevant[0].score, _pg_bands):
+                if avoid_block:
+                    return {
+                        "additionalContext": avoid_block,
+                        "systemMessage": "",
+                        "relevant": [],
+                        "avoid_block": avoid_block,
+                        "emitted_sink": [],
+                    }
+                return {}
+        except Exception as exc:
+            _logger.debug("recall pipeline: precision gate check failed: %s", exc)
+
+    # 8. Post-top-K intra-dedup
+    if flag_bool("MEMO_RECALL_INTRA_DEDUP") and len(relevant) > 1:
+        relevant = collapse_near_dups(
+            relevant,
+            threshold=flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8,
+        )
+
+    # 9. Nudge (overflow hits) + omitted tail
+    nudge = qualifying[knobs.top_k : knobs.top_k + 3]
+    omitted = list(qualifying[knobs.top_k + 3 :])
+    if qualifying and len(qualifying) < len(pre_filter):
+        kept = {h.id for h in qualifying}
+        omitted.extend(h for h in pre_filter if h.id not in kept)
+
+    # 10. Contextual record_search
+    if relevant and knobs.contextual:
+        with contextlib.suppress(Exception):
+            mem.contextual.record_search(query_text, [h.id for h in relevant])
+
+    # 11. Session dedup
+    if previous_turn_ids and relevant:
+        len(relevant)
+        relevant = [h for h in relevant if h.id not in previous_turn_ids]
+        if not relevant:
+            if avoid_block:
+                return {
+                    "additionalContext": avoid_block,
+                    "systemMessage": "",
+                    "relevant": [],
+                    "avoid_block": avoid_block,
+                    "emitted_sink": [],
+                }
+            return {"_status": "all_recalled"}
+
+    if not relevant:
+        if avoid_block:
+            return {
+                "additionalContext": avoid_block,
+                "systemMessage": "",
+                "relevant": [],
+                "avoid_block": avoid_block,
+                "emitted_sink": [],
+            }
+        # Emit the epistemic empty marker for real sessions.
+        if session_id and flag_bool("MEMO_RECALL_EMPTY_MARKER"):
+            return {
+                "additionalContext": EMPTY_RECALL_MARKER,
+                "systemMessage": "",
+                "relevant": [],
+                "avoid_block": "",
+                "emitted_sink": [],
+            }
+        return {"_status": "no_hits"}
+
+    # 12. Trust dossier (MEMO_HIT_DOSSIER)
+    disputed_by: dict[str, list[str]] = {}
+    if flag_bool("MEMO_HIT_DOSSIER"):
+        try:
+            _ids = [h.id for h in relevant]
+            for _p in mem.contradict_store.pairs_for_ids(
+                _ids, status="open"
+            ) + mem.contradict_store.pairs_for_ids(_ids, status="competing"):
+                disputed_by.setdefault(_p.memory_id_a, []).append(_p.memory_id_b)
+                disputed_by.setdefault(_p.memory_id_b, []).append(_p.memory_id_a)
+        except Exception:
+            disputed_by = {}
+
+    # 13. Format resolve + render
+    _body_chars = flag_int("MEMO_RECALL_BODY_CHARS")
+    body_chars = 400 if _body_chars is None else _body_chars
+
+    fmt = resolve_recall_format(token_budget, len(relevant))
+    emitted_sink: list[tuple[str, str]] = []
+
+    context = render_by_format(
+        fmt,
+        relevant,
+        nudge,
+        turn=turn,
+        body_chars=body_chars,
+        token_budget=token_budget,
+        omitted=omitted,
+        disputed_by=disputed_by,
+        state_dir=state_dir,
+        emitted_sink=emitted_sink,
+    )
+
+    # Graph-associative nudge
+    with contextlib.suppress(Exception):
+        _assoc = build_nudge(mem, relevant)
+        if _assoc:
+            context = render_associative_line(context, _assoc, token_budget=token_budget)
+
+    # Cite instruction
+    if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
+        context = f"{context}\n{CITE_INSTRUCTION}"
+
+    # Verbosity steering
+    from memo.flags_recall import flag_recall_verbosity_level
+
+    _verbosity_level = flag_recall_verbosity_level()
+    if _verbosity_level > 0:
+        context = maybe_inject_verbosity_steering(context, _verbosity_level)
+
+    # Prepend avoid block at the very top
+    if avoid_block:
+        context = f"{avoid_block}\n\n{context}"
+
+    # System message
+    system_msg = ""
+    if flag_bool("MEMO_RECALL_SYSTEM_MESSAGE"):
+        try:
+            system_msg = build_system_message(relevant)
+        except Exception as exc:
+            _logger.debug("recall pipeline: system-message build failed: %s", exc)
+
+    # Mark recalled IDs
+    if session_id and turn is not None:
+        new_ids = {
+            h.id: turn
+            for h in relevant
+            if previous_turn_ids is None or h.id not in previous_turn_ids
+        }
+        if new_ids:
+            with contextlib.suppress(Exception):
+                from memo import session as _sess
+
+                _sess.mark_ids_recalled(state_dir, session_id, new_ids)
+
+    # Emit ledger
+    if emitted_sink and state_dir:
+        with contextlib.suppress(Exception):
+            from memo.dashboard_logs import append_context_cost_log
+
+            append_context_cost_log(
+                state_dir,
+                kind="recall",
+                chars=len(context),
+                session_id=session_id,
+                turn=turn,
+            )
+
+    return {
+        "additionalContext": context,
+        "systemMessage": system_msg,
+        "relevant": relevant,
+        "avoid_block": avoid_block,
+        "emitted_sink": emitted_sink,
+    }
 
 
 def _recall_logic(

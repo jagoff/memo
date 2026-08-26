@@ -285,7 +285,7 @@ def build_context_pack(
     supporting: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
     sensitive_omitted = 0
-    for index, hit in enumerate(hits):
+    for _index, hit in enumerate(hits):
         row = build_context_row(hit, snippet_chars=snippet_chars)
         if row is None:
             sensitive_omitted += 1
@@ -294,7 +294,9 @@ def build_context_pack(
             stale.append(row)
         elif row["quality_bucket"] == "supporting":
             supporting.append(row)
-        elif index == 0 or not current:
+        elif not current:
+            # First qualifying non-supporting/non-stale hit becomes current,
+            # regardless of position — score-based, not positional.
             current.append(row)
         else:
             supporting.append(row)

@@ -1,0 +1,11 @@
+name: uv-install
+match:
+  command: uv
+  subcommand: pip
+pipeline:
+  - action: remove_lines
+    pattern: "^\\s+(Resolving|Downloading|Installing|Uninstalling)"
+  - action: keep_lines
+    pattern: "(Installed|error|ERROR|already installed)"
+  - action: tail
+    n: 30
