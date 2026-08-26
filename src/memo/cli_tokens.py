@@ -161,8 +161,9 @@ def _proxy_panel(proxy: dict) -> Panel:
         colour = "green" if frac >= 0 else "red"
         verb = "saved" if frac >= 0 else "cost"
         # The headline is now a weighted PROMPT COST ratio (input_tokens +
-        # 1.25x cache-creation + 0.1x cache-read — see meter.py's weight
-        # constants), not a bare input_tokens ratio: real traffic bills
+        # cache-creation weighted BY TIER, 1.25x for a 5m write and 2x for a
+        # 1h one, + 0.1x cache-read — see meter.py's weight constants), not a
+        # bare input_tokens ratio: real traffic bills
         # almost the whole prompt through the two cache counters, so
         # input_tokens alone is a ratio of noise. The raw input_tokens
         # means stay visible alongside it.
