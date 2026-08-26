@@ -481,3 +481,63 @@ def test_bracket_expressions_with_a_literal_close_bracket_are_not_false_positive
     (tmp_path / "f.yaml").write_text(_filter_yaml_with_pattern(pattern))
     filters = load_filters(tmp_path)
     assert len(filters) == 1, f"{pattern!r} was falsely rejected at load"
+
+
+def test_a_shrunk_tool_result_keeps_its_image_block(tmp_path):
+    """Cutting the text must not delete the picture.
+
+    `_set_block_text` replaced the whole `content` list with one text block,
+    so a tool_result carrying [text, image] lost the image. It is the only
+    cut in this package with NO recovery path: `_rewrite_block` stashes the
+    joined TEXT for CCR, so `memo_crush_retrieve` cannot bring the base64
+    back. The model simply never sees the screenshot it asked for, and
+    nothing anywhere says so.
+
+    Reproduced live: Claude Code's own `Read` of a .ipynb returns cells as
+    text PLUS the figure as an image, and any notebook with a matplotlib plot
+    clears the 4000-char fallback threshold easily. So the trigger is not
+    exotic multimodal MCP servers — it is reading a notebook.
+    """
+    from memo.proxy.transforms.toolresults import _set_block_text
+
+    image = {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": "iVBOR"},
+    }
+    doc = {"type": "document", "source": {"type": "text", "data": "d"}}
+    block = {"type": "tool_result", "content": [{"type": "text", "text": "x" * 9000}, image, doc]}
+
+    _set_block_text(block, "cut")
+
+    kinds = [b.get("type") for b in block["content"]]
+    assert kinds == ["text", "image", "document"], kinds
+    assert block["content"][0]["text"] == "cut"
+    assert block["content"][1] is image, "the image object itself must survive untouched"
+    assert block["content"][2] is doc
+
+
+def test_the_replacement_text_lands_where_the_first_text_block_was(tmp_path):
+    """Order matters: an image that preceded the text must stay in front of
+    it, or the model reads the result in the wrong sequence."""
+    from memo.proxy.transforms.toolresults import _set_block_text
+
+    image = {"type": "image", "source": {"data": "x"}}
+    block = {
+        "type": "tool_result",
+        "content": [image, {"type": "text", "text": "a"}, {"type": "text", "text": "b"}],
+    }
+
+    _set_block_text(block, "cut")
+
+    assert [b.get("type") for b in block["content"]] == ["image", "text"]
+    assert block["content"][0] is image
+    assert block["content"][1]["text"] == "cut"
+
+
+def test_a_string_content_block_is_still_replaced_wholesale(tmp_path):
+    """The non-list form has nothing to preserve."""
+    from memo.proxy.transforms.toolresults import _set_block_text
+
+    block = {"type": "tool_result", "content": "plain string"}
+    _set_block_text(block, "cut")
+    assert block["content"] == "cut"

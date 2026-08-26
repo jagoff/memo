@@ -71,6 +71,12 @@ from typing import Any
 from memo.flags import flag_bool
 from memo.mcp_budget import est_tokens
 from memo.proxy.plan import ZONE_LIVE, Context
+
+# `_set_block_text` is imported, not re-implemented: three identical copies
+# existed and all three deleted any image or document block travelling with
+# the text. One canonical version lives in the module that owns tool_result
+# rewriting.
+from memo.proxy.transforms.toolresults import _set_block_text
 from memo.proxy.zones import Zones, scan_scope
 
 _log = logging.getLogger(__name__)
@@ -126,13 +132,6 @@ def _block_text(block: dict) -> str:
         ]
         return "\n".join(parts)
     return ""
-
-
-def _set_block_text(block: dict, text: str) -> None:
-    if isinstance(block.get("content"), list):
-        block["content"] = [{"type": "text", "text": text}]
-    else:
-        block["content"] = text
 
 
 class JsonCrush:

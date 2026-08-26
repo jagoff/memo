@@ -497,10 +497,38 @@ def _block_text(block: dict) -> str:
 
 
 def _set_block_text(block: dict, text: str) -> None:
-    if isinstance(block.get("content"), list):
-        block["content"] = [{"type": "text", "text": text}]
-    else:
+    """Write the rewritten text back, KEEPING every non-text block.
+
+    This used to assign ``[{"type": "text", ...}]`` over the whole content
+    list, which silently deleted any image or document travelling with the
+    text -- and unlike every other cut in this package, that one had no way
+    back: ``_rewrite_block`` stashes the joined TEXT for CCR, so
+    ``memo_crush_retrieve`` cannot return the base64. The model never saw the
+    screenshot it asked for, and nothing said so.
+
+    The trigger is ordinary, not exotic: Claude Code's own ``Read`` of a
+    .ipynb returns cells as text PLUS the figure as an image, and a notebook
+    with one matplotlib plot clears the 4000-char fallback threshold easily.
+
+    The replacement text takes the position of the FIRST text block, so a
+    picture that preceded the text stays in front of it.
+    """
+    content = block.get("content")
+    if not isinstance(content, list):
         block["content"] = text
+        return
+    rebuilt: list = []
+    placed = False
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "text":
+            if not placed:
+                rebuilt.append({"type": "text", "text": text})
+                placed = True
+            continue
+        rebuilt.append(part)
+    if not placed:
+        rebuilt.append({"type": "text", "text": text})
+    block["content"] = rebuilt
 
 
 class ToolResults:
