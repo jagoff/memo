@@ -9,6 +9,40 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.3] - 2026-08-26
+
+### Fixed
+
+- **A shrunk `tool_result` no longer deletes its image.** Rewriting a block
+  replaced the whole content list with one text block, so a result carrying
+  `[text, image]` lost the image once the text crossed the 4000-char
+  threshold. It was the only cut in the proxy with no recovery path — CCR
+  stashes the joined *text*, so `memo_crush_retrieve` could not return the
+  base64. The trigger is ordinary: `Read` of a `.ipynb` returns cells as text
+  plus figures as images, and one matplotlib plot clears 4000 chars easily.
+
+- **A 1-hour cache write is billed at 2x, not 1.25x.** The meter weighted
+  every cache-creation token at the 5-minute-tier rate. Measured on real
+  traffic: 15.5M tokens written at the 1h tier and zero at 5m — wrong for
+  100% of observed writes. `usage_from_response` now records the per-tier
+  breakdown the API already returns. The error *understated* savings; the
+  measured cut over a full session goes from 47.2% to 51.8%.
+
+- **Removed a "soft refresh" that would have re-cached the whole
+  conversation every 10 turns.** It folded newly-used tools into the frozen
+  keep-set, commented "only additions preserve prefix stability" — which is
+  false, since `tools` sits at the front of the cached prefix. It never fired
+  only because the `turn_count` it gated on was declared and never assigned.
+
+- **TypeScript signature maps now include methods.** `export class Foo` came
+  back as a single line with no methods at all, because the export branch
+  emitted the header and stopped — and almost every class in a real `.ts`
+  file is exported. A second bug double-emitted the class header, since the
+  bare `class` keyword token shares its node type with a class expression.
+
+- `memo maintain`, `memo proxy` and the recall pipeline pick up 16 further
+  improvements to measurement, structure maps and recall.
+
 ## [4.14.2] - 2026-08-26
 
 ### Fixed
