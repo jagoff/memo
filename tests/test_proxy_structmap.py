@@ -776,3 +776,36 @@ def test_language_is_chosen_by_extension():
     assert _language_for("/a/b/c.py") == "python"
     assert _language_for("/a/b/c.md") == ""
     assert _language_for("") == ""
+
+
+def test_typescript_is_sniffed_when_no_file_path_is_known():
+    """With no path, SHAPE is the only evidence — and it must cover TS too.
+
+    `sniff_signatures` tries Python first, then the TS and JS grammars. A
+    `Bash cat foo.ts` result carries no `Read` tool_use to take a path from,
+    so without this branch a TypeScript file pasted through a shell command
+    was never reduced at all.
+    """
+    from memo.proxy.transforms.structmap import sniff_signatures
+
+    src = (
+        "export class Service {\n"
+        + "".join(
+            f"  method{i}(a: number): string {{\n    const x = a * {i};\n    return String(x);\n  }}\n"
+            for i in range(40)
+        )
+        + "}\n"
+    )
+    out = sniff_signatures(src)
+    assert out is not None, "TS source with no path should still be reduced"
+    assert "class Service" in out
+    assert "method0" in out
+    assert "const x = a * 0" not in out
+    assert len(out) < len(src)
+
+
+def test_sniffing_prose_returns_none():
+    """Only source gets reduced. A paragraph is not a signature map."""
+    from memo.proxy.transforms.structmap import sniff_signatures
+
+    assert sniff_signatures("Esto es texto comun, sin codigo de ningun tipo.\n" * 60) is None
