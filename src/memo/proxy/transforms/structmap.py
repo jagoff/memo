@@ -64,6 +64,7 @@ try:
     import tree_sitter
     import tree_sitter_javascript as ts_javascript
     import tree_sitter_typescript as ts_typescript
+
     _TS_LANG = tree_sitter.Language(ts_typescript.language_typescript())
     _JS_LANG = tree_sitter.Language(ts_javascript.language())
     _HAS_TREE_SITTER = True
@@ -82,7 +83,9 @@ from memo.proxy.zones import Zones, whole_history_scope
 
 _log = logging.getLogger(__name__)
 
-_SUPPORTED_LANGUAGES = frozenset({"python"} | ({"typescript", "javascript"} if _HAS_TREE_SITTER else set()))
+_SUPPORTED_LANGUAGES = frozenset(
+    {"python"} | ({"typescript", "javascript"} if _HAS_TREE_SITTER else set())
+)
 _ELISION = "..."
 
 # Extended as more languages grow an `ast`-equivalent parser. A path whose
@@ -215,7 +218,11 @@ def sniff_signatures(text: str) -> str | None:
         if not isinstance(text, str) or len(text) < _SNIFF_MIN_CHARS:
             return None
         reduced = signatures(text, "python")
-        if isinstance(reduced, str) and reduced != text and len(reduced) <= len(text) * _SNIFF_MAX_RATIO:
+        if (
+            isinstance(reduced, str)
+            and reduced != text
+            and len(reduced) <= len(text) * _SNIFF_MAX_RATIO
+        ):
             return reduced
     except Exception:
         _log.debug("structmap: python sniff failed", exc_info=True)
@@ -227,7 +234,11 @@ def sniff_signatures(text: str) -> str | None:
                 continue
             try:
                 reduced = _signatures_typescript(text, lang_obj)
-                if isinstance(reduced, str) and reduced != text and len(reduced) <= len(text) * _SNIFF_MAX_RATIO:
+                if (
+                    isinstance(reduced, str)
+                    and reduced != text
+                    and len(reduced) <= len(text) * _SNIFF_MAX_RATIO
+                ):
                     return reduced
             except Exception:
                 _log.debug("structmap: ts/js sniff failed for %s", _lang_name, exc_info=True)

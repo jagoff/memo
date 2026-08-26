@@ -180,7 +180,11 @@ def detect_topic_shift(
     """Detect topic shift between turns. Uses cosine similarity when
     embeddings are available (semantic), falls back to Jaccard (lexical)."""
     # Prefer semantic similarity when embeddings are provided
-    if current_embedding and previous_embedding and len(current_embedding) == len(previous_embedding):
+    if (
+        current_embedding
+        and previous_embedding
+        and len(current_embedding) == len(previous_embedding)
+    ):
         dot = sum(a * b for a, b in zip(current_embedding, previous_embedding, strict=True))
         norm_a = sum(a * a for a in current_embedding) ** 0.5
         norm_b = sum(b * b for b in previous_embedding) ** 0.5
@@ -1950,7 +1954,10 @@ def run_recall_pipeline(
         # within the hook budget instead of bailing to an empty result.
         if mode in ("vec", "hybrid"):
             if flag_bool("MEMO_RECALL_DEBUG"):
-                print(f"# memo recall-hook: {mode} embed failed ({exc}); bm25 fallback", file=sys.stderr)
+                print(
+                    f"# memo recall-hook: {mode} embed failed ({exc}); bm25 fallback",
+                    file=sys.stderr,
+                )
             mode = "bm25"
             knobs = replace(knobs, mode="bm25")
             search_k = max(knobs.top_k * 3, 9)
@@ -1983,7 +1990,10 @@ def run_recall_pipeline(
         qualifying = apply_recency_band(
             qualifying,
             fetch_recency_band(
-                mem, days=_band_days, exclude_types=exclude_types, floor=knobs.min_sim,
+                mem,
+                days=_band_days,
+                exclude_types=exclude_types,
+                floor=knobs.min_sim,
             ),
         )
 
@@ -1992,7 +2002,11 @@ def run_recall_pipeline(
         qualifying = apply_recency_band(
             qualifying,
             fetch_chunk_parent_hits(
-                mem, query_text, mode=mode, limit=5, budget_ms=400.0,
+                mem,
+                query_text,
+                mode=mode,
+                limit=5,
+                budget_ms=400.0,
             ),
         )
 
@@ -2003,7 +2017,9 @@ def run_recall_pipeline(
         with contextlib.suppress(Exception):
             _prefs = mem.contextual.context.get_preferences()
 
-    qualifying = rank_hits(qualifying, knobs, vec_cosine=_vec_cosine, preferences=_prefs, query=query_text)
+    qualifying = rank_hits(
+        qualifying, knobs, vec_cosine=_vec_cosine, preferences=_prefs, query=query_text
+    )
 
     # Context expansion — recover hits when the original query is too narrow.
     if not qualifying and flag_bool("MEMO_RECALL_EXPAND_CONTEXT"):
@@ -2020,11 +2036,16 @@ def run_recall_pipeline(
                     exclude_tags=exclude_tags,
                 )
                 qualifying = rank_hits(
-                    expanded, knobs, vec_cosine=_vec_cosine, preferences=_prefs, query=query_text,
+                    expanded,
+                    knobs,
+                    vec_cosine=_vec_cosine,
+                    preferences=_prefs,
+                    query=query_text,
                 )
                 if qualifying:
                     _logger.debug(
-                        "recall pipeline: query expansion recovered %d hits", len(qualifying),
+                        "recall pipeline: query expansion recovered %d hits",
+                        len(qualifying),
                     )
             except Exception as exc:
                 _logger.debug("recall pipeline: context expansion failed: %s", exc)
@@ -2034,7 +2055,9 @@ def run_recall_pipeline(
     token_budget = _token_budget
     if flag_bool("MEMO_RECALL_ADAPTIVE_BUDGET") and token_budget > 0 and query_text:
         token_budget = adaptive_token_budget(token_budget, len(query_text))
-    token_budget = _session_scaled_token_budget(token_budget, session_id=session_id, state_dir=state_dir)
+    token_budget = _session_scaled_token_budget(
+        token_budget, session_id=session_id, state_dir=state_dir
+    )
 
     # 3. Negative recall (⛔ AVOID)
     avoid_block = _negative_recall_block(
@@ -2055,7 +2078,8 @@ def run_recall_pipeline(
     # 5. Pre-top-K dedup
     if flag_bool("MEMO_RECALL_DEDUP_COLLAPSE") and len(qualifying) > 1:
         qualifying = collapse_near_dups(
-            qualifying, threshold=flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8,
+            qualifying,
+            threshold=flag_float("MEMO_RECALL_INTRA_DEDUP_THRESHOLD") or 0.8,
         )
 
     relevant = qualifying[: knobs.top_k]
@@ -2198,18 +2222,28 @@ def run_recall_pipeline(
 
     # Mark recalled IDs
     if session_id and turn is not None:
-        new_ids = {h.id: turn for h in relevant if previous_turn_ids is None or h.id not in previous_turn_ids}
+        new_ids = {
+            h.id: turn
+            for h in relevant
+            if previous_turn_ids is None or h.id not in previous_turn_ids
+        }
         if new_ids:
             with contextlib.suppress(Exception):
                 from memo import session as _sess
+
                 _sess.mark_ids_recalled(state_dir, session_id, new_ids)
 
     # Emit ledger
     if emitted_sink and state_dir:
         with contextlib.suppress(Exception):
             from memo.dashboard_logs import append_context_cost_log
+
             append_context_cost_log(
-                state_dir, kind="recall", chars=len(context), session_id=session_id, turn=turn,
+                state_dir,
+                kind="recall",
+                chars=len(context),
+                session_id=session_id,
+                turn=turn,
             )
 
     return {

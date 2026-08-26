@@ -34,6 +34,7 @@ def count_tokens(text: str) -> int:
         return 0
     try:
         from memo.token_meter import count_tokens_accurate
+
         return count_tokens_accurate(text)
     except Exception:
         return (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
@@ -171,7 +172,7 @@ class P2Sample:
     tokens_on: int
     survived: bool
     rows_survived: int  # new: count of original rows that survived
-    rows_total: int     # new: total original rows
+    rows_total: int  # new: total original rows
 
 
 def load_capture_corpus(path: Path) -> list[CaptureCase]:

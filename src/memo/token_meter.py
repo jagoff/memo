@@ -214,6 +214,7 @@ _CHARS_PER_TOKEN = 4
 
 try:
     import tiktoken
+
     _TIKTOKEN_ENC = tiktoken.get_encoding("cl100k_base")
 
     def count_tokens_accurate(text: str) -> int:
