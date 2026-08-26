@@ -37,6 +37,22 @@ class _FakeHTTPException(Exception):
         self.detail = detail
 
 
+def _evict_server_http() -> None:
+    """Drop `memo.server_http` from BOTH places Python caches it.
+
+    `sys.modules.pop` alone is not an eviction: the parent package keeps its
+    own attribute bound to the module object, so `monkeypatch.setattr` on a
+    dotted string still resolves to the stale module while the code under test
+    re-imports a fresh one. The two then disagree, the patch lands nowhere,
+    and a test that meant to stub `run_server` starts a real server instead.
+    """
+    import memo
+
+    sys.modules.pop("memo.server_http", None)
+    if hasattr(memo, "server_http"):
+        delattr(memo, "server_http")
+
+
 def test_http_api_uses_runtime_package_version(monkeypatch) -> None:
     monkeypatch.setitem(
         sys.modules,
@@ -49,7 +65,7 @@ def test_http_api_uses_runtime_package_version(monkeypatch) -> None:
             Query=lambda **_kwargs: None,
         ),
     )
-    sys.modules.pop("memo.server_http", None)
+    _evict_server_http()
     try:
         server_http = importlib.import_module("memo.server_http")
 
@@ -58,13 +74,13 @@ def test_http_api_uses_runtime_package_version(monkeypatch) -> None:
     finally:
         # Evict the module built against the fake fastapi: leaving it cached
         # would hand any later importer a _FakeFastAPI-backed app.
-        sys.modules.pop("memo.server_http", None)
+        _evict_server_http()
 
 
 def _load_server(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("MEMO_HTTP_API_TOKEN", _TOKEN)
-    sys.modules.pop("memo.server_http", None)
+    _evict_server_http()
     module = importlib.import_module("memo.server_http")
     module.configure_auth(host="127.0.0.1")
     return module
@@ -186,7 +202,7 @@ def test_rest_rejects_oversized_chunked_body_even_when_route_ignores_body(
 def test_rest_no_auth_mode_installs_local_request_guard(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MEMO_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.delenv("MEMO_HTTP_API_TOKEN", raising=False)
-    sys.modules.pop("memo.server_http", None)
+    _evict_server_http()
     server_http = importlib.import_module("memo.server_http")
     server_http.configure_auth(host="127.0.0.1", allow_no_auth=True)
     memory = MagicMock()
@@ -214,7 +230,7 @@ def test_rest_direct_import_no_auth_mode_installs_local_request_guard(
     monkeypatch.setenv("MEMO_HTTP_ALLOW_NO_AUTH", "1")
     monkeypatch.setenv("MEMO_HTTP_HOST", "127.0.0.1")
     monkeypatch.delenv("MEMO_HTTP_API_TOKEN", raising=False)
-    sys.modules.pop("memo.server_http", None)
+    _evict_server_http()
     server_http = importlib.import_module("memo.server_http")
     memory = MagicMock()
     monkeypatch.setattr(server_http, "_memory", memory)
@@ -302,3 +318,34 @@ def test_rest_backup_uses_real_metadata_fields(monkeypatch, tmp_path) -> None:
             }
         ]
     }
+
+
+def test_evicting_the_module_does_not_strand_the_parent_attribute():
+    """`sys.modules` and `memo.server_http` must never disagree.
+
+    Popping only `sys.modules["memo.server_http"]` leaves the attribute on the
+    parent `memo` package bound to the evicted module object. Anything that
+    then does `monkeypatch.setattr("memo.server_http.run_server", ...)`
+    patches that STALE object, while the code under test re-imports a fresh
+    module and gets the REAL `run_server` — which starts a live uvicorn server
+    and hangs until pytest-timeout kills it 120s later.
+
+    That is the contamination behind `test_cli_http`'s intermittent hang
+    (3 failures / 23 passes since 2026-08-02), and it only reproduces when the
+    two files run in the same session in the wrong order — which is why it
+    looked like flakiness rather than a bug.
+    """
+    import memo
+
+    before = importlib.import_module("memo.server_http")
+    assert getattr(memo, "server_http", None) is before
+
+    _evict_server_http()
+
+    assert "memo.server_http" not in sys.modules
+    assert getattr(memo, "server_http", None) is None, (
+        "parent attribute still points at the evicted module"
+    )
+
+    after = importlib.import_module("memo.server_http")
+    assert getattr(memo, "server_http", None) is after
