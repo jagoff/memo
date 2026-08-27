@@ -53,3 +53,40 @@ def test_low_confidence_ids_excludes_soft_deleted_memory(mock_memory):
     ids = mock_memory.low_confidence_ids(threshold=0.4)
 
     assert rec.id not in ids
+
+
+def test_health_title_reports_the_true_total_not_the_evidence_cap():
+    """Same truncation bug as the ROI detector: `len(ids)` is the evidence cap,
+    not the corpus count, so the title understated a large backlog."""
+
+    class _TruncatedMem:
+        def low_confidence_ids(self, *, threshold, limit):
+            return [f"low{i}" for i in range(limit)]
+
+        def low_confidence_count(self, *, threshold):
+            return 42
+
+    n = detect_health(_TruncatedMem(), now="2026-07-21T00:00:00Z", limit=10)[0]
+
+    assert "42 low-confidence" in n.title
+    assert len(n.evidence) == 10
+
+
+def test_health_falls_back_to_evidence_length_when_count_is_unavailable():
+    class _NoCountMem:
+        def low_confidence_ids(self, *, threshold, limit):
+            return ["low1", "low2"]
+
+    n = detect_health(_NoCountMem(), now="2026-07-21T00:00:00Z")[0]
+
+    assert "2 low-confidence" in n.title
+
+
+def test_real_facade_low_confidence_count_matches_unlimited_ids(mock_memory):
+    for i in range(3):
+        rec = mock_memory.save(content=f"shaky note {i}", type_="note")
+        mock_memory.store.set_confidence_batch([(rec.id, 0.2)])
+
+    assert mock_memory.low_confidence_count(threshold=0.4) == len(
+        mock_memory.low_confidence_ids(threshold=0.4, limit=999)
+    )
