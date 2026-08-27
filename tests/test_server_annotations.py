@@ -104,3 +104,49 @@ def test_every_registered_tool_has_annotations(mem, monkeypatch):
     tools = asyncio.run(server.list_tools())
     missing = sorted(t.name for t in tools if t.annotations is None)
     assert missing == [], f"tools without annotations: {missing}"
+
+
+def test_read_only_hint_reads_the_snake_case_field():
+    """Newer MCP SDKs renamed `readOnlyHint` to `read_only_hint` (PEP 8).
+
+    A tool object from such an SDK carries only the snake_case spelling, so
+    reading the camelCase name would report every read-only tool as a write.
+    """
+    from types import SimpleNamespace
+
+    from memo.server_annotations import read_only_hint
+
+    assert read_only_hint(SimpleNamespace(read_only_hint=True)) is True
+    assert read_only_hint(SimpleNamespace(read_only_hint=False)) is False
+
+
+def test_read_only_hint_falls_back_to_the_camel_case_field():
+    """Current MCP SDKs (mcp 1.x) still spell it `readOnlyHint`."""
+    from types import SimpleNamespace
+
+    from memo.server_annotations import read_only_hint
+
+    assert read_only_hint(SimpleNamespace(readOnlyHint=True)) is True
+    assert read_only_hint(SimpleNamespace(readOnlyHint=False)) is False
+    assert read_only_hint(SimpleNamespace()) is False
+    assert read_only_hint(None) is False
+
+
+def test_read_only_hint_never_touches_the_deprecated_alias_when_the_new_one_exists():
+    """The camelCase alias emits a FastMCPDeprecationWarning on every access.
+
+    An unset `read_only_hint` is None, which must be read as "not read-only"
+    rather than as "field missing" — otherwise the fallback fires on exactly
+    the SDK whose warning this function exists to avoid.
+    """
+
+    class Annotations:
+        read_only_hint = None
+
+        @property
+        def readOnlyHint(self) -> bool:  # mirrors the SDK's own spelling
+            raise AssertionError("read the deprecated alias despite read_only_hint")
+
+    from memo.server_annotations import read_only_hint
+
+    assert read_only_hint(Annotations()) is False
