@@ -9,6 +9,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.4] - 2026-08-26
+
+### Fixed
+
+- **Aggregate proactive nudges reported the evidence cap, not the backlog.**
+  The `roi` and `health` detectors titled their nudge with `len(ids)`, but
+  `ids` comes back capped at the detector's `limit` (10) — so on any corpus
+  larger than the cap the digest printed the cap. On the author's index that
+  read `10 memories never surfaced` against **1645** never-accessed durable
+  memories, a 164x understatement of the one number the nudge exists to
+  communicate, with nothing to hint it was truncated. Evidence stays capped;
+  the title now comes from `Memory.dead_memory_count()` /
+  `Memory.low_confidence_count()`, each sharing its `FROM`/`WHERE` tail with
+  its `*_ids` sibling so the list and the total can never drift onto different
+  populations. The count is best-effort (`total_or`): a duck-typed source
+  without the newer method falls back to `len(ids)` and still emits its nudge.
+
 ## [4.14.3] - 2026-08-26
 
 ### Fixed
