@@ -53,6 +53,29 @@ from memo.temporal import TemporalAnalyzer
 
 _log = logging.getLogger(__name__)
 
+# Shared FROM/WHERE tails for the proactive-nudge reads below, so the capped
+# `*_ids` query and its uncapped `*_count` sibling can never drift apart and
+# report on two different populations.
+_LOW_CONFIDENCE_FROM = (
+    "FROM memory_health mh JOIN meta m ON m.id = mh.id "
+    "WHERE mh.confidence < ? AND (m.deleted_at IS NULL OR m.deleted_at = '')"
+)
+
+
+def _dead_memory_from(durable_types: frozenset[str]) -> str:
+    """FROM/WHERE tail for never-accessed durable memories.
+
+    Built rather than a constant because the `IN (...)` list needs one `?` per
+    durable type; the caller binds `durable_types` in the same order.
+    """
+    placeholders = ",".join("?" for _ in durable_types)
+    return (
+        "FROM meta m LEFT JOIN access a ON a.id = m.id "
+        "WHERE COALESCE(a.access_count, 0) = 0 "
+        f"AND m.type IN ({placeholders}) "
+        "AND (m.deleted_at IS NULL OR m.deleted_at = '')"
+    )
+
 
 class Memory(
     _WriteOpsMixin,
@@ -538,20 +561,28 @@ class Memory(
         (`MEMO_SOFT_DELETE` leaves `memory_health` rows around for up to 90
         days after `meta.deleted_at` is stamped — see `dead_memory_ids` for
         the same deleted-filter idiom) so a deleted memory never gets cited.
+
+        Capped by `limit`: pair with `low_confidence_count` when you need to
+        report how many there really are.
         """
         rows = self.store._conn.execute(
-            """
-            SELECT mh.id
-              FROM memory_health mh
-              JOIN meta m ON m.id = mh.id
-             WHERE mh.confidence < ?
-               AND (m.deleted_at IS NULL OR m.deleted_at = '')
-             ORDER BY mh.confidence ASC
-             LIMIT ?
-            """,
+            f"SELECT mh.id {_LOW_CONFIDENCE_FROM} ORDER BY mh.confidence ASC LIMIT ?",
             (threshold, limit),
         ).fetchall()
         return [str(r["id"]) for r in rows]
+
+    def low_confidence_count(self, *, threshold: float = 0.4) -> int:
+        """How many live memories sit below `threshold` — the uncapped total.
+
+        `low_confidence_ids` truncates to `limit`, so its length is the
+        evidence cap rather than the backlog; a nudge that reports `len(ids)`
+        silently understates a corpus with more than `limit` of them.
+        """
+        row = self.store._conn.execute(
+            f"SELECT count(*) AS n {_LOW_CONFIDENCE_FROM}",
+            (threshold,),
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
     def dead_memory_ids(self, *, limit: int = 50) -> list[str]:
         """Durable memory ids with zero recorded access (`access` table).
@@ -559,24 +590,31 @@ class Memory(
         Never surfaced since creation — candidates the proactive ROI
         detector flags for pruning. Reference/secret types are excluded
         (only `tiers.DURABLE_TYPES` counts as a "dead" memory).
+
+        Capped by `limit`: pair with `dead_memory_count` when you need to
+        report how many there really are.
         """
         from memo.tiers import DURABLE_TYPES
 
-        placeholders = ",".join("?" for _ in DURABLE_TYPES)
         rows = self.store._conn.execute(
-            f"""
-            SELECT m.id
-              FROM meta m
-              LEFT JOIN access a ON a.id = m.id
-             WHERE COALESCE(a.access_count, 0) = 0
-               AND m.type IN ({placeholders})
-               AND (m.deleted_at IS NULL OR m.deleted_at = '')
-             ORDER BY m.created ASC
-             LIMIT ?
-            """,  # noqa: S608 — placeholders are '?' marks, not interpolated values
+            f"SELECT m.id {_dead_memory_from(DURABLE_TYPES)} ORDER BY m.created ASC LIMIT ?",
             (*DURABLE_TYPES, limit),
         ).fetchall()
         return [str(r["id"]) for r in rows]
+
+    def dead_memory_count(self) -> int:
+        """How many durable memories have never been surfaced — the real total.
+
+        `dead_memory_ids` truncates to `limit`, so on a corpus with thousands
+        of never-accessed memories its length reports the cap, not the backlog.
+        """
+        from memo.tiers import DURABLE_TYPES
+
+        row = self.store._conn.execute(
+            f"SELECT count(*) AS n {_dead_memory_from(DURABLE_TYPES)}",
+            tuple(DURABLE_TYPES),
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
     def recurring_pattern_pairs(
         self, *, limit: int = 5, min_count: int = 2
