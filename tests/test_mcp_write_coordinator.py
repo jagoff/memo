@@ -180,6 +180,34 @@ async def test_middleware_bypasses_read_only_and_coordinates_writes():
 
 
 @pytest.mark.asyncio
+async def test_middleware_bypasses_read_only_under_the_snake_case_sdk():
+    """MCP SDK v2 spells the hint `read_only_hint`; the bypass must still fire.
+
+    Reading only the camelCase name there would route every read-only tool
+    through the write coordinator, serialising queries behind mutations.
+    """
+    coordinator = McpWriteCoordinator(1)
+
+    class Server:
+        async def get_tool(self, name):
+            return SimpleNamespace(annotations=SimpleNamespace(read_only_hint=name == "read"))
+
+    middleware = make_write_coordinator_middleware(Server(), coordinator)
+
+    async def next_call(context):
+        return context.message.name
+
+    def context(name):
+        return SimpleNamespace(message=SimpleNamespace(name=name))
+
+    assert await middleware.on_call_tool(context("read"), next_call) == "read"
+    assert coordinator.snapshot()["submitted"] == 0
+    assert await middleware.on_call_tool(context("write"), next_call) == "write"
+    assert coordinator.snapshot()["submitted"] == 1
+    await coordinator.close()
+
+
+@pytest.mark.asyncio
 async def test_load_is_strict_fifo_and_leaves_no_pending_jobs():
     capacity = flag_int("MEMO_MCP_WRITE_QUEUE_SIZE") or 0
     assert capacity == 32

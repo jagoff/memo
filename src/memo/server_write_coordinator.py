@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from memo.errors import MemoError, QueueFullError, StorageError
+from memo.server_annotations import read_only_hint
 
 _log = logging.getLogger("memo.server")
 
@@ -194,8 +195,7 @@ def make_write_coordinator_middleware(server: Any, coordinator: McpWriteCoordina
         async def on_call_tool(self, context: Any, call_next: Any) -> Any:
             name = str(getattr(context.message, "name", "") or "")
             tool = await server.get_tool(name)
-            annotations = getattr(tool, "annotations", None)
-            if annotations is not None and bool(getattr(annotations, "readOnlyHint", False)):
+            if read_only_hint(getattr(tool, "annotations", None)):
                 return await call_next(context)
             return await coordinator.submit(lambda: call_next(context))
 

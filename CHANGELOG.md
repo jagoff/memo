@@ -9,6 +9,20 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+### Fixed
+
+- **Read-only MCP tools stopped bypassing the write coordinator on MCP SDK v2.**
+  The middleware read `ToolAnnotations.readOnlyHint`, which SDK v2 renamed to
+  `read_only_hint` (PEP 8) and kept only as a deprecated alias that warns on
+  every access — so newer environments got a deprecation warning per tool call
+  now, and would serialise every query behind the write queue once the alias is
+  dropped. `server_annotations.read_only_hint()` now reads the PEP 8 name first
+  and falls back to the camelCase one for the mcp 1.x line. The probe uses a
+  sentinel rather than `is None`, because the field's own default IS `None`: an
+  SDK with `read_only_hint` merely unset would otherwise fall through to the
+  deprecated alias, warning on exactly the version the fix targets. Thanks
+  @PierrePrevostAvenel (#299).
+
 ## [4.14.4] - 2026-08-26
 
 ### Fixed

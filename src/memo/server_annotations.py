@@ -43,6 +43,28 @@ NETWORK_WRITE: dict[str, Any] = {
 }
 
 
+_MISSING = object()
+
+
+def read_only_hint(annotations: Any) -> bool:
+    """Read a tool's read-only hint across both MCP SDK spellings.
+
+    MCP SDK v2 renamed `ToolAnnotations.readOnlyHint` to `read_only_hint`, and
+    kept the camelCase name as a deprecated alias that warns on every access.
+    Read the PEP 8 name first so we don't warn there, and fall back to the
+    camelCase one for the mcp 1.x line, which only has that spelling.
+
+    The probe is a sentinel rather than `is None` because the field's default
+    IS None: an SDK that has `read_only_hint` unset would otherwise fall
+    through to the deprecated alias — warning on exactly the version this
+    function exists to keep quiet.
+    """
+    value = getattr(annotations, "read_only_hint", _MISSING)
+    if value is _MISSING:
+        value = getattr(annotations, "readOnlyHint", None)
+    return bool(value)
+
+
 # Names of every tool registered with a NON read-only annotation. Populated at
 # registration time so the response-budget middleware can tell a mutation from a
 # query: a write commits BEFORE the middleware sizes its payload, so replacing
