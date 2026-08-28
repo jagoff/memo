@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from memo.retrieval_boost import boost_for, query_terms
+from memo.retrieval_boost import boost_for, query_terms, shares_content_term
 
 # ---------- query_terms ----------
 
@@ -112,3 +112,21 @@ def test_filename_partial_match_boost_1_3x() -> None:
     # 1/3 of terms in filename → <0.5 but >0 → x1.3
     b = boost_for(query="aws legacy login", filename="aws-only.md")
     assert 1.2 < b < 1.4
+
+
+def test_shares_content_term_matches_on_a_significant_term():
+    assert shares_content_term("recall hook budget", "Runtime manages the recall budget")
+
+
+def test_shares_content_term_rejects_when_nothing_overlaps():
+    assert not shares_content_term("asdfgh qwerty zzz", "MBR 2026 05 accounting export")
+
+
+def test_shares_content_term_rejects_a_query_of_only_stopwords():
+    """No significant term means nothing to substantiate a citation with."""
+    assert not shares_content_term("how do i", "how do i restart the daemon")
+
+
+def test_shares_content_term_is_diacritic_insensitive():
+    """Folding matches `query_terms`, so an accented prompt still matches."""
+    assert shares_content_term("configuración del daemon", "configuracion pendiente")

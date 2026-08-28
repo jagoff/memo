@@ -123,6 +123,26 @@ def query_terms(query: str) -> list[str]:
     ]
 
 
+def shares_content_term(query: str, text: str) -> bool:
+    """Whether ``text`` shares at least one significant term with ``query``.
+
+    A relevance floor for callers that must justify citing a specific memory
+    against a specific prompt. Retrieval always returns its best row for any
+    input, so "we got a hit" is not evidence. A score floor cannot supply that
+    evidence either — hybrid scores are not comparable across queries — but
+    "shares no content word at all" disqualifies without needing a calibrated
+    cut. Built on `query_terms`, so it agrees with every other retrieval path
+    on what counts as significant.
+
+    A query whose terms are all stopwords has nothing to match on and is
+    treated as unsubstantiated.
+    """
+    terms = set(query_terms(query))
+    if not terms:
+        return False
+    return bool(terms & set(query_terms(text)))
+
+
 def boost_for(
     *,
     query: str,

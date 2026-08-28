@@ -47,6 +47,7 @@ from memo.memory.search_scoring_ops import _SearchScoringMixin
 from memo.memory.secret_ops import _SecretOpsMixin
 from memo.memory.update_ops import _UpdateOpsMixin
 from memo.memory.write_ops import _WriteOpsMixin
+from memo.retrieval_boost import shares_content_term
 from memo.store import VecStore
 from memo.store.fact_edge_store import FactEdgeStore
 from memo.temporal import TemporalAnalyzer
@@ -626,9 +627,15 @@ class Memory(
         (`dashboard_logs.read_recall_log`) — true déjà-vu would compare
         against the CURRENT recall's live hits, but that context isn't
         available outside a recall call, so this re-runs `search()` (the
-        same retrieval machinery any query uses) to find a real citable
-        hit. A pattern with no matching memory is dropped; this never
-        fabricates a citation.
+        same retrieval machinery any query uses) to find a citable hit.
+
+        `search()` returns its best row for any input, so a hit alone is not
+        evidence: a pattern is kept only when its top hit shares a content
+        term with the prompt (`_cites_shared_topic`). That floor sits at
+        "zero shared terms" on purpose — scores are not comparable across
+        queries, so any higher cut drops real prompts too. A citation
+        matching on one incidental word can still get through: this bounds
+        the fabrication, it does not eliminate it.
         """
         from collections import Counter
 
@@ -656,9 +663,14 @@ class Memory(
             if count < min_count:
                 break
             hits = self.search(query, limit=1, disable_reranker=True)
-            if hits and hits[0].id not in seen:
-                seen.add(hits[0].id)
-                out.append((hits[0].id, query))
+            if not hits or hits[0].id in seen:
+                continue
+            title = getattr(hits[0], "title", "") or ""
+            snippet = getattr(hits[0], "snippet", "") or ""
+            if not shares_content_term(query, f"{title} {snippet}"):
+                continue
+            seen.add(hits[0].id)
+            out.append((hits[0].id, query))
         return out
 
     def capability(self, name: str) -> Any:
