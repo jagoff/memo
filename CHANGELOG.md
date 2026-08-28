@@ -9,6 +9,8 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.5] - 2026-08-28
+
 ### Fixed
 
 - **An operator's recall cap never reached the daemon.** `settings.json` sets
