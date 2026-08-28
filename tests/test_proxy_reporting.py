@@ -80,16 +80,16 @@ def test_measured_panel_reports_treated_vs_holdout_when_data_exists(tmp_path):
     only `verb`/`colour` carry the sign, and nothing asserted them. Assert
     the actual claim."""
     state_dir = tmp_path / "state"
-    for i in range(10):
+    for i in range(30):
         _seed(state_dir, [_record(f"t{i}", holdout=False, input_tokens=500)])
-    for i in range(10):
+    for i in range(30):
         _seed(state_dir, [_record(f"h{i}", holdout=True, input_tokens=1000)])
     result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
     assert result.exit_code == 0, result.output
     assert "no measured data" not in result.output.lower()
     assert "50.0% saved" in result.output
     assert "treated 500 vs holdout 1000" in result.output
-    assert "n=10 treated / 10 holdout" in result.output
+    assert "n=30 treated / 30 holdout" in result.output
     # The panel label is "on prompt cost" unconditionally now (defect 1's
     # relabel), so a bare "cost" substring check would trip on the noun in
     # every panel, saved or not -- assert the VERB specifically stayed
@@ -102,9 +102,9 @@ def test_passthrough_rows_are_reported_but_excluded_from_the_treated_count(tmp_p
     (`rewritten=False`) must not inflate n=treated, but it also must not
     just silently vanish — the panel says how many were excluded and why."""
     state_dir = tmp_path / "state"
-    for i in range(10):
+    for i in range(30):
         _seed(state_dir, [_record(f"t{i}", holdout=False, input_tokens=500)])
-    for i in range(10):
+    for i in range(30):
         _seed(state_dir, [_record(f"h{i}", holdout=True, input_tokens=1000)])
     _seed(
         state_dir,
@@ -112,7 +112,7 @@ def test_passthrough_rows_are_reported_but_excluded_from_the_treated_count(tmp_p
     )
     result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
     assert result.exit_code == 0, result.output
-    assert "n=10 treated / 10 holdout" in result.output
+    assert "n=30 treated / 30 holdout" in result.output
     assert "1 passthrough request" in result.output
 
 
@@ -142,17 +142,25 @@ def test_json_reports_no_data_as_none_not_zero(tmp_path):
     assert data["proxy"]["n_treated"] == 0
 
 
-def test_proxy_panel_flags_a_thin_sample(tmp_path):
-    """Round-2 (item 6): the sibling transcript panel applies a
+def test_proxy_panel_withholds_a_thin_sample(tmp_path):
+    """Round-2 (item 6) originally: the sibling transcript panel applies a
     _MIN_COHORT_TURNS=30 floor and marks a thin cohort as provisional; the
     proxy panel applied none, so a n=1-vs-n=1 fluke could print e.g. "33.3%
-    saved" in bold green with no qualifier at all."""
+    saved" in bold green with no qualifier at all. That round added the word
+    "provisional" and kept the number.
+
+    Round-3 (2026-08-28): annotating was not enough — live traffic rendered
+    "386295.8% cost" WITH the provisional marker attached, and a reader takes
+    the bold four-order-of-magnitude number, not the grey caveat. Below the
+    floor the panel now withholds the ratio entirely."""
     state_dir = tmp_path / "state"
     _seed(state_dir, [_record("t0", holdout=False, input_tokens=500)])
     _seed(state_dir, [_record("h0", holdout=True, input_tokens=1000)])
     result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
     assert result.exit_code == 0, result.output
-    assert "provisional" in result.output.lower()
+    assert "not enough data" in result.output.lower()
+    assert "% saved" not in result.output
+    assert "% cost" not in result.output
 
 
 def test_proxy_panel_no_thin_marker_at_a_healthy_sample(tmp_path):
@@ -238,3 +246,46 @@ def test_by_transform_has_no_dead_retrieval_rate_column(tmp_path):
     assert result.exit_code == 0, result.output
     assert "retrieval rate" not in result.output.lower()
     assert "over-cutting" not in result.output.lower()
+
+
+def test_a_thin_holdout_suppresses_the_percentage_instead_of_annotating_it(tmp_path):
+    """Live defect (2026-08-28): `memo tokens` printed "386295.8% cost" —
+    treated 19320 vs holdout 5 tok-equiv/request off n=4984 treated / 2
+    holdout requests in ONE holdout session.
+
+    Holdout is assigned per session at MEMO_PROXY_HOLDOUT_FRAC=0.05, so ~20
+    sessions must elapse before one lands in the control arm, and the one
+    that did was a 2-request session that never carried a real prompt. The
+    `thin` flag already caught this and only appended a "provisional" word
+    to a bold headline that was wrong by four orders of magnitude. A sample
+    too thin to compare is not a measurement with a caveat; it is not a
+    measurement. Suppress the number, keep the counts.
+    """
+    state_dir = tmp_path / "state"
+    for i in range(40):
+        _seed(state_dir, [_record(f"t{i}", holdout=False, input_tokens=19320, session_key="s-t")])
+    for i in range(2):
+        _seed(state_dir, [_record(f"h{i}", holdout=True, input_tokens=5, session_key="s-h")])
+    result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
+    assert result.exit_code == 0, result.output
+    out = result.output.lower()
+    assert "not enough data" in out
+    # The bogus headline and its verb must both be gone, not merely qualified.
+    assert "%" not in result.output.split("memo · proxy")[-1].split("╰")[0]
+    # The counts stay visible so the user can see why it is withheld.
+    assert "40" in result.output and "2" in result.output
+
+
+def test_suppressed_headline_still_reports_the_session_counts(tmp_path):
+    """The effective sample unit is the session, not the request (holdout is
+    assigned per session), so the withheld-measurement line must show it —
+    otherwise "40 treated / 2 holdout requests" reads as a near-miss on the
+    30-request floor when the real shortfall is 1 control session."""
+    state_dir = tmp_path / "state"
+    for i in range(40):
+        _seed(state_dir, [_record(f"t{i}", holdout=False, input_tokens=19320, session_key="s-t")])
+    for i in range(2):
+        _seed(state_dir, [_record(f"h{i}", holdout=True, input_tokens=5, session_key="s-h")])
+    result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
+    assert result.exit_code == 0, result.output
+    assert "session" in result.output.lower()
