@@ -64,16 +64,23 @@ _LOW_CONFIDENCE_FROM = (
 
 
 def _dead_memory_from(durable_types: frozenset[str]) -> str:
-    """FROM/WHERE tail for never-accessed durable memories.
+    """FROM/WHERE tail for never-accessed durable memories old enough to prune.
 
     Built rather than a constant because the `IN (...)` list needs one `?` per
-    durable type; the caller binds `durable_types` in the same order.
+    durable type; the caller binds `durable_types` in the same order, then the
+    `date('now', ?)` offset.
+
+    Never-accessed alone is not prunable: a memory saved this week has not had
+    a chance to be surfaced yet. The window matches `memo maintain
+    --stale-days`, the command that actually archives these, so the count and
+    its remediation agree.
     """
     placeholders = ",".join("?" for _ in durable_types)
     return (
         "FROM meta m LEFT JOIN access a ON a.id = m.id "
         "WHERE COALESCE(a.access_count, 0) = 0 "
         f"AND m.type IN ({placeholders}) "
+        "AND m.created < date('now', ?) "
         "AND (m.deleted_at IS NULL OR m.deleted_at = '')"
     )
 
@@ -595,11 +602,11 @@ class Memory(
         Capped by `limit`: pair with `dead_memory_count` when you need to
         report how many there really are.
         """
-        from memo.tiers import DURABLE_TYPES
+        from memo.tiers import DURABLE_TYPES, STALE_AFTER_DAYS
 
         rows = self.store._conn.execute(
             f"SELECT m.id {_dead_memory_from(DURABLE_TYPES)} ORDER BY m.created ASC LIMIT ?",
-            (*DURABLE_TYPES, limit),
+            (*DURABLE_TYPES, f"-{STALE_AFTER_DAYS} day", limit),
         ).fetchall()
         return [str(r["id"]) for r in rows]
 
@@ -609,11 +616,11 @@ class Memory(
         `dead_memory_ids` truncates to `limit`, so on a corpus with thousands
         of never-accessed memories its length reports the cap, not the backlog.
         """
-        from memo.tiers import DURABLE_TYPES
+        from memo.tiers import DURABLE_TYPES, STALE_AFTER_DAYS
 
         row = self.store._conn.execute(
             f"SELECT count(*) AS n {_dead_memory_from(DURABLE_TYPES)}",
-            tuple(DURABLE_TYPES),
+            (*DURABLE_TYPES, f"-{STALE_AFTER_DAYS} day"),
         ).fetchone()
         return int(row["n"]) if row else 0
 
