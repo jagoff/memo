@@ -9,6 +9,38 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ## [Unreleased]
 
+## [4.14.6] - 2026-08-28
+
+### Fixed
+
+- **The déjà-vu nudge cited memories that answer nothing.**
+  `recurring_pattern_pairs` documented that "a pattern with no matching memory
+  is dropped; this never fabricates a citation", but `search()` ranks the whole
+  corpus and returns its best row for any input, so on a populated corpus the
+  `if hits` guard is dead code. Every repeated recall-log prompt — keyboard mash
+  included — became a "you already have this" assertion citing an unrelated
+  memory; `memo digest` was emitting `Recurring: asdfgh qwerty zzz — you already
+  have this`. The covering test ran against an empty corpus, where the guard is
+  trivially true, so it measured nothing. A pattern is now kept only when its
+  top hit shares a content term with the prompt (`shares_content_term`, next to
+  `query_terms` in `retrieval_boost`, so the floor agrees with every other
+  retrieval path). The floor sits at zero shared terms deliberately: hybrid
+  scores are not comparable across queries, and on live data a real query can
+  match on a single term exactly like an incidental one, so any higher cut
+  drops real prompts too. This bounds the fabrication rather than eliminating
+  it, and the docstring now says so.
+- **The ROI nudge called this week's memories prunable.** `dead_memory_ids` and
+  `dead_memory_count` counted every never-accessed durable memory and rendered
+  it as "N memories never surfaced — candidates to prune". Never-accessed is not
+  prunable: a memory saved this week has not had a chance to be surfaced. On a
+  three-month-old corpus the nudge claimed 1505 candidates while `memo maintain`
+  — the command that archives them — would have archived none, because it only
+  takes memories older than `--stale-days` (365). The count now applies that
+  same window, so it agrees with the command that acts on it, and
+  `STALE_AFTER_DAYS` in `tiers.py` replaces the two hardcoded values. The
+  existing test saved a memory and immediately asserted it was dead, encoding
+  the bug; it now backdates the row.
+
 ## [4.14.5] - 2026-08-28
 
 ### Fixed
