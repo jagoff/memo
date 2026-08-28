@@ -18,6 +18,8 @@ import logging
 from pathlib import PurePosixPath
 from typing import Any
 
+from memo.dream_synthesis_tags import synthesis_tags
+
 _log = logging.getLogger(__name__)
 
 _SYS = (
@@ -162,6 +164,7 @@ def run_folder_abstracts(
                     mem.save(
                         content=synth["body"],
                         type_="synthesis",
+                        tags=synthesis_tags("folder_abstract"),
                         title=synth["title"],
                         extra=extra,
                     )

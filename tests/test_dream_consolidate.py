@@ -89,7 +89,7 @@ def test_run_consolidate_saves_with_keyword_content(monkeypatch):
         def search(self, q, limit=1, disable_reranker=True):
             return []
 
-        def save(self, *, content, type_, title, extra):  # keyword-only, like the real facade
+        def save(self, *, content, type_, title, extra, tags=None):  # keyword-only, real facade
             saved.append({"content": content, "type_": type_, "title": title})
 
     class _Cfg:
