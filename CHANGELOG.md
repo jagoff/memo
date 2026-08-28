@@ -26,6 +26,37 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   before this field carry no fingerprint and are treated as not-comparable,
   never as a match.
 
+- **The session-start briefing spent 100% of its budget on one truncated
+  section and delivered zero durable memory.** `compose_unified_briefing`
+  concatenated every section and then hard-truncated the join at 900 chars.
+  The dream-distilled profile is composed first and runs ~4.6k chars, so it
+  swallowed the whole budget and was itself cut mid-word. Measured on the live
+  corpus: 12,812 chars composed, 900 emitted, **0 of 13 sections surviving** —
+  knowledge map, temporal facts, proactive nudges, known pitfalls, open loops
+  and operational continuity all dropped whole, on the surface memo's own MCP
+  instructions tell every client to call at session start. The new
+  `budget_sections` allocator buys breadth before depth: each section first
+  receives a floor big enough for its heading plus one content line, granted in
+  composition order, and only the residue is water-filled for extra detail.
+  Truncation is now at line granularity, so surviving bullets are whole rather
+  than cut mid-word, and a section too small to hold its own heading is dropped
+  instead of emitted naked. Same 900-char cap, same corpus: **12 of 13 sections
+  survive** in 849 chars.
+- **`memo_unified_briefing` shipped its whole payload twice.** The tool result
+  carried both `markdown` and `lines`, where `lines` was literally
+  `markdown.splitlines()` — a verbatim second copy that was exactly 50% of the
+  serialized result (2,016 chars → 1,008, ~252 est. tokens per session) and had
+  no reader anywhere in the repo. `lines` is gone; `available` now tests
+  `markdown` directly. Clients that want lines can split `markdown`.
+- **The world-kernel block was 74 chars of scaffolding prepended to every
+  recall injection.** With no active task, no code summary and no beliefs,
+  `ZeroSearchProjector.project_context` still emitted its `<memo-world-kernel>`
+  wrapper around a bare `## Active Project State: default` header — structure
+  carrying no information, on every balanced and context render. Over the 1,643
+  recall injections in the local context-cost ledger that is ~30k est. tokens
+  spent on a constant. A projector with nothing to project now returns the
+  empty string, and the caller no longer appends a stray newline for it.
+
 - **`noise@k` was structurally blind to the failure mode it is named for.**
   `_hit_is_noise` fired only on a hit carrying a noise TAG, sitting under a
   noise PATH fragment, or listed in the prompt's `avoid_ids`. The curated set

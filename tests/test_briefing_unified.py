@@ -61,7 +61,7 @@ def test_mcp_unified_briefing_returns_native_operational_state(tmp_cfg) -> None:
 
         assert out["available"] is True
         assert "Ship Memo 4" in out["markdown"]
-        assert isinstance(out["lines"], list)
+        assert "lines" not in out, "markdown must not be shipped twice"
         assert out["notification"] == ""
     finally:
         mem.close()
@@ -72,3 +72,63 @@ def test_compact_text_preserves_limit_and_ellipsis() -> None:
     assert len(compact) <= 80
     assert compact.endswith("…")
     assert "\n\n" not in compact
+
+
+def test_budget_sections_gives_every_section_a_share() -> None:
+    """A 4,000-char first section must not consume a 900-char briefing whole.
+
+    Regression: `compose_unified_briefing` concatenated every section and then
+    hard-truncated the join, so the profile block (section 0, ~4.6k chars) ate
+    100% of the budget and all 10 later sections were dropped mid-word.
+    """
+    from memo.briefing import budget_sections
+
+    lines = ["# Huge"] + [f"- filler line {i} padded out to be wide" * 2 for i in range(120)]
+    lines += ["### Small A", "- a1", "- a2"]
+    lines += ["### Small B", "- b1"]
+    lines += ["### Small C", "- c1"]
+
+    out = budget_sections(lines, max_chars=900)
+
+    assert len(out) <= 900
+    for heading in ("# Huge", "### Small A", "### Small B", "### Small C"):
+        assert heading in out, f"{heading} was starved out of the budget"
+
+
+def test_budget_sections_keeps_whole_lines_not_mid_word_cuts() -> None:
+    """Each section truncates at line granularity, so no bullet is cut mid-word."""
+    from memo.briefing import budget_sections
+
+    lines = ["### S", "- keep this whole", "- and this one", "- " + "x" * 400]
+    out = budget_sections(lines, max_chars=60)
+
+    assert "- keep this whole" in out
+    for line in out.splitlines():
+        assert line in lines, f"line {line!r} is a partial cut of a source line"
+
+
+def test_budget_sections_drops_a_section_that_cannot_fit_its_heading() -> None:
+    """A naked heading carries no information, so it is dropped rather than kept."""
+    from memo.briefing import budget_sections
+
+    out = budget_sections(["### Kept", "- v", "### AVeryLongHeadingThatCannotFit"], max_chars=14)
+
+    assert "### AVeryLongHeadingThatCannotFit" not in out
+    assert out.strip(), "budget large enough for the first section should emit it"
+
+
+def test_unified_briefing_surfaces_more_than_one_section(tmp_cfg) -> None:
+    """End-to-end: the composed briefing must carry several sections, not one."""
+    from memo.briefing import budget_sections
+
+    lines = ["# Profile — global"] + [
+        f"- profile detail {i} spelled out at length" for i in range(90)
+    ]
+    lines += ["### Knowledge map (your hubs)", "- hub one", "- hub two"]
+    lines += ["### Temporal facts", "- fact one"]
+    lines += ["### Operational continuity", "- focus: ship the thing"]
+
+    out = budget_sections(lines, max_chars=900)
+    surviving = [line for line in out.splitlines() if line.startswith("#")]
+
+    assert len(surviving) >= 4, f"only {len(surviving)} sections survived: {surviving}"
