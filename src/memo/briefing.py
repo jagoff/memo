@@ -31,6 +31,110 @@ def compact_text(text: str, *, max_chars: int = 480) -> str:
     return compact[: max_chars - 1].rstrip() + "…"
 
 
+def _split_sections(lines: list[str]) -> list[list[str]]:
+    """Group flat briefing lines into sections; a heading line opens a new one."""
+    sections: list[list[str]] = []
+    for line in lines:
+        if line.startswith("#") or not sections:
+            sections.append([])
+        sections[-1].append(line)
+    return sections
+
+
+def _fair_share(sizes: list[int], budget: int) -> list[int]:
+    """Water-fill ``budget`` across ``sizes``: equal cuts, leftovers redistributed.
+
+    Sections that need less than an equal cut take only what they need and hand
+    the remainder back, so a few small sections are never starved by one large
+    one — the failure that let the profile block consume the whole briefing.
+    """
+    alloc = [0] * len(sizes)
+    live = [i for i, size in enumerate(sizes) if size > 0]
+    remaining = budget
+    while live and remaining > 0:
+        share = remaining // len(live)
+        if share <= 0:
+            break
+        modest = [i for i in live if sizes[i] <= share]
+        if not modest:
+            for i in live:
+                alloc[i] = share
+            break
+        for i in modest:
+            alloc[i] = sizes[i]
+            remaining -= sizes[i]
+            live.remove(i)
+    return alloc
+
+
+def _floor_cost(section: list[str]) -> int:
+    """Chars needed for a section's heading plus its first line of content.
+
+    A heading with nothing under it is not worth budgeting for, so a section
+    that carries no content line costs nothing and is skipped.
+    """
+    content = [line for line in section if not line.startswith("#")]
+    if not content:
+        return 0
+    heading = [line for line in section if line.startswith("#")][:1]
+    return sum(len(line) + 1 for line in heading + content[:1])
+
+
+def budget_sections(lines: list[str], *, max_chars: int) -> str:
+    """Render briefing ``lines`` under ``max_chars``, sharing the budget fairly.
+
+    Truncation is at line granularity so every surviving bullet is whole, and a
+    section whose share cannot hold its own heading is dropped rather than
+    emitted as a naked heading carrying no information.
+    """
+    if max_chars <= 0:
+        return ""
+    # Entries may themselves span several lines, so flatten before grouping.
+    clean = [
+        stripped
+        for entry in lines
+        for line in str(entry).splitlines()
+        if (stripped := line.strip())
+    ]
+    if not clean:
+        return ""
+
+    sections = _split_sections(clean)
+    # +1 per line for the newline that joins it to the next.
+    sizes = [sum(len(line) + 1 for line in section) for section in sections]
+    if sum(sizes) <= max_chars:
+        return "\n".join(clean)
+
+    # Breadth before depth: every section first gets a floor big enough for its
+    # heading plus one line of content, granted in composition order (which is
+    # priority order). Only the residue is then shared out for extra detail, so
+    # one oversized section can no longer swallow the whole briefing.
+    floors = [_floor_cost(section) for section in sections]
+    alloc = [0] * len(sections)
+    remaining = max_chars
+    for i, floor in enumerate(floors):
+        if 0 < floor <= remaining:
+            alloc[i] = floor
+            remaining -= floor
+    residual = [sizes[i] - alloc[i] if alloc[i] else 0 for i in range(len(sections))]
+    shares = [a + extra for a, extra in zip(alloc, _fair_share(residual, remaining), strict=True)]
+
+    kept: list[str] = []
+    for section, share in zip(sections, shares, strict=True):
+        used = 0
+        block: list[str] = []
+        for line in section:
+            cost = len(line) + 1
+            if used + cost > share:
+                break
+            block.append(line)
+            used += cost
+        # A heading alone says nothing; require at least one line of content.
+        if len(block) > 1 or (block and not block[0].startswith("#")):
+            kept.extend(block)
+    return "\n".join(kept)
+
+
 def operational_briefing_lines(mem: Any, cwd: str | None = None) -> list[str]:
     """Render focus, handoffs, attention, and conflicts from Memo's journal."""
     try:
@@ -668,7 +772,7 @@ def compose_unified_briefing(memory: Any, cwd: str | None) -> str:
         memory, loops_n=loops_n, loops_days=loops_days
     )
     raw_lines.extend(operational_briefing_lines(memory, cwd))
-    return compact_text("\n".join(raw_lines), max_chars=900)
+    return budget_sections(raw_lines, max_chars=900)
 
 
 def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
@@ -679,6 +783,7 @@ def _clip(text: str, *, limit: int = _SNIPPET_CHARS) -> str:
 
 
 __all__ = [
+    "budget_sections",
     "compact_text",
     "compose_unified_briefing",
     "dream_digest_lines",

@@ -105,7 +105,6 @@ def register(server: Any, memory: Memory) -> None:
 
         t0 = now_ms()
         markdown = compose_unified_briefing(memory, cwd)
-        lines = markdown.splitlines() if markdown else []
         log_consult(
             memory,
             tool="unified_briefing",
@@ -115,10 +114,12 @@ def register(server: Any, memory: Memory) -> None:
             source=source,
         )
 
+        # `lines` used to ship markdown.splitlines() alongside `markdown` —
+        # a verbatim second copy that was half the serialized payload and had
+        # no reader. Clients that want lines can split `markdown` themselves.
         return {
-            "available": bool(lines),
+            "available": bool(markdown),
             "markdown": markdown,
-            "lines": lines,
             "notification": _read_notification(memory),
         }
 

@@ -798,7 +798,8 @@ def render_by_format(
             from memo.kernel.world_model import WorldModel
 
             wm = WorldModel(Path(state_dir))
-            world_proj = ZeroSearchProjector(wm).project_context() + "\n"
+            projected = ZeroSearchProjector(wm).project_context()
+            world_proj = projected + "\n" if projected else ""
         except Exception:
             world_proj = ""
 
