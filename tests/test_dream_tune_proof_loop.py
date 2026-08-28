@@ -53,7 +53,9 @@ def test_online_reverted_restores_floor_before_and_baseline(tmp_path, monkeypatc
         "write_overlay",
         lambda sd, params, meta: calls.__setitem__("overlay", dict(params)),
     )
-    monkeypatch.setattr(dream_tune, "save_baseline", lambda sd, m: calls.__setitem__("baseline", m))
+    monkeypatch.setattr(
+        dream_tune, "save_baseline", lambda sd, m, **kw: calls.__setitem__("baseline", m)
+    )
     monkeypatch.setattr(
         dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure"))
     )
@@ -122,7 +124,7 @@ def test_graph_signal_revert_restores_atomic_config_and_baseline(tmp_path, monke
         dream_tune, "save_graph_baseline", lambda sd, m: calls.__setitem__("graph_baseline", m)
     )
     monkeypatch.setattr(
-        dream_tune, "save_baseline", lambda sd, m: calls.__setitem__("min_baseline", m)
+        dream_tune, "save_baseline", lambda sd, m, **kw: calls.__setitem__("min_baseline", m)
     )
     monkeypatch.setattr(
         dream_tune, "measure", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no measure"))
