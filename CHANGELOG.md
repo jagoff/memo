@@ -11,6 +11,19 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- **The `🔗 Also connected` tail could not be measured, only paid for.** It
+  costs ~48 est. tokens on every injected prompt (193 chars, 19.9% of the
+  block, ~80,400 est. tokens across the 1,665 logged injections), is on by
+  default, and fires on 15/15 off-domain probes — `build_nudge` never receives
+  the prompt at all, so associates are ranked by activation × recency with no
+  reference to the query. Whether a nudged id was ever *used* was not merely
+  unlogged but structurally unknowable: `emitted_sink` is what the grounding
+  matcher joins a later citation against, and only the hit renderers ever fed
+  it. `render_associative_line` now records the ids it actually shows (and
+  nothing when the budget rejects the line), so the tail's benefit becomes
+  measurable against its cost instead of being argued about. No behaviour
+  change to what is injected.
+
 - **`memo debug-recall` reported hits on a channel the live hook does not
   use.** It resolved its own exclusions from `MEMO_RECALL_EXCLUDE_REFERENCE`
   alone, missing the Negative Recall branch that drops `failure_pattern` from

@@ -311,3 +311,110 @@ def test_build_nudge_without_conn_stays_unverified(monkeypatch):
 
     nudge = ra.build_nudge(_Mem(), [_Rec("s1", "seed")])
     assert nudge and all(not h.verified for h in nudge)
+
+
+def test_render_associative_line_records_shown_ids_for_grounding():
+    """A nudged id must reach `emitted_sink`, or its value can never be measured.
+
+    `emitted_sink` is what the grounding matcher joins a later citation
+    against, and only the hit renderers ever fed it — so an id surfaced in the
+    "🔗 Also connected" tail could not be recorded as used, no matter how often
+    it was. The tail costs ~48 est. tokens on every injected prompt (19.9% of
+    the block) and fires on 15/15 off-domain probes; making it observable is
+    what lets that cost be judged against a measured benefit.
+    """
+    from memo.recall_assoc import NudgeItem, render_associative_line
+
+    nudge = [NudgeItem(id="abcd1234ef", title="alpha", via="graph")]
+    sink: list[tuple[str, str]] = []
+
+    render_associative_line("ctx", nudge, token_budget=1000, emitted_sink=sink)
+
+    assert [i for i, _ in sink] == ["abcd1234ef"]
+
+
+def test_render_associative_line_records_nothing_when_the_line_does_not_fit():
+    """A line the budget rejected was never shown, so it must not be recorded."""
+    from memo.recall_assoc import NudgeItem, render_associative_line
+
+    nudge = [NudgeItem(id="abcd1234ef", title="alpha", via="graph")]
+    sink: list[tuple[str, str]] = []
+
+    out = render_associative_line("ctx", nudge, token_budget=1, emitted_sink=sink)
+
+    assert out == "ctx"
+    assert sink == []
+
+
+def _nudge_env(monkeypatch) -> None:
+    monkeypatch.setenv("MEMO_RECALL_MIN_SIM", "0.0")
+    monkeypatch.setenv("MEMO_RECALL_SKIP_BELOW", "0")
+    monkeypatch.setenv("MEMO_RECALL_GAP_THRESHOLD", "0")
+    monkeypatch.setenv("MEMO_RECALL_MIN_BODY_CHARS", "0")
+    monkeypatch.setenv("MEMO_RECALL_ASSOCIATIVE", "1")
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "0")
+
+
+def _stub_nudge(monkeypatch, nudge_id: str) -> None:
+    from memo.recall_assoc import NudgeItem
+
+    monkeypatch.setattr(
+        "memo.recall_assoc.build_nudge",
+        lambda *_a, **_k: [NudgeItem(id=nudge_id, title="assoc", via="graph")],
+    )
+
+
+def test_pipeline_records_the_nudge_id_in_its_emitted_sink(tmp_cfg, monkeypatch):
+    """`run_recall_pipeline` must hand its sink to the associative renderer.
+
+    Covers the daemon/subprocess-shared call site. Without it the id shown in
+    the tail never enters the sink the grounding matcher reads.
+    """
+    from memo.memory import Memory
+    from memo.recall_logic import RankKnobs, run_recall_pipeline
+
+    _nudge_env(monkeypatch)
+    _stub_nudge(monkeypatch, "nudge123abc")
+    mem = Memory(tmp_cfg)
+    try:
+        mem.save(content="the alpha rollout cutover went fine", title="alpha cutover", type_="fact")
+        out = run_recall_pipeline(
+            mem=mem,
+            query_text="alpha rollout cutover",
+            knobs=RankKnobs(top_k=3, min_sim=0.0, min_body_chars=0, mode="vec"),
+            turn=1,
+            session_id="s-nudge",
+            state_dir=tmp_cfg.state_dir,
+        )
+    finally:
+        mem.close()
+
+    assert out, "pipeline returned nothing — fixture did not produce a hit"
+    assert "nudge123abc" in {i for i, _ in out["emitted_sink"]}
+
+
+def test_daemon_recall_records_the_nudge_id_too(tmp_cfg, monkeypatch):
+    """`_recall_logic` carries its own copy of the assoc wiring; cover it too."""
+    from memo.memory import Memory
+    from memo.recall_logic import _recall_logic
+
+    _nudge_env(monkeypatch)
+    _stub_nudge(monkeypatch, "nudge456def")
+    captured: list[list[tuple[str, str]]] = []
+    real = __import__("memo.recall_assoc", fromlist=["x"]).render_associative_line
+
+    def _spy(context, nudge, *, token_budget, emitted_sink=None):
+        out = real(context, nudge, token_budget=token_budget, emitted_sink=emitted_sink)
+        captured.append(list(emitted_sink or []))
+        return out
+
+    monkeypatch.setattr("memo.recall_assoc.render_associative_line", _spy)
+    mem = Memory(tmp_cfg)
+    try:
+        mem.save(content="the beta rollout cutover went fine", title="beta cutover", type_="fact")
+        _recall_logic("beta rollout cutover", None, mem, mem.cfg)
+    finally:
+        mem.close()
+
+    assert captured, "the associative renderer never ran"
+    assert "nudge456def" in {i for i, _ in captured[-1]}

@@ -152,7 +152,13 @@ def _recency_weight(updated_iso: str) -> float:
         return 1.0
 
 
-def render_associative_line(context: str, nudge: list[Any], *, token_budget: int) -> str:
+def render_associative_line(
+    context: str,
+    nudge: list[Any],
+    *,
+    token_budget: int,
+    emitted_sink: list[tuple[str, str]] | None = None,
+) -> str:
     """Append an associative nudge line to *context* if it fits the token budget.
 
     Format::
@@ -166,6 +172,12 @@ def render_associative_line(context: str, nudge: list[Any], *, token_budget: int
 
     ``token_budget <= 0`` means no cap (always append).  Otherwise the line is
     skipped when ``len(context) + len(line) > token_budget * 4``.
+
+    ``emitted_sink``, when a list, receives ``(id, "")`` for every item the line
+    actually shows — the same contract the hit renderers use. Without it a
+    nudged id never enters the path the grounding matcher joins a later
+    citation against, so the tail's cost is measurable and its benefit is not.
+    A line the budget rejected was never shown, so it records nothing.
     """
     if not nudge:
         return context
@@ -178,4 +190,6 @@ def render_associative_line(context: str, nudge: list[Any], *, token_budget: int
     line = f"\n_🔗 Also connected ({label}): {parts}._"
     if token_budget > 0 and len(context) + len(line) > token_budget * 4:
         return context
+    if emitted_sink is not None:
+        emitted_sink.extend((h.id, "") for h in nudge)
     return context + line

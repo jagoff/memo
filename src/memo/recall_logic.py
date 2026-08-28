@@ -2199,7 +2199,9 @@ def run_recall_pipeline(
     with contextlib.suppress(Exception):
         _assoc = build_nudge(mem, relevant)
         if _assoc:
-            context = render_associative_line(context, _assoc, token_budget=token_budget)
+            context = render_associative_line(
+                context, _assoc, token_budget=token_budget, emitted_sink=emitted_sink
+            )
 
     # Cite instruction
     if flag_bool("MEMO_RECALL_CITE_INSTRUCTION"):
@@ -2639,7 +2641,9 @@ def _recall_logic(
 
         _assoc = build_nudge(mem, relevant)
         if _assoc:
-            context = render_associative_line(context, _assoc, token_budget=token_budget)
+            context = render_associative_line(
+                context, _assoc, token_budget=token_budget, emitted_sink=_emitted
+            )
 
     # Cite instruction — budget-exempt (~30 tokens), appended after any token-cap.
     # Mirror the subprocess path (cli_recall_hook): gated, never counts against budget.
