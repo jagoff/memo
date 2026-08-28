@@ -35,8 +35,20 @@ FP_SOURCE_SUPERSEDE = "supersede"
 FP_SOURCE_AVOID_VERDICT = "avoid_verdict"
 
 # Default tags applied to each derived anti-memory.
-DEFAULT_SUPERSEDE_TAGS: tuple[str, ...] = ("negative-recall", "superseded")
-DEFAULT_AVOID_VERDICT_TAGS: tuple[str, ...] = ("negative-recall", "avoid-verdict")
+# Names the class itself, so every anti-memory stays retrievable as one and
+# the pair clears memo's own >=3 tag convention — `memo lint` reported 43 of
+# 52 recent failure_patterns as `few_tags` while both tuples held exactly two.
+FAILURE_PATTERN_TAG = "failure-pattern"
+DEFAULT_SUPERSEDE_TAGS: tuple[str, ...] = (
+    "negative-recall",
+    "superseded",
+    FAILURE_PATTERN_TAG,
+)
+DEFAULT_AVOID_VERDICT_TAGS: tuple[str, ...] = (
+    "negative-recall",
+    "avoid-verdict",
+    FAILURE_PATTERN_TAG,
+)
 
 # Header of the rendered ⛔ block. A stored FACT surfaced, framed as data — no
 # suggest/agent/imperative-cognition verb (memo keeps cognition off its output).
@@ -332,6 +344,7 @@ __all__ = [
     "AVOID_BLOCK_HEADER",
     "DEFAULT_AVOID_VERDICT_TAGS",
     "DEFAULT_SUPERSEDE_TAGS",
+    "FAILURE_PATTERN_TAG",
     "FAILURE_PATTERN_TYPE",
     "FP_LINKS_KEY",
     "FP_SOURCE_AVOID_VERDICT",

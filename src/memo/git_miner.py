@@ -22,6 +22,19 @@ from typing import Any
 
 _log = logging.getLogger("memo.git_miner")
 
+
+def _mined_tags(slug: str) -> list[str]:
+    """Tags for a git-mined anti-memory.
+
+    ``failure-pattern`` names the class so mined entries are retrievable
+    alongside the ones Negative Recall writes, and it takes the list to three,
+    which is memo's own documented convention and what ``memo lint`` checks.
+    """
+    from memo.negative_recall import FAILURE_PATTERN_TAG
+
+    return ["git-mined", f"project:{slug}", FAILURE_PATTERN_TAG]
+
+
 _FIX_SUBJECT_RE = re.compile(r"^(revert\b|fix(\(|!?:|\b)|hotfix\b|bugfix\b)", re.I)
 _FIELD_SEP = "\x1f"
 _RECORD_SEP = "\x1e"
@@ -159,7 +172,7 @@ def mine_git_history(
                 "title": c["subject"][:80],
                 "body": "\n".join(body_lines),
                 "type": "failure_pattern",
-                "tags": ["git-mined", f"project:{slug}"],
+                "tags": _mined_tags(slug),
             }
             if is_near_duplicate(mem, cand):
                 skipped_dup += 1

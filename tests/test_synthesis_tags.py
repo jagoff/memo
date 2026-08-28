@@ -43,3 +43,35 @@ def test_an_unknown_kind_still_clears_the_convention() -> None:
     tags = synthesis_tags("some-new-kind")
     assert len(tags) >= 3
     assert "some-new-kind" in tags
+
+
+def test_failure_pattern_defaults_meet_the_convention() -> None:
+    """The ⛔ AVOID producers wrote exactly two tags, one short of the bar.
+
+    Measured over the same eight days, `failure_pattern` violated `few_tags`
+    43 times out of 52 — for the same reason as `synthesis`, one level down:
+    both default tag tuples carried exactly two entries, and the git miner
+    built exactly two. A third tag naming the class keeps every anti-memory
+    retrievable as one, the way `synthesis` now is.
+    """
+    from memo.negative_recall import (
+        DEFAULT_AVOID_VERDICT_TAGS,
+        DEFAULT_SUPERSEDE_TAGS,
+        FAILURE_PATTERN_TAG,
+    )
+
+    for tags in (DEFAULT_SUPERSEDE_TAGS, DEFAULT_AVOID_VERDICT_TAGS):
+        assert len(tags) >= 3, tags
+        assert FAILURE_PATTERN_TAG in tags, tags
+
+
+def test_git_mined_anti_memories_meet_the_convention() -> None:
+    """The git miner builds its own tag list and must clear the bar too."""
+    from memo.git_miner import _mined_tags
+    from memo.negative_recall import FAILURE_PATTERN_TAG
+
+    tags = _mined_tags("memo")
+
+    assert len(tags) >= 3, tags
+    assert FAILURE_PATTERN_TAG in tags
+    assert "project:memo" in tags

@@ -25,7 +25,10 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   derived from the `synthesis_kind` it already records: no embedder call, no
   LLM, sorted and de-duplicated so re-saving never churns a record, and an
   unregistered kind still clears three tags rather than silently reopening
-  this.
+  this. The ⛔ AVOID producers had the same defect one level down —
+  `DEFAULT_SUPERSEDE_TAGS`, `DEFAULT_AVOID_VERDICT_TAGS` and the git miner
+  each built exactly two tags — and now carry a third, `failure-pattern`,
+  which also makes every anti-memory retrievable as one class.
 
 - **The `🔗 Also connected` tail could not be measured, only paid for.** It
   costs ~48 est. tokens on every injected prompt (193 chars, 19.9% of the
