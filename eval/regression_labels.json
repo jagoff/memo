@@ -278,17 +278,20 @@
     {
       "text": "best pasta recipe for tonight",
       "relevant": false,
-      "_note": "Noise probe — culinary content not in the developer's vault."
+      "_note": "Noise probe — culinary content not in the developer's vault.",
+      "noise_probe": true
     },
     {
       "text": "what is the weather tomorrow",
       "relevant": false,
-      "_note": "Noise probe — real-time query with no stored answer."
+      "_note": "Noise probe — real-time query with no stored answer.",
+      "noise_probe": true
     },
     {
       "text": "explain quantum entanglement",
       "relevant": false,
-      "_note": "Noise probe — general physics, not stored as a personal memory."
+      "_note": "Noise probe — general physics, not stored as a personal memory.",
+      "noise_probe": true
     },
     {
       "text": "hace el push a master",
