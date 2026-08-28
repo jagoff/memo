@@ -16,6 +16,8 @@ import hashlib
 from collections.abc import Callable
 from typing import Any
 
+from memo.dream_synthesis_tags import synthesis_tags
+
 _SYS = (
     "You abstract a cluster of a user's memories into one durable insight. "
     'Reply ONLY with JSON {"title": str, "insight": str}. The insight names '
@@ -194,6 +196,7 @@ def run_synthesize_communities(
                     mem.save(
                         content=f"{d['body']}\n\n[community {d['provenance_hash']}]",
                         type_="synthesis",
+                        tags=synthesis_tags("community"),
                         title=d["title"],
                         extra={
                             "synthesis_kind": "community",

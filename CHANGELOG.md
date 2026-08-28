@@ -11,6 +11,22 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- **`few_tags` was not a backlog to sweep — it was a nightly producer writing
+  below memo's own convention.** `memo lint` flags any memory with under three
+  tags, citing the CLAUDE.md "project + domain + topic" rule, and reported
+  3,941 of them. Broken down by type over the eight days to 2026-08-28 the
+  cause is not diffuse: `synthesis` violated the rule **107 times out of 109**
+  (98%) and `failure_pattern` 43 of 52, while `reference` — the bulk of the
+  corpus at 4,119 rows — sat at 4%. All five synthesis producers (distill,
+  consolidate, communities, bridges, folder abstracts) called `mem.save(...)`
+  with no `tags=` whatsoever, so each record kept only what `save` could derive
+  alone, usually one. Retro-tagging the corpus would have left the producer
+  refilling it every night. Each producer now passes `synthesis_tags(kind)`,
+  derived from the `synthesis_kind` it already records: no embedder call, no
+  LLM, sorted and de-duplicated so re-saving never churns a record, and an
+  unregistered kind still clears three tags rather than silently reopening
+  this.
+
 - **The `🔗 Also connected` tail could not be measured, only paid for.** It
   costs ~48 est. tokens on every injected prompt (193 chars, 19.9% of the
   block, ~80,400 est. tokens across the 1,665 logged injections), is on by

@@ -24,6 +24,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from memo.dream_synthesis_tags import synthesis_tags
+
 # --- pure core (testable) ----------------------------------------------------
 
 
@@ -298,6 +300,7 @@ def run_distill(
                     mem.save(
                         content=f"{d['body']}\n\n[distill {d['provenance_hash']}]",
                         type_="synthesis",
+                        tags=synthesis_tags("distillation"),
                         title=d["title"],
                         extra={
                             "synthesis_kind": "distillation",
