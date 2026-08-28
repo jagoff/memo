@@ -6,7 +6,9 @@ root group in cli.py via `cli.add_command(session_group)`.
 
 from __future__ import annotations
 
+import logging
 import sys
+from pathlib import Path
 from typing import Any
 
 import click
@@ -14,6 +16,8 @@ import click
 from memo.cli_common import console
 from memo.config import Config
 from memo.flags import flag_bool, flag_int
+
+_log = logging.getLogger(__name__)
 
 
 @click.command(name="continuity")
@@ -596,6 +600,44 @@ def session_refresh_summary() -> None:
     _sys.exit(0)
 
 
+def _row_has_content(row: dict, summary: str) -> bool:
+    """Whether a session row says anything at all.
+
+    `list_sessions` orders by `updated`, and `mark_ids_recalled` bumps that on
+    content-free snapshots, so recall bookkeeping promotes empty rows above
+    informative ones. Charging the session-start budget for a line that is
+    three em-dashes and an id is a pure loss, so those rows are dropped.
+    """
+    return bool(
+        (row.get("project") or "").strip()
+        or (row.get("branch") or "").strip()
+        or summary.strip().strip("—·")
+    )
+
+
+def _log_session_recent_cost(state_dir: Path, context: str) -> None:
+    """Record this panel in the context-cost ledger.
+
+    It is injected into every matching SessionStart but was the one injection
+    the ledger never saw, so its share of the session-start budget could not be
+    measured against recall or the briefing.
+    """
+    try:
+        from memo.dashboard import append_context_cost_log
+
+        append_context_cost_log(
+            state_dir,
+            kind="session_recent",
+            chars=len(context),
+            client="claude-code",
+        )
+    except (OSError, ImportError) as exc:
+        # The write is a `datetime.now()` plus a capped JSONL append, so disk
+        # trouble and a missing dashboard module are the only realistic
+        # failures — and neither may take down a SessionStart hook.
+        _log.debug("session recent: context-cost log failed: %s", exc)
+
+
 @session_group.command(name="recent")
 @click.option("--limit", default=None, type=int, show_default=True)
 def session_recent(limit: int | None) -> None:
@@ -693,6 +735,7 @@ def session_recent(limit: int | None) -> None:
         )
 
     def _render_table(title: str, items: list[dict]) -> None:
+        items = [r for r in items if _row_has_content(r, _clean_summary(r, 55))]
         if not items:
             return
         lines.extend(
@@ -727,10 +770,14 @@ def session_recent(limit: int | None) -> None:
         _render_table("Other projects", others)
         lines.append("_`memo resume <id>` to see details. `claude --resume <id>` to resume._")
 
+    context = "\n".join(lines)
+
+    _log_session_recent_cost(cfg.state_dir, context)
+
     output = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": "\n".join(lines),
+            "additionalContext": context,
         }
     }
     print(_json.dumps(output, ensure_ascii=False))

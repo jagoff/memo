@@ -1,5 +1,4 @@
 import json
-from types import SimpleNamespace
 
 from memo.proxy.plan import Context
 from memo.proxy.transforms.toolschemas import DOCS_TOOL_NAME, ToolSchemas, recent_tool_names
@@ -486,38 +485,58 @@ def test_the_keep_set_never_grows_mid_session(tmp_path, monkeypatch):
     assert {t["name"] for t in zones2.tools} == first
 
 
-def test_builtin_discovery_shells_out_and_degrades_to_the_core_set(monkeypatch):
-    """`_discover_builtins` asks the real CLI, and must never depend on it.
+def test_the_builtin_set_is_a_constant_not_a_subprocess() -> None:
+    """The never-prune set must be stable across turns, so it is a constant.
 
-    Whatever this returns lands in the `tools` array, which sits at the front
-    of the cached prefix — so a discovery that answers on one turn and fails
-    on the next would reshape the prefix and re-cache the conversation. Every
-    failure mode therefore collapses to the same `_BUILTIN_CORE`: a non-zero
-    exit, empty stdout, a timeout, a missing binary.
+    Whatever it holds lands in the `tools` array at the front of the cached
+    prefix, so a set that answered on one turn and failed on the next would
+    reshape the prefix and re-cache the whole conversation. This used to be
+    computed by shelling out to `claude --list-tools` — an option that does
+    not exist, so the call could only ever fail and fall back. The previous
+    test for it mocked `subprocess.run` into succeeding, and so reported a
+    discovery path that never ran in production.
     """
-    import subprocess
-
     import memo.proxy.transforms.toolschemas as ts
 
-    core = ts._BUILTIN_CORE
+    assert isinstance(ts._BUILTIN_NEVER_PRUNE, frozenset)
+    assert {"Read", "Write", "Edit", "Bash", "Glob", "Grep"} <= ts._BUILTIN_NEVER_PRUNE
+    assert ts._BUILTIN_NEVER_PRUNE == ts._BUILTIN_NEVER_PRUNE, "must not be recomputed"
 
-    def _ok(*_a, **_k):
-        return SimpleNamespace(returncode=0, stdout="Bash  run a command\nGlob  find files\n")
 
-    monkeypatch.setattr(subprocess, "run", _ok)
-    ts._discover_builtins.cache_clear() if hasattr(ts._discover_builtins, "cache_clear") else None
-    found = ts._discover_builtins()
-    assert core <= found
-    assert {"Bash", "Glob"} <= found
+def test_structuredoutput_is_never_pruned(tmp_path, monkeypatch):
+    """Pruning StructuredOutput makes the model call it blind, and it must.
 
-    for failure in (
-        lambda *_a, **_k: SimpleNamespace(returncode=1, stdout=""),
-        lambda *_a, **_k: SimpleNamespace(returncode=0, stdout="   \n"),
-        lambda *_a, **_k: (_ for _ in ()).throw(subprocess.TimeoutExpired("claude", 5)),
-        lambda *_a, **_k: (_ for _ in ()).throw(FileNotFoundError("claude")),
-    ):
-        monkeypatch.setattr(subprocess, "run", failure)
-        ts._discover_builtins.cache_clear() if hasattr(
-            ts._discover_builtins, "cache_clear"
-        ) else None
-        assert ts._discover_builtins() == core
+    The harness executes StructuredOutput client-side and *forces* schema
+    agents to call it, so stripping its schema from the request does not
+    remove the capability — it removes the model's knowledge of the required
+    fields. Measured across 237 subagent transcripts: 121 first calls (51%)
+    came back `must have required property ...`, discarding 511k output
+    tokens to retries. A tool the model is compelled to call is the one tool
+    whose schema is never safe to drop.
+    """
+    monkeypatch.delenv("MEMO_PROXY_TOOL_SCHEMAS_SCOPE", raising=False)
+    monkeypatch.setattr(
+        "memo.proxy.transforms.toolschemas.recent_tool_names",
+        lambda state_dir, window: set(),
+    )
+    zones = make_zones(["StructuredOutput", "memo_rename"])
+
+    ToolSchemas().apply(zones, _ctx(tmp_path))
+
+    names = {t["name"] for t in zones.tools}
+    assert "StructuredOutput" in names
+    assert "memo_rename" not in names, "unrelated pruning must still happen"
+
+
+def test_builtin_discovery_does_not_shell_out() -> None:
+    """The built-in set is a constant, not the result of a subprocess.
+
+    `_discover_builtins` ran `claude --list-tools` at import time. That option
+    does not exist — it exits non-zero with `unknown option '--list-tools'` —
+    so the call could only ever fail, then fall back. It paid a subprocess on
+    every import to learn nothing.
+    """
+    import memo.proxy.transforms.toolschemas as ts
+
+    assert not hasattr(ts, "_discover_builtins")
+    assert "StructuredOutput" in ts._BUILTIN_NEVER_PRUNE

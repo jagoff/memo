@@ -11,6 +11,47 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- **The proxy pruned `StructuredOutput`, so the model called it blind and paid
+  the difference back in retries.** `_discover_builtins()` shelled out to
+  `claude --list-tools` at import time to extend the never-prune set. That
+  option does not exist — it exits non-zero with `unknown option
+  '--list-tools'` — so discovery could only ever fail and fall back to the
+  9-name core, paying a subprocess on every import to learn nothing. The
+  existing test mocked `subprocess.run` into succeeding and so reported a path
+  that never ran. `StructuredOutput` therefore fell outside `_ALWAYS_KEEP` and
+  was pruned when unused. Because the harness executes it client-side and
+  *forces* schema agents to call it, dropping its schema does not remove the
+  capability — it removes the model's knowledge of the required fields.
+  Measured across 237 subagent transcripts: 121 first calls (51%) came back
+  `must have required property 'refuted' ...`, discarding **511,052 output
+  tokens** to retries, far more than the pruned schema ever saved. The set is
+  now a constant that includes `StructuredOutput`, which also keeps the cached
+  prefix stable turn to turn.
+
+- **`memo session recent` charged the session-start budget for rows that say
+  nothing.** `list_sessions` orders by `updated`, and `mark_ids_recalled`
+  bumps `updated` on content-free snapshots, so recall bookkeeping promoted
+  empty sessions above informative ones. Measured live: 7 of 8 rendered rows
+  were `| 4h ago | — | — | — | \`id\` |` — a timestamp and a truncated id, no
+  project, branch, or summary. Rows with no content are now dropped before
+  rendering; the live panel went 525 → 273 chars, exactly the 252 bytes those
+  rows occupied.
+- **The same panel was the one injection memo's own ledger never saw.**
+  `context_cost.log` recorded only `kind=recall` and `kind=briefing`, because
+  `cli_session` emitted its `additionalContext` and returned without logging —
+  so a per-session injection could not be weighed against the two that were
+  measured. It now records `kind=session_recent`.
+- **`memo tokens --by-transform` advertised a decomposition of a number it is
+  not denominated in.** The help read "Break the measured proxy saving down per
+  transform" and the column read "share of savings", but the headline saving is
+  a cache-weighted *billed* ratio while `saved_by` is an unweighted chars/4
+  count of removed text. The two differ by 9.11x on the live ledger — 1.08B raw
+  tokens "saved" against 118M tok-equiv ever billed — because prefix content a
+  transform removes is credited at full value every turn while the
+  counterfactual bills it at the 0.1x cache-read weight. The split itself was
+  already honest; only its label was not. Now titled "raw text removed, not
+  billed saving", with the column and `--help` matching.
+
 - **The nightly tuner confirmed a knob and rolled it back in the same pass.**
   On 2026-08-27 one `dream` run CONFIRMED `MEMO_RECALL_MIN_SIM` 0.5 → 0.4 on
   the online proof loop (0.0 → 0.9362, n=47) and reverted it minutes later.

@@ -289,3 +289,44 @@ def test_suppressed_headline_still_reports_the_session_counts(tmp_path):
     result = CliRunner().invoke(tokens_cmd, [], env=_env(tmp_path))
     assert result.exit_code == 0, result.output
     assert "session" in result.output.lower()
+
+
+def test_by_transform_does_not_claim_to_decompose_the_billed_saving(tmp_path):
+    """The per-transform split is raw removed text, not the cache-weighted cost.
+
+    `measured_saving_frac` is a billed-cost ratio built with the 1.25x / 2.0x /
+    0.1x cache weights; `saved_by` is an unweighted chars/4 diff that cannot
+    carry a weight and cannot go negative. On the live ledger the two differ by
+    9.11x, because cached prefix content is credited at full value every turn
+    while the counterfactual bills it at 0.1x. The panel must not present one
+    as a breakdown of the other.
+    """
+    state_dir = tmp_path / "state"
+    for i in range(10):
+        _seed(
+            state_dir,
+            [
+                _record(
+                    f"a{i}",
+                    holdout=False,
+                    input_tokens=500,
+                    transforms=["toolschemas"],
+                    est_saved_tokens=100,
+                    saved_by={"toolschemas": 100},
+                )
+            ],
+        )
+
+    result = CliRunner().invoke(tokens_cmd, ["--by-transform"], env=_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert "share of savings" not in result.output, "implies the billed saving"
+    assert "text removed" in result.output, "must name the unit it actually reports"
+
+
+def test_by_transform_help_names_the_unit_it_reports(tmp_path):
+    """`--by-transform` help must not advertise the measured proxy saving."""
+    result = CliRunner().invoke(tokens_cmd, ["--help"], env=_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert "measured proxy saving" not in result.output

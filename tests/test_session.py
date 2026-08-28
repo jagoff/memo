@@ -2123,3 +2123,42 @@ def test_refresh_summary_llm_failure_has_stable_diagnostic(
 
     assert not refresh_summary(tmp_path, "sid-llm-failure", min_new_turns=3)
     assert "session: reflect summary LLM call failed: model unavailable" in caplog.messages
+
+
+def test_session_recent_drops_content_free_rows(tmp_cfg, monkeypatch, tmp_path):
+    """A row with no project, branch, or summary costs bytes and says nothing.
+
+    `list_sessions` sorts by `updated` desc and `mark_ids_recalled` bumps
+    `updated` on content-free snapshots, so recall bookkeeping promoted empty
+    rows above informative ones. Measured live: 7 of 8 rendered rows were
+    `| 4h ago | - | - | - | id |`.
+    """
+    from memo import session as session_mod
+
+    hollow = [
+        {"session_id": f"empty-{i}", "project": "", "branch": "", "summary": "", "cwd": ""}
+        for i in range(4)
+    ]
+    real = {
+        "session_id": "real-one",
+        "project": "memo",
+        "branch": "master",
+        "summary": "ship the briefing budget fix",
+        "cwd": str(tmp_path),
+    }
+    monkeypatch.setattr(session_mod, "list_sessions", lambda *a, **k: [real, *hollow])
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        session_group,
+        ["recent"],
+        env={
+            "MEMO_STATE_DIR": str(tmp_cfg.state_dir),
+            "MEMO_DATA_DIR": str(tmp_cfg.data_dir),
+            "MEMO_NONINTERACTIVE": "1",
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    for i in range(4):
+        assert f"empty-{i}" not in result.output, "content-free row was rendered"

@@ -92,32 +92,35 @@ _OWNED_PREFIX = "memo_"
 # included for the same reason `memo_tool_docs` is: it is Claude Code's OWN
 # discovery-then-hydrate primitive for every other deferred/pruned tool, so
 # losing it breaks the recovery path for everything else, not just memo's.
-# Core built-ins that must never be pruned. These are the minimum set;
-# discover_builtins() extends this with any additional tools discovered at runtime.
-_BUILTIN_CORE = frozenset(
-    {"Read", "Write", "Edit", "Bash", "Glob", "Grep", "Task", "Agent", "ToolSearch"}
+# Core built-ins that must never be pruned.
+#
+# This used to be a floor that `_discover_builtins()` extended by running
+# `claude --list-tools` at import time. That option does not exist — it exits
+# non-zero with `unknown option '--list-tools'` — so discovery could only ever
+# fail and fall back here, paying a subprocess on every import to learn
+# nothing. The set is a constant, and is written as one.
+#
+# StructuredOutput belongs here for a reason the file-access tools do not: the
+# harness executes it client-side and *forces* schema agents to call it, so
+# pruning its schema does not remove the capability, it removes the model's
+# knowledge of the required fields. The model then calls it blind and the call
+# is rejected. Measured across 237 subagent transcripts: 121 first calls (51%)
+# failed with `must have required property ...`, discarding 511k output tokens
+# to retries — far more than the schema ever saved.
+_BUILTIN_NEVER_PRUNE = frozenset(
+    {
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "Glob",
+        "Grep",
+        "Task",
+        "Agent",
+        "ToolSearch",
+        "StructuredOutput",
+    }
 )
-
-
-def _discover_builtins() -> frozenset[str]:
-    """Try to discover built-in tools from the Claude Code installation.
-    Falls back to _BUILTIN_CORE if discovery fails."""
-    import contextlib
-
-    with contextlib.suppress(Exception):
-        import subprocess
-
-        result = subprocess.run(
-            ["claude", "--list-tools"], capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            names = {line.strip().split()[0] for line in result.stdout.splitlines() if line.strip()}
-            if names:
-                return _BUILTIN_CORE | names
-    return _BUILTIN_CORE
-
-
-_BUILTIN_NEVER_PRUNE = _discover_builtins()
 # Kept regardless of usage or scope: without these the model cannot reach
 # memo, or the agent's own built-in tools, at all.
 _ALWAYS_KEEP = frozenset({DOCS_TOOL_NAME, "memo_search", "memo_save"}) | _BUILTIN_NEVER_PRUNE
