@@ -5,10 +5,13 @@
 (full) and ``render_recall_compact`` — and by neither ``render_recall_balanced``.
 
 The daemon is a separate long-lived process, so it does NOT inherit the recall
-hook's environment, and the socket request carries only prompt/cwd/session_id/
-turn/client (``recall_client.connect_and_recall``) — no budget, no format. It
-therefore resolves ``MEMO_RECALL_TOKEN_BUDGET`` / ``_TOP_K`` / ``_FORMAT`` from
-its OWN flag chain, which on a default install yields 600 / 3 / auto. Adaptive
+hook's environment. ``recall_client.connect_and_recall`` now forwards a budget
+or top_k the operator moved off its registry default, and the socket handler
+passes them to ``_recall_logic`` — so an operator's cap is honoured rather than
+silently dropped. Absent keys still leave the daemon resolving
+``MEMO_RECALL_TOKEN_BUDGET`` / ``_TOP_K`` / ``_FORMAT`` from its OWN flag
+chain, which on a default install yields 600 / 3 / auto, and ``_FORMAT`` is
+never forwarded at all. Adaptive
 budgeting maps 600 to {800, 600, 360} by prompt length and hits are capped at
 top_k, so *every* reachable combination resolves to ``balanced`` — `full` needs
 a budget strictly above 800 and the maximum attainable is exactly 800.
@@ -274,3 +277,99 @@ def test_daemon_startup_stays_quiet_when_no_annotation_flag_is_set(monkeypatch, 
     err = _boot_daemon(monkeypatch, tmp_path)
 
     assert "WARNING" not in err, err
+
+
+def test_the_client_forwards_the_operator_resolved_recall_knobs(monkeypatch) -> None:
+    """A budget the operator set in the hook env must reach the daemon.
+
+    The daemon is a separate long-lived process and does not inherit the
+    hook's environment, so a request that carries only prompt/cwd/session_id/
+    turn/client leaves it resolving MEMO_RECALL_TOKEN_BUDGET / _TOP_K from its
+    OWN chain — which the LaunchAgent does not set. An operator writing
+    `MEMO_RECALL_TOKEN_BUDGET=160 MEMO_RECALL_TOP_K=1` in settings.json
+    therefore got 600/3 and no error. Forwarding closes that silently.
+    """
+    from memo import recall_client
+
+    sent: dict = {}
+
+    def _capture(state_dir, payload, timeout, max_retries=3):
+        sent.update(payload)
+        return "{}"
+
+    monkeypatch.setattr(recall_client, "_send_request", _capture)
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "160")
+    monkeypatch.setenv("MEMO_RECALL_TOP_K", "1")
+
+    recall_client.connect_and_recall(Path("/tmp"), "a prompt", None)
+
+    assert sent.get("token_budget") == 160
+    assert sent.get("top_k") == 1
+
+
+def test_the_client_omits_knobs_the_operator_did_not_set(monkeypatch) -> None:
+    """An unset knob must stay absent so the daemon keeps resolving its own."""
+    from memo import recall_client
+
+    sent: dict = {}
+    monkeypatch.setattr(
+        recall_client,
+        "_send_request",
+        lambda state_dir, payload, timeout, max_retries=3: (sent.update(payload), "{}")[1],
+    )
+    monkeypatch.delenv("MEMO_RECALL_TOKEN_BUDGET", raising=False)
+    monkeypatch.delenv("MEMO_RECALL_TOP_K", raising=False)
+
+    recall_client.connect_and_recall(Path("/tmp"), "a prompt", None)
+
+    assert "token_budget" not in sent
+    assert "top_k" not in sent
+
+
+def test_recall_logic_honours_the_forwarded_knobs(tmp_cfg, monkeypatch) -> None:
+    """The daemon must prefer the caller's knobs over its own flag chain.
+
+    Forwarding is only half the fix: if `_recall_logic` keeps resolving from
+    its own environment the request's values are decoration. Overrides are
+    per-request, so one client capping its injections cannot change what
+    another client gets.
+    """
+    import re as _re
+
+    from memo.memory import Memory
+    from memo.recall_logic import _recall_logic
+
+    for flag, value in (
+        ("MEMO_RECALL_MIN_SIM", "0.0"),
+        ("MEMO_RECALL_SKIP_BELOW", "0"),
+        ("MEMO_RECALL_GAP_THRESHOLD", "0"),
+        ("MEMO_RECALL_MIN_BODY_CHARS", "0"),
+        ("MEMO_RECALL_TOP_K", "3"),
+        ("MEMO_RECALL_ASSOCIATIVE", "0"),
+    ):
+        monkeypatch.setenv(flag, value)
+
+    mem = Memory(tmp_cfg)
+    try:
+        # Distinct enough to survive near-duplicate collapse, close enough
+        # that all three match the query.
+        for title, body in (
+            ("gamma cutover plan", "the gamma rollout cutover was scheduled for a tuesday"),
+            ("gamma cutover rollback", "rolling the gamma cutover back needs the old flag set"),
+            ("gamma cutover owners", "platform owns the gamma cutover, storage signs it off"),
+        ):
+            mem.save(content=body, title=title, type_="fact")
+        default_out, _ = _recall_logic("gamma rollout cutover", None, mem, mem.cfg)
+        capped_out, _ = _recall_logic("gamma rollout cutover", None, mem, mem.cfg, top_k=1)
+    finally:
+        mem.close()
+
+    def _n_hits(out: str) -> int:
+        # Only bullet ids in the recall block — the cite instruction carries a
+        # literal `[a1b2c3d4]` example that is not a hit.
+        return len(_re.findall(r"- \[[0-9a-f]{8}\]", out))
+
+    assert _n_hits(default_out) > 1, "fixture did not produce a multi-hit baseline"
+    assert _n_hits(capped_out) == 1, (
+        f"forwarded top_k ignored: {_n_hits(capped_out)} hits, expected 1"
+    )

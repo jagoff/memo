@@ -2261,6 +2261,18 @@ def run_recall_pipeline(
     }
 
 
+def _knobs_with_overrides(*, cwd: str | None, top_k: int | None) -> RankKnobs:
+    """Flag-resolved knobs, with a caller override applied when one was sent.
+
+    The daemon does not inherit the calling hook's environment, so a request
+    that carries no knobs leaves it resolving from its own chain — which the
+    LaunchAgent does not set. Overrides are per-request: one client capping
+    its injections cannot change what another client gets.
+    """
+    knobs = knobs_from_flags(cwd=cwd)
+    return knobs if top_k is None else replace(knobs, top_k=int(top_k))
+
+
 def _recall_logic(
     prompt: str,
     cwd: str | None,
@@ -2272,21 +2284,33 @@ def _recall_logic(
     turn: int | None = None,
     client: str | None = None,
     micro_embedder: Any | None = None,
+    token_budget: int | None = None,
+    top_k: int | None = None,
 ) -> tuple[str, Callable[[], None] | None]:
+    """Run one recall. ``token_budget``/``top_k``, when given, override this
+    process's own flag resolution.
+
+    The daemon does not inherit the calling hook's environment, so without a
+    per-request override an operator's `MEMO_RECALL_TOKEN_BUDGET` never
+    reached it. Overrides are per-request: one client capping its injections
+    cannot change what another client gets.
+    """
     from memo.flags import flag_float as _flag_float
     from memo.flags import flag_int as _flag_int
 
     # Single-source knob resolution — knobs_from_flags mirrors the historical
     # inline block exactly (same flag names, defaults, overlay resolution,
     # project_tag gating on project_boost > 0 and cwd).
-    knobs = knobs_from_flags(cwd=cwd)
+    knobs = _knobs_with_overrides(cwd=cwd, top_k=top_k)
     top_k = knobs.top_k
     mode = knobs.mode
     project_tag = knobs.project_tag
     contextual = knobs.contextual
     _body_chars = _flag_int("MEMO_RECALL_BODY_CHARS")
     body_chars = 400 if _body_chars is None else max(0, _body_chars)
-    token_budget = _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0
+    token_budget = (
+        _flag_int("MEMO_RECALL_TOKEN_BUDGET") or 0 if token_budget is None else token_budget
+    )
 
     # Adaptive budget — parity with the subprocess path (cli_recall_hook):
     # scale the per-turn budget by prompt length, BEFORE session decay.
