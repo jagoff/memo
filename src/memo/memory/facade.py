@@ -47,6 +47,7 @@ from memo.memory.search_scoring_ops import _SearchScoringMixin
 from memo.memory.secret_ops import _SecretOpsMixin
 from memo.memory.update_ops import _UpdateOpsMixin
 from memo.memory.write_ops import _WriteOpsMixin
+from memo.retrieval_boost import shares_content_term
 from memo.store import VecStore
 from memo.store.fact_edge_store import FactEdgeStore
 from memo.temporal import TemporalAnalyzer
@@ -63,16 +64,23 @@ _LOW_CONFIDENCE_FROM = (
 
 
 def _dead_memory_from(durable_types: frozenset[str]) -> str:
-    """FROM/WHERE tail for never-accessed durable memories.
+    """FROM/WHERE tail for never-accessed durable memories old enough to prune.
 
     Built rather than a constant because the `IN (...)` list needs one `?` per
-    durable type; the caller binds `durable_types` in the same order.
+    durable type; the caller binds `durable_types` in the same order, then the
+    `date('now', ?)` offset.
+
+    Never-accessed alone is not prunable: a memory saved this week has not had
+    a chance to be surfaced yet. The window matches `memo maintain
+    --stale-days`, the command that actually archives these, so the count and
+    its remediation agree.
     """
     placeholders = ",".join("?" for _ in durable_types)
     return (
         "FROM meta m LEFT JOIN access a ON a.id = m.id "
         "WHERE COALESCE(a.access_count, 0) = 0 "
         f"AND m.type IN ({placeholders}) "
+        "AND m.created < date('now', ?) "
         "AND (m.deleted_at IS NULL OR m.deleted_at = '')"
     )
 
@@ -594,11 +602,11 @@ class Memory(
         Capped by `limit`: pair with `dead_memory_count` when you need to
         report how many there really are.
         """
-        from memo.tiers import DURABLE_TYPES
+        from memo.tiers import DURABLE_TYPES, STALE_AFTER_DAYS
 
         rows = self.store._conn.execute(
             f"SELECT m.id {_dead_memory_from(DURABLE_TYPES)} ORDER BY m.created ASC LIMIT ?",
-            (*DURABLE_TYPES, limit),
+            (*DURABLE_TYPES, f"-{STALE_AFTER_DAYS} day", limit),
         ).fetchall()
         return [str(r["id"]) for r in rows]
 
@@ -608,11 +616,11 @@ class Memory(
         `dead_memory_ids` truncates to `limit`, so on a corpus with thousands
         of never-accessed memories its length reports the cap, not the backlog.
         """
-        from memo.tiers import DURABLE_TYPES
+        from memo.tiers import DURABLE_TYPES, STALE_AFTER_DAYS
 
         row = self.store._conn.execute(
             f"SELECT count(*) AS n {_dead_memory_from(DURABLE_TYPES)}",
-            tuple(DURABLE_TYPES),
+            (*DURABLE_TYPES, f"-{STALE_AFTER_DAYS} day"),
         ).fetchone()
         return int(row["n"]) if row else 0
 
@@ -626,9 +634,15 @@ class Memory(
         (`dashboard_logs.read_recall_log`) — true déjà-vu would compare
         against the CURRENT recall's live hits, but that context isn't
         available outside a recall call, so this re-runs `search()` (the
-        same retrieval machinery any query uses) to find a real citable
-        hit. A pattern with no matching memory is dropped; this never
-        fabricates a citation.
+        same retrieval machinery any query uses) to find a citable hit.
+
+        `search()` returns its best row for any input, so a hit alone is not
+        evidence: a pattern is kept only when its top hit shares a content
+        term with the prompt (`_cites_shared_topic`). That floor sits at
+        "zero shared terms" on purpose — scores are not comparable across
+        queries, so any higher cut drops real prompts too. A citation
+        matching on one incidental word can still get through: this bounds
+        the fabrication, it does not eliminate it.
         """
         from collections import Counter
 
@@ -656,9 +670,14 @@ class Memory(
             if count < min_count:
                 break
             hits = self.search(query, limit=1, disable_reranker=True)
-            if hits and hits[0].id not in seen:
-                seen.add(hits[0].id)
-                out.append((hits[0].id, query))
+            if not hits or hits[0].id in seen:
+                continue
+            title = getattr(hits[0], "title", "") or ""
+            snippet = getattr(hits[0], "snippet", "") or ""
+            if not shares_content_term(query, f"{title} {snippet}"):
+                continue
+            seen.add(hits[0].id)
+            out.append((hits[0].id, query))
         return out
 
     def capability(self, name: str) -> Any:

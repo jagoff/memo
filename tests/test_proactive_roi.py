@@ -33,12 +33,37 @@ def test_roi_guarded_returns_empty_on_error():
     assert detect_roi(Boom(), now="2026-07-21T00:00:00Z") == []
 
 
+def _age(mem, memo_id: str, *, days: int) -> None:
+    """Backdate `created` so the memory clears the staleness window."""
+    mem.store._conn.execute(
+        "UPDATE meta SET created = date('now', ?) WHERE id = ?",
+        (f"-{days} day", memo_id),
+    )
+    mem.store._conn.commit()
+
+
 def test_real_facade_dead_memory_ids_finds_never_accessed_durable_memory(mock_memory):
     rec = mock_memory.save(content="a fact nobody ever looked up again", type_="fact")
+    _age(mock_memory, rec.id, days=400)
 
     ids = mock_memory.dead_memory_ids()
 
     assert rec.id in ids
+
+
+def test_real_facade_dead_memory_ids_ignores_a_memory_too_young_to_prune(mock_memory):
+    """Never-accessed is not the same as prunable.
+
+    The nudge these ids feed says "candidates to prune", but the remediation
+    it points at (`memo maintain`) only archives never-accessed memories older
+    than `--stale-days`. Counting fresh ones tells the operator to delete work
+    they saved this week: on the live corpus that was 1505 memories against
+    which `memo maintain` would have archived zero.
+    """
+    rec = mock_memory.save(content="a fact saved moments ago", type_="fact")
+
+    assert rec.id not in mock_memory.dead_memory_ids()
+    assert mock_memory.dead_memory_count() == 0
 
 
 def test_roi_title_reports_the_true_total_not_the_evidence_cap():
@@ -75,6 +100,7 @@ def test_roi_falls_back_to_evidence_length_when_count_is_unavailable():
 
 def test_real_facade_dead_memory_count_matches_unlimited_ids(mock_memory):
     for i in range(3):
-        mock_memory.save(content=f"fact {i} nobody ever looked up", type_="fact")
+        rec = mock_memory.save(content=f"fact {i} nobody ever looked up", type_="fact")
+        _age(mock_memory, rec.id, days=400)
 
     assert mock_memory.dead_memory_count() == len(mock_memory.dead_memory_ids(limit=999))

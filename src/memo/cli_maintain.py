@@ -53,6 +53,7 @@ from memo.maintain_compact import (
     _undo_targets,
     _write_synthesis_last_run,
 )
+from memo.tiers import STALE_AFTER_DAYS
 
 _log = logging.getLogger(__name__)
 _RUN_STAMP_RE = re.compile(r"\d{1,20}(?:-\d{1,20}-\d{1,30})?\Z")
@@ -218,8 +219,8 @@ def _fail_on_pass_errors(receipt: dict[str, Any], *, dry_run: bool) -> None:
 @click.option(
     "--stale-days",
     type=int,
-    default=365,
-    help="Archive never-accessed memories older than this (default 365).",
+    default=STALE_AFTER_DAYS,
+    help=f"Archive never-accessed memories older than this (default {STALE_AFTER_DAYS}).",
 )
 @click.option(
     "--dup-threshold",

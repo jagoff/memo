@@ -34,7 +34,7 @@ from memo.outcome import (
     reconcile_roi,
     reconcile_source_feedback,
 )
-from memo.tiers import EVICTION_PROTECTED_TYPES
+from memo.tiers import EVICTION_PROTECTED_TYPES, STALE_AFTER_DAYS
 from memo.transcript_miner import mine_transcripts
 
 if TYPE_CHECKING:
@@ -792,7 +792,9 @@ def _run_stale(mem: Memory, dry_run: bool = False) -> dict[str, Any]:
     """
     result: dict[str, Any] = {"archived": []}
     try:
-        stale = mem.temporal.detect_stale_memories(days_threshold=365, min_access_count=0)
+        stale = mem.temporal.detect_stale_memories(
+            days_threshold=STALE_AFTER_DAYS, min_access_count=0
+        )
         for item in stale:
             mid = item.get("id")
             if not mid:

@@ -71,6 +71,13 @@ DURABLE_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# How long a never-accessed memory must sit before it counts as prunable.
+# `memo maintain --stale-days` archives never-accessed memories older than
+# this, so anything reporting "candidates to prune" has to use the same window
+# — otherwise the nudge recommends deleting work the remediation would refuse
+# to touch.
+STALE_AFTER_DAYS = 365
+
 # A chunk marker like "§54/130" in a title — the signature of a bulk vault
 # ingest (one source doc split across many memories).
 _CHUNK_TITLE_RE = re.compile(r"§\s*\d+\s*/\s*\d+")
@@ -113,6 +120,7 @@ __all__ = [
     "REFERENCE_TYPES",
     "SECRET_KINDS",
     "SENSITIVE_TYPES",
+    "STALE_AFTER_DAYS",
     "VerificationState",
     "is_reference_candidate",
 ]

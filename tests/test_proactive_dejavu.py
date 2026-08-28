@@ -84,3 +84,34 @@ def test_real_facade_recurring_pattern_pairs_bounds_search_calls(mock_memory):
 
     assert pairs == []
     assert call_count <= 20
+
+
+def test_real_facade_recurring_pattern_pairs_drops_prompt_sharing_no_term(mock_memory, monkeypatch):
+    """On a populated corpus the `if hits` guard is dead code.
+
+    `search()` always ranks *something* once the corpus is large enough for a
+    hit to clear the similarity floor, so "a pattern with no matching memory is
+    dropped" never fires in production — every repeated prompt, gibberish
+    included, gets cited against whatever came back. The older empty-corpus
+    test passes only because an empty corpus makes the guard trivially true.
+
+    Force the production condition and require the pattern to be dropped on the
+    strength of the citation instead.
+    """
+    from memo.dashboard_logs import append_recall_log
+
+    mock_memory.save(
+        content="always restart the recall daemon after a config change",
+        type_="note",
+    )
+    prompt = "asdfgh qwerty zzz"
+    append_recall_log(mock_memory.cfg.state_dir, prompt=prompt, hits=[])
+    append_recall_log(mock_memory.cfg.state_dir, prompt=prompt, hits=[])
+
+    # The fixture corpus is too small for gibberish to clear the floor on its
+    # own, so pin `search` to the hit a real corpus would have returned.
+    hits = mock_memory.search("restart recall daemon", limit=1, disable_reranker=True)
+    assert hits, "fixture sanity: a matching query must return the seeded memory"
+    monkeypatch.setattr(mock_memory, "search", lambda *a, **k: hits)
+
+    assert mock_memory.recurring_pattern_pairs() == []
