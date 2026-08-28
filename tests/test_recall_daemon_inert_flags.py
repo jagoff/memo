@@ -346,6 +346,11 @@ def test_recall_logic_honours_the_forwarded_knobs(tmp_cfg, monkeypatch) -> None:
         ("MEMO_RECALL_MIN_BODY_CHARS", "0"),
         ("MEMO_RECALL_TOP_K", "3"),
         ("MEMO_RECALL_ASSOCIATIVE", "0"),
+        # int8 quantization nudges the cosines together, so leaving either
+        # dedup on lets the baseline collapse to a single hit and the test
+        # fails for a reason that has nothing to do with knob forwarding.
+        ("MEMO_RECALL_DEDUP_COLLAPSE", "0"),
+        ("MEMO_RECALL_INTRA_DEDUP", "0"),
     ):
         monkeypatch.setenv(flag, value)
 
