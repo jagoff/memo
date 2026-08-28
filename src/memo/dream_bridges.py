@@ -19,6 +19,7 @@ from collections.abc import Callable
 from typing import Any
 
 from memo.dream_communities import provenance_hash
+from memo.dream_synthesis_tags import synthesis_tags
 
 _DATE_RE = re.compile(r"^\d{4}([-/]\d{1,2}){0,2}$")
 # Generic co-mention tokens that are not meaningful link anchors.
@@ -196,6 +197,7 @@ def run_synthesize_bridges(
                     mem.save(
                         content=f"{d['body']}\n\n[bridge {d['provenance_hash']}]",
                         type_="synthesis",
+                        tags=synthesis_tags("bridge"),
                         title=d["title"],
                         extra={
                             "synthesis_kind": "bridge",

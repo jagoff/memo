@@ -21,6 +21,8 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from memo.dream_synthesis_tags import synthesis_tags
+
 # --- pure core (testable) ----------------------------------------------------
 
 
@@ -179,6 +181,7 @@ def run_consolidate_episodes(
                     mem.save(
                         content=f"{d['body']}\n\n[cross-session {d['provenance_hash']}]",
                         type_="synthesis",
+                        tags=synthesis_tags("cross_session"),
                         title=d["title"],
                         extra={
                             "synthesis_kind": "cross_session",
