@@ -21,8 +21,12 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   The live hook's own log agrees — 429 injected hits across 148 daemon entries
   contain zero `failure_pattern`. Exclusions now come from the same
   `_recall_excluded_types()` the hook uses, `--json` reports the full
-  `excluded_types` set instead of a single `exclude_reference` boolean, and the
-  table gained a `type` column so an operator can see why a row was dropped.
+  `excluded_types` set instead of a single `exclude_reference` boolean, and each
+  hit carries its `type` there. The rendered table keeps its nine columns: a
+  tenth pushes the boosts cell into wrapping at the 80-column width the
+  module-level console falls back to with no TTY. (The test that caught this
+  sets `COLUMNS=200` to "keep the boosts cell unwrapped" — `cli_common` builds
+  its `Console` at import time, so that knob has never had any effect.)
 
 - **The proxy pruned `StructuredOutput`, so the model called it blind and paid
   the difference back in retries.** `_discover_builtins()` shelled out to

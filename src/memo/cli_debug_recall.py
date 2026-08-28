@@ -154,8 +154,10 @@ def _run_debug_recall(prompt: str, cwd: str | None) -> dict[str, Any]:
                     "id": h.id,
                     "id8": h.id[:8],
                     "title": h.title,
-                    # Without this an operator cannot tell that a row the
-                    # normal section excludes is excluded for its TYPE.
+                    # `--json` only. A tenth table column pushes the boosts
+                    # cell into wrapping at the 80-column width the module
+                    # console falls back to when there is no TTY, which is
+                    # what CI renders at.
                     "type": getattr(h, "type", None),
                     "vec_sim": vec_cosine(h),
                     "bm25": bm25_scores.get(h.id),
@@ -276,7 +278,6 @@ def _render(result: dict[str, Any], prompt: str) -> None:
     table.add_column("rank", justify="right", no_wrap=True)
     table.add_column("id", no_wrap=True)
     table.add_column("title", max_width=30, overflow="ellipsis")
-    table.add_column("type", no_wrap=True)
     table.add_column("vec", justify="right")
     if show_bm25:
         table.add_column("bm25", justify="right")
@@ -293,7 +294,6 @@ def _render(result: dict[str, Any], prompt: str) -> None:
             rank_cell,
             row["id8"],
             row["title"] or "",
-            row.get("type") or "—",
             _fmt_score(row.get("vec_sim")),
         ]
         if show_bm25:
