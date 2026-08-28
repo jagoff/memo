@@ -30,6 +30,23 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
   machine-local gate baseline must be reseeded (`--update-baseline`) for the
   same reason.
 
+||||||| 75ef32e8
+- **`memo tokens` printed a proxy saving of "386295.8% cost".** The holdout
+  A/B panel rendered its headline ratio at any sample size, qualifying a thin
+  one with the word "provisional" but printing the number anyway. Because the
+  control arm is drawn per *session* at `MEMO_PROXY_HOLDOUT_FRAC`, it fills far
+  slower than the treated arm, and live traffic put 2 holdout requests worth 5
+  tok-equiv (one short, atypical session) against 4984 treated worth 19320 —
+  a ratio wrong by four orders of magnitude, in bold, above a grey caveat no
+  reader weighs against it. Below the existing `_MIN_PROXY_SAMPLE` floor the
+  panel now withholds the ratio and falls into the "not enough data to compare
+  arms yet" branch that already existed, reporting request AND session counts
+  plus the floor so the shortfall is legible. This is the instrument every
+  proxy savings claim is measured against, so a wrong number here discredits
+  all of them. Note the residual: 30 requests drawn from a single session are
+  still one correlated sample, which is why the session counts are now shown
+  next to the request counts.
+
 - **Read-only MCP tools stopped bypassing the write coordinator on MCP SDK v2.**
   The middleware read `ToolAnnotations.readOnlyHint`, which SDK v2 renamed to
   `read_only_hint` (PEP 8) and kept only as a deprecated alias that warns on

@@ -146,11 +146,28 @@ def _transcript_panel(measured: dict) -> Panel:
 def _proxy_panel(proxy: dict) -> Panel:
     frac = proxy["measured_saving_frac"]
     n_t, n_h = proxy["n_treated"], proxy["n_holdout"]
-    if frac is None:
+    # Defect 2: holdout is assigned per SESSION, not per request, so n_t/n_h
+    # (request counts) overstate the effective sample size — every request in
+    # one holdout session is correlated, not an independent draw. Report the
+    # distinct-session count beside the request count rather than hiding that
+    # the unit changed.
+    n_ts = proxy.get("n_treated_sessions") or 0
+    n_hs = proxy.get("n_holdout_sessions") or 0
+    sessions_note = f", {n_ts}/{n_hs} sessions" if (n_ts or n_hs) else ""
+    # A sample too thin to compare is not a measurement with a caveat — it is
+    # not a measurement. Because the control arm is drawn per session at
+    # MEMO_PROXY_HOLDOUT_FRAC, it fills ~1/frac times slower than the treated
+    # one, and its first entries can be a single atypical session: live
+    # traffic once put 2 holdout requests worth 5 tok-equiv against 4984
+    # treated worth 19320 and rendered "386295.8% cost" in bold. Withhold the
+    # ratio below the floor instead of shipping it with a "provisional" word.
+    thin = min(n_t, n_h) < _MIN_PROXY_SAMPLE
+    if frac is None or thin:
         if n_t or n_h:
             body = (
                 f"[dim]not enough data to compare arms yet[/dim] "
-                f"([dim]{n_t} treated / {n_h} holdout requests[/dim])"
+                f"([dim]{n_t} treated / {n_h} holdout requests{sessions_note}"
+                f" — need {_MIN_PROXY_SAMPLE} per arm[/dim])"
             )
         else:
             body = "[dim]no measured data yet — the proxy has not logged any requests[/dim]"
@@ -171,21 +188,11 @@ def _proxy_panel(proxy: dict) -> Panel:
         cost_h = proxy["mean_prompt_cost_holdout"]
         mean_in_t = proxy["mean_input_treated"]
         mean_in_h = proxy["mean_input_holdout"]
-        thin = min(n_t, n_h) < _MIN_PROXY_SAMPLE
-        # Defect 2: holdout is now assigned per SESSION, not per request, so
-        # n_t/n_h (request counts) overstate the effective sample size —
-        # every request in one holdout session is correlated, not an
-        # independent draw. Report the distinct-session count beside the
-        # request count rather than hiding that the unit changed.
-        n_ts = proxy.get("n_treated_sessions") or 0
-        n_hs = proxy.get("n_holdout_sessions") or 0
-        sessions_note = f", {n_ts}/{n_hs} sessions" if (n_ts or n_hs) else ""
         body = (
             f"[bold {colour}]{abs(frac) * 100:.1f}% {verb}[/bold {colour}] on prompt cost "
             f"(treated {cost_t:.0f} vs holdout {cost_h:.0f} tok-equiv/request; "
             f"raw input_tokens {mean_in_t:.0f} vs {mean_in_h:.0f}) "
-            f"[dim](n={n_t} treated / {n_h} holdout requests{sessions_note}"
-            f"{' · provisional, thin sample' if thin else ''})[/dim]"
+            f"[dim](n={n_t} treated / {n_h} holdout requests{sessions_note})[/dim]"
         )
     if proxy.get("retrieved"):
         body += f"\n[dim]{proxy['retrieved']} recovered originals (cost their tokens twice)[/dim]"
