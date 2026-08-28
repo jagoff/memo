@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from memo import dream_tune_online
+from memo.dream_utils import _corpus_fingerprint
 from memo.eval_recall import (
     Cfg,
     LabelSet,
@@ -151,10 +152,63 @@ def load_baseline(state_dir: Path) -> dict[str, float] | None:
         return None
 
 
-def save_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
+def save_baseline(state_dir: Path, metrics: dict[str, float], *, mem: Any = None) -> None:
+    """Persist the offline gate metrics, stamped with the corpus they describe.
+
+    Without the stamp the baseline is a bare pair of numbers whose provenance
+    is lost the moment the corpus moves, and the rollback guard charges every
+    later corpus change to whatever knob it happens to be judging. `mem` is
+    optional so callers that have no Memory handy (and every baseline written
+    before this field existed) still work — the guard treats a missing
+    fingerprint as not-comparable, never as a match.
+    """
+    doc: dict[str, Any] = dict(metrics)
+    fingerprint = _corpus_fingerprint(mem) if mem is not None else None
+    if fingerprint:
+        doc["corpus_fingerprint"] = fingerprint
     p = _baseline_path(state_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    p.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def _live_floor_regressed(
+    state_dir: Path,
+    mem: Any,
+    labels: Any,
+    *,
+    baseline: dict[str, Any],
+    live: dict[str, float],
+    current: float,
+    k: int,
+    measure: Any,
+) -> bool:
+    """Has the applied min_sim floor actually regressed — as opposed to the corpus moving?
+
+    The stored baseline answers that only while it still describes the live
+    corpus. Once it doesn't, comparing against it measures corpus drift and
+    charges it to the knob, which is how one pass CONFIRMED 0.5 -> 0.4 on the
+    online proof loop and rolled it back minutes later. So when the stamp no
+    longer matches, ask the comparable question instead: the current floor
+    against the floor it replaced, both measured on today's corpus.
+    """
+    stamp = baseline.get("corpus_fingerprint")
+    if stamp and stamp == _corpus_fingerprint(mem):
+        return bool(_regressed(live, baseline))
+    prev_floor = _prev_floor(state_dir)
+    if prev_floor is None or prev_floor == current:
+        return False
+    return bool(_regressed(live, measure(mem, labels, k=k, floor=prev_floor)))
+
+
+def _prev_floor(state_dir: Path) -> float | None:
+    """The min_sim value the live overlay replaced, i.e. what a rollback would
+    restore. `None` when the overlay has no prior scalar for the knob — then
+    there is no applied change for the guard to second-guess."""
+    prev = read_overlay(state_dir).get("_meta", {}).get("prev")
+    if not isinstance(prev, dict):
+        return None
+    value = prev.get(_MIN_SIM)
+    return float(value) if isinstance(value, int | float) else None
 
 
 # --- labels ------------------------------------------------------------------
@@ -310,14 +364,19 @@ def _is_improved_change(
     ) > (before["precision_at_k"], -before["noise_at_k"])
 
 
-def _save_knob_baseline(state_dir: Path, knob: str, metrics: dict[str, float]) -> None:
-    """Persist the matching offline baseline when the knob has one."""
+def _save_knob_baseline(
+    state_dir: Path, knob: str, metrics: dict[str, float], *, mem: Any = None
+) -> None:
+    """Persist the matching offline baseline when the knob has one.
+
+    `mem` is threaded through so the saved baseline can record WHICH corpus it
+    describes; savers that have no use for it ignore it."""
     saver = _KNOB_BASELINE_SAVERS.get(knob)
     if saver is not None:
-        saver(state_dir, metrics)
+        saver(state_dir, metrics, mem)
 
 
-def _restore_online_revert(state_dir: Path, resolution: dict[str, Any]) -> None:
+def _restore_online_revert(state_dir: Path, resolution: dict[str, Any], *, mem: Any = None) -> None:
     """Restore every key managed by one reverted online experiment."""
     params = _scalar_overlay(state_dir)
     managed_before = resolution.get("managed_before")
@@ -330,7 +389,7 @@ def _restore_online_revert(state_dir: Path, resolution: dict[str, Any]) -> None:
     write_overlay(state_dir, params, {"set_by": "dream-online-revert"})
     saver = _KNOB_BASELINE_SAVERS.get(resolution["knob"])
     if saver is not None:
-        saver(state_dir, resolution["offline_before"])
+        saver(state_dir, resolution["offline_before"], mem)
     dream_tune_online.set_revert_cooldown(state_dir)
     pin_prev_to_current(state_dir)
 
@@ -382,7 +441,7 @@ def run_tuning_pass(
             )
             res["online"] = resolution
             if resolution["status"] == "reverted":
-                _restore_online_revert(cfg.state_dir, resolution)
+                _restore_online_revert(cfg.state_dir, resolution, mem=mem)
                 res["status"] = "online_reverted"
                 return res
             if resolution["status"] == "waiting":
@@ -393,11 +452,36 @@ def run_tuning_pass(
         current = flag_float(_MIN_SIM)
         current = 0.5 if current is None else current
 
-        # rollback guard: if the LIVE config already regressed vs baseline, revert first.
+        # rollback guard: if the LIVE config already regressed, revert first.
+        #
+        # "Regressed" has to mean "worse than the config it replaced", not
+        # "worse than a stored snapshot". The baseline is written once and the
+        # corpus grows every day, so a stale snapshot compared against a fresh
+        # measurement — under `_regressed`'s 1e-9 tolerance — reverts the knob
+        # for any drift at all. That is exactly what happened on 2026-08-27:
+        # one pass CONFIRMED min_sim 0.5->0.4 on the online proof loop
+        # (0.0 -> 0.9362, n=47) and rolled it back in the same pass, against a
+        # baseline six days and thousands of memories old.
+        #
+        # So: trust the snapshot only while it describes THIS corpus. Once it
+        # doesn't, ask the comparable question instead — measure the current
+        # floor against the floor it replaced, both on today's corpus. Costs a
+        # second measurement in a nightly pass, and isolates the knob from the
+        # corpus completely.
         baseline = load_baseline(cfg.state_dir)
         if baseline is not None:
             live = measure(mem, labels, k=k, floor=current)
-            if _regressed(live, baseline) and not dry_run:
+            worse = _live_floor_regressed(
+                cfg.state_dir,
+                mem,
+                labels,
+                baseline=baseline,
+                live=live,
+                current=current,
+                k=k,
+                measure=measure,
+            )
+            if worse and not dry_run:
                 rolled = rollback_overlay(cfg.state_dir)
                 if rolled is not None:
                     res["status"] = "rolled_back"
@@ -583,7 +667,7 @@ def run_tuning_pass(
                 "baseline_noise": w_after["noise_at_k"],
             },
         )
-        _save_knob_baseline(cfg.state_dir, knob, w_after)
+        _save_knob_baseline(cfg.state_dir, knob, w_after, mem=mem)
         dream_tune_online.record_pending(
             cfg.state_dir,
             knob=knob,
@@ -985,11 +1069,13 @@ def save_graph_baseline(state_dir: Path, metrics: dict[str, float]) -> None:
 # Lambda wrappers preserve late-binding: save_baseline / save_graph_baseline are
 # looked up in the module's global namespace at call time, not at dict-construction
 # time, so monkeypatching either function works correctly in tests.
+# `mem` defaults to None so a two-argument call still works: the rank-knob
+# savers ignore it, and only the min_sim baseline records a corpus fingerprint.
 _KNOB_BASELINE_SAVERS = {
-    _MIN_SIM: lambda sd, m: save_baseline(sd, m),
-    _GRAPH_ALPHA: lambda sd, m: save_graph_baseline(sd, m),
-    _MMR_LAMBDA: lambda sd, m: save_rank_knob_baseline(sd, _MMR_LAMBDA, m),
-    _SYNTHESIS_BOOST: lambda sd, m: save_rank_knob_baseline(sd, _SYNTHESIS_BOOST, m),
+    _MIN_SIM: lambda sd, m, mem=None: save_baseline(sd, m, mem=mem),
+    _GRAPH_ALPHA: lambda sd, m, mem=None: save_graph_baseline(sd, m),
+    _MMR_LAMBDA: lambda sd, m, mem=None: save_rank_knob_baseline(sd, _MMR_LAMBDA, m),
+    _SYNTHESIS_BOOST: lambda sd, m, mem=None: save_rank_knob_baseline(sd, _SYNTHESIS_BOOST, m),
 }
 
 
