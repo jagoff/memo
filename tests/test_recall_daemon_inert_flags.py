@@ -5,10 +5,13 @@
 (full) and ``render_recall_compact`` — and by neither ``render_recall_balanced``.
 
 The daemon is a separate long-lived process, so it does NOT inherit the recall
-hook's environment, and the socket request carries only prompt/cwd/session_id/
-turn/client (``recall_client.connect_and_recall``) — no budget, no format. It
-therefore resolves ``MEMO_RECALL_TOKEN_BUDGET`` / ``_TOP_K`` / ``_FORMAT`` from
-its OWN flag chain, which on a default install yields 600 / 3 / auto. Adaptive
+hook's environment. ``recall_client.connect_and_recall`` now forwards a budget
+or top_k the operator moved off its registry default, and the socket handler
+passes them to ``_recall_logic`` — so an operator's cap is honoured rather than
+silently dropped. Absent keys still leave the daemon resolving
+``MEMO_RECALL_TOKEN_BUDGET`` / ``_TOP_K`` / ``_FORMAT`` from its OWN flag
+chain, which on a default install yields 600 / 3 / auto, and ``_FORMAT`` is
+never forwarded at all. Adaptive
 budgeting maps 600 to {800, 600, 360} by prompt length and hits are capped at
 top_k, so *every* reachable combination resolves to ``balanced`` — `full` needs
 a budget strictly above 800 and the maximum attainable is exactly 800.
@@ -274,3 +277,93 @@ def test_daemon_startup_stays_quiet_when_no_annotation_flag_is_set(monkeypatch, 
     err = _boot_daemon(monkeypatch, tmp_path)
 
     assert "WARNING" not in err, err
+
+
+def test_the_client_forwards_the_operator_resolved_recall_knobs(monkeypatch) -> None:
+    """A budget the operator set in the hook env must reach the daemon.
+
+    The daemon is a separate long-lived process and does not inherit the
+    hook's environment, so a request that carries only prompt/cwd/session_id/
+    turn/client leaves it resolving MEMO_RECALL_TOKEN_BUDGET / _TOP_K from its
+    OWN chain — which the LaunchAgent does not set. An operator writing
+    `MEMO_RECALL_TOKEN_BUDGET=160 MEMO_RECALL_TOP_K=1` in settings.json
+    therefore got 600/3 and no error. Forwarding closes that silently.
+    """
+    from memo import recall_client
+
+    sent: dict = {}
+
+    def _capture(state_dir, payload, timeout, max_retries=3):
+        sent.update(payload)
+        return "{}"
+
+    monkeypatch.setattr(recall_client, "_send_request", _capture)
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "160")
+    monkeypatch.setenv("MEMO_RECALL_TOP_K", "1")
+
+    recall_client.connect_and_recall(Path("/tmp"), "a prompt", None)
+
+    assert sent.get("token_budget") == 160
+    assert sent.get("top_k") == 1
+
+
+def test_the_client_omits_knobs_the_operator_did_not_set(monkeypatch) -> None:
+    """An unset knob must stay absent so the daemon keeps resolving its own."""
+    from memo import recall_client
+
+    sent: dict = {}
+    monkeypatch.setattr(
+        recall_client,
+        "_send_request",
+        lambda state_dir, payload, timeout, max_retries=3: (sent.update(payload), "{}")[1],
+    )
+    monkeypatch.delenv("MEMO_RECALL_TOKEN_BUDGET", raising=False)
+    monkeypatch.delenv("MEMO_RECALL_TOP_K", raising=False)
+
+    recall_client.connect_and_recall(Path("/tmp"), "a prompt", None)
+
+    assert "token_budget" not in sent
+    assert "top_k" not in sent
+
+
+def test_recall_logic_honours_the_forwarded_knobs(tmp_cfg, monkeypatch) -> None:
+    """The daemon must prefer the caller's knobs over its own flag chain.
+
+    Forwarding is only half the fix: if `_recall_logic` keeps resolving from
+    its own environment the request's values are decoration. Overrides are
+    per-request, so one client capping its injections cannot change what
+    another client gets.
+
+    Asserted at `_resolve_daemon_fallback`, which receives the resolved knobs
+    on every call. Counting surviving hits instead would make the result a
+    function of retrieval scoring, and under `MEMO_VEC_QUANTIZE=int8` the
+    cosines shift enough that the baseline collapses for reasons that have
+    nothing to do with knob forwarding.
+    """
+    from memo import recall_logic as rl
+    from memo.memory import Memory
+
+    monkeypatch.setenv("MEMO_RECALL_TOP_K", "3")
+    monkeypatch.setenv("MEMO_RECALL_TOKEN_BUDGET", "600")
+
+    seen: list[tuple[int, int]] = []
+    real_fallback = rl._resolve_daemon_fallback
+
+    def _spy(*args, **kwargs):
+        result = real_fallback(*args, **kwargs)
+        seen.append((result[2].top_k, 0))
+        return result
+
+    monkeypatch.setattr(rl, "_resolve_daemon_fallback", _spy)
+
+    mem = Memory(tmp_cfg)
+    try:
+        mem.save(content="the gamma rollout cutover went fine", title="gamma", type_="fact")
+        rl._recall_logic("gamma rollout cutover", None, mem, mem.cfg)
+        rl._recall_logic("gamma rollout cutover", None, mem, mem.cfg, top_k=1)
+    finally:
+        mem.close()
+
+    assert len(seen) == 2, f"the fallback resolver ran {len(seen)} times, expected 2"
+    assert seen[0][0] == 3, f"baseline should use the env top_k, got {seen[0][0]}"
+    assert seen[1][0] == 1, f"forwarded top_k ignored, got {seen[1][0]}"

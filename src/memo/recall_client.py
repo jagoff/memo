@@ -33,6 +33,22 @@ def connect_and_recall(
     client: str | None = None,
 ) -> str | None:
     req: dict = {"prompt": prompt, "cwd": cwd or ""}
+    # Forward the knobs THIS process resolved. The daemon is a separate
+    # long-lived process that does not inherit the hook's environment, so a
+    # request without them leaves it resolving MEMO_RECALL_TOKEN_BUDGET /
+    # _TOP_K from its own chain — which the LaunchAgent does not set. An
+    # operator capping injections in settings.json silently got the defaults.
+    # Only forward what was actually set, so an unset knob still lets the
+    # daemon resolve its own and an older daemon ignores the extra keys.
+    from memo.flags import REGISTRY, flag_int
+
+    for key, flag in (("token_budget", "MEMO_RECALL_TOKEN_BUDGET"), ("top_k", "MEMO_RECALL_TOP_K")):
+        value = flag_int(flag)
+        # Forward only a value moved OFF its registry default: the daemon
+        # resolves the same default on its own, so sending it would add wire
+        # bytes for nothing and mask a future default change.
+        if value is not None and value != REGISTRY[flag].default:
+            req[key] = int(value)
     if session_id is not None:
         req["session_id"] = session_id
     if turn is not None:

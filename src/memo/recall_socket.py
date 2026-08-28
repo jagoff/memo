@@ -327,6 +327,14 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                     _turn = req.get("turn")
                     _turn = int(_turn) if isinstance(_turn, (int, float)) else None
                     _client = req.get("client") or None
+                    # Per-request knob overrides: this process does not inherit
+                    # the calling hook's environment, so without these an
+                    # operator's MEMO_RECALL_TOKEN_BUDGET / _TOP_K never
+                    # reached recall. Absent keys keep the daemon's own chain.
+                    _budget = req.get("token_budget")
+                    _budget = int(_budget) if isinstance(_budget, (int, float)) else None
+                    _topk = req.get("top_k")
+                    _topk = int(_topk) if isinstance(_topk, (int, float)) else None
                     if not prompt:
                         self._write_tracked_response(
                             "{}", debug=debug, started_at=t0, op=op, error=error
@@ -379,6 +387,8 @@ class _RecallHandler(socketserver.StreamRequestHandler):
                                 turn=_turn,
                                 client=_client,
                                 micro_embedder=self.server._micro_embedder,
+                                token_budget=_budget,
+                                top_k=_topk,
                             )
                     finally:
                         self.server._priority_lock.release()

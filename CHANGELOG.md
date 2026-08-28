@@ -11,6 +11,21 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- **An operator's recall cap never reached the daemon.** `settings.json` sets
+  `MEMO_RECALL_TOKEN_BUDGET=160 MEMO_RECALL_TOP_K=1` on the hook, but the hook
+  delegates to the persistent recall daemon — a separate long-lived process
+  that does not inherit its environment — and the socket request carried only
+  prompt/cwd/session_id/turn/client. The daemon therefore resolved 600/3 from
+  its own chain, which the LaunchAgent does not set either, and the operator
+  got no error: `recall_metrics.jsonl` records `path:'daemon', hits:3` against
+  a configured `TOP_K=1`. `connect_and_recall` now forwards a budget or top_k
+  that was moved off its registry default, the socket handler passes them to
+  `_recall_logic`, and both are per-request so one client capping its
+  injections cannot change what another gets. An unset knob is still omitted,
+  so the daemon keeps resolving its own and an older daemon ignores the extra
+  keys. `MEMO_RECALL_FORMAT` is deliberately not forwarded: it reshapes the
+  cached prefix.
+
 - **`few_tags` was not a backlog to sweep — it was a nightly producer writing
   below memo's own convention.** `memo lint` flags any memory with under three
   tags, citing the CLAUDE.md "project + domain + topic" rule, and reported
