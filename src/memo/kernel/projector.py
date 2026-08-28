@@ -20,6 +20,12 @@ class ZeroSearchProjector:
         state = self.world_model.state
         active_beliefs = self.world_model.get_active_beliefs()[:max_beliefs]
 
+        # Nothing to project → project nothing. The wrapper plus a bare project
+        # name is 74 chars of scaffolding that was prepended to every balanced
+        # and context recall injection while carrying no information at all.
+        if not (state.active_task or state.code_summary or active_beliefs):
+            return ""
+
         lines = [
             "<memo-world-kernel>",
             f"## Active Project State: {state.project_name}",

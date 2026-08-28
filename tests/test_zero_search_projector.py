@@ -38,3 +38,29 @@ def test_zero_search_projector() -> None:
         assert "memo_proj" in ctx
         assert "Refactor storage layer" in ctx
         assert "Use SQLite WAL mode" in ctx
+
+
+def test_projector_emits_nothing_when_it_has_nothing_to_project() -> None:
+    """An empty world model must project an empty string, not naked scaffolding.
+
+    Regression: with no active task, code summary, or beliefs, project_context
+    still returned the `<memo-world-kernel>` wrapper plus a bare project-name
+    header — 74 chars of pure structure prepended to every balanced/context
+    recall injection, carrying zero information.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wm = WorldModel(Path(tmpdir), project_name="default")
+
+        assert ZeroSearchProjector(wm).project_context() == ""
+
+
+def test_projector_still_emits_when_it_has_content() -> None:
+    """The empty-projection guard must not suppress a projection with content."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wm = WorldModel(Path(tmpdir), project_name="memo")
+        wm.state.active_task = "ship the briefing budget fix"
+
+        out = ZeroSearchProjector(wm).project_context()
+
+        assert "<memo-world-kernel>" in out
+        assert "ship the briefing budget fix" in out
