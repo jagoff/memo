@@ -11,6 +11,25 @@ Releases before `2.0.0` are archived in [docs/CHANGELOG-archive.md](docs/CHANGEL
 
 ### Fixed
 
+- **`noise@k` was structurally blind to the failure mode it is named for.**
+  `_hit_is_noise` fired only on a hit carrying a noise TAG, sitting under a
+  noise PATH fragment, or listed in the prompt's `avoid_ids`. The curated set
+  ships three prompts whose `_note` calls them "Noise probe" — culinary,
+  weather, physics — and none of them can produce such a hit: whatever comes
+  back is an ordinary dev memory with ordinary tags. So they scored zero noise
+  no matter what surfaced, and the gate read a clean `noise@5 0.000` while
+  `memo debug-recall "best pasta recipe for tonight"` injected 3 memories. The
+  new schema-additive `noise_probe` label makes the claim measurable: a prompt
+  that declares nothing in the corpus answers it counts every top-K hit as
+  noise. It is an explicit field rather than an inference from
+  `relevant=false and not expect_ids`, because the two ⛔ AVOID coverage probes
+  and the as-of probe share exactly that shape and their own labels state they
+  must never perturb precision@K / noise@K. Measured on the live index: `noise@5`
+  goes 0.000 → **0.041** at config `L live/vec/0.5` with `prec@5` unchanged at
+  0.530 — the recall did not regress, the instrument stopped lying. The
+  machine-local gate baseline must be reseeded (`--update-baseline`) for the
+  same reason.
+
 - **Read-only MCP tools stopped bypassing the write coordinator on MCP SDK v2.**
   The middleware read `ToolAnnotations.readOnlyHint`, which SDK v2 renamed to
   `read_only_hint` (PEP 8) and kept only as a deprecated alias that warns on

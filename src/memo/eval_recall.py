@@ -89,6 +89,13 @@ class Prompt:
     # Complements `avoid_ids` (ids that must stay OUT of normal recall — leakage).
     # Schema-additive on memo.eval_recall.labels.v1.
     expect_avoid_ids: list[str] = field(default_factory=list)
+    # A prompt with NO relevant answer anywhere in the corpus: every top-K hit
+    # it returns is noise. Explicit rather than inferred from
+    # `relevant=False and not expect_ids`, because the ⛔ AVOID coverage probes
+    # and the as-of probe share that exact shape and their labels state they
+    # must never perturb precision@K / noise@K — they score avoid@k only.
+    # Schema-additive on memo.eval_recall.labels.v1.
+    noise_probe: bool = False
 
 
 # Alias so tests/code can import `Label` as the per-prompt record type.
@@ -112,6 +119,7 @@ def _label_from_dict(d: dict) -> Label:
         avoid_ids=[str(x) for x in (d.get("avoid_ids") or [])],
         as_of=str(d["as_of"]) if d.get("as_of") else None,
         expect_avoid_ids=[str(x) for x in (d.get("expect_avoid_ids") or [])],
+        noise_probe=bool(d.get("noise_probe", False)),
     )
 
 
@@ -139,6 +147,7 @@ class LabelSet:
                         sorted(p.avoid_ids),
                         p.as_of,
                         sorted(p.expect_avoid_ids),
+                        p.noise_probe,
                     )
                     for p in self.prompts
                 ],
@@ -445,6 +454,23 @@ def _is_noise(rec: Any, labels: LabelSet) -> bool:
         return True
     p = (getattr(rec, "path", None) or "").lower()
     return any(frag in p for frag in labels.noise_path_fragments)
+
+
+def hit_is_noise(rec: Any, prompt: Prompt, labels: LabelSet) -> bool:
+    """Does this top-K hit count against ``noise@k`` for ``prompt``?
+
+    Three ways in. The first two are properties of the HIT — a noise tag or a
+    noise path fragment — and the third is the prompt's own ``avoid_ids``.
+    None of them can fire for an ordinary memory surfaced by a prompt that has
+    no right answer at all, which is why the curated set's three "Noise probe"
+    prompts scored a clean 0.000 while the live pipeline injected 3 memories
+    for `best pasta recipe for tonight`. A prompt marked ``noise_probe``
+    asserts that nothing in the corpus answers it, so anything it returns is
+    noise by the definition of the label.
+    """
+    if prompt.noise_probe:
+        return True
+    return _is_noise(rec, labels) or _id_matches(getattr(rec, "id", ""), prompt.avoid_ids)
 
 
 def _id_matches(hit_id: str, expect_ids: list[str]) -> bool:
@@ -878,8 +904,8 @@ def _run_config_inner(
         top = ranked[:k]
         quality_metrics = _quality_eval_metrics(top, k=k)
 
-        def _hit_is_noise(h: Any, _avoid_ids: list[str] = prompt.avoid_ids) -> bool:
-            return _is_noise(h, labels) or _id_matches(getattr(h, "id", ""), _avoid_ids)
+        def _hit_is_noise(h: Any, _prompt: Prompt = prompt) -> bool:
+            return hit_is_noise(h, _prompt, labels)
 
         for h in top:
             graph_eval_rows.append(

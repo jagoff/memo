@@ -1814,3 +1814,65 @@ def test_run_config_counts_type_marked_canonical_hit() -> None:
     )
 
     assert eval_recall.gate_metrics([row])["canonical_hit_at_k"] == 1.0
+
+
+def test_noise_probe_counts_every_hit_as_noise():
+    """`noise@k` was structurally blind to the failure mode it is named for.
+
+    `_hit_is_noise` only fired on a hit carrying a noise TAG, sitting under a
+    noise PATH fragment, or listed in the prompt's `avoid_ids`. The curated set
+    ships three prompts whose `_note` calls them "Noise probe" — culinary,
+    weather, physics — none of which can produce such a hit: whatever surfaces
+    is an ordinary dev memory with ordinary tags. So they scored 0 noise no
+    matter what came back, and `noise@k` read a clean 0.000 while
+    `memo debug-recall "best pasta recipe for tonight"` injected 3 memories.
+
+    A prompt declared a noise probe asserts that NOTHING is relevant to it, so
+    every top-k hit it returns is noise by definition of the label."""
+    labels = LabelSet(prompts=[Prompt(text="best pasta recipe", noise_probe=True)])
+    prompt = labels.prompts[0]
+    hit = SimpleNamespace(id="deadbeef", tags=["project:memo"], path="/vault/notes/x.md")
+    assert eval_recall.hit_is_noise(hit, prompt, labels) is True
+
+
+def test_a_deliberately_unscored_prompt_is_not_a_noise_probe():
+    """The two ⛔ AVOID coverage probes and the as-of probe share the noise
+    probes' shape (`relevant=false`, empty `expect_ids`) but their notes say
+    they must NEVER perturb precision@K / noise@K — they score avoid@k only.
+    Keying off that shape would have silently started scoring them, so the
+    signal is an explicit field, not an inference."""
+    labels = LabelSet(prompts=[Prompt(text="let's cut a release now", expect_avoid_ids=["de5df482"])])
+    prompt = labels.prompts[0]
+    hit = SimpleNamespace(id="deadbeef", tags=["project:memo"], path="/vault/notes/x.md")
+    assert prompt.noise_probe is False
+    assert eval_recall.hit_is_noise(hit, prompt, labels) is False
+
+
+def test_noise_probe_survives_the_json_round_trip():
+    p = eval_recall._label_from_dict({"text": "what is the weather tomorrow", "noise_probe": True})
+    assert p.noise_probe is True
+    assert eval_recall._label_from_dict({"text": "x"}).noise_probe is False
+
+
+def test_noise_probe_is_part_of_the_labels_fingerprint():
+    """The fingerprint keys the eval cache and the gate baseline. If flipping
+    a prompt to a noise probe left it unchanged, a stale cached result would
+    be served for a label set that now scores differently."""
+    base = LabelSet(prompts=[Prompt(text="q")])
+    probe = LabelSet(prompts=[Prompt(text="q", noise_probe=True)])
+    assert base.fingerprint() != probe.fingerprint()
+
+
+def test_curated_noise_probes_are_marked():
+    """The three prompts whose `_note` calls them noise probes carry the field
+    that makes that claim measurable."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    path = _Path(__file__).resolve().parents[1] / "eval" / "regression_labels.json"
+    if not path.is_file():  # packaged checkouts without the curated set
+        return
+    prompts = _json.loads(path.read_text(encoding="utf-8"))["prompts"]
+    noted = [p for p in prompts if "noise probe" in (p.get("_note") or "").lower()]
+    assert noted, "curated set lost its noise probes"
+    assert all(p.get("noise_probe") for p in noted)
