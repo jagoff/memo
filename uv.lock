@@ -1438,7 +1438,7 @@ wheels = [
 
 [[package]]
 name = "mlx-memo"
-version = "4.14.5"
+version = "4.14.6"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
